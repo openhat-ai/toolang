@@ -2,17 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from toolang.files import (
-    CapEntry,
-    InputFingerprint,
-    LockEntry,
-    LockedAgentRefs,
-    ModelEntry,
-    ModelsSection,
-    SyncedProgram,
-    SyncState,
-    ToolangConfig,
-)
+from toolang.files.config import ModelEntry, ModelsSection, ToolangConfig
+from toolang.files.program import SyncedProgram
+from toolang.files.sync_state import InputFingerprint, LockEntry, LockedAgentRefs, SyncState
+from toolang_caps.models import CapEntry
 
 
 def test_toolang_config_round_trip(tmp_path) -> None:

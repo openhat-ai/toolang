@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from importlib.metadata import version as package_version
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -17,6 +18,13 @@ def test_cli_has_expected_subcommands() -> None:
     assert "sync" in result.output
     assert "check" not in result.output
     assert "dump-ast" not in result.output
+
+
+def test_cli_shows_package_version() -> None:
+    result = runner.invoke(app, ["--version"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == f"toolang {package_version('toolang')}"
 
 
 def test_cli_sync_resolves_resident_agent_from_toolang_root(tmp_path: Path, monkeypatch) -> None:

@@ -7,7 +7,8 @@ import pytest
 
 from toolang.agent_refs import resolve_agent_ref
 from toolang.errors import ToolangError
-from toolang.files import SyncState, SyncedProgram
+from toolang.files.program import SyncedProgram
+from toolang.files.sync_state import SyncState
 from toolang.layout import (
     agent_sync_path,
     resolve_toolang_root,
@@ -16,7 +17,7 @@ from toolang.layout import (
 )
 from toolang.parser import parse_program
 from toolang.sync import ensure_agent_synced, sync_agent
-from toolang_caps import ResolvedCapRef
+from toolang_caps.models import ResolvedCapRef
 
 PARSE_FIXTURE = Path(__file__).parent / "fixtures" / "sample.too"
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"

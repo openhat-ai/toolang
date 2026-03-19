@@ -5,6 +5,10 @@
 - Use semantic commit messages.
 - Write all code and documentation in English.
 - Keep changes PR-sized and composable.
+- Before each commit, run:
+  - `uv run ty check --python-version 3.13 src tests`
+  - `uv run ruff check`
+  - `uv run pytest -q`
 - Update this file when new project-wide conventions become stable.
 
 

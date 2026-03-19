@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
-from toolang_caps import CapEntry
+from toolang_caps.models import CapEntry
 
 from toolang.files._toml import load_toml, write_toml
 
@@ -24,7 +24,7 @@ class ModelsSection(BaseModel):
     def from_toml(cls, data: dict[str, Any]) -> "ModelsSection":
         defaults = data.get("default", [])
         named = {
-            key: value
+            key: ModelEntry.model_validate(value)
             for key, value in data.items()
             if key != "default" and isinstance(value, dict)
         }

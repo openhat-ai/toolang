@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from typing import Callable, Literal
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 
 from toolang.errors import ToolangError
 from toolang.layout import agent_source_path, resident_agent_home, visiting_agent_home
@@ -83,13 +83,12 @@ def _resolve_uri(text: str, *, toolang_root: Path) -> ResolvedAgentRef:
     raise ToolangError(f"Unsupported agent URI scheme: {parsed.scheme}")
 
 
-def _resolve_agent_uri(parsed: object, *, toolang_root: Path) -> ResolvedAgentRef:
-    split = parsed if hasattr(parsed, "scheme") else urlsplit(str(parsed))
-    home_name = split.netloc
+def _resolve_agent_uri(parsed: SplitResult, *, toolang_root: Path) -> ResolvedAgentRef:
+    home_name = parsed.netloc
     if not home_name:
         raise ToolangError("Resident agent URI must include a home name.")
 
-    path = PurePosixPath(split.path)
+    path = PurePosixPath(parsed.path)
     filename = path.name
     if path.parent != PurePosixPath("/") or not filename.endswith(".too"):
         raise ToolangError("Resident agent URI must look like agent://<home>/<agent>.too")
@@ -108,10 +107,9 @@ def _resolve_agent_uri(parsed: object, *, toolang_root: Path) -> ResolvedAgentRe
     )
 
 
-def _resolve_file_uri(parsed: object, *, toolang_root: Path) -> ResolvedAgentRef:
-    split = parsed if hasattr(parsed, "scheme") else urlsplit(str(parsed))
-    path = Path(split.path).expanduser().resolve()
-    return _resolve_absolute_local_path(path, toolang_root=toolang_root, raw=split.geturl())
+def _resolve_file_uri(parsed: SplitResult, *, toolang_root: Path) -> ResolvedAgentRef:
+    path = Path(parsed.path).expanduser().resolve()
+    return _resolve_absolute_local_path(path, toolang_root=toolang_root, raw=parsed.geturl())
 
 
 def _resolve_https(text: str, *, toolang_root: Path) -> ResolvedAgentRef:
