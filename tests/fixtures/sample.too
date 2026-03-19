@@ -1,0 +1,22 @@
+use skill briceyan/pdf-processing
+
+prompt summarize(style, audience?): ```md
+Summarize the request in a {{style}} style.
+Audience: {{audience}}
+
+{{input}}
+```
+
+struct WorkspaceSummary: ```json
+{
+  "title": "string",
+  "summary": "string"
+}
+```
+
+thunk summarize(user) => WorkspaceSummary:
+    model = gpt-5
+    skills = briceyan/pdf-processing
+
+    Produce a concise workspace summary.
+    women
