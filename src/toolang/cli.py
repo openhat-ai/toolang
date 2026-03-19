@@ -154,6 +154,7 @@ def serve(
         bus_db_path=bus_db_path,
         host=host,
         port=port,
+        cors_allow_origins=_cors_allow_origins(),
     )
 
 
@@ -214,7 +215,12 @@ def bus_serve(
     port: Annotated[int, typer.Option(help="Port to listen on")] = 8780,
 ) -> None:
     toolang_root = _toolang_root()
-    serve_bus_app(bus_events_db_path(toolang_root), host=host, port=port)
+    serve_bus_app(
+        bus_events_db_path(toolang_root),
+        host=host,
+        port=port,
+        cors_allow_origins=_cors_allow_origins(),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -283,6 +289,14 @@ def _guest_resolver():
 
         guest_resolver = resolve_guest_name
     return guest_resolver
+
+
+def _cors_allow_origins() -> list[str] | None:
+    raw = os.environ.get("TOOLANG_CORS_ORIGINS", "").strip()
+    if not raw:
+        return None
+    items = [item.strip() for item in raw.split(",") if item.strip()]
+    return items or None
 
 
 def _resolve_known_agent(

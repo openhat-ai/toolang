@@ -22,16 +22,28 @@ from toolang.api_models import (
     RunListResponse,
 )
 from toolang.bus.db import AgentSnapshot, BusStore, RunSnapshot, StoredEvent
+from toolang.http import add_cors
 
 SSE_POLL_INTERVAL_SEC = 0.5
 SSE_PING_INTERVAL_SEC = 20.0
 
 
-def serve_bus_app(db_path: Path, *, host: str, port: int) -> None:
-    uvicorn.run(create_bus_app(db_path), host=host, port=port, log_level="info")
+def serve_bus_app(
+    db_path: Path,
+    *,
+    host: str,
+    port: int,
+    cors_allow_origins: list[str] | None = None,
+) -> None:
+    uvicorn.run(
+        create_bus_app(db_path, cors_allow_origins=cors_allow_origins),
+        host=host,
+        port=port,
+        log_level="info",
+    )
 
 
-def create_bus_app(db_path: Path) -> FastAPI:
+def create_bus_app(db_path: Path, *, cors_allow_origins: list[str] | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.store = BusStore(db_path)
@@ -41,6 +53,7 @@ def create_bus_app(db_path: Path) -> FastAPI:
             app.state.store.close()
 
     app = FastAPI(title="Toolang Bus API", lifespan=lifespan)
+    add_cors(app, allow_origins=cors_allow_origins)
 
     @app.get("/healthz")
     def healthz() -> dict[str, object]:

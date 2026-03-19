@@ -69,6 +69,12 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
         assert runtime.json()["working_directory"] == str(home)
         assert runtime.json()["model"] == "gpt-5"
 
+        cors_runtime = client.get(
+            "/api/v1/runtime",
+            headers={"Origin": "http://localhost:3000"},
+        )
+        assert cors_runtime.headers["access-control-allow-origin"] == "http://localhost:3000"
+
         profile = client.get("/api/v1/profile")
         assert profile.status_code == 200
         assert profile.json()["agent"] == "alice"

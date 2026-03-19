@@ -101,6 +101,12 @@ def test_create_bus_app_serves_agents_runs_events_and_proxy_chat(tmp_path: Path,
         assert health.status_code == 200
         assert health.json() == {"ok": True}
 
+        cors_agents = client.get(
+            "/api/v1/agents",
+            headers={"Origin": "http://localhost:3000"},
+        )
+        assert cors_agents.headers["access-control-allow-origin"] == "http://localhost:3000"
+
         agents = client.get("/api/v1/agents")
         assert agents.status_code == 200
         assert agents.json()["items"][0]["id"] == agent_id

@@ -46,6 +46,7 @@ from toolang.caps_view import InlineCapView, SkillCapView, load_prepared_caps
 from toolang.chats import ChatMessage, ChatStore, ChatThread, ChatTurn
 from toolang.errors import ToolangError
 from toolang.files.agent_run import AgentRunState
+from toolang.http import add_cors
 from toolang.invoke import chat_prepared_agent, invoke_prepared_agent
 from toolang.layout import agent_chats_db_path, agent_run_path
 from toolang.messages import chat_message
@@ -64,6 +65,7 @@ def serve_agent(
     bus_db_path: Path,
     host: str,
     port: int,
+    cors_allow_origins: list[str] | None = None,
 ) -> None:
     endpoint = f"http://{host}:{port}"
     app = create_agent_app(
@@ -72,6 +74,7 @@ def serve_agent(
         bus_db_path=bus_db_path,
         host=host,
         port=port,
+        cors_allow_origins=cors_allow_origins,
     )
     try:
         uvicorn.run(app, host=host, port=port, log_level="info")
@@ -96,6 +99,7 @@ def create_agent_app(
     bus_db_path: Path,
     host: str,
     port: int,
+    cors_allow_origins: list[str] | None = None,
 ) -> FastAPI:
     endpoint = f"http://{host}:{port}"
     bus = BusStore(bus_db_path)
@@ -127,6 +131,7 @@ def create_agent_app(
         title=f"Toolang Agent Server: {prepared.ref.agent_name}",
         lifespan=lifespan,
     )
+    add_cors(app, allow_origins=cors_allow_origins)
 
     @app.middleware("http")
     async def update_heartbeat(
