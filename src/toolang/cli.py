@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Sequence
 
 import click
 import typer
@@ -20,10 +20,12 @@ from toolang.bus.events import AgentUpdated, utc_now
 from toolang.agent_refs import ResolvedAgentRef, resolve_agent_ref
 from toolang.agent_registry import (
     KnownAgentRecord,
+    KnownAgentSnapshot,
     delete_running_agent,
     find_known_agents_by_id_prefix,
     find_known_agents_by_name,
     get_running_agent,
+    list_known_agents,
     upsert_known_agent,
 )
 from toolang.errors import ToolangError
@@ -78,6 +80,27 @@ def callback(
     ] = None,
 ) -> None:
     """Toolang CLI."""
+
+
+@app.command("list")
+def list_agents() -> None:
+    db_path = agents_db_path(_toolang_root())
+    snapshots = _fresh_known_agents(db_path)
+    if not snapshots:
+        typer.echo("No agents found.")
+        return
+
+    rows = [
+        (
+            snapshot.agent_id,
+            snapshot.running_status or "stopped",
+            snapshot.agent_name,
+            snapshot.agent_uri,
+            snapshot.endpoint or "-",
+        )
+        for snapshot in snapshots
+    ]
+    typer.echo(_format_rows(("ID", "STATUS", "NAME", "URI", "ENDPOINT"), rows))
 
 
 @app.command()
@@ -358,6 +381,43 @@ def _remember_agent(agent: ResolvedAgentRef, *, db_path: Path) -> None:
             updated_at=datetime.now(timezone.utc),
         ),
     )
+
+
+def _fresh_known_agents(db_path: Path) -> list[KnownAgentSnapshot]:
+    snapshots = list_known_agents(db_path)
+    stale_snapshots = [
+        snapshot
+        for snapshot in snapshots
+        if snapshot.pid is not None and not _pid_exists(snapshot.pid)
+    ]
+    if not stale_snapshots:
+        return snapshots
+
+    for snapshot in stale_snapshots:
+        delete_running_agent(db_path, snapshot.agent_uri)
+        run_path = agent_run_path(Path(snapshot.agent_home), snapshot.agent_name)
+        if run_path.exists():
+            now = datetime.now(timezone.utc)
+            run_state = AgentRunState.load(run_path)
+            run_state.model_copy(update={"status": "stopped", "heartbeat_at": now}).save(
+                run_path
+            )
+    return list_known_agents(db_path)
+
+
+def _format_rows(headers: tuple[str, ...], rows: Sequence[Sequence[str]]) -> str:
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for index, cell in enumerate(row):
+            widths[index] = max(widths[index], len(cell))
+
+    lines = [
+        "  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)),
+        "  ".join("-" * widths[index] for index in range(len(headers))),
+    ]
+    for row in rows:
+        lines.append("  ".join(cell.ljust(widths[index]) for index, cell in enumerate(row)))
+    return "\n".join(lines)
 
 
 def _looks_like_explicit_source_selector(text: str) -> bool:

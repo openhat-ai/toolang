@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from importlib.metadata import version as package_version
 from pathlib import Path
@@ -23,6 +24,7 @@ def test_cli_has_expected_subcommands() -> None:
     result = runner.invoke(app, ["--help"])
 
     assert result.exit_code == 0
+    assert "list" in result.output
     assert "invoke" in result.output
     assert "sync" in result.output
     assert "serve" in result.output
@@ -157,3 +159,61 @@ def test_cli_drops_stale_running_agent_and_updates_run_file(tmp_path: Path, monk
 
     assert get_running_agent(db_path, agent.agent_uri) is None
     assert AgentRunState.load(run_path).status == "stopped"
+
+
+def test_cli_list_shows_known_agents_and_status(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    db_path = agents_db_path(root)
+    _remember_agent(agent, db_path=db_path)
+
+    result = runner.invoke(app, ["list"])
+
+    assert result.exit_code == 0
+    assert "ID" in result.output
+    assert "STATUS" in result.output
+    assert "alice" in result.output
+    assert "stopped" in result.output
+    assert "agent://alice/alice.too" in result.output
+
+
+def test_cli_list_marks_active_agent_running(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    db_path = agents_db_path(root)
+    _remember_agent(agent, db_path=db_path)
+    upsert_running_agent(
+        db_path,
+        RunningAgentRecord(
+            agent_uri=agent.agent_uri,
+            pid=os.getpid(),
+            status="running",
+            endpoint="http://127.0.0.1:8778",
+            started_at=datetime(2026, 3, 19, 9, 0, 0, tzinfo=timezone.utc),
+            heartbeat_at=datetime(2026, 3, 19, 9, 1, 0, tzinfo=timezone.utc),
+        ),
+    )
+
+    result = runner.invoke(app, ["list"])
+
+    assert result.exit_code == 0
+    assert "running" in result.output
+    assert "http://127.0.0.1:8778" in result.output
