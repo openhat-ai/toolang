@@ -145,7 +145,7 @@ Notes:
 - `bus/` stores local event and bus state
 - `agents.db` stores:
   - known agents keyed by `agent_uri`
-  - active served agents keyed by `agent_uri`
+  - active started agents keyed by `agent_uri`
 - `agents.too` is optional
 
 
@@ -217,7 +217,8 @@ ${AGENT_ROOM}/
 Notes:
 
 - the agent room is private to one agent
-- `agent.run` mirrors the current running state of one served agent
-- `agent.log` stores the managed server log for one agent
+- `agent.run` mirrors the current running state and active loop set of one
+  started agent
+- `agent.log` stores the managed runtime log for one agent
 - `sandbox/` stores the local execution sandbox for that agent
 - `tasks/`, `chores/`, and `will.md` store agent-local work state

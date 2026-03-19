@@ -28,7 +28,7 @@ The main runtime flow is:
 
 1. `parse`
 2. `sync`
-3. `run`
+3. `invoke`
 
 Responsibilities:
 
@@ -36,22 +36,32 @@ Responsibilities:
   - use Tree-sitter to read `.too` source into structured syntax data
 - `sync`
   - build durable generated state for one agent home
-- `run`
+- `invoke`
   - load synced state from `${AGENT_HOME}/.toolang/.sync/`, then execute the
-    model and tool loop
+    model and tool loop for one non-interactive turn
 - `serve`
-  - prepare one synced agent and expose a local HTTP API
+  - prepare one synced agent and run the `server` runtime loop in the
+    foreground
 - `start`
-  - launch `serve` in the background and wait for registration in
-    `agents.db`
+  - launch a selected runtime-loop set in the background and wait for
+    registration in `agents.db`
 
 Expected runtime behavior:
 
-- most invocations should spend their time in `run`
+- most steady-state execution should spend its time in `invoke`
 - `parse` and `sync` are rebuild steps and should be skipped when existing sync
   state is still fresh
 - the synced state in `${AGENT_HOME}/.toolang/.sync/` is the execution
   boundary, not the raw source text
+- `serve` and `start` are process surfaces layered over the same prepared
+  synced agent state
+- the turn model is message-driven, with `origin = invoke | chat | task | chore
+  | will`; only `chat` carries a non-null `channel`
+- the long-lived trigger layer uses four runtime loops:
+  `server | poll | hook | pulse`
+- default loop policy depends on agent kind:
+  resident starts configured loops, visiting defaults to `server`, roaming
+  defaults to none
 
 Internal sync steps:
 
@@ -117,7 +127,7 @@ Command groups:
 
 Representative commands:
 
-- `toolang run`
+- `toolang invoke`
 - `toolang serve`
 - `toolang start`
 - `toolang sync`
