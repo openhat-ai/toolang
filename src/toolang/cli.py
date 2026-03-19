@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 from toolang import __version__
+from toolang.agent_refs import ResolvedAgentRef, resolve_agent_ref
 from toolang.errors import ToolangError
+from toolang.layout import resolve_toolang_root
 from toolang.parser import parse_program
 from toolang.runtime import execute_thunk
 
@@ -16,19 +19,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    run_parser = subparsers.add_parser("run", help="Parse a .too file and execute a thunk")
-    _add_program_argument(run_parser)
+    run_parser = subparsers.add_parser("run", help="Resolve an agent and execute a thunk")
+    _add_agent_argument(run_parser)
     run_parser.add_argument("--thunk", help="Thunk name to run")
     run_parser.add_argument("--input", help="User input for a thunk(user) entrypoint")
     run_parser.add_argument("--model", help="Override model selection")
     run_parser.set_defaults(handler=_handle_run)
 
-    check_parser = subparsers.add_parser("check", help="Validate a .too file")
-    _add_program_argument(check_parser)
+    check_parser = subparsers.add_parser("check", help="Validate a Toolang agent")
+    _add_agent_argument(check_parser)
     check_parser.set_defaults(handler=_handle_check)
 
     dump_ast_parser = subparsers.add_parser("dump-ast", help="Print parsed AST as JSON")
-    _add_program_argument(dump_ast_parser)
+    _add_agent_argument(dump_ast_parser)
     dump_ast_parser.set_defaults(handler=_handle_dump_ast)
     return parser
 
@@ -45,7 +48,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _handle_run(args: argparse.Namespace) -> int:
-    program_path = _resolve_program_path(args.program)
+    agent = _resolve_cli_agent(args.agent)
+    program_path = _resolve_program_path(agent)
     program = parse_program(program_path.read_text(encoding="utf-8"))
     thunk = program.get_thunk(args.thunk)
 
@@ -65,28 +69,47 @@ def _handle_run(args: argparse.Namespace) -> int:
 
 
 def _handle_check(args: argparse.Namespace) -> int:
-    program_path = _resolve_program_path(args.program)
+    program_path = _resolve_program_path(_resolve_cli_agent(args.agent))
     parse_program(program_path.read_text(encoding="utf-8"))
     print("ok")
     return 0
 
 
 def _handle_dump_ast(args: argparse.Namespace) -> int:
-    program_path = _resolve_program_path(args.program)
+    program_path = _resolve_program_path(_resolve_cli_agent(args.agent))
     program = parse_program(program_path.read_text(encoding="utf-8"))
     print(json.dumps(program.to_dict(), indent=2, ensure_ascii=False))
     return 0
 
 
-def _resolve_program_path(raw_path: str) -> Path:
-    program_path = Path(raw_path).resolve()
+def _resolve_program_path(agent: ResolvedAgentRef) -> Path:
+    program_path = agent.source_path
     if not program_path.exists():
-        raise FileNotFoundError(f"Program not found: {program_path}")
+        if agent.agent_kind == "visiting":
+            raise FileNotFoundError(
+                f"Visiting agent is not materialized locally: {agent.agent_uri} -> {program_path}"
+            )
+        raise FileNotFoundError(f"Agent source not found: {program_path}")
     return program_path
 
 
-def _add_program_argument(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("program", help="Path to a Toolang .too file")
+def _resolve_cli_agent(raw: str) -> ResolvedAgentRef:
+    toolang_root = resolve_toolang_root(os.environ.get("TOOLANG_ROOT", "~/.toolang"))
+    guest_base_url = os.environ.get("TOOLANG_GUEST_BASE_URL", "").strip()
+    guest_resolver = None
+    if guest_base_url:
+        base = guest_base_url.rstrip("/")
+        guest_resolver = lambda name: f"{base}/{name.lstrip('/')}"
+    return resolve_agent_ref(
+        raw,
+        cwd=Path.cwd(),
+        toolang_root=toolang_root,
+        guest_resolver=guest_resolver,
+    )
+
+
+def _add_agent_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("agent", help="Agent reference, path, or URI")
 
 
 def _load_dotenv_if_available() -> None:
