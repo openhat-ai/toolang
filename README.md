@@ -54,26 +54,14 @@ Run CLI help:
 uv run toolang --help
 ```
 
-Validate a Toolang file:
+`toolang` is an agent runtime CLI. Grammar inspection and AST-oriented tooling
+belong in the sibling grammar package rather than this runtime package.
+
+If you want real model execution from `toolang run`, install the remaining
+runtime-specific package yourself:
 
 ```bash
-uv run toolang check tests/fixtures/sample.too
-```
-
-Dump the parsed AST:
-
-```bash
-uv run toolang dump-ast tests/fixtures/sample.too
-```
-
-## Optional Runtime Dependencies
-
-The core package is intentionally stdlib-only so it stays easy to lock and test.
-
-If you want real model execution from `toolang run`, install optional runtime packages yourself:
-
-```bash
-uv add openai python-dotenv
+uv add openai
 ```
 
 ## Tree-sitter And Editor Repos

@@ -14,6 +14,10 @@
 - Do not add layers that only forward parameters without adding meaning.
 - Put core data structures, file definitions, and common operations in focused
   modules.
+- Toolang is still in a very early implementation stage. Do not preserve
+  compatibility with earlier local designs just for the sake of continuity.
+  If a change is clearly simpler, easier to maintain, or better aligned with
+  the concepts confirmed in discussion, make the change directly.
 - Do not read environment variables inside core modules.
 - Do not infer ambiguous parameters inside core modules.
 - Resolve environment variables, CLI inputs, and default values at the call

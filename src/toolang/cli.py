@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-import argparse
-import json
 import os
 import sys
 from pathlib import Path
+from typing import Annotated
+
+import click
+import typer
+from dotenv import load_dotenv
 
 from toolang import __version__
 from toolang.agent_refs import ResolvedAgentRef, resolve_agent_ref
@@ -14,71 +17,80 @@ from toolang.parser import parse_program
 from toolang.runtime import execute_thunk
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="toolang", description="Toolang CLI")
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    run_parser = subparsers.add_parser("run", help="Resolve an agent and execute a thunk")
-    _add_agent_argument(run_parser)
-    run_parser.add_argument("--thunk", help="Thunk name to run")
-    run_parser.add_argument("--input", help="User input for a thunk(user) entrypoint")
-    run_parser.add_argument("--model", help="Override model selection")
-    run_parser.set_defaults(handler=_handle_run)
-
-    check_parser = subparsers.add_parser("check", help="Validate a Toolang agent")
-    _add_agent_argument(check_parser)
-    check_parser.set_defaults(handler=_handle_check)
-
-    dump_ast_parser = subparsers.add_parser("dump-ast", help="Print parsed AST as JSON")
-    _add_agent_argument(dump_ast_parser)
-    dump_ast_parser.set_defaults(handler=_handle_dump_ast)
-    return parser
+def _version_callback(value: bool | None) -> None:
+    if value:
+        typer.echo(f"toolang {__version__}")
+        raise typer.Exit()
 
 
-def main(argv: list[str] | None = None) -> int:
-    _load_dotenv_if_available()
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    try:
-        return args.handler(args)
-    except (FileNotFoundError, ToolangError) as exc:
-        print(f"toolang error: {exc}", file=sys.stderr)
-        return 1
+app = typer.Typer(
+    help="Toolang CLI",
+    add_completion=False,
+    no_args_is_help=True,
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+)
 
 
-def _handle_run(args: argparse.Namespace) -> int:
-    agent = _resolve_cli_agent(args.agent)
-    program_path = _resolve_program_path(agent)
+@app.callback()
+def callback(
+    version: Annotated[
+        bool | None,
+        typer.Option(
+            "--version",
+            help="Show the version and exit.",
+            callback=_version_callback,
+            is_eager=True,
+        ),
+    ] = None,
+) -> None:
+    """Toolang CLI."""
+
+
+@app.command()
+def run(
+    agent: Annotated[str, typer.Argument(help="Agent reference, path, or URI")],
+    thunk: Annotated[str | None, typer.Option(help="Thunk name to run")] = None,
+    user_input: Annotated[
+        str | None,
+        typer.Option("--input", help="User input for a thunk(user) entrypoint"),
+    ] = None,
+    model: Annotated[str | None, typer.Option(help="Override model selection")] = None,
+) -> None:
+    agent_ref = _resolve_cli_agent(agent)
+    program_path = _resolve_program_path(agent_ref)
     program = parse_program(program_path.read_text(encoding="utf-8"))
-    thunk = program.get_thunk(args.thunk)
+    selected_thunk = program.get_thunk(thunk)
 
-    user_input = args.input
-    if thunk.input_name and user_input is None and not sys.stdin.isatty():
+    if selected_thunk.input_name and user_input is None and not sys.stdin.isatty():
         user_input = sys.stdin.read()
 
     result = execute_thunk(
         program,
-        thunk,
+        selected_thunk,
         program_path,
         user_input=user_input,
-        model=args.model,
+        model=model,
     )
-    print(result)
-    return 0
+    typer.echo(result)
 
 
-def _handle_check(args: argparse.Namespace) -> int:
-    program_path = _resolve_program_path(_resolve_cli_agent(args.agent))
-    parse_program(program_path.read_text(encoding="utf-8"))
-    print("ok")
-    return 0
-
-
-def _handle_dump_ast(args: argparse.Namespace) -> int:
-    program_path = _resolve_program_path(_resolve_cli_agent(args.agent))
-    program = parse_program(program_path.read_text(encoding="utf-8"))
-    print(json.dumps(program.to_dict(), indent=2, ensure_ascii=False))
+def main(argv: list[str] | None = None) -> int:
+    load_dotenv()
+    try:
+        app(
+            args=list(argv) if argv is not None else None,
+            prog_name="toolang",
+            standalone_mode=False,
+        )
+    except click.exceptions.Exit as exc:
+        return exc.exit_code
+    except click.ClickException as exc:
+        exc.show(file=sys.stderr)
+        return exc.exit_code
+    except (FileNotFoundError, ToolangError) as exc:
+        typer.echo(f"toolang error: {exc}", err=True)
+        return 1
     return 0
 
 
@@ -106,15 +118,3 @@ def _resolve_cli_agent(raw: str) -> ResolvedAgentRef:
         toolang_root=toolang_root,
         guest_resolver=guest_resolver,
     )
-
-
-def _add_agent_argument(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("agent", help="Agent reference, path, or URI")
-
-
-def _load_dotenv_if_available() -> None:
-    try:
-        from dotenv import load_dotenv
-    except ImportError:
-        return
-    load_dotenv()

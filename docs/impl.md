@@ -113,10 +113,6 @@ Command groups:
 
 Representative commands:
 
-- `toolang check`
-- `toolang dump ast`
-- `toolang dump ir`
-- `toolang dump messages`
 - `toolang run`
 - `toolang serve`
 - `toolang start`
