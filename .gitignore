@@ -1,0 +1,19 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+.pytest_cache/
+.ruff_cache/
+.coverage
+build/
+dist/
+wheels/
+*.egg-info
+.DS_Store
+
+# Virtual environments
+.venv
+
+# Local secrets
+.env
+
+.obsidian

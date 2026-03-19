@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "toolang"
+version = "0.1.0"
+description = "Toolang runtime and CLI"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+toolang = "toolang.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3.5",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/toolang"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
