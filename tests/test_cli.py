@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from typer.testing import CliRunner
 
 from toolang.cli import app
@@ -12,5 +14,21 @@ def test_cli_has_expected_subcommands() -> None:
 
     assert result.exit_code == 0
     assert "run" in result.output
+    assert "sync" in result.output
     assert "check" not in result.output
     assert "dump-ast" not in result.output
+
+
+def test_cli_sync_resolves_resident_agent_from_toolang_root(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    fixture = Path(__file__).parent / "fixtures" / "sample.too"
+    (home / "alice.too").write_text(fixture.read_text(encoding="utf-8"), encoding="utf-8")
+
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+
+    result = runner.invoke(app, ["sync", "alice"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "synced"

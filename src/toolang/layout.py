@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-CAP_KINDS = ("skills", "services", "prompts", "psyches")
+from toolang_caps import CAP_KINDS
 
 
 def resolve_toolang_root(root: Path | str) -> Path:
@@ -59,6 +59,14 @@ def agent_source_path(agent_home: Path | str, agent_name: str) -> Path:
 
 def agent_room(agent_home: Path | str, agent_name: str) -> Path:
     return resolve_agent_home(agent_home) / ".toolang" / "agent" / agent_name
+
+
+def agent_program_path(agent_home: Path | str, agent_name: str) -> Path:
+    return agent_room(agent_home, agent_name) / "program.json"
+
+
+def agent_sync_state_path(agent_home: Path | str, agent_name: str) -> Path:
+    return agent_room(agent_home, agent_name) / "sync.json"
 
 
 def synced_caps_root(agent_home: Path | str) -> Path:

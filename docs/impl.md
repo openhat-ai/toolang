@@ -217,6 +217,7 @@ This repository owns:
 - runtime code
 - CLI code
 - runtime parser and sync integration
+- the colocated `toolang_caps` package until it is split out
 - tests for runtime behavior
 
 Sibling repositories own:
@@ -228,6 +229,8 @@ Sibling repositories own:
 Reason:
 
 - runtime behavior and editor packaging evolve at different speeds
+- caps storage and synchronization logic already has a cleaner extraction
+  boundary than the rest of the runtime
 - keeping editor packages separate avoids polluting the runtime package
 
 

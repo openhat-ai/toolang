@@ -26,7 +26,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/toolang"]
+packages = ["src/toolang", "src/toolang_caps"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
