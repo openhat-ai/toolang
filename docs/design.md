@@ -98,6 +98,10 @@ Responsibilities:
 
 - `agents.db`
   - global registry of known agents and active started agents
+- `bus/events.db`
+  - shared lifecycle and run-history store
+  - written directly by agent processes
+  - readable even when no standalone bus server is running
 - `agents/{HOME}/`
   - resident agent homes
 - `guests/{HOME}/`
@@ -114,6 +118,8 @@ Rules:
 - resident agent identity stays stable when a Toolang root is copied to a new
   machine or path
 - visiting agent homes live under `guests/`, not under a separate hotel layout
+- agent processes publish to `bus/events.db` directly, so local history survives
+  even if a future bus server is offline
 
 Reason:
 
@@ -692,9 +698,61 @@ Rules:
 - `agent.run` in the agent room mirrors the current running state and active
   loop set for one agent
 - `agent.log` stores the managed runtime log for one agent
+- `bus/events.db` stores the shared durable event stream for agent lifecycle and
+  run history
+
+Bus event families:
+
+- agent lifecycle
+  - `agent_started`
+  - `agent_stopped`
+  - `agent_updated`
+- run lifecycle
+  - `run_started`
+  - `run_finished`
+  - `run_failed`
+
+Rules:
+
+- `serve` and `start` publish agent lifecycle events
+- `invoke` and server-side `POST /api/v1/runs` publish top-level run events
+- `sync` may publish `agent_updated`
+- event records use a monotonic `event_id` so a later bus server or web UI can
+  backfill and resume from a cursor
 
 
-## 13. Runtime Flow
+## 13. Agent API
+
+Each started agent exposes a local HTTP API for direct web UI integration.
+
+Current endpoints:
+
+- `GET /api/v1/health`
+- `GET /api/v1/agent`
+- `GET /api/v1/caps`
+- `GET /api/v1/runs`
+- `GET /api/v1/events`
+- `POST /api/v1/runs`
+
+Responsibilities:
+
+- `/api/v1/agent`
+  - basic agent identity and current started state
+- `/api/v1/caps`
+  - synced capability metadata for the current agent home
+- `/api/v1/runs`
+  - current and historical top-level runs for this agent
+- `/api/v1/events`
+  - ordered agent-scoped event stream from `bus/events.db`
+
+Reason:
+
+- a direct single-agent endpoint lets Web UI work before the multi-agent bus
+  server exists
+- the same runtime event model can later be projected through a central bus API
+
+
+## 14. Runtime Flow
 
 Primary runtime flow:
 

@@ -155,6 +155,9 @@ Reason:
   and structured responses
 - a direct SDK integration keeps the core runtime easier to reason about than a
   heavier orchestration framework
+- runtime-native event and run models are the source of truth; LangChain-style
+  callbacks may be adapted later at the edge, but are not the internal runtime
+  contract
 
 
 ## 7. HTTP And Networking
@@ -171,6 +174,7 @@ Chosen client stack:
 Expected use:
 
 - `toolang serve`
+- agent API v1
 - registry access
 - remote home fetches
 - remote capability downloads
@@ -189,6 +193,7 @@ Expected use:
 
 - agent memory
 - `agents` and `running_agents` tables in `agents.db`
+- `events`, `agents`, and `runs` projections in `bus/events.db`
 - local metadata
 
 Reason:
