@@ -17,3 +17,5 @@ wheels/
 .env
 
 .obsidian
+archive/
+scratch/
