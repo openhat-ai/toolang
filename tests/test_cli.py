@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from importlib.metadata import version as package_version
 from pathlib import Path
 
@@ -7,8 +8,11 @@ import pytest
 from typer.testing import CliRunner
 
 from toolang.agent_refs import resolve_agent_ref
-from toolang.cli import _remember_agent, _resolve_cli_agent, app
+from toolang.agent_registry import RunningAgentRecord, get_running_agent, upsert_running_agent
+from toolang.cli import _drop_stale_running_agent, _remember_agent, _resolve_cli_agent, app
 from toolang.errors import ToolangError
+from toolang.files.agent_run import AgentRunState
+from toolang.layout import agent_run_path
 from toolang.layout import agents_db_path
 
 runner = CliRunner()
@@ -106,3 +110,49 @@ def test_cli_rejects_ambiguous_known_agent_name(tmp_path: Path, monkeypatch) -> 
 
     with pytest.raises(ToolangError, match="Ambiguous agent name"):
         _resolve_cli_agent("reviewer", db_path=db_path)
+
+
+def test_cli_drops_stale_running_agent_and_updates_run_file(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    db_path = agents_db_path(root)
+    _remember_agent(agent, db_path=db_path)
+    upsert_running_agent(
+        db_path,
+        RunningAgentRecord(
+            agent_uri=agent.agent_uri,
+            pid=999999,
+            status="running",
+            endpoint="http://127.0.0.1:8778",
+            started_at=datetime(2026, 3, 19, 9, 0, 0, tzinfo=timezone.utc),
+            heartbeat_at=datetime(2026, 3, 19, 9, 1, 0, tzinfo=timezone.utc),
+        ),
+    )
+    run_path = agent_run_path(home, "alice")
+    run_path.parent.mkdir(parents=True, exist_ok=True)
+    AgentRunState(
+        agent_uri=agent.agent_uri,
+        agent_id=agent.agent_id[:12],
+        agent_name=agent.agent_name,
+        agent_home=str(agent.agent_home),
+        source_file=agent.source_path.name,
+        pid=999999,
+        status="running",
+        endpoint="http://127.0.0.1:8778",
+        started_at=datetime(2026, 3, 19, 9, 0, 0, tzinfo=timezone.utc),
+        heartbeat_at=datetime(2026, 3, 19, 9, 1, 0, tzinfo=timezone.utc),
+    ).save(run_path)
+
+    _drop_stale_running_agent(db_path, agent)
+
+    assert get_running_agent(db_path, agent.agent_uri) is None
+    assert AgentRunState.load(run_path).status == "stopped"

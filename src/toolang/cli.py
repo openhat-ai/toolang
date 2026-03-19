@@ -25,7 +25,14 @@ from toolang.agent_registry import (
 )
 from toolang.errors import ToolangError
 from toolang.files._toml import load_toml
-from toolang.layout import agent_log_path, agents_db_path, ensure_toolang_root_layout, resolve_toolang_root
+from toolang.files.agent_run import AgentRunState
+from toolang.layout import (
+    agent_log_path,
+    agent_run_path,
+    agents_db_path,
+    ensure_toolang_root_layout,
+    resolve_toolang_root,
+)
 from toolang.prepared import prepare_agent
 from toolang.runtime import execute_thunk
 from toolang.server import serve_agent
@@ -333,6 +340,11 @@ def _drop_stale_running_agent(db_path: Path, agent: ResolvedAgentRef) -> None:
     if _pid_exists(existing.pid):
         return
     delete_running_agent(db_path, agent.agent_uri)
+    run_path = agent_run_path(agent.agent_home, agent.agent_name)
+    if run_path.exists():
+        now = datetime.now(timezone.utc)
+        run_state = AgentRunState.load(run_path)
+        run_state.model_copy(update={"status": "stopped", "heartbeat_at": now}).save(run_path)
 
 
 def _wait_for_running_agent(
