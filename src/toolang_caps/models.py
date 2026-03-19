@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, model_validator
 
 CAP_KINDS = ("skill", "service", "prompt", "psyche")
 CapKind = Literal["skill", "service", "prompt", "psyche"]
+InlineCapKind = Literal["service", "prompt", "psyche"]
 
 SECTION_BY_KIND = {
     "skill": "skills",
@@ -36,7 +37,7 @@ class CapParam(BaseModel):
 
 
 class InlineCap(BaseModel):
-    kind: Literal["service", "prompt", "psyche"]
+    kind: InlineCapKind
     name: str
     language: str | None = None
     raw_text: str = ""
@@ -44,7 +45,7 @@ class InlineCap(BaseModel):
 
 
 class InlineCapMeta(BaseModel):
-    kind: Literal["service", "prompt", "psyche"]
+    kind: InlineCapKind
     name: str
     language: str | None = None
     path: str

@@ -119,7 +119,11 @@ def _resolve_cli_agent(raw: str) -> ResolvedAgentRef:
     guest_resolver = None
     if guest_base_url:
         base = guest_base_url.rstrip("/")
-        guest_resolver = lambda name: f"{base}/{name.lstrip('/')}"
+
+        def resolve_guest_name(name: str) -> str:
+            return f"{base}/{name.lstrip('/')}"
+
+        guest_resolver = resolve_guest_name
     return resolve_agent_ref(
         raw,
         cwd=Path.cwd(),

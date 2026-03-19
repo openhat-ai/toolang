@@ -24,11 +24,22 @@ toolang = "toolang.cli:main"
 
 [dependency-groups]
 dev = [
+  "openai>=1.109.1",
   "pytest>=8.3.5",
+  "ruff>=0.15.6",
+  "tree-sitter-toolang>=0.0.5",
+  "ty>=0.0.23",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/toolang", "src/toolang_caps"]
+
+[tool.uv.sources]
+tree-sitter-toolang = { path = "../tree-sitter-toolang" }
+
+[tool.ruff]
+exclude = ["archive", "dist", "scratch"]
+target-version = "py310"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

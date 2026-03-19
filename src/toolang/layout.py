@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
-from toolang_caps import CAP_KINDS, section_name
+from toolang_caps import CAP_KINDS, CapKind, section_name
 
 
 def resolve_toolang_root(root: Path | str) -> Path:
@@ -65,8 +66,7 @@ def synced_caps_root(agent_home: Path | str) -> Path:
     return resolve_agent_home(agent_home) / ".toolang" / ".sync"
 
 
-def synced_caps_dir(agent_home: Path | str, kind: str) -> Path:
-    _validate_cap_kind(kind)
+def synced_caps_dir(agent_home: Path | str, kind: CapKind) -> Path:
     return synced_caps_root(agent_home) / section_name(kind)
 
 
@@ -74,8 +74,7 @@ def shared_caps_root(agent_home: Path | str) -> Path:
     return resolve_agent_home(agent_home) / ".toolang"
 
 
-def shared_caps_dir(agent_home: Path | str, kind: str) -> Path:
-    _validate_cap_kind(kind)
+def shared_caps_dir(agent_home: Path | str, kind: CapKind) -> Path:
     return shared_caps_root(agent_home) / section_name(kind)
 
 
@@ -106,6 +105,7 @@ def ensure_agent_home_layout(agent_home: Path | str, agent_name: str) -> Path:
     return resolved_home
 
 
-def _validate_cap_kind(kind: str) -> None:
+def _validate_cap_kind(kind: str) -> CapKind:
     if kind not in CAP_KINDS:
         raise ValueError(f"Unsupported capability kind: {kind}")
+    return cast(CapKind, kind)

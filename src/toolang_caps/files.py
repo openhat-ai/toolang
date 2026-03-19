@@ -4,7 +4,14 @@ import shutil
 from pathlib import Path
 
 from toolang_caps.frontmatter import parse_cap_body
-from toolang_caps.models import CAP_KINDS, InlineCap, InlineCapMeta, SkillMeta, section_name
+from toolang_caps.models import (
+    CAP_KINDS,
+    InlineCap,
+    InlineCapKind,
+    InlineCapMeta,
+    SkillMeta,
+    section_name,
+)
 
 LANGUAGE_EXTENSIONS = {
     "json": ".json",
@@ -79,12 +86,12 @@ def remove_stale_skill_materializations(root: Path, expected_names: set[str]) ->
             _remove_path(existing)
 
 
-def inline_cap_path(root: Path, kind: str, name: str, language: str | None) -> Path:
+def inline_cap_path(root: Path, kind: InlineCapKind, name: str, language: str | None) -> Path:
     extension = LANGUAGE_EXTENSIONS.get(language or "", f".{language}" if language else ".txt")
     return root / section_name(kind) / f"{name}{extension}"
 
 
-def inline_cap_meta_path(root: Path, kind: str, name: str) -> Path:
+def inline_cap_meta_path(root: Path, kind: InlineCapKind, name: str) -> Path:
     return root / section_name(kind) / f"{name}.meta.json"
 
 

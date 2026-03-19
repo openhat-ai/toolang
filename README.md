@@ -46,6 +46,14 @@ Run tests with the default development interpreter:
 uv run pytest
 ```
 
+Run the pre-commit checks:
+
+```bash
+uv run ty check --python-version 3.13 src tests
+uv run ruff check
+uv run pytest -q
+```
+
 Validate compatibility against the oldest supported Python version:
 
 ```bash

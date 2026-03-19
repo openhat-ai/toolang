@@ -29,6 +29,7 @@ from toolang_caps import (
     CAP_KINDS,
     CapParam,
     InlineCap,
+    InlineCapKind,
     ResolvedCapRef,
     SkillMeta,
     fetch_github_tree,
@@ -43,7 +44,7 @@ from toolang_caps import (
     sync_skill_materialization,
 )
 
-SOURCE_DECL_TO_CAP_KIND = {
+SOURCE_DECL_TO_CAP_KIND: dict[str, InlineCapKind] = {
     "service": "service",
     "prompt": "prompt",
     "psyche": "psyche",

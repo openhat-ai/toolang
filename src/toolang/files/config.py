@@ -24,7 +24,7 @@ class ModelsSection(BaseModel):
     def from_toml(cls, data: dict[str, Any]) -> "ModelsSection":
         defaults = data.get("default", [])
         named = {
-            key: value
+            key: ModelEntry.model_validate(value)
             for key, value in data.items()
             if key != "default" and isinstance(value, dict)
         }
