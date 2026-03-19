@@ -45,6 +45,9 @@ Responsibilities:
 - `start`
   - launch a selected runtime-loop set in the background and wait for
     registration in `agents.db`
+- `bus serve`
+  - expose the shared `bus/events.db` projection as one local multi-agent HTTP
+    API
 
 Expected runtime behavior:
 
@@ -192,6 +195,7 @@ SQLite is the primary local storage layer.
 Expected use:
 
 - agent memory
+- agent chat transcripts in `${AGENT_ROOM}/chats/chats.db`
 - `agents` and `running_agents` tables in `agents.db`
 - `events`, `agents`, and `runs` projections in `bus/events.db`
 - local metadata

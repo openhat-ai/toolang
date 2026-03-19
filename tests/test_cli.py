@@ -27,6 +27,7 @@ def test_cli_has_expected_subcommands() -> None:
     assert "sync" in result.output
     assert "serve" in result.output
     assert "start" in result.output
+    assert "bus" in result.output
     assert "check" not in result.output
     assert "dump-ast" not in result.output
 

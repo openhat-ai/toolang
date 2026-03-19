@@ -84,6 +84,18 @@ runtime-specific package yourself:
 uv add openai
 ```
 
+Run a started agent for direct Web UI integration:
+
+```bash
+uv run toolang serve alice --port 8765
+```
+
+Run the shared bus HTTP API for multi-agent Web UI integration:
+
+```bash
+uv run toolang bus serve --port 8780
+```
+
 ## Tree-sitter And Editor Repos
 
 - `../tree-sitter-toolang` is shared language infrastructure for editors, web highlighting, and the runtime parser.

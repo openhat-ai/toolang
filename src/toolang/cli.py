@@ -14,6 +14,7 @@ import click
 import typer
 from dotenv import load_dotenv
 
+from toolang.bus.app import serve_bus_app
 from toolang.bus.db import BusStore
 from toolang.bus.events import AgentUpdated, utc_now
 from toolang.agent_refs import ResolvedAgentRef, resolve_agent_ref
@@ -55,6 +56,13 @@ app = typer.Typer(
     pretty_exceptions_enable=False,
     pretty_exceptions_show_locals=False,
 )
+bus_app = typer.Typer(
+    help="Bus commands",
+    add_completion=False,
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+)
+app.add_typer(bus_app, name="bus")
 
 
 @app.callback()
@@ -198,6 +206,15 @@ def start(
         log_path=log_path,
     )
     typer.echo(f"started {prepared.ref.agent_id[:12]} {endpoint}")
+
+
+@bus_app.command("serve")
+def bus_serve(
+    host: Annotated[str, typer.Option(help="Host interface to bind")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="Port to listen on")] = 8780,
+) -> None:
+    toolang_root = _toolang_root()
+    serve_bus_app(bus_events_db_path(toolang_root), host=host, port=port)
 
 
 def main(argv: list[str] | None = None) -> int:

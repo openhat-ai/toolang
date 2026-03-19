@@ -10,6 +10,7 @@ from typing import Any
 
 from toolang.ast import Program, Thunk
 from toolang.errors import ToolangError
+from toolang.messages import Message, context_prompt
 
 MODEL_DIRECTIVE_RE = re.compile(r"^model\s*=\s*(.*)$")
 PROMPT_CALL_RE = re.compile(r"^/([A-Za-z_][\w-]*)(?:\s+(.*))?$")
@@ -126,44 +127,49 @@ def execute_thunk(
             f"Thunk {thunk.name or '<default>'} does not accept user input."
         )
 
-    output_decl = program.get_decl("struct", thunk.output) if thunk.output else None
-    runtime_context = build_runtime_context(program, thunk, program_path)
     expanded_user_input = expand_prompt_input(program, user_input) if user_input else ""
-
-    developer_sections = [
-        "You are the Toolang runtime.",
-        "Follow the selected thunk.",
-        "Treat the thunk body as system-side instruction.",
-        "Respect declared uses, inline capabilities, stashes, and directives.",
-        "Runtime context:",
-        json.dumps(runtime_context, indent=2, ensure_ascii=False),
-        "Source file:",
-        program_path.read_text(encoding="utf-8"),
-        "Thunk instruction:",
-        thunk.prompt,
-    ]
-    if output_decl:
-        developer_sections.extend(
-            [
-                f"Expected output declaration: {output_decl.name}",
-                output_decl.body or "{}",
-            ]
-        )
-        if output_decl.language == "json":
-            developer_sections.append("Return valid JSON only.")
-
-    developer_message = "\n\n".join(section for section in developer_sections if section.strip())
+    developer_message = _build_developer_message(program, thunk, program_path)
     user_message = (
         expanded_user_input
         if thunk.input_name
         else "Execute the selected thunk with no external user message."
     )
 
-    response = openai_client.responses.create(
-        model=infer_model(thunk, override=model),
-        input=[
+    response = _create_response(
+        openai_client,
+        thunk,
+        model=model,
+        messages=[
             {"role": "developer", "content": developer_message},
             {"role": "user", "content": user_message},
+        ],
+    )
+    return _coerce_response_text(response)
+
+
+def execute_chat_thunk(
+    program: Program,
+    thunk: Thunk,
+    program_path: Path,
+    *,
+    history_messages: list[dict[str, Any]],
+    message: Message,
+    model: str | None = None,
+) -> str:
+    openai_client = _create_openai_client()
+    developer_message = _build_developer_message(
+        program,
+        thunk,
+        program_path,
+        message=message,
+    )
+    response = _create_response(
+        openai_client,
+        thunk,
+        model=model,
+        messages=[
+            {"role": "developer", "content": developer_message},
+            *history_messages,
         ],
     )
     return _coerce_response_text(response)
@@ -224,3 +230,55 @@ def _coerce_response_text(response: Any) -> str:
     if collected:
         return "".join(collected)
     raise ToolangError("Model response did not contain text output.")
+
+
+def _build_developer_message(
+    program: Program,
+    thunk: Thunk,
+    program_path: Path,
+    *,
+    message: Message | None = None,
+) -> str:
+    output_decl = program.get_decl("struct", thunk.output) if thunk.output else None
+    runtime_context = build_runtime_context(program, thunk, program_path)
+    developer_sections = [
+        "You are the Toolang runtime.",
+        "Follow the selected thunk.",
+        "Treat the thunk body as system-side instruction.",
+        "Respect declared uses, inline capabilities, stashes, and directives.",
+    ]
+    if message is not None:
+        developer_sections.append(context_prompt(message))
+    developer_sections.extend(
+        [
+            "Runtime context:",
+            json.dumps(runtime_context, indent=2, ensure_ascii=False),
+            "Source file:",
+            program_path.read_text(encoding="utf-8"),
+            "Thunk instruction:",
+            thunk.prompt,
+        ]
+    )
+    if output_decl:
+        developer_sections.extend(
+            [
+                f"Expected output declaration: {output_decl.name}",
+                output_decl.body or "{}",
+            ]
+        )
+        if output_decl.language == "json":
+            developer_sections.append("Return valid JSON only.")
+    return "\n\n".join(section for section in developer_sections if section.strip())
+
+
+def _create_response(
+    openai_client: Any,
+    thunk: Thunk,
+    *,
+    model: str | None,
+    messages: list[dict[str, Any]],
+) -> Any:
+    return openai_client.responses.create(
+        model=infer_model(thunk, override=model),
+        input=messages,
+    )

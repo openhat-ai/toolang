@@ -65,6 +65,14 @@ def agent_log_path(agent_home: Path | str, agent_name: str) -> Path:
     return agent_room(agent_home, agent_name) / "agent.log"
 
 
+def agent_chats_dir(agent_home: Path | str, agent_name: str) -> Path:
+    return agent_room(agent_home, agent_name) / "chats"
+
+
+def agent_chats_db_path(agent_home: Path | str, agent_name: str) -> Path:
+    return agent_chats_dir(agent_home, agent_name) / "chats.db"
+
+
 def agent_sync_path(agent_home: Path | str, agent_name: str) -> Path:
     return synced_caps_root(agent_home) / f"{agent_name}.state.json"
 
