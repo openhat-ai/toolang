@@ -270,44 +270,57 @@ Rules:
 - `toolang.toml` does not store resolved results
 
 
-## 7. Lock File
+## 7. Per-Agent Sync State
 
-`toolang.lock` stores the managed resolved set for one agent home.
+Each top-level `.too` file writes one durable sync state file:
+
+- `${AGENT_HOME}/.toolang/.sync/<agent>.state.json`
+
+The state file stores:
+
+- freshness metadata for the whole agent home
+- the compiled synced program for that agent
+- the exact resolved refs used by that agent
 
 It does not store:
 
-- inline cap bodies from `.too`
+- raw synced cap files
 - local authored caps
-- purely local path-based authored content
+- agent runtime logs or process state
 
 Minimal shape:
 
-```toml
-version = 1
-
-[skills]
-"pdf-processing" = { ref = "briceyan/pdf-processing", resolved = "github.com/briceyan/agent-skills@8f3c2d4a5b6c7d8e9f00112233445566778899aa:skills/pdf-processing" }
-
-[services]
-"github" = { ref = "github/github", resolved = "github.com/github/agent-services@1a2b3c4d5e6f70819293949596979899aabbccdd:services/github.md" }
+```json
+{
+  "version": 1,
+  "synced_at": "2026-03-18T21:00:00Z",
+  "source_file": "reviewer.too",
+  "inputs": {
+    "reviewer.too": { "mtime_ns": 1742302800000000000, "size": 812 },
+    "shared.too": { "mtime_ns": 1742302810000000000, "size": 241 }
+  },
+  "program": {},
+  "refs": {
+    "skills": {
+      "pdf-processing": {
+        "ref": "by3gus/pdf-processing",
+        "repo": "by3gus/agent-skills",
+        "path": "skills/pdf-processing",
+        "rev": "8f3c2d4a5b6c7d8e9f00112233445566778899aa"
+      }
+    }
+  }
+}
 ```
 
 Rules:
 
-- `version = 1` is a top-level key
-- each kind has its own top-level table
-- each key is the effective managed name for that kind
-- each entry stores:
-  - `ref`
-  - `resolved`
-- if multiple authored sources produce the same kind and name:
-  - identical refs merge into one lock entry
-  - different refs fail with a name collision
-
-Reason:
-
-- the lock file is the durable resolved index
-- keeping it keyed by managed name makes it easy to inspect and diff
+- one state file exists per top-level `.too` file
+- the state file is generated and should not be hand-edited
+- `refs` keep agent-level provenance, even when multiple agents in one home use
+  the same cap name
+- raw synced caps under `${AGENT_HOME}/.toolang/.sync/` remain the materialized
+  union for the whole agent home
 
 
 ## 8. Sync
@@ -322,9 +335,8 @@ Inputs:
 
 Outputs:
 
-- `toolang.lock`
 - `${AGENT_HOME}/.toolang/.sync/`
-- `${AGENT_ROOM}/`
+- one `${AGENT_HOME}/.toolang/.sync/<agent>.state.json` per top-level `.too`
 
 Contract:
 
@@ -333,29 +345,28 @@ Contract:
 3. read managed refs from `toolang.toml`
 4. compute the managed set keyed by kind and managed name
 5. resolve each managed ref to an exact immutable target
-6. compile per-agent synced records into the agent room
+6. compile per-agent synced records
 7. write synced capabilities under `${AGENT_HOME}/.toolang/.sync/`
-8. rewrite `toolang.lock`
+8. rewrite `${AGENT_HOME}/.toolang/.sync/<agent>.state.json` for each agent
 9. make `${AGENT_HOME}/.toolang/.sync/` exactly match the current synced cap set
-10. write freshness metadata into the agent room
-11. report local shadowing without rewriting local authored caps
+10. report local shadowing without rewriting local authored caps
 
 Rules:
 
-- the agent room stores the last sync time and input fingerprints used for
-  freshness checks
+- each `${AGENT_HOME}/.toolang/.sync/<agent>.state.json` stores the last sync
+  time and input fingerprints used for freshness checks
 - freshness uses recorded input metadata such as `mtime_ns` and file size for:
   - `.too` files in the agent home
   - `toolang.toml`
   - local cap directories under `.toolang/`
 - `toolang run` may skip parse and sync when the current inputs still match
-  the stored freshness metadata in the agent room
+  the stored freshness metadata in `${AGENT_HOME}/.toolang/.sync/<agent>.state.json`
 - if any recorded input changed, if generated sync artifacts are missing, or if
-  `toolang.lock` is stale, `toolang run` triggers sync before execution
+  any expected state file is stale, `toolang run` triggers sync before execution
 - source-defined caps are materialized during sync so unchanged agents do not
   need to be reparsed just to recover inline definitions
-- if an entry exists in `toolang.lock`, the matching managed artifact must
-  exist in `${AGENT_HOME}/.toolang/.sync/<kind>/`
+- if an entry exists in an agent's `refs`, the matching managed artifact must
+  exist in `${AGENT_HOME}/.toolang/.sync/<kind>s/`
 - if an artifact exists in `${AGENT_HOME}/.toolang/.sync/` but not in the
   current synced cap set, sync removes it
 - sync may reuse or refresh data under `TOOLANG_ROOT`
@@ -365,8 +376,8 @@ Reason:
 
 - `${AGENT_HOME}/.toolang/.sync/` is the synced cap projection for one agent
   home
-- `${AGENT_ROOM}/` holds agent-specific sync metadata and compiled program
-  state
+- `${AGENT_HOME}/.toolang/.sync/<agent>.state.json` holds agent-specific synced
+  state and provenance
 - `TOOLANG_ROOT` is shared local system state
 
 Minimal sync state shape:
@@ -376,12 +387,22 @@ Minimal sync state shape:
   "version": 1,
   "synced_at": "2026-03-18T21:00:00Z",
   "source_file": "reviewer.too",
-  "agent_room": ".toolang/agent/reviewer/",
+  "sync_state": ".toolang/.sync/reviewer.state.json",
   "synced_caps": ".toolang/.sync/",
   "inputs": {
     "toolang.toml": { "mtime_ns": 1742302800000000000, "size": 812 },
     "reviewer.too": { "mtime_ns": 1742302805000000000, "size": 2412 },
     ".toolang/skills/": { "mtime_ns": 1742302799000000000 }
+  },
+  "refs": {
+    "skills": {
+      "pdf-processing": {
+        "ref": "by3gus/pdf-processing",
+        "repo": "by3gus/agent-skills",
+        "path": "skills/pdf-processing",
+        "rev": "8f3c2d4a5b6c7d8e9f00112233445566778899aa"
+      }
+    }
   }
 }
 ```
@@ -483,8 +504,8 @@ Command intent:
 - `new`
   - create a local authored cap
 - `sync`
-  - rebuild `toolang.lock`, `${AGENT_HOME}/.toolang/.sync/`, and agent-local
-    synced state in `${AGENT_ROOM}/`
+  - rebuild `${AGENT_HOME}/.toolang/.sync/` and all
+    `${AGENT_HOME}/.toolang/.sync/<agent>.state.json` files for the agent home
 
 ### 10.4 Running-Agent Commands
 
@@ -512,7 +533,6 @@ Rules:
 
 - an agent room is private to one agent
 - the agent room stores agent-local runtime state
-- the agent room also stores sync metadata and compiled program state
 - the agent room lives under `.toolang/` because it is machine-managed
 
 `will.md` stores durable agent-local intent and working state.
@@ -549,8 +569,8 @@ Primary runtime flow:
 
 Fast path:
 
-- if the freshness metadata in `${AGENT_ROOM}/` is still valid, runtime skips
-  parse and sync and runs from the existing synced artifacts
+- if `${AGENT_HOME}/.toolang/.sync/<agent>.state.json` is still valid, runtime
+  skips parse and sync and runs from the existing synced artifacts
 
 Definitions:
 
@@ -559,8 +579,8 @@ Definitions:
 - `sync`
   - build durable generated state for one agent home
 - `run`
-  - load synced state from `${AGENT_HOME}/.toolang/.sync/` and `${AGENT_ROOM}/`,
-    assemble runtime inputs, and execute the model and tool loop
+  - load synced state from `${AGENT_HOME}/.toolang/.sync/`, assemble runtime
+    inputs, and execute the model and tool loop
 
 Internal sync steps:
 
@@ -571,5 +591,5 @@ Internal sync steps:
 - `compile`
   - convert source and config inputs into per-agent synced records
 - `materialize`
-  - update `toolang.lock`, `${AGENT_HOME}/.toolang/.sync/`, and synced state in
-    `${AGENT_ROOM}/`
+  - update `${AGENT_HOME}/.toolang/.sync/` and
+    `${AGENT_HOME}/.toolang/.sync/<agent>.state.json`

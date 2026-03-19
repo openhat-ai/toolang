@@ -15,17 +15,14 @@ from toolang.files import (
     SyncState,
     SyncedProgram,
     ToolangConfig,
-    ToolangLock,
 )
 from toolang.layout import (
     agent_source_path,
     agent_sync_path,
     ensure_agent_home_layout,
     shared_caps_dir,
-    synced_agents_dir,
     synced_caps_root,
     toolang_config_path,
-    toolang_lock_path,
 )
 from toolang.parser import parse_program
 from toolang_caps import (
@@ -68,13 +65,11 @@ def sync_agent(agent: ResolvedAgentRef) -> SyncedProgram:
     sync_root = synced_caps_root(agent.agent_home)
     sync_inline_caps(sync_root, _home_inline_caps(programs))
 
-    resolved_skills_by_agent = _resolve_home_skill_refs(programs)
-    _sync_skill_caps(sync_root, _materialized_skill_refs(resolved_skills_by_agent))
-    _sync_agent_states(agent.agent_home, programs, _current_inputs(source_paths))
+    refs_by_agent = _resolve_home_skill_refs(programs)
+    _sync_skill_caps(sync_root, _materialized_skill_refs(refs_by_agent))
+    _sync_agent_states(agent.agent_home, programs, refs_by_agent, _current_inputs(source_paths))
     _remove_stale_sync_root_entries(sync_root)
-
-    _build_toolang_lock(resolved_skills_by_agent).save(toolang_lock_path(agent.agent_home))
-    _remove_legacy_agent_lock(agent.agent_home)
+    _remove_legacy_lock_files(agent.agent_home)
     _remove_legacy_agent_programs(agent.agent_home)
     return SyncState.load(agent_sync_path(agent.agent_home, agent.agent_name)).program
 
@@ -123,15 +118,9 @@ def _current_inputs(source_paths: list[Path]) -> dict[str, InputFingerprint]:
 def _is_sync_fresh(agent: ResolvedAgentRef) -> bool:
     source_path = agent.source_path
     state_path = agent_sync_path(agent.agent_home, agent.agent_name)
-    lock_path = toolang_lock_path(agent.agent_home)
     sync_root = synced_caps_root(agent.agent_home)
 
-    if (
-        not source_path.exists()
-        or not state_path.exists()
-        or not lock_path.exists()
-        or not sync_root.exists()
-    ):
+    if not source_path.exists() or not state_path.exists() or not sync_root.exists():
         return False
 
     current_inputs = _current_inputs(_home_source_paths(agent.agent_home))
@@ -140,22 +129,24 @@ def _is_sync_fresh(agent: ResolvedAgentRef) -> bool:
         return False
 
     try:
-        programs = _load_synced_programs(agent.agent_home, current_inputs)
-        toolang_lock = ToolangLock.load(lock_path)
-        return _has_expected_synced_caps(sync_root, programs, toolang_lock)
+        states = _load_agent_states(agent.agent_home, current_inputs)
+        return _has_expected_synced_caps(sync_root, states)
     except (FileNotFoundError, ToolangError):
         return False
 
 
-def _load_synced_programs(agent_home: Path, inputs: dict[str, InputFingerprint]) -> dict[str, Program]:
-    programs: dict[str, Program] = {}
+def _load_agent_states(
+    agent_home: Path,
+    inputs: dict[str, InputFingerprint],
+) -> dict[str, SyncState]:
+    states: dict[str, SyncState] = {}
     for source_name in sorted(inputs):
         agent_name = Path(source_name).stem
         state_path = agent_sync_path(agent_home, agent_name)
         if not state_path.exists():
             raise FileNotFoundError(f"Synced state is missing: {state_path}")
-        programs[agent_name] = SyncState.load(state_path).to_program()
-    return programs
+        states[agent_name] = SyncState.load(state_path)
+    return states
 
 
 def _validate_supported_cap_inputs(agent_home: Path) -> None:
@@ -274,6 +265,7 @@ def _sync_skill_caps(sync_root: Path, resolved_skills: list[ResolvedCapRef]) -> 
 def _sync_agent_states(
     agent_home: Path,
     programs: dict[str, Program],
+    refs_by_agent: dict[str, dict[str, ResolvedCapRef]],
     inputs: dict[str, InputFingerprint],
 ) -> None:
     expected = {
@@ -286,19 +278,7 @@ def _sync_agent_states(
             source_file=agent_source_path(agent_home, agent_name).name,
             inputs=inputs,
             program=SyncedProgram.from_program(program),
-        ).save(agent_sync_path(agent_home, agent_name))
-
-    for path in synced_agents_dir(agent_home).glob("*.json"):
-        if path not in expected:
-            path.unlink()
-
-
-def _build_toolang_lock(
-    refs_by_agent: dict[str, dict[str, ResolvedCapRef]],
-) -> ToolangLock:
-    return ToolangLock(
-        agents={
-            agent_name: LockedAgentRefs(
+            refs=LockedAgentRefs(
                 skills={
                     name: LockEntry(
                         ref=resolved.ref,
@@ -306,23 +286,27 @@ def _build_toolang_lock(
                         path=resolved.path,
                         rev=resolved.rev,
                     )
-                    for name, resolved in refs.items()
+                    for name, resolved in refs_by_agent[agent_name].items()
                 }
-            )
-            for agent_name, refs in refs_by_agent.items()
-            if refs
-        }
-    )
+            ),
+        ).save(agent_sync_path(agent_home, agent_name))
+
+    for path in synced_caps_root(agent_home).glob("*.state.json"):
+        if path not in expected:
+            path.unlink()
 
 
 def _has_expected_synced_caps(
     sync_root: Path,
-    programs: dict[str, Program],
-    toolang_lock: ToolangLock,
+    states: dict[str, SyncState],
 ) -> bool:
+    programs = {
+        agent_name: state.to_program()
+        for agent_name, state in states.items()
+    }
     if not _has_expected_inline_caps(sync_root, _home_inline_caps(programs)):
         return False
-    return _has_expected_skills(sync_root, toolang_lock)
+    return _has_expected_skills(sync_root, states)
 
 
 def _has_expected_inline_caps(sync_root: Path, inline_caps: list[InlineCap]) -> bool:
@@ -345,8 +329,8 @@ def _has_expected_inline_caps(sync_root: Path, inline_caps: list[InlineCap]) -> 
     return True
 
 
-def _has_expected_skills(sync_root: Path, toolang_lock: ToolangLock) -> bool:
-    materialized = _materialized_skill_entries(toolang_lock)
+def _has_expected_skills(sync_root: Path, states: dict[str, SyncState]) -> bool:
+    materialized = _materialized_skill_entries(states)
     kind_dir = sync_root / section_name("skill")
     if not kind_dir.exists():
         return False
@@ -382,10 +366,10 @@ def _has_expected_skills(sync_root: Path, toolang_lock: ToolangLock) -> bool:
     return True
 
 
-def _materialized_skill_entries(toolang_lock: ToolangLock) -> dict[str, LockEntry]:
+def _materialized_skill_entries(states: dict[str, SyncState]) -> dict[str, LockEntry]:
     materialized: dict[str, LockEntry] = {}
-    for agent_name in sorted(toolang_lock.agents):
-        for name, entry in toolang_lock.agents[agent_name].skills.items():
+    for agent_name in sorted(states):
+        for name, entry in states[agent_name].refs.skills.items():
             existing = materialized.get(name)
             if existing is None:
                 materialized[name] = entry
@@ -403,19 +387,21 @@ def _fingerprint(path: Path) -> InputFingerprint:
 
 
 def _remove_stale_sync_root_entries(sync_root: Path) -> None:
-    expected = {section_name(kind) for kind in CAP_KINDS} | {"agents"}
+    expected_dirs = {section_name(kind) for kind in CAP_KINDS}
     for path in sync_root.iterdir():
-        if path.name not in expected:
-            if path.is_dir():
+        if path.is_dir():
+            if path.name not in expected_dirs:
                 shutil.rmtree(path)
-            else:
-                path.unlink()
+            continue
+        if path.suffixes != [".state", ".json"]:
+            path.unlink()
 
 
-def _remove_legacy_agent_lock(agent_home: Path) -> None:
-    legacy_lock = agent_home / "agent.lock"
-    if legacy_lock.exists():
-        legacy_lock.unlink()
+def _remove_legacy_lock_files(agent_home: Path) -> None:
+    for filename in ("agent.lock", "toolang.lock"):
+        path = agent_home / filename
+        if path.exists():
+            path.unlink()
 
 
 def _remove_legacy_agent_programs(agent_home: Path) -> None:

@@ -7,13 +7,12 @@ import pytest
 
 from toolang.agent_refs import resolve_agent_ref
 from toolang.errors import ToolangError
-from toolang.files import ToolangLock, SyncedProgram
+from toolang.files import SyncState, SyncedProgram
 from toolang.layout import (
     agent_sync_path,
     resolve_toolang_root,
     synced_caps_root,
     toolang_config_path,
-    toolang_lock_path,
 )
 from toolang.parser import parse_program
 from toolang.sync import ensure_agent_synced, sync_agent
@@ -46,7 +45,9 @@ def test_sync_agent_writes_program_and_source_caps(tmp_path) -> None:
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     synced_program = sync_agent(agent)
 
+    assert agent_sync_path(home, "alice") == synced_caps_root(home) / "alice.state.json"
     assert agent_sync_path(home, "alice").exists()
+    assert not (synced_caps_root(home) / "agents").exists()
     assert (synced_caps_root(home) / "prompts" / "summarize.md").exists()
     assert (synced_caps_root(home) / "prompts" / "summarize.meta.json").exists()
     assert (synced_caps_root(home) / "services" / "github.md").read_text(encoding="utf-8").startswith("---\n")
@@ -54,7 +55,10 @@ def test_sync_agent_writes_program_and_source_caps(tmp_path) -> None:
     assert '"transport": "http"' in service_meta
     assert synced_program.to_program().to_dict() == parse_program(source_path.read_text()).to_dict()
 
-def test_sync_agent_materializes_used_skills_and_writes_toolang_lock(tmp_path, monkeypatch) -> None:
+
+def test_sync_agent_materializes_used_skills_and_writes_agent_refs_into_state(
+    tmp_path, monkeypatch
+) -> None:
     root = resolve_toolang_root(tmp_path / "toolang-root")
     home = root / "agents" / "alice"
     home.mkdir(parents=True)
@@ -112,10 +116,12 @@ thunk review:
         REMOTE_SKILL_FIXTURE / "assets" / "template.md"
     ).read_text(encoding="utf-8")
 
-    lock = ToolangLock.load(toolang_lock_path(home))
-    assert lock.agents["alice"].skills["pdf-processing"].repo == "by3gus/agent-skills"
-    assert lock.agents["bob"].skills["pdf-processing"].path == "skills/pdf-processing"
-    assert lock.agents["alice"].skills["pdf-processing"].rev == "abc123"
+    alice_state = SyncState.load(agent_sync_path(home, "alice"))
+    bob_state = SyncState.load(agent_sync_path(home, "bob"))
+    assert alice_state.refs.skills["pdf-processing"].repo == "by3gus/agent-skills"
+    assert bob_state.refs.skills["pdf-processing"].path == "skills/pdf-processing"
+    assert alice_state.refs.skills["pdf-processing"].rev == "abc123"
+    assert not (home / "toolang.lock").exists()
 
 
 def test_ensure_agent_synced_reuses_fresh_state(tmp_path) -> None:

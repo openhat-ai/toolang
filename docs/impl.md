@@ -37,16 +37,16 @@ Responsibilities:
 - `sync`
   - build durable generated state for one agent home
 - `run`
-  - load synced state from `${AGENT_HOME}/.toolang/.sync/` and `${AGENT_ROOM}/`,
-    then execute the model and tool loop
+  - load synced state from `${AGENT_HOME}/.toolang/.sync/`, then execute the
+    model and tool loop
 
 Expected runtime behavior:
 
 - most invocations should spend their time in `run`
 - `parse` and `sync` are rebuild steps and should be skipped when existing sync
   state is still fresh
-- the synced state in `${AGENT_HOME}/.toolang/.sync/` and `${AGENT_ROOM}/` is
-  the execution boundary, not the raw source text
+- the synced state in `${AGENT_HOME}/.toolang/.sync/` is the execution
+  boundary, not the raw source text
 
 Internal sync steps:
 
@@ -57,8 +57,8 @@ Internal sync steps:
 - `compile`
   - convert source and config inputs into per-agent synced records
 - `materialize`
-  - update `toolang.lock`, `${AGENT_HOME}/.toolang/.sync/`, and synced
-    agent-local state in `${AGENT_ROOM}/`
+  - update `${AGENT_HOME}/.toolang/.sync/` and
+    `${AGENT_HOME}/.toolang/.sync/<agent>.state.json`
 
 
 ## 3. Parsing And Sync State
@@ -73,7 +73,7 @@ Implementation strategy:
 - sync writes durable generated artifacts that can be reused without reparsing
   unchanged source files
 - synced caps are written under `${AGENT_HOME}/.toolang/.sync/`
-- sync metadata and compiled agent records live under `${AGENT_ROOM}/`
+- per-agent sync state lives in `${AGENT_HOME}/.toolang/.sync/<agent>.state.json`
 
 Reason:
 
@@ -90,7 +90,7 @@ Pydantic v2 is the chosen model layer for structured runtime data.
 Expected use:
 
 - AST and synced agent records
-- home configuration and lock records
+- home configuration and resolved-cap records
 - registry and resolved-cap records
 - structured CLI and API output
 
@@ -187,11 +187,10 @@ Other durable formats:
 
 - TOML
   - `toolang.toml`
-  - `toolang.lock`
 - Markdown
   - skill, service, prompt, and psyche source artifacts
 - JSON
-  - sync state, command output, API output, and runtime metadata blobs
+  - per-agent sync state, command output, API output, and runtime metadata blobs
 
 
 ## 9. Capability Resolution
