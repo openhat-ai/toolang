@@ -28,6 +28,9 @@
   room, and canonical agent URI layout.
 - `docs/design.md` defines runtime behavior and CLI semantics.
 - `docs/impl.md` defines implementation direction and stack choices.
+- The Tree-sitter grammar source of truth lives in the sibling
+  `tree-sitter-toolang` repository. This repository vendors generated parser
+  artifacts for runtime use.
 
 
 ## Agent Identity
