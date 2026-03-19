@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
-from toolang_caps import CapEntry
+from toolang_caps.models import CapEntry
 
 from toolang.files._toml import load_toml, write_toml
 

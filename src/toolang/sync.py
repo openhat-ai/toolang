@@ -8,14 +8,9 @@ from toolang.agent_refs import ResolvedAgentRef
 from toolang.analyze import analyze_program
 from toolang.ast import Program
 from toolang.errors import ToolangError
-from toolang.files import (
-    InputFingerprint,
-    LockEntry,
-    LockedAgentRefs,
-    SyncState,
-    SyncedProgram,
-    ToolangConfig,
-)
+from toolang.files.config import ToolangConfig
+from toolang.files.program import SyncedProgram
+from toolang.files.sync_state import InputFingerprint, LockEntry, LockedAgentRefs, SyncState
 from toolang.layout import (
     agent_source_path,
     agent_sync_path,
@@ -25,23 +20,24 @@ from toolang.layout import (
     toolang_config_path,
 )
 from toolang.parser import parse_program
-from toolang_caps import (
+from toolang_caps.files import (
+    inline_cap_meta_path,
+    inline_cap_path,
+    remove_stale_skill_materializations,
+    skill_cap_dir,
+    skill_cap_meta_path,
+    sync_inline_caps,
+    sync_skill_materialization,
+)
+from toolang_caps.github import fetch_github_tree, resolve_github_skill_ref
+from toolang_caps.models import (
     CAP_KINDS,
     CapParam,
     InlineCap,
     InlineCapKind,
     ResolvedCapRef,
     SkillMeta,
-    fetch_github_tree,
-    inline_cap_meta_path,
-    inline_cap_path,
-    remove_stale_skill_materializations,
-    resolve_github_skill_ref,
     section_name,
-    skill_cap_dir,
-    skill_cap_meta_path,
-    sync_inline_caps,
-    sync_skill_materialization,
 )
 
 SOURCE_DECL_TO_CAP_KIND: dict[str, InlineCapKind] = {

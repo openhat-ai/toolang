@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 from typing import Annotated
 
@@ -9,9 +10,9 @@ import click
 import typer
 from dotenv import load_dotenv
 
-from toolang import __version__
 from toolang.agent_refs import ResolvedAgentRef, resolve_agent_ref
 from toolang.errors import ToolangError
+from toolang.files._toml import load_toml
 from toolang.layout import resolve_toolang_root
 from toolang.runtime import execute_thunk
 from toolang.sync import ensure_agent_synced, sync_agent
@@ -19,7 +20,7 @@ from toolang.sync import ensure_agent_synced, sync_agent
 
 def _version_callback(value: bool | None) -> None:
     if value:
-        typer.echo(f"toolang {__version__}")
+        typer.echo(f"toolang {_toolang_version()}")
         raise typer.Exit()
 
 
@@ -130,3 +131,15 @@ def _resolve_cli_agent(raw: str) -> ResolvedAgentRef:
         toolang_root=toolang_root,
         guest_resolver=guest_resolver,
     )
+
+
+def _toolang_version() -> str:
+    try:
+        return package_version("toolang")
+    except PackageNotFoundError:
+        pyproject_path = Path(__file__).resolve().parents[2] / "pyproject.toml"
+        project = load_toml(pyproject_path).get("project", {})
+        version = project.get("version")
+        if isinstance(version, str) and version:
+            return version
+        raise ToolangError(f"Could not determine package version from {pyproject_path}.")
