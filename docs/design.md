@@ -33,21 +33,22 @@ Detailed filesystem layout and agent identity conventions live in
   - the stem of a `.too` filename
 - `agent_uri`
   - the canonical identity string used for stable hashing
+- `agent_id`
+  - a short stable hash derived from `agent_uri`
 - `resident agent`
   - an agent hosted under `${TOOLANG_ROOT}/agents/`
 - `roaming agent`
   - an agent hosted at an external local path
 - `visiting agent`
   - an agent materialized from a remote URL under `${TOOLANG_ROOT}/guests/`
-- `house_no`
-  - a short persistent identifier for an agent instance
 - `cap_ref`
   - a capability reference used by `skill`, `service`, `prompt`, and `psyche`
     operations
 - `agent_ref`
   - an input that resolves to agent source
-- `run_ref`
-  - an input that resolves to a running agent
+- `agent selector`
+  - a CLI input that may be a source-facing `agent_ref`, an `agent_id`, or an
+    `agent_name`
 
 
 ## 2. Naming
@@ -96,7 +97,7 @@ Global Toolang storage lives under `TOOLANG_ROOT`.
 Responsibilities:
 
 - `agents.db`
-  - global table of running agents
+  - global registry of known agents and active served agents
 - `agents/{HOME}/`
   - resident agent homes
 - `guests/{HOME}/`
@@ -410,43 +411,46 @@ Minimal sync state shape:
 
 ## 9. References
 
-### 9.1 Agent References
+### 9.1 Agent Selectors
 
-`agent_ref` may be:
+An `agent selector` may be:
 
-- a resident shorthand
-- a guest shorthand
-- a local `.too` path
-- a canonical `agent://...` URI
-- a canonical `file://...` URI
-- a canonical `https://...` URI
+- a source-facing `agent_ref`
+- an `agent_id`
+- an `agent_name`
 
 Examples:
 
 - `alice`
-- `alice/alice`
 - `alice/bob`
 - `guest:alice`
 - `bob.too`
 - `./bob.too`
 - `/path/to/some/dir/bob.too`
+- `4f3a20b1c1d9`
 - `agent://alice/alice.too`
 - `file:///path/to/some/dir/bob.too`
 - `https://example.com/reviewer.too`
 
 Resolution rules:
 
-- `alice` resolves to `agent://alice/alice.too`
-- `<home>/<agent>` resolves to `agent://<home>/<agent>.too`
-- `guest:<name>` resolves through a guest resolver to a real `https://...` URI
-- relative local paths are allowed as input and normalize to absolute
-  `file://...` URIs
-- canonical `file://...` URIs always use absolute normalized paths
-- `agent_uri` is used for stable hashing
-- `agent_uri` must not include `TOOLANG_ROOT`
-- an `agent_ref` resolves to both:
+- explicit source selectors resolve directly:
+  - `alice` resolves to `agent://alice/alice.too`
+  - `<home>/<agent>` resolves to `agent://<home>/<agent>.too`
+  - `guest:<name>` resolves through a guest resolver to a real `https://...`
+    URI
+  - relative local paths normalize to absolute `file://...` URIs
+- if the selector is not an explicit source selector, Toolang checks
+  `agents.db`:
+  1. match `agent_id` by unique prefix
+  2. match `agent_name` exactly
+  3. fall back to source-selector resolution
+- `agent_uri` is the canonical identity and must not include `TOOLANG_ROOT`
+- `agent_id` is a short stable hash derived from `agent_uri`
+- an explicit source selector resolves to:
   - `agent_uri`
   - `agent_home`
+  - `agent_name`
 
 ### 9.2 URL Materialization
 
@@ -470,10 +474,16 @@ Rules:
 
 Rules:
 
+- all execution commands accept an `agent selector`
 - `run` is one-shot foreground execution
 - `run` checks sync freshness before execution and triggers sync when required
-- `serve` runs in the foreground
-- `start` runs in the background
+- `run` updates the known-agent registry but does not create a running-agent
+  record
+- `serve` runs in the foreground and registers one active served process for
+  its `agent_uri`
+- `start` launches `serve` in the background and returns the selected
+  `agent_id` and local endpoint
+- v1 allows at most one active served process per `agent_uri`
 
 Grammar inspection and AST-oriented tooling belong in the sibling grammar
 package rather than the Toolang runtime CLI.
@@ -510,9 +520,9 @@ Command intent:
 ### 10.4 Running-Agent Commands
 
 - `toolang ps`
-- `toolang inspect <run_ref>`
-- `toolang logs <run_ref>`
-- `toolang stop <run_ref>`
+- `toolang inspect <agent>`
+- `toolang logs <agent>`
+- `toolang stop <agent>`
 
 
 ## 11. Agent State
@@ -537,26 +547,41 @@ Rules:
 
 `will.md` stores durable agent-local intent and working state.
 
-Running agents are tracked in `~/.toolang/agents.db`.
+Toolang tracks agents in `~/.toolang/agents.db`.
 
-Each active process records:
+The database has two logical tables:
 
-- `house_no`
+- `agents`
+  - known agent registry
+  - keyed by `agent_uri`
+- `running_agents`
+  - active served agents
+  - keyed by `agent_uri`
+
+Known-agent records include:
+
+- `agent_uri`
+- `agent_id`
 - `agent_name`
-- `source_uri`
 - `agent_home`
 - `source_file`
+- `updated_at`
+
+Running-agent records include:
+
+- `agent_uri`
 - `pid`
-- `mode`
 - `status`
 - `started_at`
 - `heartbeat_at`
 - `endpoint` when applicable
 
-Mode values:
+Rules:
 
-- `run`
-- `serve`
+- `run` may add or refresh an `agents` record
+- only `serve` and `start` create `running_agents` records
+- `agent.run` in the agent room mirrors the current running state for one agent
+- `agent.log` stores the managed server log for one agent
 
 
 ## 12. Runtime Flow
@@ -593,3 +618,12 @@ Internal sync steps:
 - `materialize`
   - update `${AGENT_HOME}/.toolang/.sync/` and
     `${AGENT_HOME}/.toolang/.sync/<agent>.state.json`
+
+Foreground and background execution build on the same prepared agent:
+
+- `run`
+  - prepare one synced agent and execute a thunk once
+- `serve`
+  - prepare one synced agent and expose a local HTTP API
+- `start`
+  - spawn `serve` as a background process and wait for registration

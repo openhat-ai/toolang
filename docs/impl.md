@@ -39,6 +39,11 @@ Responsibilities:
 - `run`
   - load synced state from `${AGENT_HOME}/.toolang/.sync/`, then execute the
     model and tool loop
+- `serve`
+  - prepare one synced agent and expose a local HTTP API
+- `start`
+  - launch `serve` in the background and wait for registration in
+    `agents.db`
 
 Expected runtime behavior:
 
@@ -106,7 +111,6 @@ Typer is the chosen CLI framework.
 
 Command groups:
 
-- analysis
 - execution
 - capability management
 - running-agent management
@@ -174,7 +178,7 @@ SQLite is the primary local storage layer.
 Expected use:
 
 - agent memory
-- running-agent table
+- `agents` and `running_agents` tables in `agents.db`
 - local metadata
 
 Reason:

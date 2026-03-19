@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import os
+import socket
+import subprocess
 import sys
+import time
+from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 from typing import Annotated
@@ -11,11 +15,21 @@ import typer
 from dotenv import load_dotenv
 
 from toolang.agent_refs import ResolvedAgentRef, resolve_agent_ref
+from toolang.agent_registry import (
+    KnownAgentRecord,
+    delete_running_agent,
+    find_known_agents_by_id_prefix,
+    find_known_agents_by_name,
+    get_running_agent,
+    upsert_known_agent,
+)
 from toolang.errors import ToolangError
 from toolang.files._toml import load_toml
-from toolang.layout import resolve_toolang_root
+from toolang.layout import agent_log_path, agents_db_path, ensure_toolang_root_layout, resolve_toolang_root
+from toolang.prepared import prepare_agent
 from toolang.runtime import execute_thunk
-from toolang.sync import ensure_agent_synced, sync_agent
+from toolang.server import serve_agent
+from toolang.sync import sync_agent
 
 
 def _version_callback(value: bool | None) -> None:
@@ -50,7 +64,7 @@ def callback(
 
 @app.command()
 def run(
-    agent: Annotated[str, typer.Argument(help="Agent reference, path, or URI")],
+    agent: Annotated[str, typer.Argument(help="Agent selector")],
     thunk: Annotated[str | None, typer.Option(help="Thunk name to run")] = None,
     user_input: Annotated[
         str | None,
@@ -58,18 +72,18 @@ def run(
     ] = None,
     model: Annotated[str | None, typer.Option(help="Override model selection")] = None,
 ) -> None:
-    agent_ref = _resolve_cli_agent(agent)
-    program_path = _resolve_program_path(agent_ref)
-    program = ensure_agent_synced(agent_ref).to_program()
-    selected_thunk = program.get_thunk(thunk)
+    db_path = agents_db_path(_toolang_root())
+    prepared = prepare_agent(_resolve_cli_agent(agent, db_path=db_path))
+    _remember_agent(prepared.ref, db_path=db_path)
+    selected_thunk = prepared.program.get_thunk(thunk)
 
     if selected_thunk.input_name and user_input is None and not sys.stdin.isatty():
         user_input = sys.stdin.read()
 
     result = execute_thunk(
-        program,
+        prepared.program,
         selected_thunk,
-        program_path,
+        prepared.source_path,
         user_input=user_input,
         model=model,
     )
@@ -78,10 +92,81 @@ def run(
 
 @app.command()
 def sync(
-    agent: Annotated[str, typer.Argument(help="Agent reference, path, or URI")],
+    agent: Annotated[str, typer.Argument(help="Agent selector")],
 ) -> None:
-    sync_agent(_resolve_cli_agent(agent))
+    db_path = agents_db_path(_toolang_root())
+    agent_ref = _resolve_cli_agent(agent, db_path=db_path)
+    sync_agent(agent_ref)
+    _remember_agent(agent_ref, db_path=db_path)
     typer.echo("synced")
+
+
+@app.command()
+def serve(
+    agent: Annotated[str, typer.Argument(help="Agent selector")],
+    host: Annotated[str, typer.Option(help="Host interface to bind")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="Port to listen on")] = 8765,
+) -> None:
+    db_path = agents_db_path(_toolang_root())
+    prepared = prepare_agent(_resolve_cli_agent(agent, db_path=db_path))
+    _remember_agent(prepared.ref, db_path=db_path)
+    serve_agent(
+        prepared,
+        agents_db_path=db_path,
+        host=host,
+        port=port,
+    )
+
+
+@app.command()
+def start(
+    agent: Annotated[str, typer.Argument(help="Agent selector")],
+    host: Annotated[str, typer.Option(help="Host interface to bind")] = "127.0.0.1",
+    port: Annotated[int | None, typer.Option(help="Port to bind; chooses a free port by default")] = None,
+) -> None:
+    db_path = agents_db_path(_toolang_root())
+    prepared = prepare_agent(_resolve_cli_agent(agent, db_path=db_path))
+    _remember_agent(prepared.ref, db_path=db_path)
+    _drop_stale_running_agent(db_path, prepared.ref)
+
+    active = get_running_agent(db_path, prepared.ref.agent_uri)
+    if active is not None:
+        raise ToolangError(f"Agent is already being served: {prepared.ref.agent_uri}")
+
+    selected_port = port if port is not None else _pick_free_port(host)
+    endpoint = f"http://{host}:{selected_port}"
+    log_path = agent_log_path(prepared.ref.agent_home, prepared.ref.agent_name)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        sys.executable,
+        "-c",
+        "from toolang.cli import main; raise SystemExit(main())",
+        "serve",
+        prepared.ref.agent_uri,
+        "--host",
+        host,
+        "--port",
+        str(selected_port),
+    ]
+    with log_path.open("ab") as log_file:
+        process = subprocess.Popen(
+            command,
+            cwd=str(prepared.ref.agent_home),
+            env=os.environ.copy(),
+            stdin=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+    _wait_for_running_agent(
+        db_path=db_path,
+        agent=prepared.ref,
+        process=process,
+        endpoint=endpoint,
+        log_path=log_path,
+    )
+    typer.echo(f"started {prepared.ref.agent_id[:12]} {endpoint}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -103,19 +188,43 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _resolve_program_path(agent: ResolvedAgentRef) -> Path:
-    program_path = agent.source_path
-    if not program_path.exists():
-        if agent.agent_kind == "visiting":
-            raise FileNotFoundError(
-                f"Visiting agent is not materialized locally: {agent.agent_uri} -> {program_path}"
-            )
-        raise FileNotFoundError(f"Agent source not found: {program_path}")
-    return program_path
+def _resolve_cli_agent(raw: str, *, db_path: Path | None = None) -> ResolvedAgentRef:
+    toolang_root = _toolang_root()
+    guest_resolver = _guest_resolver()
+    text = raw.strip()
+    resolved_db_path = db_path if db_path is not None else agents_db_path(toolang_root)
+
+    if _looks_like_explicit_source_selector(text):
+        return resolve_agent_ref(
+            text,
+            cwd=Path.cwd(),
+            toolang_root=toolang_root,
+            guest_resolver=guest_resolver,
+        )
+
+    resolved_from_registry = _resolve_known_agent(
+        text,
+        db_path=resolved_db_path,
+        toolang_root=toolang_root,
+        guest_resolver=guest_resolver,
+    )
+    if resolved_from_registry is not None:
+        return resolved_from_registry
+
+    return resolve_agent_ref(
+        text,
+        cwd=Path.cwd(),
+        toolang_root=toolang_root,
+        guest_resolver=guest_resolver,
+    )
 
 
-def _resolve_cli_agent(raw: str) -> ResolvedAgentRef:
-    toolang_root = resolve_toolang_root(os.environ.get("TOOLANG_ROOT", "~/.toolang"))
+def _toolang_root() -> Path:
+    root = resolve_toolang_root(os.environ.get("TOOLANG_ROOT", "~/.toolang"))
+    return ensure_toolang_root_layout(root)
+
+
+def _guest_resolver():
     guest_base_url = os.environ.get("TOOLANG_GUEST_BASE_URL", "").strip()
     guest_resolver = None
     if guest_base_url:
@@ -125,12 +234,126 @@ def _resolve_cli_agent(raw: str) -> ResolvedAgentRef:
             return f"{base}/{name.lstrip('/')}"
 
         guest_resolver = resolve_guest_name
-    return resolve_agent_ref(
-        raw,
-        cwd=Path.cwd(),
-        toolang_root=toolang_root,
-        guest_resolver=guest_resolver,
+    return guest_resolver
+
+
+def _resolve_known_agent(
+    raw: str,
+    *,
+    db_path: Path,
+    toolang_root: Path,
+    guest_resolver,
+) -> ResolvedAgentRef | None:
+    if _looks_like_agent_id(raw):
+        by_id = _select_known_agent(find_known_agents_by_id_prefix(db_path, raw), raw, "agent id")
+        if by_id is not None:
+            return resolve_agent_ref(
+                by_id.agent_uri,
+                cwd=Path.cwd(),
+                toolang_root=toolang_root,
+                guest_resolver=guest_resolver,
+            )
+
+    by_name = _select_known_agent(find_known_agents_by_name(db_path, raw), raw, "agent name")
+    if by_name is not None:
+        return resolve_agent_ref(
+            by_name.agent_uri,
+            cwd=Path.cwd(),
+            toolang_root=toolang_root,
+            guest_resolver=guest_resolver,
+        )
+
+    if not _looks_like_agent_id(raw):
+        by_id = _select_known_agent(find_known_agents_by_id_prefix(db_path, raw), raw, "agent id")
+        if by_id is not None:
+            return resolve_agent_ref(
+                by_id.agent_uri,
+                cwd=Path.cwd(),
+                toolang_root=toolang_root,
+                guest_resolver=guest_resolver,
+            )
+    return None
+
+
+def _select_known_agent(
+    records: list[KnownAgentRecord],
+    raw: str,
+    label: str,
+) -> KnownAgentRecord | None:
+    if not records:
+        return None
+    if len(records) > 1:
+        matches = ", ".join(record.agent_uri for record in records)
+        raise ToolangError(f"Ambiguous {label} {raw!r}: {matches}")
+    return records[0]
+
+
+def _remember_agent(agent: ResolvedAgentRef, *, db_path: Path) -> None:
+    upsert_known_agent(
+        db_path,
+        KnownAgentRecord.from_resolved_agent(
+            agent,
+            updated_at=datetime.now(timezone.utc),
+        ),
     )
+
+
+def _looks_like_explicit_source_selector(text: str) -> bool:
+    return (
+        "://" in text
+        or text.startswith("guest:")
+        or text.startswith(("./", "../", "/", "~"))
+        or text.endswith(".too")
+        or "/" in text
+    )
+
+
+def _looks_like_agent_id(text: str) -> bool:
+    return len(text) >= 7 and all(character in "0123456789abcdef" for character in text.lower())
+
+
+def _pick_free_port(host: str) -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind((host, 0))
+        return int(sock.getsockname()[1])
+
+
+def _pid_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _drop_stale_running_agent(db_path: Path, agent: ResolvedAgentRef) -> None:
+    existing = get_running_agent(db_path, agent.agent_uri)
+    if existing is None:
+        return
+    if _pid_exists(existing.pid):
+        return
+    delete_running_agent(db_path, agent.agent_uri)
+
+
+def _wait_for_running_agent(
+    *,
+    db_path: Path,
+    agent: ResolvedAgentRef,
+    process: subprocess.Popen,
+    endpoint: str,
+    log_path: Path,
+) -> None:
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise ToolangError(
+                f"Agent server exited before startup completed. See log: {log_path}"
+            )
+        active = get_running_agent(db_path, agent.agent_uri)
+        if active is not None:
+            return
+        time.sleep(0.1)
+    raise ToolangError(f"Timed out waiting for agent server startup at {endpoint}.")
 
 
 def _toolang_version() -> str:

@@ -26,10 +26,13 @@ This document defines Toolang filesystem layout and agent identity.
     `${TOOLANG_ROOT}/guests/`
 - `agent_ref`
   - the raw CLI input used to locate an agent
+- `agent selector`
+  - a CLI input that may be a source-facing `agent_ref`, an `agent_id`, or an
+    `agent_name`
 - `agent_uri`
   - the canonical identity string used for stable hashing
 - `agent_id`
-  - a stable hash derived from `agent_uri`
+  - a short stable hash derived from `agent_uri`
 
 
 ## 2. Canonical Agent URIs
@@ -90,7 +93,7 @@ Examples:
 
 ## 4. Resolution Rules
 
-Resolution order:
+Resolution order for source-facing `agent_ref` values:
 
 1. If the input already contains `://`, treat it as a canonical URI.
 2. If the input starts with `guest:`, resolve it to a real `https://...` URI.
@@ -106,10 +109,15 @@ Additional rules:
 
 - relative local paths are allowed as input but not as canonical URI
 - canonical `file://` URIs always use absolute normalized paths
-- an `agent_ref` resolves to both:
+- an explicit `agent_ref` resolves to both:
   - `agent_uri`
   - `agent_home`
 - `agent_home` is always local, even for visiting agents
+- an `agent selector` may also be:
+  - an `agent_id` prefix from `agents.db`
+  - an exact `agent_name` from `agents.db`
+- if an `agent selector` is not an explicit source selector, Toolang checks
+  `agents.db` before falling back to resident shorthand resolution
 
 
 ## 5. Toolang Root
@@ -135,7 +143,9 @@ Notes:
 - `guests/{HOME}/` stores visiting agent homes
 - `sandbox/{AGENT}/` is reserved for local execution sandboxes
 - `bus/` stores local event and bus state
-- `agents.db` stores the global running-agent table
+- `agents.db` stores:
+  - known agents keyed by `agent_uri`
+  - active served agents keyed by `agent_uri`
 - `agents.too` is optional
 
 
@@ -207,6 +217,7 @@ ${AGENT_ROOM}/
 Notes:
 
 - the agent room is private to one agent
-- `agent.run` and `agent.log` store agent-local runtime state
+- `agent.run` mirrors the current running state of one served agent
+- `agent.log` stores the managed server log for one agent
 - `sandbox/` stores the local execution sandbox for that agent
 - `tasks/`, `chores/`, and `will.md` store agent-local work state
