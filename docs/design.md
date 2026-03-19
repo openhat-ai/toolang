@@ -360,10 +360,12 @@ Rules:
   - `.too` files in the agent home
   - `toolang.toml`
   - local cap directories under `.toolang/`
-- `toolang run` may skip parse and sync when the current inputs still match
-  the stored freshness metadata in `${AGENT_HOME}/.toolang/.sync/<agent>.state.json`
+- `toolang invoke` may skip parse and sync when the current inputs still match
+  the stored freshness metadata in
+  `${AGENT_HOME}/.toolang/.sync/<agent>.state.json`
 - if any recorded input changed, if generated sync artifacts are missing, or if
-  any expected state file is stale, `toolang run` triggers sync before execution
+  any expected state file is stale, `toolang invoke` triggers sync before
+  execution
 - source-defined caps are materialized during sync so unchanged agents do not
   need to be reparsed just to recover inline definitions
 - if an entry exists in an agent's `refs`, the matching managed artifact must
@@ -464,21 +466,82 @@ Rules:
 - `guest://...` is not a canonical URI in v1
 
 
-## 10. CLI
+## 10. Message Model
 
-### 10.1 Execution
+Toolang uses a single `Message` object as the runtime input for one turn.
 
-- `toolang run <agent>`
+Minimal fields:
+
+- `origin`
+- `channel`
+- `sender`
+- `thread_id`
+- `text`
+- `meta`
+
+`origin` defines why the current turn exists:
+
+- `invoke`
+  - a caller-driven one-shot non-interactive execution
+- `chat`
+  - an interactive conversation turn
+- `task`
+  - a managed task turn
+- `chore`
+  - a scheduled or periodic turn
+- `will`
+  - an agent-local self-directed turn
+
+`channel` defines the transport for chat turns.
+
+Common values:
+
+- `tui`
+- `webui`
+- `api`
+- `telegram`
+
+`sender` defines who sent the message relative to the current agent:
+
+- `owner`
+- `peer`
+- `guest`
+- `self`
+
+Rules:
+
+- `origin == chat` requires a non-null `channel`
+- `origin in {invoke, task, chore, will}` requires `channel = null`
+- `task`, `chore`, and `will` use `sender = self`
+- `invoke` is usually `sender = owner`, but may use `peer` for agent-to-agent
+  calls
+- `channel` is only for chat transport and must not be used as a generic
+  execution mode field
+- `serve` and `start` are process surfaces, not message origins
+
+Reason:
+
+- `origin` answers why the turn exists
+- `channel` answers how a chat message arrived
+- `sender` answers who the agent is responding to
+
+
+## 11. CLI
+
+### 11.1 Execution
+
+- `toolang invoke <agent>`
 - `toolang serve <agent>`
 - `toolang start <agent>`
 
 Rules:
 
 - all execution commands accept an `agent selector`
-- `run` is one-shot foreground execution
-- `run` checks sync freshness before execution and triggers sync when required
-- `run` updates the known-agent registry but does not create a running-agent
-  record
+- `invoke` is caller-driven one-shot foreground execution
+- `invoke` checks sync freshness before execution and triggers sync when
+  required
+- `invoke` updates the known-agent registry but does not create a
+  running-agent record
 - `serve` runs in the foreground and registers one active served process for
   its `agent_uri`
 - `start` launches `serve` in the background and returns the selected
@@ -488,7 +551,7 @@ Rules:
 Grammar inspection and AST-oriented tooling belong in the sibling grammar
 package rather than the Toolang runtime CLI.
 
-### 10.2 Capability Management
+### 11.2 Capability Management
 
 - `toolang skill add <cap_ref>`
 - `toolang skill new <name>`
@@ -517,15 +580,16 @@ Command intent:
   - rebuild `${AGENT_HOME}/.toolang/.sync/` and all
     `${AGENT_HOME}/.toolang/.sync/<agent>.state.json` files for the agent home
 
-### 10.4 Running-Agent Commands
+### 11.3 Agent Registry And Running-Agent Commands
 
+- `toolang list`
 - `toolang ps`
 - `toolang inspect <agent>`
 - `toolang logs <agent>`
 - `toolang stop <agent>`
 
 
-## 11. Agent State
+## 12. Agent State
 
 Each agent has a private room under `.toolang/agent/{AGENT}/` inside its agent
 home.
@@ -578,24 +642,24 @@ Running-agent records include:
 
 Rules:
 
-- `run` may add or refresh an `agents` record
+- `invoke` may add or refresh an `agents` record
 - only `serve` and `start` create `running_agents` records
 - `agent.run` in the agent room mirrors the current running state for one agent
 - `agent.log` stores the managed server log for one agent
 
 
-## 12. Runtime Flow
+## 13. Runtime Flow
 
 Primary runtime flow:
 
 1. `parse`
 2. `sync`
-3. `run`
+3. `invoke`
 
 Fast path:
 
 - if `${AGENT_HOME}/.toolang/.sync/<agent>.state.json` is still valid, runtime
-  skips parse and sync and runs from the existing synced artifacts
+  skips parse and sync and invokes from the existing synced artifacts
 
 Definitions:
 
@@ -603,9 +667,9 @@ Definitions:
   - use Tree-sitter to read `.too` source into structured syntax data
 - `sync`
   - build durable generated state for one agent home
-- `run`
+- `invoke`
   - load synced state from `${AGENT_HOME}/.toolang/.sync/`, assemble runtime
-    inputs, and execute the model and tool loop
+    inputs, and execute one non-interactive turn
 
 Internal sync steps:
 
@@ -621,7 +685,7 @@ Internal sync steps:
 
 Foreground and background execution build on the same prepared agent:
 
-- `run`
+- `invoke`
   - prepare one synced agent and execute a thunk once
 - `serve`
   - prepare one synced agent and expose a local HTTP API

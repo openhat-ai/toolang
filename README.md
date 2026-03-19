@@ -77,7 +77,7 @@ Build source-only sync state for an agent:
 uv run toolang sync tests/fixtures/sample.too
 ```
 
-If you want real model execution from `toolang run`, install the remaining
+If you want real model execution from `toolang invoke`, install the remaining
 runtime-specific package yourself:
 
 ```bash

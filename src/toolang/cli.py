@@ -70,9 +70,9 @@ def callback(
 
 
 @app.command()
-def run(
+def invoke(
     agent: Annotated[str, typer.Argument(help="Agent selector")],
-    thunk: Annotated[str | None, typer.Option(help="Thunk name to run")] = None,
+    thunk: Annotated[str | None, typer.Option(help="Thunk name to invoke")] = None,
     user_input: Annotated[
         str | None,
         typer.Option("--input", help="User input for a thunk(user) entrypoint"),

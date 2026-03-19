@@ -23,7 +23,7 @@ def test_cli_has_expected_subcommands() -> None:
     result = runner.invoke(app, ["--help"])
 
     assert result.exit_code == 0
-    assert "run" in result.output
+    assert "invoke" in result.output
     assert "sync" in result.output
     assert "serve" in result.output
     assert "start" in result.output
