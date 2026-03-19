@@ -1,11 +1,22 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-CAP_KINDS = ("skills", "services", "prompts", "psyches")
-CapKind = Literal["skills", "services", "prompts", "psyches"]
+CAP_KINDS = ("skill", "service", "prompt", "psyche")
+CapKind = Literal["skill", "service", "prompt", "psyche"]
+
+SECTION_BY_KIND = {
+    "skill": "skills",
+    "service": "services",
+    "prompt": "prompts",
+    "psyche": "psyches",
+}
+
+
+def section_name(kind: CapKind) -> str:
+    return SECTION_BY_KIND[kind]
 
 
 class CapEntry(BaseModel):
@@ -24,10 +35,40 @@ class CapParam(BaseModel):
     optional: bool = False
 
 
-class SyncedCap(BaseModel):
-    kind: CapKind
+class InlineCap(BaseModel):
+    kind: Literal["service", "prompt", "psyche"]
     name: str
     language: str | None = None
-    body: str = ""
+    raw_text: str = ""
     params: list[CapParam] = Field(default_factory=list)
 
+
+class InlineCapMeta(BaseModel):
+    kind: Literal["service", "prompt", "psyche"]
+    name: str
+    language: str | None = None
+    path: str
+    params: list[CapParam] = Field(default_factory=list)
+    front_matter: dict[str, Any] | None = None
+    content: str = ""
+
+
+class ResolvedCapRef(BaseModel):
+    kind: CapKind
+    name: str
+    ref: str
+    repo: str
+    path: str
+    rev: str
+
+
+class SkillMeta(BaseModel):
+    kind: Literal["skill"] = "skill"
+    name: str
+    path: str
+    entry_path: str
+    files: list[str] = Field(default_factory=list)
+    ref: str
+    repo: str
+    source_path: str
+    rev: str

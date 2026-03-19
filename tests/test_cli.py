@@ -23,7 +23,7 @@ def test_cli_sync_resolves_resident_agent_from_toolang_root(tmp_path: Path, monk
     root = tmp_path / "toolang-root"
     home = root / "agents" / "alice"
     home.mkdir(parents=True)
-    fixture = Path(__file__).parent / "fixtures" / "sample.too"
+    fixture = Path(__file__).parent / "fixtures" / "source_only.too"
     (home / "alice.too").write_text(fixture.read_text(encoding="utf-8"), encoding="utf-8")
 
     monkeypatch.setenv("TOOLANG_ROOT", str(root))

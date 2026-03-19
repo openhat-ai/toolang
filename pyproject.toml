@@ -9,8 +9,10 @@ description = "Toolang runtime and CLI"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "httpx>=0.28.1",
     "pydantic>=2.11,<3",
     "python-dotenv>=1.0,<2",
+    "python-frontmatter>=1.1.0",
     "tomli>=2.2.1 ; python_full_version < '3.11'",
     "tomli-w>=1.2.0",
     "tree-sitter>=0.24,<0.26",

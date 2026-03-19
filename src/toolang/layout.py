@@ -49,8 +49,8 @@ def toolang_config_path(agent_home: Path | str) -> Path:
     return resolve_agent_home(agent_home) / "toolang.toml"
 
 
-def toolang_lock_path(agent_home: Path | str) -> Path:
-    return resolve_agent_home(agent_home) / "toolang.lock"
+def agent_lock_path(agent_home: Path | str) -> Path:
+    return resolve_agent_home(agent_home) / "agent.lock"
 
 
 def agent_source_path(agent_home: Path | str, agent_name: str) -> Path:

@@ -3,14 +3,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from toolang.files import (
+    AgentLock,
+    AgentLockEntry,
     CapEntry,
     InputFingerprint,
-    LockEntry,
     ModelEntry,
     ModelsSection,
     SyncState,
     ToolangConfig,
-    ToolangLock,
 )
 
 
@@ -37,19 +37,21 @@ def test_toolang_config_round_trip(tmp_path) -> None:
     assert loaded == config
 
 
-def test_toolang_lock_round_trip(tmp_path) -> None:
-    path = tmp_path / "toolang.lock"
-    lock = ToolangLock(
+def test_agent_lock_round_trip(tmp_path) -> None:
+    path = tmp_path / "agent.lock"
+    lock = AgentLock(
         skills={
-            "pdf-processing": LockEntry(
+            "pdf-processing": AgentLockEntry(
                 ref="briceyan/pdf-processing",
-                resolved="github.com/briceyan/agent-skills@abc123:skills/pdf-processing",
+                repo="briceyan/agent-skills",
+                path="skills/pdf-processing",
+                rev="abc123",
             )
         }
     )
 
     lock.save(path)
-    loaded = ToolangLock.load(path)
+    loaded = AgentLock.load(path)
 
     assert loaded == lock
 

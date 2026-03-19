@@ -7,24 +7,26 @@ from pydantic import BaseModel, Field
 from toolang.files._toml import load_toml, write_toml
 
 
-class LockEntry(BaseModel):
+class AgentLockEntry(BaseModel):
     ref: str
-    resolved: str
+    repo: str
+    path: str
+    rev: str
 
 
-class ToolangLock(BaseModel):
+class AgentLock(BaseModel):
     version: int = 1
-    skills: dict[str, LockEntry] = Field(default_factory=dict)
-    services: dict[str, LockEntry] = Field(default_factory=dict)
-    prompts: dict[str, LockEntry] = Field(default_factory=dict)
-    psyches: dict[str, LockEntry] = Field(default_factory=dict)
+    skills: dict[str, AgentLockEntry] = Field(default_factory=dict)
+    services: dict[str, AgentLockEntry] = Field(default_factory=dict)
+    prompts: dict[str, AgentLockEntry] = Field(default_factory=dict)
+    psyches: dict[str, AgentLockEntry] = Field(default_factory=dict)
 
     @classmethod
-    def empty(cls) -> "ToolangLock":
+    def empty(cls) -> "AgentLock":
         return cls()
 
     @classmethod
-    def load(cls, path: Path) -> "ToolangLock":
+    def load(cls, path: Path) -> "AgentLock":
         data = load_toml(path)
         return cls(
             version=int(data.get("version", 1)),
