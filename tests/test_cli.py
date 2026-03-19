@@ -4,7 +4,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from toolang.cli import app, main
+from toolang.cli import app
 
 runner = CliRunner()
 
@@ -18,9 +18,7 @@ def test_cli_has_expected_subcommands() -> None:
     assert "dump-ast" in result.output
 
 
-def test_cli_check_resolves_resident_agent_from_toolang_root(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
+def test_cli_check_resolves_resident_agent_from_toolang_root(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "toolang-root"
     home = root / "agents" / "alice"
     home.mkdir(parents=True)
@@ -29,8 +27,7 @@ def test_cli_check_resolves_resident_agent_from_toolang_root(
 
     monkeypatch.setenv("TOOLANG_ROOT", str(root))
 
-    exit_code = main(["check", "alice"])
+    result = runner.invoke(app, ["check", "alice"])
 
-    assert exit_code == 0
-    captured = capsys.readouterr()
-    assert captured.out.strip() == "ok"
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "ok"
