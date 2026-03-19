@@ -8,6 +8,7 @@ from typing import Annotated
 
 import click
 import typer
+from dotenv import load_dotenv
 
 from toolang import __version__
 from toolang.agent_refs import ResolvedAgentRef, resolve_agent_ref
@@ -94,7 +95,7 @@ def dump_ast(
 
 
 def main(argv: list[str] | None = None) -> int:
-    _load_dotenv_if_available()
+    load_dotenv()
     try:
         app(
             args=list(argv) if argv is not None else None,
@@ -136,11 +137,3 @@ def _resolve_cli_agent(raw: str) -> ResolvedAgentRef:
         toolang_root=toolang_root,
         guest_resolver=guest_resolver,
     )
-
-
-def _load_dotenv_if_available() -> None:
-    try:
-        from dotenv import load_dotenv
-    except ImportError:
-        return
-    load_dotenv()
