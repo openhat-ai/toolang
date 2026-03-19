@@ -3,20 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
+from toolang_caps import CapEntry
 
 from toolang.files._toml import load_toml, write_toml
-
-
-class CapEntry(BaseModel):
-    ref: str | None = None
-    path: str | None = None
-
-    @model_validator(mode="after")
-    def validate_location(self) -> "CapEntry":
-        if bool(self.ref) == bool(self.path):
-            raise ValueError("Cap entries must define exactly one of 'ref' or 'path'.")
-        return self
 
 
 class ModelEntry(BaseModel):

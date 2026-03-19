@@ -160,6 +160,7 @@ ${AGENT_HOME}/
   .toolang/
     agent/{AGENT}/                   # private room
     .sync/
+      {AGENT}.state.json
       psyches/
       skills/
       services/
@@ -175,6 +176,8 @@ Notes:
 - `{AGENT}.too` is the runnable source file for that agent
 - `agents.too` is optional
 - `.toolang/.sync/` stores synced capabilities for this agent home
+- `.toolang/.sync/{AGENT}.state.json` stores one generated sync record per
+  top-level `.too` file
 - `.toolang/{psyches,skills,services,prompts}/` stores shared caps for this
   agent home
 

@@ -13,8 +13,8 @@ from toolang import __version__
 from toolang.agent_refs import ResolvedAgentRef, resolve_agent_ref
 from toolang.errors import ToolangError
 from toolang.layout import resolve_toolang_root
-from toolang.parser import parse_program
 from toolang.runtime import execute_thunk
+from toolang.sync import ensure_agent_synced, sync_agent
 
 
 def _version_callback(value: bool | None) -> None:
@@ -59,7 +59,7 @@ def run(
 ) -> None:
     agent_ref = _resolve_cli_agent(agent)
     program_path = _resolve_program_path(agent_ref)
-    program = parse_program(program_path.read_text(encoding="utf-8"))
+    program = ensure_agent_synced(agent_ref).to_program()
     selected_thunk = program.get_thunk(thunk)
 
     if selected_thunk.input_name and user_input is None and not sys.stdin.isatty():
@@ -73,6 +73,14 @@ def run(
         model=model,
     )
     typer.echo(result)
+
+
+@app.command()
+def sync(
+    agent: Annotated[str, typer.Argument(help="Agent reference, path, or URI")],
+) -> None:
+    sync_agent(_resolve_cli_agent(agent))
+    typer.echo("synced")
 
 
 def main(argv: list[str] | None = None) -> int:

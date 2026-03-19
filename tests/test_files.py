@@ -6,11 +6,12 @@ from toolang.files import (
     CapEntry,
     InputFingerprint,
     LockEntry,
+    LockedAgentRefs,
     ModelEntry,
     ModelsSection,
+    SyncedProgram,
     SyncState,
     ToolangConfig,
-    ToolangLock,
 )
 
 
@@ -37,33 +38,25 @@ def test_toolang_config_round_trip(tmp_path) -> None:
     assert loaded == config
 
 
-def test_toolang_lock_round_trip(tmp_path) -> None:
-    path = tmp_path / "toolang.lock"
-    lock = ToolangLock(
-        skills={
-            "pdf-processing": LockEntry(
-                ref="briceyan/pdf-processing",
-                resolved="github.com/briceyan/agent-skills@abc123:skills/pdf-processing",
-            )
-        }
-    )
-
-    lock.save(path)
-    loaded = ToolangLock.load(path)
-
-    assert loaded == lock
-
-
 def test_sync_state_round_trip(tmp_path) -> None:
-    path = tmp_path / "sync.json"
+    path = tmp_path / "alice.state.json"
     state = SyncState(
         synced_at=datetime(2026, 3, 19, 8, 0, 0, tzinfo=timezone.utc),
         source_file="alice.too",
-        agent_room=".toolang/agent/alice/",
-        synced_caps=".toolang/.sync/",
         inputs={
             "alice.too": InputFingerprint(mtime_ns=1, size=42),
         },
+        program=SyncedProgram(),
+        refs=LockedAgentRefs(
+            skills={
+                "pdf-processing": LockEntry(
+                    ref="briceyan/pdf-processing",
+                    repo="briceyan/agent-skills",
+                    path="skills/pdf-processing",
+                    rev="abc123",
+                )
+            }
+        ),
     )
 
     state.save(path)

@@ -36,6 +36,9 @@
   `tree-sitter-toolang` repository. Toolang consumes the Python extension
   package exposed by that repository rather than compiling grammar sources at
   runtime.
+- Caps logic lives in the separate `toolang_caps` package, even while it is
+  still shipped from this repository, so it can be split out later without a
+  large refactor.
 
 
 ## Agent Identity

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-CAP_KINDS = ("skills", "services", "prompts", "psyches")
+from toolang_caps import CAP_KINDS, section_name
 
 
 def resolve_toolang_root(root: Path | str) -> Path:
@@ -49,10 +49,6 @@ def toolang_config_path(agent_home: Path | str) -> Path:
     return resolve_agent_home(agent_home) / "toolang.toml"
 
 
-def toolang_lock_path(agent_home: Path | str) -> Path:
-    return resolve_agent_home(agent_home) / "toolang.lock"
-
-
 def agent_source_path(agent_home: Path | str, agent_name: str) -> Path:
     return resolve_agent_home(agent_home) / f"{agent_name}.too"
 
@@ -61,13 +57,17 @@ def agent_room(agent_home: Path | str, agent_name: str) -> Path:
     return resolve_agent_home(agent_home) / ".toolang" / "agent" / agent_name
 
 
+def agent_sync_path(agent_home: Path | str, agent_name: str) -> Path:
+    return synced_caps_root(agent_home) / f"{agent_name}.state.json"
+
+
 def synced_caps_root(agent_home: Path | str) -> Path:
     return resolve_agent_home(agent_home) / ".toolang" / ".sync"
 
 
 def synced_caps_dir(agent_home: Path | str, kind: str) -> Path:
     _validate_cap_kind(kind)
-    return synced_caps_root(agent_home) / kind
+    return synced_caps_root(agent_home) / section_name(kind)
 
 
 def shared_caps_root(agent_home: Path | str) -> Path:
@@ -76,7 +76,7 @@ def shared_caps_root(agent_home: Path | str) -> Path:
 
 def shared_caps_dir(agent_home: Path | str, kind: str) -> Path:
     _validate_cap_kind(kind)
-    return shared_caps_root(agent_home) / kind
+    return shared_caps_root(agent_home) / section_name(kind)
 
 
 def ensure_toolang_root_layout(root: Path | str) -> Path:
@@ -100,8 +100,9 @@ def ensure_agent_home_layout(agent_home: Path | str, agent_name: str) -> Path:
     for path in (resolved_home, room, sync_root):
         path.mkdir(parents=True, exist_ok=True)
     for kind in CAP_KINDS:
-        (sync_root / kind).mkdir(parents=True, exist_ok=True)
-        (shared_root / kind).mkdir(parents=True, exist_ok=True)
+        section = section_name(kind)
+        (sync_root / section).mkdir(parents=True, exist_ok=True)
+        (shared_root / section).mkdir(parents=True, exist_ok=True)
     return resolved_home
 
 

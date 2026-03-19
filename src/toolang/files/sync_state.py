@@ -5,19 +5,35 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from toolang.files.program import SyncedProgram
+
 
 class InputFingerprint(BaseModel):
     mtime_ns: int
     size: int | None = None
 
 
+class LockEntry(BaseModel):
+    ref: str
+    repo: str
+    path: str
+    rev: str
+
+
+class LockedAgentRefs(BaseModel):
+    skills: dict[str, LockEntry] = Field(default_factory=dict)
+    services: dict[str, LockEntry] = Field(default_factory=dict)
+    prompts: dict[str, LockEntry] = Field(default_factory=dict)
+    psyches: dict[str, LockEntry] = Field(default_factory=dict)
+
+
 class SyncState(BaseModel):
     version: int = 1
     synced_at: datetime
     source_file: str
-    agent_room: str
-    synced_caps: str
     inputs: dict[str, InputFingerprint] = Field(default_factory=dict)
+    program: SyncedProgram
+    refs: LockedAgentRefs = Field(default_factory=LockedAgentRefs)
 
     @classmethod
     def load(cls, path: Path) -> "SyncState":
@@ -28,3 +44,6 @@ class SyncState(BaseModel):
             self.model_dump_json(indent=2, exclude_none=True),
             encoding="utf-8",
         )
+
+    def to_program(self):
+        return self.program.to_program()

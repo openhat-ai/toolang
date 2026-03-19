@@ -12,8 +12,14 @@ The project pins `3.13` for day-to-day development, but the package metadata sta
 ## Project Layout
 
 - `src/toolang/`: installable Python package
+- `src/toolang_caps/`: caps models and synced-cap filesystem logic, kept as a
+  separate package so it can be split out later
 - `tests/`: parser and CLI tests
 - `archive/python-experiments/`: old experimental Python entrypoints kept for reference
+
+The runtime package now supports `toolang sync <agent>` for source-only sync
+state generation. Managed config caps and local shared caps are intentionally
+left unsupported until resolution is implemented.
 
 ## Workspace Repositories
 
@@ -56,6 +62,12 @@ uv run toolang --help
 
 `toolang` is an agent runtime CLI. Grammar inspection and AST-oriented tooling
 belong in the sibling grammar package rather than this runtime package.
+
+Build source-only sync state for an agent:
+
+```bash
+uv run toolang sync tests/fixtures/sample.too
+```
 
 If you want real model execution from `toolang run`, install the remaining
 runtime-specific package yourself:
