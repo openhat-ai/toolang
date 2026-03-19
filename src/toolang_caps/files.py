@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 
 from toolang_caps.frontmatter import parse_cap_body
-from toolang_caps.models import CAP_KINDS, InlineCap, InlineCapMeta, SkillMeta
+from toolang_caps.models import CAP_KINDS, InlineCap, InlineCapMeta, SkillMeta, section_name
 
 LANGUAGE_EXTENSIONS = {
     "json": ".json",
@@ -16,7 +16,7 @@ LANGUAGE_EXTENSIONS = {
 def sync_inline_caps(root: Path, caps: list[InlineCap]) -> None:
     root.mkdir(parents=True, exist_ok=True)
     for kind in CAP_KINDS:
-        (root / kind).mkdir(parents=True, exist_ok=True)
+        (root / section_name(kind)).mkdir(parents=True, exist_ok=True)
 
     expected: dict[Path, str] = {}
     for cap in caps:
@@ -42,7 +42,7 @@ def sync_inline_caps(root: Path, caps: list[InlineCap]) -> None:
         expected[meta_path] = "file"
 
     for kind in ("service", "prompt", "psyche"):
-        kind_dir = root / kind
+        kind_dir = root / section_name(kind)
         for existing in kind_dir.iterdir():
             if existing not in expected:
                 _remove_path(existing)
@@ -67,7 +67,7 @@ def sync_skill_materialization(root: Path, name: str, source_dir: Path, resolved
 
 
 def remove_stale_skill_materializations(root: Path, expected_names: set[str]) -> None:
-    kind_dir = root / "skill"
+    kind_dir = root / section_name("skill")
     kind_dir.mkdir(parents=True, exist_ok=True)
     expected_paths = {
         skill_cap_dir(root, name) for name in expected_names
@@ -81,19 +81,19 @@ def remove_stale_skill_materializations(root: Path, expected_names: set[str]) ->
 
 def inline_cap_path(root: Path, kind: str, name: str, language: str | None) -> Path:
     extension = LANGUAGE_EXTENSIONS.get(language or "", f".{language}" if language else ".txt")
-    return root / kind / f"{name}{extension}"
+    return root / section_name(kind) / f"{name}{extension}"
 
 
 def inline_cap_meta_path(root: Path, kind: str, name: str) -> Path:
-    return root / kind / f"{name}.meta.json"
+    return root / section_name(kind) / f"{name}.meta.json"
 
 
 def skill_cap_dir(root: Path, name: str) -> Path:
-    return root / "skill" / name
+    return root / section_name("skill") / name
 
 
 def skill_cap_meta_path(root: Path, name: str) -> Path:
-    return root / "skill" / f"{name}.meta.json"
+    return root / section_name("skill") / f"{name}.meta.json"
 
 
 def _remove_path(path: Path) -> None:
