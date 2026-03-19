@@ -13,6 +13,7 @@ dependencies = [
     "tomli>=2.2.1 ; python_full_version < '3.11'",
     "tomli-w>=1.2.0",
     "tree-sitter>=0.24,<0.26",
+    "typer>=0.16,<1",
 ]
 
 [project.scripts]

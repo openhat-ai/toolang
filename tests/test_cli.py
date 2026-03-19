@@ -2,15 +2,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from toolang.cli import build_parser, main
+from typer.testing import CliRunner
+
+from toolang.cli import app, main
+
+runner = CliRunner()
 
 
 def test_cli_has_expected_subcommands() -> None:
-    parser = build_parser()
-    namespace = parser.parse_args(["check", "alice"])
+    result = runner.invoke(app, ["--help"])
 
-    assert namespace.command == "check"
-    assert namespace.agent == "alice"
+    assert result.exit_code == 0
+    assert "run" in result.output
+    assert "check" in result.output
+    assert "dump-ast" in result.output
 
 
 def test_cli_check_resolves_resident_agent_from_toolang_root(
