@@ -61,12 +61,12 @@ def agent_room(agent_home: Path | str, agent_name: str) -> Path:
     return resolve_agent_home(agent_home) / ".toolang" / "agent" / agent_name
 
 
-def agent_program_path(agent_home: Path | str, agent_name: str) -> Path:
-    return agent_room(agent_home, agent_name) / "program.json"
+def synced_agents_dir(agent_home: Path | str) -> Path:
+    return synced_caps_root(agent_home) / "agents"
 
 
-def agent_sync_state_path(agent_home: Path | str, agent_name: str) -> Path:
-    return agent_room(agent_home, agent_name) / "sync.json"
+def agent_sync_path(agent_home: Path | str, agent_name: str) -> Path:
+    return synced_agents_dir(agent_home) / f"{agent_name}.json"
 
 
 def synced_caps_root(agent_home: Path | str) -> Path:
@@ -105,7 +105,7 @@ def ensure_agent_home_layout(agent_home: Path | str, agent_name: str) -> Path:
     room = agent_room(resolved_home, agent_name)
     sync_root = synced_caps_root(resolved_home)
     shared_root = shared_caps_root(resolved_home)
-    for path in (resolved_home, room, sync_root):
+    for path in (resolved_home, room, sync_root, synced_agents_dir(resolved_home)):
         path.mkdir(parents=True, exist_ok=True)
     for kind in CAP_KINDS:
         section = section_name(kind)

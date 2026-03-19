@@ -9,8 +9,7 @@ from toolang.agent_refs import resolve_agent_ref
 from toolang.errors import ToolangError
 from toolang.files import ToolangLock, SyncedProgram
 from toolang.layout import (
-    agent_program_path,
-    agent_sync_state_path,
+    agent_sync_path,
     resolve_toolang_root,
     synced_caps_root,
     toolang_config_path,
@@ -47,8 +46,7 @@ def test_sync_agent_writes_program_and_source_caps(tmp_path) -> None:
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     synced_program = sync_agent(agent)
 
-    assert agent_program_path(home, "alice").exists()
-    assert agent_sync_state_path(home, "alice").exists()
+    assert agent_sync_path(home, "alice").exists()
     assert (synced_caps_root(home) / "prompts" / "summarize.md").exists()
     assert (synced_caps_root(home) / "prompts" / "summarize.meta.json").exists()
     assert (synced_caps_root(home) / "services" / "github.md").read_text(encoding="utf-8").startswith("---\n")
@@ -66,6 +64,15 @@ use skill by3gus/pdf-processing
 
 thunk summarize:
     Summarize the selected PDFs.
+""".strip(),
+        encoding="utf-8",
+    )
+    (home / "bob.too").write_text(
+        """
+use skill by3gus/pdf-processing
+
+thunk review:
+    Review the selected PDFs.
 """.strip(),
         encoding="utf-8",
     )
@@ -106,9 +113,9 @@ thunk summarize:
     ).read_text(encoding="utf-8")
 
     lock = ToolangLock.load(toolang_lock_path(home))
-    assert lock.skills["pdf-processing"].repo == "by3gus/agent-skills"
-    assert lock.skills["pdf-processing"].path == "skills/pdf-processing"
-    assert lock.skills["pdf-processing"].rev == "abc123"
+    assert lock.agents["alice"].skills["pdf-processing"].repo == "by3gus/agent-skills"
+    assert lock.agents["bob"].skills["pdf-processing"].path == "skills/pdf-processing"
+    assert lock.agents["alice"].skills["pdf-processing"].rev == "abc123"
 
 
 def test_ensure_agent_synced_reuses_fresh_state(tmp_path) -> None:
@@ -119,10 +126,10 @@ def test_ensure_agent_synced_reuses_fresh_state(tmp_path) -> None:
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     sync_agent(agent)
-    before = agent_sync_state_path(home, "alice").read_text(encoding="utf-8")
+    before = agent_sync_path(home, "alice").read_text(encoding="utf-8")
 
     ensure_agent_synced(agent)
-    after = agent_sync_state_path(home, "alice").read_text(encoding="utf-8")
+    after = agent_sync_path(home, "alice").read_text(encoding="utf-8")
 
     assert after == before
 
@@ -158,7 +165,7 @@ thunk review:
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     sync_agent(agent)
-    before = agent_sync_state_path(home, "alice").read_text(encoding="utf-8")
+    before = agent_sync_path(home, "alice").read_text(encoding="utf-8")
 
     (home / "bob.too").write_text(
         """
@@ -169,7 +176,7 @@ thunk review:
     )
 
     ensure_agent_synced(agent)
-    after = agent_sync_state_path(home, "alice").read_text(encoding="utf-8")
+    after = agent_sync_path(home, "alice").read_text(encoding="utf-8")
 
     assert after != before
 

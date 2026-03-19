@@ -14,12 +14,27 @@ class LockEntry(BaseModel):
     rev: str
 
 
-class ToolangLock(BaseModel):
-    version: int = 1
+class LockedAgentRefs(BaseModel):
     skills: dict[str, LockEntry] = Field(default_factory=dict)
     services: dict[str, LockEntry] = Field(default_factory=dict)
     prompts: dict[str, LockEntry] = Field(default_factory=dict)
     psyches: dict[str, LockEntry] = Field(default_factory=dict)
+
+    def to_toml(self) -> dict[str, object]:
+        data: dict[str, object] = {}
+        for section in ("skills", "services", "prompts", "psyches"):
+            entries = getattr(self, section)
+            if entries:
+                data[section] = {
+                    name: entries[name].model_dump(mode="python")
+                    for name in sorted(entries)
+                }
+        return data
+
+
+class ToolangLock(BaseModel):
+    version: int = 1
+    agents: dict[str, LockedAgentRefs] = Field(default_factory=dict)
 
     @classmethod
     def empty(cls) -> "ToolangLock":
@@ -30,10 +45,7 @@ class ToolangLock(BaseModel):
         data = load_toml(path)
         return cls(
             version=int(data.get("version", 1)),
-            skills=data.get("skills", {}) or {},
-            services=data.get("services", {}) or {},
-            prompts=data.get("prompts", {}) or {},
-            psyches=data.get("psyches", {}) or {},
+            agents=data.get("agents", {}) or {},
         )
 
     def save(self, path: Path) -> None:
@@ -41,11 +53,9 @@ class ToolangLock(BaseModel):
 
     def to_toml(self) -> dict[str, object]:
         data: dict[str, object] = {"version": self.version}
-        for section in ("skills", "services", "prompts", "psyches"):
-            entries = getattr(self, section)
-            if entries:
-                data[section] = {
-                    name: entries[name].model_dump(mode="python")
-                    for name in sorted(entries)
-                }
+        if self.agents:
+            data["agents"] = {
+                agent_name: self.agents[agent_name].to_toml()
+                for agent_name in sorted(self.agents)
+            }
         return data
