@@ -56,6 +56,20 @@ class RunningAgentSnapshot(BaseModel):
     heartbeat_at: datetime
 
 
+class KnownAgentSnapshot(BaseModel):
+    agent_uri: str
+    agent_id: str
+    agent_name: str
+    agent_home: str
+    source_file: str
+    updated_at: datetime
+    pid: int | None = None
+    running_status: str | None = None
+    endpoint: str | None = None
+    started_at: datetime | None = None
+    heartbeat_at: datetime | None = None
+
+
 def ensure_agent_registry(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with _connect(db_path) as connection:
@@ -223,6 +237,31 @@ def list_running_agents(db_path: Path) -> list[RunningAgentSnapshot]:
     return [_running_snapshot_from_row(row) for row in rows]
 
 
+def list_known_agents(db_path: Path) -> list[KnownAgentSnapshot]:
+    ensure_agent_registry(db_path)
+    with _connect(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                agents.agent_uri,
+                agents.agent_id,
+                agents.agent_name,
+                agents.agent_home,
+                agents.source_file,
+                agents.updated_at,
+                running_agents.pid,
+                running_agents.status AS running_status,
+                running_agents.endpoint,
+                running_agents.started_at,
+                running_agents.heartbeat_at
+            FROM agents
+            LEFT JOIN running_agents ON running_agents.agent_uri = agents.agent_uri
+            ORDER BY agents.agent_name ASC, agents.updated_at DESC
+            """
+        ).fetchall()
+    return [_known_snapshot_from_row(row) for row in rows]
+
+
 def delete_running_agent(db_path: Path, agent_uri: str) -> None:
     ensure_agent_registry(db_path)
     with _connect(db_path) as connection:
@@ -274,4 +313,28 @@ def _running_snapshot_from_row(row: sqlite3.Row) -> RunningAgentSnapshot:
         endpoint=row["endpoint"],
         started_at=datetime.fromisoformat(row["started_at"]),
         heartbeat_at=datetime.fromisoformat(row["heartbeat_at"]),
+    )
+
+
+def _known_snapshot_from_row(row: sqlite3.Row) -> KnownAgentSnapshot:
+    return KnownAgentSnapshot(
+        agent_uri=row["agent_uri"],
+        agent_id=row["agent_id"],
+        agent_name=row["agent_name"],
+        agent_home=row["agent_home"],
+        source_file=row["source_file"],
+        updated_at=datetime.fromisoformat(row["updated_at"]),
+        pid=row["pid"],
+        running_status=row["running_status"],
+        endpoint=row["endpoint"],
+        started_at=(
+            datetime.fromisoformat(row["started_at"])
+            if row["started_at"] is not None
+            else None
+        ),
+        heartbeat_at=(
+            datetime.fromisoformat(row["heartbeat_at"])
+            if row["heartbeat_at"] is not None
+            else None
+        ),
     )

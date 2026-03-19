@@ -471,6 +471,7 @@ Rules:
 - `toolang run <agent>`
 - `toolang serve <agent>`
 - `toolang start <agent>`
+- `toolang list`
 
 Rules:
 
@@ -520,6 +521,7 @@ Command intent:
 ### 10.4 Running-Agent Commands
 
 - `toolang ps`
+- `toolang list`
 - `toolang inspect <agent>`
 - `toolang logs <agent>`
 - `toolang stop <agent>`

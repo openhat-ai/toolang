@@ -120,6 +120,7 @@ Representative commands:
 - `toolang run`
 - `toolang serve`
 - `toolang start`
+- `toolang list`
 - `toolang sync`
 
 Reason:
