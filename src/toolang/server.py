@@ -44,13 +44,18 @@ def serve_agent(
     host: str,
     port: int,
 ) -> None:
+    endpoint = f"http://{host}:{port}"
     app = create_agent_app(
         prepared,
         agents_db_path=agents_db_path,
         host=host,
         port=port,
     )
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    try:
+        uvicorn.run(app, host=host, port=port, log_level="info")
+    finally:
+        if _has_running_state(prepared, agents_db_path=agents_db_path):
+            _deactivate_running_agent(prepared, agents_db_path=agents_db_path, endpoint=endpoint)
 
 
 def create_agent_app(
@@ -216,6 +221,16 @@ def _write_agent_run_state(
         started_at=started_at,
         heartbeat_at=heartbeat_at,
     ).save(run_path)
+
+
+def _has_running_state(
+    prepared: PreparedAgent,
+    *,
+    agents_db_path: Path,
+) -> bool:
+    if get_running_agent(agents_db_path, prepared.ref.agent_uri) is not None:
+        return True
+    return agent_run_path(prepared.ref.agent_home, prepared.ref.agent_name).exists()
 
 
 def _pid_exists(pid: int) -> bool:
