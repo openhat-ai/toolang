@@ -208,6 +208,8 @@ Agent room layout:
 ${AGENT_ROOM}/
   agent.run
   agent.log
+  chats/
+    chats.db
   sandbox/
   tasks/
     *.md
@@ -222,5 +224,6 @@ Notes:
 - `agent.run` mirrors the current running state and active loop set of one
   started agent
 - `agent.log` stores the managed runtime log for one agent
+- `chats/chats.db` stores durable chat threads and messages for one agent
 - `sandbox/` stores the local execution sandbox for that agent
 - `tasks/`, `chores/`, and `will.md` store agent-local work state

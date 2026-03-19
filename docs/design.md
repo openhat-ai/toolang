@@ -727,32 +727,87 @@ Each started agent exposes a local HTTP API for direct web UI integration.
 
 Current endpoints:
 
+- `GET /healthz`
 - `GET /api/v1/health`
 - `GET /api/v1/agent`
+- `GET /api/v1/profile`
+- `GET /api/v1/runtime`
 - `GET /api/v1/caps`
+- `POST /api/v1/chat`
+- `POST /api/v1/chat/stream`
+- `GET /api/v1/chats`
+- `GET /api/v1/chats/{thread_id}`
 - `GET /api/v1/runs`
+- `GET /api/v1/runs/{run_id}`
 - `GET /api/v1/events`
+- `GET /api/v1/events/stream`
 - `POST /api/v1/runs`
 
 Responsibilities:
 
 - `/api/v1/agent`
   - basic agent identity and current started state
+- `/api/v1/profile`
+  - basic agent profile for UI identity and labeling
+- `/api/v1/runtime`
+  - current runtime environment and trust context for the started agent
 - `/api/v1/caps`
-  - synced capability metadata for the current agent home
+  - synced capability metadata for the current agent
+- `/api/v1/chat`
+  - one full chat turn with durable transcript storage
+- `/api/v1/chat/stream`
+  - text-streaming chat surface for Web UI
+- `/api/v1/chats`
+  - list chat threads for this agent
+- `/api/v1/chats/{thread_id}`
+  - list recent turns and messages for one thread
 - `/api/v1/runs`
   - current and historical top-level runs for this agent
+- `/api/v1/runs/{run_id}`
+  - run detail with related events and chat turn, when available
 - `/api/v1/events`
   - ordered agent-scoped event stream from `bus/events.db`
+- `/api/v1/events/stream`
+  - SSE event feed for incremental UI updates
 
 Reason:
 
 - a direct single-agent endpoint lets Web UI work before the multi-agent bus
-  server exists
-- the same runtime event model can later be projected through a central bus API
+  server is involved
+- the same runtime event model can also be projected through a central bus API
 
 
-## 14. Runtime Flow
+## 14. Bus API
+
+Toolang also exposes a root-level bus HTTP API over `bus/events.db`.
+
+Current endpoints:
+
+- `GET /healthz`
+- `GET /api/v1/agents`
+- `GET /api/v1/agents/{agent_id}`
+- `POST /api/v1/agents/{agent_id}/chat`
+- `POST /api/v1/agents/{agent_id}/chat/stream`
+- `GET /api/v1/runs`
+- `GET /api/v1/events`
+- `GET /api/v1/agents/{agent_id}/events`
+- `GET /api/v1/events/stream`
+- `GET /api/v1/agents/{agent_id}/events/stream`
+
+Responsibilities:
+
+- list known and active agents from the shared bus projection
+- list global or per-agent runs and events
+- proxy chat requests to active agent endpoints
+- provide one local endpoint for multi-agent Web UI integration
+
+Reason:
+
+- agent processes already publish durable events directly to `bus/events.db`
+- a standalone bus server can stay thin and only project/query shared state
+
+
+## 15. Runtime Flow
 
 Primary runtime flow:
 

@@ -128,6 +128,53 @@ class BusStore:
             return None
         return _agent_from_row(row)
 
+    def get_agent_by_id(self, agent_id: str) -> AgentSnapshot | None:
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT
+                    agent_uri, agent_id, name, kind, status, endpoint,
+                    agent_home, source_file, detail, created_at, updated_at
+                FROM agents
+                WHERE agent_id = ?
+                """,
+                (agent_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _agent_from_row(row)
+
+    def list_agents(self, *, limit: int = 200) -> list[AgentSnapshot]:
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT
+                    agent_uri, agent_id, name, kind, status, endpoint,
+                    agent_home, source_file, detail, created_at, updated_at
+                FROM agents
+                ORDER BY updated_at DESC, agent_id ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [_agent_from_row(row) for row in rows]
+
+    def get_run(self, run_id: str) -> RunSnapshot | None:
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT
+                    run_id, agent_uri, agent_id, run_type, origin, thunk_name,
+                    summary, status, error, parent_run_id, thread_id, created_at, updated_at
+                FROM runs
+                WHERE run_id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _run_from_row(row)
+
     def list_runs(self, *, agent_uri: str | None = None, limit: int = 50) -> list[RunSnapshot]:
         clauses: list[str] = []
         params: list[Any] = []
@@ -156,13 +203,21 @@ class BusStore:
         *,
         agent_uri: str | None = None,
         from_event_id: int = 0,
+        to_event_id: int | None = None,
+        run_id: str | None = None,
         limit: int = 100,
     ) -> list[StoredEvent]:
         clauses = ["event_id > ?"]
         params: list[Any] = [from_event_id]
+        if to_event_id is not None:
+            clauses.append("event_id <= ?")
+            params.append(to_event_id)
         if agent_uri is not None:
             clauses.append("agent_uri = ?")
             params.append(agent_uri)
+        if run_id is not None:
+            clauses.append("run_id = ?")
+            params.append(run_id)
         params.append(limit)
         with self._lock:
             rows = self._conn.execute(
@@ -189,6 +244,22 @@ class BusStore:
                 )
             )
         return items
+
+    def max_event_id(self, *, agent_uri: str | None = None) -> int:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if agent_uri is not None:
+            clauses.append("agent_uri = ?")
+            params.append(agent_uri)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT COALESCE(MAX(event_id), 0) AS event_id FROM events {where}",
+                params,
+            ).fetchone()
+        if row is None:
+            return 0
+        return int(row["event_id"])
 
     def _init_schema(self) -> None:
         with self._lock:
