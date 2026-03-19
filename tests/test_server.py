@@ -11,9 +11,10 @@ import httpx
 from fastapi.testclient import TestClient
 
 from toolang.agent_refs import resolve_agent_ref
+from toolang.bus.db import BusStore
 from toolang.agent_registry import get_running_agent
 from toolang.files.agent_run import AgentRunState
-from toolang.layout import agent_run_path, agents_db_path, resolve_toolang_root
+from toolang.layout import agent_run_path, agents_db_path, bus_events_db_path, resolve_toolang_root
 from toolang.prepared import prepare_agent
 from toolang.server import create_agent_app
 
@@ -32,10 +33,11 @@ def test_create_agent_app_registers_running_agent_and_serves_requests(
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     prepared = prepare_agent(agent)
     db_path = agents_db_path(root)
+    events_path = bus_events_db_path(root)
     run_path = agent_run_path(home, "alice")
 
     monkeypatch.setattr(
-        "toolang.server.execute_thunk",
+        "toolang.invoke.execute_thunk",
         lambda program, thunk, program_path, *, user_input, model=None: (
             f"ran:{thunk.name}:{user_input}:{model}"
         ),
@@ -44,15 +46,27 @@ def test_create_agent_app_registers_running_agent_and_serves_requests(
     app = create_agent_app(
         prepared,
         agents_db_path=db_path,
+        bus_db_path=events_path,
         host="127.0.0.1",
         port=8765,
     )
 
     with TestClient(app) as client:
-        health = client.get("/health")
+        health = client.get("/api/v1/health")
         assert health.status_code == 200
         assert health.json()["agent_uri"] == agent.agent_uri
         assert health.json()["agent_id"] == agent.agent_id[:12]
+
+        info = client.get("/api/v1/agent")
+        assert info.status_code == 200
+        assert info.json()["status"] == "started"
+        assert info.json()["kind"] == "resident"
+
+        caps = client.get("/api/v1/caps")
+        assert caps.status_code == 200
+        assert [item["name"] for item in caps.json()["services"]] == ["github"]
+        assert [item["name"] for item in caps.json()["prompts"]] == ["summarize"]
+        assert [item["name"] for item in caps.json()["psyches"]] == ["reviewer"]
 
         active = get_running_agent(db_path, agent.agent_uri)
         assert active is not None
@@ -61,14 +75,38 @@ def test_create_agent_app_registers_running_agent_and_serves_requests(
         assert AgentRunState.load(run_path).status == "running"
 
         run_response = client.post(
-            "/runs",
+            "/api/v1/runs",
             json={"thunk": "summarize", "input": "hello", "model": "gpt-5.3"},
         )
         assert run_response.status_code == 200
-        assert run_response.json() == {"output": "ran:summarize:hello:gpt-5.3"}
+        body = run_response.json()
+        assert body["output"] == "ran:summarize:hello:gpt-5.3"
+        assert len(body["run_id"]) == 32
+
+        runs = client.get("/api/v1/runs")
+        assert runs.status_code == 200
+        assert runs.json()[0]["status"] == "finished"
+        assert runs.json()[0]["origin"] == "invoke"
+
+        events = client.get("/api/v1/events")
+        assert events.status_code == 200
+        assert [item["event_type"] for item in events.json()] == [
+            "agent_started",
+            "run_started",
+            "run_finished",
+        ]
 
     assert get_running_agent(db_path, agent.agent_uri) is None
     assert AgentRunState.load(run_path).status == "stopped"
+    store = BusStore(events_path)
+    events = store.list_events(agent_uri=agent.agent_uri)
+    store.close()
+    assert [event.event_type for event in events] == [
+        "agent_started",
+        "run_started",
+        "run_finished",
+        "agent_stopped",
+    ]
 
 
 def test_serve_process_writes_stopped_state_after_termination(tmp_path: Path) -> None:
@@ -124,7 +162,7 @@ def _pick_free_port() -> int:
 
 def _wait_for_server(port: int) -> None:
     deadline = time.monotonic() + 5.0
-    url = f"http://127.0.0.1:{port}/health"
+    url = f"http://127.0.0.1:{port}/api/v1/health"
     while time.monotonic() < deadline:
         try:
             response = httpx.get(url, timeout=0.2)

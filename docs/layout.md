@@ -143,6 +143,8 @@ Notes:
 - `guests/{HOME}/` stores visiting agent homes
 - `sandbox/{AGENT}/` is reserved for local execution sandboxes
 - `bus/` stores local event and bus state
+- `bus/events.db` is the shared durable event store used by local agents and a
+  future standalone bus server
 - `agents.db` stores:
   - known agents keyed by `agent_uri`
   - active started agents keyed by `agent_uri`

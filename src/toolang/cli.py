@@ -14,6 +14,8 @@ import click
 import typer
 from dotenv import load_dotenv
 
+from toolang.bus.db import BusStore
+from toolang.bus.events import AgentUpdated, utc_now
 from toolang.agent_refs import ResolvedAgentRef, resolve_agent_ref
 from toolang.agent_registry import (
     KnownAgentRecord,
@@ -26,15 +28,16 @@ from toolang.agent_registry import (
 from toolang.errors import ToolangError
 from toolang.files._toml import load_toml
 from toolang.files.agent_run import AgentRunState
+from toolang.invoke import invoke_prepared_agent
 from toolang.layout import (
     agent_log_path,
     agent_run_path,
     agents_db_path,
+    bus_events_db_path,
     ensure_toolang_root_layout,
     resolve_toolang_root,
 )
 from toolang.prepared import prepare_agent
-from toolang.runtime import execute_thunk
 from toolang.server import serve_agent
 from toolang.sync import sync_agent
 
@@ -79,7 +82,9 @@ def invoke(
     ] = None,
     model: Annotated[str | None, typer.Option(help="Override model selection")] = None,
 ) -> None:
-    db_path = agents_db_path(_toolang_root())
+    toolang_root = _toolang_root()
+    db_path = agents_db_path(toolang_root)
+    bus_db_path = bus_events_db_path(toolang_root)
     prepared = prepare_agent(_resolve_cli_agent(agent, db_path=db_path))
     _remember_agent(prepared.ref, db_path=db_path)
     selected_thunk = prepared.program.get_thunk(thunk)
@@ -87,24 +92,40 @@ def invoke(
     if selected_thunk.input_name and user_input is None and not sys.stdin.isatty():
         user_input = sys.stdin.read()
 
-    result = execute_thunk(
-        prepared.program,
+    result = invoke_prepared_agent(
+        prepared,
         selected_thunk,
-        prepared.source_path,
+        bus_db_path=bus_db_path,
         user_input=user_input,
         model=model,
     )
-    typer.echo(result)
+    typer.echo(result.output)
 
 
 @app.command()
 def sync(
     agent: Annotated[str, typer.Argument(help="Agent selector")],
 ) -> None:
-    db_path = agents_db_path(_toolang_root())
+    toolang_root = _toolang_root()
+    db_path = agents_db_path(toolang_root)
+    bus_db_path = bus_events_db_path(toolang_root)
     agent_ref = _resolve_cli_agent(agent, db_path=db_path)
     sync_agent(agent_ref)
     _remember_agent(agent_ref, db_path=db_path)
+    bus = BusStore(bus_db_path)
+    bus.append(
+        AgentUpdated(
+            at=utc_now(),
+            agent_uri=agent_ref.agent_uri,
+            agent_id=agent_ref.agent_id[:12],
+            name=agent_ref.agent_name,
+            update_kind="sync",
+            detail="sync completed",
+            agent_home=str(agent_ref.agent_home),
+            source_file=agent_ref.source_path.name,
+        )
+    )
+    bus.close()
     typer.echo("synced")
 
 
@@ -114,12 +135,15 @@ def serve(
     host: Annotated[str, typer.Option(help="Host interface to bind")] = "127.0.0.1",
     port: Annotated[int, typer.Option(help="Port to listen on")] = 8765,
 ) -> None:
-    db_path = agents_db_path(_toolang_root())
+    toolang_root = _toolang_root()
+    db_path = agents_db_path(toolang_root)
+    bus_db_path = bus_events_db_path(toolang_root)
     prepared = prepare_agent(_resolve_cli_agent(agent, db_path=db_path))
     _remember_agent(prepared.ref, db_path=db_path)
     serve_agent(
         prepared,
         agents_db_path=db_path,
+        bus_db_path=bus_db_path,
         host=host,
         port=port,
     )
