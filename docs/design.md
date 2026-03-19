@@ -97,7 +97,7 @@ Global Toolang storage lives under `TOOLANG_ROOT`.
 Responsibilities:
 
 - `agents.db`
-  - global registry of known agents and active served agents
+  - global registry of known agents and active started agents
 - `agents/{HOME}/`
   - resident agent homes
 - `guests/{HOME}/`
@@ -525,6 +525,47 @@ Reason:
 - `channel` answers how a chat message arrived
 - `sender` answers who the agent is responding to
 
+### 10.1 Runtime Loops
+
+Toolang has four long-lived `runtime loops` that generate messages for the
+shared turn engine:
+
+- `server`
+  - accepts local requests and can generate `invoke` or `chat` turns
+- `poll`
+  - polls external channels and usually generates `chat` turns
+- `hook`
+  - reacts to external hooks and usually generates `invoke` turns
+- `pulse`
+  - emits internal `task`, `chore`, and `will` turns
+
+Rules:
+
+- runtime loops are trigger sources, not message origins
+- `toolang invoke` starts no runtime loops
+- `toolang serve` starts only the `server` loop
+- `toolang start` starts a loop set chosen by agent-kind defaults or an
+  explicit `--loops=...` override
+
+Default loop policy:
+
+- resident agent
+  - start all configured loops
+- visiting agent
+  - start `server` by default
+  - `poll`, `hook`, and `pulse` require explicit opt-in
+- roaming agent
+  - start no loops by default
+  - every loop requires explicit opt-in
+
+Reason:
+
+- roaming agents are often used for one-shot local work such as scripts,
+  Makefiles, and editor actions
+- visiting agents should be reachable by default without automatically gaining
+  long-lived polling or self-driven behavior
+- resident agents are the natural home for fully managed long-running behavior
+
 
 ## 11. CLI
 
@@ -542,11 +583,14 @@ Rules:
   required
 - `invoke` updates the known-agent registry but does not create a
   running-agent record
-- `serve` runs in the foreground and registers one active served process for
-  its `agent_uri`
-- `start` launches `serve` in the background and returns the selected
-  `agent_id` and local endpoint
-- v1 allows at most one active served process per `agent_uri`
+- `serve` runs the `server` loop in the foreground and registers one active
+  started process for its `agent_uri`
+- `start` launches the selected runtime loop set in the background
+- `start` uses the default loop policy for the resolved agent kind unless
+  `--loops=...` overrides it
+- if `server` is part of the active loop set, `start` also reports the local
+  endpoint
+- v1 allows at most one active started process per `agent_uri`
 
 Grammar inspection and AST-oriented tooling belong in the sibling grammar
 package rather than the Toolang runtime CLI.
@@ -619,7 +663,7 @@ The database has two logical tables:
   - known agent registry
   - keyed by `agent_uri`
 - `running_agents`
-  - active served agents
+  - active started agents
   - keyed by `agent_uri`
 
 Known-agent records include:
@@ -634,6 +678,7 @@ Known-agent records include:
 Running-agent records include:
 
 - `agent_uri`
+- `loops`
 - `pid`
 - `status`
 - `started_at`
@@ -644,8 +689,9 @@ Rules:
 
 - `invoke` may add or refresh an `agents` record
 - only `serve` and `start` create `running_agents` records
-- `agent.run` in the agent room mirrors the current running state for one agent
-- `agent.log` stores the managed server log for one agent
+- `agent.run` in the agent room mirrors the current running state and active
+  loop set for one agent
+- `agent.log` stores the managed runtime log for one agent
 
 
 ## 13. Runtime Flow
@@ -687,7 +733,16 @@ Foreground and background execution build on the same prepared agent:
 
 - `invoke`
   - prepare one synced agent and execute a thunk once
+- `server`
+  - accept local requests and feed the shared turn engine
+- `poll`
+  - read external channels and feed the shared turn engine
+- `hook`
+  - react to external hooks and feed the shared turn engine
+- `pulse`
+  - emit `task`, `chore`, and `will` turns for the shared turn engine
 - `serve`
-  - prepare one synced agent and expose a local HTTP API
+  - prepare one synced agent and run the `server` loop only
 - `start`
-  - spawn `serve` as a background process and wait for registration
+  - spawn the selected runtime loop set as a background process and wait for
+    registration

@@ -40,10 +40,11 @@ Responsibilities:
   - load synced state from `${AGENT_HOME}/.toolang/.sync/`, then execute the
     model and tool loop for one non-interactive turn
 - `serve`
-  - prepare one synced agent and expose a local HTTP API
+  - prepare one synced agent and run the `server` runtime loop in the
+    foreground
 - `start`
-  - launch `serve` in the background and wait for registration in
-    `agents.db`
+  - launch a selected runtime-loop set in the background and wait for
+    registration in `agents.db`
 
 Expected runtime behavior:
 
@@ -56,6 +57,11 @@ Expected runtime behavior:
   synced agent state
 - the turn model is message-driven, with `origin = invoke | chat | task | chore
   | will`; only `chat` carries a non-null `channel`
+- the long-lived trigger layer uses four runtime loops:
+  `server | poll | hook | pulse`
+- default loop policy depends on agent kind:
+  resident starts configured loops, visiting defaults to `server`, roaming
+  defaults to none
 
 Internal sync steps:
 
