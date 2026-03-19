@@ -1,208 +1,214 @@
 from __future__ import annotations
 
-import re
+from functools import lru_cache
+
+from tree_sitter import Language, Node, Parser
 
 from toolang.ast import DeclBlock, ParamDecl, Program, SourceSpan, Thunk, UseDecl
 from toolang.errors import ToolangError
 
-USE_RE = re.compile(r"^use\s+(skill|service|prompt|psyche)\s+(.+)$")
-DECL_RE = re.compile(
-    r"^(service|prompt|psyche|struct|stash)\s+([A-Za-z_][\w-]*)"
-    r"(?:\(([^)]*)\))?(?:\s*:\s*(.*))?$"
-)
-THUNK_RE = re.compile(
-    r"^thunk(?:\s+([A-Za-z_][\w-]*))?(?:\s*\(\s*([A-Za-z_][\w-]*)\s*\))?"
-    r"(?:\s*=>\s*([A-Za-z_][\w-]*))?\s*:\s*$"
-)
-FENCE_START_RE = re.compile(r"^(`{3,})([A-Za-z0-9_-]+)?\s*$")
-COLLECTION_DIRECTIVE_RE = re.compile(r"^(skills|services|tools|thunks)\s*(=|-)\s*(.*)$")
-MODEL_DIRECTIVE_RE = re.compile(r"^model\s*=\s*(.*)$")
-
 
 def parse_program(source: str) -> Program:
+    source_bytes = source.encode("utf-8")
+    tree = _parse_tree(source_bytes)
     lines = source.splitlines()
     program = Program()
-    index = 0
 
-    while index < len(lines):
-        raw = lines[index]
-        stripped = raw.strip()
-        if not stripped or stripped.startswith("#"):
-            index += 1
+    error_node = _first_error_node(tree.root_node)
+    if error_node is not None:
+        _raise_syntax_error(lines, error_node)
+
+    for child in tree.root_node.named_children:
+        if child.type in {"blank_line", "comment"}:
             continue
-        if raw.startswith((" ", "\t")):
-            raise ToolangError(f"Unexpected indentation at line {index + 1}.")
-
-        use_match = USE_RE.match(_strip_comment(raw))
-        if use_match:
-            program.uses.append(
-                UseDecl(
-                    kind=use_match.group(1),
-                    reference=use_match.group(2).strip(),
-                    span=SourceSpan(index + 1),
-                )
-            )
-            index += 1
+        if child.type == "use_statement":
+            program.uses.append(_parse_use(child))
             continue
-
-        thunk_match = THUNK_RE.match(_strip_comment(raw))
-        if thunk_match:
-            thunk, index = _parse_thunk(lines, index, thunk_match)
-            program.thunks.append(thunk)
+        if child.type == "declaration":
+            program.declarations.append(_parse_decl(child))
             continue
-
-        decl_match = DECL_RE.match(_strip_comment(raw))
-        if decl_match:
-            declaration, index = _parse_decl(lines, index, decl_match)
-            program.declarations.append(declaration)
+        if child.type == "thunk":
+            program.thunks.append(_parse_thunk(lines, child))
             continue
-
-        raise ToolangError(f"Unsupported statement at line {index + 1}: {raw!r}")
+        raise ToolangError(
+            f"Unsupported statement at line {child.start_point.row + 1}: {_node_text(child)!r}"
+        )
 
     return program
 
 
-def _parse_decl(lines: list[str], start: int, match: re.Match[str]) -> tuple[DeclBlock, int]:
-    kind = match.group(1)
-    name = match.group(2)
-    raw_params = match.group(3)
-    suffix = (match.group(4) or "").strip()
-    line_number = start + 1
-    index = start + 1
-    params = _parse_params(raw_params, line_number) if raw_params is not None else []
+def _parse_use(node: Node) -> UseDecl:
+    return UseDecl(
+        kind=_required_text(node, "kind"),
+        reference=_required_text(node, "reference"),
+        span=SourceSpan(node.start_point.row + 1),
+    )
 
-    if raw_params is not None and kind != "prompt":
+
+def _parse_decl(node: Node) -> DeclBlock:
+    header = _required_child(node, "header")
+    kind = _required_text(header, "kind")
+    name = _required_text(header, "name")
+    line_number = node.start_point.row + 1
+    params = _parse_params(header.child_by_field_name("parameters"), line_number)
+
+    if params and kind != "prompt":
         raise ToolangError(f"Only prompt declarations may declare parameters at line {line_number}.")
     if kind == "prompt" and any(param.name == "input" for param in params):
         raise ToolangError(
             f"Prompt parameters may not use reserved name 'input' at line {line_number}."
         )
 
-    if not suffix:
-        return (
-            DeclBlock(
-                kind=kind,
-                name=name,
-                language=None,
-                body="",
-                header_suffix="",
-                params=params,
-                span=SourceSpan(line_number),
-            ),
-            index,
-        )
+    language_node = header.child_by_field_name("language")
+    language = _node_text(language_node) if language_node is not None else None
+    body_node = node.child_by_field_name("body")
 
-    fence_match = FENCE_START_RE.match(suffix)
-    if not fence_match:
-        raise ToolangError(f"Expected fenced block after {kind} {name} at line {line_number}.")
-
-    language = fence_match.group(2)
-    opening_ticks = fence_match.group(1)
-    body_lines: list[str] = []
-    while index < len(lines):
-        raw = lines[index]
-        if _is_fence_close(raw.strip(), opening_ticks):
-            return (
-                DeclBlock(
-                    kind=kind,
-                    name=name,
-                    language=language,
-                    body="\n".join(body_lines).rstrip(),
-                    header_suffix=suffix,
-                    params=params,
-                    span=SourceSpan(line_number),
-                ),
-                index + 1,
-            )
-        body_lines.append(raw)
-        index += 1
-
-    raise ToolangError(
-        f"Unterminated fenced block for {kind} {name} starting at line {line_number}."
+    return DeclBlock(
+        kind=kind,
+        name=name,
+        language=language,
+        body=_parse_fence_body(body_node) if body_node is not None else "",
+        header_suffix=f"```{language or ''}" if body_node is not None else "",
+        params=params,
+        span=SourceSpan(line_number),
     )
 
 
-def _parse_thunk(
-    lines: list[str], start: int, match: re.Match[str]
-) -> tuple[Thunk, int]:
+def _parse_thunk(lines: list[str], node: Node) -> Thunk:
+    header = _required_child(node, "header")
     thunk = Thunk(
-        name=match.group(1),
-        input_name=match.group(2),
-        output=match.group(3),
-        span=SourceSpan(start + 1),
+        name=_optional_text(header.child_by_field_name("name")),
+        input_name=_parse_thunk_input(header.child_by_field_name("input")),
+        output=_optional_text(header.child_by_field_name("output")),
+        span=SourceSpan(node.start_point.row + 1),
     )
-    index = start + 1
-    block: list[str] = []
-
-    while index < len(lines):
-        raw = lines[index]
-        if raw.strip() and not raw.startswith((" ", "\t")):
-            break
-        block.append(raw)
-        index += 1
-
     prompt_started = False
     prompt_lines: list[str] = []
-    for raw in block:
-        if not raw.strip():
+
+    for child in node.named_children:
+        if child.type == "thunk_header":
+            continue
+        if child.type == "blank_line":
             if prompt_started:
                 prompt_lines.append("")
             continue
 
-        if not raw.startswith((" ", "\t")):
-            raise ToolangError(f"Thunk body must be indented under line {start + 1}: {raw!r}")
+        raw_line = _line_text(lines, child.start_point.row)
+        if not raw_line.startswith((" ", "\t")):
+            raise ToolangError(
+                f"Thunk body must be indented under line {node.start_point.row + 1}: {raw_line!r}"
+            )
 
-        content = raw.lstrip()
-        stripped_content = _strip_comment(content).strip()
-        if not stripped_content:
-            if prompt_started:
-                prompt_lines.append("")
-            continue
-
-        if not prompt_started and _looks_like_directive(content):
-            thunk.directives.append(_strip_comment(content).strip())
+        text = _parse_thunk_line_text(child)
+        if child.type == "directive_line" and not prompt_started:
+            thunk.directives.append(text)
             continue
 
         prompt_started = True
-        prompt_lines.append(content)
+        prompt_lines.append(text)
 
     thunk.prompt = "\n".join(prompt_lines).strip()
     if not thunk.prompt:
-        raise ToolangError(f"Thunk at line {start + 1} is missing prompt text.")
-    return thunk, index
+        raise ToolangError(f"Thunk at line {node.start_point.row + 1} is missing prompt text.")
+    return thunk
 
 
-def _parse_params(raw_params: str, line_number: int) -> list[ParamDecl]:
+def _parse_params(node: Node | None, line_number: int) -> list[ParamDecl]:
+    if node is None:
+        return []
+
     params: list[ParamDecl] = []
     seen: set[str] = set()
-    for token in raw_params.split(","):
-        item = token.strip()
-        if not item:
-            raise ToolangError(f"Empty parameter in declaration at line {line_number}.")
-        optional = item.endswith("?")
-        name = item[:-1] if optional else item
-        if not re.fullmatch(r"[A-Za-z_][\w-]*", name):
-            raise ToolangError(f"Invalid parameter name {item!r} at line {line_number}.")
+    for parameter in node.children_by_field_name("parameter"):
+        name = _required_text(parameter, "name")
         if name in seen:
             raise ToolangError(f"Duplicate parameter {name!r} at line {line_number}.")
         seen.add(name)
-        params.append(ParamDecl(name=name, optional=optional))
+        params.append(
+            ParamDecl(name=name, optional=parameter.child_by_field_name("optional") is not None)
+        )
     return params
 
 
-def _looks_like_directive(content: str) -> bool:
-    stripped = _strip_comment(content).strip()
-    return bool(stripped) and bool(
-        COLLECTION_DIRECTIVE_RE.match(stripped) or MODEL_DIRECTIVE_RE.match(stripped)
-    )
+def _parse_fence_body(node: Node) -> str:
+    lines: list[str] = []
+    for child in node.named_children:
+        text_node = child.child_by_field_name("text")
+        lines.append(_node_text(text_node) if text_node is not None else "")
+    return "\n".join(lines).rstrip()
 
 
-def _is_fence_close(stripped: str, opening_ticks: str) -> bool:
-    return bool(stripped) and set(stripped) == {"`"} and len(stripped) >= len(opening_ticks)
+def _parse_thunk_input(node: Node | None) -> str | None:
+    if node is None:
+        return None
+    return _required_text(node, "value")
 
 
-def _strip_comment(line: str) -> str:
-    if "#" not in line:
-        return line.rstrip()
-    before_hash, _, _ = line.partition("#")
-    return before_hash.rstrip()
+def _parse_thunk_line_text(node: Node) -> str:
+    if node.type == "directive_line":
+        return _node_text(node.named_children[0]).strip()
+    if node.type == "prompt_line":
+        return _required_text(node, "text")
+    raise ToolangError(f"Unsupported thunk content node: {node.type}")
+
+
+def _first_error_node(node: Node) -> Node | None:
+    if node.is_error or node.is_missing:
+        return node
+    for child in node.children:
+        result = _first_error_node(child)
+        if result is not None:
+            return result
+    return None
+
+
+def _raise_syntax_error(lines: list[str], node: Node) -> None:
+    line_number = node.start_point.row + 1
+    raw_line = _line_text(lines, node.start_point.row)
+    if raw_line.startswith((" ", "\t")) and raw_line.strip():
+        raise ToolangError(f"Unexpected indentation at line {line_number}.")
+    raise ToolangError(f"Syntax error at line {line_number}.")
+
+
+def _required_child(node: Node, field_name: str) -> Node:
+    child = node.child_by_field_name(field_name)
+    if child is None:
+        raise ToolangError(f"Missing syntax field {field_name!r} at line {node.start_point.row + 1}.")
+    return child
+
+
+def _required_text(node: Node, field_name: str) -> str:
+    return _node_text(_required_child(node, field_name))
+
+
+def _optional_text(node: Node | None) -> str | None:
+    return _node_text(node) if node is not None else None
+
+
+def _node_text(node: Node | None) -> str:
+    if node is None or node.text is None:
+        return ""
+    return node.text.decode("utf-8")
+
+
+def _line_text(lines: list[str], row: int) -> str:
+    if 0 <= row < len(lines):
+        return lines[row]
+    return ""
+
+
+def _parse_tree(source: bytes):
+    parser = Parser(_toolang_language())
+    return parser.parse(source)
+
+
+@lru_cache(maxsize=1)
+def _toolang_language() -> Language:
+    try:
+        import tree_sitter_toolang
+    except ImportError as exc:
+        raise ToolangError(
+            "The 'tree-sitter-toolang' package is not installed. Install a local wheel "
+            "or publishable package before running Toolang parsing commands."
+        ) from exc
+    return Language(tree_sitter_toolang.language())

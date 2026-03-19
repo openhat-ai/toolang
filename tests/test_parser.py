@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+
+from toolang.errors import ToolangError
 from toolang.parser import parse_program
 from toolang.runtime import expand_prompt_input, infer_model
 
@@ -44,3 +47,26 @@ thunk summarize(user):
     assert "brief" in expanded
     assert "engineering" in expanded
     assert "Ship the parser refactor." in expanded
+
+
+def test_parse_program_rejects_unindented_thunk_body() -> None:
+    source = """
+thunk summarize:
+model = gpt-5
+""".strip()
+
+    with pytest.raises(ToolangError, match="Thunk body must be indented"):
+        parse_program(source)
+
+
+def test_parse_program_keeps_directive_like_lines_after_prompt_in_prompt_body() -> None:
+    source = """
+thunk summarize:
+    First line
+    model = gpt-5
+""".strip()
+
+    program = parse_program(source)
+
+    assert program.thunks[0].directives == []
+    assert "model = gpt-5" in program.thunks[0].prompt

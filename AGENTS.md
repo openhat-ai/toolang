@@ -28,6 +28,10 @@
   room, and canonical agent URI layout.
 - `docs/design.md` defines runtime behavior and CLI semantics.
 - `docs/impl.md` defines implementation direction and stack choices.
+- The Tree-sitter grammar source of truth lives in the sibling
+  `tree-sitter-toolang` repository. Toolang consumes the Python extension
+  package exposed by that repository rather than compiling grammar sources at
+  runtime.
 
 
 ## Agent Identity
