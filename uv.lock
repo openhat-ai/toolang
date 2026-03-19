@@ -700,7 +700,7 @@ dev = [
     { name = "openai", specifier = ">=1.109.1" },
     { name = "pytest", specifier = ">=8.3.5" },
     { name = "ruff", specifier = ">=0.15.6" },
-    { name = "tree-sitter-toolang", directory = "../tree-sitter-toolang" },
+    { name = "tree-sitter-toolang", path = "../tree-sitter-toolang/dist/tree_sitter_toolang-0.0.5-cp310-abi3-macosx_10_9_universal2.whl" },
     { name = "ty", specifier = ">=0.0.23" },
 ]
 
@@ -762,7 +762,10 @@ wheels = [
 [[package]]
 name = "tree-sitter-toolang"
 version = "0.0.5"
-source = { directory = "../tree-sitter-toolang" }
+source = { path = "../tree-sitter-toolang/dist/tree_sitter_toolang-0.0.5-cp310-abi3-macosx_10_9_universal2.whl" }
+wheels = [
+    { filename = "tree_sitter_toolang-0.0.5-cp310-abi3-macosx_10_9_universal2.whl", hash = "sha256:d5c485e65cad6680b06ed45495a170262f3850d549700d882db202b9a82e0fcd" },
+]
 
 [package.metadata]
 requires-dist = [
