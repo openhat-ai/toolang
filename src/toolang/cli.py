@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -74,24 +73,6 @@ def run(
         model=model,
     )
     typer.echo(result)
-
-
-@app.command()
-def check(
-    agent: Annotated[str, typer.Argument(help="Agent reference, path, or URI")],
-) -> None:
-    program_path = _resolve_program_path(_resolve_cli_agent(agent))
-    parse_program(program_path.read_text(encoding="utf-8"))
-    typer.echo("ok")
-
-
-@app.command(name="dump-ast")
-def dump_ast(
-    agent: Annotated[str, typer.Argument(help="Agent reference, path, or URI")],
-) -> None:
-    program_path = _resolve_program_path(_resolve_cli_agent(agent))
-    program = parse_program(program_path.read_text(encoding="utf-8"))
-    typer.echo(json.dumps(program.to_dict(), indent=2, ensure_ascii=False))
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -441,14 +441,7 @@ Rules:
 
 ## 10. CLI
 
-### 10.1 Analysis and Inspection
-
-- `toolang check <agent>`
-- `toolang dump ast <agent>`
-- `toolang dump ir <agent>`
-- `toolang dump messages <agent>`
-
-### 10.2 Execution
+### 10.1 Execution
 
 - `toolang run <agent>`
 - `toolang serve <agent>`
@@ -461,7 +454,10 @@ Rules:
 - `serve` runs in the foreground
 - `start` runs in the background
 
-### 10.3 Capability Management
+Grammar inspection and AST-oriented tooling belong in the sibling grammar
+package rather than the Toolang runtime CLI.
+
+### 10.2 Capability Management
 
 - `toolang skill add <cap_ref>`
 - `toolang skill new <name>`
