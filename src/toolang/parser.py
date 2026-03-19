@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from tree_sitter import Node
+from functools import lru_cache
+
+from tree_sitter import Language, Node, Parser
 
 from toolang.ast import DeclBlock, ParamDecl, Program, SourceSpan, Thunk, UseDecl
 from toolang.errors import ToolangError
-from toolang.tree_sitter_loader import parse_tree
 
 
 def parse_program(source: str) -> Program:
     source_bytes = source.encode("utf-8")
-    tree = parse_tree(source_bytes)
+    tree = _parse_tree(source_bytes)
     lines = source.splitlines()
     program = Program()
 
@@ -194,3 +195,20 @@ def _line_text(lines: list[str], row: int) -> str:
     if 0 <= row < len(lines):
         return lines[row]
     return ""
+
+
+def _parse_tree(source: bytes):
+    parser = Parser(_toolang_language())
+    return parser.parse(source)
+
+
+@lru_cache(maxsize=1)
+def _toolang_language() -> Language:
+    try:
+        import tree_sitter_toolang
+    except ImportError as exc:
+        raise ToolangError(
+            "The 'tree-sitter-toolang' package is not installed. Install a local wheel "
+            "or publishable package before running Toolang parsing commands."
+        ) from exc
+    return Language(tree_sitter_toolang.language())
