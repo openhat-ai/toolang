@@ -3,17 +3,19 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-import pytest
-
 from toolang.agent_refs import resolve_agent_ref
-from toolang.errors import ToolangError
 from toolang.files.program import SyncedProgram
 from toolang.files.sync_state import SyncState
 from toolang.layout import (
+    agent_synced_caps_root,
     agent_sync_path,
+    global_caps_dir,
+    global_source_path,
+    global_synced_caps_root,
     resolve_toolang_root,
+    shared_caps_dir,
+    shared_source_path,
     synced_caps_root,
-    toolang_config_path,
 )
 from toolang.parser import parse_program
 from toolang.sync import ensure_agent_synced, sync_agent
@@ -109,7 +111,7 @@ thunk review:
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     sync_agent(agent)
 
-    skill_root = synced_caps_root(home) / "skills" / "pdf-processing"
+    skill_root = agent_synced_caps_root(home, "alice") / "skills" / "pdf-processing"
     assert (skill_root / "SKILL.md").read_text(encoding="utf-8") == (
         REMOTE_SKILL_FIXTURE / "SKILL.md"
     ).read_text(encoding="utf-8")
@@ -119,10 +121,12 @@ thunk review:
 
     alice_state = SyncState.load(agent_sync_path(home, "alice"))
     bob_state = SyncState.load(agent_sync_path(home, "bob"))
-    assert alice_state.refs.skills["pdf-processing"].repo == "by3gus/agent-skills"
-    assert bob_state.refs.skills["pdf-processing"].path == "skills/pdf-processing"
-    assert alice_state.refs.skills["pdf-processing"].rev == "abc123"
+    assert alice_state.agent_refs.skills["pdf-processing"].repo == "by3gus/agent-skills"
+    assert bob_state.agent_refs.skills["pdf-processing"].path == "skills/pdf-processing"
+    assert alice_state.agent_refs.skills["pdf-processing"].rev == "abc123"
     assert not (home / "toolang.lock").exists()
+    assert not (synced_caps_root(home) / "skills" / "pdf-processing").exists()
+    assert (agent_synced_caps_root(home, "bob") / "skills" / "pdf-processing" / "SKILL.md").exists()
 
 
 def test_ensure_agent_synced_reuses_fresh_state(tmp_path) -> None:
@@ -188,20 +192,89 @@ thunk review:
     assert after != before
 
 
-def test_sync_agent_rejects_managed_caps_until_resolution_exists(tmp_path) -> None:
+def test_sync_agent_reads_shared_and_global_skill_sources_without_collapsing_names(
+    tmp_path, monkeypatch
+) -> None:
     root = resolve_toolang_root(tmp_path / "toolang-root")
     home = root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "alice.too").write_text(SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
-    toolang_config_path(home).write_text(
+    (home / "alice.too").write_text(
         """
-[skills]
-"pdf-processing" = { ref = "briceyan/pdf-processing" }
+use skill by3hak/repo-search
+
+thunk review:
+    Review the change set.
+""".strip(),
+        encoding="utf-8",
+    )
+    shared_source_path(home).write_text("use skill by3gus/repo-search\n", encoding="utf-8")
+    global_source_path(root).write_text("use skill by3hak/repo-search\n", encoding="utf-8")
+
+    def fake_resolve(ref: str) -> ResolvedCapRef:
+        owner, _, name = ref.partition("/")
+        repo_name = "agent-skills" if owner == "by3gus" else "skills"
+        path = f"skills/{name}" if repo_name == "agent-skills" else name
+        return ResolvedCapRef(
+            kind="skill",
+            name=name,
+            ref=ref,
+            repo=f"{owner}/{repo_name}",
+            path=path,
+            rev=f"rev-{owner}",
+        )
+
+    def fake_fetch(resolved: ResolvedCapRef):
+        fetched_root = tmp_path / "fetched" / resolved.repo.replace("/", "__") / resolved.name
+        fetched_root.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(REMOTE_SKILL_FIXTURE, fetched_root)
+        files = sorted(
+            str(path.relative_to(fetched_root))
+            for path in fetched_root.rglob("*")
+            if path.is_file()
+        )
+        return fetched_root, files
+
+    monkeypatch.setattr("toolang.sync.resolve_github_skill_ref", fake_resolve)
+    monkeypatch.setattr("toolang.sync.fetch_github_tree", fake_fetch)
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    sync_agent(agent)
+
+    state = SyncState.load(agent_sync_path(home, "alice"))
+    assert state.global_refs.skills["repo-search"].ref == "by3hak/repo-search"
+    assert state.shared_refs.skills["repo-search"].ref == "by3gus/repo-search"
+    assert state.agent_refs.skills["repo-search"].ref == "by3hak/repo-search"
+    assert (global_synced_caps_root(root) / "skills" / "repo-search" / "SKILL.md").exists()
+    assert (synced_caps_root(home) / "skills" / "repo-search" / "SKILL.md").exists()
+    assert (agent_synced_caps_root(home, "alice") / "skills" / "repo-search" / "SKILL.md").exists()
+
+
+def test_sync_agent_materializes_shared_and_global_local_skills(tmp_path) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        """
+thunk review:
+    Review the change set.
 """.strip(),
         encoding="utf-8",
     )
 
-    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    shared_skill = shared_caps_dir(home, "skill") / "local-shared"
+    shared_skill.mkdir(parents=True)
+    (shared_skill / "SKILL.md").write_text("# Shared\n", encoding="utf-8")
 
-    with pytest.raises(ToolangError, match="Managed caps"):
-        sync_agent(agent)
+    global_skill = global_caps_dir(root, "skill") / "local-global"
+    global_skill.mkdir(parents=True)
+    (global_skill / "SKILL.md").write_text("# Global\n", encoding="utf-8")
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    sync_agent(agent)
+
+    state = SyncState.load(agent_sync_path(home, "alice"))
+    assert state.shared_refs.skills["local-shared"].path == "skills/local-shared"
+    assert state.shared_refs.skills["local-shared"].ref is None
+    assert state.global_refs.skills["local-global"].path == "skills/local-global"
+    assert (synced_caps_root(home) / "skills" / "local-shared" / "SKILL.md").exists()
+    assert (global_synced_caps_root(root) / "skills" / "local-global" / "SKILL.md").exists()

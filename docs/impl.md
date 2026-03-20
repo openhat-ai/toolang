@@ -73,7 +73,7 @@ Internal sync steps:
 - `resolve`
   - capability and reference resolution
 - `compile`
-  - convert source and config inputs into per-agent synced records
+  - convert agent, shared, and global inputs into per-agent synced records
 - `materialize`
   - update `${AGENT_HOME}/.toolang/sync/` and
     `${AGENT_HOME}/.toolang/sync/<agent>.state.json`
@@ -209,7 +209,7 @@ Reason:
 Other durable formats:
 
 - TOML
-  - `toolang.toml`
+  - future automation or bus-adjacent authored config, when needed
 - Markdown
   - skill, service, prompt, and psyche source artifacts
 - JSON

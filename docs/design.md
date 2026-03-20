@@ -131,32 +131,25 @@ Reason:
 
 ### 5.1 Capability Sources
 
-Toolang combines three authored capability sources:
+Toolang currently uses these authored sources:
 
-- source caps
-  - refs or inline definitions in `.too`
-- config caps
-  - managed entries in `toolang.toml`
-- local caps
-  - files or directories in
-    `.toolang/{skills,services,prompts,psyches}/` inside an agent home
+- `agent`
+  - refs or inline definitions in `{AGENT}.too`
+- `shared`
+  - refs in `${AGENT_HOME}/agents.too`
+  - local files or directories in `${AGENT_HOME}/.toolang/{kinds}/`
+- `global`
+  - refs in `${TOOLANG_ROOT}/agents.too`
+  - local files or directories in `${TOOLANG_ROOT}/{kinds}/`
 
-Default visible set:
+For skills, runtime precedence is:
 
-- source
-- config
-- local
+1. `agent`
+2. `shared`
+3. `global`
 
-Precedence for the same kind and name:
-
-1. local
-2. config
-3. source
-
-Reason:
-
-- local overrides make it easy to patch or test a cap without editing `.too`
-  or `toolang.toml`
+Local skills are kept in the same scope as their authored directory and can
+override refs from that same scope without collapsing other scopes at sync time.
 
 ### 5.2 Visibility Switches
 
@@ -175,23 +168,23 @@ Runtime visibility is controlled with CSV switches:
 
 Allowed CSV values:
 
-- `source`
-- `config`
-- `local`
+- `agent`
+- `shared`
+- `global`
 
 Rules:
 
-- omitted switches use `source,config,local`
+- omitted switches use `agent,shared,global`
 - `--caps` applies to all kinds
 - a kind-specific switch overrides `--caps` for that kind
 - CSV order does not change precedence
 
 Examples:
 
-- `--caps=source`
-- `--caps=source,config`
-- `--caps=source,local`
-- `--caps=source --skills=source,config,local`
+- `--caps=agent`
+- `--caps=agent,shared`
+- `--caps=shared,global`
+- `--caps=agent --skills=agent,shared,global`
 
 ### 5.3 Capability References
 
@@ -200,14 +193,13 @@ Examples:
 Examples:
 
 - `toolang skill add briceyan/pdf-processing`
-- `toolang service add github/github`
 - `use skill briceyan/pdf-processing`
 
-The same ref syntax is used in:
+The same ref syntax is currently used in:
 
-- `toolang.toml`
 - `.too` `use` declarations
-- CLI commands that manage refs
+- `agents.too` shared source files
+- CLI commands that manage skill refs
 
 ### 5.4 GitHub Resolution
 
@@ -236,45 +228,42 @@ Canonical layout for new GitHub caps:
   - path: `skills/<cap-name>/SKILL.md`
 
 
-## 6. Home Configuration
+## 6. Capability Scopes
 
-`toolang.toml` stores managed caps and model configuration.
+Toolang currently uses three capability scopes:
 
-```toml
-[skills]
-"pdf-processing" = { ref = "briceyan/pdf-processing" }
-"create-skill" = { ref = "anthropic/create-skill" }
+- `agent`
+  - authored source: `{AGENT_HOME}/{AGENT}.too`
+- `shared`
+  - authored source: `{AGENT_HOME}/agents.too`
+  - local editable caps: `{AGENT_HOME}/.toolang/{skills,services,prompts,psyches}/`
+- `global`
+  - authored source: `{TOOLANG_ROOT}/agents.too`
+  - local editable caps: `{TOOLANG_ROOT}/{skills,services,prompts,psyches}/`
 
-[services]
-"linear" = { ref = "acme/linear" }
+For skills, sync keeps the scopes separate and runtime applies precedence in
+this order:
 
-[prompts]
-"release-notes" = { path = "prompts/release-notes.md" }
+1. `agent`
+2. `shared`
+3. `global`
 
-[psyches]
-"reviewer" = { path = "psyches/reviewer.md" }
+Current scope categories are:
 
-[models]
-default = ["local-qwen", "gpt-5.3"]
+- `ref`
+  - declared with `use ...` in `.too` or `agents.too`
+- `inline`
+  - declared directly in `.too`
+- `local`
+  - human-edited files under the local cap directories
 
-[models.local-qwen]
-provider = "openai-compatible"
-model = "qwen3-32b"
-base_url = "http://127.0.0.1:11434/v1"
-api_key_env = "LOCAL_MODEL_API_KEY"
+Current implementation details:
 
-[models.gpt-5.3]
-provider = "openai"
-model = "gpt-5.3"
-api_key_env = "OPENAI_API_KEY"
-```
-
-Rules:
-
-- top-level tables are grouped by kind
-- the table key is the managed capability name
-- entries use authored inline tables such as `{ ref = "owner/name" }`
-- `toolang.toml` does not store resolved results
+- `agents.too` currently supports shared and global `use skill ...` refs
+- local skill directories are created lazily when the first local skill is
+  created in that scope
+- scope override is intentionally deferred to runtime rather than collapsing
+  same-name skills during sync
 
 
 ## 7. Per-Agent Sync State
@@ -287,7 +276,10 @@ The state file stores:
 
 - freshness metadata for the whole agent home
 - the compiled synced program for that agent
-- the exact resolved refs used by that agent
+- scope-separated exact skill entries used by that agent:
+  - `agent_refs`
+  - `shared_refs`
+  - `global_refs`
 
 It does not store:
 
@@ -303,11 +295,15 @@ Minimal shape:
   "synced_at": "2026-03-18T21:00:00Z",
   "source_file": "reviewer.too",
   "inputs": {
-    "reviewer.too": { "mtime_ns": 1742302800000000000, "size": 812 },
-    "shared.too": { "mtime_ns": 1742302810000000000, "size": 241 }
+    "agent/reviewer.too": { "mtime_ns": 1742302800000000000, "size": 812 },
+    "shared/agents.too": { "mtime_ns": 1742302810000000000, "size": 241 },
+    "global/skills/repo-search/SKILL.md": {
+      "mtime_ns": 1742302820000000000,
+      "size": 112
+    }
   },
   "program": {},
-  "refs": {
+  "agent_refs": {
     "skills": {
       "pdf-processing": {
         "ref": "by3gus/pdf-processing",
@@ -316,6 +312,16 @@ Minimal shape:
         "rev": "8f3c2d4a5b6c7d8e9f00112233445566778899aa"
       }
     }
+  },
+  "shared_refs": {
+    "skills": {
+      "repo-search": {
+        "path": "skills/repo-search"
+      }
+    }
+  },
+  "global_refs": {
+    "skills": {}
   }
 }
 ```
@@ -324,10 +330,12 @@ Rules:
 
 - one state file exists per top-level `.too` file
 - the state file is generated and should not be hand-edited
-- `refs` keep agent-level provenance, even when multiple agents in one home use
-  the same cap name
-- raw synced caps under `${AGENT_HOME}/.toolang/sync/` remain the materialized
-  union for the whole agent home
+- scope-separated refs let runtime resolve precedence late instead of forcing
+  same-name overrides at sync time
+- raw synced caps are materialized into separate roots:
+  - `${TOOLANG_ROOT}/sync/`
+  - `${AGENT_HOME}/.toolang/sync/`
+  - `${AGENT_HOME}/.toolang/agents/{AGENT}/sync/`
 
 
 ## 8. Sync
@@ -337,26 +345,27 @@ Rules:
 Inputs:
 
 - top-level `.too` files
-- `toolang.toml`
-- local cap directories
+- `${AGENT_HOME}/agents.too`
+- `${TOOLANG_ROOT}/agents.too`
+- local skill directories in shared and global scope
 
 Outputs:
 
+- `${TOOLANG_ROOT}/sync/`
 - `${AGENT_HOME}/.toolang/sync/`
+- `${AGENT_HOME}/.toolang/agents/{AGENT}/sync/`
 - one `${AGENT_HOME}/.toolang/sync/<agent>.state.json` per top-level `.too`
 
 Contract:
 
 1. parse top-level `.too` files with Tree-sitter
-2. analyze declarations, `use` statements, and source-defined caps
-3. read managed refs from `toolang.toml`
-4. compute the managed set keyed by kind and managed name
-5. resolve each managed ref to an exact immutable target
-6. compile per-agent synced records
-7. write synced capabilities under `${AGENT_HOME}/.toolang/sync/`
+2. analyze per-agent declarations, `use` statements, and inline caps
+3. parse shared and global `agents.too` skill refs
+4. read shared and global local skill directories
+5. resolve each ref to an exact immutable target
+6. materialize global, shared, and agent skill scopes into separate sync roots
+7. write inline caps into `${AGENT_HOME}/.toolang/sync/`
 8. rewrite `${AGENT_HOME}/.toolang/sync/<agent>.state.json` for each agent
-9. make `${AGENT_HOME}/.toolang/sync/` exactly match the current synced cap set
-10. report local shadowing without rewriting local authored caps
 
 Rules:
 
@@ -364,57 +373,26 @@ Rules:
   time and input fingerprints used for freshness checks
 - freshness uses recorded input metadata such as `mtime_ns` and file size for:
   - `.too` files in the agent home
-  - `toolang.toml`
-  - local cap directories under `.toolang/`
+  - shared and global `agents.too`
+  - shared and global local skill directories
 - `toolang invoke` may skip parse and sync when the current inputs still match
   the stored freshness metadata in
   `${AGENT_HOME}/.toolang/sync/<agent>.state.json`
 - if any recorded input changed, if generated sync artifacts are missing, or if
   any expected state file is stale, `toolang invoke` triggers sync before
   execution
-- source-defined caps are materialized during sync so unchanged agents do not
+- inline caps are still materialized during sync so unchanged agents do not
   need to be reparsed just to recover inline definitions
-- if an entry exists in an agent's `refs`, the matching managed artifact must
-  exist in `${AGENT_HOME}/.toolang/sync/<kind>s/`
-- if an artifact exists in `${AGENT_HOME}/.toolang/sync/` but not in the
-  current synced cap set, sync removes it
+- same-name skills in different scopes are intentionally allowed to coexist in
+  their own sync roots
+- runtime chooses the effective skill with precedence `agent > shared > global`
 - sync may reuse or refresh data under `TOOLANG_ROOT`
-- sync does not make all of `TOOLANG_ROOT` equal to the current agent home
 
 Reason:
 
-- `${AGENT_HOME}/.toolang/sync/` is the synced cap projection for one agent
-  home
-- `${AGENT_HOME}/.toolang/sync/<agent>.state.json` holds agent-specific synced
-  state and provenance
-- `TOOLANG_ROOT` is shared local system state
-
-Minimal sync state shape:
-
-```json
-{
-  "version": 1,
-  "synced_at": "2026-03-18T21:00:00Z",
-  "source_file": "reviewer.too",
-  "sync_state": ".toolang/sync/reviewer.state.json",
-  "synced_caps": ".toolang/sync/",
-  "inputs": {
-    "toolang.toml": { "mtime_ns": 1742302800000000000, "size": 812 },
-    "reviewer.too": { "mtime_ns": 1742302805000000000, "size": 2412 },
-    ".toolang/skills/": { "mtime_ns": 1742302799000000000 }
-  },
-  "refs": {
-    "skills": {
-      "pdf-processing": {
-        "ref": "by3gus/pdf-processing",
-        "repo": "by3gus/agent-skills",
-        "path": "skills/pdf-processing",
-        "rev": "8f3c2d4a5b6c7d8e9f00112233445566778899aa"
-      }
-    }
-  }
-}
-```
+- `${TOOLANG_ROOT}/sync/` holds global synced caps
+- `${AGENT_HOME}/.toolang/sync/` holds shared synced caps and per-agent state
+- `${AGENT_HOME}/.toolang/agents/{AGENT}/sync/` holds agent-scoped synced caps
 
 
 ## 9. References
@@ -603,32 +581,34 @@ package rather than the Toolang runtime CLI.
 
 ### 11.2 Capability Management
 
-- `toolang skill add <cap_ref>`
-- `toolang skill new <name>`
-- `toolang skill remove <name>`
-- `toolang service add <cap_ref>`
-- `toolang service new <name>`
-- `toolang service remove <name>`
-- `toolang prompt add <cap_ref>`
-- `toolang prompt new <name>`
-- `toolang prompt remove <name>`
-- `toolang psyche add <cap_ref>`
-- `toolang psyche new <name>`
-- `toolang psyche remove <name>`
-- `toolang use <kind> <cap_ref> --agent <agent_name>`
+- `toolang skill add <cap_ref> --scope=agent|shared|global`
+- `toolang skill remove <name> --scope=agent|shared|global`
+- `toolang skill local new <name> --scope=shared|global`
+- `toolang skill local new <name> --from <cap_ref> --scope=shared|global`
+- `toolang skill local path <name> --scope=shared|global`
+- `toolang skill local delete <name> --scope=shared|global`
 - `toolang sync`
 
 Command intent:
 
 - `add`
-  - add a managed home-level ref to `toolang.toml`
-- `use`
-  - add a source-level `use` declaration to `<agent>.too`
-- `new`
-  - create a local authored cap
+  - add a skill ref to the selected authored source scope
+- `remove`
+  - remove a skill ref by name from the selected authored source scope
+- `local new`
+  - create a local editable skill directory
+- `local new --from`
+  - initialize a local editable skill from a remote ref
+- `local path`
+  - print the target local skill path without creating directories
+- `local delete`
+  - remove a local editable skill directory
 - `sync`
-  - rebuild `${AGENT_HOME}/.toolang/sync/` and all
-    `${AGENT_HOME}/.toolang/sync/<agent>.state.json` files for the agent home
+  - rebuild:
+    - `${TOOLANG_ROOT}/sync/`
+    - `${AGENT_HOME}/.toolang/sync/`
+    - `${AGENT_HOME}/.toolang/agents/{AGENT}/sync/`
+    - `${AGENT_HOME}/.toolang/sync/<agent>.state.json`
 
 ### 11.3 Agent Registry And Running-Agent Commands
 
@@ -837,7 +817,7 @@ Internal sync steps:
 - `resolve`
   - dependency and capability resolution
 - `compile`
-  - convert source and config inputs into per-agent synced records
+  - convert agent, shared, and global inputs into per-agent synced records
 - `materialize`
   - update `${AGENT_HOME}/.toolang/sync/` and
     `${AGENT_HOME}/.toolang/sync/<agent>.state.json`

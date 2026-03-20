@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import os
+import shutil
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from importlib.metadata import version as package_version
@@ -15,11 +16,18 @@ from toolang.agent_registry import RunningAgentRecord, get_running_agent, upsert
 from toolang.cli import _drop_stale_running_agent, _remember_agent, _resolve_cli_agent, app, main
 from toolang.errors import ToolangError
 from toolang.files.agent_run import AgentRunState
-from toolang.layout import agent_run_path
-from toolang.layout import agents_db_path
+from toolang.layout import (
+    agent_run_path,
+    agents_db_path,
+    global_caps_dir,
+    global_source_path,
+    shared_caps_dir,
+    shared_source_path,
+)
 
 runner = CliRunner()
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"
+REMOTE_SKILL_FIXTURE = Path(__file__).parent / "fixtures" / "remote-skill" / "pdf-processing"
 
 
 def test_cli_has_expected_subcommands() -> None:
@@ -31,6 +39,7 @@ def test_cli_has_expected_subcommands() -> None:
     assert "sync" in result.output
     assert "serve" in result.output
     assert "start" in result.output
+    assert "skill" in result.output
     assert "bus" in result.output
     assert "home" not in result.output
     assert "source" not in result.output
@@ -250,6 +259,185 @@ def test_hidden_path_commands_resolve_agent_paths(tmp_path: Path, monkeypatch) -
     assert source_result.stdout.strip() == str(source_path.resolve())
     assert room_result.stdout.strip() == str((home / ".toolang" / "agents" / "alice").resolve())
     assert root_result.stdout.strip() == str(root.resolve())
+
+
+def test_skill_add_writes_agent_source_from_current_home(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    source_path = home / "alice.too"
+    source_path.write_text(
+        """
+thunk review:
+    Review the change set.
+""".strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+    monkeypatch.chdir(home)
+
+    result = runner.invoke(app, ["skill", "add", "by3gus/pdf-processing"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == str(source_path.resolve())
+    assert source_path.read_text(encoding="utf-8").startswith("use skill by3gus/pdf-processing\n\n")
+
+
+def test_skill_add_writes_shared_source(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "team"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        """
+thunk review:
+    Review the change set.
+""".strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+    monkeypatch.chdir(home)
+
+    result = runner.invoke(app, ["skill", "add", "by3gus/pdf-processing", "--scope", "shared"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == str(shared_source_path(home).resolve())
+    assert shared_source_path(home).read_text(encoding="utf-8") == "use skill by3gus/pdf-processing\n"
+
+
+def test_skill_add_writes_global_source(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang-root"
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+
+    result = runner.invoke(app, ["skill", "add", "by3gus/pdf-processing", "--scope", "global"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == str(global_source_path(root).resolve())
+    assert global_source_path(root).read_text(encoding="utf-8") == "use skill by3gus/pdf-processing\n"
+
+
+def test_skill_remove_deletes_empty_shared_source(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "team"
+    home.mkdir(parents=True)
+    shared_source_path(home).write_text("use skill by3gus/pdf-processing\n", encoding="utf-8")
+
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+    monkeypatch.chdir(home)
+
+    result = runner.invoke(app, ["skill", "remove", "pdf-processing", "--scope", "shared"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == str(shared_source_path(home).resolve())
+    assert not shared_source_path(home).exists()
+
+
+def test_skill_local_new_creates_shared_skill_dir_lazily(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "team"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        """
+thunk review:
+    Review the change set.
+""".strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+    monkeypatch.chdir(home)
+
+    result = runner.invoke(app, ["skill", "local", "new", "repo-search"])
+
+    skill_dir = shared_caps_dir(home, "skill") / "repo-search"
+    assert result.exit_code == 0
+    assert result.stdout.strip() == str(skill_dir.resolve())
+    assert (skill_dir / "SKILL.md").exists()
+
+
+def test_skill_local_path_prints_global_target_without_creating_dirs(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang-root"
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+
+    result = runner.invoke(app, ["skill", "local", "path", "repo-search", "--scope", "global"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == str((global_caps_dir(root, "skill") / "repo-search").resolve())
+    assert not global_caps_dir(root, "skill").exists()
+
+
+def test_skill_local_new_from_ref_copies_remote_skill(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "team"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        """
+thunk review:
+    Review the change set.
+""".strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+    monkeypatch.chdir(home)
+
+    def fake_resolve(ref: str):
+        from toolang_caps.models import ResolvedCapRef
+
+        return ResolvedCapRef(
+            kind="skill",
+            name="repo-search",
+            ref=ref,
+            repo="by3gus/agent-skills",
+            path="skills/repo-search",
+            rev="abc123",
+        )
+
+    def fake_fetch(_resolved):
+        fetched_root = tmp_path / "fetched" / "materialized" / "repo-search"
+        fetched_root.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(REMOTE_SKILL_FIXTURE, fetched_root)
+        files = sorted(
+            str(path.relative_to(fetched_root))
+            for path in fetched_root.rglob("*")
+            if path.is_file()
+        )
+        return fetched_root, files
+
+    monkeypatch.setattr("toolang.cli.resolve_github_skill_ref", fake_resolve)
+    monkeypatch.setattr("toolang.cli.fetch_github_tree", fake_fetch)
+
+    result = runner.invoke(
+        app,
+        ["skill", "local", "new", "repo-search", "--from", "by3gus/repo-search"],
+    )
+
+    skill_dir = shared_caps_dir(home, "skill") / "repo-search"
+    assert result.exit_code == 0
+    assert result.stdout.strip() == str(skill_dir.resolve())
+    assert (skill_dir / "SKILL.md").read_text(encoding="utf-8") == (
+        REMOTE_SKILL_FIXTURE / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+
+def test_skill_local_delete_prunes_empty_kind_dir(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "team"
+    home.mkdir(parents=True)
+    skill_dir = shared_caps_dir(home, "skill") / "repo-search"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("# Repo Search\n", encoding="utf-8")
+
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+    monkeypatch.chdir(home)
+
+    result = runner.invoke(app, ["skill", "local", "delete", "repo-search"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == str(skill_dir.resolve())
+    assert not skill_dir.exists()
+    assert not shared_caps_dir(home, "skill").exists()
 
 
 def test_hidden_init_zsh_outputs_cd_helpers() -> None:

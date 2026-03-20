@@ -14,10 +14,10 @@ class InputFingerprint(BaseModel):
 
 
 class LockEntry(BaseModel):
-    ref: str
-    repo: str
+    ref: str | None = None
+    repo: str | None = None
     path: str
-    rev: str
+    rev: str | None = None
 
 
 class LockedAgentRefs(BaseModel):
@@ -33,7 +33,9 @@ class SyncState(BaseModel):
     source_file: str
     inputs: dict[str, InputFingerprint] = Field(default_factory=dict)
     program: SyncedProgram
-    refs: LockedAgentRefs = Field(default_factory=LockedAgentRefs)
+    agent_refs: LockedAgentRefs = Field(default_factory=LockedAgentRefs)
+    shared_refs: LockedAgentRefs = Field(default_factory=LockedAgentRefs)
+    global_refs: LockedAgentRefs = Field(default_factory=LockedAgentRefs)
 
     @classmethod
     def load(cls, path: Path) -> "SyncState":
