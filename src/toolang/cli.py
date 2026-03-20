@@ -194,11 +194,11 @@ def init(
     typer.echo(_posix_init_script())
 
 
-@app.command("new", help="Create a new resident agent source.")
+@app.command("new", help="Create a new agent.")
 def agent_new(
     target: Annotated[
         str,
-        typer.Argument(help="Resident target in home or home/agent form"),
+        typer.Argument(help="Agent name or home/agent target"),
     ],
 ) -> None:
     toolang_root = _toolang_root()
@@ -215,12 +215,12 @@ def agent_new(
     typer.echo(str(agent_ref.source_path))
 
 
-@app.command("clone", help="Clone an agent source into a resident home.")
+@app.command("clone", help="Clone an existing agent.")
 def agent_clone(
-    source: Annotated[str, typer.Argument(help="Source agent selector")],
+    source: Annotated[str, typer.Argument(help="Agent to clone")],
     target: Annotated[
         str,
-        typer.Argument(help="Resident target in home or home/agent form"),
+        typer.Argument(help="New agent name or home/agent target"),
     ],
 ) -> None:
     toolang_root = _toolang_root()
@@ -241,9 +241,9 @@ def agent_clone(
     typer.echo(str(target_ref.source_path))
 
 
-@app.command("remove", help="Remove a resident agent source and local state.")
+@app.command("remove", help="Remove an agent and its local state.")
 def agent_remove(
-    agent: Annotated[str, typer.Argument(help="Resident agent selector")],
+    agent: Annotated[str, typer.Argument(help="Agent to remove")],
 ) -> None:
     toolang_root = _toolang_root()
     db_path = agents_db_path(toolang_root)
@@ -638,7 +638,7 @@ def invoke(
     typer.echo(result.output)
 
 
-@app.command("sync", help="Sync one agent home.")
+@app.command("sync", help="Sync one agent state.")
 def sync(
     agent: Annotated[str, typer.Argument(help="Agent selector")],
 ) -> None:
@@ -1331,33 +1331,33 @@ skill_app.add_typer(skill_local_app, name="local")
 service_app.add_typer(service_local_app, name="local")
 prompt_app.add_typer(prompt_local_app, name="local")
 psyche_app.add_typer(psyche_local_app, name="local")
+app.add_typer(psyche_app, name="psyche")
 app.add_typer(skill_app, name="skill")
 app.add_typer(service_app, name="service")
 app.add_typer(prompt_app, name="prompt")
-app.add_typer(psyche_app, name="psyche")
 app.add_typer(bus_app, name="bus")
 
 
 def _reorder_help_entries() -> None:
     command_order = {
-        "list": 0,
-        "new": 1,
-        "clone": 2,
-        "sync": 3,
-        "invoke": 4,
-        "serve": 5,
-        "start": 6,
-        "remove": 7,
+        "new": 0,
+        "clone": 1,
+        "remove": 2,
+        "list": 3,
+        "sync": 4,
+        "invoke": 5,
+        "serve": 6,
+        "start": 7,
         "home": 100,
         "source": 101,
         "room": 102,
         "init": 103,
     }
     group_order = {
-        "skill": 0,
-        "service": 1,
-        "prompt": 2,
-        "psyche": 3,
+        "psyche": 0,
+        "skill": 1,
+        "service": 2,
+        "prompt": 3,
         "bus": 4,
     }
     app.registered_commands.sort(

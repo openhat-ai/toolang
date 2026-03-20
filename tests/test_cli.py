@@ -44,26 +44,26 @@ def test_cli_has_expected_subcommands() -> None:
     result = runner.invoke(app, ["--help"])
 
     assert result.exit_code == 0
+    assert "new" in result.output
+    assert "Create a new agent." in result.output
+    assert "clone" in result.output
+    assert "Clone an existing agent." in result.output
+    assert "remove" in result.output
+    assert "Remove an agent and its local state." in result.output
     assert "list" in result.output
     assert "List known agents and their current status." in result.output
-    assert "new" in result.output
-    assert "Create a new resident agent source." in result.output
-    assert "clone" in result.output
-    assert "Clone an agent source into a resident home." in result.output
     assert "sync" in result.output
-    assert "Sync one agent home." in result.output
+    assert "Sync one agent state." in result.output
     assert "invoke" in result.output
     assert "Run one non-interactive agent turn." in result.output
     assert "serve" in result.output
     assert "Serve one agent in the foreground." in result.output
     assert "start" in result.output
     assert "Start serving one agent in the background." in result.output
-    assert "remove" in result.output
-    assert "Remove a resident agent source and local state." in result.output
+    assert "psyche" in result.output
     assert "skill" in result.output
     assert "service" in result.output
     assert "prompt" in result.output
-    assert "psyche" in result.output
     assert "bus" in result.output
     command_lines = []
     for line in result.output.splitlines():
@@ -90,18 +90,18 @@ def test_cli_has_expected_subcommands() -> None:
         }:
             command_lines.append(name)
     assert command_lines == [
-        "list",
         "new",
         "clone",
+        "remove",
+        "list",
         "sync",
         "invoke",
         "serve",
         "start",
-        "remove",
+        "psyche",
         "skill",
         "service",
         "prompt",
-        "psyche",
         "bus",
     ]
     assert "home" not in command_lines
