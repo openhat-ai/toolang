@@ -86,9 +86,13 @@ def callback(
 
 @app.command(hidden=True)
 def home(
-    agent: Annotated[str, typer.Argument(help="Agent selector")],
+    agent: Annotated[str | None, typer.Argument(help="Agent selector")] = None,
 ) -> None:
-    db_path = agents_db_path(_toolang_root())
+    toolang_root = _toolang_root()
+    if agent is None:
+        typer.echo(str(toolang_root))
+        return
+    db_path = agents_db_path(toolang_root)
     resolved = _resolve_cli_agent(agent, db_path=db_path)
     typer.echo(str(resolved.agent_home))
 
@@ -118,6 +122,7 @@ def init(
         typer.Argument(help="Shell to initialize"),
     ],
 ) -> None:
+    typer.echo(_init_install_note(shell), err=True)
     if shell == "fish":
         typer.echo(_fish_init_script())
         return
@@ -462,44 +467,43 @@ def _format_rows(headers: tuple[str, ...], rows: Sequence[Sequence[str]]) -> str
     return "\n".join(lines)
 
 
+def _init_install_note(shell: Literal["zsh", "bash", "fish"]) -> str:
+    shell_file = {
+        "zsh": "~/.zshrc",
+        "bash": "~/.bashrc",
+        "fish": "~/.config/fish/config.fish",
+    }[shell]
+    return (
+        f"# Add the emitted block to {shell_file}.\n"
+        "# Remove everything between the toolang markers to uninstall.\n"
+        "#\n"
+        "# Append it with:\n"
+        f"#   toolang init {shell} >> {shell_file}\n"
+    )
+
+
 def _posix_init_script() -> str:
-    return """toolang() {
-  case "$1" in
-    cd)
-      shift
-      builtin cd -- "$(command toolang home "$@")"
-      ;;
-    croom)
-      shift
-      builtin cd -- "$(command toolang room "$@")"
-      ;;
-    csource)
-      shift
-      builtin cd -- "$(dirname "$(command toolang source "$@")")"
-      ;;
-    *)
-      command toolang "$@"
-      ;;
-  esac
-}"""
+    return """# >>> toolang shell helpers >>>
+toohome() {
+  builtin cd -- "$(command toolang home "$@")"
+}
+
+tooroom() {
+  builtin cd -- "$(command toolang room "$@")"
+}
+# <<< toolang shell helpers <<<"""
 
 
 def _fish_init_script() -> str:
-    return """function toolang
-    switch $argv[1]
-        case cd
-            set -e argv[1]
-            cd (command toolang home $argv)
-        case croom
-            set -e argv[1]
-            cd (command toolang room $argv)
-        case csource
-            set -e argv[1]
-            cd (dirname (command toolang source $argv))
-        case '*'
-            command toolang $argv
-    end
-end"""
+    return """# >>> toolang shell helpers >>>
+function toohome
+    cd (command toolang home $argv)
+end
+
+function tooroom
+    cd (command toolang room $argv)
+end
+# <<< toolang shell helpers <<<"""
 
 
 def _looks_like_explicit_source_selector(text: str) -> bool:
