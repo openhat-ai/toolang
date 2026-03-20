@@ -20,7 +20,7 @@ from toolang.agent.registry import (
 )
 from toolang.bus.db import BusStore
 from toolang.bus.events import AgentUpdated, utc_now
-from toolang.cap_scopes import CapScopeSelection
+from toolang.caps import CapScopeSelection
 from toolang.errors import ToolangError
 from toolang.files._toml import load_toml
 from toolang.files.agent_run import AgentRunState
