@@ -199,7 +199,7 @@ Notes:
 - `{AGENT}.too` is the runnable source file for that agent
 - `agents.too` is optional
 - `.toolang/` is created by runtime-managed commands such as `sync`, `serve`,
-  and `start`, not by `toolang agent new` or `toolang agent clone`
+  and `start`, not by `toolang new` or `toolang clone`
 - `.toolang/sync/` stores synced capabilities for this agent home
 - `.toolang/sync/{AGENT}.state.json` stores one generated sync record per
   top-level `.too` file

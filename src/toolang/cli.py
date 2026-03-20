@@ -86,12 +86,6 @@ bus_app = typer.Typer(
     pretty_exceptions_enable=False,
     pretty_exceptions_show_locals=False,
 )
-agent_app = typer.Typer(
-    help="Resident agent commands",
-    add_completion=False,
-    pretty_exceptions_enable=False,
-    pretty_exceptions_show_locals=False,
-)
 skill_app = typer.Typer(
     help="Skill commands",
     add_completion=False,
@@ -140,18 +134,6 @@ psyche_local_app = typer.Typer(
     pretty_exceptions_enable=False,
     pretty_exceptions_show_locals=False,
 )
-app.add_typer(bus_app, name="bus")
-app.add_typer(agent_app, name="agent")
-app.add_typer(skill_app, name="skill")
-app.add_typer(service_app, name="service")
-app.add_typer(prompt_app, name="prompt")
-app.add_typer(psyche_app, name="psyche")
-skill_app.add_typer(skill_local_app, name="local")
-service_app.add_typer(service_local_app, name="local")
-prompt_app.add_typer(prompt_local_app, name="local")
-psyche_app.add_typer(psyche_local_app, name="local")
-
-
 @app.callback()
 def callback(
     version: Annotated[
@@ -212,11 +194,11 @@ def init(
     typer.echo(_posix_init_script())
 
 
-@agent_app.command("new")
+@app.command("new", help="Create a new agent.")
 def agent_new(
     target: Annotated[
         str,
-        typer.Argument(help="Resident target in home or home/agent form"),
+        typer.Argument(help="Agent name or home/agent target"),
     ],
 ) -> None:
     toolang_root = _toolang_root()
@@ -233,12 +215,12 @@ def agent_new(
     typer.echo(str(agent_ref.source_path))
 
 
-@agent_app.command("clone")
+@app.command("clone", help="Clone an existing agent.")
 def agent_clone(
-    source: Annotated[str, typer.Argument(help="Source agent selector")],
+    source: Annotated[str, typer.Argument(help="Agent to clone")],
     target: Annotated[
         str,
-        typer.Argument(help="Resident target in home or home/agent form"),
+        typer.Argument(help="New agent name or home/agent target"),
     ],
 ) -> None:
     toolang_root = _toolang_root()
@@ -259,15 +241,15 @@ def agent_clone(
     typer.echo(str(target_ref.source_path))
 
 
-@agent_app.command("remove")
+@app.command("remove", help="Remove an agent and its local state.")
 def agent_remove(
-    agent: Annotated[str, typer.Argument(help="Resident agent selector")],
+    agent: Annotated[str, typer.Argument(help="Agent to remove")],
 ) -> None:
     toolang_root = _toolang_root()
     db_path = agents_db_path(toolang_root)
     agent_ref = _resolve_cli_agent(agent, db_path=db_path)
     if agent_ref.agent_kind != "resident":
-        raise ToolangError("toolang agent remove only supports resident agents.")
+        raise ToolangError("toolang remove only supports resident agents.")
 
     _drop_stale_running_agent(db_path, agent_ref)
     if get_running_agent(db_path, agent_ref.agent_uri) is not None:
@@ -605,7 +587,7 @@ def psyche_local_delete(
     _cap_local_delete("psyche", name=name, scope=scope, agent=agent)
 
 
-@app.command("list")
+@app.command("list", help="List known agents and their current status.")
 def list_agents() -> None:
     db_path = agents_db_path(_toolang_root())
     snapshots = _fresh_known_agents(db_path)
@@ -626,7 +608,7 @@ def list_agents() -> None:
     typer.echo(_format_rows(("ID", "STATUS", "NAME", "URI", "ENDPOINT"), rows))
 
 
-@app.command()
+@app.command("invoke", help="Run one non-interactive agent turn.")
 def invoke(
     agent: Annotated[str, typer.Argument(help="Agent selector")],
     thunk: Annotated[str | None, typer.Option(help="Thunk name to invoke")] = None,
@@ -656,7 +638,7 @@ def invoke(
     typer.echo(result.output)
 
 
-@app.command()
+@app.command("sync", help="Sync one agent state.")
 def sync(
     agent: Annotated[str, typer.Argument(help="Agent selector")],
 ) -> None:
@@ -674,7 +656,7 @@ def sync(
     typer.echo("synced")
 
 
-@app.command()
+@app.command("serve", help="Serve one agent in the foreground.")
 def serve(
     agent: Annotated[str, typer.Argument(help="Agent selector")],
     host: Annotated[str, typer.Option(help="Host interface to bind")] = "127.0.0.1",
@@ -695,7 +677,7 @@ def serve(
     )
 
 
-@app.command()
+@app.command("start", help="Start serving one agent in the background.")
 def start(
     agent: Annotated[str, typer.Argument(help="Agent selector")],
     host: Annotated[str, typer.Option(help="Host interface to bind")] = "127.0.0.1",
@@ -1343,3 +1325,47 @@ def _toolang_version() -> str:
         if isinstance(version, str) and version:
             return version
         raise ToolangError(f"Could not determine package version from {pyproject_path}.")
+
+
+skill_app.add_typer(skill_local_app, name="local")
+service_app.add_typer(service_local_app, name="local")
+prompt_app.add_typer(prompt_local_app, name="local")
+psyche_app.add_typer(psyche_local_app, name="local")
+app.add_typer(psyche_app, name="psyche")
+app.add_typer(skill_app, name="skill")
+app.add_typer(service_app, name="service")
+app.add_typer(prompt_app, name="prompt")
+app.add_typer(bus_app, name="bus")
+
+
+def _reorder_help_entries() -> None:
+    command_order = {
+        "new": 0,
+        "clone": 1,
+        "remove": 2,
+        "list": 3,
+        "sync": 4,
+        "invoke": 5,
+        "serve": 6,
+        "start": 7,
+        "home": 100,
+        "source": 101,
+        "room": 102,
+        "init": 103,
+    }
+    group_order = {
+        "psyche": 0,
+        "skill": 1,
+        "service": 2,
+        "prompt": 3,
+        "bus": 4,
+    }
+    app.registered_commands.sort(
+        key=lambda info: (command_order.get(info.name or "", 999), info.name or "")
+    )
+    app.registered_groups.sort(
+        key=lambda info: (group_order.get(info.name or "", 999), info.name or "")
+    )
+
+
+_reorder_help_entries()

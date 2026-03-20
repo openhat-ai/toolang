@@ -44,23 +44,72 @@ def test_cli_has_expected_subcommands() -> None:
     result = runner.invoke(app, ["--help"])
 
     assert result.exit_code == 0
-    assert "agent" in result.output
+    assert "new" in result.output
+    assert "Create a new agent." in result.output
+    assert "clone" in result.output
+    assert "Clone an existing agent." in result.output
+    assert "remove" in result.output
+    assert "Remove an agent and its local state." in result.output
     assert "list" in result.output
-    assert "invoke" in result.output
+    assert "List known agents and their current status." in result.output
     assert "sync" in result.output
+    assert "Sync one agent state." in result.output
+    assert "invoke" in result.output
+    assert "Run one non-interactive agent turn." in result.output
     assert "serve" in result.output
+    assert "Serve one agent in the foreground." in result.output
     assert "start" in result.output
+    assert "Start serving one agent in the background." in result.output
+    assert "psyche" in result.output
     assert "skill" in result.output
     assert "service" in result.output
     assert "prompt" in result.output
-    assert "psyche" in result.output
     assert "bus" in result.output
-    assert "home" not in result.output
-    assert "source" not in result.output
-    assert "room" not in result.output
-    assert "init" not in result.output
-    assert "check" not in result.output
-    assert "dump-ast" not in result.output
+    command_lines = []
+    for line in result.output.splitlines():
+        if not line.startswith("│ "):
+            continue
+        content = line.strip("│ ").rstrip()
+        if not content:
+            continue
+        name = content.split()[0]
+        if name in {
+            "list",
+            "new",
+            "clone",
+            "sync",
+            "invoke",
+            "serve",
+            "start",
+            "remove",
+            "skill",
+            "service",
+            "prompt",
+            "psyche",
+            "bus",
+        }:
+            command_lines.append(name)
+    assert command_lines == [
+        "new",
+        "clone",
+        "remove",
+        "list",
+        "sync",
+        "invoke",
+        "serve",
+        "start",
+        "psyche",
+        "skill",
+        "service",
+        "prompt",
+        "bus",
+    ]
+    assert "home" not in command_lines
+    assert "source" not in command_lines
+    assert "room" not in command_lines
+    assert "init" not in command_lines
+    assert "check" not in command_lines
+    assert "dump-ast" not in command_lines
 
 
 def test_cli_shows_package_version() -> None:
@@ -281,7 +330,7 @@ def test_agent_new_creates_resident_agent_source_and_registry_entry(
     root = tmp_path / "toolang-root"
     monkeypatch.setenv("TOOLANG_ROOT", str(root))
 
-    result = runner.invoke(app, ["agent", "new", "alice"])
+    result = runner.invoke(app, ["new", "alice"])
 
     source_path = root / "agents" / "alice" / "alice.too"
     assert result.exit_code == 0
@@ -304,7 +353,7 @@ def test_agent_clone_copies_source_into_new_resident_home(tmp_path: Path, monkey
 
     monkeypatch.setenv("TOOLANG_ROOT", str(root))
 
-    result = runner.invoke(app, ["agent", "clone", "source/reviewer", "team/reviewer"])
+    result = runner.invoke(app, ["clone", "source/reviewer", "team/reviewer"])
 
     cloned_path = root / "agents" / "team" / "reviewer.too"
     assert result.exit_code == 0
@@ -328,7 +377,7 @@ def test_agent_clone_fetches_visiting_source_when_not_materialized(
 
     result = runner.invoke(
         app,
-        ["agent", "clone", "https://example.com/alice.too", "team/alice"],
+        ["clone", "https://example.com/alice.too", "team/alice"],
     )
 
     cloned_path = root / "agents" / "team" / "alice.too"
@@ -358,7 +407,7 @@ def test_agent_remove_deletes_resident_agent_state_and_registry_entry(
     db_path = agents_db_path(root)
     _remember_agent(agent, db_path=db_path)
 
-    result = runner.invoke(app, ["agent", "remove", "alice"])
+    result = runner.invoke(app, ["remove", "alice"])
 
     assert result.exit_code == 0
     assert result.stdout.strip() == str(source_path.resolve())
