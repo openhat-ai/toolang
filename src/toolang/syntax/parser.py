@@ -209,7 +209,7 @@ def _toolang_language() -> Language:
         import tree_sitter_toolang
     except ImportError as exc:
         raise ToolangError(
-            "The 'tree-sitter-toolang' package is not installed. Install a local wheel "
-            "or publishable package before running Toolang parsing commands."
+            "The 'tree-sitter-toolang' package is not installed. Install it from PyPI "
+            "before running Toolang parsing commands."
         ) from exc
     return Language(tree_sitter_toolang.language())

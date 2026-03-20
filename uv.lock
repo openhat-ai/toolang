@@ -724,7 +724,7 @@ requires-dist = [
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.2.1" },
     { name = "tomli-w", specifier = ">=1.2.0" },
     { name = "tree-sitter", specifier = ">=0.24,<0.26" },
-    { name = "tree-sitter-toolang", path = "../tree-sitter-toolang/dist/tree_sitter_toolang-0.0.5-cp310-abi3-macosx_10_9_universal2.whl" },
+    { name = "tree-sitter-toolang", specifier = ">=0.0.5" },
     { name = "typer", specifier = ">=0.16,<1" },
     { name = "uvicorn", specifier = ">=0.35,<1" },
 ]
@@ -795,18 +795,14 @@ wheels = [
 [[package]]
 name = "tree-sitter-toolang"
 version = "0.0.5"
-source = { path = "../tree-sitter-toolang/dist/tree_sitter_toolang-0.0.5-cp310-abi3-macosx_10_9_universal2.whl" }
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c9/10/69150e2de4c9d3c65297e19486d3d2d5da29ad04d400068817a811cb3ca1/tree_sitter_toolang-0.0.5.tar.gz", hash = "sha256:3120cc86146fa74c441954ffc25920e9b44187a05ae90418dd941d5b63e8dbd0", size = 22472, upload-time = "2026-03-20T08:57:22.135Z" }
 wheels = [
-    { filename = "tree_sitter_toolang-0.0.5-cp310-abi3-macosx_10_9_universal2.whl", hash = "sha256:d5c485e65cad6680b06ed45495a170262f3850d549700d882db202b9a82e0fcd" },
+    { url = "https://files.pythonhosted.org/packages/db/c7/bcba374d6eb0bd5472aaa7f9b699c4716cf191a4aaa1931d883fb5e277a9/tree_sitter_toolang-0.0.5-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:a78ccdcbfac3bff01d2fa6bc374f3e7a846731ce9a8c83cec85eb08603241e83", size = 16148, upload-time = "2026-03-20T08:57:16.403Z" },
+    { url = "https://files.pythonhosted.org/packages/86/f1/1e1e82a8438df16337e09cef10edfaa669cd2265f0495a5bd73bdf395106/tree_sitter_toolang-0.0.5-cp310-abi3-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:8f2a1189118cc96afa53cb35cafa0055e79ad428ee9de6828ca13b9ba3c570cd", size = 26888, upload-time = "2026-03-20T08:57:18.466Z" },
+    { url = "https://files.pythonhosted.org/packages/54/36/04e8a800dc4fa3bde4fbd068256a6a87c2f53d719bef490e9d7a6fa92bb6/tree_sitter_toolang-0.0.5-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:359af338d15709df33a362c47df1f827b335a9137442cccd4d6bc90b03cad375", size = 26689, upload-time = "2026-03-20T08:57:19.547Z" },
+    { url = "https://files.pythonhosted.org/packages/c3/ad/de4091029bc2a156dd69df8163334280f5a8865aedc4a38aa08e019aa171/tree_sitter_toolang-0.0.5-cp310-abi3-win_amd64.whl", hash = "sha256:7216cedbbb48835a10db3cada9ebf1ddcaeec4616a88f2468926387cfbd3f6a9", size = 18093, upload-time = "2026-03-20T08:57:20.84Z" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "pytest", marker = "extra == 'tests'", specifier = ">=8" },
-    { name = "tree-sitter", marker = "extra == 'core'", specifier = "~=0.25" },
-    { name = "tree-sitter", marker = "extra == 'tests'", specifier = "~=0.25" },
-]
-provides-extras = ["core", "tests"]
 
 [[package]]
 name = "ty"
