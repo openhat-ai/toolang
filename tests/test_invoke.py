@@ -5,9 +5,9 @@ from pathlib import Path
 from toolang.agent_refs import resolve_agent_ref
 from toolang.bus.db import BusStore
 from toolang.files.prompt_trace import PromptTrace
-from toolang.invoke import invoke_prepared_agent
 from toolang.layout import agent_run_prompt_path, bus_events_db_path, resolve_toolang_root
 from toolang.prepared import prepare_agent
+from toolang.runtime.invoke import invoke_prepared_agent
 
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"
 
@@ -19,7 +19,7 @@ def test_invoke_prepared_agent_records_run_events(tmp_path: Path, monkeypatch) -
     (home / "alice.too").write_text(SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
 
     monkeypatch.setattr(
-        "toolang.invoke.execute_prompt_build",
+        "toolang.runtime.invoke.execute_prompt_build",
         lambda build: (
             f"ran:{build.runtime_context['program']['thunk']['name']}:{build.raw_input}:{build.model}"
         ),

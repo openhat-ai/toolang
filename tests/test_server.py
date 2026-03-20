@@ -23,7 +23,7 @@ from toolang.layout import (
     resolve_toolang_root,
 )
 from toolang.prepared import prepare_agent
-from toolang.server import create_agent_app
+from toolang.runtime.server import create_agent_app
 
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"
 
@@ -49,7 +49,7 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
             return f"chat:{len(build.messages) - 1}:{build.raw_input}:{build.model}"
         return f"invoke:{thunk_name}:{build.raw_input}:{build.model}"
 
-    monkeypatch.setattr("toolang.invoke.execute_prompt_build", fake_execute)
+    monkeypatch.setattr("toolang.runtime.invoke.execute_prompt_build", fake_execute)
 
     app = create_agent_app(
         prepared,
@@ -219,7 +219,7 @@ def test_create_agent_app_reports_docker_sandbox_state(
     run_path = agent_run_path(home, "alice")
 
     monkeypatch.setattr(
-        "toolang.invoke.execute_prompt_build",
+        "toolang.runtime.invoke.execute_prompt_build",
         lambda build: "ok",
     )
 

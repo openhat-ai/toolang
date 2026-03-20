@@ -16,7 +16,6 @@ from toolang.agent_refs import ResolvedAgentRef
 from toolang.agent_registry import delete_running_agent, get_running_agent
 from toolang.errors import ToolangError
 from toolang.files.agent_run import AgentRunState
-from toolang.invoke import invoke_prepared_agent
 from toolang.layout import (
     agent_log_path,
     agent_room_sandbox_dir,
@@ -28,6 +27,8 @@ from toolang.layout import (
     sandbox_host,
 )
 from toolang.prepared import PreparedAgent, prepare_agent
+from toolang.runtime.invoke import invoke_prepared_agent
+from toolang.runtime.server import serve_agent
 from toolang.sandbox import (
     HOST_SANDBOX,
     docker_container_name,
@@ -41,7 +42,6 @@ from toolang.sandbox import (
     write_sandbox_args_file,
     write_sandbox_exec_file,
 )
-from toolang.server import serve_agent
 from toolang.sync import sync_agent
 
 from .support import (

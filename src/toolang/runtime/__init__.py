@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from toolang.errors import ToolangError
-from toolang.prompt_build import PromptBuild, expand_prompt_input, infer_model
+
+from .build import PromptBuild, expand_prompt_input, infer_model
 
 __all__ = ["execute_prompt_build", "expand_prompt_input", "infer_model"]
 

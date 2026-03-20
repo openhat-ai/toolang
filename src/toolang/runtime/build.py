@@ -11,7 +11,8 @@ from typing import Any
 from toolang.ast import Program, Thunk
 from toolang.caps_view import load_prepared_caps
 from toolang.errors import ToolangError
-from toolang.messages import Message, context_prompt
+
+from .messages import Message, context_prompt
 
 MODEL_DIRECTIVE_RE = re.compile(r"^model\s*=\s*(.*)$")
 PROMPT_CALL_RE = re.compile(r"^/([A-Za-z_][\w-]*)(?:\s+(.*))?$")
