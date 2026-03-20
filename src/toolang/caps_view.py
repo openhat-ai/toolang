@@ -1,13 +1,21 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
-from toolang.files.sync_state import SyncState
+from toolang.agent_refs import ResolvedAgentRef
+from toolang.ast import DeclBlock, ParamDecl, Program, SourceSpan
 from toolang.layout import agent_synced_caps_root, global_synced_caps_root, synced_caps_root
-from toolang.prepared import PreparedAgent
-from toolang_caps.models import InlineCapMeta, SkillMeta
+from toolang_caps.models import (
+    InlineCapKind,
+    InlineCapMeta,
+    SkillMeta,
+    TEXT_CAP_KINDS,
+)
+
+if TYPE_CHECKING:
+    from toolang.prepared import PreparedAgent
 
 
 class InlineCapView(BaseModel):
@@ -38,39 +46,47 @@ class CapsView(BaseModel):
     psyches: list[InlineCapView] = Field(default_factory=list)
 
 
-def load_prepared_caps(prepared: PreparedAgent) -> CapsView:
-    root = synced_caps_root(prepared.ref.agent_home)
-    result = CapsView()
-    if not root.exists():
-        return result
-
-    state = SyncState.load(prepared.sync_state_path)
-    result.skills = _overlay_skills(
-        _load_skills(
-            global_synced_caps_root(prepared.ref.toolang_root),
-            names=set(state.global_refs.skills),
-        ),
-        _load_skills(root, names=set(state.shared_refs.skills)),
-        _load_skills(
-            agent_synced_caps_root(prepared.ref.agent_home, prepared.ref.agent_name),
-            names=set(state.agent_refs.skills),
-        ),
+def build_effective_program(source_program: Program, ref: ResolvedAgentRef) -> Program:
+    declarations = [
+        declaration
+        for declaration in source_program.declarations
+        if declaration.kind not in TEXT_CAP_KINDS
+    ]
+    for kind in TEXT_CAP_KINDS:
+        for declaration in _load_text_declarations(ref, kind):
+            declarations.append(declaration)
+    return Program(
+        uses=list(source_program.uses),
+        declarations=declarations,
+        thunks=list(source_program.thunks),
     )
-    result.services = _load_inline_caps(root, prepared, "service")
-    result.prompts = _load_inline_caps(root, prepared, "prompt")
-    result.psyches = _load_inline_caps(root, prepared, "psyche")
-    return result
 
 
-def _load_skills(root, *, names: set[str]) -> dict[str, SkillCapView]:
+def load_prepared_caps(prepared: PreparedAgent) -> CapsView:
+    return CapsView(
+        skills=_load_skill_views(prepared.ref),
+        services=_load_inline_views(prepared.ref, "service"),
+        prompts=_load_inline_views(prepared.ref, "prompt"),
+        psyches=_load_inline_views(prepared.ref, "psyche"),
+    )
+
+
+def _load_skill_views(ref: ResolvedAgentRef) -> list[SkillCapView]:
+    items = _overlay_layers(
+        _load_skills(global_synced_caps_root(ref.toolang_root)),
+        _load_skills(synced_caps_root(ref.agent_home)),
+        _load_skills(agent_synced_caps_root(ref.agent_home, ref.agent_name)),
+    )
+    return [items[name] for name in sorted(items)]
+
+
+def _load_skills(root) -> dict[str, SkillCapView]:
     skill_dir = root / "skills"
     items: dict[str, SkillCapView] = {}
     if not skill_dir.exists():
         return items
     for meta_path in sorted(skill_dir.glob("*.meta.json")):
         meta = SkillMeta.model_validate_json(meta_path.read_text(encoding="utf-8"))
-        if meta.name not in names:
-            continue
         items[meta.name] = SkillCapView(
             name=meta.name,
             path=meta.path,
@@ -84,38 +100,67 @@ def _load_skills(root, *, names: set[str]) -> dict[str, SkillCapView]:
     return items
 
 
-def _overlay_skills(*layers: dict[str, SkillCapView]) -> list[SkillCapView]:
-    merged: dict[str, SkillCapView] = {}
-    for layer in layers:
-        merged.update(layer)
-    return [merged[name] for name in sorted(merged)]
-
-
-def _load_inline_caps(
-    root,
-    prepared: PreparedAgent,
+def _load_inline_views(
+    ref: ResolvedAgentRef,
     kind: Literal["service", "prompt", "psyche"],
 ) -> list[InlineCapView]:
-    section = f"{kind}s" if kind != "psyche" else "psyches"
-    directory = root / section
-    expected = {
-        declaration.name
-        for declaration in prepared.program.declarations
-        if declaration.kind == kind
-    }
-    items: list[InlineCapView] = []
-    for meta_path in sorted(directory.glob("*.meta.json")):
-        meta = InlineCapMeta.model_validate_json(meta_path.read_text(encoding="utf-8"))
-        if meta.name not in expected:
-            continue
-        items.append(
-            InlineCapView(
-                kind=kind,
-                name=meta.name,
-                language=meta.language,
-                path=meta.path,
-                params=[param.model_dump(mode="python") for param in meta.params],
-                front_matter=meta.front_matter,
-            )
+    items = _overlay_layers(
+        _load_inline_meta(global_synced_caps_root(ref.toolang_root), kind),
+        _load_inline_meta(synced_caps_root(ref.agent_home), kind),
+        _load_inline_meta(agent_synced_caps_root(ref.agent_home, ref.agent_name), kind),
+    )
+    return [
+        InlineCapView(
+            kind=kind,
+            name=meta.name,
+            language=meta.language,
+            path=meta.path,
+            params=[param.model_dump(mode="python") for param in meta.params],
+            front_matter=meta.front_matter,
         )
+        for _, meta in sorted(items.items())
+    ]
+
+
+def _load_text_declarations(
+    ref: ResolvedAgentRef,
+    kind: InlineCapKind,
+) -> list[DeclBlock]:
+    items = _overlay_layers(
+        _load_inline_meta(global_synced_caps_root(ref.toolang_root), kind),
+        _load_inline_meta(synced_caps_root(ref.agent_home), kind),
+        _load_inline_meta(agent_synced_caps_root(ref.agent_home, ref.agent_name), kind),
+    )
+    return [
+        DeclBlock(
+            kind=kind,
+            name=meta.name,
+            language=meta.language,
+            body=meta.raw_text,
+            header_suffix=f"```{meta.language or ''}",
+            span=SourceSpan(0),
+            params=[
+                ParamDecl(name=param.name, optional=param.optional)
+                for param in meta.params
+            ],
+        )
+        for _, meta in sorted(items.items())
+    ]
+
+
+def _load_inline_meta(root, kind: InlineCapKind) -> dict[str, InlineCapMeta]:
+    kind_dir = root / f"{kind}s" if kind != "psyche" else root / "psyches"
+    items: dict[str, InlineCapMeta] = {}
+    if not kind_dir.exists():
+        return items
+    for meta_path in sorted(kind_dir.glob("*.meta.json")):
+        meta = InlineCapMeta.model_validate_json(meta_path.read_text(encoding="utf-8"))
+        items[meta.name] = meta
     return items
+
+
+def _overlay_layers(*layers: dict[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for layer in layers:
+        merged.update(layer)
+    return merged

@@ -8,60 +8,91 @@ from pathlib import Path
 import httpx
 
 from toolang.errors import ToolangError
-from toolang_caps.models import ResolvedCapRef
+from toolang_caps.models import CapKind, ResolvedCapRef
 
-SKILL_REPO_CANDIDATES = (
-    ("agent-skills", "skills/{name}"),
-    ("skills", "{name}"),
-)
+CAP_REPO_CANDIDATES: dict[CapKind, tuple[tuple[str, str, str | None], ...]] = {
+    "skill": (
+        ("agent-skills", "skills/{name}", "SKILL.md"),
+        ("skills", "{name}", "SKILL.md"),
+    ),
+    "service": (
+        ("agent-services", "services/{name}.md", None),
+        ("services", "{name}.md", None),
+    ),
+    "prompt": (
+        ("agent-prompts", "prompts/{name}.md", None),
+        ("prompts", "{name}.md", None),
+    ),
+    "psyche": (
+        ("agent-psyches", "psyches/{name}.md", None),
+        ("psyches", "{name}.md", None),
+    ),
+}
 
 
-def resolve_github_skill_ref(ref: str) -> ResolvedCapRef:
+def resolve_github_cap_ref(kind: CapKind, ref: str) -> ResolvedCapRef:
     owner, name = _parse_cap_ref(ref)
     with httpx.Client(
         follow_redirects=True,
         headers={"User-Agent": "toolang-sync"},
         timeout=20.0,
     ) as client:
-        for repo_name, path_template in SKILL_REPO_CANDIDATES:
+        for repo_name, path_template, required_child in CAP_REPO_CANDIDATES[kind]:
             repo = f"{owner}/{repo_name}"
             default_branch = _repo_default_branch(client, repo)
             if default_branch is None:
                 continue
             rev = _repo_branch_rev(client, repo, default_branch)
             path = path_template.format(name=name)
-            if _github_file_exists(client, repo, rev, f"{path}/SKILL.md"):
+            check_path = f"{path}/{required_child}" if required_child is not None else path
+            if _github_file_exists(client, repo, rev, check_path):
                 return ResolvedCapRef(
-                    kind="skill",
+                    kind=kind,
                     name=name,
                     ref=ref,
                     repo=repo,
                     path=path,
                     rev=rev,
                 )
-    raise ToolangError(f"Skill ref could not be resolved from GitHub: {ref}")
+    raise ToolangError(f"{kind.title()} ref could not be resolved from GitHub: {ref}")
 
 
-def fetch_github_tree(resolved: ResolvedCapRef) -> tuple[Path, list[str]]:
+def resolve_github_skill_ref(ref: str) -> ResolvedCapRef:
+    return resolve_github_cap_ref("skill", ref)
+
+
+def fetch_github_artifact(resolved: ResolvedCapRef) -> tuple[Path, list[str]]:
     archive = _download_repo_archive(resolved.repo, resolved.rev)
     temp_root = Path(tempfile.mkdtemp(prefix="toolang-cap-tree-"))
     _extract_repo_archive(archive, temp_root)
-    source_dir = _extracted_source_dir(temp_root, resolved.path)
-    if not source_dir.exists():
+    source_path = _extracted_source_path(temp_root, resolved.path)
+    if not source_path.exists():
         raise ToolangError(
             f"Resolved cap path was not found in the fetched archive: {resolved.repo}@{resolved.rev}:{resolved.path}"
         )
-    materialized_root = temp_root / "materialized" / resolved.name
+    materialized_root = temp_root / "materialized"
     files: list[str] = []
-    for source in source_dir.rglob("*"):
-        if not source.is_file():
-            continue
-        relative = source.relative_to(source_dir)
-        target = materialized_root / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(source.read_bytes())
-        files.append(str(relative))
-    return materialized_root, sorted(files)
+    if source_path.is_dir():
+        materialized_path = materialized_root / resolved.name
+        for source in source_path.rglob("*"):
+            if not source.is_file():
+                continue
+            relative = source.relative_to(source_path)
+            target = materialized_path / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(source.read_bytes())
+            files.append(str(relative))
+        return materialized_path, sorted(files)
+
+    materialized_path = materialized_root / source_path.name
+    materialized_path.parent.mkdir(parents=True, exist_ok=True)
+    materialized_path.write_bytes(source_path.read_bytes())
+    files.append(materialized_path.name)
+    return materialized_path, files
+
+
+def fetch_github_tree(resolved: ResolvedCapRef) -> tuple[Path, list[str]]:
+    return fetch_github_artifact(resolved)
 
 
 def _parse_cap_ref(ref: str) -> tuple[str, str]:
@@ -109,7 +140,7 @@ def _extract_repo_archive(archive: bytes, root: Path) -> None:
         tar.extractall(root)
 
 
-def _extracted_source_dir(root: Path, path: str) -> Path:
+def _extracted_source_path(root: Path, path: str) -> Path:
     extracted_roots = [item for item in root.iterdir() if item.is_dir()]
     if len(extracted_roots) != 1:
         raise ToolangError("Expected exactly one extracted repository root.")
