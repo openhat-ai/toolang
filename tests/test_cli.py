@@ -19,13 +19,12 @@ from toolang.agent.registry import (
     get_running_agent,
     upsert_running_agent,
 )
-from toolang.cli import (
+from toolang.cli import app, main
+from toolang.cli.runtime.serve import _drop_stale_running_agent
+from toolang.cli.support import (
     _default_runtime_cap_scopes,
-    _drop_stale_running_agent,
     _remember_agent,
     _resolve_cli_agent,
-    app,
-    main,
 )
 from toolang.errors import ToolangError
 from toolang.files.agent_run import AgentRunState

@@ -9,7 +9,7 @@ from toolang.agent.registry import delete_known_agent, get_running_agent
 from toolang.errors import ToolangError
 from toolang.layout import agents_db_path
 
-from .runtime import _drop_stale_running_agent
+from .runtime.serve import _drop_stale_running_agent
 from .support import (
     _append_agent_updated,
     _format_rows,
