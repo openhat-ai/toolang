@@ -193,13 +193,16 @@ Examples:
 Examples:
 
 - `toolang skill add briceyan/pdf-processing`
+- `toolang service add by3gus/github`
+- `toolang prompt add by3gus/rewrite`
+- `toolang psyche add by3gus/reviewer`
 - `use skill briceyan/pdf-processing`
 
 The same ref syntax is currently used in:
 
 - `.too` `use` declarations
 - `agents.too` shared source files
-- CLI commands that manage skill refs
+- CLI commands that manage capability refs
 
 ### 5.4 GitHub Resolution
 
@@ -214,6 +217,12 @@ Probe rules:
 - for `service`
   - repos: `agent-services`, `services`
   - paths: `services/<cap-name>.md`, `<cap-name>.md`
+- for `prompt`
+  - repos: `agent-prompts`, `prompts`
+  - paths: `prompts/<cap-name>.md`, `<cap-name>.md`
+- for `psyche`
+  - repos: `agent-psyches`, `psyches`
+  - paths: `psyches/<cap-name>.md`, `<cap-name>.md`
 - for `skill`
   - repos: `agent-skills`, `skills`
   - paths: `skills/<cap-name>/SKILL.md`, `<cap-name>/SKILL.md`
@@ -223,6 +232,12 @@ Canonical layout for new GitHub caps:
 - service
   - repo: `agent-services`
   - path: `services/<cap-name>.md`
+- prompt
+  - repo: `agent-prompts`
+  - path: `prompts/<cap-name>.md`
+- psyche
+  - repo: `agent-psyches`
+  - path: `psyches/<cap-name>.md`
 - skill
   - repo: `agent-skills`
   - path: `skills/<cap-name>/SKILL.md`
@@ -241,8 +256,7 @@ Toolang currently uses three capability scopes:
   - authored source: `{TOOLANG_ROOT}/agents.too`
   - local editable caps: `{TOOLANG_ROOT}/{skills,services,prompts,psyches}/`
 
-For skills, sync keeps the scopes separate and runtime applies precedence in
-this order:
+Sync keeps the scopes separate and runtime applies precedence in this order:
 
 1. `agent`
 2. `shared`
@@ -259,11 +273,12 @@ Current scope categories are:
 
 Current implementation details:
 
-- `agents.too` currently supports shared and global `use skill ...` refs
-- local skill directories are created lazily when the first local skill is
-  created in that scope
-- scope override is intentionally deferred to runtime rather than collapsing
-  same-name skills during sync
+- `agents.too` currently supports shared and global `use` refs for `skill`,
+  `service`, `prompt`, and `psyche`
+- local cap directories are created lazily when the first local cap is created
+  in that scope
+- same-name caps in different scopes are intentionally deferred to runtime
+  overlay instead of collapsing at sync time
 
 
 ## 7. Per-Agent Sync State
@@ -276,7 +291,7 @@ The state file stores:
 
 - freshness metadata for the whole agent home
 - the compiled synced program for that agent
-- scope-separated exact skill entries used by that agent:
+- scope-separated exact cap entries used by that agent:
   - `agent_refs`
   - `shared_refs`
   - `global_refs`
@@ -311,17 +326,34 @@ Minimal shape:
         "path": "skills/pdf-processing",
         "rev": "8f3c2d4a5b6c7d8e9f00112233445566778899aa"
       }
-    }
+      }
+    },
+    "services": {},
+    "prompts": {},
+    "psyches": {}
   },
   "shared_refs": {
     "skills": {
       "repo-search": {
         "path": "skills/repo-search"
       }
-    }
+    },
+    "services": {
+      "github": {
+        "ref": "by3gus/github",
+        "repo": "by3gus/agent-services",
+        "path": "services/github.md",
+        "rev": "8f3c2d4a5b6c7d8e9f00112233445566778899aa"
+      }
+    },
+    "prompts": {},
+    "psyches": {}
   },
   "global_refs": {
-    "skills": {}
+    "skills": {},
+    "services": {},
+    "prompts": {},
+    "psyches": {}
   }
 }
 ```
@@ -347,7 +379,7 @@ Inputs:
 - top-level `.too` files
 - `${AGENT_HOME}/agents.too`
 - `${TOOLANG_ROOT}/agents.too`
-- local skill directories in shared and global scope
+- local cap directories in shared and global scope
 
 Outputs:
 
@@ -360,11 +392,11 @@ Contract:
 
 1. parse top-level `.too` files with Tree-sitter
 2. analyze per-agent declarations, `use` statements, and inline caps
-3. parse shared and global `agents.too` skill refs
-4. read shared and global local skill directories
+3. parse shared and global `agents.too` refs
+4. read shared and global local cap directories
 5. resolve each ref to an exact immutable target
-6. materialize global, shared, and agent skill scopes into separate sync roots
-7. write inline caps into `${AGENT_HOME}/.toolang/sync/`
+6. materialize global, shared, and agent cap scopes into separate sync roots
+7. write agent inline caps into `${AGENT_HOME}/.toolang/agents/{AGENT}/sync/`
 8. rewrite `${AGENT_HOME}/.toolang/sync/<agent>.state.json` for each agent
 
 Rules:
@@ -374,7 +406,7 @@ Rules:
 - freshness uses recorded input metadata such as `mtime_ns` and file size for:
   - `.too` files in the agent home
   - shared and global `agents.too`
-  - shared and global local skill directories
+  - shared and global local cap directories
 - `toolang invoke` may skip parse and sync when the current inputs still match
   the stored freshness metadata in
   `${AGENT_HOME}/.toolang/sync/<agent>.state.json`
@@ -383,9 +415,9 @@ Rules:
   execution
 - inline caps are still materialized during sync so unchanged agents do not
   need to be reparsed just to recover inline definitions
-- same-name skills in different scopes are intentionally allowed to coexist in
+- same-name caps in different scopes are intentionally allowed to coexist in
   their own sync roots
-- runtime chooses the effective skill with precedence `agent > shared > global`
+- runtime chooses the effective cap with precedence `agent > shared > global`
 - sync may reuse or refresh data under `TOOLANG_ROOT`
 
 Reason:
@@ -587,22 +619,40 @@ package rather than the Toolang runtime CLI.
 - `toolang skill local new <name> --from <cap_ref> --scope=shared|global`
 - `toolang skill local path <name> --scope=shared|global`
 - `toolang skill local delete <name> --scope=shared|global`
+- `toolang service add <cap_ref> --scope=agent|shared|global`
+- `toolang service remove <name> --scope=agent|shared|global`
+- `toolang service local new <name> --scope=shared|global`
+- `toolang service local new <name> --from <cap_ref> --scope=shared|global`
+- `toolang service local path <name> --scope=shared|global`
+- `toolang service local delete <name> --scope=shared|global`
+- `toolang prompt add <cap_ref> --scope=agent|shared|global`
+- `toolang prompt remove <name> --scope=agent|shared|global`
+- `toolang prompt local new <name> --scope=shared|global`
+- `toolang prompt local new <name> --from <cap_ref> --scope=shared|global`
+- `toolang prompt local path <name> --scope=shared|global`
+- `toolang prompt local delete <name> --scope=shared|global`
+- `toolang psyche add <cap_ref> --scope=agent|shared|global`
+- `toolang psyche remove <name> --scope=agent|shared|global`
+- `toolang psyche local new <name> --scope=shared|global`
+- `toolang psyche local new <name> --from <cap_ref> --scope=shared|global`
+- `toolang psyche local path <name> --scope=shared|global`
+- `toolang psyche local delete <name> --scope=shared|global`
 - `toolang sync`
 
 Command intent:
 
 - `add`
-  - add a skill ref to the selected authored source scope
+  - add a capability ref to the selected authored source scope
 - `remove`
-  - remove a skill ref by name from the selected authored source scope
+  - remove a capability ref by name from the selected authored source scope
 - `local new`
-  - create a local editable skill directory
+  - create a local editable cap
 - `local new --from`
-  - initialize a local editable skill from a remote ref
+  - initialize a local editable cap from a remote ref
 - `local path`
-  - print the target local skill path without creating directories
+  - print the target local cap path without creating directories
 - `local delete`
-  - remove a local editable skill directory
+  - remove a local editable cap
 - `sync`
   - rebuild:
     - `${TOOLANG_ROOT}/sync/`

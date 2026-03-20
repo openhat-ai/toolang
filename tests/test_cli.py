@@ -7,6 +7,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from importlib.metadata import version as package_version
 from pathlib import Path
+from typing import cast
 
 import pytest
 from typer.testing import CliRunner
@@ -24,10 +25,14 @@ from toolang.layout import (
     shared_caps_dir,
     shared_source_path,
 )
+from toolang_caps.models import CapKind
 
 runner = CliRunner()
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"
 REMOTE_SKILL_FIXTURE = Path(__file__).parent / "fixtures" / "remote-skill" / "pdf-processing"
+REMOTE_SERVICE_FIXTURE = Path(__file__).parent / "fixtures" / "remote-service" / "github.md"
+REMOTE_PROMPT_FIXTURE = Path(__file__).parent / "fixtures" / "remote-prompt" / "rewrite.md"
+REMOTE_PSYCHE_FIXTURE = Path(__file__).parent / "fixtures" / "remote-psyche" / "reviewer.md"
 
 
 def test_cli_has_expected_subcommands() -> None:
@@ -40,6 +45,9 @@ def test_cli_has_expected_subcommands() -> None:
     assert "serve" in result.output
     assert "start" in result.output
     assert "skill" in result.output
+    assert "service" in result.output
+    assert "prompt" in result.output
+    assert "psyche" in result.output
     assert "bus" in result.output
     assert "home" not in result.output
     assert "source" not in result.output
@@ -382,9 +390,10 @@ thunk review:
     monkeypatch.setenv("TOOLANG_ROOT", str(root))
     monkeypatch.chdir(home)
 
-    def fake_resolve(ref: str):
+    def fake_resolve(kind: str, ref: str):
         from toolang_caps.models import ResolvedCapRef
 
+        assert kind == "skill"
         return ResolvedCapRef(
             kind="skill",
             name="repo-search",
@@ -405,8 +414,8 @@ thunk review:
         )
         return fetched_root, files
 
-    monkeypatch.setattr("toolang.cli.resolve_github_skill_ref", fake_resolve)
-    monkeypatch.setattr("toolang.cli.fetch_github_tree", fake_fetch)
+    monkeypatch.setattr("toolang.cli.resolve_github_cap_ref", fake_resolve)
+    monkeypatch.setattr("toolang.cli.fetch_github_artifact", fake_fetch)
 
     result = runner.invoke(
         app,
@@ -438,6 +447,156 @@ def test_skill_local_delete_prunes_empty_kind_dir(tmp_path: Path, monkeypatch) -
     assert result.stdout.strip() == str(skill_dir.resolve())
     assert not skill_dir.exists()
     assert not shared_caps_dir(home, "skill").exists()
+
+
+@pytest.mark.parametrize(
+    ("kind", "ref", "scope", "expected_name"),
+    [
+        ("service", "by3gus/github", "agent", "use service by3gus/github\n\n"),
+        ("prompt", "by3gus/rewrite", "shared", "use prompt by3gus/rewrite\n"),
+        ("psyche", "by3gus/reviewer", "global", "use psyche by3gus/reviewer\n"),
+    ],
+)
+def test_text_cap_add_writes_expected_scope_source(
+    tmp_path: Path,
+    monkeypatch,
+    kind: str,
+    ref: str,
+    scope: str,
+    expected_name: str,
+) -> None:
+    typed_kind = cast(CapKind, kind)
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "team"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        """
+thunk review:
+    Review the change set.
+""".strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+    monkeypatch.chdir(home)
+
+    result = runner.invoke(app, [typed_kind, "add", ref, "--scope", scope])
+
+    assert result.exit_code == 0
+    if scope == "agent":
+        target = home / "alice.too"
+    elif scope == "shared":
+        target = shared_source_path(home)
+    else:
+        target = global_source_path(root)
+    assert result.stdout.strip() == str(target.resolve())
+    assert target.read_text(encoding="utf-8").startswith(expected_name)
+
+
+@pytest.mark.parametrize(
+    ("kind", "ref", "fixture", "scope"),
+    [
+        ("service", "by3gus/github", REMOTE_SERVICE_FIXTURE, "shared"),
+        ("prompt", "by3gus/rewrite", REMOTE_PROMPT_FIXTURE, "global"),
+        ("psyche", "by3gus/reviewer", REMOTE_PSYCHE_FIXTURE, "shared"),
+    ],
+)
+def test_text_cap_local_new_from_ref_copies_remote_file(
+    tmp_path: Path,
+    monkeypatch,
+    kind: str,
+    ref: str,
+    fixture: Path,
+    scope: str,
+) -> None:
+    typed_kind = cast(CapKind, kind)
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "team"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        """
+thunk review:
+    Review the change set.
+""".strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+    monkeypatch.chdir(home)
+
+    def fake_resolve(actual_kind: CapKind, actual_ref: str):
+        from toolang_caps.models import ResolvedCapRef
+
+        assert actual_kind == typed_kind
+        assert actual_ref == ref
+        return ResolvedCapRef(
+            kind=typed_kind,
+            name=Path(fixture).stem,
+            ref=ref,
+            repo=f"by3gus/agent-{typed_kind}s",
+            path=f"{typed_kind}s/{Path(fixture).name}",
+            rev="abc123",
+        )
+
+    def fake_fetch(_resolved):
+        fetched_file = tmp_path / "fetched" / "materialized" / fixture.name
+        fetched_file.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(fixture, fetched_file)
+        return fetched_file, [fixture.name]
+
+    monkeypatch.setattr("toolang.cli.resolve_github_cap_ref", fake_resolve)
+    monkeypatch.setattr("toolang.cli.fetch_github_artifact", fake_fetch)
+
+    result = runner.invoke(
+        app,
+        [typed_kind, "local", "new", Path(fixture).stem, "--from", ref, "--scope", scope],
+    )
+
+    if scope == "shared":
+        target = shared_caps_dir(home, typed_kind) / f"{Path(fixture).stem}.md"
+    else:
+        target = global_caps_dir(root, typed_kind) / f"{Path(fixture).stem}.md"
+    assert result.exit_code == 0
+    assert result.stdout.strip() == str(target.resolve())
+    assert target.read_text(encoding="utf-8") == fixture.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("kind", "scope"),
+    [
+        ("service", "shared"),
+        ("prompt", "global"),
+        ("psyche", "shared"),
+    ],
+)
+def test_text_cap_local_delete_prunes_empty_kind_dir(
+    tmp_path: Path,
+    monkeypatch,
+    kind: str,
+    scope: str,
+) -> None:
+    typed_kind = cast(CapKind, kind)
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "team"
+    home.mkdir(parents=True)
+    target_dir = (
+        shared_caps_dir(home, typed_kind)
+        if scope == "shared"
+        else global_caps_dir(root, typed_kind)
+    )
+    target_dir.mkdir(parents=True)
+    cap_path = target_dir / "demo.md"
+    cap_path.write_text("demo\n", encoding="utf-8")
+
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+    monkeypatch.chdir(home)
+
+    result = runner.invoke(app, [typed_kind, "local", "delete", "demo", "--scope", scope])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == str(cap_path.resolve())
+    assert not cap_path.exists()
+    assert not target_dir.exists()
 
 
 def test_hidden_init_zsh_outputs_cd_helpers() -> None:

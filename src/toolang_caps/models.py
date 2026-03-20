@@ -5,6 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 CAP_KINDS = ("skill", "service", "prompt", "psyche")
+TEXT_CAP_KINDS = ("service", "prompt", "psyche")
 CapKind = Literal["skill", "service", "prompt", "psyche"]
 InlineCapKind = Literal["service", "prompt", "psyche"]
 
@@ -18,6 +19,10 @@ SECTION_BY_KIND = {
 
 def section_name(kind: CapKind) -> str:
     return SECTION_BY_KIND[kind]
+
+
+def refs_attr_name(kind: CapKind) -> str:
+    return section_name(kind)
 
 
 class CapEntry(BaseModel):
@@ -52,6 +57,11 @@ class InlineCapMeta(BaseModel):
     params: list[CapParam] = Field(default_factory=list)
     front_matter: dict[str, Any] | None = None
     content: str = ""
+    raw_text: str = ""
+    ref: str | None = None
+    repo: str | None = None
+    source_path: str | None = None
+    rev: str | None = None
 
 
 class ResolvedCapRef(BaseModel):

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from toolang.agent_refs import ResolvedAgentRef
 from toolang.ast import Program
+from toolang.caps_view import build_effective_program
 from toolang.layout import agent_sync_path
 from toolang.sync import ensure_agent_synced
 
@@ -27,9 +28,10 @@ def prepare_agent(agent: ResolvedAgentRef) -> PreparedAgent:
         raise FileNotFoundError(f"Agent source not found: {source_path}")
 
     synced_program = ensure_agent_synced(agent)
+    source_program = synced_program.to_program()
     return PreparedAgent(
         ref=agent,
         source_path=source_path,
         sync_state_path=agent_sync_path(agent.agent_home, agent.agent_name),
-        program=synced_program.to_program(),
+        program=build_effective_program(source_program, agent),
     )

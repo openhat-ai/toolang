@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import cast
 
 from toolang.agent_refs import resolve_agent_ref
 from toolang.files.program import SyncedProgram
@@ -20,10 +21,14 @@ from toolang.layout import (
 from toolang.parser import parse_program
 from toolang.sync import ensure_agent_synced, sync_agent
 from toolang_caps.models import ResolvedCapRef
+from toolang_caps.models import CapKind
 
 PARSE_FIXTURE = Path(__file__).parent / "fixtures" / "sample.too"
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"
 REMOTE_SKILL_FIXTURE = Path(__file__).parent / "fixtures" / "remote-skill" / "pdf-processing"
+REMOTE_SERVICE_FIXTURE = Path(__file__).parent / "fixtures" / "remote-service" / "github.md"
+REMOTE_PROMPT_FIXTURE = Path(__file__).parent / "fixtures" / "remote-prompt" / "rewrite.md"
+REMOTE_PSYCHE_FIXTURE = Path(__file__).parent / "fixtures" / "remote-psyche" / "reviewer.md"
 
 
 def test_synced_program_round_trip(tmp_path) -> None:
@@ -47,15 +52,17 @@ def test_sync_agent_writes_program_and_source_caps(tmp_path) -> None:
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     synced_program = sync_agent(agent)
+    agent_sync_root = agent_synced_caps_root(home, "alice")
 
     assert agent_sync_path(home, "alice") == synced_caps_root(home) / "alice.state.json"
     assert agent_sync_path(home, "alice").exists()
     assert not (synced_caps_root(home) / "agents").exists()
-    assert (synced_caps_root(home) / "prompts" / "summarize.md").exists()
-    assert (synced_caps_root(home) / "prompts" / "summarize.meta.json").exists()
-    assert (synced_caps_root(home) / "services" / "github.md").read_text(encoding="utf-8").startswith("---\n")
-    service_meta = (synced_caps_root(home) / "services" / "github.meta.json").read_text(encoding="utf-8")
+    assert (agent_sync_root / "prompts" / "summarize.md").exists()
+    assert (agent_sync_root / "prompts" / "summarize.meta.json").exists()
+    assert (agent_sync_root / "services" / "github.md").read_text(encoding="utf-8").startswith("---\n")
+    service_meta = (agent_sync_root / "services" / "github.meta.json").read_text(encoding="utf-8")
     assert '"transport": "http"' in service_meta
+    assert not (synced_caps_root(home) / "prompts" / "summarize.md").exists()
     assert synced_program.to_program().to_dict() == parse_program(source_path.read_text()).to_dict()
 
 
@@ -84,7 +91,8 @@ thunk review:
         encoding="utf-8",
     )
 
-    def fake_resolve(ref: str) -> ResolvedCapRef:
+    def fake_resolve(kind: str, ref: str) -> ResolvedCapRef:
+        assert kind == "skill"
         return ResolvedCapRef(
             kind="skill",
             name="pdf-processing",
@@ -105,8 +113,8 @@ thunk review:
         )
         return fetched_root, files
 
-    monkeypatch.setattr("toolang.sync.resolve_github_skill_ref", fake_resolve)
-    monkeypatch.setattr("toolang.sync.fetch_github_tree", fake_fetch)
+    monkeypatch.setattr("toolang.sync.resolve_github_cap_ref", fake_resolve)
+    monkeypatch.setattr("toolang.sync.fetch_github_artifact", fake_fetch)
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     sync_agent(agent)
@@ -153,7 +161,7 @@ def test_ensure_agent_synced_rebuilds_missing_synced_caps(tmp_path) -> None:
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     sync_agent(agent)
-    prompt_path = synced_caps_root(home) / "prompts" / "summarize.md"
+    prompt_path = agent_synced_caps_root(home, "alice") / "prompts" / "summarize.md"
     prompt_path.unlink()
 
     ensure_agent_synced(agent)
@@ -210,8 +218,9 @@ thunk review:
     shared_source_path(home).write_text("use skill by3gus/repo-search\n", encoding="utf-8")
     global_source_path(root).write_text("use skill by3hak/repo-search\n", encoding="utf-8")
 
-    def fake_resolve(ref: str) -> ResolvedCapRef:
+    def fake_resolve(kind: str, ref: str) -> ResolvedCapRef:
         owner, _, name = ref.partition("/")
+        assert kind == "skill"
         repo_name = "agent-skills" if owner == "by3gus" else "skills"
         path = f"skills/{name}" if repo_name == "agent-skills" else name
         return ResolvedCapRef(
@@ -234,8 +243,8 @@ thunk review:
         )
         return fetched_root, files
 
-    monkeypatch.setattr("toolang.sync.resolve_github_skill_ref", fake_resolve)
-    monkeypatch.setattr("toolang.sync.fetch_github_tree", fake_fetch)
+    monkeypatch.setattr("toolang.sync.resolve_github_cap_ref", fake_resolve)
+    monkeypatch.setattr("toolang.sync.fetch_github_artifact", fake_fetch)
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     sync_agent(agent)
@@ -278,3 +287,83 @@ thunk review:
     assert state.global_refs.skills["local-global"].path == "skills/local-global"
     assert (synced_caps_root(home) / "skills" / "local-shared" / "SKILL.md").exists()
     assert (global_synced_caps_root(root) / "skills" / "local-global" / "SKILL.md").exists()
+
+
+def test_sync_agent_materializes_text_caps_for_all_scopes(tmp_path, monkeypatch) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        """
+use service by3hak/github
+use prompt by3gus/rewrite
+
+thunk review(user):
+    Review the request.
+""".strip(),
+        encoding="utf-8",
+    )
+    shared_source_path(home).write_text("use service by3gus/github\n", encoding="utf-8")
+    global_source_path(root).write_text("use psyche by3hak/reviewer\n", encoding="utf-8")
+
+    shared_prompt = shared_caps_dir(home, "prompt") / "shared-rewrite.md"
+    shared_prompt.parent.mkdir(parents=True)
+    shared_prompt.write_text(REMOTE_PROMPT_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+
+    global_psyche = global_caps_dir(root, "psyche") / "global-reviewer.md"
+    global_psyche.parent.mkdir(parents=True)
+    global_psyche.write_text(REMOTE_PSYCHE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+
+    def fake_resolve(kind: str, ref: str) -> ResolvedCapRef:
+        typed_kind = cast(CapKind, kind)
+        owner, _, name = ref.partition("/")
+        repo_name = {
+            "service": "agent-services" if owner == "by3gus" else "services",
+            "prompt": "agent-prompts" if owner == "by3gus" else "prompts",
+            "psyche": "agent-psyches" if owner == "by3gus" else "psyches",
+        }[typed_kind]
+        path = {
+            "service": f"services/{name}.md" if repo_name == "agent-services" else f"{name}.md",
+            "prompt": f"prompts/{name}.md" if repo_name == "agent-prompts" else f"{name}.md",
+            "psyche": f"psyches/{name}.md" if repo_name == "agent-psyches" else f"{name}.md",
+        }[typed_kind]
+        return ResolvedCapRef(
+            kind=typed_kind,
+            name=name,
+            ref=ref,
+            repo=f"{owner}/{repo_name}",
+            path=path,
+            rev=f"rev-{owner}",
+        )
+
+    def fake_fetch(resolved: ResolvedCapRef):
+        fixture = {
+            "service": REMOTE_SERVICE_FIXTURE,
+            "prompt": REMOTE_PROMPT_FIXTURE,
+            "psyche": REMOTE_PSYCHE_FIXTURE,
+        }[resolved.kind]
+        fetched_file = tmp_path / "fetched" / resolved.repo.replace("/", "__") / fixture.name
+        fetched_file.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(fixture, fetched_file)
+        return fetched_file, [fixture.name]
+
+    monkeypatch.setattr("toolang.sync.resolve_github_cap_ref", fake_resolve)
+    monkeypatch.setattr("toolang.sync.fetch_github_artifact", fake_fetch)
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    sync_agent(agent)
+
+    state = SyncState.load(agent_sync_path(home, "alice"))
+    assert state.agent_refs.services["github"].ref == "by3hak/github"
+    assert state.agent_refs.prompts["rewrite"].ref == "by3gus/rewrite"
+    assert state.shared_refs.services["github"].ref == "by3gus/github"
+    assert state.shared_refs.prompts["shared-rewrite"].path == "prompts/shared-rewrite.md"
+    assert state.global_refs.psyches["reviewer"].ref == "by3hak/reviewer"
+    assert state.global_refs.psyches["global-reviewer"].path == "psyches/global-reviewer.md"
+
+    assert (agent_synced_caps_root(home, "alice") / "services" / "github.md").exists()
+    assert (agent_synced_caps_root(home, "alice") / "prompts" / "rewrite.md").exists()
+    assert (synced_caps_root(home) / "services" / "github.md").exists()
+    assert (synced_caps_root(home) / "prompts" / "shared-rewrite.md").exists()
+    assert (global_synced_caps_root(root) / "psyches" / "reviewer.md").exists()
+    assert (global_synced_caps_root(root) / "psyches" / "global-reviewer.md").exists()

@@ -51,14 +51,16 @@ from toolang.layout import (
 from toolang.prepared import prepare_agent
 from toolang.server import serve_agent
 from toolang.sync import sync_agent
-from toolang_caps.github import fetch_github_tree, resolve_github_skill_ref
-from toolang_caps.skills import (
-    add_skill_ref,
-    create_local_skill,
-    delete_local_skill,
-    install_local_skill,
+from toolang_caps.github import fetch_github_artifact, resolve_github_cap_ref
+from toolang_caps.models import CapKind
+from toolang_caps.source_ops import (
+    add_cap_ref,
+    create_local_cap,
+    delete_local_cap,
+    install_local_cap,
+    local_cap_path,
     prune_empty_local_kind_dir,
-    remove_skill_ref,
+    remove_cap_ref,
 )
 
 
@@ -93,9 +95,51 @@ skill_local_app = typer.Typer(
     pretty_exceptions_enable=False,
     pretty_exceptions_show_locals=False,
 )
+service_app = typer.Typer(
+    help="Service commands",
+    add_completion=False,
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+)
+service_local_app = typer.Typer(
+    help="Local service commands",
+    add_completion=False,
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+)
+prompt_app = typer.Typer(
+    help="Prompt commands",
+    add_completion=False,
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+)
+prompt_local_app = typer.Typer(
+    help="Local prompt commands",
+    add_completion=False,
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+)
+psyche_app = typer.Typer(
+    help="Psyche commands",
+    add_completion=False,
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+)
+psyche_local_app = typer.Typer(
+    help="Local psyche commands",
+    add_completion=False,
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+)
 app.add_typer(bus_app, name="bus")
 app.add_typer(skill_app, name="skill")
+app.add_typer(service_app, name="service")
+app.add_typer(prompt_app, name="prompt")
+app.add_typer(psyche_app, name="psyche")
 skill_app.add_typer(skill_local_app, name="local")
+service_app.add_typer(service_local_app, name="local")
+prompt_app.add_typer(prompt_local_app, name="local")
+psyche_app.add_typer(psyche_local_app, name="local")
 
 
 @app.callback()
@@ -170,11 +214,7 @@ def skill_add(
         typer.Option("--agent", help="Agent selector used to resolve agent or shared scope"),
     ] = None,
 ) -> None:
-    target = _resolve_skill_scope_target(scope=scope, agent=agent)
-    changed = add_skill_ref(target.source_path, ref)
-    typer.echo(str(target.source_path))
-    if not changed:
-        typer.echo("unchanged", err=True)
+    _cap_add("skill", ref=ref, scope=scope, agent=agent)
 
 
 @skill_app.command("remove")
@@ -189,15 +229,7 @@ def skill_remove(
         typer.Option("--agent", help="Agent selector used to resolve agent or shared scope"),
     ] = None,
 ) -> None:
-    target = _resolve_skill_scope_target(scope=scope, agent=agent)
-    changed = remove_skill_ref(
-        target.source_path,
-        name,
-        delete_when_empty=target.source_path.name == "agents.too",
-    )
-    if not changed:
-        raise ToolangError(f"Skill {name!r} is not referenced in {target.source_path}.")
-    typer.echo(str(target.source_path))
+    _cap_remove("skill", name=name, scope=scope, agent=agent)
 
 
 @skill_local_app.command("new")
@@ -216,19 +248,7 @@ def skill_local_new(
         typer.Option("--agent", help="Agent selector used to resolve shared scope"),
     ] = None,
 ) -> None:
-    target = _resolve_skill_local_target(scope=scope, agent=agent, name=name)
-    if from_ref is None:
-        create_local_skill(target.skill_path, name)
-        typer.echo(str(target.skill_path))
-        return
-
-    resolved = resolve_github_skill_ref(from_ref)
-    source_dir, _ = fetch_github_tree(resolved)
-    try:
-        install_local_skill(target.skill_path, source_dir)
-    finally:
-        shutil.rmtree(source_dir.parent.parent, ignore_errors=True)
-    typer.echo(str(target.skill_path))
+    _cap_local_new("skill", name=name, scope=scope, from_ref=from_ref, agent=agent)
 
 
 @skill_local_app.command("path")
@@ -243,8 +263,7 @@ def skill_local_path(
         typer.Option("--agent", help="Agent selector used to resolve shared scope"),
     ] = None,
 ) -> None:
-    target = _resolve_skill_local_target(scope=scope, agent=agent, name=name)
-    typer.echo(str(target.skill_path))
+    _cap_local_path("skill", name=name, scope=scope, agent=agent)
 
 
 @skill_local_app.command("delete")
@@ -259,11 +278,244 @@ def skill_local_delete(
         typer.Option("--agent", help="Agent selector used to resolve shared scope"),
     ] = None,
 ) -> None:
-    target = _resolve_skill_local_target(scope=scope, agent=agent, name=name)
-    if not delete_local_skill(target.skill_path):
-        raise ToolangError(f"Local skill not found: {target.skill_path}")
-    prune_empty_local_kind_dir(target.kind_dir)
-    typer.echo(str(target.skill_path))
+    _cap_local_delete("skill", name=name, scope=scope, agent=agent)
+
+
+@service_app.command("add")
+def service_add(
+    ref: Annotated[str, typer.Argument(help="Service ref in owner/name form")],
+    scope: Annotated[
+        Literal["agent", "shared", "global"],
+        typer.Option(help="Target scope"),
+    ] = "agent",
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="Agent selector used to resolve agent or shared scope"),
+    ] = None,
+) -> None:
+    _cap_add("service", ref=ref, scope=scope, agent=agent)
+
+
+@service_app.command("remove")
+def service_remove(
+    name: Annotated[str, typer.Argument(help="Service name")],
+    scope: Annotated[
+        Literal["agent", "shared", "global"],
+        typer.Option(help="Target scope"),
+    ] = "agent",
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="Agent selector used to resolve agent or shared scope"),
+    ] = None,
+) -> None:
+    _cap_remove("service", name=name, scope=scope, agent=agent)
+
+
+@service_local_app.command("new")
+def service_local_new(
+    name: Annotated[str, typer.Argument(help="Service name")],
+    scope: Annotated[
+        Literal["shared", "global"],
+        typer.Option(help="Target local scope"),
+    ] = "shared",
+    from_ref: Annotated[
+        str | None,
+        typer.Option("--from", help="Initialize the local service from a remote ref"),
+    ] = None,
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
+    ] = None,
+) -> None:
+    _cap_local_new("service", name=name, scope=scope, from_ref=from_ref, agent=agent)
+
+
+@service_local_app.command("path")
+def service_local_path(
+    name: Annotated[str, typer.Argument(help="Service name")],
+    scope: Annotated[
+        Literal["shared", "global"],
+        typer.Option(help="Target local scope"),
+    ] = "shared",
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
+    ] = None,
+) -> None:
+    _cap_local_path("service", name=name, scope=scope, agent=agent)
+
+
+@service_local_app.command("delete")
+def service_local_delete(
+    name: Annotated[str, typer.Argument(help="Service name")],
+    scope: Annotated[
+        Literal["shared", "global"],
+        typer.Option(help="Target local scope"),
+    ] = "shared",
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
+    ] = None,
+) -> None:
+    _cap_local_delete("service", name=name, scope=scope, agent=agent)
+
+
+@prompt_app.command("add")
+def prompt_add(
+    ref: Annotated[str, typer.Argument(help="Prompt ref in owner/name form")],
+    scope: Annotated[
+        Literal["agent", "shared", "global"],
+        typer.Option(help="Target scope"),
+    ] = "agent",
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="Agent selector used to resolve agent or shared scope"),
+    ] = None,
+) -> None:
+    _cap_add("prompt", ref=ref, scope=scope, agent=agent)
+
+
+@prompt_app.command("remove")
+def prompt_remove(
+    name: Annotated[str, typer.Argument(help="Prompt name")],
+    scope: Annotated[
+        Literal["agent", "shared", "global"],
+        typer.Option(help="Target scope"),
+    ] = "agent",
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="Agent selector used to resolve agent or shared scope"),
+    ] = None,
+) -> None:
+    _cap_remove("prompt", name=name, scope=scope, agent=agent)
+
+
+@prompt_local_app.command("new")
+def prompt_local_new(
+    name: Annotated[str, typer.Argument(help="Prompt name")],
+    scope: Annotated[
+        Literal["shared", "global"],
+        typer.Option(help="Target local scope"),
+    ] = "shared",
+    from_ref: Annotated[
+        str | None,
+        typer.Option("--from", help="Initialize the local prompt from a remote ref"),
+    ] = None,
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
+    ] = None,
+) -> None:
+    _cap_local_new("prompt", name=name, scope=scope, from_ref=from_ref, agent=agent)
+
+
+@prompt_local_app.command("path")
+def prompt_local_path(
+    name: Annotated[str, typer.Argument(help="Prompt name")],
+    scope: Annotated[
+        Literal["shared", "global"],
+        typer.Option(help="Target local scope"),
+    ] = "shared",
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
+    ] = None,
+) -> None:
+    _cap_local_path("prompt", name=name, scope=scope, agent=agent)
+
+
+@prompt_local_app.command("delete")
+def prompt_local_delete(
+    name: Annotated[str, typer.Argument(help="Prompt name")],
+    scope: Annotated[
+        Literal["shared", "global"],
+        typer.Option(help="Target local scope"),
+    ] = "shared",
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
+    ] = None,
+) -> None:
+    _cap_local_delete("prompt", name=name, scope=scope, agent=agent)
+
+
+@psyche_app.command("add")
+def psyche_add(
+    ref: Annotated[str, typer.Argument(help="Psyche ref in owner/name form")],
+    scope: Annotated[
+        Literal["agent", "shared", "global"],
+        typer.Option(help="Target scope"),
+    ] = "agent",
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="Agent selector used to resolve agent or shared scope"),
+    ] = None,
+) -> None:
+    _cap_add("psyche", ref=ref, scope=scope, agent=agent)
+
+
+@psyche_app.command("remove")
+def psyche_remove(
+    name: Annotated[str, typer.Argument(help="Psyche name")],
+    scope: Annotated[
+        Literal["agent", "shared", "global"],
+        typer.Option(help="Target scope"),
+    ] = "agent",
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="Agent selector used to resolve agent or shared scope"),
+    ] = None,
+) -> None:
+    _cap_remove("psyche", name=name, scope=scope, agent=agent)
+
+
+@psyche_local_app.command("new")
+def psyche_local_new(
+    name: Annotated[str, typer.Argument(help="Psyche name")],
+    scope: Annotated[
+        Literal["shared", "global"],
+        typer.Option(help="Target local scope"),
+    ] = "shared",
+    from_ref: Annotated[
+        str | None,
+        typer.Option("--from", help="Initialize the local psyche from a remote ref"),
+    ] = None,
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
+    ] = None,
+) -> None:
+    _cap_local_new("psyche", name=name, scope=scope, from_ref=from_ref, agent=agent)
+
+
+@psyche_local_app.command("path")
+def psyche_local_path(
+    name: Annotated[str, typer.Argument(help="Psyche name")],
+    scope: Annotated[
+        Literal["shared", "global"],
+        typer.Option(help="Target local scope"),
+    ] = "shared",
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
+    ] = None,
+) -> None:
+    _cap_local_path("psyche", name=name, scope=scope, agent=agent)
+
+
+@psyche_local_app.command("delete")
+def psyche_local_delete(
+    name: Annotated[str, typer.Argument(help="Psyche name")],
+    scope: Annotated[
+        Literal["shared", "global"],
+        typer.Option(help="Target local scope"),
+    ] = "shared",
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
+    ] = None,
+) -> None:
+    _cap_local_delete("psyche", name=name, scope=scope, agent=agent)
 
 
 @app.command("list")
@@ -450,7 +702,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 @dataclass(frozen=True, slots=True)
-class SkillSourceTarget:
+class CapSourceTarget:
     toolang_root: Path
     agent_home: Path | None
     agent_name: str | None
@@ -458,11 +710,12 @@ class SkillSourceTarget:
 
 
 @dataclass(frozen=True, slots=True)
-class SkillLocalTarget:
+class CapLocalTarget:
     toolang_root: Path
     agent_home: Path | None
+    kind: CapKind
     kind_dir: Path
-    skill_path: Path
+    cap_path: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -507,14 +760,95 @@ def _toolang_root() -> Path:
     return ensure_toolang_root_layout(root)
 
 
-def _resolve_skill_scope_target(
+def _cap_add(
+    kind: CapKind,
+    *,
+    ref: str,
+    scope: Literal["agent", "shared", "global"],
+    agent: str | None,
+) -> None:
+    target = _resolve_cap_scope_target(scope=scope, agent=agent)
+    changed = add_cap_ref(target.source_path, kind, ref)
+    typer.echo(str(target.source_path))
+    if not changed:
+        typer.echo("unchanged", err=True)
+
+
+def _cap_remove(
+    kind: CapKind,
+    *,
+    name: str,
+    scope: Literal["agent", "shared", "global"],
+    agent: str | None,
+) -> None:
+    target = _resolve_cap_scope_target(scope=scope, agent=agent)
+    changed = remove_cap_ref(
+        target.source_path,
+        kind,
+        name,
+        delete_when_empty=target.source_path.name == "agents.too",
+    )
+    if not changed:
+        raise ToolangError(f"{kind.title()} {name!r} is not referenced in {target.source_path}.")
+    typer.echo(str(target.source_path))
+
+
+def _cap_local_new(
+    kind: CapKind,
+    *,
+    name: str,
+    scope: Literal["shared", "global"],
+    from_ref: str | None,
+    agent: str | None,
+) -> None:
+    target = _resolve_cap_local_target(kind=kind, scope=scope, agent=agent, name=name)
+    if from_ref is None:
+        create_local_cap(target.cap_path, kind, name)
+        typer.echo(str(target.cap_path))
+        return
+
+    resolved = resolve_github_cap_ref(kind, from_ref)
+    source_path, _ = fetch_github_artifact(resolved)
+    try:
+        install_local_cap(target.cap_path, kind, source_path)
+    finally:
+        shutil.rmtree(source_path.parent.parent, ignore_errors=True)
+    typer.echo(str(target.cap_path))
+
+
+def _cap_local_path(
+    kind: CapKind,
+    *,
+    name: str,
+    scope: Literal["shared", "global"],
+    agent: str | None,
+) -> None:
+    target = _resolve_cap_local_target(kind=kind, scope=scope, agent=agent, name=name)
+    typer.echo(str(target.cap_path))
+
+
+def _cap_local_delete(
+    kind: CapKind,
+    *,
+    name: str,
+    scope: Literal["shared", "global"],
+    agent: str | None,
+) -> None:
+    target = _resolve_cap_local_target(kind=kind, scope=scope, agent=agent, name=name)
+    if not delete_local_cap(target.cap_path):
+        raise ToolangError(f"Local {kind} not found: {target.cap_path}")
+    prune_empty_local_kind_dir(target.kind_dir)
+    typer.echo(str(target.cap_path))
+
+
+def _resolve_cap_scope_target(
     *,
     scope: Literal["agent", "shared", "global"],
     agent: str | None,
-) -> SkillSourceTarget:
+) -> CapSourceTarget:
     toolang_root = _toolang_root()
     if scope == "global":
-        return SkillSourceTarget(
+        return CapSourceTarget(
             toolang_root=toolang_root,
             agent_home=None,
             agent_name=None,
@@ -527,7 +861,7 @@ def _resolve_skill_scope_target(
             source_path = shared_source_path(resolved.agent_home)
         else:
             source_path = agent_source_path(resolved.agent_home, resolved.agent_name)
-        return SkillSourceTarget(
+        return CapSourceTarget(
             toolang_root=toolang_root,
             agent_home=resolved.agent_home,
             agent_name=resolved.agent_name,
@@ -549,7 +883,7 @@ def _resolve_skill_scope_target(
         if scope == "shared"
         else agent_source_path(inferred.agent_home, inferred.agent_name or "")
     )
-    return SkillSourceTarget(
+    return CapSourceTarget(
         toolang_root=toolang_root,
         agent_home=inferred.agent_home,
         agent_name=inferred.agent_name,
@@ -557,30 +891,33 @@ def _resolve_skill_scope_target(
     )
 
 
-def _resolve_skill_local_target(
+def _resolve_cap_local_target(
     *,
+    kind: CapKind,
     scope: Literal["shared", "global"],
     agent: str | None,
     name: str,
-) -> SkillLocalTarget:
+) -> CapLocalTarget:
     toolang_root = _toolang_root()
     if scope == "global":
-        kind_dir = global_caps_dir(toolang_root, "skill")
-        return SkillLocalTarget(
+        kind_dir = global_caps_dir(toolang_root, kind)
+        return CapLocalTarget(
             toolang_root=toolang_root,
             agent_home=None,
+            kind=kind,
             kind_dir=kind_dir,
-            skill_path=kind_dir / name,
+            cap_path=local_cap_path(kind_dir, kind, name),
         )
 
     if agent is not None:
         resolved = _resolve_cli_agent(agent, db_path=agents_db_path(toolang_root))
-        kind_dir = shared_caps_dir(resolved.agent_home, "skill")
-        return SkillLocalTarget(
+        kind_dir = shared_caps_dir(resolved.agent_home, kind)
+        return CapLocalTarget(
             toolang_root=toolang_root,
             agent_home=resolved.agent_home,
+            kind=kind,
             kind_dir=kind_dir,
-            skill_path=kind_dir / name,
+            cap_path=local_cap_path(kind_dir, kind, name),
         )
 
     inferred = _infer_agent_context_from_cwd(Path.cwd(), toolang_root)
@@ -589,12 +926,13 @@ def _resolve_skill_local_target(
             "Could not infer a shared scope target from the current directory. "
             "Run the command from an agent home or pass --agent."
         )
-    kind_dir = shared_caps_dir(inferred.agent_home, "skill")
-    return SkillLocalTarget(
+    kind_dir = shared_caps_dir(inferred.agent_home, kind)
+    return CapLocalTarget(
         toolang_root=toolang_root,
         agent_home=inferred.agent_home,
+        kind=kind,
         kind_dir=kind_dir,
-        skill_path=kind_dir / name,
+        cap_path=local_cap_path(kind_dir, kind, name),
     )
 
 

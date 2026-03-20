@@ -265,7 +265,7 @@ Capability scopes are:
   - local: `${TOOLANG_ROOT}/{skills,services,prompts,psyches}/`
   - sync: `${TOOLANG_ROOT}/sync/`
 
-For skill refs and local skills, Toolang keeps the three scopes materialized
+For ref, inline, and local caps, Toolang keeps the three scopes materialized
 separately and applies override precedence at runtime:
 
 1. `agent`
