@@ -205,7 +205,7 @@ def callback(
     show_hidden: Annotated[
         bool,
         typer.Option(
-            "--show-hidden",
+            "--hidden",
             help="Show hidden commands in help output.",
             callback=_show_hidden_callback,
             is_eager=True,
