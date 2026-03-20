@@ -113,8 +113,8 @@ thunk review:
         )
         return fetched_root, files
 
-    monkeypatch.setattr("toolang.sync.resolve_github_cap_ref", fake_resolve)
-    monkeypatch.setattr("toolang.sync.fetch_github_artifact", fake_fetch)
+    monkeypatch.setattr("toolang.sync.remote.resolve_github_cap_ref", fake_resolve)
+    monkeypatch.setattr("toolang.sync.remote.fetch_github_artifact", fake_fetch)
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     sync_agent(agent)
@@ -243,8 +243,8 @@ thunk review:
         )
         return fetched_root, files
 
-    monkeypatch.setattr("toolang.sync.resolve_github_cap_ref", fake_resolve)
-    monkeypatch.setattr("toolang.sync.fetch_github_artifact", fake_fetch)
+    monkeypatch.setattr("toolang.sync.remote.resolve_github_cap_ref", fake_resolve)
+    monkeypatch.setattr("toolang.sync.remote.fetch_github_artifact", fake_fetch)
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     sync_agent(agent)
@@ -347,8 +347,8 @@ thunk review(user):
         shutil.copy2(fixture, fetched_file)
         return fetched_file, [fixture.name]
 
-    monkeypatch.setattr("toolang.sync.resolve_github_cap_ref", fake_resolve)
-    monkeypatch.setattr("toolang.sync.fetch_github_artifact", fake_fetch)
+    monkeypatch.setattr("toolang.sync.remote.resolve_github_cap_ref", fake_resolve)
+    monkeypatch.setattr("toolang.sync.remote.fetch_github_artifact", fake_fetch)
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     sync_agent(agent)
