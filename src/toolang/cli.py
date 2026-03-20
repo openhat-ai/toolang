@@ -86,9 +86,13 @@ def callback(
 
 @app.command(hidden=True)
 def home(
-    agent: Annotated[str, typer.Argument(help="Agent selector")],
+    agent: Annotated[str | None, typer.Argument(help="Agent selector")] = None,
 ) -> None:
-    db_path = agents_db_path(_toolang_root())
+    toolang_root = _toolang_root()
+    if agent is None:
+        typer.echo(str(toolang_root))
+        return
+    db_path = agents_db_path(toolang_root)
     resolved = _resolve_cli_agent(agent, db_path=db_path)
     typer.echo(str(resolved.agent_home))
 

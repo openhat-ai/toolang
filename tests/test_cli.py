@@ -238,13 +238,16 @@ def test_hidden_path_commands_resolve_agent_paths(tmp_path: Path, monkeypatch) -
     home_result = runner.invoke(app, ["home", "alice"])
     source_result = runner.invoke(app, ["source", "alice"])
     room_result = runner.invoke(app, ["room", "alice"])
+    root_result = runner.invoke(app, ["home"])
 
     assert home_result.exit_code == 0
     assert source_result.exit_code == 0
     assert room_result.exit_code == 0
+    assert root_result.exit_code == 0
     assert home_result.stdout.strip() == str(home.resolve())
     assert source_result.stdout.strip() == str(source_path.resolve())
     assert room_result.stdout.strip() == str((home / ".toolang" / "agent" / "alice").resolve())
+    assert root_result.stdout.strip() == str(root.resolve())
 
 
 def test_hidden_init_zsh_outputs_cd_helpers() -> None:
