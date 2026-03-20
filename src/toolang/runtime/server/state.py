@@ -1,0 +1,209 @@
+from __future__ import annotations
+
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+from toolang.agent.prepared import PreparedAgent
+from toolang.agent.registry import (
+    KnownAgentRecord,
+    RunningAgentRecord,
+    delete_running_agent,
+    get_running_agent,
+    upsert_known_agent,
+    upsert_running_agent,
+)
+from toolang.bus.db import BusStore
+from toolang.bus.events import AgentStarted, AgentStopped, utc_now
+from toolang.errors import ToolangError
+from toolang.files.agent_run import AgentRunState, SandboxInfo, SandboxRunInfo
+from toolang.layout import agent_run_path
+from toolang.sandbox import (
+    docker_container_name,
+    normalize_sandbox_spec,
+    parse_sandbox_spec,
+    sandbox_process_alive,
+)
+
+SHORT_AGENT_ID_LENGTH = 12
+
+
+def activate_running_agent(
+    prepared: PreparedAgent,
+    *,
+    agents_db_path: Path,
+    bus: BusStore,
+    endpoint: str,
+    sandbox: str,
+) -> None:
+    current_pid = os.getpid()
+    sandbox_spec = normalize_sandbox_spec(sandbox)
+    existing = get_running_agent(agents_db_path, prepared.ref.agent_uri)
+    if existing is not None:
+        alive = sandbox_process_alive(
+            sandbox_spec=existing.sandbox,
+            pid=existing.pid,
+            agent_name=prepared.ref.agent_name,
+            agent_id=prepared.ref.agent_id[:SHORT_AGENT_ID_LENGTH],
+        )
+        if alive and existing.pid != current_pid:
+            raise ToolangError(f"Agent is already being served: {prepared.ref.agent_uri}")
+        if not alive:
+            delete_running_agent(agents_db_path, prepared.ref.agent_uri)
+
+    now = datetime.now(timezone.utc)
+    upsert_known_agent(
+        agents_db_path,
+        KnownAgentRecord.from_resolved_agent(prepared.ref, updated_at=now),
+    )
+    upsert_running_agent(
+        agents_db_path,
+        RunningAgentRecord(
+            agent_uri=prepared.ref.agent_uri,
+            pid=current_pid,
+            status="running",
+            endpoint=endpoint,
+            sandbox=sandbox_spec,
+            started_at=now,
+            heartbeat_at=now,
+        ),
+    )
+    bus.append(
+        AgentStarted(
+            at=utc_now(),
+            agent_uri=prepared.ref.agent_uri,
+            agent_id=prepared.ref.agent_id[:SHORT_AGENT_ID_LENGTH],
+            name=prepared.ref.agent_name,
+            kind=prepared.ref.agent_kind,
+            sandbox=sandbox_spec,
+            endpoint=endpoint,
+            agent_home=str(prepared.ref.agent_home),
+            source_file=prepared.source_path.name,
+        )
+    )
+    write_agent_run_state(
+        prepared,
+        endpoint=endpoint,
+        status="running",
+        started_at=now,
+        heartbeat_at=now,
+        sandbox=sandbox_spec,
+    )
+
+
+def touch_running_agent(
+    prepared: PreparedAgent,
+    *,
+    agents_db_path: Path,
+    endpoint: str,
+) -> None:
+    current = get_running_agent(agents_db_path, prepared.ref.agent_uri)
+    if current is None:
+        return
+    now = datetime.now(timezone.utc)
+    updated = current.model_copy(update={"heartbeat_at": now})
+    upsert_running_agent(agents_db_path, updated)
+    write_agent_run_state(
+        prepared,
+        endpoint=endpoint,
+        status=updated.status,
+        started_at=updated.started_at,
+        heartbeat_at=now,
+        sandbox=updated.sandbox,
+    )
+
+
+def deactivate_running_agent(
+    prepared: PreparedAgent,
+    *,
+    agents_db_path: Path,
+    bus: BusStore,
+    endpoint: str,
+    sandbox: str,
+) -> None:
+    current = get_running_agent(agents_db_path, prepared.ref.agent_uri)
+    now = datetime.now(timezone.utc)
+    started_at = current.started_at if current is not None else now
+    delete_running_agent(agents_db_path, prepared.ref.agent_uri)
+    sandbox_spec = normalize_sandbox_spec(sandbox)
+    bus.append(
+        AgentStopped(
+            at=utc_now(),
+            agent_uri=prepared.ref.agent_uri,
+            agent_id=prepared.ref.agent_id[:SHORT_AGENT_ID_LENGTH],
+            name=prepared.ref.agent_name,
+            sandbox=sandbox_spec,
+            detail="server stopped",
+            endpoint=endpoint,
+            agent_home=str(prepared.ref.agent_home),
+            source_file=prepared.source_path.name,
+        )
+    )
+    write_agent_run_state(
+        prepared,
+        endpoint=endpoint,
+        status="stopped",
+        started_at=started_at,
+        heartbeat_at=now,
+        sandbox=sandbox_spec,
+    )
+
+
+def write_agent_run_state(
+    prepared: PreparedAgent,
+    *,
+    endpoint: str,
+    status: str,
+    started_at: datetime,
+    heartbeat_at: datetime,
+    sandbox: str,
+) -> None:
+    sandbox_spec = normalize_sandbox_spec(sandbox)
+    parsed_sandbox = parse_sandbox_spec(sandbox_spec)
+    run_path = agent_run_path(prepared.ref.agent_home, prepared.ref.agent_name)
+    run_path.parent.mkdir(parents=True, exist_ok=True)
+    AgentRunState(
+        agent_uri=prepared.ref.agent_uri,
+        agent_id=prepared.ref.agent_id[:SHORT_AGENT_ID_LENGTH],
+        agent_name=prepared.ref.agent_name,
+        agent_home=str(prepared.ref.agent_home),
+        source_file=prepared.source_path.name,
+        pid=os.getpid(),
+        status=status,
+        endpoint=endpoint,
+        started_at=started_at,
+        heartbeat_at=heartbeat_at,
+        sandbox=SandboxInfo(
+            type=parsed_sandbox.kind,
+            container_name=(
+                docker_container_name(
+                    prepared.ref.agent_name,
+                    prepared.ref.agent_id[:SHORT_AGENT_ID_LENGTH],
+                )
+                if parsed_sandbox.kind == "docker"
+                else None
+            ),
+            image_name=parsed_sandbox.image,
+            run=SandboxRunInfo(pid=os.getpid(), port=port_from_endpoint(endpoint)),
+        ),
+    ).save(run_path)
+
+
+def has_running_state(
+    prepared: PreparedAgent,
+    *,
+    agents_db_path: Path,
+) -> bool:
+    if get_running_agent(agents_db_path, prepared.ref.agent_uri) is not None:
+        return True
+    run_path = agent_run_path(prepared.ref.agent_home, prepared.ref.agent_name)
+    if not run_path.exists():
+        return False
+    return AgentRunState.load(run_path).status == "running"
+
+
+def port_from_endpoint(endpoint: str) -> int | None:
+    try:
+        return int(endpoint.rsplit(":", 1)[1])
+    except (IndexError, ValueError):
+        return None
