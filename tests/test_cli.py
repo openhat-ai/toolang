@@ -421,10 +421,10 @@ def test_cli_start_docker_stages_sandbox_launch(tmp_path: Path, monkeypatch) -> 
         calls.update(kwargs)
         return "container-123"
 
-    monkeypatch.setattr("toolang.cli.runtime.docker_remove_container", fake_remove)
-    monkeypatch.setattr("toolang.cli.runtime.docker_run_detached", fake_run)
+    monkeypatch.setattr("toolang.cli.runtime.serve.docker_remove_container", fake_remove)
+    monkeypatch.setattr("toolang.cli.runtime.serve.docker_run_detached", fake_run)
     monkeypatch.setattr(
-        "toolang.cli.runtime._wait_for_running_agent_sandbox",
+        "toolang.cli.runtime.serve._wait_for_running_agent_sandbox",
         lambda **kwargs: None,
     )
 
