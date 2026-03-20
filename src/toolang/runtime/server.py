@@ -12,7 +12,30 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 
-from toolang.api_models import (
+from toolang.agent_registry import (
+    KnownAgentRecord,
+    RunningAgentRecord,
+    delete_running_agent,
+    get_running_agent,
+    upsert_known_agent,
+    upsert_running_agent,
+)
+from toolang.bus.db import AgentSnapshot, BusStore, RunSnapshot, StoredEvent
+from toolang.bus.events import AgentStarted, AgentStopped, utc_now
+from toolang.caps_view import InlineCapView, SkillCapView, load_prepared_caps
+from toolang.errors import ToolangError
+from toolang.files.agent_run import AgentRunState, SandboxInfo, SandboxRunInfo
+from toolang.http import add_cors
+from toolang.layout import agent_chats_db_path, agent_run_path
+from toolang.prepared import PreparedAgent, prepare_agent
+from toolang.sandbox import (
+    docker_container_name,
+    normalize_sandbox_spec,
+    parse_sandbox_spec,
+    sandbox_process_alive,
+)
+
+from .api_models import (
     AgentCapsResponse,
     AgentChatMessage,
     AgentProfile,
@@ -32,32 +55,10 @@ from toolang.api_models import (
     RunRequest,
     RunResponse,
 )
-from toolang.agent_registry import (
-    KnownAgentRecord,
-    RunningAgentRecord,
-    delete_running_agent,
-    get_running_agent,
-    upsert_known_agent,
-    upsert_running_agent,
-)
-from toolang.bus.db import AgentSnapshot, BusStore, RunSnapshot, StoredEvent
-from toolang.bus.events import AgentStarted, AgentStopped, utc_now
-from toolang.caps_view import InlineCapView, SkillCapView, load_prepared_caps
-from toolang.chats import ChatMessage, ChatStore, ChatThread, ChatTurn
-from toolang.errors import ToolangError
-from toolang.files.agent_run import AgentRunState, SandboxInfo, SandboxRunInfo
-from toolang.http import add_cors
-from toolang.invoke import chat_prepared_agent, invoke_prepared_agent
-from toolang.layout import agent_chats_db_path, agent_run_path
-from toolang.messages import chat_message
-from toolang.prepared import PreparedAgent, prepare_agent
-from toolang.prompt_build import infer_model
-from toolang.sandbox import (
-    docker_container_name,
-    normalize_sandbox_spec,
-    parse_sandbox_spec,
-    sandbox_process_alive,
-)
+from .build import infer_model
+from .chats import ChatMessage, ChatStore, ChatThread, ChatTurn
+from .invoke import chat_prepared_agent, invoke_prepared_agent
+from .messages import chat_message
 
 SHORT_AGENT_ID_LENGTH = 12
 SSE_POLL_INTERVAL_SEC = 0.5
