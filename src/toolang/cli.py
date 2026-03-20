@@ -463,42 +463,22 @@ def _format_rows(headers: tuple[str, ...], rows: Sequence[Sequence[str]]) -> str
 
 
 def _posix_init_script() -> str:
-    return """toolang() {
-  case "$1" in
-    cd)
-      shift
-      builtin cd -- "$(command toolang home "$@")"
-      ;;
-    croom)
-      shift
-      builtin cd -- "$(command toolang room "$@")"
-      ;;
-    csource)
-      shift
-      builtin cd -- "$(dirname "$(command toolang source "$@")")"
-      ;;
-    *)
-      command toolang "$@"
-      ;;
-  esac
+    return """toohome() {
+  builtin cd -- "$(command toolang home "$@")"
+}
+
+tooroom() {
+  builtin cd -- "$(command toolang room "$@")"
 }"""
 
 
 def _fish_init_script() -> str:
-    return """function toolang
-    switch $argv[1]
-        case cd
-            set -e argv[1]
-            cd (command toolang home $argv)
-        case croom
-            set -e argv[1]
-            cd (command toolang room $argv)
-        case csource
-            set -e argv[1]
-            cd (dirname (command toolang source $argv))
-        case '*'
-            command toolang $argv
-    end
+    return """function toohome
+    cd (command toolang home $argv)
+end
+
+function tooroom
+    cd (command toolang room $argv)
 end"""
 
 

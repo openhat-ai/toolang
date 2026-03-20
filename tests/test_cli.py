@@ -251,17 +251,19 @@ def test_hidden_init_zsh_outputs_cd_helpers() -> None:
     result = runner.invoke(app, ["init", "zsh"])
 
     assert result.exit_code == 0
-    assert 'case "$1" in' in result.stdout
+    assert "toohome() {" in result.stdout
+    assert "tooroom() {" in result.stdout
     assert 'builtin cd -- "$(command toolang home "$@")"' in result.stdout
     assert 'builtin cd -- "$(command toolang room "$@")"' in result.stdout
-    assert 'builtin cd -- "$(dirname "$(command toolang source "$@")")"' in result.stdout
+    assert "toolang source" not in result.stdout
 
 
 def test_hidden_init_fish_outputs_cd_helpers() -> None:
     result = runner.invoke(app, ["init", "fish"])
 
     assert result.exit_code == 0
-    assert "function toolang" in result.stdout
+    assert "function toohome" in result.stdout
+    assert "function tooroom" in result.stdout
     assert "cd (command toolang home $argv)" in result.stdout
     assert "cd (command toolang room $argv)" in result.stdout
-    assert "cd (dirname (command toolang source $argv))" in result.stdout
+    assert "toolang source" not in result.stdout
