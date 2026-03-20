@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
-from toolang.agent_refs import ResolvedAgentRef
+from toolang.agent.refs import ResolvedAgentRef
 from toolang.ast import DeclBlock, ParamDecl, Program, SourceSpan
 from toolang.cap_scopes import CapScopeSelection
 from toolang.layout import agent_synced_caps_root, global_synced_caps_root, synced_caps_root
@@ -16,7 +16,7 @@ from toolang_caps.models import (
 )
 
 if TYPE_CHECKING:
-    from toolang.prepared import PreparedAgent
+    from toolang.agent.prepared import PreparedAgent
 
 
 class InlineCapView(BaseModel):

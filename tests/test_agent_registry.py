@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from toolang.agent_refs import resolve_agent_ref
-from toolang.agent_registry import (
+from toolang.agent.refs import resolve_agent_ref
+from toolang.agent.registry import (
     KnownAgentRecord,
     RunningAgentRecord,
     delete_known_agent,

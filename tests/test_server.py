@@ -10,8 +10,9 @@ from pathlib import Path
 import httpx
 from fastapi.testclient import TestClient
 
-from toolang.agent_refs import resolve_agent_ref
-from toolang.agent_registry import get_running_agent
+from toolang.agent.prepared import prepare_agent
+from toolang.agent.refs import resolve_agent_ref
+from toolang.agent.registry import get_running_agent
 from toolang.bus.db import BusStore
 from toolang.files.agent_run import AgentRunState
 from toolang.files.prompt_trace import PromptTrace
@@ -22,7 +23,6 @@ from toolang.layout import (
     bus_events_db_path,
     resolve_toolang_root,
 )
-from toolang.prepared import prepare_agent
 from toolang.runtime.server import create_agent_app
 
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"

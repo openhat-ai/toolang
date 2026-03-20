@@ -3,11 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import cast
 
-from toolang.agent_refs import resolve_agent_ref
+from toolang.agent.prepared import prepare_agent
+from toolang.agent.refs import resolve_agent_ref
 from toolang.cap_scopes import CapScopeSelection
 from toolang.caps_view import load_prepared_caps
 from toolang.layout import global_caps_dir
-from toolang.prepared import prepare_agent
 from toolang.layout import resolve_toolang_root
 from toolang.layout import global_source_path, shared_caps_dir, shared_source_path
 from toolang_caps.models import CapKind, ResolvedCapRef

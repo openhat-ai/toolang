@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from toolang.agent_refs import ResolvedAgentRef
+from .refs import ResolvedAgentRef
 
 
 class KnownAgentRecord(BaseModel):

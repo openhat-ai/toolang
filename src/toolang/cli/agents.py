@@ -4,8 +4,8 @@ from typing import Annotated
 
 import typer
 
-from toolang.agent_homes import clone_resident_agent, create_resident_agent, remove_resident_agent
-from toolang.agent_registry import delete_known_agent, get_running_agent
+from toolang.agent.homes import clone_resident_agent, create_resident_agent, remove_resident_agent
+from toolang.agent.registry import delete_known_agent, get_running_agent
 from toolang.errors import ToolangError
 from toolang.layout import agents_db_path
 
