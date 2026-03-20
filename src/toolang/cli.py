@@ -122,6 +122,7 @@ def init(
         typer.Argument(help="Shell to initialize"),
     ],
 ) -> None:
+    typer.echo(_init_install_note(shell), err=True)
     if shell == "fish":
         typer.echo(_fish_init_script())
         return
@@ -466,11 +467,20 @@ def _format_rows(headers: tuple[str, ...], rows: Sequence[Sequence[str]]) -> str
     return "\n".join(lines)
 
 
+def _init_install_note(shell: Literal["zsh", "bash", "fish"]) -> str:
+    shell_file = {
+        "zsh": "~/.zshrc",
+        "bash": "~/.bashrc",
+        "fish": "~/.config/fish/config.fish",
+    }[shell]
+    return (
+        f"Add the emitted block to {shell_file}.\n"
+        "Remove everything between the toolang markers to uninstall."
+    )
+
+
 def _posix_init_script(shell: Literal["zsh", "bash"]) -> str:
-    shell_file = "~/.zshrc" if shell == "zsh" else "~/.bashrc"
-    return f"""# Add this block to {shell_file}.
-# Remove everything between the toolang markers to uninstall.
-# >>> toolang shell helpers >>>
+    return """# >>> toolang shell helpers >>>
 toohome() {{
   builtin cd -- "$(command toolang home "$@")"
 }}
@@ -482,9 +492,7 @@ tooroom() {{
 
 
 def _fish_init_script() -> str:
-    return """# Add this block to ~/.config/fish/config.fish.
-# Remove everything between the toolang markers to uninstall.
-# >>> toolang shell helpers >>>
+    return """# >>> toolang shell helpers >>>
 function toohome
     cd (command toolang home $argv)
 end

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import os
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from importlib.metadata import version as package_version
 from pathlib import Path
@@ -10,7 +12,7 @@ from typer.testing import CliRunner
 
 from toolang.agent_refs import resolve_agent_ref
 from toolang.agent_registry import RunningAgentRecord, get_running_agent, upsert_running_agent
-from toolang.cli import _drop_stale_running_agent, _remember_agent, _resolve_cli_agent, app
+from toolang.cli import _drop_stale_running_agent, _remember_agent, _resolve_cli_agent, app, main
 from toolang.errors import ToolangError
 from toolang.files.agent_run import AgentRunState
 from toolang.layout import agent_run_path
@@ -251,28 +253,40 @@ def test_hidden_path_commands_resolve_agent_paths(tmp_path: Path, monkeypatch) -
 
 
 def test_hidden_init_zsh_outputs_cd_helpers() -> None:
-    result = runner.invoke(app, ["init", "zsh"])
+    stdout = io.StringIO()
+    stderr = io.StringIO()
 
-    assert result.exit_code == 0
-    assert "# Add this block to ~/.zshrc." in result.stdout
-    assert "# >>> toolang shell helpers >>>" in result.stdout
-    assert "# <<< toolang shell helpers <<<" in result.stdout
-    assert "toohome() {" in result.stdout
-    assert "tooroom() {" in result.stdout
-    assert 'builtin cd -- "$(command toolang home "$@")"' in result.stdout
-    assert 'builtin cd -- "$(command toolang room "$@")"' in result.stdout
-    assert "toolang source" not in result.stdout
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+        exit_code = main(["init", "zsh"])
+
+    assert exit_code == 0
+    assert "Add the emitted block to ~/.zshrc." in stderr.getvalue()
+    assert "Remove everything between the toolang markers to uninstall." in stderr.getvalue()
+    assert "# Add this block to ~/.zshrc." not in stdout.getvalue()
+    assert "# >>> toolang shell helpers >>>" in stdout.getvalue()
+    assert "# <<< toolang shell helpers <<<" in stdout.getvalue()
+    assert "toohome() {" in stdout.getvalue()
+    assert "tooroom() {" in stdout.getvalue()
+    assert 'builtin cd -- "$(command toolang home "$@")"' in stdout.getvalue()
+    assert 'builtin cd -- "$(command toolang room "$@")"' in stdout.getvalue()
+    assert "toolang source" not in stdout.getvalue()
 
 
 def test_hidden_init_fish_outputs_cd_helpers() -> None:
-    result = runner.invoke(app, ["init", "fish"])
+    stdout = io.StringIO()
+    stderr = io.StringIO()
 
-    assert result.exit_code == 0
-    assert "# Add this block to ~/.config/fish/config.fish." in result.stdout
-    assert "# >>> toolang shell helpers >>>" in result.stdout
-    assert "# <<< toolang shell helpers <<<" in result.stdout
-    assert "function toohome" in result.stdout
-    assert "function tooroom" in result.stdout
-    assert "cd (command toolang home $argv)" in result.stdout
-    assert "cd (command toolang room $argv)" in result.stdout
-    assert "toolang source" not in result.stdout
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+        exit_code = main(["init", "fish"])
+
+    assert exit_code == 0
+    assert "Add the emitted block to ~/.config/fish/config.fish." in stderr.getvalue()
+    assert "Remove everything between the toolang markers to uninstall." in stderr.getvalue()
+    assert "# Add this block to ~/.config/fish/config.fish." not in stdout.getvalue()
+    assert "# >>> toolang shell helpers >>>" in stdout.getvalue()
+    assert "# <<< toolang shell helpers <<<" in stdout.getvalue()
+    assert "function toohome" in stdout.getvalue()
+    assert "function tooroom" in stdout.getvalue()
+    assert "cd (command toolang home $argv)" in stdout.getvalue()
+    assert "cd (command toolang room $argv)" in stdout.getvalue()
+    assert "toolang source" not in stdout.getvalue()
