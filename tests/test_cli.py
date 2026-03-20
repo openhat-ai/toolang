@@ -267,6 +267,8 @@ def test_hidden_init_zsh_outputs_cd_helpers() -> None:
     assert "# <<< toolang shell helpers <<<" in stdout.getvalue()
     assert "toohome() {" in stdout.getvalue()
     assert "tooroom() {" in stdout.getvalue()
+    assert "{{" not in stdout.getvalue()
+    assert "}}" not in stdout.getvalue()
     assert 'builtin cd -- "$(command toolang home "$@")"' in stdout.getvalue()
     assert 'builtin cd -- "$(command toolang room "$@")"' in stdout.getvalue()
     assert "toolang source" not in stdout.getvalue()

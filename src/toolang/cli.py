@@ -126,7 +126,7 @@ def init(
     if shell == "fish":
         typer.echo(_fish_init_script())
         return
-    typer.echo(_posix_init_script(shell))
+    typer.echo(_posix_init_script())
 
 
 @app.command("list")
@@ -479,15 +479,15 @@ def _init_install_note(shell: Literal["zsh", "bash", "fish"]) -> str:
     )
 
 
-def _posix_init_script(shell: Literal["zsh", "bash"]) -> str:
+def _posix_init_script() -> str:
     return """# >>> toolang shell helpers >>>
-toohome() {{
+toohome() {
   builtin cd -- "$(command toolang home "$@")"
-}}
+}
 
-tooroom() {{
+tooroom() {
   builtin cd -- "$(command toolang room "$@")"
-}}
+}
 # <<< toolang shell helpers <<<"""
 
 
