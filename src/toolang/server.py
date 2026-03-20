@@ -206,7 +206,7 @@ def create_agent_app(
     @app.get("/api/v1/runtime", response_model=AgentRuntimeResponse)
     def runtime_info() -> AgentRuntimeResponse:
         current_run = get_running_agent(agents_db_path, prepared.ref.agent_uri)
-        current = prepare_agent(prepared.ref)
+        current = prepare_agent(prepared.ref, cap_scopes=prepared.cap_scopes)
         return AgentRuntimeResponse(
             status="online",
             checked_at=utc_now(),
@@ -231,7 +231,7 @@ def create_agent_app(
 
     @app.get("/api/v1/caps", response_model=AgentCapsResponse)
     def list_caps() -> AgentCapsResponse:
-        current = prepare_agent(prepared.ref)
+        current = prepare_agent(prepared.ref, cap_scopes=prepared.cap_scopes)
         caps = load_prepared_caps(current)
         return _caps_response(prepared.ref.agent_name, caps)
 
@@ -392,7 +392,7 @@ def create_agent_app(
     @app.post("/api/v1/runs", response_model=RunResponse)
     @app.post("/runs", response_model=RunResponse)
     def run_thunk(request: RunRequest) -> RunResponse:
-        current = prepare_agent(prepared.ref)
+        current = prepare_agent(prepared.ref, cap_scopes=prepared.cap_scopes)
         try:
             selected_thunk = current.program.get_thunk(request.thunk)
             result = invoke_prepared_agent(
@@ -423,7 +423,7 @@ def _chat_once(
     if not text:
         raise ToolangError("Chat message may not be empty.")
 
-    current = prepare_agent(prepared.ref)
+    current = prepare_agent(prepared.ref, cap_scopes=prepared.cap_scopes)
     selected_thunk = _select_chat_thunk(current, request.thunk)
     incoming = chat_message(
         channel="api",

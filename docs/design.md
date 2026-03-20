@@ -170,40 +170,32 @@ For skills, runtime precedence is:
 Local skills are kept in the same scope as their authored directory and can
 override refs from that same scope without collapsing other scopes at sync time.
 
-### 5.2 Visibility Switches
+### 5.2 Runtime Cap Scopes
 
-Runtime visibility is controlled with CSV switches:
+`invoke`, `serve`, and `start` always load agent-scoped caps.
 
-- `--caps=<csv>`
-  - set visibility for all kinds
-- `--skills=<csv>`
-  - override visibility for skills
-- `--services=<csv>`
-  - override visibility for services
-- `--prompts=<csv>`
-  - override visibility for prompts
-- `--psyches=<csv>`
-  - override visibility for psyches
+Two CLI switches control whether wider scopes are enabled at runtime:
 
-Allowed CSV values:
+- `--shared/--no-shared`
+- `--global/--no-global`
 
-- `agent`
-- `shared`
-- `global`
+Defaults are resolved from the agent kind:
 
-Rules:
+- `resident`
+  - `shared=on`, `global=on`
+- `roaming`
+  - `shared=on`, `global=off`
+- `visiting`
+  - `shared=off`, `global=off`
 
-- omitted switches use `agent,shared,global`
-- `--caps` applies to all kinds
-- a kind-specific switch overrides `--caps` for that kind
-- CSV order does not change precedence
+The switches only control runtime visibility and precedence. Sync still keeps
+each scope materialized in its own sync root.
 
 Examples:
 
-- `--caps=agent`
-- `--caps=agent,shared`
-- `--caps=shared,global`
-- `--caps=agent --skills=agent,shared,global`
+- `toolang start alice`
+- `toolang start ./reviewer.too --no-global`
+- `toolang serve https://example.com/alice.too --shared --global`
 
 ### 5.3 Capability References
 

@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from toolang.agent_refs import ResolvedAgentRef
 from toolang.ast import DeclBlock, ParamDecl, Program, SourceSpan
+from toolang.cap_scopes import CapScopeSelection
 from toolang.layout import agent_synced_caps_root, global_synced_caps_root, synced_caps_root
 from toolang_caps.models import (
     InlineCapKind,
@@ -46,14 +47,19 @@ class CapsView(BaseModel):
     psyches: list[InlineCapView] = Field(default_factory=list)
 
 
-def build_effective_program(source_program: Program, ref: ResolvedAgentRef) -> Program:
+def build_effective_program(
+    source_program: Program,
+    ref: ResolvedAgentRef,
+    *,
+    cap_scopes: CapScopeSelection,
+) -> Program:
     declarations = [
         declaration
         for declaration in source_program.declarations
         if declaration.kind not in TEXT_CAP_KINDS
     ]
     for kind in TEXT_CAP_KINDS:
-        for declaration in _load_text_declarations(ref, kind):
+        for declaration in _load_text_declarations(ref, kind, cap_scopes=cap_scopes):
             declarations.append(declaration)
     return Program(
         uses=list(source_program.uses),
@@ -64,19 +70,15 @@ def build_effective_program(source_program: Program, ref: ResolvedAgentRef) -> P
 
 def load_prepared_caps(prepared: PreparedAgent) -> CapsView:
     return CapsView(
-        skills=_load_skill_views(prepared.ref),
-        services=_load_inline_views(prepared.ref, "service"),
-        prompts=_load_inline_views(prepared.ref, "prompt"),
-        psyches=_load_inline_views(prepared.ref, "psyche"),
+        skills=_load_skill_views(prepared.ref, cap_scopes=prepared.cap_scopes),
+        services=_load_inline_views(prepared.ref, "service", cap_scopes=prepared.cap_scopes),
+        prompts=_load_inline_views(prepared.ref, "prompt", cap_scopes=prepared.cap_scopes),
+        psyches=_load_inline_views(prepared.ref, "psyche", cap_scopes=prepared.cap_scopes),
     )
 
 
-def _load_skill_views(ref: ResolvedAgentRef) -> list[SkillCapView]:
-    items = _overlay_layers(
-        _load_skills(global_synced_caps_root(ref.toolang_root)),
-        _load_skills(synced_caps_root(ref.agent_home)),
-        _load_skills(agent_synced_caps_root(ref.agent_home, ref.agent_name)),
-    )
+def _load_skill_views(ref: ResolvedAgentRef, *, cap_scopes: CapScopeSelection) -> list[SkillCapView]:
+    items = _overlay_layers(*_skill_scope_layers(ref, cap_scopes=cap_scopes))
     return [items[name] for name in sorted(items)]
 
 
@@ -103,12 +105,10 @@ def _load_skills(root) -> dict[str, SkillCapView]:
 def _load_inline_views(
     ref: ResolvedAgentRef,
     kind: Literal["service", "prompt", "psyche"],
+    *,
+    cap_scopes: CapScopeSelection,
 ) -> list[InlineCapView]:
-    items = _overlay_layers(
-        _load_inline_meta(global_synced_caps_root(ref.toolang_root), kind),
-        _load_inline_meta(synced_caps_root(ref.agent_home), kind),
-        _load_inline_meta(agent_synced_caps_root(ref.agent_home, ref.agent_name), kind),
-    )
+    items = _overlay_layers(*_inline_scope_layers(ref, kind, cap_scopes=cap_scopes))
     return [
         InlineCapView(
             kind=kind,
@@ -125,12 +125,10 @@ def _load_inline_views(
 def _load_text_declarations(
     ref: ResolvedAgentRef,
     kind: InlineCapKind,
+    *,
+    cap_scopes: CapScopeSelection,
 ) -> list[DeclBlock]:
-    items = _overlay_layers(
-        _load_inline_meta(global_synced_caps_root(ref.toolang_root), kind),
-        _load_inline_meta(synced_caps_root(ref.agent_home), kind),
-        _load_inline_meta(agent_synced_caps_root(ref.agent_home, ref.agent_name), kind),
-    )
+    items = _overlay_layers(*_inline_scope_layers(ref, kind, cap_scopes=cap_scopes))
     return [
         DeclBlock(
             kind=kind,
@@ -164,3 +162,32 @@ def _overlay_layers(*layers: dict[str, Any]) -> dict[str, Any]:
     for layer in layers:
         merged.update(layer)
     return merged
+
+
+def _skill_scope_layers(
+    ref: ResolvedAgentRef,
+    *,
+    cap_scopes: CapScopeSelection,
+) -> list[dict[str, SkillCapView]]:
+    layers: list[dict[str, SkillCapView]] = []
+    if cap_scopes.include_global:
+        layers.append(_load_skills(global_synced_caps_root(ref.toolang_root)))
+    if cap_scopes.include_shared:
+        layers.append(_load_skills(synced_caps_root(ref.agent_home)))
+    layers.append(_load_skills(agent_synced_caps_root(ref.agent_home, ref.agent_name)))
+    return layers
+
+
+def _inline_scope_layers(
+    ref: ResolvedAgentRef,
+    kind: InlineCapKind,
+    *,
+    cap_scopes: CapScopeSelection,
+) -> list[dict[str, InlineCapMeta]]:
+    layers: list[dict[str, InlineCapMeta]] = []
+    if cap_scopes.include_global:
+        layers.append(_load_inline_meta(global_synced_caps_root(ref.toolang_root), kind))
+    if cap_scopes.include_shared:
+        layers.append(_load_inline_meta(synced_caps_root(ref.agent_home), kind))
+    layers.append(_load_inline_meta(agent_synced_caps_root(ref.agent_home, ref.agent_name), kind))
+    return layers

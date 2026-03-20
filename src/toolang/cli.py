@@ -23,6 +23,7 @@ from toolang.agent_homes import clone_resident_agent, create_resident_agent, rem
 from toolang.bus.app import serve_bus_app
 from toolang.bus.db import BusStore
 from toolang.bus.events import AgentUpdated, utc_now
+from toolang.cap_scopes import CapScopeSelection
 from toolang.agent_refs import ResolvedAgentRef, resolve_agent_ref
 from toolang.agent_registry import (
     KnownAgentRecord,
@@ -704,11 +705,31 @@ def invoke(
         typer.Option("--input", help="User input for a thunk(user) entrypoint"),
     ] = None,
     model: Annotated[str | None, typer.Option(help="Override model selection")] = None,
+    shared_caps: Annotated[
+        bool | None,
+        typer.Option(
+            "--shared/--no-shared",
+            help="Enable or disable shared caps. Defaults to on for resident and roaming agents.",
+        ),
+    ] = None,
+    global_caps: Annotated[
+        bool | None,
+        typer.Option(
+            "--global/--no-global",
+            help="Enable or disable global caps. Defaults to on only for resident agents.",
+        ),
+    ] = None,
 ) -> None:
     toolang_root = _toolang_root()
     db_path = agents_db_path(toolang_root)
     bus_db_path = bus_events_db_path(toolang_root)
-    prepared = prepare_agent(_resolve_cli_agent(agent, db_path=db_path))
+    agent_ref = _resolve_cli_agent(agent, db_path=db_path)
+    cap_scopes = _resolve_runtime_cap_scopes(
+        agent_ref,
+        shared_caps=shared_caps,
+        global_caps=global_caps,
+    )
+    prepared = prepare_agent(agent_ref, cap_scopes=cap_scopes)
     _remember_agent(prepared.ref, db_path=db_path)
     selected_thunk = prepared.program.get_thunk(thunk)
 
@@ -756,6 +777,20 @@ def serve(
         str | None,
         typer.Option("--public-host", help="Published host name", hidden=True),
     ] = None,
+    shared_caps: Annotated[
+        bool | None,
+        typer.Option(
+            "--shared/--no-shared",
+            help="Enable or disable shared caps. Defaults to on for resident and roaming agents.",
+        ),
+    ] = None,
+    global_caps: Annotated[
+        bool | None,
+        typer.Option(
+            "--global/--no-global",
+            help="Enable or disable global caps. Defaults to on only for resident agents.",
+        ),
+    ] = None,
 ) -> None:
     toolang_root = _toolang_root()
     db_path = agents_db_path(toolang_root)
@@ -764,7 +799,13 @@ def serve(
     parsed_sandbox = _parse_sandbox_or_raise(sandbox_spec)
     if parsed_sandbox.kind != "host":
         raise ToolangError("toolang serve only supports host sandbox; use start for docker.")
-    prepared = prepare_agent(_resolve_cli_agent(agent, db_path=db_path))
+    agent_ref = _resolve_cli_agent(agent, db_path=db_path)
+    cap_scopes = _resolve_runtime_cap_scopes(
+        agent_ref,
+        shared_caps=shared_caps,
+        global_caps=global_caps,
+    )
+    prepared = prepare_agent(agent_ref, cap_scopes=cap_scopes)
     _remember_agent(prepared.ref, db_path=db_path)
     serve_agent(
         prepared,
@@ -787,10 +828,30 @@ def start(
         str,
         typer.Option(help="Sandbox to use: host or docker:<image>"),
     ] = HOST_SANDBOX,
+    shared_caps: Annotated[
+        bool | None,
+        typer.Option(
+            "--shared/--no-shared",
+            help="Enable or disable shared caps. Defaults to on for resident and roaming agents.",
+        ),
+    ] = None,
+    global_caps: Annotated[
+        bool | None,
+        typer.Option(
+            "--global/--no-global",
+            help="Enable or disable global caps. Defaults to on only for resident agents.",
+        ),
+    ] = None,
 ) -> None:
     toolang_root = _toolang_root()
     db_path = agents_db_path(toolang_root)
-    prepared = prepare_agent(_resolve_cli_agent(agent, db_path=db_path))
+    agent_ref = _resolve_cli_agent(agent, db_path=db_path)
+    cap_scopes = _resolve_runtime_cap_scopes(
+        agent_ref,
+        shared_caps=shared_caps,
+        global_caps=global_caps,
+    )
+    prepared = prepare_agent(agent_ref, cap_scopes=cap_scopes)
     _remember_agent(prepared.ref, db_path=db_path)
     _drop_stale_running_agent(db_path, prepared.ref)
 
@@ -933,6 +994,27 @@ def _show_hidden_commands(ctx: click.Context) -> bool:
 def _toolang_root() -> Path:
     root = resolve_toolang_root(os.environ.get("TOOLANG_ROOT", "~/.toolang"))
     return ensure_toolang_root_layout(root)
+
+
+def _resolve_runtime_cap_scopes(
+    agent: ResolvedAgentRef,
+    *,
+    shared_caps: bool | None,
+    global_caps: bool | None,
+) -> CapScopeSelection:
+    defaults = _default_runtime_cap_scopes(agent)
+    return CapScopeSelection(
+        include_shared=defaults.include_shared if shared_caps is None else shared_caps,
+        include_global=defaults.include_global if global_caps is None else global_caps,
+    )
+
+
+def _default_runtime_cap_scopes(agent: ResolvedAgentRef) -> CapScopeSelection:
+    if agent.agent_kind == "resident":
+        return CapScopeSelection(include_shared=True, include_global=True)
+    if agent.agent_kind == "roaming":
+        return CapScopeSelection(include_shared=True, include_global=False)
+    return CapScopeSelection(include_shared=False, include_global=False)
 
 
 def _resolve_resident_target(raw: str) -> ResolvedAgentRef:
@@ -1479,6 +1561,8 @@ def _start_host_agent(
         str(port),
         "--sandbox",
         sandbox_spec,
+        "--shared" if prepared.cap_scopes.include_shared else "--no-shared",
+        "--global" if prepared.cap_scopes.include_global else "--no-global",
     ]
     with log_path.open("ab") as log_file:
         return subprocess.Popen(
@@ -1549,6 +1633,8 @@ def _start_docker_agent(
                     str(port),
                     "--sandbox",
                     f"docker:{sandbox_image}",
+                    "--shared" if prepared.cap_scopes.include_shared else "--no-shared",
+                    "--global" if prepared.cap_scopes.include_global else "--no-global",
                 ]
             )
             + f" >> {shlex.quote(str(log_path))} 2>&1"
