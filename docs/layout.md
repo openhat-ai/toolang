@@ -128,6 +128,15 @@ The default Toolang root is `~/.toolang`.
 {TOOLANG_ROOT}/
   agents.db
   agents.too                # optional
+  sync/
+    skills/
+    services/
+    prompts/
+    psyches/
+  skills/
+  services/
+  prompts/
+  psyches/
   agents/{HOME}/            # resident agent home
   guests/{HOME}/            # visiting agent home
   sandbox/{AGENT}/
@@ -141,6 +150,8 @@ Notes:
 
 - `agents/{HOME}/` stores resident agent homes
 - `guests/{HOME}/` stores visiting agent homes
+- `sync/` stores global synced caps
+- `{skills,services,prompts,psyches}/` store global local caps
 - `sandbox/{AGENT}/` is reserved for local execution sandboxes
 - `bus/` stores local event and bus state
 - `bus/events.db` is the shared durable event store used by local agents and a
@@ -190,8 +201,10 @@ Notes:
 - `.toolang/sync/` stores synced capabilities for this agent home
 - `.toolang/sync/{AGENT}.state.json` stores one generated sync record per
   top-level `.too` file
-- `.toolang/{psyches,skills,services,prompts}/` stores shared caps for this
-  agent home
+- `.toolang/{psyches,skills,services,prompts}/` store shared local caps for
+  this agent home
+- `agents.too` stores shared refs for this agent home
+- `{AGENT}.too` stores agent-scoped refs and runnable source
 
 
 ## 7. Agent Room
@@ -208,6 +221,11 @@ Agent room layout:
 ${AGENT_ROOM}/
   agent.run
   agent.log
+  sync/
+    skills/
+    services/
+    prompts/
+    psyches/
   chats/
     chats.db
   sandbox/
@@ -224,6 +242,32 @@ Notes:
 - `agent.run` mirrors the current running state and active loop set of one
   started agent
 - `agent.log` stores the managed runtime log for one agent
+- `sync/` stores agent-scoped synced caps
 - `chats/chats.db` stores durable chat threads and messages for one agent
 - `sandbox/` stores the local execution sandbox for that agent
 - `tasks/`, `chores/`, and `will.md` store agent-local work state
+
+
+## 8. Capability Scopes
+
+Capability scopes are:
+
+- `agent`
+  - source: `${AGENT_HOME}/{AGENT}.too`
+  - local: not used
+  - sync: `${AGENT_HOME}/.toolang/agents/{AGENT}/sync/`
+- `shared`
+  - source: `${AGENT_HOME}/agents.too`
+  - local: `${AGENT_HOME}/.toolang/{skills,services,prompts,psyches}/`
+  - sync: `${AGENT_HOME}/.toolang/sync/`
+- `global`
+  - source: `${TOOLANG_ROOT}/agents.too`
+  - local: `${TOOLANG_ROOT}/{skills,services,prompts,psyches}/`
+  - sync: `${TOOLANG_ROOT}/sync/`
+
+For skill refs and local skills, Toolang keeps the three scopes materialized
+separately and applies override precedence at runtime:
+
+1. `agent`
+2. `shared`
+3. `global`

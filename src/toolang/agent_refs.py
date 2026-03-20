@@ -19,6 +19,7 @@ class ResolvedAgentRef:
     agent_kind: AgentKind
     agent_uri: str
     agent_id: str
+    toolang_root: Path
     agent_home: Path
     agent_name: str
     source_path: Path
@@ -101,6 +102,7 @@ def _resolve_agent_uri(parsed: SplitResult, *, toolang_root: Path) -> ResolvedAg
         agent_kind="resident",
         agent_uri=agent_uri,
         agent_id=agent_id(agent_uri),
+        toolang_root=toolang_root,
         agent_home=home,
         agent_name=agent_name,
         source_path=agent_source_path(home, agent_name),
@@ -128,6 +130,7 @@ def _resolve_https(text: str, *, toolang_root: Path) -> ResolvedAgentRef:
         agent_kind="visiting",
         agent_uri=agent_uri,
         agent_id=agent_id(agent_uri),
+        toolang_root=toolang_root,
         agent_home=home,
         agent_name=agent_name,
         source_path=home / filename,
@@ -163,6 +166,7 @@ def _resolve_absolute_local_path(
                 agent_kind="resident",
                 agent_uri=agent_uri,
                 agent_id=agent_id(agent_uri),
+                toolang_root=toolang_root,
                 agent_home=home,
                 agent_name=agent_name,
                 source_path=path,
@@ -174,6 +178,7 @@ def _resolve_absolute_local_path(
         agent_kind="roaming",
         agent_uri=agent_uri,
         agent_id=agent_id(agent_uri),
+        toolang_root=toolang_root,
         agent_home=path.parent,
         agent_name=path.stem,
         source_path=path,
@@ -199,6 +204,7 @@ def _resolve_resident_shorthand(text: str, *, toolang_root: Path) -> ResolvedAge
         agent_kind="resident",
         agent_uri=agent_uri,
         agent_id=agent_id(agent_uri),
+        toolang_root=toolang_root,
         agent_home=home,
         agent_name=agent_name,
         source_path=agent_source_path(home, agent_name),

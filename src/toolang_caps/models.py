@@ -69,7 +69,7 @@ class SkillMeta(BaseModel):
     path: str
     entry_path: str
     files: list[str] = Field(default_factory=list)
-    ref: str
-    repo: str
+    ref: str | None = None
+    repo: str | None = None
     source_path: str
-    rev: str
+    rev: str | None = None

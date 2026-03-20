@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+import shutil
 import socket
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
@@ -40,11 +42,24 @@ from toolang.layout import (
     agents_db_path,
     bus_events_db_path,
     ensure_toolang_root_layout,
+    global_caps_dir,
+    global_source_path,
     resolve_toolang_root,
+    shared_caps_dir,
+    shared_source_path,
 )
 from toolang.prepared import prepare_agent
 from toolang.server import serve_agent
 from toolang.sync import sync_agent
+from toolang_caps.github import fetch_github_tree, resolve_github_skill_ref
+from toolang_caps.skills import (
+    add_skill_ref,
+    create_local_skill,
+    delete_local_skill,
+    install_local_skill,
+    prune_empty_local_kind_dir,
+    remove_skill_ref,
+)
 
 
 def _version_callback(value: bool | None) -> None:
@@ -66,7 +81,21 @@ bus_app = typer.Typer(
     pretty_exceptions_enable=False,
     pretty_exceptions_show_locals=False,
 )
+skill_app = typer.Typer(
+    help="Skill commands",
+    add_completion=False,
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+)
+skill_local_app = typer.Typer(
+    help="Local skill commands",
+    add_completion=False,
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+)
 app.add_typer(bus_app, name="bus")
+app.add_typer(skill_app, name="skill")
+skill_app.add_typer(skill_local_app, name="local")
 
 
 @app.callback()
@@ -127,6 +156,114 @@ def init(
         typer.echo(_fish_init_script())
         return
     typer.echo(_posix_init_script())
+
+
+@skill_app.command("add")
+def skill_add(
+    ref: Annotated[str, typer.Argument(help="Skill ref in owner/name form")],
+    scope: Annotated[
+        Literal["agent", "shared", "global"],
+        typer.Option(help="Target scope"),
+    ] = "agent",
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="Agent selector used to resolve agent or shared scope"),
+    ] = None,
+) -> None:
+    target = _resolve_skill_scope_target(scope=scope, agent=agent)
+    changed = add_skill_ref(target.source_path, ref)
+    typer.echo(str(target.source_path))
+    if not changed:
+        typer.echo("unchanged", err=True)
+
+
+@skill_app.command("remove")
+def skill_remove(
+    name: Annotated[str, typer.Argument(help="Skill name")],
+    scope: Annotated[
+        Literal["agent", "shared", "global"],
+        typer.Option(help="Target scope"),
+    ] = "agent",
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="Agent selector used to resolve agent or shared scope"),
+    ] = None,
+) -> None:
+    target = _resolve_skill_scope_target(scope=scope, agent=agent)
+    changed = remove_skill_ref(
+        target.source_path,
+        name,
+        delete_when_empty=target.source_path.name == "agents.too",
+    )
+    if not changed:
+        raise ToolangError(f"Skill {name!r} is not referenced in {target.source_path}.")
+    typer.echo(str(target.source_path))
+
+
+@skill_local_app.command("new")
+def skill_local_new(
+    name: Annotated[str, typer.Argument(help="Skill name")],
+    scope: Annotated[
+        Literal["shared", "global"],
+        typer.Option(help="Target local scope"),
+    ] = "shared",
+    from_ref: Annotated[
+        str | None,
+        typer.Option("--from", help="Initialize the local skill from a remote ref"),
+    ] = None,
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
+    ] = None,
+) -> None:
+    target = _resolve_skill_local_target(scope=scope, agent=agent, name=name)
+    if from_ref is None:
+        create_local_skill(target.skill_path, name)
+        typer.echo(str(target.skill_path))
+        return
+
+    resolved = resolve_github_skill_ref(from_ref)
+    source_dir, _ = fetch_github_tree(resolved)
+    try:
+        install_local_skill(target.skill_path, source_dir)
+    finally:
+        shutil.rmtree(source_dir.parent.parent, ignore_errors=True)
+    typer.echo(str(target.skill_path))
+
+
+@skill_local_app.command("path")
+def skill_local_path(
+    name: Annotated[str, typer.Argument(help="Skill name")],
+    scope: Annotated[
+        Literal["shared", "global"],
+        typer.Option(help="Target local scope"),
+    ] = "shared",
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
+    ] = None,
+) -> None:
+    target = _resolve_skill_local_target(scope=scope, agent=agent, name=name)
+    typer.echo(str(target.skill_path))
+
+
+@skill_local_app.command("delete")
+def skill_local_delete(
+    name: Annotated[str, typer.Argument(help="Skill name")],
+    scope: Annotated[
+        Literal["shared", "global"],
+        typer.Option(help="Target local scope"),
+    ] = "shared",
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
+    ] = None,
+) -> None:
+    target = _resolve_skill_local_target(scope=scope, agent=agent, name=name)
+    if not delete_local_skill(target.skill_path):
+        raise ToolangError(f"Local skill not found: {target.skill_path}")
+    prune_empty_local_kind_dir(target.kind_dir)
+    typer.echo(str(target.skill_path))
 
 
 @app.command("list")
@@ -312,6 +449,28 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+@dataclass(frozen=True, slots=True)
+class SkillSourceTarget:
+    toolang_root: Path
+    agent_home: Path | None
+    agent_name: str | None
+    source_path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class SkillLocalTarget:
+    toolang_root: Path
+    agent_home: Path | None
+    kind_dir: Path
+    skill_path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class InferredAgentContext:
+    agent_home: Path
+    agent_name: str | None
+
+
 def _resolve_cli_agent(raw: str, *, db_path: Path | None = None) -> ResolvedAgentRef:
     toolang_root = _toolang_root()
     guest_resolver = _guest_resolver()
@@ -346,6 +505,145 @@ def _resolve_cli_agent(raw: str, *, db_path: Path | None = None) -> ResolvedAgen
 def _toolang_root() -> Path:
     root = resolve_toolang_root(os.environ.get("TOOLANG_ROOT", "~/.toolang"))
     return ensure_toolang_root_layout(root)
+
+
+def _resolve_skill_scope_target(
+    *,
+    scope: Literal["agent", "shared", "global"],
+    agent: str | None,
+) -> SkillSourceTarget:
+    toolang_root = _toolang_root()
+    if scope == "global":
+        return SkillSourceTarget(
+            toolang_root=toolang_root,
+            agent_home=None,
+            agent_name=None,
+            source_path=global_source_path(toolang_root),
+        )
+
+    if agent is not None:
+        resolved = _resolve_cli_agent(agent, db_path=agents_db_path(toolang_root))
+        if scope == "shared":
+            source_path = shared_source_path(resolved.agent_home)
+        else:
+            source_path = agent_source_path(resolved.agent_home, resolved.agent_name)
+        return SkillSourceTarget(
+            toolang_root=toolang_root,
+            agent_home=resolved.agent_home,
+            agent_name=resolved.agent_name,
+            source_path=source_path,
+        )
+
+    inferred = _infer_agent_context_from_cwd(Path.cwd(), toolang_root)
+    if inferred is None:
+        raise ToolangError(
+            f"Could not infer a {scope} scope target from the current directory. "
+            "Run the command from an agent home or pass --agent."
+        )
+    if scope == "agent" and inferred.agent_name is None:
+        raise ToolangError(
+            "Could not infer a single agent source from the current directory. Pass --agent."
+        )
+    source_path = (
+        shared_source_path(inferred.agent_home)
+        if scope == "shared"
+        else agent_source_path(inferred.agent_home, inferred.agent_name or "")
+    )
+    return SkillSourceTarget(
+        toolang_root=toolang_root,
+        agent_home=inferred.agent_home,
+        agent_name=inferred.agent_name,
+        source_path=source_path,
+    )
+
+
+def _resolve_skill_local_target(
+    *,
+    scope: Literal["shared", "global"],
+    agent: str | None,
+    name: str,
+) -> SkillLocalTarget:
+    toolang_root = _toolang_root()
+    if scope == "global":
+        kind_dir = global_caps_dir(toolang_root, "skill")
+        return SkillLocalTarget(
+            toolang_root=toolang_root,
+            agent_home=None,
+            kind_dir=kind_dir,
+            skill_path=kind_dir / name,
+        )
+
+    if agent is not None:
+        resolved = _resolve_cli_agent(agent, db_path=agents_db_path(toolang_root))
+        kind_dir = shared_caps_dir(resolved.agent_home, "skill")
+        return SkillLocalTarget(
+            toolang_root=toolang_root,
+            agent_home=resolved.agent_home,
+            kind_dir=kind_dir,
+            skill_path=kind_dir / name,
+        )
+
+    inferred = _infer_agent_context_from_cwd(Path.cwd(), toolang_root)
+    if inferred is None:
+        raise ToolangError(
+            "Could not infer a shared scope target from the current directory. "
+            "Run the command from an agent home or pass --agent."
+        )
+    kind_dir = shared_caps_dir(inferred.agent_home, "skill")
+    return SkillLocalTarget(
+        toolang_root=toolang_root,
+        agent_home=inferred.agent_home,
+        kind_dir=kind_dir,
+        skill_path=kind_dir / name,
+    )
+
+
+def _infer_agent_context_from_cwd(cwd: Path, toolang_root: Path) -> InferredAgentContext | None:
+    resolved_cwd = cwd.resolve()
+    for candidate in (resolved_cwd, *resolved_cwd.parents):
+        if candidate == toolang_root:
+            break
+        if _is_managed_agent_home(candidate, toolang_root) or _looks_like_roaming_home(candidate):
+            agent_name = _infer_agent_name(candidate, resolved_cwd)
+            return InferredAgentContext(agent_home=candidate, agent_name=agent_name)
+    return None
+
+
+def _is_managed_agent_home(candidate: Path, toolang_root: Path) -> bool:
+    parent = candidate.parent
+    grandparent = parent.parent
+    return grandparent == toolang_root and parent.name in {"agents", "guests"}
+
+
+def _looks_like_roaming_home(candidate: Path) -> bool:
+    if not candidate.is_dir():
+        return False
+    if (candidate / ".toolang").exists():
+        return True
+    return any(
+        path.is_file()
+        for path in candidate.glob("*.too")
+        if path.name != "agents.too"
+    )
+
+
+def _infer_agent_name(agent_home: Path, cwd: Path) -> str | None:
+    try:
+        relative = cwd.relative_to(agent_home)
+    except ValueError:
+        return None
+
+    if len(relative.parts) >= 3 and relative.parts[:2] == (".toolang", "agents"):
+        return relative.parts[2]
+
+    agent_names = sorted(
+        path.stem
+        for path in agent_home.glob("*.too")
+        if path.name != "agents.too"
+    )
+    if len(agent_names) == 1:
+        return agent_names[0]
+    return None
 
 
 def _guest_resolver():

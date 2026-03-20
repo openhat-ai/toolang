@@ -56,6 +56,29 @@ def sync_inline_caps(root: Path, caps: list[InlineCap]) -> None:
 
 
 def sync_skill_materialization(root: Path, name: str, source_dir: Path, resolved, files: list[str]) -> None:
+    sync_local_skill_materialization(
+        root,
+        name,
+        source_dir,
+        files=files,
+        source_path=resolved.path,
+        ref=resolved.ref,
+        repo=resolved.repo,
+        rev=resolved.rev,
+    )
+
+
+def sync_local_skill_materialization(
+    root: Path,
+    name: str,
+    source_dir: Path,
+    *,
+    files: list[str],
+    source_path: str,
+    ref: str | None = None,
+    repo: str | None = None,
+    rev: str | None = None,
+) -> None:
     skill_dir = skill_cap_dir(root, name)
     meta_path = skill_cap_meta_path(root, name)
     _remove_path(skill_dir)
@@ -65,10 +88,10 @@ def sync_skill_materialization(root: Path, name: str, source_dir: Path, resolved
         path=str(skill_dir.relative_to(root)) + "/",
         entry_path=str((skill_dir / "SKILL.md").relative_to(root)),
         files=sorted(files),
-        ref=resolved.ref,
-        repo=resolved.repo,
-        source_path=resolved.path,
-        rev=resolved.rev,
+        ref=ref,
+        repo=repo,
+        source_path=source_path,
+        rev=rev,
     )
     meta_path.write_text(meta.model_dump_json(indent=2), encoding="utf-8")
 

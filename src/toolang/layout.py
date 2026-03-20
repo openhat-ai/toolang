@@ -45,12 +45,16 @@ def bus_log_path(root: Path | str) -> Path:
     return bus_dir(root) / "bus.log"
 
 
-def toolang_config_path(agent_home: Path | str) -> Path:
-    return resolve_agent_home(agent_home) / "toolang.toml"
-
-
 def agent_source_path(agent_home: Path | str, agent_name: str) -> Path:
     return resolve_agent_home(agent_home) / f"{agent_name}.too"
+
+
+def shared_source_path(agent_home: Path | str) -> Path:
+    return resolve_agent_home(agent_home) / "agents.too"
+
+
+def global_source_path(root: Path | str) -> Path:
+    return resolve_toolang_root(root) / "agents.too"
 
 
 def agent_room(agent_home: Path | str, agent_name: str) -> Path:
@@ -85,12 +89,36 @@ def synced_caps_dir(agent_home: Path | str, kind: CapKind) -> Path:
     return synced_caps_root(agent_home) / section_name(kind)
 
 
+def agent_synced_caps_root(agent_home: Path | str, agent_name: str) -> Path:
+    return agent_room(agent_home, agent_name) / "sync"
+
+
+def agent_synced_caps_dir(agent_home: Path | str, agent_name: str, kind: CapKind) -> Path:
+    return agent_synced_caps_root(agent_home, agent_name) / section_name(kind)
+
+
+def global_synced_caps_root(root: Path | str) -> Path:
+    return resolve_toolang_root(root) / "sync"
+
+
+def global_synced_caps_dir(root: Path | str, kind: CapKind) -> Path:
+    return global_synced_caps_root(root) / section_name(kind)
+
+
 def shared_caps_root(agent_home: Path | str) -> Path:
     return resolve_agent_home(agent_home) / ".toolang"
 
 
 def shared_caps_dir(agent_home: Path | str, kind: CapKind) -> Path:
     return shared_caps_root(agent_home) / section_name(kind)
+
+
+def global_caps_root(root: Path | str) -> Path:
+    return resolve_toolang_root(root)
+
+
+def global_caps_dir(root: Path | str, kind: CapKind) -> Path:
+    return global_caps_root(root) / section_name(kind)
 
 
 def ensure_toolang_root_layout(root: Path | str) -> Path:
@@ -110,11 +138,8 @@ def ensure_agent_home_layout(agent_home: Path | str, agent_name: str) -> Path:
     resolved_home = resolve_agent_home(agent_home)
     room = agent_room(resolved_home, agent_name)
     sync_root = synced_caps_root(resolved_home)
-    shared_root = shared_caps_root(resolved_home)
     for path in (resolved_home, room, sync_root):
         path.mkdir(parents=True, exist_ok=True)
     for kind in CAP_KINDS:
-        section = section_name(kind)
-        (sync_root / section).mkdir(parents=True, exist_ok=True)
-        (shared_root / section).mkdir(parents=True, exist_ok=True)
+        (sync_root / section_name(kind)).mkdir(parents=True, exist_ok=True)
     return resolved_home
