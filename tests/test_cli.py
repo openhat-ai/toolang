@@ -44,7 +44,9 @@ def test_cli_has_expected_subcommands() -> None:
     result = runner.invoke(app, ["--help"])
 
     assert result.exit_code == 0
-    assert "agent" in result.output
+    assert "new" in result.output
+    assert "clone" in result.output
+    assert "remove" in result.output
     assert "list" in result.output
     assert "invoke" in result.output
     assert "sync" in result.output
@@ -281,7 +283,7 @@ def test_agent_new_creates_resident_agent_source_and_registry_entry(
     root = tmp_path / "toolang-root"
     monkeypatch.setenv("TOOLANG_ROOT", str(root))
 
-    result = runner.invoke(app, ["agent", "new", "alice"])
+    result = runner.invoke(app, ["new", "alice"])
 
     source_path = root / "agents" / "alice" / "alice.too"
     assert result.exit_code == 0
@@ -304,7 +306,7 @@ def test_agent_clone_copies_source_into_new_resident_home(tmp_path: Path, monkey
 
     monkeypatch.setenv("TOOLANG_ROOT", str(root))
 
-    result = runner.invoke(app, ["agent", "clone", "source/reviewer", "team/reviewer"])
+    result = runner.invoke(app, ["clone", "source/reviewer", "team/reviewer"])
 
     cloned_path = root / "agents" / "team" / "reviewer.too"
     assert result.exit_code == 0
@@ -328,7 +330,7 @@ def test_agent_clone_fetches_visiting_source_when_not_materialized(
 
     result = runner.invoke(
         app,
-        ["agent", "clone", "https://example.com/alice.too", "team/alice"],
+        ["clone", "https://example.com/alice.too", "team/alice"],
     )
 
     cloned_path = root / "agents" / "team" / "alice.too"
@@ -358,7 +360,7 @@ def test_agent_remove_deletes_resident_agent_state_and_registry_entry(
     db_path = agents_db_path(root)
     _remember_agent(agent, db_path=db_path)
 
-    result = runner.invoke(app, ["agent", "remove", "alice"])
+    result = runner.invoke(app, ["remove", "alice"])
 
     assert result.exit_code == 0
     assert result.stdout.strip() == str(source_path.resolve())

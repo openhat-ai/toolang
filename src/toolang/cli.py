@@ -86,12 +86,6 @@ bus_app = typer.Typer(
     pretty_exceptions_enable=False,
     pretty_exceptions_show_locals=False,
 )
-agent_app = typer.Typer(
-    help="Resident agent commands",
-    add_completion=False,
-    pretty_exceptions_enable=False,
-    pretty_exceptions_show_locals=False,
-)
 skill_app = typer.Typer(
     help="Skill commands",
     add_completion=False,
@@ -141,7 +135,6 @@ psyche_local_app = typer.Typer(
     pretty_exceptions_show_locals=False,
 )
 app.add_typer(bus_app, name="bus")
-app.add_typer(agent_app, name="agent")
 app.add_typer(skill_app, name="skill")
 app.add_typer(service_app, name="service")
 app.add_typer(prompt_app, name="prompt")
@@ -212,7 +205,7 @@ def init(
     typer.echo(_posix_init_script())
 
 
-@agent_app.command("new")
+@app.command("new")
 def agent_new(
     target: Annotated[
         str,
@@ -233,7 +226,7 @@ def agent_new(
     typer.echo(str(agent_ref.source_path))
 
 
-@agent_app.command("clone")
+@app.command("clone")
 def agent_clone(
     source: Annotated[str, typer.Argument(help="Source agent selector")],
     target: Annotated[
@@ -259,7 +252,7 @@ def agent_clone(
     typer.echo(str(target_ref.source_path))
 
 
-@agent_app.command("remove")
+@app.command("remove")
 def agent_remove(
     agent: Annotated[str, typer.Argument(help="Resident agent selector")],
 ) -> None:
@@ -267,7 +260,7 @@ def agent_remove(
     db_path = agents_db_path(toolang_root)
     agent_ref = _resolve_cli_agent(agent, db_path=db_path)
     if agent_ref.agent_kind != "resident":
-        raise ToolangError("toolang agent remove only supports resident agents.")
+        raise ToolangError("toolang remove only supports resident agents.")
 
     _drop_stale_running_agent(db_path, agent_ref)
     if get_running_agent(db_path, agent_ref.agent_uri) is not None:

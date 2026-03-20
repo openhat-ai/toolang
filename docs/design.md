@@ -613,9 +613,9 @@ package rather than the Toolang runtime CLI.
 
 ### 11.2 Resident Agent Management
 
-- `toolang agent new <resident_target>`
-- `toolang agent clone <source_agent> <resident_target>`
-- `toolang agent remove <resident_agent>`
+- `toolang new <resident_target>`
+- `toolang clone <source_agent> <resident_target>`
+- `toolang remove <resident_agent>`
 
 Command intent:
 
