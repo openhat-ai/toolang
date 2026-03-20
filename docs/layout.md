@@ -223,6 +223,9 @@ Agent room layout:
 ${AGENT_ROOM}/
   agent.run
   agent.log
+  runs/
+    {RUN_ID}/
+      prompt.json
   sync/
     skills/
     services/
@@ -244,6 +247,8 @@ Notes:
 - `agent.run` mirrors the current running state and sandbox of one started
   agent
 - `agent.log` stores the managed runtime log for one agent
+- `runs/{RUN_ID}/prompt.json` stores structured prompt-build diagnostics for
+  one turn
 - `sync/` stores agent-scoped synced caps
 - `chats/chats.db` stores durable chat threads and messages for one agent
 - `sandbox/` stores the runtime-mounted sandbox files for that agent

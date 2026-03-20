@@ -51,7 +51,7 @@ from toolang.invoke import chat_prepared_agent, invoke_prepared_agent
 from toolang.layout import agent_chats_db_path, agent_run_path
 from toolang.messages import chat_message
 from toolang.prepared import PreparedAgent, prepare_agent
-from toolang.runtime import infer_model
+from toolang.prompt_build import infer_model
 from toolang.sandbox import (
     docker_container_name,
     normalize_sandbox_spec,
@@ -339,6 +339,7 @@ def create_agent_app(
             chats=chats,
             bus_db_path=bus_db_path,
             request=request,
+            sandbox=sandbox_spec,
         )
         item = _message_item(assistant)
         return ChatResponse(
@@ -358,6 +359,7 @@ def create_agent_app(
                     chats=chats,
                     bus_db_path=bus_db_path,
                     request=request,
+                    sandbox=sandbox_spec,
                 )
             except Exception as exc:
                 message = str(exc).strip() or type(exc).__name__
@@ -401,6 +403,7 @@ def create_agent_app(
                 bus_db_path=bus_db_path,
                 user_input=request.input,
                 model=request.model,
+                sandbox=sandbox_spec,
             )
         except ToolangError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -415,6 +418,7 @@ def _chat_once(
     chats: ChatStore,
     bus_db_path: Path,
     request: ChatRequest,
+    sandbox: str,
 ) -> ChatMessage:
     thread_id = request.thread.strip()
     if not thread_id:
@@ -438,6 +442,7 @@ def _chat_once(
         chat_store=chats,
         message=incoming,
         model=request.model,
+        sandbox=sandbox,
     )
     return result.assistant
 

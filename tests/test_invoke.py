@@ -4,8 +4,9 @@ from pathlib import Path
 
 from toolang.agent_refs import resolve_agent_ref
 from toolang.bus.db import BusStore
+from toolang.files.prompt_trace import PromptTrace
 from toolang.invoke import invoke_prepared_agent
-from toolang.layout import bus_events_db_path, resolve_toolang_root
+from toolang.layout import agent_run_prompt_path, bus_events_db_path, resolve_toolang_root
 from toolang.prepared import prepare_agent
 
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"
@@ -18,9 +19,9 @@ def test_invoke_prepared_agent_records_run_events(tmp_path: Path, monkeypatch) -
     (home / "alice.too").write_text(SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
 
     monkeypatch.setattr(
-        "toolang.invoke.execute_thunk",
-        lambda program, thunk, program_path, *, user_input, model=None: (
-            f"ran:{thunk.name}:{user_input}:{model}"
+        "toolang.invoke.execute_prompt_build",
+        lambda build: (
+            f"ran:{build.runtime_context['program']['thunk']['name']}:{build.raw_input}:{build.model}"
         ),
     )
 
@@ -40,9 +41,15 @@ def test_invoke_prepared_agent_records_run_events(tmp_path: Path, monkeypatch) -
     runs = store.list_runs(agent_uri=agent.agent_uri)
     events = store.list_events(agent_uri=agent.agent_uri)
     store.close()
+    trace = PromptTrace.load(agent_run_prompt_path(home, "alice", result.run_id))
 
     assert result.output == "ran:summarize:hello:gpt-5.3"
     assert len(result.run_id) == 32
     assert [run.status for run in runs] == ["finished"]
     assert runs[0].summary == "alice:summarize"
     assert [event.event_type for event in events] == ["run_started", "run_finished"]
+    assert trace.sandbox == "host"
+    assert trace.cap_scopes == ["agent", "shared", "global"]
+    assert trace.runtime_context["program"]["thunk"]["name"] == "summarize"
+    assert trace.runtime_context["visible_caps"]["services"][0]["name"] == "github"
+    assert trace.response_text == "ran:summarize:hello:gpt-5.3"
