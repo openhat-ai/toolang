@@ -272,6 +272,17 @@ def delete_running_agent(db_path: Path, agent_uri: str) -> None:
         connection.commit()
 
 
+def delete_known_agent(db_path: Path, agent_uri: str) -> bool:
+    ensure_agent_registry(db_path)
+    with _connect(db_path) as connection:
+        cursor = connection.execute(
+            "DELETE FROM agents WHERE agent_uri = ?",
+            (agent_uri,),
+        )
+        connection.commit()
+    return cursor.rowcount > 0
+
+
 def _connect(db_path: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(db_path)
     connection.row_factory = sqlite3.Row

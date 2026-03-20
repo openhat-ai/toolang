@@ -7,6 +7,7 @@ from toolang.agent_refs import resolve_agent_ref
 from toolang.agent_registry import (
     KnownAgentRecord,
     RunningAgentRecord,
+    delete_known_agent,
     delete_running_agent,
     find_known_agents_by_id_prefix,
     find_known_agents_by_name,
@@ -115,3 +116,23 @@ def test_known_agent_registry_lists_known_agents_with_optional_running_state(
     assert len(snapshots) == 1
     assert snapshots[0].running_status == "running"
     assert snapshots[0].endpoint == "http://127.0.0.1:8765"
+
+
+def test_delete_known_agent_removes_registry_row(tmp_path: Path) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "reviewer.too").write_text(SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+
+    agent = resolve_agent_ref("alice/reviewer", cwd=tmp_path, toolang_root=root)
+    db_path = agents_db_path(root)
+    upsert_known_agent(
+        db_path,
+        KnownAgentRecord.from_resolved_agent(
+            agent,
+            updated_at=datetime(2026, 3, 19, 8, 0, 0, tzinfo=timezone.utc),
+        ),
+    )
+
+    assert delete_known_agent(db_path, agent.agent_uri) is True
+    assert find_known_agents_by_name(db_path, "reviewer") == []

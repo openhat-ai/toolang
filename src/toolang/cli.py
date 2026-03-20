@@ -13,9 +13,11 @@ from pathlib import Path
 from typing import Annotated, Literal, Sequence
 
 import click
+import httpx
 import typer
 from dotenv import load_dotenv
 
+from toolang.agent_homes import clone_resident_agent, create_resident_agent, remove_resident_agent
 from toolang.bus.app import serve_bus_app
 from toolang.bus.db import BusStore
 from toolang.bus.events import AgentUpdated, utc_now
@@ -23,6 +25,7 @@ from toolang.agent_refs import ResolvedAgentRef, resolve_agent_ref
 from toolang.agent_registry import (
     KnownAgentRecord,
     KnownAgentSnapshot,
+    delete_known_agent,
     delete_running_agent,
     find_known_agents_by_id_prefix,
     find_known_agents_by_name,
@@ -83,6 +86,12 @@ bus_app = typer.Typer(
     pretty_exceptions_enable=False,
     pretty_exceptions_show_locals=False,
 )
+agent_app = typer.Typer(
+    help="Resident agent commands",
+    add_completion=False,
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+)
 skill_app = typer.Typer(
     help="Skill commands",
     add_completion=False,
@@ -132,6 +141,7 @@ psyche_local_app = typer.Typer(
     pretty_exceptions_show_locals=False,
 )
 app.add_typer(bus_app, name="bus")
+app.add_typer(agent_app, name="agent")
 app.add_typer(skill_app, name="skill")
 app.add_typer(service_app, name="service")
 app.add_typer(prompt_app, name="prompt")
@@ -200,6 +210,83 @@ def init(
         typer.echo(_fish_init_script())
         return
     typer.echo(_posix_init_script())
+
+
+@agent_app.command("new")
+def agent_new(
+    target: Annotated[
+        str,
+        typer.Argument(help="Resident target in home or home/agent form"),
+    ],
+) -> None:
+    toolang_root = _toolang_root()
+    db_path = agents_db_path(toolang_root)
+    agent_ref = _resolve_resident_target(target)
+    create_resident_agent(agent_ref.source_path, agent_name=agent_ref.agent_name)
+    _remember_agent(agent_ref, db_path=db_path)
+    _append_agent_updated(
+        toolang_root,
+        agent_ref,
+        update_kind="create",
+        detail="resident agent created",
+    )
+    typer.echo(str(agent_ref.source_path))
+
+
+@agent_app.command("clone")
+def agent_clone(
+    source: Annotated[str, typer.Argument(help="Source agent selector")],
+    target: Annotated[
+        str,
+        typer.Argument(help="Resident target in home or home/agent form"),
+    ],
+) -> None:
+    toolang_root = _toolang_root()
+    db_path = agents_db_path(toolang_root)
+    source_ref = _resolve_cli_agent(source, db_path=db_path)
+    target_ref = _resolve_resident_target(target)
+    clone_resident_agent(
+        target_ref.source_path,
+        source_text=_load_clone_source_text(source_ref),
+    )
+    _remember_agent(target_ref, db_path=db_path)
+    _append_agent_updated(
+        toolang_root,
+        target_ref,
+        update_kind="clone",
+        detail=f"cloned from {source_ref.agent_uri}",
+    )
+    typer.echo(str(target_ref.source_path))
+
+
+@agent_app.command("remove")
+def agent_remove(
+    agent: Annotated[str, typer.Argument(help="Resident agent selector")],
+) -> None:
+    toolang_root = _toolang_root()
+    db_path = agents_db_path(toolang_root)
+    agent_ref = _resolve_cli_agent(agent, db_path=db_path)
+    if agent_ref.agent_kind != "resident":
+        raise ToolangError("toolang agent remove only supports resident agents.")
+
+    _drop_stale_running_agent(db_path, agent_ref)
+    if get_running_agent(db_path, agent_ref.agent_uri) is not None:
+        raise ToolangError(
+            f"Resident agent {agent_ref.agent_uri} is currently running. Stop it before removal."
+        )
+
+    removed_files = remove_resident_agent(agent_ref.agent_home, agent_name=agent_ref.agent_name)
+    removed_registry = delete_known_agent(db_path, agent_ref.agent_uri)
+    if not removed_files and not removed_registry:
+        raise ToolangError(f"Resident agent not found: {agent_ref.source_path}")
+
+    _append_agent_updated(
+        toolang_root,
+        agent_ref,
+        update_kind="remove",
+        detail="resident agent removed",
+    )
+    typer.echo(str(agent_ref.source_path))
 
 
 @skill_app.command("add")
@@ -575,24 +662,15 @@ def sync(
 ) -> None:
     toolang_root = _toolang_root()
     db_path = agents_db_path(toolang_root)
-    bus_db_path = bus_events_db_path(toolang_root)
     agent_ref = _resolve_cli_agent(agent, db_path=db_path)
     sync_agent(agent_ref)
     _remember_agent(agent_ref, db_path=db_path)
-    bus = BusStore(bus_db_path)
-    bus.append(
-        AgentUpdated(
-            at=utc_now(),
-            agent_uri=agent_ref.agent_uri,
-            agent_id=agent_ref.agent_id[:12],
-            name=agent_ref.agent_name,
-            update_kind="sync",
-            detail="sync completed",
-            agent_home=str(agent_ref.agent_home),
-            source_file=agent_ref.source_path.name,
-        )
+    _append_agent_updated(
+        toolang_root,
+        agent_ref,
+        update_kind="sync",
+        detail="sync completed",
     )
-    bus.close()
     typer.echo("synced")
 
 
@@ -758,6 +836,56 @@ def _resolve_cli_agent(raw: str, *, db_path: Path | None = None) -> ResolvedAgen
 def _toolang_root() -> Path:
     root = resolve_toolang_root(os.environ.get("TOOLANG_ROOT", "~/.toolang"))
     return ensure_toolang_root_layout(root)
+
+
+def _resolve_resident_target(raw: str) -> ResolvedAgentRef:
+    toolang_root = _toolang_root()
+    agent_ref = resolve_agent_ref(
+        raw,
+        cwd=Path.cwd(),
+        toolang_root=toolang_root,
+        guest_resolver=_guest_resolver(),
+    )
+    if agent_ref.agent_kind != "resident":
+        raise ToolangError(
+            "Resident agent targets must use resident shorthand or an agent:// URI."
+        )
+    return agent_ref
+
+
+def _load_clone_source_text(agent: ResolvedAgentRef) -> str:
+    if agent.source_path.exists():
+        return agent.source_path.read_text(encoding="utf-8")
+
+    if agent.agent_kind == "visiting":
+        response = httpx.get(agent.agent_uri, follow_redirects=True, timeout=10.0)
+        response.raise_for_status()
+        return response.text
+
+    raise ToolangError(f"Agent source file not found: {agent.source_path}")
+
+
+def _append_agent_updated(
+    toolang_root: Path,
+    agent: ResolvedAgentRef,
+    *,
+    update_kind: str,
+    detail: str,
+) -> None:
+    bus = BusStore(bus_events_db_path(toolang_root))
+    bus.append(
+        AgentUpdated(
+            at=utc_now(),
+            agent_uri=agent.agent_uri,
+            agent_id=agent.agent_id[:12],
+            name=agent.agent_name,
+            update_kind=update_kind,
+            detail=detail,
+            agent_home=str(agent.agent_home),
+            source_file=agent.source_path.name,
+        )
+    )
+    bus.close()
 
 
 def _cap_add(
