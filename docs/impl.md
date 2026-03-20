@@ -37,7 +37,7 @@ Responsibilities:
 - `sync`
   - build durable generated state for one agent home
 - `invoke`
-  - load synced state from `${AGENT_HOME}/.toolang/.sync/`, then execute the
+  - load synced state from `${AGENT_HOME}/.toolang/sync/`, then execute the
     model and tool loop for one non-interactive turn
 - `serve`
   - prepare one synced agent and run the `server` runtime loop in the
@@ -54,7 +54,7 @@ Expected runtime behavior:
 - most steady-state execution should spend its time in `invoke`
 - `parse` and `sync` are rebuild steps and should be skipped when existing sync
   state is still fresh
-- the synced state in `${AGENT_HOME}/.toolang/.sync/` is the execution
+- the synced state in `${AGENT_HOME}/.toolang/sync/` is the execution
   boundary, not the raw source text
 - `serve` and `start` are process surfaces layered over the same prepared
   synced agent state
@@ -75,8 +75,8 @@ Internal sync steps:
 - `compile`
   - convert source and config inputs into per-agent synced records
 - `materialize`
-  - update `${AGENT_HOME}/.toolang/.sync/` and
-    `${AGENT_HOME}/.toolang/.sync/<agent>.state.json`
+  - update `${AGENT_HOME}/.toolang/sync/` and
+    `${AGENT_HOME}/.toolang/sync/<agent>.state.json`
 
 
 ## 3. Parsing And Sync State
@@ -90,8 +90,8 @@ Implementation strategy:
   syntax parser
 - sync writes durable generated artifacts that can be reused without reparsing
   unchanged source files
-- synced caps are written under `${AGENT_HOME}/.toolang/.sync/`
-- per-agent sync state lives in `${AGENT_HOME}/.toolang/.sync/<agent>.state.json`
+- synced caps are written under `${AGENT_HOME}/.toolang/sync/`
+- per-agent sync state lives in `${AGENT_HOME}/.toolang/sync/<agent>.state.json`
 
 Reason:
 
@@ -220,7 +220,7 @@ Other durable formats:
 
 Capability materialization uses two storage layers:
 
-- `${AGENT_HOME}/.toolang/.sync/`
+- `${AGENT_HOME}/.toolang/sync/`
   - synced cap artifacts for one agent home
 - `TOOLANG_ROOT`
   - reusable local system state for resident and visiting agents
@@ -228,7 +228,7 @@ Capability materialization uses two storage layers:
 Reason:
 
 - per-agent-home reproducibility and cross-home reuse should stay separate
-- `${AGENT_HOME}/.toolang/.sync/` needs exact sync semantics
+- `${AGENT_HOME}/.toolang/sync/` needs exact sync semantics
 - `TOOLANG_ROOT` should stay reusable across resident and visiting agents
 
 
