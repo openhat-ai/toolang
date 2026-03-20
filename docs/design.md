@@ -610,6 +610,10 @@ Rules:
   required
 - `invoke` updates the known-agent registry but does not create a
   running-agent record
+- each invoke or chat turn writes a structured prompt trace to
+  `${AGENT_ROOM}/runs/{RUN_ID}/prompt.json`
+- the prompt trace records the final model input, selected caps, thunk data,
+  sandbox, and either the model output or the execution error
 - `serve` runs the `server` loop in the foreground and registers one active
   started process for its `agent_uri`
 - `start` launches the selected runtime loop set in the background

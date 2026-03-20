@@ -14,7 +14,14 @@ from toolang.agent_refs import resolve_agent_ref
 from toolang.agent_registry import get_running_agent
 from toolang.bus.db import BusStore
 from toolang.files.agent_run import AgentRunState
-from toolang.layout import agent_run_path, agents_db_path, bus_events_db_path, resolve_toolang_root
+from toolang.files.prompt_trace import PromptTrace
+from toolang.layout import (
+    agent_run_path,
+    agent_run_prompt_path,
+    agents_db_path,
+    bus_events_db_path,
+    resolve_toolang_root,
+)
 from toolang.prepared import prepare_agent
 from toolang.server import create_agent_app
 
@@ -36,18 +43,13 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
     events_path = bus_events_db_path(root)
     run_path = agent_run_path(home, "alice")
 
-    monkeypatch.setattr(
-        "toolang.invoke.execute_thunk",
-        lambda program, thunk, program_path, *, user_input, model=None: (
-            f"invoke:{thunk.name}:{user_input}:{model}"
-        ),
-    )
-    monkeypatch.setattr(
-        "toolang.invoke.execute_chat_thunk",
-        lambda program, thunk, program_path, *, history_messages, message, model=None: (
-            f"chat:{len(history_messages)}:{message.text}:{model or '-'}"
-        ),
-    )
+    def fake_execute(build) -> str:
+        thunk_name = build.runtime_context["program"]["thunk"]["name"] or "default"
+        if build.message_context is not None:
+            return f"chat:{len(build.messages) - 1}:{build.raw_input}:{build.model}"
+        return f"invoke:{thunk_name}:{build.raw_input}:{build.model}"
+
+    monkeypatch.setattr("toolang.invoke.execute_prompt_build", fake_execute)
 
     app = create_agent_app(
         prepared,
@@ -109,8 +111,13 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
         assert first_chat.status_code == 200
         first_chat_body = first_chat.json()
         assert first_chat_body["thread_id"] == "owner"
-        assert first_chat_body["message"]["parts"][0]["text"] == "chat:1:hello:-"
+        assert first_chat_body["message"]["parts"][0]["text"] == "chat:1:hello:gpt-5"
         first_run_id = first_chat_body["turn_id"]
+        first_trace = PromptTrace.load(agent_run_prompt_path(home, "alice", first_run_id))
+        assert first_trace.message_context is not None
+        assert first_trace.message_context["channel"] == "api"
+        assert first_trace.sandbox == "host"
+        assert first_trace.runtime_context["visible_caps"]["psyches"][0]["name"] == "reviewer"
 
         second_chat = client.post(
             "/api/v1/chat",
@@ -118,7 +125,7 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
         )
         assert second_chat.status_code == 200
         second_chat_body = second_chat.json()
-        assert second_chat_body["message"]["parts"][0]["text"] == "chat:3:again:-"
+        assert second_chat_body["message"]["parts"][0]["text"] == "chat:3:again:gpt-5"
 
         with client.stream(
             "POST",
@@ -129,7 +136,7 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
             stream_text = "".join(chunk.decode("utf-8") for chunk in response.iter_raw())
         assert '"type":"start"' in stream_text
         assert '"type":"text-delta"' in stream_text
-        assert "chat:5:stream me:-" in stream_text
+        assert "chat:5:stream me:gpt-5" in stream_text
         assert "data: [DONE]" in stream_text
 
         threads = client.get("/api/v1/chats")
@@ -167,6 +174,12 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
         )
         assert run_response.status_code == 200
         assert run_response.json()["output"] == "invoke:summarize:hello:gpt-5.3"
+        invoke_trace = PromptTrace.load(
+            agent_run_prompt_path(home, "alice", run_response.json()["run_id"])
+        )
+        assert invoke_trace.raw_input == "hello"
+        assert invoke_trace.expanded_input == "hello"
+        assert invoke_trace.model == "gpt-5.3"
 
         events = client.get("/api/v1/events")
         assert events.status_code == 200
@@ -206,8 +219,8 @@ def test_create_agent_app_reports_docker_sandbox_state(
     run_path = agent_run_path(home, "alice")
 
     monkeypatch.setattr(
-        "toolang.invoke.execute_chat_thunk",
-        lambda program, thunk, program_path, *, history_messages, message, model=None: "ok",
+        "toolang.invoke.execute_prompt_build",
+        lambda build: "ok",
     )
 
     app = create_agent_app(

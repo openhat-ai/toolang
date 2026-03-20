@@ -742,6 +742,7 @@ def invoke(
         bus_db_path=bus_db_path,
         user_input=user_input,
         model=model,
+        sandbox=HOST_SANDBOX,
     )
     typer.echo(result.output)
 

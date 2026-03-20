@@ -150,10 +150,11 @@ The runtime core uses the official OpenAI Python SDK for model execution.
 
 Expected responsibilities:
 
-- message assembly
+- structured prompt assembly
 - tool registration and execution loop
 - model fallback handling
 - output coercion and structured-output enforcement
+- prompt trace logging under `${AGENT_ROOM}/runs/{RUN_ID}/prompt.json`
 
 Reason:
 

@@ -85,6 +85,18 @@ def agent_chats_db_path(agent_home: Path | str, agent_name: str) -> Path:
     return agent_chats_dir(agent_home, agent_name) / "chats.db"
 
 
+def agent_runs_dir(agent_home: Path | str, agent_name: str) -> Path:
+    return agent_room(agent_home, agent_name) / "runs"
+
+
+def agent_run_dir(agent_home: Path | str, agent_name: str, run_id: str) -> Path:
+    return agent_runs_dir(agent_home, agent_name) / run_id
+
+
+def agent_run_prompt_path(agent_home: Path | str, agent_name: str, run_id: str) -> Path:
+    return agent_run_dir(agent_home, agent_name, run_id) / "prompt.json"
+
+
 def agent_room_sandbox_dir(agent_home: Path | str, agent_name: str) -> Path:
     return agent_room(agent_home, agent_name) / "sandbox"
 
