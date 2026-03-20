@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
-from typing import Annotated, Sequence
+from typing import Annotated, Literal, Sequence
 
 import click
 import typer
@@ -34,7 +34,9 @@ from toolang.files.agent_run import AgentRunState
 from toolang.invoke import invoke_prepared_agent
 from toolang.layout import (
     agent_log_path,
+    agent_room,
     agent_run_path,
+    agent_source_path,
     agents_db_path,
     bus_events_db_path,
     ensure_toolang_root_layout,
@@ -80,6 +82,46 @@ def callback(
     ] = None,
 ) -> None:
     """Toolang CLI."""
+
+
+@app.command(hidden=True)
+def home(
+    agent: Annotated[str, typer.Argument(help="Agent selector")],
+) -> None:
+    db_path = agents_db_path(_toolang_root())
+    resolved = _resolve_cli_agent(agent, db_path=db_path)
+    typer.echo(str(resolved.agent_home))
+
+
+@app.command(hidden=True)
+def source(
+    agent: Annotated[str, typer.Argument(help="Agent selector")],
+) -> None:
+    db_path = agents_db_path(_toolang_root())
+    resolved = _resolve_cli_agent(agent, db_path=db_path)
+    typer.echo(str(agent_source_path(resolved.agent_home, resolved.agent_name)))
+
+
+@app.command(hidden=True)
+def room(
+    agent: Annotated[str, typer.Argument(help="Agent selector")],
+) -> None:
+    db_path = agents_db_path(_toolang_root())
+    resolved = _resolve_cli_agent(agent, db_path=db_path)
+    typer.echo(str(agent_room(resolved.agent_home, resolved.agent_name)))
+
+
+@app.command(hidden=True)
+def init(
+    shell: Annotated[
+        Literal["zsh", "bash", "fish"],
+        typer.Argument(help="Shell to initialize"),
+    ],
+) -> None:
+    if shell == "fish":
+        typer.echo(_fish_init_script())
+        return
+    typer.echo(_posix_init_script())
 
 
 @app.command("list")
@@ -418,6 +460,46 @@ def _format_rows(headers: tuple[str, ...], rows: Sequence[Sequence[str]]) -> str
     for row in rows:
         lines.append("  ".join(cell.ljust(widths[index]) for index, cell in enumerate(row)))
     return "\n".join(lines)
+
+
+def _posix_init_script() -> str:
+    return """toolang() {
+  case "$1" in
+    cd)
+      shift
+      builtin cd -- "$(command toolang home "$@")"
+      ;;
+    croom)
+      shift
+      builtin cd -- "$(command toolang room "$@")"
+      ;;
+    csource)
+      shift
+      builtin cd -- "$(dirname "$(command toolang source "$@")")"
+      ;;
+    *)
+      command toolang "$@"
+      ;;
+  esac
+}"""
+
+
+def _fish_init_script() -> str:
+    return """function toolang
+    switch $argv[1]
+        case cd
+            set -e argv[1]
+            cd (command toolang home $argv)
+        case croom
+            set -e argv[1]
+            cd (command toolang room $argv)
+        case csource
+            set -e argv[1]
+            cd (dirname (command toolang source $argv))
+        case '*'
+            command toolang $argv
+    end
+end"""
 
 
 def _looks_like_explicit_source_selector(text: str) -> bool:
