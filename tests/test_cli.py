@@ -29,6 +29,9 @@ from toolang.layout import (
     global_source_path,
     shared_caps_dir,
     shared_source_path,
+    sandbox_args_path,
+    sandbox_exec_path,
+    sandbox_host,
 )
 from toolang_caps.models import CapKind
 
@@ -295,6 +298,82 @@ def test_cli_list_marks_active_agent_running(tmp_path: Path, monkeypatch) -> Non
     assert result.exit_code == 0
     assert "running" in result.output
     assert "http://127.0.0.1:8778" in result.output
+
+
+def test_cli_serve_rejects_docker_sandbox(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang-root"
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+
+    result = runner.invoke(app, ["serve", "alice", "--sandbox", "docker:python:3.13-slim"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, ToolangError)
+    assert "toolang serve only supports host sandbox" in str(result.exception)
+
+
+def test_cli_start_docker_stages_sandbox_launch(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    source_path = home / "alice.too"
+    source_path.write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    calls: dict[str, object] = {}
+
+    def fake_remove(name: str) -> None:
+        calls["removed"] = name
+
+    def fake_run(**kwargs):
+        calls.update(kwargs)
+        return "container-123"
+
+    monkeypatch.setattr("toolang.cli.docker_remove_container", fake_remove)
+    monkeypatch.setattr("toolang.cli.docker_run_detached", fake_run)
+    monkeypatch.setattr("toolang.cli._wait_for_running_agent_sandbox", lambda **kwargs: None)
+
+    result = runner.invoke(
+        app,
+        [
+            "start",
+            "alice",
+            "--sandbox",
+            "docker:python:3.13-slim",
+            "--port",
+            "8779",
+        ],
+    )
+
+    key = f"alice-{agent.agent_id[:12]}"
+    args_path = sandbox_args_path(root, key)
+    exec_path = sandbox_exec_path(root, key)
+    stage_dir = sandbox_host(root, key)
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == f"started {agent.agent_id[:12]} http://127.0.0.1:8779"
+    assert args_path.exists()
+    assert exec_path.exists()
+    assert stage_dir.exists()
+    assert calls["image"] == "python:3.13-slim"
+    assert calls["container_name"] == f"toolang-agent-alice-{agent.agent_id[:12]}"
+    assert calls["published_host"] == "127.0.0.1"
+    assert calls["published_port"] == 8779
+    assert calls["workdir"] == home.resolve()
+    assert calls["env_values"] == {"TOOLANG_ROOT": str(root.resolve())}
+    mounts = [(str(source), str(target)) for source, target in cast(list[tuple[Path, Path]], calls["mounts"])]
+    assert (str(root.resolve()), str(root.resolve())) in mounts
+    assert (str(stage_dir.resolve()), str((home / ".toolang" / "agents" / "alice" / "sandbox").resolve())) in mounts
+
+    args_payload = __import__("json").loads(args_path.read_text(encoding="utf-8"))
+    assert args_payload["sandbox"]["image_name"] == "python:3.13-slim"
+    exec_text = exec_path.read_text(encoding="utf-8")
+    assert "toolang serve" in exec_text
+    assert "--host 0.0.0.0" in exec_text
+    assert "--sandbox docker:python:3.13-slim" in exec_text
 
 
 def test_hidden_path_commands_resolve_agent_paths(tmp_path: Path, monkeypatch) -> None:

@@ -42,9 +42,11 @@ Responsibilities:
 - `serve`
   - prepare one synced agent and run the `server` runtime loop in the
     foreground
+  - supports `host` sandbox only
 - `start`
   - launch a selected runtime-loop set in the background and wait for
     registration in `agents.db`
+  - supports `host` and `docker:<image>` sandboxes
 - `bus serve`
   - expose the shared `bus/events.db` projection as one local multi-agent HTTP
     API
@@ -58,6 +60,7 @@ Expected runtime behavior:
   boundary, not the raw source text
 - `serve` and `start` are process surfaces layered over the same prepared
   synced agent state
+- `agent.run` is the runtime truth for sandbox mode and process state
 - the turn model is message-driven, with `origin = invoke | chat | task | chore
   | will`; only `chat` carries a non-null `channel`
 - the long-lived trigger layer uses four runtime loops:

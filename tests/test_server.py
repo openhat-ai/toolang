@@ -55,6 +55,7 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
         bus_db_path=events_path,
         host="127.0.0.1",
         port=8765,
+        sandbox="host",
     )
 
     with TestClient(app) as client:
@@ -67,6 +68,7 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
         assert runtime.json()["status"] == "online"
         assert runtime.json()["endpoint"] == "http://127.0.0.1:8765"
         assert runtime.json()["working_directory"] == str(home)
+        assert runtime.json()["sandbox"] == "host"
         assert runtime.json()["model"] == "gpt-5"
 
         cors_runtime = client.get(
@@ -95,8 +97,10 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
         active = get_running_agent(db_path, agent.agent_uri)
         assert active is not None
         assert active.status == "running"
+        assert active.sandbox == "host"
         assert run_path.exists()
         assert AgentRunState.load(run_path).status == "running"
+        assert AgentRunState.load(run_path).sandbox.spec() == "host"
 
         first_chat = client.post(
             "/api/v1/chat",
@@ -184,6 +188,49 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
     events = store.list_events(agent_uri=agent.agent_uri)
     store.close()
     assert events[-1].event_type == "agent_stopped"
+
+
+def test_create_agent_app_reports_docker_sandbox_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    prepared = prepare_agent(agent)
+    db_path = agents_db_path(root)
+    events_path = bus_events_db_path(root)
+    run_path = agent_run_path(home, "alice")
+
+    monkeypatch.setattr(
+        "toolang.invoke.execute_chat_thunk",
+        lambda program, thunk, program_path, *, history_messages, message, model=None: "ok",
+    )
+
+    app = create_agent_app(
+        prepared,
+        agents_db_path=db_path,
+        bus_db_path=events_path,
+        host="0.0.0.0",
+        port=8766,
+        sandbox="docker:python:3.13-slim",
+        public_host="127.0.0.1",
+    )
+
+    with TestClient(app) as client:
+        runtime = client.get("/api/v1/runtime")
+        assert runtime.status_code == 200
+        assert runtime.json()["endpoint"] == "http://127.0.0.1:8766"
+        assert runtime.json()["execution_host"] == "docker"
+        assert runtime.json()["sandbox"] == "docker:python:3.13-slim"
+
+        run_state = AgentRunState.load(run_path)
+        assert run_state.sandbox.type == "docker"
+        assert run_state.sandbox.image_name == "python:3.13-slim"
+        assert run_state.sandbox.container_name is not None
 
 
 def test_serve_process_writes_stopped_state_after_termination(tmp_path: Path) -> None:

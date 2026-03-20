@@ -39,6 +39,7 @@ class AgentSnapshot(BaseModel):
     kind: str
     status: str
     endpoint: str | None = None
+    sandbox: str | None = None
     agent_home: str | None = None
     source_file: str | None = None
     detail: str | None = None
@@ -117,7 +118,7 @@ class BusStore:
             row = self._conn.execute(
                 """
                 SELECT
-                    agent_uri, agent_id, name, kind, status, endpoint,
+                    agent_uri, agent_id, name, kind, status, endpoint, sandbox,
                     agent_home, source_file, detail, created_at, updated_at
                 FROM agents
                 WHERE agent_uri = ?
@@ -133,7 +134,7 @@ class BusStore:
             row = self._conn.execute(
                 """
                 SELECT
-                    agent_uri, agent_id, name, kind, status, endpoint,
+                    agent_uri, agent_id, name, kind, status, endpoint, sandbox,
                     agent_home, source_file, detail, created_at, updated_at
                 FROM agents
                 WHERE agent_id = ?
@@ -149,7 +150,7 @@ class BusStore:
             rows = self._conn.execute(
                 """
                 SELECT
-                    agent_uri, agent_id, name, kind, status, endpoint,
+                    agent_uri, agent_id, name, kind, status, endpoint, sandbox,
                     agent_home, source_file, detail, created_at, updated_at
                 FROM agents
                 ORDER BY updated_at DESC, agent_id ASC
@@ -287,6 +288,7 @@ class BusStore:
                     kind TEXT NOT NULL,
                     status TEXT NOT NULL,
                     endpoint TEXT,
+                    sandbox TEXT,
                     agent_home TEXT,
                     source_file TEXT,
                     detail TEXT,
@@ -323,6 +325,12 @@ class BusStore:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status)"
             )
+            columns = {
+                str(row["name"]): row
+                for row in self._conn.execute("PRAGMA table_info(agents)").fetchall()
+            }
+            if "sandbox" not in columns:
+                self._conn.execute("ALTER TABLE agents ADD COLUMN sandbox TEXT")
             self._conn.commit()
 
     def _apply_projection(self, event: BusEvent) -> None:
@@ -346,15 +354,16 @@ class BusStore:
         self._conn.execute(
             """
             INSERT INTO agents(
-                agent_uri, agent_id, name, kind, status, endpoint,
+                agent_uri, agent_id, name, kind, status, endpoint, sandbox,
                 agent_home, source_file, detail, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(agent_uri) DO UPDATE SET
                 agent_id = excluded.agent_id,
                 name = excluded.name,
                 kind = excluded.kind,
                 status = excluded.status,
                 endpoint = excluded.endpoint,
+                sandbox = excluded.sandbox,
                 agent_home = excluded.agent_home,
                 source_file = excluded.source_file,
                 detail = excluded.detail,
@@ -367,6 +376,7 @@ class BusStore:
                 event.kind,
                 "started",
                 event.endpoint,
+                event.sandbox,
                 event.agent_home,
                 event.source_file,
                 None,
@@ -384,14 +394,15 @@ class BusStore:
         self._conn.execute(
             """
             INSERT INTO agents(
-                agent_uri, agent_id, name, kind, status, endpoint,
+                agent_uri, agent_id, name, kind, status, endpoint, sandbox,
                 agent_home, source_file, detail, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(agent_uri) DO UPDATE SET
                 agent_id = excluded.agent_id,
                 name = excluded.name,
                 status = excluded.status,
                 endpoint = COALESCE(excluded.endpoint, agents.endpoint),
+                sandbox = COALESCE(excluded.sandbox, agents.sandbox),
                 agent_home = COALESCE(excluded.agent_home, agents.agent_home),
                 source_file = COALESCE(excluded.source_file, agents.source_file),
                 detail = excluded.detail,
@@ -404,6 +415,7 @@ class BusStore:
                 "",
                 "stopped",
                 event.endpoint,
+                event.sandbox,
                 event.agent_home,
                 event.source_file,
                 event.detail,
@@ -414,23 +426,25 @@ class BusStore:
 
     def _apply_agent_updated(self, event: AgentUpdated) -> None:
         row = self._conn.execute(
-            "SELECT kind, status, endpoint, created_at FROM agents WHERE agent_uri = ?",
+            "SELECT kind, status, endpoint, sandbox, created_at FROM agents WHERE agent_uri = ?",
             (event.agent_uri,),
         ).fetchone()
         kind = str(row["kind"]) if row is not None else ""
         status = str(row["status"]) if row is not None else "updated"
         endpoint = row["endpoint"] if row is not None else None
+        sandbox = row["sandbox"] if row is not None else None
         created_at = str(row["created_at"]) if row is not None else event.at
         self._conn.execute(
             """
             INSERT INTO agents(
-                agent_uri, agent_id, name, kind, status, endpoint,
+                agent_uri, agent_id, name, kind, status, endpoint, sandbox,
                 agent_home, source_file, detail, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(agent_uri) DO UPDATE SET
                 agent_id = excluded.agent_id,
                 name = excluded.name,
                 endpoint = COALESCE(excluded.endpoint, agents.endpoint),
+                sandbox = COALESCE(excluded.sandbox, agents.sandbox),
                 agent_home = COALESCE(excluded.agent_home, agents.agent_home),
                 source_file = COALESCE(excluded.source_file, agents.source_file),
                 detail = excluded.detail,
@@ -443,6 +457,7 @@ class BusStore:
                 kind,
                 status,
                 endpoint,
+                sandbox,
                 event.agent_home,
                 event.source_file,
                 f"{event.update_kind}: {event.detail}",
@@ -507,6 +522,7 @@ def _agent_from_row(row: sqlite3.Row) -> AgentSnapshot:
         kind=str(row["kind"]),
         status=str(row["status"]),
         endpoint=row["endpoint"],
+        sandbox=row["sandbox"],
         agent_home=row["agent_home"],
         source_file=row["source_file"],
         detail=row["detail"],

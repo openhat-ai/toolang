@@ -45,13 +45,19 @@ from toolang.bus.events import AgentStarted, AgentStopped, utc_now
 from toolang.caps_view import InlineCapView, SkillCapView, load_prepared_caps
 from toolang.chats import ChatMessage, ChatStore, ChatThread, ChatTurn
 from toolang.errors import ToolangError
-from toolang.files.agent_run import AgentRunState
+from toolang.files.agent_run import AgentRunState, SandboxInfo, SandboxRunInfo
 from toolang.http import add_cors
 from toolang.invoke import chat_prepared_agent, invoke_prepared_agent
 from toolang.layout import agent_chats_db_path, agent_run_path
 from toolang.messages import chat_message
 from toolang.prepared import PreparedAgent, prepare_agent
 from toolang.runtime import infer_model
+from toolang.sandbox import (
+    docker_container_name,
+    normalize_sandbox_spec,
+    parse_sandbox_spec,
+    sandbox_process_alive,
+)
 
 SHORT_AGENT_ID_LENGTH = 12
 SSE_POLL_INTERVAL_SEC = 0.5
@@ -65,15 +71,21 @@ def serve_agent(
     bus_db_path: Path,
     host: str,
     port: int,
+    sandbox: str = "host",
+    public_host: str | None = None,
     cors_allow_origins: list[str] | None = None,
 ) -> None:
-    endpoint = f"http://{host}:{port}"
+    sandbox_spec = normalize_sandbox_spec(sandbox)
+    endpoint_host = public_host or host
+    endpoint = f"http://{endpoint_host}:{port}"
     app = create_agent_app(
         prepared,
         agents_db_path=agents_db_path,
         bus_db_path=bus_db_path,
         host=host,
         port=port,
+        sandbox=sandbox_spec,
+        public_host=endpoint_host,
         cors_allow_origins=cors_allow_origins,
     )
     try:
@@ -87,6 +99,7 @@ def serve_agent(
                     agents_db_path=agents_db_path,
                     bus=bus,
                     endpoint=endpoint,
+                    sandbox=sandbox_spec,
                 )
             finally:
                 bus.close()
@@ -99,9 +112,14 @@ def create_agent_app(
     bus_db_path: Path,
     host: str,
     port: int,
+    sandbox: str = "host",
+    public_host: str | None = None,
     cors_allow_origins: list[str] | None = None,
 ) -> FastAPI:
-    endpoint = f"http://{host}:{port}"
+    sandbox_spec = normalize_sandbox_spec(sandbox)
+    parsed_sandbox = parse_sandbox_spec(sandbox_spec)
+    endpoint_host = public_host or host
+    endpoint = f"http://{endpoint_host}:{port}"
     bus = BusStore(bus_db_path)
     chats = ChatStore(agent_chats_db_path(prepared.ref.agent_home, prepared.ref.agent_name))
 
@@ -112,6 +130,7 @@ def create_agent_app(
             agents_db_path=agents_db_path,
             bus=bus,
             endpoint=endpoint,
+            sandbox=sandbox_spec,
         )
         try:
             yield
@@ -122,6 +141,7 @@ def create_agent_app(
                     agents_db_path=agents_db_path,
                     bus=bus,
                     endpoint=endpoint,
+                    sandbox=sandbox_spec,
                 )
             finally:
                 chats.close()
@@ -171,6 +191,7 @@ def create_agent_app(
             kind=prepared.ref.agent_kind,
             status="prepared",
             endpoint=endpoint,
+            sandbox=sandbox_spec,
             agent_home=str(prepared.ref.agent_home),
             source_file=prepared.source_path.name,
             detail=None,
@@ -190,9 +211,9 @@ def create_agent_app(
             status="online",
             checked_at=utc_now(),
             endpoint=endpoint,
-            execution_host="local",
+            execution_host=parsed_sandbox.execution_host,
             working_directory=str(prepared.ref.agent_home),
-            sandbox="none",
+            sandbox=sandbox_spec,
             network="enabled",
             approvals="n/a",
             filesystem_scope="agent-home",
@@ -436,11 +457,22 @@ def _activate_running_agent(
     agents_db_path: Path,
     bus: BusStore,
     endpoint: str,
+    sandbox: str,
 ) -> None:
     current_pid = os.getpid()
+    sandbox_spec = normalize_sandbox_spec(sandbox)
     existing = get_running_agent(agents_db_path, prepared.ref.agent_uri)
-    if existing is not None and existing.pid != current_pid and _pid_exists(existing.pid):
-        raise ToolangError(f"Agent is already being served: {prepared.ref.agent_uri}")
+    if existing is not None:
+        alive = sandbox_process_alive(
+            sandbox_spec=existing.sandbox,
+            pid=existing.pid,
+            agent_name=prepared.ref.agent_name,
+            agent_id=prepared.ref.agent_id[:SHORT_AGENT_ID_LENGTH],
+        )
+        if alive and existing.pid != current_pid:
+            raise ToolangError(f"Agent is already being served: {prepared.ref.agent_uri}")
+        if not alive:
+            delete_running_agent(agents_db_path, prepared.ref.agent_uri)
 
     now = datetime.now(timezone.utc)
     upsert_known_agent(
@@ -454,6 +486,7 @@ def _activate_running_agent(
             pid=current_pid,
             status="running",
             endpoint=endpoint,
+            sandbox=sandbox_spec,
             started_at=now,
             heartbeat_at=now,
         ),
@@ -465,6 +498,7 @@ def _activate_running_agent(
             agent_id=prepared.ref.agent_id[:SHORT_AGENT_ID_LENGTH],
             name=prepared.ref.agent_name,
             kind=prepared.ref.agent_kind,
+            sandbox=sandbox_spec,
             endpoint=endpoint,
             agent_home=str(prepared.ref.agent_home),
             source_file=prepared.source_path.name,
@@ -476,6 +510,7 @@ def _activate_running_agent(
         status="running",
         started_at=now,
         heartbeat_at=now,
+        sandbox=sandbox_spec,
     )
 
 
@@ -497,6 +532,7 @@ def _touch_running_agent(
         status=updated.status,
         started_at=updated.started_at,
         heartbeat_at=now,
+        sandbox=updated.sandbox,
     )
 
 
@@ -506,17 +542,20 @@ def _deactivate_running_agent(
     agents_db_path: Path,
     bus: BusStore,
     endpoint: str,
+    sandbox: str,
 ) -> None:
     current = get_running_agent(agents_db_path, prepared.ref.agent_uri)
     now = datetime.now(timezone.utc)
     started_at = current.started_at if current is not None else now
     delete_running_agent(agents_db_path, prepared.ref.agent_uri)
+    sandbox_spec = normalize_sandbox_spec(sandbox)
     bus.append(
         AgentStopped(
             at=utc_now(),
             agent_uri=prepared.ref.agent_uri,
             agent_id=prepared.ref.agent_id[:SHORT_AGENT_ID_LENGTH],
             name=prepared.ref.agent_name,
+            sandbox=sandbox_spec,
             detail="server stopped",
             endpoint=endpoint,
             agent_home=str(prepared.ref.agent_home),
@@ -529,6 +568,7 @@ def _deactivate_running_agent(
         status="stopped",
         started_at=started_at,
         heartbeat_at=now,
+        sandbox=sandbox_spec,
     )
 
 
@@ -539,7 +579,10 @@ def _write_agent_run_state(
     status: str,
     started_at: datetime,
     heartbeat_at: datetime,
+    sandbox: str,
 ) -> None:
+    sandbox_spec = normalize_sandbox_spec(sandbox)
+    parsed_sandbox = parse_sandbox_spec(sandbox_spec)
     run_path = agent_run_path(prepared.ref.agent_home, prepared.ref.agent_name)
     run_path.parent.mkdir(parents=True, exist_ok=True)
     AgentRunState(
@@ -553,6 +596,19 @@ def _write_agent_run_state(
         endpoint=endpoint,
         started_at=started_at,
         heartbeat_at=heartbeat_at,
+        sandbox=SandboxInfo(
+            type=parsed_sandbox.kind,
+            container_name=(
+                docker_container_name(
+                    prepared.ref.agent_name,
+                    prepared.ref.agent_id[:SHORT_AGENT_ID_LENGTH],
+                )
+                if parsed_sandbox.kind == "docker"
+                else None
+            ),
+            image_name=parsed_sandbox.image,
+            run=SandboxRunInfo(pid=os.getpid(), port=_port_from_endpoint(endpoint)),
+        ),
     ).save(run_path)
 
 
@@ -567,15 +623,6 @@ def _has_running_state(
     if not run_path.exists():
         return False
     return AgentRunState.load(run_path).status == "running"
-
-
-def _pid_exists(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    return True
-
 
 def _default_model(prepared: PreparedAgent) -> str | None:
     try:
@@ -714,3 +761,10 @@ def _sse(event: str, data: dict[str, object], event_id: int | None = None) -> st
 
 def _data_sse(chunk: dict[str, object]) -> str:
     return "data: " + __import__("json").dumps(chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
+
+
+def _port_from_endpoint(endpoint: str) -> int | None:
+    try:
+        return int(endpoint.rsplit(":", 1)[1])
+    except (IndexError, ValueError):
+        return None

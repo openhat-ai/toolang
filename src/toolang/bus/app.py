@@ -308,7 +308,7 @@ def _agent_item(snapshot: AgentSnapshot) -> BusAgentItem:
         model=None,
         host=host,
         port=port,
-        sandbox=None,
+        sandbox=snapshot.sandbox,
         runtime_ref=snapshot.agent_uri,
         detail=snapshot.detail,
         created_at=snapshot.created_at,
