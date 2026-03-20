@@ -30,62 +30,22 @@ from toolang_caps.source_ops import (
 
 from .support import _resolve_cli_agent, _toolang_root
 
-skill_app = typer.Typer(
-    help="Skill commands",
-    add_completion=False,
-    no_args_is_help=True,
-    pretty_exceptions_enable=False,
-    pretty_exceptions_show_locals=False,
-)
-skill_local_app = typer.Typer(
-    help="Local skill commands",
-    add_completion=False,
-    no_args_is_help=True,
-    pretty_exceptions_enable=False,
-    pretty_exceptions_show_locals=False,
-)
-service_app = typer.Typer(
-    help="Service commands",
-    add_completion=False,
-    no_args_is_help=True,
-    pretty_exceptions_enable=False,
-    pretty_exceptions_show_locals=False,
-)
-service_local_app = typer.Typer(
-    help="Local service commands",
-    add_completion=False,
-    no_args_is_help=True,
-    pretty_exceptions_enable=False,
-    pretty_exceptions_show_locals=False,
-)
-prompt_app = typer.Typer(
-    help="Prompt commands",
-    add_completion=False,
-    no_args_is_help=True,
-    pretty_exceptions_enable=False,
-    pretty_exceptions_show_locals=False,
-)
-prompt_local_app = typer.Typer(
-    help="Local prompt commands",
-    add_completion=False,
-    no_args_is_help=True,
-    pretty_exceptions_enable=False,
-    pretty_exceptions_show_locals=False,
-)
-psyche_app = typer.Typer(
-    help="Psyche commands",
-    add_completion=False,
-    no_args_is_help=True,
-    pretty_exceptions_enable=False,
-    pretty_exceptions_show_locals=False,
-)
-psyche_local_app = typer.Typer(
-    help="Local psyche commands",
-    add_completion=False,
-    no_args_is_help=True,
-    pretty_exceptions_enable=False,
-    pretty_exceptions_show_locals=False,
-)
+SourceScope = Annotated[
+    Literal["agent", "shared", "global"],
+    typer.Option(help="Target scope"),
+]
+LocalScope = Annotated[
+    Literal["shared", "global"],
+    typer.Option(help="Target local scope"),
+]
+ScopedAgent = Annotated[
+    str | None,
+    typer.Option("--agent", help="Agent selector used to resolve agent or shared scope"),
+]
+LocalScopedAgent = Annotated[
+    str | None,
+    typer.Option("--agent", help="Agent selector used to resolve shared scope"),
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,332 +71,87 @@ class InferredAgentContext:
     agent_name: str | None
 
 
-@skill_app.command("add", no_args_is_help=True)
-def skill_add(
-    ref: Annotated[str, typer.Argument(help="Skill ref in owner/name form")],
-    scope: Annotated[
-        Literal["agent", "shared", "global"],
-        typer.Option(help="Target scope"),
-    ] = "agent",
-    agent: Annotated[
-        str | None,
-        typer.Option("--agent", help="Agent selector used to resolve agent or shared scope"),
-    ] = None,
-) -> None:
-    _cap_add("skill", ref=ref, scope=scope, agent=agent)
+@dataclass(frozen=True, slots=True)
+class CapCommandSpec:
+    kind: CapKind
+    title: str
 
 
-@skill_app.command("remove", no_args_is_help=True)
-def skill_remove(
-    name: Annotated[str, typer.Argument(help="Skill name")],
-    scope: Annotated[
-        Literal["agent", "shared", "global"],
-        typer.Option(help="Target scope"),
-    ] = "agent",
-    agent: Annotated[
-        str | None,
-        typer.Option("--agent", help="Agent selector used to resolve agent or shared scope"),
-    ] = None,
-) -> None:
-    _cap_remove("skill", name=name, scope=scope, agent=agent)
-
-
-@skill_local_app.command("new", no_args_is_help=True)
-def skill_local_new(
-    name: Annotated[str, typer.Argument(help="Skill name")],
-    scope: Annotated[
-        Literal["shared", "global"],
-        typer.Option(help="Target local scope"),
-    ] = "shared",
-    from_ref: Annotated[
-        str | None,
-        typer.Option("--from", help="Initialize the local skill from a remote ref"),
-    ] = None,
-    agent: Annotated[
-        str | None,
-        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
-    ] = None,
-) -> None:
-    _cap_local_new("skill", name=name, scope=scope, from_ref=from_ref, agent=agent)
-
-
-@skill_local_app.command("path", no_args_is_help=True)
-def skill_local_path(
-    name: Annotated[str, typer.Argument(help="Skill name")],
-    scope: Annotated[
-        Literal["shared", "global"],
-        typer.Option(help="Target local scope"),
-    ] = "shared",
-    agent: Annotated[
-        str | None,
-        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
-    ] = None,
-) -> None:
-    _cap_local_path("skill", name=name, scope=scope, agent=agent)
-
-
-@skill_local_app.command("delete", no_args_is_help=True)
-def skill_local_delete(
-    name: Annotated[str, typer.Argument(help="Skill name")],
-    scope: Annotated[
-        Literal["shared", "global"],
-        typer.Option(help="Target local scope"),
-    ] = "shared",
-    agent: Annotated[
-        str | None,
-        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
-    ] = None,
-) -> None:
-    _cap_local_delete("skill", name=name, scope=scope, agent=agent)
-
-
-@service_app.command("add", no_args_is_help=True)
-def service_add(
-    ref: Annotated[str, typer.Argument(help="Service ref in owner/name form")],
-    scope: Annotated[
-        Literal["agent", "shared", "global"],
-        typer.Option(help="Target scope"),
-    ] = "agent",
-    agent: Annotated[
-        str | None,
-        typer.Option("--agent", help="Agent selector used to resolve agent or shared scope"),
-    ] = None,
-) -> None:
-    _cap_add("service", ref=ref, scope=scope, agent=agent)
-
-
-@service_app.command("remove", no_args_is_help=True)
-def service_remove(
-    name: Annotated[str, typer.Argument(help="Service name")],
-    scope: Annotated[
-        Literal["agent", "shared", "global"],
-        typer.Option(help="Target scope"),
-    ] = "agent",
-    agent: Annotated[
-        str | None,
-        typer.Option("--agent", help="Agent selector used to resolve agent or shared scope"),
-    ] = None,
-) -> None:
-    _cap_remove("service", name=name, scope=scope, agent=agent)
-
-
-@service_local_app.command("new", no_args_is_help=True)
-def service_local_new(
-    name: Annotated[str, typer.Argument(help="Service name")],
-    scope: Annotated[
-        Literal["shared", "global"],
-        typer.Option(help="Target local scope"),
-    ] = "shared",
-    from_ref: Annotated[
-        str | None,
-        typer.Option("--from", help="Initialize the local service from a remote ref"),
-    ] = None,
-    agent: Annotated[
-        str | None,
-        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
-    ] = None,
-) -> None:
-    _cap_local_new("service", name=name, scope=scope, from_ref=from_ref, agent=agent)
-
-
-@service_local_app.command("path", no_args_is_help=True)
-def service_local_path(
-    name: Annotated[str, typer.Argument(help="Service name")],
-    scope: Annotated[
-        Literal["shared", "global"],
-        typer.Option(help="Target local scope"),
-    ] = "shared",
-    agent: Annotated[
-        str | None,
-        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
-    ] = None,
-) -> None:
-    _cap_local_path("service", name=name, scope=scope, agent=agent)
-
-
-@service_local_app.command("delete", no_args_is_help=True)
-def service_local_delete(
-    name: Annotated[str, typer.Argument(help="Service name")],
-    scope: Annotated[
-        Literal["shared", "global"],
-        typer.Option(help="Target local scope"),
-    ] = "shared",
-    agent: Annotated[
-        str | None,
-        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
-    ] = None,
-) -> None:
-    _cap_local_delete("service", name=name, scope=scope, agent=agent)
-
-
-@prompt_app.command("add", no_args_is_help=True)
-def prompt_add(
-    ref: Annotated[str, typer.Argument(help="Prompt ref in owner/name form")],
-    scope: Annotated[
-        Literal["agent", "shared", "global"],
-        typer.Option(help="Target scope"),
-    ] = "agent",
-    agent: Annotated[
-        str | None,
-        typer.Option("--agent", help="Agent selector used to resolve agent or shared scope"),
-    ] = None,
-) -> None:
-    _cap_add("prompt", ref=ref, scope=scope, agent=agent)
-
-
-@prompt_app.command("remove", no_args_is_help=True)
-def prompt_remove(
-    name: Annotated[str, typer.Argument(help="Prompt name")],
-    scope: Annotated[
-        Literal["agent", "shared", "global"],
-        typer.Option(help="Target scope"),
-    ] = "agent",
-    agent: Annotated[
-        str | None,
-        typer.Option("--agent", help="Agent selector used to resolve agent or shared scope"),
-    ] = None,
-) -> None:
-    _cap_remove("prompt", name=name, scope=scope, agent=agent)
-
-
-@prompt_local_app.command("new", no_args_is_help=True)
-def prompt_local_new(
-    name: Annotated[str, typer.Argument(help="Prompt name")],
-    scope: Annotated[
-        Literal["shared", "global"],
-        typer.Option(help="Target local scope"),
-    ] = "shared",
-    from_ref: Annotated[
-        str | None,
-        typer.Option("--from", help="Initialize the local prompt from a remote ref"),
-    ] = None,
-    agent: Annotated[
-        str | None,
-        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
-    ] = None,
-) -> None:
-    _cap_local_new("prompt", name=name, scope=scope, from_ref=from_ref, agent=agent)
-
-
-@prompt_local_app.command("path", no_args_is_help=True)
-def prompt_local_path(
-    name: Annotated[str, typer.Argument(help="Prompt name")],
-    scope: Annotated[
-        Literal["shared", "global"],
-        typer.Option(help="Target local scope"),
-    ] = "shared",
-    agent: Annotated[
-        str | None,
-        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
-    ] = None,
-) -> None:
-    _cap_local_path("prompt", name=name, scope=scope, agent=agent)
-
-
-@prompt_local_app.command("delete", no_args_is_help=True)
-def prompt_local_delete(
-    name: Annotated[str, typer.Argument(help="Prompt name")],
-    scope: Annotated[
-        Literal["shared", "global"],
-        typer.Option(help="Target local scope"),
-    ] = "shared",
-    agent: Annotated[
-        str | None,
-        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
-    ] = None,
-) -> None:
-    _cap_local_delete("prompt", name=name, scope=scope, agent=agent)
-
-
-@psyche_app.command("add", no_args_is_help=True)
-def psyche_add(
-    ref: Annotated[str, typer.Argument(help="Psyche ref in owner/name form")],
-    scope: Annotated[
-        Literal["agent", "shared", "global"],
-        typer.Option(help="Target scope"),
-    ] = "agent",
-    agent: Annotated[
-        str | None,
-        typer.Option("--agent", help="Agent selector used to resolve agent or shared scope"),
-    ] = None,
-) -> None:
-    _cap_add("psyche", ref=ref, scope=scope, agent=agent)
-
-
-@psyche_app.command("remove", no_args_is_help=True)
-def psyche_remove(
-    name: Annotated[str, typer.Argument(help="Psyche name")],
-    scope: Annotated[
-        Literal["agent", "shared", "global"],
-        typer.Option(help="Target scope"),
-    ] = "agent",
-    agent: Annotated[
-        str | None,
-        typer.Option("--agent", help="Agent selector used to resolve agent or shared scope"),
-    ] = None,
-) -> None:
-    _cap_remove("psyche", name=name, scope=scope, agent=agent)
-
-
-@psyche_local_app.command("new", no_args_is_help=True)
-def psyche_local_new(
-    name: Annotated[str, typer.Argument(help="Psyche name")],
-    scope: Annotated[
-        Literal["shared", "global"],
-        typer.Option(help="Target local scope"),
-    ] = "shared",
-    from_ref: Annotated[
-        str | None,
-        typer.Option("--from", help="Initialize the local psyche from a remote ref"),
-    ] = None,
-    agent: Annotated[
-        str | None,
-        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
-    ] = None,
-) -> None:
-    _cap_local_new("psyche", name=name, scope=scope, from_ref=from_ref, agent=agent)
-
-
-@psyche_local_app.command("path", no_args_is_help=True)
-def psyche_local_path(
-    name: Annotated[str, typer.Argument(help="Psyche name")],
-    scope: Annotated[
-        Literal["shared", "global"],
-        typer.Option(help="Target local scope"),
-    ] = "shared",
-    agent: Annotated[
-        str | None,
-        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
-    ] = None,
-) -> None:
-    _cap_local_path("psyche", name=name, scope=scope, agent=agent)
-
-
-@psyche_local_app.command("delete", no_args_is_help=True)
-def psyche_local_delete(
-    name: Annotated[str, typer.Argument(help="Psyche name")],
-    scope: Annotated[
-        Literal["shared", "global"],
-        typer.Option(help="Target local scope"),
-    ] = "shared",
-    agent: Annotated[
-        str | None,
-        typer.Option("--agent", help="Agent selector used to resolve shared scope"),
-    ] = None,
-) -> None:
-    _cap_local_delete("psyche", name=name, scope=scope, agent=agent)
+CAP_COMMAND_SPECS = (
+    CapCommandSpec(kind="psyche", title="Psyche"),
+    CapCommandSpec(kind="skill", title="Skill"),
+    CapCommandSpec(kind="service", title="Service"),
+    CapCommandSpec(kind="prompt", title="Prompt"),
+)
 
 
 def register_cap_commands(app: typer.Typer) -> None:
-    skill_app.add_typer(skill_local_app, name="local", no_args_is_help=True)
-    service_app.add_typer(service_local_app, name="local", no_args_is_help=True)
-    prompt_app.add_typer(prompt_local_app, name="local", no_args_is_help=True)
-    psyche_app.add_typer(psyche_local_app, name="local", no_args_is_help=True)
+    for spec in CAP_COMMAND_SPECS:
+        cap_app, local_app = _build_cap_apps(spec)
+        cap_app.add_typer(local_app, name="local", no_args_is_help=True)
+        app.add_typer(cap_app, name=spec.kind, no_args_is_help=True)
 
-    app.add_typer(psyche_app, name="psyche", no_args_is_help=True)
-    app.add_typer(skill_app, name="skill", no_args_is_help=True)
-    app.add_typer(service_app, name="service", no_args_is_help=True)
-    app.add_typer(prompt_app, name="prompt", no_args_is_help=True)
+
+def _build_cap_apps(spec: CapCommandSpec) -> tuple[typer.Typer, typer.Typer]:
+    cap_app = _new_cap_group(f"{spec.title} commands")
+    local_app = _new_cap_group(f"Local {spec.kind} commands")
+
+    @cap_app.command("add", no_args_is_help=True)
+    def add(
+        ref: str = typer.Argument(help=f"{spec.title} ref in owner/name form"),
+        scope: SourceScope = "agent",
+        agent: ScopedAgent = None,
+    ) -> None:
+        _cap_add(spec.kind, ref=ref, scope=scope, agent=agent)
+
+    @cap_app.command("remove", no_args_is_help=True)
+    def remove(
+        name: str = typer.Argument(help=f"{spec.title} name"),
+        scope: SourceScope = "agent",
+        agent: ScopedAgent = None,
+    ) -> None:
+        _cap_remove(spec.kind, name=name, scope=scope, agent=agent)
+
+    @local_app.command("new", no_args_is_help=True)
+    def local_new(
+        name: str = typer.Argument(help=f"{spec.title} name"),
+        scope: LocalScope = "shared",
+        from_ref: str | None = typer.Option(
+            None,
+            "--from",
+            help=f"Initialize the local {spec.kind} from a remote ref",
+        ),
+        agent: LocalScopedAgent = None,
+    ) -> None:
+        _cap_local_new(spec.kind, name=name, scope=scope, from_ref=from_ref, agent=agent)
+
+    @local_app.command("path", no_args_is_help=True)
+    def local_path(
+        name: str = typer.Argument(help=f"{spec.title} name"),
+        scope: LocalScope = "shared",
+        agent: LocalScopedAgent = None,
+    ) -> None:
+        _cap_local_path(spec.kind, name=name, scope=scope, agent=agent)
+
+    @local_app.command("delete", no_args_is_help=True)
+    def local_delete(
+        name: str = typer.Argument(help=f"{spec.title} name"),
+        scope: LocalScope = "shared",
+        agent: LocalScopedAgent = None,
+    ) -> None:
+        _cap_local_delete(spec.kind, name=name, scope=scope, agent=agent)
+
+    return cap_app, local_app
+
+
+def _new_cap_group(help_text: str) -> typer.Typer:
+    return typer.Typer(
+        help=help_text,
+        add_completion=False,
+        no_args_is_help=True,
+        pretty_exceptions_enable=False,
+        pretty_exceptions_show_locals=False,
+    )
 
 
 def _cap_add(
