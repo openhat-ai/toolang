@@ -5,6 +5,7 @@ from pathlib import Path
 
 from toolang.agent_refs import ResolvedAgentRef
 from toolang.ast import Program
+from toolang.cap_scopes import CapScopeSelection
 from toolang.caps_view import build_effective_program
 from toolang.layout import agent_sync_path
 from toolang.sync import ensure_agent_synced
@@ -16,9 +17,14 @@ class PreparedAgent:
     source_path: Path
     sync_state_path: Path
     program: Program
+    cap_scopes: CapScopeSelection
 
 
-def prepare_agent(agent: ResolvedAgentRef) -> PreparedAgent:
+def prepare_agent(
+    agent: ResolvedAgentRef,
+    *,
+    cap_scopes: CapScopeSelection = CapScopeSelection(),
+) -> PreparedAgent:
     source_path = agent.source_path
     if not source_path.exists():
         if agent.agent_kind == "visiting":
@@ -33,5 +39,6 @@ def prepare_agent(agent: ResolvedAgentRef) -> PreparedAgent:
         ref=agent,
         source_path=source_path,
         sync_state_path=agent_sync_path(agent.agent_home, agent.agent_name),
-        program=build_effective_program(source_program, agent),
+        program=build_effective_program(source_program, agent, cap_scopes=cap_scopes),
+        cap_scopes=cap_scopes,
     )

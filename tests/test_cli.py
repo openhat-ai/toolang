@@ -19,7 +19,14 @@ from toolang.agent_registry import (
     get_running_agent,
     upsert_running_agent,
 )
-from toolang.cli import _drop_stale_running_agent, _remember_agent, _resolve_cli_agent, app, main
+from toolang.cli import (
+    _default_runtime_cap_scopes,
+    _drop_stale_running_agent,
+    _remember_agent,
+    _resolve_cli_agent,
+    app,
+    main,
+)
 from toolang.errors import ToolangError
 from toolang.files.agent_run import AgentRunState
 from toolang.layout import (
@@ -244,6 +251,21 @@ def test_cli_resolves_known_agent_by_id_prefix(tmp_path: Path, monkeypatch) -> N
     assert resolved.agent_uri == agent.agent_uri
 
 
+def test_cli_runtime_cap_scope_defaults_follow_agent_kind(tmp_path: Path) -> None:
+    root = tmp_path / "toolang-root"
+    roaming_path = tmp_path / "project" / "bob.too"
+    roaming_path.parent.mkdir(parents=True)
+    roaming_path.write_text("thunk chat(user):\n    Hello.\n", encoding="utf-8")
+
+    resident = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    roaming = resolve_agent_ref(str(roaming_path), cwd=tmp_path, toolang_root=root)
+    visiting = resolve_agent_ref("https://example.com/alice.too", cwd=tmp_path, toolang_root=root)
+
+    assert _default_runtime_cap_scopes(resident).labels() == ("agent", "shared", "global")
+    assert _default_runtime_cap_scopes(roaming).labels() == ("agent", "shared")
+    assert _default_runtime_cap_scopes(visiting).labels() == ("agent",)
+
+
 def test_cli_rejects_ambiguous_known_agent_name(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "toolang-root"
     monkeypatch.setenv("TOOLANG_ROOT", str(root))
@@ -441,6 +463,8 @@ def test_cli_start_docker_stages_sandbox_launch(tmp_path: Path, monkeypatch) -> 
     assert "toolang serve" in exec_text
     assert "--host 0.0.0.0" in exec_text
     assert "--sandbox docker:python:3.13-slim" in exec_text
+    assert "--shared" in exec_text
+    assert "--global" in exec_text
 
 
 def test_hidden_path_commands_resolve_agent_paths(tmp_path: Path, monkeypatch) -> None:
