@@ -611,7 +611,32 @@ Rules:
 Grammar inspection and AST-oriented tooling belong in the sibling grammar
 package rather than the Toolang runtime CLI.
 
-### 11.2 Capability Management
+### 11.2 Resident Agent Management
+
+- `toolang agent new <resident_target>`
+- `toolang agent clone <source_agent> <resident_target>`
+- `toolang agent remove <resident_agent>`
+
+Command intent:
+
+- `agent new`
+  - create a new resident agent source file under `TOOLANG_ROOT/agents/{HOME}/`
+- `agent clone`
+  - copy the source `.too` file from an existing agent into a new resident
+    target
+- `agent remove`
+  - remove a resident agent source file and its agent-local generated state
+
+Resident targets use resident shorthand or canonical resident URIs:
+
+- `alice`
+  - `${TOOLANG_ROOT}/agents/alice/alice.too`
+- `team/reviewer`
+  - `${TOOLANG_ROOT}/agents/team/reviewer.too`
+- `agent://team/reviewer.too`
+  - `${TOOLANG_ROOT}/agents/team/reviewer.too`
+
+### 11.3 Capability Management
 
 - `toolang skill add <cap_ref> --scope=agent|shared|global`
 - `toolang skill remove <name> --scope=agent|shared|global`
@@ -660,7 +685,7 @@ Command intent:
     - `${AGENT_HOME}/.toolang/agents/{AGENT}/sync/`
     - `${AGENT_HOME}/.toolang/sync/<agent>.state.json`
 
-### 11.3 Agent Registry And Running-Agent Commands
+### 11.4 Agent Registry And Running-Agent Commands
 
 - `toolang list`
 - `toolang ps`

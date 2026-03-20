@@ -13,7 +13,12 @@ import pytest
 from typer.testing import CliRunner
 
 from toolang.agent_refs import resolve_agent_ref
-from toolang.agent_registry import RunningAgentRecord, get_running_agent, upsert_running_agent
+from toolang.agent_registry import (
+    RunningAgentRecord,
+    find_known_agents_by_name,
+    get_running_agent,
+    upsert_running_agent,
+)
 from toolang.cli import _drop_stale_running_agent, _remember_agent, _resolve_cli_agent, app, main
 from toolang.errors import ToolangError
 from toolang.files.agent_run import AgentRunState
@@ -39,6 +44,7 @@ def test_cli_has_expected_subcommands() -> None:
     result = runner.invoke(app, ["--help"])
 
     assert result.exit_code == 0
+    assert "agent" in result.output
     assert "list" in result.output
     assert "invoke" in result.output
     assert "sync" in result.output
@@ -267,6 +273,100 @@ def test_hidden_path_commands_resolve_agent_paths(tmp_path: Path, monkeypatch) -
     assert source_result.stdout.strip() == str(source_path.resolve())
     assert room_result.stdout.strip() == str((home / ".toolang" / "agents" / "alice").resolve())
     assert root_result.stdout.strip() == str(root.resolve())
+
+
+def test_agent_new_creates_resident_agent_source_and_registry_entry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "toolang-root"
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+
+    result = runner.invoke(app, ["agent", "new", "alice"])
+
+    source_path = root / "agents" / "alice" / "alice.too"
+    assert result.exit_code == 0
+    assert result.stdout.strip() == str(source_path.resolve())
+    assert "thunk chat(user):" in source_path.read_text(encoding="utf-8")
+    assert not (root / "agents" / "alice" / ".toolang").exists()
+
+    listed = runner.invoke(app, ["list"])
+    assert listed.exit_code == 0
+    assert "agent://alice/alice.too" in listed.output
+
+
+def test_agent_clone_copies_source_into_new_resident_home(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang-root"
+    source_home = root / "agents" / "source"
+    source_home.mkdir(parents=True)
+    source_path = source_home / "reviewer.too"
+    source_text = SOURCE_FIXTURE.read_text(encoding="utf-8")
+    source_path.write_text(source_text, encoding="utf-8")
+
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+
+    result = runner.invoke(app, ["agent", "clone", "source/reviewer", "team/reviewer"])
+
+    cloned_path = root / "agents" / "team" / "reviewer.too"
+    assert result.exit_code == 0
+    assert result.stdout.strip() == str(cloned_path.resolve())
+    assert cloned_path.read_text(encoding="utf-8") == source_text
+
+
+def test_agent_clone_fetches_visiting_source_when_not_materialized(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "toolang-root"
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+
+    class FakeResponse:
+        text = SOURCE_FIXTURE.read_text(encoding="utf-8")
+
+        def raise_for_status(self) -> None:
+            return None
+
+    monkeypatch.setattr("toolang.cli.httpx.get", lambda *args, **kwargs: FakeResponse())
+
+    result = runner.invoke(
+        app,
+        ["agent", "clone", "https://example.com/alice.too", "team/alice"],
+    )
+
+    cloned_path = root / "agents" / "team" / "alice.too"
+    assert result.exit_code == 0
+    assert result.stdout.strip() == str(cloned_path.resolve())
+    assert cloned_path.read_text(encoding="utf-8") == SOURCE_FIXTURE.read_text(encoding="utf-8")
+
+
+def test_agent_remove_deletes_resident_agent_state_and_registry_entry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "alice"
+    source_path = home / "alice.too"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text(SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    state_path = home / ".toolang" / "sync" / "alice.state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text("{}", encoding="utf-8")
+    room = home / ".toolang" / "agents" / "alice"
+    room.mkdir(parents=True)
+    (room / "agent.log").write_text("", encoding="utf-8")
+
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    db_path = agents_db_path(root)
+    _remember_agent(agent, db_path=db_path)
+
+    result = runner.invoke(app, ["agent", "remove", "alice"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == str(source_path.resolve())
+    assert not source_path.exists()
+    assert not state_path.exists()
+    assert not room.exists()
+    assert not home.exists()
+    assert find_known_agents_by_name(db_path, "alice") == []
 
 
 def test_skill_add_writes_agent_source_from_current_home(tmp_path: Path, monkeypatch) -> None:

@@ -180,7 +180,7 @@ ${AGENT_HOME}/
   {AGENT}.too
   agents.too                         # optional
   .env                               # optional
-  .toolang/
+  .toolang/                          # machine-managed, created lazily
     agents/{AGENT}/                  # private room
     sync/
       {AGENT}.state.json
@@ -198,6 +198,8 @@ Notes:
 
 - `{AGENT}.too` is the runnable source file for that agent
 - `agents.too` is optional
+- `.toolang/` is created by runtime-managed commands such as `sync`, `serve`,
+  and `start`, not by `toolang agent new` or `toolang agent clone`
 - `.toolang/sync/` stores synced capabilities for this agent home
 - `.toolang/sync/{AGENT}.state.json` stores one generated sync record per
   top-level `.too` file
