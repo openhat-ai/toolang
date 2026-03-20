@@ -17,6 +17,7 @@ import click
 import httpx
 import typer
 from dotenv import load_dotenv
+from typer.core import TyperGroup
 
 from toolang.agent_homes import clone_resident_agent, create_resident_agent, remove_resident_agent
 from toolang.bus.app import serve_bus_app
@@ -91,10 +92,38 @@ def _version_callback(value: bool | None) -> None:
         raise typer.Exit()
 
 
+def _show_hidden_callback(ctx: click.Context, _param: click.Parameter, value: bool) -> bool:
+    if value:
+        ctx.meta["show_hidden_commands"] = True
+    return value
+
+
+class ToolangGroup(TyperGroup):
+    def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        if not _show_hidden_commands(ctx):
+            return super().format_help(ctx, formatter)
+
+        hidden_commands: list[click.Command] = []
+        for command_name in self.list_commands(ctx):
+            command = self.get_command(ctx, command_name)
+            if command is None or not command.hidden:
+                continue
+            hidden_commands.append(command)
+
+        for command in hidden_commands:
+            command.hidden = False
+        try:
+            return super().format_help(ctx, formatter)
+        finally:
+            for command in hidden_commands:
+                command.hidden = True
+
+
 app = typer.Typer(
+    cls=ToolangGroup,
     help="Toolang CLI",
     add_completion=False,
-    no_args_is_help=True,
+    invoke_without_command=True,
     pretty_exceptions_enable=False,
     pretty_exceptions_show_locals=False,
 )
@@ -163,6 +192,7 @@ psyche_local_app = typer.Typer(
 )
 @app.callback()
 def callback(
+    ctx: typer.Context,
     version: Annotated[
         bool | None,
         typer.Option(
@@ -172,11 +202,26 @@ def callback(
             is_eager=True,
         ),
     ] = None,
+    show_hidden: Annotated[
+        bool,
+        typer.Option(
+            "--show-hidden",
+            help="Show hidden commands in help output.",
+            callback=_show_hidden_callback,
+            is_eager=True,
+        ),
+    ] = False,
 ) -> None:
     """Toolang CLI."""
+    if ctx.invoked_subcommand is None:
+        typer.echo(ctx.get_help())
+        raise typer.Exit()
+    if show_hidden and ctx.invoked_subcommand is None:
+        typer.echo(ctx.get_help())
+        raise typer.Exit()
 
 
-@app.command(hidden=True)
+@app.command(hidden=True, help="Print the Toolang root or an agent home path.")
 def home(
     agent: Annotated[str | None, typer.Argument(help="Agent selector")] = None,
 ) -> None:
@@ -189,7 +234,7 @@ def home(
     typer.echo(str(resolved.agent_home))
 
 
-@app.command(hidden=True, no_args_is_help=True)
+@app.command(hidden=True, no_args_is_help=True, help="Print an agent source file path.")
 def source(
     agent: Annotated[str, typer.Argument(help="Agent selector")],
 ) -> None:
@@ -198,7 +243,7 @@ def source(
     typer.echo(str(agent_source_path(resolved.agent_home, resolved.agent_name)))
 
 
-@app.command(hidden=True, no_args_is_help=True)
+@app.command(hidden=True, no_args_is_help=True, help="Print an agent room path.")
 def room(
     agent: Annotated[str, typer.Argument(help="Agent selector")],
 ) -> None:
@@ -207,7 +252,7 @@ def room(
     typer.echo(str(agent_room(resolved.agent_home, resolved.agent_name)))
 
 
-@app.command(hidden=True, no_args_is_help=True)
+@app.command(hidden=True, no_args_is_help=True, help="Print shell helper setup.")
 def init(
     shell: Annotated[
         Literal["zsh", "bash", "fish"],
@@ -861,6 +906,13 @@ def _resolve_cli_agent(raw: str, *, db_path: Path | None = None) -> ResolvedAgen
         toolang_root=toolang_root,
         guest_resolver=guest_resolver,
     )
+
+
+def _show_hidden_commands(ctx: click.Context) -> bool:
+    if ctx.meta.get("show_hidden_commands") is True:
+        return True
+    value = ctx.params.get("show_hidden")
+    return isinstance(value, bool) and value
 
 
 def _toolang_root() -> Path:

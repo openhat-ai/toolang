@@ -115,6 +115,21 @@ def test_cli_has_expected_subcommands() -> None:
     assert "dump-ast" not in command_lines
 
 
+def test_cli_can_show_hidden_commands_in_help() -> None:
+    result = runner.invoke(app, ["--show-hidden"])
+
+    assert result.exit_code == 0
+    assert "--show-hidden" in result.output
+    assert "home" in result.output
+    assert "Print the Toolang root or an agent home path." in result.output
+    assert "source" in result.output
+    assert "Print an agent source file path." in result.output
+    assert "room" in result.output
+    assert "Print an agent room path." in result.output
+    assert "init" in result.output
+    assert "Print shell helper setup." in result.output
+
+
 def test_cli_shows_package_version() -> None:
     result = runner.invoke(app, ["--version"])
 
