@@ -101,54 +101,63 @@ app = typer.Typer(
 bus_app = typer.Typer(
     help="Bus commands",
     add_completion=False,
+    no_args_is_help=True,
     pretty_exceptions_enable=False,
     pretty_exceptions_show_locals=False,
 )
 skill_app = typer.Typer(
     help="Skill commands",
     add_completion=False,
+    no_args_is_help=True,
     pretty_exceptions_enable=False,
     pretty_exceptions_show_locals=False,
 )
 skill_local_app = typer.Typer(
     help="Local skill commands",
     add_completion=False,
+    no_args_is_help=True,
     pretty_exceptions_enable=False,
     pretty_exceptions_show_locals=False,
 )
 service_app = typer.Typer(
     help="Service commands",
     add_completion=False,
+    no_args_is_help=True,
     pretty_exceptions_enable=False,
     pretty_exceptions_show_locals=False,
 )
 service_local_app = typer.Typer(
     help="Local service commands",
     add_completion=False,
+    no_args_is_help=True,
     pretty_exceptions_enable=False,
     pretty_exceptions_show_locals=False,
 )
 prompt_app = typer.Typer(
     help="Prompt commands",
     add_completion=False,
+    no_args_is_help=True,
     pretty_exceptions_enable=False,
     pretty_exceptions_show_locals=False,
 )
 prompt_local_app = typer.Typer(
     help="Local prompt commands",
     add_completion=False,
+    no_args_is_help=True,
     pretty_exceptions_enable=False,
     pretty_exceptions_show_locals=False,
 )
 psyche_app = typer.Typer(
     help="Psyche commands",
     add_completion=False,
+    no_args_is_help=True,
     pretty_exceptions_enable=False,
     pretty_exceptions_show_locals=False,
 )
 psyche_local_app = typer.Typer(
     help="Local psyche commands",
     add_completion=False,
+    no_args_is_help=True,
     pretty_exceptions_enable=False,
     pretty_exceptions_show_locals=False,
 )
@@ -180,7 +189,7 @@ def home(
     typer.echo(str(resolved.agent_home))
 
 
-@app.command(hidden=True)
+@app.command(hidden=True, no_args_is_help=True)
 def source(
     agent: Annotated[str, typer.Argument(help="Agent selector")],
 ) -> None:
@@ -189,7 +198,7 @@ def source(
     typer.echo(str(agent_source_path(resolved.agent_home, resolved.agent_name)))
 
 
-@app.command(hidden=True)
+@app.command(hidden=True, no_args_is_help=True)
 def room(
     agent: Annotated[str, typer.Argument(help="Agent selector")],
 ) -> None:
@@ -198,7 +207,7 @@ def room(
     typer.echo(str(agent_room(resolved.agent_home, resolved.agent_name)))
 
 
-@app.command(hidden=True)
+@app.command(hidden=True, no_args_is_help=True)
 def init(
     shell: Annotated[
         Literal["zsh", "bash", "fish"],
@@ -212,7 +221,7 @@ def init(
     typer.echo(_posix_init_script())
 
 
-@app.command("new", help="Create a new agent.")
+@app.command("new", help="Create a new agent.", no_args_is_help=True)
 def agent_new(
     target: Annotated[
         str,
@@ -233,7 +242,7 @@ def agent_new(
     typer.echo(str(agent_ref.source_path))
 
 
-@app.command("clone", help="Clone an existing agent.")
+@app.command("clone", help="Clone an existing agent.", no_args_is_help=True)
 def agent_clone(
     source: Annotated[str, typer.Argument(help="Agent to clone")],
     target: Annotated[
@@ -259,7 +268,7 @@ def agent_clone(
     typer.echo(str(target_ref.source_path))
 
 
-@app.command("remove", help="Remove an agent and its local state.")
+@app.command("remove", help="Remove an agent and its local state.", no_args_is_help=True)
 def agent_remove(
     agent: Annotated[str, typer.Argument(help="Agent to remove")],
 ) -> None:
@@ -289,7 +298,7 @@ def agent_remove(
     typer.echo(str(agent_ref.source_path))
 
 
-@skill_app.command("add")
+@skill_app.command("add", no_args_is_help=True)
 def skill_add(
     ref: Annotated[str, typer.Argument(help="Skill ref in owner/name form")],
     scope: Annotated[
@@ -304,7 +313,7 @@ def skill_add(
     _cap_add("skill", ref=ref, scope=scope, agent=agent)
 
 
-@skill_app.command("remove")
+@skill_app.command("remove", no_args_is_help=True)
 def skill_remove(
     name: Annotated[str, typer.Argument(help="Skill name")],
     scope: Annotated[
@@ -319,7 +328,7 @@ def skill_remove(
     _cap_remove("skill", name=name, scope=scope, agent=agent)
 
 
-@skill_local_app.command("new")
+@skill_local_app.command("new", no_args_is_help=True)
 def skill_local_new(
     name: Annotated[str, typer.Argument(help="Skill name")],
     scope: Annotated[
@@ -338,7 +347,7 @@ def skill_local_new(
     _cap_local_new("skill", name=name, scope=scope, from_ref=from_ref, agent=agent)
 
 
-@skill_local_app.command("path")
+@skill_local_app.command("path", no_args_is_help=True)
 def skill_local_path(
     name: Annotated[str, typer.Argument(help="Skill name")],
     scope: Annotated[
@@ -353,7 +362,7 @@ def skill_local_path(
     _cap_local_path("skill", name=name, scope=scope, agent=agent)
 
 
-@skill_local_app.command("delete")
+@skill_local_app.command("delete", no_args_is_help=True)
 def skill_local_delete(
     name: Annotated[str, typer.Argument(help="Skill name")],
     scope: Annotated[
@@ -368,7 +377,7 @@ def skill_local_delete(
     _cap_local_delete("skill", name=name, scope=scope, agent=agent)
 
 
-@service_app.command("add")
+@service_app.command("add", no_args_is_help=True)
 def service_add(
     ref: Annotated[str, typer.Argument(help="Service ref in owner/name form")],
     scope: Annotated[
@@ -383,7 +392,7 @@ def service_add(
     _cap_add("service", ref=ref, scope=scope, agent=agent)
 
 
-@service_app.command("remove")
+@service_app.command("remove", no_args_is_help=True)
 def service_remove(
     name: Annotated[str, typer.Argument(help="Service name")],
     scope: Annotated[
@@ -398,7 +407,7 @@ def service_remove(
     _cap_remove("service", name=name, scope=scope, agent=agent)
 
 
-@service_local_app.command("new")
+@service_local_app.command("new", no_args_is_help=True)
 def service_local_new(
     name: Annotated[str, typer.Argument(help="Service name")],
     scope: Annotated[
@@ -417,7 +426,7 @@ def service_local_new(
     _cap_local_new("service", name=name, scope=scope, from_ref=from_ref, agent=agent)
 
 
-@service_local_app.command("path")
+@service_local_app.command("path", no_args_is_help=True)
 def service_local_path(
     name: Annotated[str, typer.Argument(help="Service name")],
     scope: Annotated[
@@ -432,7 +441,7 @@ def service_local_path(
     _cap_local_path("service", name=name, scope=scope, agent=agent)
 
 
-@service_local_app.command("delete")
+@service_local_app.command("delete", no_args_is_help=True)
 def service_local_delete(
     name: Annotated[str, typer.Argument(help="Service name")],
     scope: Annotated[
@@ -447,7 +456,7 @@ def service_local_delete(
     _cap_local_delete("service", name=name, scope=scope, agent=agent)
 
 
-@prompt_app.command("add")
+@prompt_app.command("add", no_args_is_help=True)
 def prompt_add(
     ref: Annotated[str, typer.Argument(help="Prompt ref in owner/name form")],
     scope: Annotated[
@@ -462,7 +471,7 @@ def prompt_add(
     _cap_add("prompt", ref=ref, scope=scope, agent=agent)
 
 
-@prompt_app.command("remove")
+@prompt_app.command("remove", no_args_is_help=True)
 def prompt_remove(
     name: Annotated[str, typer.Argument(help="Prompt name")],
     scope: Annotated[
@@ -477,7 +486,7 @@ def prompt_remove(
     _cap_remove("prompt", name=name, scope=scope, agent=agent)
 
 
-@prompt_local_app.command("new")
+@prompt_local_app.command("new", no_args_is_help=True)
 def prompt_local_new(
     name: Annotated[str, typer.Argument(help="Prompt name")],
     scope: Annotated[
@@ -496,7 +505,7 @@ def prompt_local_new(
     _cap_local_new("prompt", name=name, scope=scope, from_ref=from_ref, agent=agent)
 
 
-@prompt_local_app.command("path")
+@prompt_local_app.command("path", no_args_is_help=True)
 def prompt_local_path(
     name: Annotated[str, typer.Argument(help="Prompt name")],
     scope: Annotated[
@@ -511,7 +520,7 @@ def prompt_local_path(
     _cap_local_path("prompt", name=name, scope=scope, agent=agent)
 
 
-@prompt_local_app.command("delete")
+@prompt_local_app.command("delete", no_args_is_help=True)
 def prompt_local_delete(
     name: Annotated[str, typer.Argument(help="Prompt name")],
     scope: Annotated[
@@ -526,7 +535,7 @@ def prompt_local_delete(
     _cap_local_delete("prompt", name=name, scope=scope, agent=agent)
 
 
-@psyche_app.command("add")
+@psyche_app.command("add", no_args_is_help=True)
 def psyche_add(
     ref: Annotated[str, typer.Argument(help="Psyche ref in owner/name form")],
     scope: Annotated[
@@ -541,7 +550,7 @@ def psyche_add(
     _cap_add("psyche", ref=ref, scope=scope, agent=agent)
 
 
-@psyche_app.command("remove")
+@psyche_app.command("remove", no_args_is_help=True)
 def psyche_remove(
     name: Annotated[str, typer.Argument(help="Psyche name")],
     scope: Annotated[
@@ -556,7 +565,7 @@ def psyche_remove(
     _cap_remove("psyche", name=name, scope=scope, agent=agent)
 
 
-@psyche_local_app.command("new")
+@psyche_local_app.command("new", no_args_is_help=True)
 def psyche_local_new(
     name: Annotated[str, typer.Argument(help="Psyche name")],
     scope: Annotated[
@@ -575,7 +584,7 @@ def psyche_local_new(
     _cap_local_new("psyche", name=name, scope=scope, from_ref=from_ref, agent=agent)
 
 
-@psyche_local_app.command("path")
+@psyche_local_app.command("path", no_args_is_help=True)
 def psyche_local_path(
     name: Annotated[str, typer.Argument(help="Psyche name")],
     scope: Annotated[
@@ -590,7 +599,7 @@ def psyche_local_path(
     _cap_local_path("psyche", name=name, scope=scope, agent=agent)
 
 
-@psyche_local_app.command("delete")
+@psyche_local_app.command("delete", no_args_is_help=True)
 def psyche_local_delete(
     name: Annotated[str, typer.Argument(help="Psyche name")],
     scope: Annotated[
@@ -626,7 +635,7 @@ def list_agents() -> None:
     typer.echo(_format_rows(("ID", "STATUS", "NAME", "URI", "ENDPOINT"), rows))
 
 
-@app.command("invoke", help="Run one non-interactive agent turn.")
+@app.command("invoke", help="Run one non-interactive agent turn.", no_args_is_help=True)
 def invoke(
     agent: Annotated[str, typer.Argument(help="Agent selector")],
     thunk: Annotated[str | None, typer.Option(help="Thunk name to invoke")] = None,
@@ -656,7 +665,7 @@ def invoke(
     typer.echo(result.output)
 
 
-@app.command("sync", help="Sync one agent state.")
+@app.command("sync", help="Sync one agent state.", no_args_is_help=True)
 def sync(
     agent: Annotated[str, typer.Argument(help="Agent selector")],
 ) -> None:
@@ -674,7 +683,7 @@ def sync(
     typer.echo("synced")
 
 
-@app.command("serve", help="Serve one agent in the foreground.")
+@app.command("serve", help="Serve one agent in the foreground.", no_args_is_help=True)
 def serve(
     agent: Annotated[str, typer.Argument(help="Agent selector")],
     host: Annotated[str, typer.Option(help="Host interface to bind")] = "127.0.0.1",
@@ -709,7 +718,7 @@ def serve(
     )
 
 
-@app.command("start", help="Start serving one agent in the background.")
+@app.command("start", help="Start serving one agent in the background.", no_args_is_help=True)
 def start(
     agent: Annotated[str, typer.Argument(help="Agent selector")],
     host: Annotated[str, typer.Option(help="Host interface to bind")] = "127.0.0.1",
@@ -1532,15 +1541,15 @@ def _toolang_version() -> str:
         raise ToolangError(f"Could not determine package version from {pyproject_path}.")
 
 
-skill_app.add_typer(skill_local_app, name="local")
-service_app.add_typer(service_local_app, name="local")
-prompt_app.add_typer(prompt_local_app, name="local")
-psyche_app.add_typer(psyche_local_app, name="local")
-app.add_typer(psyche_app, name="psyche")
-app.add_typer(skill_app, name="skill")
-app.add_typer(service_app, name="service")
-app.add_typer(prompt_app, name="prompt")
-app.add_typer(bus_app, name="bus")
+skill_app.add_typer(skill_local_app, name="local", no_args_is_help=True)
+service_app.add_typer(service_local_app, name="local", no_args_is_help=True)
+prompt_app.add_typer(prompt_local_app, name="local", no_args_is_help=True)
+psyche_app.add_typer(psyche_local_app, name="local", no_args_is_help=True)
+app.add_typer(psyche_app, name="psyche", no_args_is_help=True)
+app.add_typer(skill_app, name="skill", no_args_is_help=True)
+app.add_typer(service_app, name="service", no_args_is_help=True)
+app.add_typer(prompt_app, name="prompt", no_args_is_help=True)
+app.add_typer(bus_app, name="bus", no_args_is_help=True)
 
 
 def _reorder_help_entries() -> None:

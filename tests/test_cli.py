@@ -122,6 +122,57 @@ def test_cli_shows_package_version() -> None:
     assert result.stdout.strip() == f"toolang {package_version('toolang')}"
 
 
+def test_cli_commands_show_help_when_called_without_required_arguments() -> None:
+    cases = [
+        ["bus"],
+        ["new"],
+        ["clone"],
+        ["remove"],
+        ["invoke"],
+        ["sync"],
+        ["serve"],
+        ["start"],
+        ["skill"],
+        ["skill", "add"],
+        ["skill", "remove"],
+        ["skill", "local"],
+        ["skill", "local", "new"],
+        ["skill", "local", "path"],
+        ["skill", "local", "delete"],
+        ["service"],
+        ["service", "add"],
+        ["service", "remove"],
+        ["service", "local"],
+        ["service", "local", "new"],
+        ["service", "local", "path"],
+        ["service", "local", "delete"],
+        ["prompt"],
+        ["prompt", "add"],
+        ["prompt", "remove"],
+        ["prompt", "local"],
+        ["prompt", "local", "new"],
+        ["prompt", "local", "path"],
+        ["prompt", "local", "delete"],
+        ["psyche"],
+        ["psyche", "add"],
+        ["psyche", "remove"],
+        ["psyche", "local"],
+        ["psyche", "local", "new"],
+        ["psyche", "local", "path"],
+        ["psyche", "local", "delete"],
+        ["source"],
+        ["room"],
+        ["init"],
+    ]
+
+    for argv in cases:
+        result = runner.invoke(app, argv)
+        assert result.exit_code == 2, argv
+        assert "Usage:" in result.output, argv
+        assert "Missing argument" not in result.output, argv
+        assert "Try '" not in result.output, argv
+
+
 def test_cli_sync_resolves_resident_agent_from_toolang_root(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "toolang-root"
     home = root / "agents" / "alice"
