@@ -120,6 +120,7 @@ def test_cli_can_show_hidden_commands_in_help() -> None:
 
     assert result.exit_code == 0
     assert "--show-hidden" in result.output
+    assert "Helper Commands" in result.output
     assert "home" in result.output
     assert "Print the Toolang root or an agent home path." in result.output
     assert "source" in result.output

@@ -216,12 +216,12 @@ def callback(
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
         raise typer.Exit()
-    if show_hidden and ctx.invoked_subcommand is None:
-        typer.echo(ctx.get_help())
-        raise typer.Exit()
 
-
-@app.command(hidden=True, help="Print the Toolang root or an agent home path.")
+@app.command(
+    hidden=True,
+    help="Print the Toolang root or an agent home path.",
+    rich_help_panel="Helper Commands",
+)
 def home(
     agent: Annotated[str | None, typer.Argument(help="Agent selector")] = None,
 ) -> None:
@@ -234,7 +234,12 @@ def home(
     typer.echo(str(resolved.agent_home))
 
 
-@app.command(hidden=True, no_args_is_help=True, help="Print an agent source file path.")
+@app.command(
+    hidden=True,
+    no_args_is_help=True,
+    help="Print an agent source file path.",
+    rich_help_panel="Helper Commands",
+)
 def source(
     agent: Annotated[str, typer.Argument(help="Agent selector")],
 ) -> None:
@@ -243,7 +248,12 @@ def source(
     typer.echo(str(agent_source_path(resolved.agent_home, resolved.agent_name)))
 
 
-@app.command(hidden=True, no_args_is_help=True, help="Print an agent room path.")
+@app.command(
+    hidden=True,
+    no_args_is_help=True,
+    help="Print an agent room path.",
+    rich_help_panel="Helper Commands",
+)
 def room(
     agent: Annotated[str, typer.Argument(help="Agent selector")],
 ) -> None:
@@ -252,7 +262,12 @@ def room(
     typer.echo(str(agent_room(resolved.agent_home, resolved.agent_name)))
 
 
-@app.command(hidden=True, no_args_is_help=True, help="Print shell helper setup.")
+@app.command(
+    hidden=True,
+    no_args_is_help=True,
+    help="Print shell helper setup.",
+    rich_help_panel="Helper Commands",
+)
 def init(
     shell: Annotated[
         Literal["zsh", "bash", "fish"],
