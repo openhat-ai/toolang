@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, Field
 
 from toolang.agent.refs import ResolvedAgentRef
-from toolang.cap_scopes import CapScopeSelection
 from toolang.layout import agent_synced_caps_root, global_synced_caps_root, synced_caps_root
 from toolang.syntax import DeclBlock, ParamDecl, Program, SourceSpan
 from toolang_caps.models import (
@@ -14,6 +13,8 @@ from toolang_caps.models import (
     SkillMeta,
     TEXT_CAP_KINDS,
 )
+
+from .scope import CapScopeSelection
 
 if TYPE_CHECKING:
     from toolang.agent.prepared import PreparedAgent

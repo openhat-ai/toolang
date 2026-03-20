@@ -23,7 +23,7 @@ from toolang.agent.registry import (
 )
 from toolang.bus.db import AgentSnapshot, BusStore, RunSnapshot, StoredEvent
 from toolang.bus.events import AgentStarted, AgentStopped, utc_now
-from toolang.caps_view import InlineCapView, SkillCapView, load_prepared_caps
+from toolang.caps import InlineCapView, SkillCapView, load_prepared_caps
 from toolang.errors import ToolangError
 from toolang.files.agent_run import AgentRunState, SandboxInfo, SandboxRunInfo
 from toolang.http import add_cors

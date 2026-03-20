@@ -8,7 +8,7 @@ from pathlib import Path
 from re import Match
 from typing import Any
 
-from toolang.caps_view import load_prepared_caps
+from toolang.caps import load_prepared_caps
 from toolang.errors import ToolangError
 from toolang.syntax import Program, Thunk
 
