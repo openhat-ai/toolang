@@ -421,9 +421,12 @@ def test_cli_start_docker_stages_sandbox_launch(tmp_path: Path, monkeypatch) -> 
         calls.update(kwargs)
         return "container-123"
 
-    monkeypatch.setattr("toolang.cli.docker_remove_container", fake_remove)
-    monkeypatch.setattr("toolang.cli.docker_run_detached", fake_run)
-    monkeypatch.setattr("toolang.cli._wait_for_running_agent_sandbox", lambda **kwargs: None)
+    monkeypatch.setattr("toolang.cli.runtime.docker_remove_container", fake_remove)
+    monkeypatch.setattr("toolang.cli.runtime.docker_run_detached", fake_run)
+    monkeypatch.setattr(
+        "toolang.cli.runtime._wait_for_running_agent_sandbox",
+        lambda **kwargs: None,
+    )
 
     result = runner.invoke(
         app,
@@ -543,7 +546,7 @@ def test_agent_clone_fetches_visiting_source_when_not_materialized(
         def raise_for_status(self) -> None:
             return None
 
-    monkeypatch.setattr("toolang.cli.httpx.get", lambda *args, **kwargs: FakeResponse())
+    monkeypatch.setattr("toolang.cli.support.httpx.get", lambda *args, **kwargs: FakeResponse())
 
     result = runner.invoke(
         app,
@@ -733,8 +736,8 @@ thunk review:
         )
         return fetched_root, files
 
-    monkeypatch.setattr("toolang.cli.resolve_github_cap_ref", fake_resolve)
-    monkeypatch.setattr("toolang.cli.fetch_github_artifact", fake_fetch)
+    monkeypatch.setattr("toolang.cli.caps.resolve_github_cap_ref", fake_resolve)
+    monkeypatch.setattr("toolang.cli.caps.fetch_github_artifact", fake_fetch)
 
     result = runner.invoke(
         app,
@@ -863,8 +866,8 @@ thunk review:
         shutil.copy2(fixture, fetched_file)
         return fetched_file, [fixture.name]
 
-    monkeypatch.setattr("toolang.cli.resolve_github_cap_ref", fake_resolve)
-    monkeypatch.setattr("toolang.cli.fetch_github_artifact", fake_fetch)
+    monkeypatch.setattr("toolang.cli.caps.resolve_github_cap_ref", fake_resolve)
+    monkeypatch.setattr("toolang.cli.caps.fetch_github_artifact", fake_fetch)
 
     result = runner.invoke(
         app,
