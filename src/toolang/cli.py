@@ -474,8 +474,11 @@ def _init_install_note(shell: Literal["zsh", "bash", "fish"]) -> str:
         "fish": "~/.config/fish/config.fish",
     }[shell]
     return (
-        f"Add the emitted block to {shell_file}.\n"
-        "Remove everything between the toolang markers to uninstall."
+        f"# Add the emitted block to {shell_file}.\n"
+        "# Remove everything between the toolang markers to uninstall.\n"
+        "#\n"
+        "# Append it with:\n"
+        f"#   toolang init {shell} >> {shell_file}\n"
     )
 
 

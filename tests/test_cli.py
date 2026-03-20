@@ -260,8 +260,11 @@ def test_hidden_init_zsh_outputs_cd_helpers() -> None:
         exit_code = main(["init", "zsh"])
 
     assert exit_code == 0
-    assert "Add the emitted block to ~/.zshrc." in stderr.getvalue()
-    assert "Remove everything between the toolang markers to uninstall." in stderr.getvalue()
+    assert "# Add the emitted block to ~/.zshrc." in stderr.getvalue()
+    assert "# Remove everything between the toolang markers to uninstall." in stderr.getvalue()
+    assert "# Append it with:" in stderr.getvalue()
+    assert "#   toolang init zsh >> ~/.zshrc" in stderr.getvalue()
+    assert stderr.getvalue().endswith("\n\n")
     assert "# Add this block to ~/.zshrc." not in stdout.getvalue()
     assert "# >>> toolang shell helpers >>>" in stdout.getvalue()
     assert "# <<< toolang shell helpers <<<" in stdout.getvalue()
@@ -282,8 +285,11 @@ def test_hidden_init_fish_outputs_cd_helpers() -> None:
         exit_code = main(["init", "fish"])
 
     assert exit_code == 0
-    assert "Add the emitted block to ~/.config/fish/config.fish." in stderr.getvalue()
-    assert "Remove everything between the toolang markers to uninstall." in stderr.getvalue()
+    assert "# Add the emitted block to ~/.config/fish/config.fish." in stderr.getvalue()
+    assert "# Remove everything between the toolang markers to uninstall." in stderr.getvalue()
+    assert "# Append it with:" in stderr.getvalue()
+    assert "#   toolang init fish >> ~/.config/fish/config.fish" in stderr.getvalue()
+    assert stderr.getvalue().endswith("\n\n")
     assert "# Add this block to ~/.config/fish/config.fish." not in stdout.getvalue()
     assert "# >>> toolang shell helpers >>>" in stdout.getvalue()
     assert "# <<< toolang shell helpers <<<" in stdout.getvalue()
