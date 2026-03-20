@@ -3,8 +3,8 @@ from pathlib import Path
 import pytest
 
 from toolang.errors import ToolangError
-from toolang.parser import parse_program
 from toolang.runtime import expand_prompt_input, infer_model
+from toolang.syntax import parse_program
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample.too"
 

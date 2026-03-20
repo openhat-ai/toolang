@@ -18,8 +18,8 @@ from toolang.layout import (
     shared_source_path,
     synced_caps_root,
 )
-from toolang.parser import parse_program
 from toolang.sync import ensure_agent_synced, sync_agent
+from toolang.syntax import parse_program
 from toolang_caps.models import ResolvedCapRef
 from toolang_caps.models import CapKind
 

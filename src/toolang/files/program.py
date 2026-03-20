@@ -4,7 +4,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from toolang.ast import DeclBlock, ParamDecl, Program, SourceSpan, Thunk, UseDecl
+from toolang.syntax import DeclBlock, ParamDecl, Program, SourceSpan, Thunk, UseDecl
 
 
 class ProgramUse(BaseModel):

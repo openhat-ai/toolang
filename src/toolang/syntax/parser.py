@@ -4,8 +4,9 @@ from functools import lru_cache
 
 from tree_sitter import Language, Node, Parser
 
-from toolang.ast import DeclBlock, ParamDecl, Program, SourceSpan, Thunk, UseDecl
 from toolang.errors import ToolangError
+
+from .ast import DeclBlock, ParamDecl, Program, SourceSpan, Thunk, UseDecl
 
 
 def parse_program(source: str) -> Program:

@@ -5,9 +5,9 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, Field
 
 from toolang.agent.refs import ResolvedAgentRef
-from toolang.ast import DeclBlock, ParamDecl, Program, SourceSpan
 from toolang.cap_scopes import CapScopeSelection
 from toolang.layout import agent_synced_caps_root, global_synced_caps_root, synced_caps_root
+from toolang.syntax import DeclBlock, ParamDecl, Program, SourceSpan
 from toolang_caps.models import (
     InlineCapKind,
     InlineCapMeta,

@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from toolang.ast import Program
 from toolang.cap_scopes import CapScopeSelection
 from toolang.caps_view import build_effective_program
 from toolang.layout import agent_sync_path
 from toolang.sync import ensure_agent_synced
+from toolang.syntax import Program
 
 from .refs import ResolvedAgentRef
 
