@@ -5,6 +5,9 @@
 - Use semantic commit messages.
 - Write all code and documentation in English.
 - Keep changes PR-sized and composable.
+- When creating PRs with `gh`, avoid inline shell-quoted multiline bodies.
+  Use `--body-file` or a single-quoted heredoc so Markdown formatting is not
+  corrupted by shell interpolation.
 - Before each commit, run:
   - `uv run ty check --python-version 3.13 src tests`
   - `uv run ruff check`
