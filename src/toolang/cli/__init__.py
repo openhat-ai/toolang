@@ -11,26 +11,11 @@ from typer.core import TyperGroup
 from .agents import register_agent_commands
 from .caps import register_cap_commands
 from .helpers import register_helper_commands
-from .runtime import (
-    _drop_stale_running_agent as _drop_stale_running_agent,
-    register_runtime_commands,
-)
-from .support import (
-    _default_runtime_cap_scopes as _default_runtime_cap_scopes,
-    _remember_agent as _remember_agent,
-    _resolve_cli_agent as _resolve_cli_agent,
-    _toolang_version,
-)
+from .runtime import register_runtime_commands
+from .support import _toolang_version
 from toolang.errors import ToolangError
 
-__all__ = [
-    "_default_runtime_cap_scopes",
-    "_drop_stale_running_agent",
-    "_remember_agent",
-    "_resolve_cli_agent",
-    "app",
-    "main",
-]
+__all__ = ["app", "main"]
 
 
 def _version_callback(value: bool | None) -> None:
