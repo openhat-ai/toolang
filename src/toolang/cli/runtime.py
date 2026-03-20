@@ -12,8 +12,9 @@ from typing import Annotated
 
 import typer
 
-from toolang.agent_refs import ResolvedAgentRef
-from toolang.agent_registry import delete_running_agent, get_running_agent
+from toolang.agent.prepared import PreparedAgent, prepare_agent
+from toolang.agent.refs import ResolvedAgentRef
+from toolang.agent.registry import delete_running_agent, get_running_agent
 from toolang.errors import ToolangError
 from toolang.files.agent_run import AgentRunState
 from toolang.layout import (
@@ -26,7 +27,6 @@ from toolang.layout import (
     sandbox_exec_path,
     sandbox_host,
 )
-from toolang.prepared import PreparedAgent, prepare_agent
 from toolang.runtime.invoke import invoke_prepared_agent
 from toolang.runtime.server import serve_agent
 from toolang.sandbox import (

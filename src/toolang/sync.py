@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
-from toolang.agent_refs import ResolvedAgentRef
+from toolang.agent.refs import ResolvedAgentRef
 from toolang.analyze import analyze_program
 from toolang.ast import Program
 from toolang.errors import ToolangError

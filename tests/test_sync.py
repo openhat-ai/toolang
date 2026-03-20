@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 from typing import cast
 
-from toolang.agent_refs import resolve_agent_ref
+from toolang.agent.refs import resolve_agent_ref
 from toolang.files.program import SyncedProgram
 from toolang.files.sync_state import SyncState
 from toolang.layout import (

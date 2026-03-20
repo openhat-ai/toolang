@@ -12,7 +12,8 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 
-from toolang.agent_registry import (
+from toolang.agent.prepared import PreparedAgent, prepare_agent
+from toolang.agent.registry import (
     KnownAgentRecord,
     RunningAgentRecord,
     delete_running_agent,
@@ -27,7 +28,6 @@ from toolang.errors import ToolangError
 from toolang.files.agent_run import AgentRunState, SandboxInfo, SandboxRunInfo
 from toolang.http import add_cors
 from toolang.layout import agent_chats_db_path, agent_run_path
-from toolang.prepared import PreparedAgent, prepare_agent
 from toolang.sandbox import (
     docker_container_name,
     normalize_sandbox_spec,

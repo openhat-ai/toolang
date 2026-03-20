@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from toolang.agent_refs import resolve_agent_ref
+from toolang.agent.prepared import prepare_agent
+from toolang.agent.refs import resolve_agent_ref
 from toolang.bus.db import BusStore
 from toolang.files.prompt_trace import PromptTrace
 from toolang.layout import agent_run_prompt_path, bus_events_db_path, resolve_toolang_root
-from toolang.prepared import prepare_agent
 from toolang.runtime.invoke import invoke_prepared_agent
 
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"

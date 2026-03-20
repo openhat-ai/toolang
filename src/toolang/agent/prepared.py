@@ -3,12 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from toolang.agent_refs import ResolvedAgentRef
 from toolang.ast import Program
 from toolang.cap_scopes import CapScopeSelection
 from toolang.caps_view import build_effective_program
 from toolang.layout import agent_sync_path
 from toolang.sync import ensure_agent_synced
+
+from .refs import ResolvedAgentRef
 
 
 @dataclass(frozen=True, slots=True)
