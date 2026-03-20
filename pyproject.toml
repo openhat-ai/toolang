@@ -36,9 +36,6 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/toolang", "src/toolang_caps"]
 
-[tool.uv.sources]
-tree-sitter-toolang = { path = "../tree-sitter-toolang/dist/tree_sitter_toolang-0.0.5-cp310-abi3-macosx_10_9_universal2.whl" }
-
 [tool.ruff]
 exclude = ["archive", "dist", "scratch"]
 target-version = "py310"
