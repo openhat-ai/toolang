@@ -125,7 +125,7 @@ def init(
     if shell == "fish":
         typer.echo(_fish_init_script())
         return
-    typer.echo(_posix_init_script())
+    typer.echo(_posix_init_script(shell))
 
 
 @app.command("list")
@@ -466,24 +466,33 @@ def _format_rows(headers: tuple[str, ...], rows: Sequence[Sequence[str]]) -> str
     return "\n".join(lines)
 
 
-def _posix_init_script() -> str:
-    return """toohome() {
+def _posix_init_script(shell: Literal["zsh", "bash"]) -> str:
+    shell_file = "~/.zshrc" if shell == "zsh" else "~/.bashrc"
+    return f"""# Add this block to {shell_file}.
+# Remove everything between the toolang markers to uninstall.
+# >>> toolang shell helpers >>>
+toohome() {{
   builtin cd -- "$(command toolang home "$@")"
-}
+}}
 
-tooroom() {
+tooroom() {{
   builtin cd -- "$(command toolang room "$@")"
-}"""
+}}
+# <<< toolang shell helpers <<<"""
 
 
 def _fish_init_script() -> str:
-    return """function toohome
+    return """# Add this block to ~/.config/fish/config.fish.
+# Remove everything between the toolang markers to uninstall.
+# >>> toolang shell helpers >>>
+function toohome
     cd (command toolang home $argv)
 end
 
 function tooroom
     cd (command toolang room $argv)
-end"""
+end
+# <<< toolang shell helpers <<<"""
 
 
 def _looks_like_explicit_source_selector(text: str) -> bool:

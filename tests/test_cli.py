@@ -254,6 +254,9 @@ def test_hidden_init_zsh_outputs_cd_helpers() -> None:
     result = runner.invoke(app, ["init", "zsh"])
 
     assert result.exit_code == 0
+    assert "# Add this block to ~/.zshrc." in result.stdout
+    assert "# >>> toolang shell helpers >>>" in result.stdout
+    assert "# <<< toolang shell helpers <<<" in result.stdout
     assert "toohome() {" in result.stdout
     assert "tooroom() {" in result.stdout
     assert 'builtin cd -- "$(command toolang home "$@")"' in result.stdout
@@ -265,6 +268,9 @@ def test_hidden_init_fish_outputs_cd_helpers() -> None:
     result = runner.invoke(app, ["init", "fish"])
 
     assert result.exit_code == 0
+    assert "# Add this block to ~/.config/fish/config.fish." in result.stdout
+    assert "# >>> toolang shell helpers >>>" in result.stdout
+    assert "# <<< toolang shell helpers <<<" in result.stdout
     assert "function toohome" in result.stdout
     assert "function tooroom" in result.stdout
     assert "cd (command toolang home $argv)" in result.stdout
