@@ -29,6 +29,7 @@ class AgentStarted:
     agent_id: str
     name: str
     kind: str
+    sandbox: str
     endpoint: str
     agent_home: str
     source_file: str
@@ -44,6 +45,7 @@ class AgentStopped:
     agent_uri: str
     agent_id: str
     name: str
+    sandbox: str
     detail: str
     endpoint: str | None = None
     agent_home: str | None = None
@@ -134,6 +136,7 @@ def serialize_event(event: BusEvent) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "name": event.name,
             "kind": event.kind,
+            "sandbox": event.sandbox,
             "endpoint": event.endpoint,
             "agent_home": event.agent_home,
             "source_file": event.source_file,
@@ -148,7 +151,7 @@ def serialize_event(event: BusEvent) -> dict[str, Any]:
         )
 
     if isinstance(event, AgentStopped):
-        payload = {"name": event.name, "detail": event.detail}
+        payload = {"name": event.name, "detail": event.detail, "sandbox": event.sandbox}
         if event.endpoint is not None:
             payload["endpoint"] = event.endpoint
         if event.agent_home is not None:

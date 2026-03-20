@@ -61,6 +61,7 @@ def test_running_agent_registry_tracks_active_served_agents(tmp_path: Path) -> N
             pid=12345,
             status="running",
             endpoint="http://127.0.0.1:8765",
+            sandbox="host",
             started_at=started_at,
             heartbeat_at=heartbeat_at,
         ),
@@ -71,9 +72,11 @@ def test_running_agent_registry_tracks_active_served_agents(tmp_path: Path) -> N
 
     assert running is not None
     assert running.pid == 12345
+    assert running.sandbox == "host"
     assert len(snapshots) == 1
     assert snapshots[0].agent_name == "reviewer"
     assert snapshots[0].agent_id == agent.agent_id[:12]
+    assert snapshots[0].sandbox == "host"
 
     delete_running_agent(db_path, agent.agent_uri)
 
@@ -106,6 +109,7 @@ def test_known_agent_registry_lists_known_agents_with_optional_running_state(
             pid=12345,
             status="running",
             endpoint="http://127.0.0.1:8765",
+            sandbox="docker:python:3.13-slim",
             started_at=datetime(2026, 3, 19, 8, 5, 0, tzinfo=timezone.utc),
             heartbeat_at=datetime(2026, 3, 19, 8, 6, 0, tzinfo=timezone.utc),
         ),
@@ -116,6 +120,7 @@ def test_known_agent_registry_lists_known_agents_with_optional_running_state(
     assert len(snapshots) == 1
     assert snapshots[0].running_status == "running"
     assert snapshots[0].endpoint == "http://127.0.0.1:8765"
+    assert snapshots[0].sandbox == "docker:python:3.13-slim"
 
 
 def test_delete_known_agent_removes_registry_row(tmp_path: Path) -> None:

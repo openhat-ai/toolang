@@ -87,7 +87,7 @@ Global Toolang storage lives under `TOOLANG_ROOT`.
   agents.too                # optional
   agents/{HOME}/
   guests/{HOME}/
-  sandbox/{AGENT}/
+  sandbox/{AGENT_KEY}/
   bus/
     events.db
     bus.run
@@ -106,8 +106,9 @@ Responsibilities:
   - resident agent homes
 - `guests/{HOME}/`
   - visiting agent homes
-- `sandbox/{AGENT}/`
-  - local execution sandboxes
+- `sandbox/{AGENT_KEY}/`
+  - staged sandbox files for started agents
+  - used by docker-backed starts
 - `bus/`
   - local bus and event state
 
@@ -125,6 +126,24 @@ Reason:
 
 - local placement and canonical identity are separate concerns
 - resident, roaming, and visiting agents all need a local agent home
+
+
+## 4.1 Sandbox
+
+Toolang supports these sandbox specs:
+
+- `host`
+- `docker:<image>`
+
+Rules:
+
+- `none` normalizes to `host`
+- `toolang serve` only supports `host`
+- `toolang start` supports `host` and `docker:<image>`
+- `agent.run` is the runtime truth for the active sandbox mode
+- docker-backed starts stage `args.json` and `exec.sh` under
+  `${TOOLANG_ROOT}/sandbox/{AGENT_KEY}/`
+- docker-backed starts mount the staged sandbox into `${AGENT_ROOM}/sandbox/`
 
 
 ## 5. Capability Model
@@ -739,9 +758,9 @@ Known-agent records include:
 Running-agent records include:
 
 - `agent_uri`
-- `loops`
 - `pid`
 - `status`
+- `sandbox`
 - `started_at`
 - `heartbeat_at`
 - `endpoint` when applicable
@@ -750,8 +769,8 @@ Rules:
 
 - `invoke` may add or refresh an `agents` record
 - only `serve` and `start` create `running_agents` records
-- `agent.run` in the agent room mirrors the current running state and active
-  loop set for one agent
+- `agent.run` in the agent room mirrors the current running state and sandbox
+  for one agent
 - `agent.log` stores the managed runtime log for one agent
 - `bus/events.db` stores the shared durable event stream for agent lifecycle and
   run history

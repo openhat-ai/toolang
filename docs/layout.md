@@ -139,7 +139,7 @@ The default Toolang root is `~/.toolang`.
   psyches/
   agents/{HOME}/            # resident agent home
   guests/{HOME}/            # visiting agent home
-  sandbox/{AGENT}/
+  sandbox/{AGENT_KEY}/
   bus/
     events.db
     bus.run
@@ -152,7 +152,7 @@ Notes:
 - `guests/{HOME}/` stores visiting agent homes
 - `sync/` stores global synced caps
 - `{skills,services,prompts,psyches}/` store global local caps
-- `sandbox/{AGENT}/` is reserved for local execution sandboxes
+- `sandbox/{AGENT_KEY}/` stores staged sandbox files for one started agent
 - `bus/` stores local event and bus state
 - `bus/events.db` is the shared durable event store used by local agents and a
   future standalone bus server
@@ -241,13 +241,23 @@ ${AGENT_ROOM}/
 Notes:
 
 - the agent room is private to one agent
-- `agent.run` mirrors the current running state and active loop set of one
-  started agent
+- `agent.run` mirrors the current running state and sandbox of one started
+  agent
 - `agent.log` stores the managed runtime log for one agent
 - `sync/` stores agent-scoped synced caps
 - `chats/chats.db` stores durable chat threads and messages for one agent
-- `sandbox/` stores the local execution sandbox for that agent
+- `sandbox/` stores the runtime-mounted sandbox files for that agent
 - `tasks/`, `chores/`, and `will.md` store agent-local work state
+
+Sandbox rules:
+
+- supported sandbox specs are `host` and `docker:<image>`
+- `none` normalizes to `host`
+- `toolang serve` uses `host` only
+- `toolang start` may use `host` or `docker:<image>`
+- `${TOOLANG_ROOT}/sandbox/{AGENT_KEY}/` holds staged docker start files such as
+  `args.json` and `exec.sh`
+- `${AGENT_ROOM}/sandbox/` is the runtime mount point for those staged files
 
 
 ## 8. Capability Scopes

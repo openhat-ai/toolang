@@ -1,0 +1,211 @@
+from __future__ import annotations
+
+import json
+import shlex
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable, Literal, Mapping
+
+HOST_SANDBOX = "host"
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedSandbox:
+    kind: Literal["host", "docker"]
+    image: str | None = None
+
+    @property
+    def spec(self) -> str:
+        if self.kind == "docker" and self.image:
+            return f"docker:{self.image}"
+        return HOST_SANDBOX
+
+    @property
+    def execution_host(self) -> str:
+        if self.kind == "docker":
+            return "docker"
+        return "local"
+
+
+def normalize_sandbox_spec(value: str | None, *, fallback: str = HOST_SANDBOX) -> str:
+    raw = (value or fallback).strip()
+    if not raw or raw == "none":
+        return HOST_SANDBOX
+    return raw
+
+
+def parse_sandbox_spec(value: str | None, *, fallback: str = HOST_SANDBOX) -> ParsedSandbox:
+    spec = normalize_sandbox_spec(value, fallback=fallback)
+    if spec == HOST_SANDBOX:
+        return ParsedSandbox(kind="host")
+    if not spec.startswith("docker:"):
+        raise ValueError("unsupported sandbox value; use 'host' or 'docker:<image>'")
+    image = spec.split(":", 1)[1].strip()
+    if not image:
+        raise ValueError("docker sandbox must include an image")
+    return ParsedSandbox(kind="docker", image=image)
+
+
+def sandbox_key(agent_name: str, agent_id: str) -> str:
+    return f"{agent_name}-{agent_id[:12]}"
+
+
+def docker_container_name(agent_name: str, agent_id: str) -> str:
+    return f"toolang-agent-{sandbox_key(agent_name, agent_id)}"
+
+
+def host_pid_exists(pid: int | None) -> bool:
+    if pid is None or pid <= 0:
+        return False
+    try:
+        import os
+
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def docker_container_running(container_name: str) -> bool:
+    try:
+        result = subprocess.run(
+            [
+                "docker",
+                "inspect",
+                "--format",
+                "{{.State.Running}}",
+                container_name,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        return False
+    if result.returncode != 0:
+        return False
+    return result.stdout.strip() == "true"
+
+
+def sandbox_process_alive(
+    *,
+    sandbox_spec: str,
+    pid: int | None,
+    agent_name: str,
+    agent_id: str,
+) -> bool:
+    try:
+        parsed = parse_sandbox_spec(sandbox_spec)
+    except ValueError:
+        return host_pid_exists(pid)
+    if parsed.kind == "docker":
+        return docker_container_running(docker_container_name(agent_name, agent_id))
+    return host_pid_exists(pid)
+
+
+def write_sandbox_args_file(path: Path, payload: Mapping[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(dict(payload), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def write_sandbox_exec_file(
+    path: Path,
+    *,
+    command: Iterable[str] | None = None,
+    shell_command: str | None = None,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if shell_command is None:
+        if command is None:
+            raise ValueError("sandbox exec file requires command or shell_command")
+        shell_command = "exec " + shlex.join(list(command))
+    script = "#!/bin/sh\nset -eu\n" + shell_command + "\n"
+    path.write_text(script, encoding="utf-8")
+    path.chmod(0o755)
+
+
+def docker_remove_container(container_name: str) -> None:
+    try:
+        subprocess.run(
+            ["docker", "rm", "--force", container_name],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        return
+
+
+def docker_run_detached(
+    *,
+    image: str,
+    container_name: str,
+    workdir: Path,
+    command: list[str],
+    mounts: list[tuple[Path, Path]],
+    published_host: str,
+    published_port: int,
+    env_names: Iterable[str],
+    env_values: Mapping[str, str],
+) -> str:
+    args = [
+        "docker",
+        "run",
+        "--detach",
+        "--name",
+        container_name,
+        "--workdir",
+        str(workdir),
+        "--publish",
+        f"{published_host}:{published_port}:{published_port}",
+    ]
+    for source, target in mounts:
+        args.extend(["--volume", f"{source}:{target}"])
+    for name in env_names:
+        args.extend(["--env", name])
+    for name, value in env_values.items():
+        args.extend(["--env", f"{name}={value}"])
+    args.append(image)
+    args.extend(command)
+    try:
+        result = subprocess.run(
+            args,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("docker command not found") from exc
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        stdout = result.stdout.strip()
+        detail = stderr or stdout or f"docker exited with code {result.returncode}"
+        raise RuntimeError(detail)
+    return result.stdout.strip()
+
+
+def forwarded_sandbox_env_names(environment: Mapping[str, str]) -> list[str]:
+    names: set[str] = set()
+    for name in environment:
+        if name.startswith("TOOLANG_"):
+            names.add(name)
+            continue
+        if name.startswith("OPENAI_"):
+            names.add(name)
+            continue
+        if name.endswith("_API_KEY"):
+            names.add(name)
+            continue
+        if name in {
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "NO_PROXY",
+            "ALL_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "no_proxy",
+            "all_proxy",
+        }:
+            names.add(name)
+    return sorted(names)

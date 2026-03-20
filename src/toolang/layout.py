@@ -25,8 +25,16 @@ def visiting_agent_home(root: Path | str, home_name: str) -> Path:
     return resolve_toolang_root(root) / "guests" / home_name
 
 
-def sandbox_host(root: Path | str, agent_name: str) -> Path:
-    return resolve_toolang_root(root) / "sandbox" / agent_name
+def sandbox_host(root: Path | str, sandbox_name: str) -> Path:
+    return resolve_toolang_root(root) / "sandbox" / sandbox_name
+
+
+def sandbox_args_path(root: Path | str, sandbox_name: str) -> Path:
+    return sandbox_host(root, sandbox_name) / "args.json"
+
+
+def sandbox_exec_path(root: Path | str, sandbox_name: str) -> Path:
+    return sandbox_host(root, sandbox_name) / "exec.sh"
 
 
 def bus_dir(root: Path | str) -> Path:
@@ -75,6 +83,10 @@ def agent_chats_dir(agent_home: Path | str, agent_name: str) -> Path:
 
 def agent_chats_db_path(agent_home: Path | str, agent_name: str) -> Path:
     return agent_chats_dir(agent_home, agent_name) / "chats.db"
+
+
+def agent_room_sandbox_dir(agent_home: Path | str, agent_name: str) -> Path:
+    return agent_room(agent_home, agent_name) / "sandbox"
 
 
 def agent_sync_path(agent_home: Path | str, agent_name: str) -> Path:

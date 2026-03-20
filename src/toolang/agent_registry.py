@@ -36,9 +36,10 @@ class KnownAgentRecord(BaseModel):
 
 class RunningAgentRecord(BaseModel):
     agent_uri: str
-    pid: int
+    pid: int | None = None
     status: str
     endpoint: str | None = None
+    sandbox: str = "host"
     started_at: datetime
     heartbeat_at: datetime
 
@@ -49,9 +50,10 @@ class RunningAgentSnapshot(BaseModel):
     agent_name: str
     agent_home: str
     source_file: str
-    pid: int
+    pid: int | None = None
     status: str
     endpoint: str | None = None
+    sandbox: str = "host"
     started_at: datetime
     heartbeat_at: datetime
 
@@ -66,6 +68,7 @@ class KnownAgentSnapshot(BaseModel):
     pid: int | None = None
     running_status: str | None = None
     endpoint: str | None = None
+    sandbox: str | None = None
     started_at: datetime | None = None
     heartbeat_at: datetime | None = None
 
@@ -95,15 +98,17 @@ def ensure_agent_registry(db_path: Path) -> None:
             """
             CREATE TABLE IF NOT EXISTS running_agents (
                 agent_uri TEXT PRIMARY KEY,
-                pid INTEGER NOT NULL,
+                pid INTEGER,
                 status TEXT NOT NULL,
                 endpoint TEXT,
+                sandbox TEXT NOT NULL DEFAULT 'host',
                 started_at TEXT NOT NULL,
                 heartbeat_at TEXT NOT NULL,
                 FOREIGN KEY(agent_uri) REFERENCES agents(agent_uri) ON DELETE CASCADE
             )
             """
         )
+        _ensure_running_agents_schema(connection)
         connection.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_running_agents_status
@@ -176,12 +181,13 @@ def upsert_running_agent(db_path: Path, record: RunningAgentRecord) -> None:
         connection.execute(
             """
             INSERT INTO running_agents (
-                agent_uri, pid, status, endpoint, started_at, heartbeat_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                agent_uri, pid, status, endpoint, sandbox, started_at, heartbeat_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(agent_uri) DO UPDATE SET
                 pid = excluded.pid,
                 status = excluded.status,
                 endpoint = excluded.endpoint,
+                sandbox = excluded.sandbox,
                 started_at = excluded.started_at,
                 heartbeat_at = excluded.heartbeat_at
             """,
@@ -190,6 +196,7 @@ def upsert_running_agent(db_path: Path, record: RunningAgentRecord) -> None:
                 record.pid,
                 record.status,
                 record.endpoint,
+                record.sandbox,
                 record.started_at.isoformat(),
                 record.heartbeat_at.isoformat(),
             ),
@@ -202,7 +209,7 @@ def get_running_agent(db_path: Path, agent_uri: str) -> RunningAgentRecord | Non
     with _connect(db_path) as connection:
         row = connection.execute(
             """
-            SELECT agent_uri, pid, status, endpoint, started_at, heartbeat_at
+            SELECT agent_uri, pid, status, endpoint, sandbox, started_at, heartbeat_at
             FROM running_agents
             WHERE agent_uri = ?
             """,
@@ -227,6 +234,7 @@ def list_running_agents(db_path: Path) -> list[RunningAgentSnapshot]:
                 running_agents.pid,
                 running_agents.status,
                 running_agents.endpoint,
+                running_agents.sandbox,
                 running_agents.started_at,
                 running_agents.heartbeat_at
             FROM running_agents
@@ -252,6 +260,7 @@ def list_known_agents(db_path: Path) -> list[KnownAgentSnapshot]:
                 running_agents.pid,
                 running_agents.status AS running_status,
                 running_agents.endpoint,
+                running_agents.sandbox,
                 running_agents.started_at,
                 running_agents.heartbeat_at
             FROM agents
@@ -307,6 +316,7 @@ def _running_agent_from_row(row: sqlite3.Row) -> RunningAgentRecord:
         pid=row["pid"],
         status=row["status"],
         endpoint=row["endpoint"],
+        sandbox=row["sandbox"],
         started_at=datetime.fromisoformat(row["started_at"]),
         heartbeat_at=datetime.fromisoformat(row["heartbeat_at"]),
     )
@@ -322,6 +332,7 @@ def _running_snapshot_from_row(row: sqlite3.Row) -> RunningAgentSnapshot:
         pid=row["pid"],
         status=row["status"],
         endpoint=row["endpoint"],
+        sandbox=row["sandbox"],
         started_at=datetime.fromisoformat(row["started_at"]),
         heartbeat_at=datetime.fromisoformat(row["heartbeat_at"]),
     )
@@ -338,6 +349,7 @@ def _known_snapshot_from_row(row: sqlite3.Row) -> KnownAgentSnapshot:
         pid=row["pid"],
         running_status=row["running_status"],
         endpoint=row["endpoint"],
+        sandbox=row["sandbox"],
         started_at=(
             datetime.fromisoformat(row["started_at"])
             if row["started_at"] is not None
@@ -349,3 +361,68 @@ def _known_snapshot_from_row(row: sqlite3.Row) -> KnownAgentSnapshot:
             else None
         ),
     )
+
+
+def _ensure_running_agents_schema(connection: sqlite3.Connection) -> None:
+    columns = {
+        str(row["name"]): row
+        for row in connection.execute("PRAGMA table_info(running_agents)").fetchall()
+    }
+    pid_info = columns.get("pid")
+    needs_rebuild = pid_info is not None and bool(pid_info["notnull"])
+    if needs_rebuild:
+        connection.execute(
+            """
+            CREATE TABLE running_agents_new (
+                agent_uri TEXT PRIMARY KEY,
+                pid INTEGER,
+                status TEXT NOT NULL,
+                endpoint TEXT,
+                sandbox TEXT NOT NULL DEFAULT 'host',
+                started_at TEXT NOT NULL,
+                heartbeat_at TEXT NOT NULL,
+                FOREIGN KEY(agent_uri) REFERENCES agents(agent_uri) ON DELETE CASCADE
+            )
+            """
+        )
+        if "sandbox" in columns:
+            connection.execute(
+                """
+                INSERT INTO running_agents_new(
+                    agent_uri, pid, status, endpoint, sandbox, started_at, heartbeat_at
+                )
+                SELECT
+                    agent_uri,
+                    pid,
+                    status,
+                    endpoint,
+                    COALESCE(sandbox, 'host'),
+                    started_at,
+                    heartbeat_at
+                FROM running_agents
+                """
+            )
+        else:
+            connection.execute(
+                """
+                INSERT INTO running_agents_new(
+                    agent_uri, pid, status, endpoint, sandbox, started_at, heartbeat_at
+                )
+                SELECT
+                    agent_uri,
+                    pid,
+                    status,
+                    endpoint,
+                    'host',
+                    started_at,
+                    heartbeat_at
+                FROM running_agents
+                """
+            )
+        connection.execute("DROP TABLE running_agents")
+        connection.execute("ALTER TABLE running_agents_new RENAME TO running_agents")
+        return
+    if "sandbox" not in columns:
+        connection.execute(
+            "ALTER TABLE running_agents ADD COLUMN sandbox TEXT NOT NULL DEFAULT 'host'"
+        )

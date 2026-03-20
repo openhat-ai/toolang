@@ -22,6 +22,7 @@ def test_create_bus_app_serves_agents_runs_events_and_proxy_chat(tmp_path: Path,
             agent_id=agent_id,
             name="alice",
             kind="resident",
+            sandbox="host",
             endpoint="http://127.0.0.1:8765",
             agent_home="/tmp/toolang-root/agents/alice",
             source_file="alice.too",
@@ -111,6 +112,7 @@ def test_create_bus_app_serves_agents_runs_events_and_proxy_chat(tmp_path: Path,
         assert agents.status_code == 200
         assert agents.json()["items"][0]["id"] == agent_id
         assert agents.json()["items"][0]["port"] == 8765
+        assert agents.json()["items"][0]["sandbox"] == "host"
 
         agent = client.get(f"/api/v1/agents/{agent_id}")
         assert agent.status_code == 200
