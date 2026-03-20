@@ -16,7 +16,7 @@ This document defines Toolang filesystem layout and agent identity.
   - every agent has an agent home, regardless of how it was discovered
 - `agent room`
   - the private room inside an agent home
-  - path: `${AGENT_HOME}/.toolang/agent/{AGENT}/`
+  - path: `${AGENT_HOME}/.toolang/agents/{AGENT}/`
 - `resident agent`
   - an agent whose home lives under `${TOOLANG_ROOT}/agents/`
 - `roaming agent`
@@ -170,8 +170,8 @@ ${AGENT_HOME}/
   agents.too                         # optional
   .env                               # optional
   .toolang/
-    agent/{AGENT}/                   # private room
-    .sync/
+    agents/{AGENT}/                  # private room
+    sync/
       {AGENT}.state.json
       psyches/
       skills/
@@ -187,8 +187,8 @@ Notes:
 
 - `{AGENT}.too` is the runnable source file for that agent
 - `agents.too` is optional
-- `.toolang/.sync/` stores synced capabilities for this agent home
-- `.toolang/.sync/{AGENT}.state.json` stores one generated sync record per
+- `.toolang/sync/` stores synced capabilities for this agent home
+- `.toolang/sync/{AGENT}.state.json` stores one generated sync record per
   top-level `.too` file
 - `.toolang/{psyches,skills,services,prompts}/` stores shared caps for this
   agent home
@@ -199,7 +199,7 @@ Notes:
 Agent room path:
 
 ```text
-${AGENT_HOME}/.toolang/agent/{AGENT}/
+${AGENT_HOME}/.toolang/agents/{AGENT}/
 ```
 
 Agent room layout:

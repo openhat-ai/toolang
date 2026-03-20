@@ -72,8 +72,8 @@ Summary:
 - `TOOLANG_ROOT/guests/` stores visiting agent homes
 - roaming agent homes stay at their original local paths
 - every agent home has a private agent room under
-  `.toolang/agent/{AGENT}/`
-- synced caps live under `.toolang/.sync/`
+  `.toolang/agents/{AGENT}/`
+- synced caps live under `.toolang/sync/`
 - shared home-local caps live under `.toolang/{psyches,skills,services,prompts}/`
 
 
@@ -281,7 +281,7 @@ Rules:
 
 Each top-level `.too` file writes one durable sync state file:
 
-- `${AGENT_HOME}/.toolang/.sync/<agent>.state.json`
+- `${AGENT_HOME}/.toolang/sync/<agent>.state.json`
 
 The state file stores:
 
@@ -326,7 +326,7 @@ Rules:
 - the state file is generated and should not be hand-edited
 - `refs` keep agent-level provenance, even when multiple agents in one home use
   the same cap name
-- raw synced caps under `${AGENT_HOME}/.toolang/.sync/` remain the materialized
+- raw synced caps under `${AGENT_HOME}/.toolang/sync/` remain the materialized
   union for the whole agent home
 
 
@@ -342,8 +342,8 @@ Inputs:
 
 Outputs:
 
-- `${AGENT_HOME}/.toolang/.sync/`
-- one `${AGENT_HOME}/.toolang/.sync/<agent>.state.json` per top-level `.too`
+- `${AGENT_HOME}/.toolang/sync/`
+- one `${AGENT_HOME}/.toolang/sync/<agent>.state.json` per top-level `.too`
 
 Contract:
 
@@ -353,14 +353,14 @@ Contract:
 4. compute the managed set keyed by kind and managed name
 5. resolve each managed ref to an exact immutable target
 6. compile per-agent synced records
-7. write synced capabilities under `${AGENT_HOME}/.toolang/.sync/`
-8. rewrite `${AGENT_HOME}/.toolang/.sync/<agent>.state.json` for each agent
-9. make `${AGENT_HOME}/.toolang/.sync/` exactly match the current synced cap set
+7. write synced capabilities under `${AGENT_HOME}/.toolang/sync/`
+8. rewrite `${AGENT_HOME}/.toolang/sync/<agent>.state.json` for each agent
+9. make `${AGENT_HOME}/.toolang/sync/` exactly match the current synced cap set
 10. report local shadowing without rewriting local authored caps
 
 Rules:
 
-- each `${AGENT_HOME}/.toolang/.sync/<agent>.state.json` stores the last sync
+- each `${AGENT_HOME}/.toolang/sync/<agent>.state.json` stores the last sync
   time and input fingerprints used for freshness checks
 - freshness uses recorded input metadata such as `mtime_ns` and file size for:
   - `.too` files in the agent home
@@ -368,24 +368,24 @@ Rules:
   - local cap directories under `.toolang/`
 - `toolang invoke` may skip parse and sync when the current inputs still match
   the stored freshness metadata in
-  `${AGENT_HOME}/.toolang/.sync/<agent>.state.json`
+  `${AGENT_HOME}/.toolang/sync/<agent>.state.json`
 - if any recorded input changed, if generated sync artifacts are missing, or if
   any expected state file is stale, `toolang invoke` triggers sync before
   execution
 - source-defined caps are materialized during sync so unchanged agents do not
   need to be reparsed just to recover inline definitions
 - if an entry exists in an agent's `refs`, the matching managed artifact must
-  exist in `${AGENT_HOME}/.toolang/.sync/<kind>s/`
-- if an artifact exists in `${AGENT_HOME}/.toolang/.sync/` but not in the
+  exist in `${AGENT_HOME}/.toolang/sync/<kind>s/`
+- if an artifact exists in `${AGENT_HOME}/.toolang/sync/` but not in the
   current synced cap set, sync removes it
 - sync may reuse or refresh data under `TOOLANG_ROOT`
 - sync does not make all of `TOOLANG_ROOT` equal to the current agent home
 
 Reason:
 
-- `${AGENT_HOME}/.toolang/.sync/` is the synced cap projection for one agent
+- `${AGENT_HOME}/.toolang/sync/` is the synced cap projection for one agent
   home
-- `${AGENT_HOME}/.toolang/.sync/<agent>.state.json` holds agent-specific synced
+- `${AGENT_HOME}/.toolang/sync/<agent>.state.json` holds agent-specific synced
   state and provenance
 - `TOOLANG_ROOT` is shared local system state
 
@@ -396,8 +396,8 @@ Minimal sync state shape:
   "version": 1,
   "synced_at": "2026-03-18T21:00:00Z",
   "source_file": "reviewer.too",
-  "sync_state": ".toolang/.sync/reviewer.state.json",
-  "synced_caps": ".toolang/.sync/",
+  "sync_state": ".toolang/sync/reviewer.state.json",
+  "synced_caps": ".toolang/sync/",
   "inputs": {
     "toolang.toml": { "mtime_ns": 1742302800000000000, "size": 812 },
     "reviewer.too": { "mtime_ns": 1742302805000000000, "size": 2412 },
@@ -627,8 +627,8 @@ Command intent:
 - `new`
   - create a local authored cap
 - `sync`
-  - rebuild `${AGENT_HOME}/.toolang/.sync/` and all
-    `${AGENT_HOME}/.toolang/.sync/<agent>.state.json` files for the agent home
+  - rebuild `${AGENT_HOME}/.toolang/sync/` and all
+    `${AGENT_HOME}/.toolang/sync/<agent>.state.json` files for the agent home
 
 ### 11.3 Agent Registry And Running-Agent Commands
 
@@ -641,7 +641,7 @@ Command intent:
 
 ## 12. Agent State
 
-Each agent has a private room under `.toolang/agent/{AGENT}/` inside its agent
+Each agent has a private room under `.toolang/agents/{AGENT}/` inside its agent
 home.
 
 Typical contents:
@@ -817,7 +817,7 @@ Primary runtime flow:
 
 Fast path:
 
-- if `${AGENT_HOME}/.toolang/.sync/<agent>.state.json` is still valid, runtime
+- if `${AGENT_HOME}/.toolang/sync/<agent>.state.json` is still valid, runtime
   skips parse and sync and invokes from the existing synced artifacts
 
 Definitions:
@@ -827,7 +827,7 @@ Definitions:
 - `sync`
   - build durable generated state for one agent home
 - `invoke`
-  - load synced state from `${AGENT_HOME}/.toolang/.sync/`, assemble runtime
+  - load synced state from `${AGENT_HOME}/.toolang/sync/`, assemble runtime
     inputs, and execute one non-interactive turn
 
 Internal sync steps:
@@ -839,8 +839,8 @@ Internal sync steps:
 - `compile`
   - convert source and config inputs into per-agent synced records
 - `materialize`
-  - update `${AGENT_HOME}/.toolang/.sync/` and
-    `${AGENT_HOME}/.toolang/.sync/<agent>.state.json`
+  - update `${AGENT_HOME}/.toolang/sync/` and
+    `${AGENT_HOME}/.toolang/sync/<agent>.state.json`
 
 Foreground and background execution build on the same prepared agent:
 

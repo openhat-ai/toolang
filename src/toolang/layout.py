@@ -54,7 +54,7 @@ def agent_source_path(agent_home: Path | str, agent_name: str) -> Path:
 
 
 def agent_room(agent_home: Path | str, agent_name: str) -> Path:
-    return resolve_agent_home(agent_home) / ".toolang" / "agent" / agent_name
+    return resolve_agent_home(agent_home) / ".toolang" / "agents" / agent_name
 
 
 def agent_run_path(agent_home: Path | str, agent_name: str) -> Path:
@@ -78,7 +78,7 @@ def agent_sync_path(agent_home: Path | str, agent_name: str) -> Path:
 
 
 def synced_caps_root(agent_home: Path | str) -> Path:
-    return resolve_agent_home(agent_home) / ".toolang" / ".sync"
+    return resolve_agent_home(agent_home) / ".toolang" / "sync"
 
 
 def synced_caps_dir(agent_home: Path | str, kind: CapKind) -> Path:

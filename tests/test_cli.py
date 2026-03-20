@@ -248,7 +248,7 @@ def test_hidden_path_commands_resolve_agent_paths(tmp_path: Path, monkeypatch) -
     assert root_result.exit_code == 0
     assert home_result.stdout.strip() == str(home.resolve())
     assert source_result.stdout.strip() == str(source_path.resolve())
-    assert room_result.stdout.strip() == str((home / ".toolang" / "agent" / "alice").resolve())
+    assert room_result.stdout.strip() == str((home / ".toolang" / "agents" / "alice").resolve())
     assert root_result.stdout.strip() == str(root.resolve())
 
 
