@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from toolang.ast import Program
 from toolang.errors import ToolangError
+
+from .ast import Program
 
 
 def analyze_program(program: Program) -> None:

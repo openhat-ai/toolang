@@ -6,8 +6,6 @@ from pathlib import Path
 from typing import cast
 
 from toolang.agent.refs import ResolvedAgentRef
-from toolang.analyze import analyze_program
-from toolang.ast import Program
 from toolang.errors import ToolangError
 from toolang.files.program import SyncedProgram
 from toolang.files.sync_state import InputFingerprint, LockEntry, LockedAgentRefs, SyncState
@@ -23,7 +21,7 @@ from toolang.layout import (
     shared_source_path,
     synced_caps_root,
 )
-from toolang.parser import parse_program
+from toolang.syntax import Program, analyze_program, parse_program
 from toolang_caps.files import (
     inline_cap_meta_path,
     inline_cap_path,
