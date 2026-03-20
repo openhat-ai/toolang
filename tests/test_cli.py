@@ -30,6 +30,10 @@ def test_cli_has_expected_subcommands() -> None:
     assert "serve" in result.output
     assert "start" in result.output
     assert "bus" in result.output
+    assert "home" not in result.output
+    assert "source" not in result.output
+    assert "room" not in result.output
+    assert "init" not in result.output
     assert "check" not in result.output
     assert "dump-ast" not in result.output
 
@@ -217,3 +221,47 @@ def test_cli_list_marks_active_agent_running(tmp_path: Path, monkeypatch) -> Non
     assert result.exit_code == 0
     assert "running" in result.output
     assert "http://127.0.0.1:8778" in result.output
+
+
+def test_hidden_path_commands_resolve_agent_paths(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    source_path = home / "alice.too"
+    source_path.write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+
+    home_result = runner.invoke(app, ["home", "alice"])
+    source_result = runner.invoke(app, ["source", "alice"])
+    room_result = runner.invoke(app, ["room", "alice"])
+
+    assert home_result.exit_code == 0
+    assert source_result.exit_code == 0
+    assert room_result.exit_code == 0
+    assert home_result.stdout.strip() == str(home.resolve())
+    assert source_result.stdout.strip() == str(source_path.resolve())
+    assert room_result.stdout.strip() == str((home / ".toolang" / "agent" / "alice").resolve())
+
+
+def test_hidden_init_zsh_outputs_cd_helpers() -> None:
+    result = runner.invoke(app, ["init", "zsh"])
+
+    assert result.exit_code == 0
+    assert 'case "$1" in' in result.stdout
+    assert 'builtin cd -- "$(command toolang home "$@")"' in result.stdout
+    assert 'builtin cd -- "$(command toolang room "$@")"' in result.stdout
+    assert 'builtin cd -- "$(dirname "$(command toolang source "$@")")"' in result.stdout
+
+
+def test_hidden_init_fish_outputs_cd_helpers() -> None:
+    result = runner.invoke(app, ["init", "fish"])
+
+    assert result.exit_code == 0
+    assert "function toolang" in result.stdout
+    assert "cd (command toolang home $argv)" in result.stdout
+    assert "cd (command toolang room $argv)" in result.stdout
+    assert "cd (dirname (command toolang source $argv))" in result.stdout
