@@ -112,6 +112,7 @@ def _reorder_help_entries() -> None:
         "invoke": 5,
         "serve": 6,
         "start": 7,
+        "stop": 8,
         "home": 100,
         "source": 101,
         "room": 102,

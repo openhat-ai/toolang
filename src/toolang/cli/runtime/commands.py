@@ -8,7 +8,7 @@ from toolang.layout import bus_events_db_path
 
 from ..support import _cors_allow_origins, _toolang_root
 from .invoke import invoke_command, sync_command
-from .serve import serve_command, start_command
+from .serve import serve_command, start_command, stop_command
 
 bus_app = typer.Typer(
     help="Bus commands",
@@ -40,6 +40,11 @@ def register_runtime_commands(app: typer.Typer) -> None:
         help="Start serving one agent in the background.",
         no_args_is_help=True,
     )(start_command)
+    app.command(
+        "stop",
+        help="Stop one running agent.",
+        no_args_is_help=True,
+    )(stop_command)
 
     @bus_app.command("serve")
     def bus_serve(
