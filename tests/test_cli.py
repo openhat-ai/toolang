@@ -385,7 +385,7 @@ def test_cli_list_marks_active_agent_running(tmp_path: Path, monkeypatch) -> Non
 
     assert result.exit_code == 0
     assert "running" in result.output
-    assert "http://127.0.0.1:8778" in result.output
+    assert "https://too.run/8778" in result.output
 
 
 def test_cli_serve_rejects_docker_sandbox(tmp_path: Path, monkeypatch) -> None:
@@ -445,7 +445,7 @@ def test_cli_start_docker_stages_sandbox_launch(tmp_path: Path, monkeypatch) -> 
     stage_dir = sandbox_host(root, key)
 
     assert result.exit_code == 0
-    assert result.stdout.strip() == f"started {agent.agent_id[:12]} http://127.0.0.1:8779"
+    assert result.stdout.strip() == f"started {agent.agent_id[:12]} https://too.run/8779"
     assert args_path.exists()
     assert exec_path.exists()
     assert stage_dir.exists()

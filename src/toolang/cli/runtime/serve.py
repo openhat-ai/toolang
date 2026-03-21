@@ -17,6 +17,7 @@ from toolang.agent.refs import ResolvedAgentRef
 from toolang.agent.registry import delete_running_agent, get_running_agent
 from toolang.errors import ToolangError
 from toolang.files.agent_run import AgentRunState
+from toolang.http import agent_link_for_port
 from toolang.layout import (
     agent_log_path,
     agent_room_sandbox_dir,
@@ -151,6 +152,7 @@ def start_command(
     parsed_sandbox = _parse_sandbox_or_raise(sandbox_spec)
     selected_port = port if port is not None else _pick_free_port(host)
     endpoint = f"http://{host}:{selected_port}"
+    agent_link = agent_link_for_port(selected_port)
     log_path = agent_log_path(prepared.ref.agent_home, prepared.ref.agent_name)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     if parsed_sandbox.kind == "docker":
@@ -182,7 +184,7 @@ def start_command(
             endpoint=endpoint,
             log_path=log_path,
         )
-    typer.echo(f"started {prepared.ref.agent_id[:12]} {endpoint}")
+    typer.echo(f"started {prepared.ref.agent_id[:12]} {agent_link}")
 
 
 def _pick_free_port(host: str) -> int:
