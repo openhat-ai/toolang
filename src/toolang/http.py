@@ -28,14 +28,8 @@ def add_cors(
         allow_origins=origins,
         allow_methods=["*"],
         allow_headers=["*"],
+        allow_private_network=True,
     )
-
-    @app.middleware("http")
-    async def allow_private_network(request, call_next):
-        response = await call_next(request)
-        if request.headers.get("access-control-request-private-network") == "true":
-            response.headers["access-control-allow-private-network"] = "true"
-        return response
 
 
 def agent_link_for_port(port: int) -> str:

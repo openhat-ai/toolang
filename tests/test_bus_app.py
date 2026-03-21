@@ -122,6 +122,7 @@ def test_create_bus_app_serves_agents_runs_events_and_proxy_chat(tmp_path: Path,
                 "Access-Control-Request-Private-Network": "true",
             },
         )
+        assert pna_agents.status_code == 200
         assert pna_agents.headers["access-control-allow-origin"] == "https://too.run"
         assert pna_agents.headers["access-control-allow-private-network"] == "true"
 

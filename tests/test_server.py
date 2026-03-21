@@ -93,6 +93,7 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
                 "Access-Control-Request-Private-Network": "true",
             },
         )
+        assert pna_runtime.status_code == 200
         assert pna_runtime.headers["access-control-allow-origin"] == "https://too.run"
         assert pna_runtime.headers["access-control-allow-private-network"] == "true"
 
