@@ -7,6 +7,7 @@ import typer
 from toolang.agent.homes import clone_resident_agent, create_resident_agent, remove_resident_agent
 from toolang.agent.registry import delete_known_agent, get_running_agent
 from toolang.errors import ToolangError
+from toolang.http import agent_link_from_endpoint
 from toolang.layout import agents_db_path
 
 from .runtime.serve import _drop_stale_running_agent
@@ -111,8 +112,8 @@ def register_agent_commands(app: typer.Typer) -> None:
                 snapshot.running_status or "stopped",
                 snapshot.agent_name,
                 snapshot.agent_uri,
-                snapshot.endpoint or "-",
+                agent_link_from_endpoint(snapshot.endpoint) or "-",
             )
             for snapshot in snapshots
         ]
-        typer.echo(_format_rows(("ID", "STATUS", "NAME", "URI", "ENDPOINT"), rows))
+        typer.echo(_format_rows(("ID", "STATUS", "NAME", "URI", "LINK"), rows))

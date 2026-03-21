@@ -79,6 +79,24 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
         )
         assert cors_runtime.headers["access-control-allow-origin"] == "http://localhost:3000"
 
+        cors_runtime_too_run = client.get(
+            "/api/v1/runtime",
+            headers={"Origin": "https://too.run"},
+        )
+        assert cors_runtime_too_run.headers["access-control-allow-origin"] == "https://too.run"
+
+        pna_runtime = client.options(
+            "/api/v1/runtime",
+            headers={
+                "Origin": "https://too.run",
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Private-Network": "true",
+            },
+        )
+        assert pna_runtime.status_code == 200
+        assert pna_runtime.headers["access-control-allow-origin"] == "https://too.run"
+        assert pna_runtime.headers["access-control-allow-private-network"] == "true"
+
         profile = client.get("/api/v1/profile")
         assert profile.status_code == 200
         assert profile.json()["agent"] == "alice"

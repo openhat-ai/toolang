@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shlex
 import socket
+import signal
 import subprocess
 import sys
 import time
@@ -17,6 +18,7 @@ from toolang.agent.refs import ResolvedAgentRef
 from toolang.agent.registry import delete_running_agent, get_running_agent
 from toolang.errors import ToolangError
 from toolang.files.agent_run import AgentRunState
+from toolang.http import agent_link_for_port
 from toolang.layout import (
     agent_log_path,
     agent_room_sandbox_dir,
@@ -151,6 +153,7 @@ def start_command(
     parsed_sandbox = _parse_sandbox_or_raise(sandbox_spec)
     selected_port = port if port is not None else _pick_free_port(host)
     endpoint = f"http://{host}:{selected_port}"
+    agent_link = agent_link_for_port(selected_port)
     log_path = agent_log_path(prepared.ref.agent_home, prepared.ref.agent_name)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     if parsed_sandbox.kind == "docker":
@@ -182,13 +185,56 @@ def start_command(
             endpoint=endpoint,
             log_path=log_path,
         )
-    typer.echo(f"started {prepared.ref.agent_id[:12]} {endpoint}")
+    typer.echo(f"started {prepared.ref.agent_id[:12]} {agent_link}")
+
+
+def stop_command(
+    agent: Annotated[str, typer.Argument(help="Agent selector")],
+) -> None:
+    toolang_root = _toolang_root()
+    db_path = agents_db_path(toolang_root)
+    agent_ref = _resolve_cli_agent(agent, db_path=db_path)
+    _drop_stale_running_agent(db_path, agent_ref)
+
+    active = get_running_agent(db_path, agent_ref.agent_uri)
+    if active is None:
+        raise ToolangError(f"Agent is not running: {agent_ref.agent_uri}")
+
+    _stop_running_agent_process(
+        sandbox_spec=active.sandbox,
+        pid=active.pid,
+        agent_name=agent_ref.agent_name,
+        agent_id=agent_ref.agent_id[:12],
+    )
+    _wait_for_running_agent_stop(db_path=db_path, agent=agent_ref)
+    typer.echo(f"stopped {agent_ref.agent_id[:12]}")
 
 
 def _pick_free_port(host: str) -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind((host, 0))
         return int(sock.getsockname()[1])
+
+
+def _stop_running_agent_process(
+    *,
+    sandbox_spec: str,
+    pid: int | None,
+    agent_name: str,
+    agent_id: str,
+) -> None:
+    parsed = _parse_sandbox_or_raise(sandbox_spec)
+    if parsed.kind == "docker":
+        docker_remove_container(docker_container_name(agent_name, agent_id))
+        return
+    if pid is None or pid <= 0:
+        raise ToolangError("Running agent has no valid process id.")
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    except PermissionError as exc:
+        raise ToolangError(f"Failed to stop agent process {pid}: {exc}") from exc
 
 
 def _drop_stale_running_agent(db_path: Path, agent: ResolvedAgentRef) -> None:
@@ -208,6 +254,20 @@ def _drop_stale_running_agent(db_path: Path, agent: ResolvedAgentRef) -> None:
         now = datetime.now(timezone.utc)
         run_state = AgentRunState.load(run_path)
         run_state.model_copy(update={"status": "stopped", "heartbeat_at": now}).save(run_path)
+
+
+def _wait_for_running_agent_stop(
+    *,
+    db_path: Path,
+    agent: ResolvedAgentRef,
+) -> None:
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        _drop_stale_running_agent(db_path, agent)
+        if get_running_agent(db_path, agent.agent_uri) is None:
+            return
+        time.sleep(0.1)
+    raise ToolangError(f"Timed out waiting for agent stop: {agent.agent_uri}")
 
 
 def _wait_for_running_agent_process(
