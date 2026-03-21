@@ -1,10 +1,15 @@
-# Toolang Impl
+# Toolang Implementation Notes
 
 This document records the selected implementation direction for Toolang v1.
 
-It focuses on stack choices and module boundaries. Source layout, capability
-semantics, and runtime behavior live in
-[design.md](/Users/bryan/openhat-ai/toolang/docs/design.md).
+Design semantics live in:
+
+- [index.md](./index.md)
+- [layout.md](./layout.md)
+- [capabilities.md](./capabilities.md)
+- [execution.md](./execution.md)
+- [api.md](./api.md)
+- [plugins.md](./plugins.md)
 
 
 ## 1. Language And Packaging
@@ -22,245 +27,116 @@ Reason:
   newer pinned interpreter
 
 
-## 2. Runtime Structure
+## 2. Selected Stack
 
-The main runtime flow is:
-
-1. `parse`
-2. `sync`
-3. `invoke`
-
-Responsibilities:
-
-- `parse`
-  - use Tree-sitter to read `.too` source into structured syntax data
-- `sync`
-  - build durable generated state for one agent home
-- `invoke`
-  - load synced state from `${AGENT_HOME}/.toolang/sync/`, then execute the
-    model and tool loop for one non-interactive turn
-- `serve`
-  - prepare one synced agent and run the `server` runtime loop in the
-    foreground
-  - supports `host` sandbox only
-- `start`
-  - launch a selected runtime-loop set in the background and wait for
-    registration in `agents.db`
-  - supports `host` and `docker:<image>` sandboxes
-- `bus serve`
-  - expose the shared `bus/events.db` projection as one local multi-agent HTTP
-    API
-
-Expected runtime behavior:
-
-- most steady-state execution should spend its time in `invoke`
-- `parse` and `sync` are rebuild steps and should be skipped when existing sync
-  state is still fresh
-- the synced state in `${AGENT_HOME}/.toolang/sync/` is the execution
-  boundary, not the raw source text
-- `serve` and `start` are process surfaces layered over the same prepared
-  synced agent state
-- `agent.run` is the runtime truth for sandbox mode and process state
-- the turn model is message-driven, with `origin = invoke | chat | task | chore
-  | will`; only `chat` carries a non-null `channel`
-- the long-lived trigger layer uses four runtime loops:
-  `server | poll | hook | pulse`
-- default loop policy depends on agent kind:
-  resident starts configured loops, visiting defaults to `server`, roaming
-  defaults to none
-
-Internal sync steps:
-
-- `analyze`
-  - semantic validation
-- `resolve`
-  - capability and reference resolution
-- `compile`
-  - convert agent, shared, and global inputs into per-agent synced records
-- `materialize`
-  - update `${AGENT_HOME}/.toolang/sync/` and
-    `${AGENT_HOME}/.toolang/sync/<agent>.state.json`
+- syntax
+  - Tree-sitter via the published `tree-sitter-toolang` Python extension
+- CLI
+  - Typer
+- validation and serialization
+  - Pydantic v2
+- model execution
+  - official OpenAI Python SDK
+- HTTP server
+  - FastAPI
+  - Uvicorn
+- HTTP client
+  - `httpx`
+- local storage
+  - SQLite
 
 
-## 3. Parsing And Sync State
+## 3. Package Boundaries
 
-Tree-sitter is the parsing foundation for Toolang.
+Current internal packages:
 
-Implementation strategy:
+- `toolang.syntax`
+  - parsing and syntax analysis
+- `toolang.agent`
+  - agent resolution, homes, preparation, and registry
+- `toolang.sync`
+  - sync orchestration and materialization
+- `toolang.runtime`
+  - prompt build, invoke, chat, and server runtime
+- `toolang.caps`
+  - runtime cap overlay and scope-aware cap views
+- `toolang.bus`
+  - shared bus projection and bus API
+- `toolang.sandbox`
+  - sandbox runtime helpers
+- `toolang.cli`
+  - CLI surfaces and command registration
+- `toolang.files`
+  - file-shape models and serialization helpers
+- `toolang.layout`
+  - canonical path and layout helpers
 
-- Tree-sitter grammar is the syntax source of truth
-- runtime parsing uses Tree-sitter output rather than a separate handwritten
-  syntax parser
-- sync writes durable generated artifacts that can be reused without reparsing
-  unchanged source files
-- synced caps are written under `${AGENT_HOME}/.toolang/sync/`
-- per-agent sync state lives in `${AGENT_HOME}/.toolang/sync/<agent>.state.json`
+Separate but colocated package:
+
+- `toolang_caps`
+  - cap fetch, source ops, and materialization
 
 Reason:
 
-- one grammar should drive runtime parsing, editor tooling, and syntax-aware
-  utilities
-- durable sync artifacts make steady-state execution cheap
-- this reduces grammar drift between the runtime and editor integrations
+- caps logic already has a cleaner extraction boundary than the rest of the
+  runtime
+- the runtime package should stay focused on execution and state
 
 
-## 4. Data Model
-
-Pydantic v2 is the chosen model layer for structured runtime data.
-
-Expected use:
-
-- AST and synced agent records
-- home configuration and resolved-cap records
-- registry and resolved-cap records
-- structured CLI and API output
-
-Reason:
-
-- explicit validation is useful at parser, config, and API boundaries
-- JSON serialization is built-in and predictable
-
-
-## 5. CLI
-
-Typer is the chosen CLI framework.
-
-Command groups:
-
-- execution
-- capability management
-- running-agent management
-
-Representative commands:
-
-- `toolang invoke`
-- `toolang serve`
-- `toolang start`
-- `toolang sync`
-
-Reason:
-
-- the command tree is large enough that typed subcommands and reusable option
-  groups are worth the extra dependency
-
-
-## 6. Runtime And Model Integration
-
-The runtime core uses the official OpenAI Python SDK for model execution.
-
-Expected responsibilities:
-
-- structured prompt assembly
-- tool registration and execution loop
-- model fallback handling
-- output coercion and structured-output enforcement
-- prompt trace logging under `${AGENT_ROOM}/runs/{RUN_ID}/prompt.json`
-
-Reason:
-
-- the runtime maps directly to developer messages, user messages, tool calls,
-  and structured responses
-- a direct SDK integration keeps the core runtime easier to reason about than a
-  heavier orchestration framework
-- runtime-native event and run models are the source of truth; LangChain-style
-  callbacks may be adapted later at the edge, but are not the internal runtime
-  contract
-
-
-## 7. HTTP And Networking
-
-Chosen server stack:
-
-- FastAPI
-- Uvicorn
-
-Chosen client stack:
-
-- `httpx`
-
-Expected use:
-
-- `toolang serve`
-- agent API v1
-- registry access
-- remote home fetches
-- remote capability downloads
-
-Reason:
-
-- these libraries are mature, simple, and fit both local-first and API-driven
-  runtime modes
-
-
-## 8. Storage
+## 4. Storage Choices
 
 SQLite is the primary local storage layer.
 
-Expected use:
+Current or expected uses:
 
-- agent memory
-- agent chat transcripts in `${AGENT_ROOM}/chats/chats.db`
-- `agents` and `running_agents` tables in `agents.db`
-- `events`, `agents`, and `runs` projections in `bus/events.db`
-- local metadata
-
-Reason:
-
-- SQLite is built into Python
-- it has low operational overhead
-- it is sufficient for the local-first runtime model
+- chat transcripts
+  - `${AGENT_ROOM}/chats/chats.db`
+- known-agent and running-agent registry
+  - `${TOOLANG_ROOT}/agents.db`
+- shared bus projection
+  - `${TOOLANG_ROOT}/bus/events.db`
+- future execution truth layer
+  - activation, thread, turn, and step records
 
 Other durable formats:
 
-- TOML
-  - future automation or bus-adjacent authored config, when needed
 - Markdown
   - skill, service, prompt, and psyche source artifacts
 - JSON
-  - per-agent sync state, command output, API output, and runtime metadata blobs
+  - sync state, prompt traces, API output, runtime metadata
+- TOML
+  - authored runtime and plugin configuration when needed
 
 
-## 9. Capability Resolution
+## 5. Parser And Sync Direction
 
-Capability materialization uses two storage layers:
+Implementation rules:
 
-- `${AGENT_HOME}/.toolang/sync/`
-  - synced cap artifacts for one agent home
-- `TOOLANG_ROOT`
-  - reusable local system state for resident and visiting agents
-
-Reason:
-
-- per-agent-home reproducibility and cross-home reuse should stay separate
-- `${AGENT_HOME}/.toolang/sync/` needs exact sync semantics
-- `TOOLANG_ROOT` should stay reusable across resident and visiting agents
+- Tree-sitter grammar is the syntax source of truth
+- runtime parsing uses Tree-sitter output, not a second handwritten parser
+- sync writes durable generated artifacts that can be reused without reparsing
+  unchanged sources
+- synced state under `.toolang/sync/` is the execution boundary, not raw source
 
 
-## 10. Repository Boundaries
+## 6. Repository Boundaries
 
 This repository owns:
 
 - runtime code
 - CLI code
-- runtime parser and sync integration
+- sync integration
 - the colocated `toolang_caps` package until it is split out
 - tests for runtime behavior
 
 Sibling repositories own:
 
-- Tree-sitter grammar source
+- the Tree-sitter grammar source
 - editor packages
-- docs site
-
-Reason:
-
-- runtime behavior and editor packaging evolve at different speeds
-- caps storage and synchronization logic already has a cleaner extraction
-  boundary than the rest of the runtime
-- keeping editor packages separate avoids polluting the runtime package
+- the docs site
 
 
-## 11. Simplicity Rules
+## 7. Simplicity Rules
 
 The v1 implementation should stay intentionally small:
 

@@ -35,10 +35,16 @@
 
 ## Current Design Boundaries
 
+- `docs/index.md` is the entry point for the design docs in `docs/`.
 - `docs/layout.md` is the source of truth for Toolang root, agent home, agent
   room, and canonical agent URI layout.
-- `docs/design.md` defines runtime behavior and CLI semantics.
+- `docs/capabilities.md` defines capability forms, scopes, refs, and sync
+  semantics.
+- `docs/execution.md` defines runtime execution semantics.
+- `docs/api.md` defines CLI, registry, agent API, and bus API surfaces.
 - `docs/impl.md` defines implementation direction and stack choices.
+- `docs/plugins.md` defines plugin boundaries and loading.
+- `docs/memory.md` defines the memory-plugin contract.
 - The Tree-sitter grammar source of truth lives in the sibling
   `tree-sitter-toolang` repository. Toolang consumes the Python extension
   package exposed by that repository rather than compiling grammar sources at
