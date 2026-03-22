@@ -51,7 +51,7 @@ Reason:
 
 Current internal packages:
 
-- `toolang.syntax`
+- `toolang.program`
   - parsing and syntax analysis
 - `toolang.agent`
   - agent resolution, homes, preparation, and registry

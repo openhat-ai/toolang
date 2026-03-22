@@ -33,7 +33,7 @@ from toolang.layout import (
     shared_source_path,
     synced_caps_root,
 )
-from toolang.syntax import Program, analyze_program, parse_program
+from toolang.program import Program, parse
 from toolang.concepts.caps import CapKind
 from toolang.concepts.identity import AgentRef
 from toolang.concepts.persisted.program import SyncedProgram
@@ -153,8 +153,8 @@ def _home_source_paths(agent_home: Path) -> list[Path]:
 def _parse_home_programs(source_paths: list[Path]) -> dict[str, Program]:
     programs: dict[str, Program] = {}
     for source_path in source_paths:
-        program = parse_program(source_path.read_text(encoding="utf-8"))
-        analyze_program(program)
+        program = parse(source_path.read_text(encoding="utf-8"))
+        program.validate()
         programs[source_path.stem] = program
     return programs
 

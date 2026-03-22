@@ -6,14 +6,15 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
-from toolang.layout import agent_synced_caps_root, global_synced_caps_root, synced_caps_root
-from toolang.syntax import DeclBlock, ParamDecl, Program, SourceSpan
 from toolang.concepts.caps import (
     CapFrontmatter,
     CapKind,
     CapSidecar,
 )
 from toolang.concepts.identity import AgentRef
+from toolang.layout import agent_synced_caps_root, global_synced_caps_root, synced_caps_root
+from toolang.program import Program
+from toolang.program.ast import DeclBlock, ParamDecl, SourceSpan
 
 from .scope import CapScopeSelection
 

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import cast, get_args
 
 from toolang.errors import ToolangError
-from toolang.syntax import Program
+from toolang.program import Program
 from toolang.concepts.caps import (
     CapContent,
     CapKind,
@@ -56,9 +56,9 @@ def load_scope_refs(path: Path, *, scope_label: str) -> LockedAgentRefs:
     if not path.exists():
         return LockedAgentRefs()
 
-    from toolang.syntax import parse_program
+    from toolang.program import parse
 
-    program = parse_program(path.read_text(encoding="utf-8"))
+    program = parse(path.read_text(encoding="utf-8"))
     if program.declarations or program.thunks:
         raise ToolangError(f"{scope_label} may only contain 'use ...' statements.")
 

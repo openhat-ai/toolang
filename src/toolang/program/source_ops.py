@@ -7,7 +7,7 @@ from pathlib import Path
 from toolang.errors import ToolangError
 from toolang.concepts.caps import CapKind
 
-from .parser import parse_program
+from .parser import parse
 
 
 def cap_name_from_ref(ref: str) -> str:
@@ -24,7 +24,7 @@ def add_cap_ref(path: Path, kind: CapKind, ref: str) -> bool:
 
     name = cap_name_from_ref(ref)
     lines = _read_lines(path)
-    program = parse_program("\n".join(lines)) if lines else None
+    program = parse("\n".join(lines)) if lines else None
 
     if program is not None and program.has_use(kind, ref):
         return False
@@ -65,7 +65,7 @@ def remove_cap_ref(
     if not lines:
         return False
 
-    program = parse_program("\n".join(lines))
+    program = parse("\n".join(lines))
     remove_indexes = {
         use.span.line - 1
         for use in program.uses_by_kind(kind)

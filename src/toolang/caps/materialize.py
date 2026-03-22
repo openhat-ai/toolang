@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from toolang.layout import agent_synced_caps_root, cap_section_dir_name
-from toolang.syntax import Program
+from toolang.program import Program
 from toolang.concepts.caps import CapContent, CapKind, CapRef, CapSidecar
 from toolang.concepts.persisted.sync_state import LockEntry, LockedAgentRefs, SyncState
 

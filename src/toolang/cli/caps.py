@@ -25,7 +25,7 @@ from toolang.caps.files import (
     prune_empty_local_kind_dir,
 )
 from toolang.concepts.caps import CapKind
-from toolang.syntax import add_cap_ref, remove_cap_ref
+from toolang.program.source_ops import add_cap_ref, remove_cap_ref
 
 from .support import _resolve_cli_agent, _toolang_root
 

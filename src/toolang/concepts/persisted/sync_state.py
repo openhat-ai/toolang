@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from pydantic import BaseModel, Field
-from toolang.syntax import Program
+from toolang.program import Program
 
 from .program import SyncedProgram
 
