@@ -6,13 +6,13 @@ import shutil
 from pathlib import Path
 from typing import Literal
 
-from .frontmatter import parse_cap_body
 from toolang.layout import cap_section_dir_name
 from toolang.concepts.caps import (
     CapContent,
     CapKind,
     CapParam,
     CapSidecar,
+    parse_cap_body,
 )
 
 LANGUAGE_EXTENSIONS = {

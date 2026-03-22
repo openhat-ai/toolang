@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, cast
 
+import frontmatter
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 CapKind = Literal["skill", "service", "prompt", "psyche"]
@@ -100,6 +101,13 @@ class CapContent(BaseModel):
     params: list[CapParam] = Field(default_factory=list)
 
 
+class ParsedCapBody(BaseModel):
+    """Parsed capability body with optional typed front matter metadata."""
+
+    front_matter: CapFrontmatter | None = None
+    content: str = ""
+
+
 class CapSidecar(BaseModel):
     """Materialized sidecar metadata stored for one synced capability."""
 
@@ -144,3 +152,17 @@ class CapRef(BaseModel):
     repo: str
     path: str
     rev: str
+
+
+def parse_cap_body(kind: CapKind, language: str | None, raw_text: str) -> ParsedCapBody:
+    """Parse one capability body, extracting typed front matter from Markdown."""
+
+    if language != "md":
+        return ParsedCapBody(content=raw_text)
+
+    post = frontmatter.loads(raw_text)
+    metadata = dict(post.metadata) or None
+    return ParsedCapBody(
+        front_matter=parse_front_matter(kind, metadata),
+        content=post.content,
+    )

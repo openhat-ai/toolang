@@ -1,4 +1,4 @@
-"""Capability support for refs, parsing, materialization, and runtime views.
+"""Capability support for refs, materialization, and runtime views.
 
 This package owns capability fetch/source operations, synced sidecar
 materialization, scope-aware overlay rules, and the effective runtime view of
