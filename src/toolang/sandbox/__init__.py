@@ -6,7 +6,7 @@ and docker execution environments.
 
 from .core import (
     HOST_SANDBOX,
-    ParsedSandbox,
+    SandboxSpec,
     forwarded_sandbox_env_names,
     host_pid_exists,
     normalize_sandbox_spec,
@@ -25,7 +25,7 @@ from .docker import (
 
 __all__ = [
     "HOST_SANDBOX",
-    "ParsedSandbox",
+    "SandboxSpec",
     "docker_container_name",
     "docker_container_running",
     "docker_remove_container",

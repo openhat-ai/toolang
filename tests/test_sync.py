@@ -20,7 +20,7 @@ from toolang.layout import (
 )
 from toolang.sync import ensure_agent_synced, sync_agent
 from toolang.syntax import parse_program
-from toolang_caps.models import ResolvedCapRef
+from toolang_caps.models import CapRef
 from toolang_caps.models import CapKind
 
 PARSE_FIXTURE = Path(__file__).parent / "fixtures" / "sample.too"
@@ -91,9 +91,9 @@ thunk review:
         encoding="utf-8",
     )
 
-    def fake_resolve(kind: str, ref: str) -> ResolvedCapRef:
+    def fake_resolve(kind: str, ref: str) -> CapRef:
         assert kind == "skill"
-        return ResolvedCapRef(
+        return CapRef(
             kind="skill",
             name="pdf-processing",
             ref=ref,
@@ -102,7 +102,7 @@ thunk review:
             rev="abc123",
         )
 
-    def fake_fetch(resolved: ResolvedCapRef):
+    def fake_fetch(resolved: CapRef):
         fetched_root = tmp_path / "fetched" / "materialized" / resolved.name
         fetched_root.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(REMOTE_SKILL_FIXTURE, fetched_root)
@@ -218,12 +218,12 @@ thunk review:
     shared_source_path(home).write_text("use skill by3gus/repo-search\n", encoding="utf-8")
     global_source_path(root).write_text("use skill by3hak/repo-search\n", encoding="utf-8")
 
-    def fake_resolve(kind: str, ref: str) -> ResolvedCapRef:
+    def fake_resolve(kind: str, ref: str) -> CapRef:
         owner, _, name = ref.partition("/")
         assert kind == "skill"
         repo_name = "agent-skills" if owner == "by3gus" else "skills"
         path = f"skills/{name}" if repo_name == "agent-skills" else name
-        return ResolvedCapRef(
+        return CapRef(
             kind="skill",
             name=name,
             ref=ref,
@@ -232,7 +232,7 @@ thunk review:
             rev=f"rev-{owner}",
         )
 
-    def fake_fetch(resolved: ResolvedCapRef):
+    def fake_fetch(resolved: CapRef):
         fetched_root = tmp_path / "fetched" / resolved.repo.replace("/", "__") / resolved.name
         fetched_root.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(REMOTE_SKILL_FIXTURE, fetched_root)
@@ -314,7 +314,7 @@ thunk review(user):
     global_psyche.parent.mkdir(parents=True)
     global_psyche.write_text(REMOTE_PSYCHE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
 
-    def fake_resolve(kind: str, ref: str) -> ResolvedCapRef:
+    def fake_resolve(kind: str, ref: str) -> CapRef:
         typed_kind = cast(CapKind, kind)
         owner, _, name = ref.partition("/")
         repo_name = {
@@ -327,7 +327,7 @@ thunk review(user):
             "prompt": f"prompts/{name}.md" if repo_name == "agent-prompts" else f"{name}.md",
             "psyche": f"psyches/{name}.md" if repo_name == "agent-psyches" else f"{name}.md",
         }[typed_kind]
-        return ResolvedCapRef(
+        return CapRef(
             kind=typed_kind,
             name=name,
             ref=ref,
@@ -336,7 +336,7 @@ thunk review(user):
             rev=f"rev-{owner}",
         )
 
-    def fake_fetch(resolved: ResolvedCapRef):
+    def fake_fetch(resolved: CapRef):
         fixture = {
             "service": REMOTE_SERVICE_FIXTURE,
             "prompt": REMOTE_PROMPT_FIXTURE,

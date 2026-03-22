@@ -6,11 +6,10 @@ from pathlib import Path
 from toolang_caps.frontmatter import parse_cap_body
 from toolang_caps.models import (
     CAP_KINDS,
+    CapContent,
     CapParam,
-    InlineCap,
     InlineCapKind,
-    InlineCapMeta,
-    SkillMeta,
+    CapSidecar,
     TEXT_CAP_KINDS,
     section_name,
 )
@@ -22,7 +21,7 @@ LANGUAGE_EXTENSIONS = {
 }
 
 
-def sync_inline_caps(root: Path, caps: list[InlineCap]) -> None:
+def sync_inline_caps(root: Path, caps: list[CapContent]) -> None:
     root.mkdir(parents=True, exist_ok=True)
     for kind in CAP_KINDS:
         (root / section_name(kind)).mkdir(parents=True, exist_ok=True)
@@ -63,7 +62,7 @@ def sync_text_cap_materialization(
     parsed = parse_cap_body(language, raw_text)
 
     raw_path.write_text(raw_text, encoding="utf-8")
-    meta = InlineCapMeta(
+    meta = CapSidecar(
         kind=kind,
         name=name,
         language=language,
@@ -136,11 +135,12 @@ def sync_local_skill_materialization(
     meta_path = skill_cap_meta_path(root, name)
     _remove_path(skill_dir)
     shutil.copytree(source_dir, skill_dir)
-    meta = SkillMeta(
+    meta = CapSidecar(
+        kind="skill",
         name=name,
         path=str(skill_dir.relative_to(root)) + "/",
         entry_path=str((skill_dir / "SKILL.md").relative_to(root)),
-        files=sorted(files),
+        asset_files=sorted(files),
         ref=ref,
         repo=repo,
         source_path=source_path,

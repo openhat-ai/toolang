@@ -12,7 +12,7 @@ HOST_SANDBOX = "host"
 
 
 @dataclass(frozen=True, slots=True)
-class ParsedSandbox:
+class SandboxSpec:
     kind: Literal["host", "docker"]
     image: str | None = None
 
@@ -36,16 +36,16 @@ def normalize_sandbox_spec(value: str | None, *, fallback: str = HOST_SANDBOX) -
     return raw
 
 
-def parse_sandbox_spec(value: str | None, *, fallback: str = HOST_SANDBOX) -> ParsedSandbox:
+def parse_sandbox_spec(value: str | None, *, fallback: str = HOST_SANDBOX) -> SandboxSpec:
     spec = normalize_sandbox_spec(value, fallback=fallback)
     if spec == HOST_SANDBOX:
-        return ParsedSandbox(kind="host")
+        return SandboxSpec(kind="host")
     if not spec.startswith("docker:"):
         raise ValueError("unsupported sandbox value; use 'host' or 'docker:<image>'")
     image = spec.split(":", 1)[1].strip()
     if not image:
         raise ValueError("docker sandbox must include an image")
-    return ParsedSandbox(kind="docker", image=image)
+    return SandboxSpec(kind="docker", image=image)
 
 
 def sandbox_key(agent_name: str, agent_id: str) -> str:

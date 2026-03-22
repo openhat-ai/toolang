@@ -11,7 +11,7 @@ from toolang_caps.files import (
     sync_local_skill_materialization,
     sync_skill_materialization,
 )
-from toolang_caps.models import ResolvedCapRef, SkillMeta, section_name
+from toolang_caps.models import CapRef, CapSidecar, section_name
 
 from .. import remote
 
@@ -63,7 +63,7 @@ def has_expected_scope_skills(
         meta_path = skill_cap_meta_path(sync_root, name)
         if not skill_dir.exists() or not meta_path.exists():
             return False
-        meta = SkillMeta.model_validate_json(meta_path.read_text(encoding="utf-8"))
+        meta = CapSidecar.model_validate_json(meta_path.read_text(encoding="utf-8"))
         if (
             meta.ref != entry.ref
             or meta.repo != entry.repo
@@ -76,7 +76,7 @@ def has_expected_scope_skills(
             for path in skill_dir.rglob("*")
             if path.is_file()
         )
-        if actual_files != meta.files:
+        if actual_files != meta.asset_files:
             return False
     return True
 
@@ -89,8 +89,8 @@ def skill_files(source_dir: Path) -> list[str]:
     )
 
 
-def _resolved_skill_ref(name: str, entry: LockEntry) -> ResolvedCapRef:
-    return ResolvedCapRef(
+def _resolved_skill_ref(name: str, entry: LockEntry) -> CapRef:
+    return CapRef(
         kind="skill",
         name=name,
         ref=entry.ref or "",
