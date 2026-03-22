@@ -20,6 +20,7 @@ from .caps import (
     ServiceFrontmatter,
     SkillFrontmatter,
 )
+from .channel import ChannelName, InboundDelivery, OutboundMessage, ReplyTarget
 from .execution import (
     ExecutionStrategy,
     Message,
@@ -50,6 +51,9 @@ __all__ = [
     "CapParam",
     "CapRef",
     "CapSidecar",
+    "ChannelName",
+    "InboundDelivery",
+    "OutboundMessage",
     "parse_cap_body",
     "parse_front_matter",
     "ParsedCapBody",
@@ -66,5 +70,6 @@ __all__ = [
     "SandboxSpec",
     "SandboxState",
     "SkillFrontmatter",
+    "ReplyTarget",
     "ToolangRoot",
 ]

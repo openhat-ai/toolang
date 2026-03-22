@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 MessageOrigin = Literal["invoke", "chat", "task", "chore", "will"]
-MessageSender = Literal["owner", "peer", "guest", "self"]
+MessageSender = Literal["owner", "peer", "guest", "self", "service"]
 RuntimeLoop = Literal["server", "poll", "hook", "pulse"]
 ExecutionStrategy = Literal["direct", "react"]
 ActivationKind = Literal["runtime", "invoke"]

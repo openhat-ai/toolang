@@ -111,6 +111,14 @@ class AgentHome:
         return self.path / "agents.too"
 
     @property
+    def channels_config_path(self) -> Path:
+        return self.path / "channels.toml"
+
+    @property
+    def hooks_config_path(self) -> Path:
+        return self.path / "hooks.toml"
+
+    @property
     def synced_caps_root(self) -> Path:
         return self.path / ".toolang" / "sync"
 
@@ -175,6 +183,14 @@ class AgentRoom:
     @property
     def sandbox_dir(self) -> Path:
         return self.path / "sandbox"
+
+    @property
+    def poll_dir(self) -> Path:
+        return self.path / "poll"
+
+    @property
+    def hooks_dir(self) -> Path:
+        return self.path / "hooks"
 
     @property
     def synced_caps_root(self) -> Path:
