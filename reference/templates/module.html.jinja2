@@ -1,0 +1,60 @@
+{% extends "default/module.html.jinja2" %}
+
+{% defaultmacro docstring(var) %}
+    {% if var.kind == "class" and not var.obj.__dict__.get("__doc__") %}
+    {% elif var.docstring %}
+        <div class="docstring">{{ var.docstring | replace("@public", "") | to_markdown | to_html | linkify(namespace=var.qualname, shorten=False) }}</div>
+    {% endif %}
+{% enddefaultmacro %}
+
+{% defaultmacro is_structured_field(doc) %}
+    {% if doc.kind == "variable" and "." in (doc.qualname or "") and not doc.name.startswith("_") %}
+        {% set parent_name = doc.qualname.rsplit(".", 1)[0] %}
+        {% set parent = module.get(parent_name) %}
+        {% if parent and parent.kind == "class" and (
+            parent.obj.__dict__.get("__dataclass_fields__")
+            or parent.obj.__dict__.get("__pydantic_fields__")
+        ) %}
+            true
+        {% endif %}
+    {% endif %}
+{% enddefaultmacro %}
+
+{% defaultmacro is_public(doc) %}
+    {% if doc.name in [
+        "model_config",
+        "__class_vars__",
+        "__private_attributes__",
+        "__signature__",
+        "__module__",
+        "__annotations__",
+        "__firstlineno__",
+        "__static_attributes__",
+        "__weakref__",
+        "__abstractmethods__",
+        "_abc_impl",
+    ] %}
+    {% elif doc.name.startswith("__pydantic") %}
+    {% elif "@private" in doc.docstring %}
+    {% elif "@public" in doc.docstring %}
+        true
+    {% elif is_structured_field(doc) | trim %}
+        {# show dataclass and Pydantic model fields even without per-field docstrings #}
+        true
+    {% elif doc.kind == "variable" and "." in (doc.qualname or "") %}
+        {# hide regular class fields by default; dataclass fields are handled above #}
+    {% elif doc.kind == "function" and not doc.is_inherited and not doc.name.startswith("_") %}
+        {# show public own methods/functions even when they do not have docstrings #}
+        true
+    {% elif not include_undocumented and not doc.docstring and doc.kind != "module" %}
+    {% elif doc.name == "__init__" and (doc.docstring or (doc.kind == "function" and doc.signature_without_self.parameters)) %}
+        true
+    {% elif doc.name == "__doc__" %}
+    {% elif doc.kind == "variable" and doc.is_typevar and not doc.docstring %}
+    {% elif doc.kind == "module" and doc.fullname not in all_modules %}
+    {% elif (doc.qualname or doc.name) is in(module.obj.__all__ or []) %}
+        true
+    {% elif not doc.name.startswith("_") %}
+        true
+    {% endif %}
+{% enddefaultmacro %}

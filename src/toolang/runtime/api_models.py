@@ -1,3 +1,5 @@
+"""HTTP API request and response models for agent and bus surfaces."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -6,17 +8,23 @@ from pydantic import BaseModel, Field
 
 
 class RunRequest(BaseModel):
+    """Request body for one stateless run invocation."""
+
     thunk: str | None = None
     input: str | None = None
     model: str | None = None
 
 
 class RunResponse(BaseModel):
+    """Response body for one completed stateless run invocation."""
+
     run_id: str
     output: str
 
 
 class ChatRequest(BaseModel):
+    """Request body for one chat turn submission."""
+
     thread: str
     message: str
     thunk: str | None = None
@@ -24,6 +32,8 @@ class ChatRequest(BaseModel):
 
 
 class AgentChatMessage(BaseModel):
+    """Stored chat message returned by the runtime API."""
+
     id: int
     thread_id: str
     turn_id: str
@@ -35,6 +45,8 @@ class AgentChatMessage(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    """Response body for one completed chat turn."""
+
     thread_id: str
     turn_id: str
     message: AgentChatMessage
@@ -42,6 +54,8 @@ class ChatResponse(BaseModel):
 
 
 class AgentProfile(BaseModel):
+    """Public profile metadata for one running agent."""
+
     agent: str
     display_name: str | None = None
     title: str | None = None
@@ -51,6 +65,8 @@ class AgentProfile(BaseModel):
 
 
 class AgentRuntimeResponse(BaseModel):
+    """Runtime status payload for one running agent."""
+
     status: str
     checked_at: str
     endpoint: str | None = None
@@ -69,12 +85,16 @@ class AgentRuntimeResponse(BaseModel):
 
 
 class CapItem(BaseModel):
+    """One capability entry shown by the runtime API."""
+
     name: str
     source: str | None = None
     effective: str | None = None
 
 
 class ChoreItem(BaseModel):
+    """One chore entry shown by the runtime API."""
+
     name: str
     created_at: str | None = None
     updated_at: str | None = None
@@ -84,6 +104,8 @@ class ChoreItem(BaseModel):
 
 
 class AgentCapsResponse(BaseModel):
+    """Capability summary returned by the runtime API."""
+
     agent: str
     psyches: list[CapItem] = Field(default_factory=list)
     skills: list[CapItem] = Field(default_factory=list)
@@ -93,6 +115,8 @@ class AgentCapsResponse(BaseModel):
 
 
 class ChatThreadItem(BaseModel):
+    """One chat thread listed by the runtime API."""
+
     id: str
     agent: str
     title: str | None = None
@@ -101,10 +125,14 @@ class ChatThreadItem(BaseModel):
 
 
 class ChatThreadListResponse(BaseModel):
+    """Collection response for chat thread listings."""
+
     items: list[ChatThreadItem]
 
 
 class ChatTurnItem(BaseModel):
+    """One stored turn within a chat thread."""
+
     thread_id: str
     turn_id: str
     messages: list[AgentChatMessage]
@@ -114,11 +142,15 @@ class ChatTurnItem(BaseModel):
 
 
 class ChatThreadResponse(BaseModel):
+    """Detailed chat thread response with stored turns."""
+
     thread: ChatThreadItem
     turns: list[ChatTurnItem]
 
 
 class EventItem(BaseModel):
+    """One event entry returned by the runtime or bus API."""
+
     event_id: int
     event_type: str
     at: str
@@ -128,10 +160,14 @@ class EventItem(BaseModel):
 
 
 class EventListResponse(BaseModel):
+    """Collection response for event listings."""
+
     items: list[EventItem]
 
 
 class RunItem(BaseModel):
+    """One run summary entry returned by the runtime or bus API."""
+
     id: str
     summary: str | None = None
     status: str
@@ -150,10 +186,14 @@ class RunItem(BaseModel):
 
 
 class RunListResponse(BaseModel):
+    """Collection response for run listings."""
+
     items: list[RunItem]
 
 
 class RunDetailResponse(BaseModel):
+    """Detailed run response with children, events, and optional turn state."""
+
     run: RunItem
     children: list[RunItem]
     events: list[EventItem]
@@ -161,6 +201,8 @@ class RunDetailResponse(BaseModel):
 
 
 class BusAgentItem(BaseModel):
+    """One agent summary entry returned by the bus API."""
+
     id: str
     name: str
     status: str
@@ -176,4 +218,6 @@ class BusAgentItem(BaseModel):
 
 
 class AgentListResponse(BaseModel):
+    """Collection response for bus agent listings."""
+
     items: list[BusAgentItem]

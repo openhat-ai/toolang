@@ -1,3 +1,9 @@
+"""Prepared runtime inputs for one agent.
+
+This module turns a resolved agent reference into sync-backed runtime inputs
+without starting loops or executing turns.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -13,6 +19,8 @@ from .refs import ResolvedAgentRef
 
 @dataclass(frozen=True, slots=True)
 class PreparedAgent:
+    """One sync-backed agent snapshot ready for execution."""
+
     ref: ResolvedAgentRef
     source_path: Path
     sync_state_path: Path
@@ -25,6 +33,7 @@ def prepare_agent(
     *,
     cap_scopes: CapScopeSelection = CapScopeSelection(),
 ) -> PreparedAgent:
+    """Prepare one resolved agent for runtime execution."""
     source_path = agent.source_path
     if not source_path.exists():
         if agent.agent_kind == "visiting":

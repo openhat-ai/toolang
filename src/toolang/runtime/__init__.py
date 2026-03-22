@@ -1,3 +1,9 @@
+"""Turn execution facade.
+
+This package owns prompt build execution and long-lived runtime behavior. It
+does not define agent identity, sync orchestration, or path layout.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -10,6 +16,7 @@ __all__ = ["execute_prompt_build"]
 
 
 def execute_prompt_build(build: PromptBuild) -> str:
+    """Execute one prepared prompt build and return model text output."""
     openai_client = _create_openai_client()
     response = _create_response(
         openai_client,

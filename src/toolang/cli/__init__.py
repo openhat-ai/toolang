@@ -1,3 +1,9 @@
+"""Toolang CLI facade.
+
+This package defines the top-level command surface and command registration for
+agent lifecycle, sync, execution, capability management, and helper commands.
+"""
+
 from __future__ import annotations
 
 import sys

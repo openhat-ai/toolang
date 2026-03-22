@@ -1,3 +1,9 @@
+"""Sandbox helpers.
+
+This package owns sandbox specification parsing and runtime helpers for host
+and docker execution environments.
+"""
+
 from .core import (
     HOST_SANDBOX,
     ParsedSandbox,

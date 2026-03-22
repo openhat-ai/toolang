@@ -28,6 +28,7 @@ toolang = "toolang.cli:main"
 [dependency-groups]
 dev = [
   "openai>=1.109.1",
+  "pdoc>=15,<16",
   "pytest>=8.3.5",
   "ruff>=0.15.6",
   "ty>=0.0.23",
