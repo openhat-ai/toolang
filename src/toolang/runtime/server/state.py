@@ -15,9 +15,9 @@ from toolang.agent.registry import (
 )
 from toolang.bus.db import BusStore
 from toolang.bus.events import AgentStarted, AgentStopped, utc_now
+from toolang.concepts.layout import AgentHome
 from toolang.concepts.sandbox import SandboxSpec, SandboxState
 from toolang.errors import ToolangError
-from toolang.layout import agent_run_path
 from toolang.concepts.persisted.activation_state import ActivationState
 from toolang.sandbox import sandbox_alive
 
@@ -158,7 +158,7 @@ def write_agent_run_state(
     sandbox: str,
 ) -> None:
     parsed_sandbox = SandboxSpec.parse(sandbox)
-    run_path = agent_run_path(prepared.ref.home, prepared.ref.name)
+    run_path = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name).run_path
     run_path.parent.mkdir(parents=True, exist_ok=True)
     ActivationState(
         agent_uri=prepared.ref.uri,
@@ -188,7 +188,7 @@ def has_running_state(
 ) -> bool:
     if get_running_agent(agents_db_path, prepared.ref.uri) is not None:
         return True
-    run_path = agent_run_path(prepared.ref.home, prepared.ref.name)
+    run_path = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name).run_path
     if not run_path.exists():
         return False
     return ActivationState.load(run_path).status == "running"

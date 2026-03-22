@@ -69,9 +69,6 @@ Current internal packages:
   - sandbox runtime helpers
 - `toolang.cli`
   - CLI surfaces and command registration
-- `toolang.layout`
-  - canonical layout facade built on shared layout concepts
-
 Reason:
 
 - shared constructs should live in one explicit internal package instead of

@@ -7,7 +7,7 @@ import typer
 
 from toolang.agent.prepared import prepare_agent
 from toolang.caps import sync_agent
-from toolang.layout import agents_db_path, bus_events_db_path
+from toolang.concepts.layout import ToolangRoot
 from toolang.runtime.invoke import invoke_prepared_agent
 from toolang.concepts.sandbox import HOST_SANDBOX
 
@@ -44,8 +44,9 @@ def invoke_command(
     ] = None,
 ) -> None:
     toolang_root = _toolang_root()
-    db_path = agents_db_path(toolang_root)
-    bus_db_path = bus_events_db_path(toolang_root)
+    root = ToolangRoot.resolve(toolang_root)
+    db_path = root.agents_db_path
+    bus_db_path = root.bus_events_db_path
     agent_ref = _resolve_cli_agent(agent, db_path=db_path)
     cap_scopes = _resolve_runtime_cap_scopes(
         agent_ref,
@@ -74,7 +75,7 @@ def sync_command(
     agent: Annotated[str, typer.Argument(help="Agent selector")],
 ) -> None:
     toolang_root = _toolang_root()
-    db_path = agents_db_path(toolang_root)
+    db_path = ToolangRoot.resolve(toolang_root).agents_db_path
     agent_ref = _resolve_cli_agent(agent, db_path=db_path)
     sync_agent(agent_ref)
     _remember_agent(agent_ref, db_path=db_path)

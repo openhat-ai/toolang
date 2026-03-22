@@ -6,8 +6,6 @@ import shutil
 from pathlib import Path
 from typing import Literal
 
-from toolang.errors import ToolangError
-from toolang.layout import cap_section_dir_name
 from toolang.concepts.caps import (
     CapContent,
     CapKind,
@@ -15,6 +13,9 @@ from toolang.concepts.caps import (
     CapSidecar,
     parse_cap_body,
 )
+from toolang.errors import ToolangError
+
+from ._paths import section_dir_name
 
 LANGUAGE_EXTENSIONS = {
     "json": ".json",
@@ -31,7 +32,7 @@ DECLARED_CAP_KINDS: tuple[Literal["service", "prompt", "psyche"], ...] = (
 def sync_declared_caps(root: Path, caps: list[CapContent]) -> None:
     root.mkdir(parents=True, exist_ok=True)
     for kind in (*DECLARED_CAP_KINDS, "skill"):
-        (root / cap_section_dir_name(kind)).mkdir(parents=True, exist_ok=True)
+        (root / section_dir_name(kind)).mkdir(parents=True, exist_ok=True)
 
     expected_by_kind: dict[CapKind, set[str]] = {kind: set() for kind in DECLARED_CAP_KINDS}
     for cap in caps:
@@ -66,7 +67,7 @@ def sync_declared_cap_materialization(
     rev: str | None = None,
 ) -> tuple[Path, Path]:
     root.mkdir(parents=True, exist_ok=True)
-    (root / cap_section_dir_name(kind)).mkdir(parents=True, exist_ok=True)
+    (root / section_dir_name(kind)).mkdir(parents=True, exist_ok=True)
     raw_path = declared_cap_path(root, kind, name, language)
     meta_path = declared_cap_meta_path(root, kind, name)
     parsed = parse_cap_body(kind, language, raw_text)
@@ -232,7 +233,7 @@ def remove_stale_declared_cap_materializations(
     kind: CapKind,
     expected_names: set[str],
 ) -> None:
-    kind_dir = root / cap_section_dir_name(kind)
+    kind_dir = root / section_dir_name(kind)
     kind_dir.mkdir(parents=True, exist_ok=True)
     for existing in kind_dir.iterdir():
         if existing.name.endswith(".meta.json"):
@@ -244,7 +245,7 @@ def remove_stale_declared_cap_materializations(
 
 
 def remove_stale_skill_materializations(root: Path, expected_names: set[str]) -> None:
-    kind_dir = root / cap_section_dir_name("skill")
+    kind_dir = root / section_dir_name("skill")
     kind_dir.mkdir(parents=True, exist_ok=True)
     expected_paths = {
         skill_cap_dir(root, name) for name in expected_names
@@ -258,19 +259,19 @@ def remove_stale_skill_materializations(root: Path, expected_names: set[str]) ->
 
 def declared_cap_path(root: Path, kind: CapKind, name: str, language: str | None) -> Path:
     extension = LANGUAGE_EXTENSIONS.get(language or "", f".{language}" if language else ".txt")
-    return root / cap_section_dir_name(kind) / f"{name}{extension}"
+    return root / section_dir_name(kind) / f"{name}{extension}"
 
 
 def declared_cap_meta_path(root: Path, kind: CapKind, name: str) -> Path:
-    return root / cap_section_dir_name(kind) / f"{name}.meta.json"
+    return root / section_dir_name(kind) / f"{name}.meta.json"
 
 
 def skill_cap_dir(root: Path, name: str) -> Path:
-    return root / cap_section_dir_name("skill") / name
+    return root / section_dir_name("skill") / name
 
 
 def skill_cap_meta_path(root: Path, name: str) -> Path:
-    return root / cap_section_dir_name("skill") / f"{name}.meta.json"
+    return root / section_dir_name("skill") / f"{name}.meta.json"
 
 
 def _language_from_path(path: Path) -> str | None:

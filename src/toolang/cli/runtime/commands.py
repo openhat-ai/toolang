@@ -4,7 +4,7 @@ from typing import Annotated
 
 import typer
 
-from toolang.layout import bus_events_db_path
+from toolang.concepts.layout import ToolangRoot
 
 from ..support import _cors_allow_origins, _toolang_root
 from .invoke import invoke_command, sync_command
@@ -55,7 +55,7 @@ def register_runtime_commands(app: typer.Typer) -> None:
         from toolang.bus.app import serve_bus_app
 
         serve_bus_app(
-            bus_events_db_path(toolang_root),
+            ToolangRoot.resolve(toolang_root).bus_events_db_path,
             host=host,
             port=port,
             cors_allow_origins=_cors_allow_origins(),

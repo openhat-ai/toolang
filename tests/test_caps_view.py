@@ -6,10 +6,28 @@ from typing import cast
 from toolang.agent.prepared import prepare_agent
 from toolang.agent.resolve import resolve_agent_ref
 from toolang.caps import CapScopeSelection, load_prepared_caps
-from toolang.layout import global_caps_dir
-from toolang.layout import resolve_toolang_root
-from toolang.layout import global_source_path, shared_caps_dir, shared_source_path
 from toolang.concepts.caps import CapKind, CapRef, ServiceFrontmatter
+from toolang.concepts.layout import AgentHome, ToolangRoot
+
+
+def resolve_toolang_root(root: Path) -> Path:
+    return ToolangRoot.resolve(root).path
+
+
+def global_caps_dir(root: Path, kind: CapKind) -> Path:
+    return ToolangRoot.resolve(root).global_caps_dir(kind)
+
+
+def global_source_path(root: Path) -> Path:
+    return ToolangRoot.resolve(root).global_source_path
+
+
+def shared_caps_dir(agent_home: Path, kind: CapKind) -> Path:
+    return AgentHome.resolve(agent_home).shared_caps_dir(kind)
+
+
+def shared_source_path(agent_home: Path) -> Path:
+    return AgentHome.resolve(agent_home).shared_source_path
 
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"
 REMOTE_SKILL_FIXTURE = Path(__file__).parent / "fixtures" / "remote-skill" / "pdf-processing"

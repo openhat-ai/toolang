@@ -17,7 +17,15 @@ from toolang.agent.registry import (
     upsert_known_agent,
     upsert_running_agent,
 )
-from toolang.layout import agents_db_path, resolve_toolang_root
+from toolang.concepts.layout import ToolangRoot
+
+
+def resolve_toolang_root(root: Path) -> Path:
+    return ToolangRoot.resolve(root).path
+
+
+def agents_db_path(root: Path) -> Path:
+    return ToolangRoot.resolve(root).agents_db_path
 
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"
 

@@ -12,7 +12,7 @@ from toolang.concepts.caps import (
     CapSidecar,
 )
 from toolang.concepts.identity import AgentRef
-from toolang.layout import agent_synced_caps_root, global_synced_caps_root, synced_caps_root
+from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.program import Program
 from toolang.program.ast import DeclBlock, ParamDecl, SourceSpan
 
@@ -189,10 +189,10 @@ def _skill_scope_layers(
 ) -> list[dict[str, SkillCapView]]:
     layers: list[dict[str, SkillCapView]] = []
     if cap_scopes.include_global:
-        layers.append(_load_skills(global_synced_caps_root(ref.root)))
+        layers.append(_load_skills(ToolangRoot.resolve(ref.root).global_synced_caps_root))
     if cap_scopes.include_shared:
-        layers.append(_load_skills(synced_caps_root(ref.home)))
-    layers.append(_load_skills(agent_synced_caps_root(ref.home, ref.name)))
+        layers.append(_load_skills(AgentHome.resolve(ref.home).synced_caps_root))
+    layers.append(_load_skills(AgentHome.resolve(ref.home).room(ref.name).synced_caps_root))
     return layers
 
 
@@ -204,8 +204,8 @@ def _cap_scope_layers(
 ) -> list[dict[str, CapSidecar]]:
     layers: list[dict[str, CapSidecar]] = []
     if cap_scopes.include_global:
-        layers.append(_load_cap_meta(global_synced_caps_root(ref.root), kind))
+        layers.append(_load_cap_meta(ToolangRoot.resolve(ref.root).global_synced_caps_root, kind))
     if cap_scopes.include_shared:
-        layers.append(_load_cap_meta(synced_caps_root(ref.home), kind))
-    layers.append(_load_cap_meta(agent_synced_caps_root(ref.home, ref.name), kind))
+        layers.append(_load_cap_meta(AgentHome.resolve(ref.home).synced_caps_root, kind))
+    layers.append(_load_cap_meta(AgentHome.resolve(ref.home).room(ref.name).synced_caps_root, kind))
     return layers

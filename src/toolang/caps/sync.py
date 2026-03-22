@@ -12,6 +12,7 @@ from typing import get_args
 
 from toolang.concepts.caps import CapKind
 from toolang.concepts.identity import AgentRef
+from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.concepts.persisted.program import SyncedProgram
 from toolang.concepts.persisted.sync_state import (
     InputFingerprint,
@@ -19,16 +20,6 @@ from toolang.concepts.persisted.sync_state import (
     SyncState,
 )
 from toolang.errors import ToolangError
-from toolang.layout import (
-    agent_source_path,
-    agent_sync_path,
-    cap_section_dir_name,
-    ensure_agent_home_layout,
-    global_source_path,
-    global_synced_caps_root,
-    shared_source_path,
-    synced_caps_root,
-)
 from toolang.program import Program, parse
 
 from .cleanup import (
@@ -43,6 +34,7 @@ from .materialize import (
     sync_scope_caps,
 )
 from .refs import load_local_entries_for_scope, resolve_cap_uses
+from ._paths import section_dir_name
 
 ALL_CAP_KINDS = get_args(CapKind)
 
@@ -52,20 +44,22 @@ def sync_agent(agent: AgentRef) -> SyncedProgram:
 
     _existing_source_path(agent)
 
-    source_paths = _home_source_paths(agent.home)
+    root = ToolangRoot.resolve(agent.root)
+    home = AgentHome.resolve(agent.home)
+    source_paths = _home_source_paths(home.path)
     programs = _parse_home_programs(source_paths)
     if agent.name not in programs:
         raise ToolangError(f"Agent source not found in agent home: {agent.name}.too")
 
     for agent_name in programs:
-        ensure_agent_home_layout(agent.home, agent_name)
+        home.ensure_layout(agent_name=agent_name)
 
     global_ref_entries = load_scope_refs(
-        global_source_path(agent.root),
+        root.global_source_path,
         scope_label="global agents.too",
     )
     shared_ref_entries = load_scope_refs(
-        shared_source_path(agent.home),
+        home.shared_source_path,
         scope_label="shared agents.too",
     )
     agent_ref_entries = {
@@ -88,12 +82,12 @@ def sync_agent(agent: AgentRef) -> SyncedProgram:
     shared_effective_entries = shared_ref_entries.overlay(shared_local_entries)
 
     sync_scope_caps(
-        global_synced_caps_root(agent.root),
+        root.global_synced_caps_root,
         global_effective_entries,
         scope_source_root=agent.root,
     )
     sync_scope_caps(
-        synced_caps_root(agent.home),
+        home.synced_caps_root,
         shared_effective_entries,
         scope_source_root=agent.home / ".toolang",
     )
@@ -101,8 +95,8 @@ def sync_agent(agent: AgentRef) -> SyncedProgram:
 
     inputs = _current_inputs(
         source_paths=source_paths,
-        shared_source=shared_source_path(agent.home),
-        global_source=global_source_path(agent.root),
+        shared_source=home.shared_source_path,
+        global_source=root.global_source_path,
         shared_local_root=agent.home / ".toolang",
         global_local_root=agent.root,
     )
@@ -114,17 +108,17 @@ def sync_agent(agent: AgentRef) -> SyncedProgram:
         global_entries=global_effective_entries,
         inputs=inputs,
     )
-    remove_stale_sync_root_entries(synced_caps_root(agent.home))
+    remove_stale_sync_root_entries(home.synced_caps_root)
     remove_legacy_lock_files(agent.home)
     remove_legacy_agent_programs(agent.home)
-    return SyncState.load(agent_sync_path(agent.home, agent.name)).program
+    return SyncState.load(home.sync_state_path(agent.name)).program
 
 
 def ensure_agent_synced(agent: AgentRef) -> SyncedProgram:
     """Return synced program state, refreshing it first when inputs changed."""
 
     if _is_sync_fresh(agent):
-        return SyncState.load(agent_sync_path(agent.home, agent.name)).program
+        return SyncState.load(AgentHome.resolve(agent.home).sync_state_path(agent.name)).program
     return sync_agent(agent)
 
 
@@ -183,8 +177,8 @@ def _current_inputs(
     if global_source.exists():
         inputs["global/agents.too"] = _fingerprint(global_source)
     for kind in ALL_CAP_KINDS:
-        inputs.update(_tree_fingerprints("shared", shared_local_root / cap_section_dir_name(kind)))
-        inputs.update(_tree_fingerprints("global", global_local_root / cap_section_dir_name(kind)))
+        inputs.update(_tree_fingerprints("shared", shared_local_root / section_dir_name(kind)))
+        inputs.update(_tree_fingerprints("global", global_local_root / section_dir_name(kind)))
     return inputs
 
 
@@ -200,15 +194,17 @@ def _tree_fingerprints(scope: str, root: Path) -> dict[str, InputFingerprint]:
 
 def _is_sync_fresh(agent: AgentRef) -> bool:
     source_path = agent.source
-    state_path = agent_sync_path(agent.home, agent.name)
-    shared_sync_root = synced_caps_root(agent.home)
+    home = AgentHome.resolve(agent.home)
+    root = ToolangRoot.resolve(agent.root)
+    state_path = home.sync_state_path(agent.name)
+    shared_sync_root = home.synced_caps_root
     if not source_path.exists() or not state_path.exists() or not shared_sync_root.exists():
         return False
 
     current_inputs = _current_inputs(
         source_paths=_home_source_paths(agent.home),
-        shared_source=shared_source_path(agent.home),
-        global_source=global_source_path(agent.root),
+        shared_source=home.shared_source_path,
+        global_source=root.global_source_path,
         shared_local_root=agent.home / ".toolang",
         global_local_root=agent.root,
     )
@@ -220,7 +216,7 @@ def _is_sync_fresh(agent: AgentRef) -> bool:
         states = _load_agent_states(agent.home, _home_agent_names(agent.home))
         programs = {agent_name: item.to_program() for agent_name, item in states.items()}
         if not has_expected_scope_caps(
-            global_synced_caps_root(agent.root),
+            root.global_synced_caps_root,
             _shared_scope_entries(states, "global_refs"),
         ):
             return False
@@ -240,8 +236,9 @@ def _home_agent_names(agent_home: Path) -> list[str]:
 
 def _load_agent_states(agent_home: Path, agent_names: list[str]) -> dict[str, SyncState]:
     states: dict[str, SyncState] = {}
+    home = AgentHome.resolve(agent_home)
     for agent_name in sorted(agent_names):
-        state_path = agent_sync_path(agent_home, agent_name)
+        state_path = home.sync_state_path(agent_name)
         if not state_path.exists():
             raise FileNotFoundError(f"Synced state is missing: {state_path}")
         states[agent_name] = SyncState.load(state_path)
@@ -257,19 +254,20 @@ def _sync_agent_states(
     global_entries: LockedAgentRefs,
     inputs: dict[str, InputFingerprint],
 ) -> None:
-    expected = {agent_sync_path(agent.home, agent_name) for agent_name in programs}
+    home = AgentHome.resolve(agent.home)
+    expected = {home.sync_state_path(agent_name) for agent_name in programs}
     for agent_name, program in sorted(programs.items()):
         SyncState(
             synced_at=datetime.now(timezone.utc),
-            source_file=agent_source_path(agent.home, agent_name).name,
+            source_file=home.source(agent_name).name,
             inputs=inputs,
             program=SyncedProgram.from_program(program),
             agent_refs=agent_ref_entries[agent_name],
             shared_refs=shared_entries,
             global_refs=global_entries,
-        ).save(agent_sync_path(agent.home, agent_name))
+        ).save(home.sync_state_path(agent_name))
 
-    for path in synced_caps_root(agent.home).glob("*.state.json"):
+    for path in home.synced_caps_root.glob("*.state.json"):
         if path not in expected:
             path.unlink()
 

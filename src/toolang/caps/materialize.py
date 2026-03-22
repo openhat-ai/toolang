@@ -6,10 +6,10 @@ import shutil
 from pathlib import Path
 from typing import Literal
 
-from toolang.layout import agent_synced_caps_root, cap_section_dir_name
-from toolang.program import Program
 from toolang.concepts.caps import CapContent, CapKind, CapRef, CapSidecar
+from toolang.concepts.layout import AgentHome
 from toolang.concepts.persisted.sync_state import LockEntry, LockedAgentRefs, SyncState
+from toolang.program import Program
 
 from .files import (
     declared_cap_meta_path,
@@ -24,6 +24,7 @@ from .files import (
     sync_skill_materialization,
 )
 from . import github
+from ._paths import section_dir_name
 
 DECLARED_CAP_KINDS: tuple[Literal["service", "prompt", "psyche"], ...] = (
     "service",
@@ -62,7 +63,7 @@ def sync_agent_caps(
     """Materialize per-agent synced caps for one agent home."""
 
     for agent_name, program in sorted(programs.items()):
-        sync_root = agent_synced_caps_root(agent_home, agent_name)
+        sync_root = AgentHome.resolve(agent_home).room(agent_name).synced_caps_root
         _sync_scope_skills(
             sync_root,
             refs_by_agent[agent_name].skills,
@@ -101,7 +102,7 @@ def has_expected_agent_scope_caps(
     """Return whether all per-agent synced caps already match expected state."""
 
     for agent_name, state in states.items():
-        sync_root = agent_synced_caps_root(agent_home, agent_name)
+        sync_root = AgentHome.resolve(agent_home).room(agent_name).synced_caps_root
         if not _has_expected_scope_skills(sync_root, state.agent_refs.skills):
             return False
         declared_caps = programs[agent_name].declared_caps()
@@ -152,7 +153,7 @@ def _has_expected_scope_skills(
     sync_root: Path,
     entries: dict[str, LockEntry],
 ) -> bool:
-    kind_dir = sync_root / cap_section_dir_name("skill")
+    kind_dir = sync_root / section_dir_name("skill")
     if not kind_dir.exists():
         return False
 
@@ -252,7 +253,7 @@ def _has_expected_scope_declared_caps(
     kind: CapKind,
     entries: dict[str, LockEntry],
 ) -> bool:
-    kind_dir = sync_root / cap_section_dir_name(kind)
+    kind_dir = sync_root / section_dir_name(kind)
     if not kind_dir.exists():
         return False
     expected_paths = {declared_cap_path(sync_root, kind, name, "md") for name in entries} | {
@@ -279,7 +280,7 @@ def _has_expected_agent_declared_caps(
     entries: dict[str, LockEntry],
     declared_caps: list[CapContent],
 ) -> bool:
-    kind_dir = sync_root / cap_section_dir_name(kind)
+    kind_dir = sync_root / section_dir_name(kind)
     if not kind_dir.exists():
         return False
 

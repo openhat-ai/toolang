@@ -14,16 +14,30 @@ from toolang.agent.prepared import prepare_agent
 from toolang.agent.resolve import resolve_agent_ref
 from toolang.agent.registry import get_running_agent
 from toolang.bus.db import BusStore
+from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.concepts.persisted.activation_state import ActivationState
 from toolang.concepts.persisted.prompt_trace import PromptTrace
-from toolang.layout import (
-    agent_run_path,
-    agent_run_prompt_path,
-    agents_db_path,
-    bus_events_db_path,
-    resolve_toolang_root,
-)
 from toolang.runtime.server import create_agent_app
+
+
+def resolve_toolang_root(root: Path) -> Path:
+    return ToolangRoot.resolve(root).path
+
+
+def agent_run_path(agent_home: Path, agent_name: str) -> Path:
+    return AgentHome.resolve(agent_home).room(agent_name).run_path
+
+
+def agent_run_prompt_path(agent_home: Path, agent_name: str, run_id: str) -> Path:
+    return AgentHome.resolve(agent_home).room(agent_name).prompt_trace_path(run_id)
+
+
+def agents_db_path(root: Path) -> Path:
+    return ToolangRoot.resolve(root).agents_db_path
+
+
+def bus_events_db_path(root: Path) -> Path:
+    return ToolangRoot.resolve(root).bus_events_db_path
 
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"
 

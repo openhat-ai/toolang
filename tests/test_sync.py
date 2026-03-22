@@ -6,21 +6,47 @@ from typing import cast
 
 from toolang.agent.resolve import resolve_agent_ref
 from toolang.caps import ensure_agent_synced, sync_agent
+from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.concepts.persisted.program import SyncedProgram
 from toolang.concepts.persisted.sync_state import SyncState
-from toolang.layout import (
-    agent_synced_caps_root,
-    agent_sync_path,
-    global_caps_dir,
-    global_source_path,
-    global_synced_caps_root,
-    resolve_toolang_root,
-    shared_caps_dir,
-    shared_source_path,
-    synced_caps_root,
-)
 from toolang.program import parse
 from toolang.concepts.caps import CapKind, CapRef, CapSidecar, ServiceFrontmatter
+
+
+def resolve_toolang_root(root: Path) -> Path:
+    return ToolangRoot.resolve(root).path
+
+
+def agent_synced_caps_root(agent_home: Path, agent_name: str) -> Path:
+    return AgentHome.resolve(agent_home).room(agent_name).synced_caps_root
+
+
+def agent_sync_path(agent_home: Path, agent_name: str) -> Path:
+    return AgentHome.resolve(agent_home).sync_state_path(agent_name)
+
+
+def global_caps_dir(root: Path, kind: CapKind) -> Path:
+    return ToolangRoot.resolve(root).global_caps_dir(kind)
+
+
+def global_source_path(root: Path) -> Path:
+    return ToolangRoot.resolve(root).global_source_path
+
+
+def global_synced_caps_root(root: Path) -> Path:
+    return ToolangRoot.resolve(root).global_synced_caps_root
+
+
+def shared_caps_dir(agent_home: Path, kind: CapKind) -> Path:
+    return AgentHome.resolve(agent_home).shared_caps_dir(kind)
+
+
+def shared_source_path(agent_home: Path) -> Path:
+    return AgentHome.resolve(agent_home).shared_source_path
+
+
+def synced_caps_root(agent_home: Path) -> Path:
+    return AgentHome.resolve(agent_home).synced_caps_root
 
 PARSE_FIXTURE = Path(__file__).parent / "fixtures" / "sample.too"
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"

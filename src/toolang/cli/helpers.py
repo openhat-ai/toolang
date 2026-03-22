@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 
 import typer
 
-from toolang.layout import agent_room, agent_source_path, agents_db_path
+from toolang.concepts.layout import AgentHome, ToolangRoot
 
 from .support import (
     _fish_init_script,
@@ -28,7 +28,7 @@ def register_helper_commands(app: typer.Typer) -> None:
         if agent is None:
             typer.echo(str(toolang_root))
             return
-        db_path = agents_db_path(toolang_root)
+        db_path = ToolangRoot.resolve(toolang_root).agents_db_path
         resolved = _resolve_cli_agent(agent, db_path=db_path)
         typer.echo(str(resolved.home))
 
@@ -41,9 +41,9 @@ def register_helper_commands(app: typer.Typer) -> None:
     def source(
         agent: Annotated[str, typer.Argument(help="Agent selector")],
     ) -> None:
-        db_path = agents_db_path(_toolang_root())
+        db_path = ToolangRoot.resolve(_toolang_root()).agents_db_path
         resolved = _resolve_cli_agent(agent, db_path=db_path)
-        typer.echo(str(agent_source_path(resolved.home, resolved.name)))
+        typer.echo(str(resolved.source))
 
     @app.command(
         hidden=True,
@@ -54,9 +54,9 @@ def register_helper_commands(app: typer.Typer) -> None:
     def room(
         agent: Annotated[str, typer.Argument(help="Agent selector")],
     ) -> None:
-        db_path = agents_db_path(_toolang_root())
+        db_path = ToolangRoot.resolve(_toolang_root()).agents_db_path
         resolved = _resolve_cli_agent(agent, db_path=db_path)
-        typer.echo(str(agent_room(resolved.home, resolved.name)))
+        typer.echo(str(AgentHome.resolve(resolved.home).room(resolved.name).path))
 
     @app.command(
         hidden=True,

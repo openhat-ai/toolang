@@ -40,9 +40,6 @@ Examples:
   - turn execution, prompt build, chat state, and serving
 - `toolang.caps`
   - cap sync, overlay, and scope-aware runtime views
-- `toolang.layout`
-  - canonical layout facade built on shared layout concepts
-
 Rules:
 
 - one module should own one main responsibility

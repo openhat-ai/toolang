@@ -12,12 +12,7 @@ from toolang.agent.prepared import prepare_agent
 from toolang.agent.registry import delete_running_agent, get_running_agent
 from toolang.errors import ToolangError
 from toolang.agent.api import agent_link_for_port
-from toolang.layout import (
-    agent_log_path,
-    agent_run_path,
-    agents_db_path,
-    bus_events_db_path,
-)
+from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.runtime.server import serve_agent
 from toolang.concepts.identity import AgentRef
 from toolang.concepts.sandbox import HOST_SANDBOX, SandboxSpec, SandboxState
@@ -61,8 +56,9 @@ def serve_command(
     ] = None,
 ) -> None:
     toolang_root = _toolang_root()
-    db_path = agents_db_path(toolang_root)
-    bus_db_path = bus_events_db_path(toolang_root)
+    root = ToolangRoot.resolve(toolang_root)
+    db_path = root.agents_db_path
+    bus_db_path = root.bus_events_db_path
     parsed_sandbox = _parse_sandbox_or_raise(sandbox)
     sandbox_spec = parsed_sandbox.spec
     if parsed_sandbox.kind != "host":
@@ -114,7 +110,7 @@ def start_command(
     ] = None,
 ) -> None:
     toolang_root = _toolang_root()
-    db_path = agents_db_path(toolang_root)
+    db_path = ToolangRoot.resolve(toolang_root).agents_db_path
     agent_ref = _resolve_cli_agent(agent, db_path=db_path)
     cap_scopes = _resolve_runtime_cap_scopes(
         agent_ref,
@@ -133,7 +129,7 @@ def start_command(
     selected_port = port if port is not None else _pick_free_port(host)
     endpoint = f"http://{host}:{selected_port}"
     agent_link = agent_link_for_port(selected_port)
-    log_path = agent_log_path(prepared.ref.home, prepared.ref.name)
+    log_path = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name).log_path
     log_path.parent.mkdir(parents=True, exist_ok=True)
     started = start_sandbox(
         spec=parsed_sandbox,
@@ -169,7 +165,7 @@ def stop_command(
     agent: Annotated[str, typer.Argument(help="Agent selector")],
 ) -> None:
     toolang_root = _toolang_root()
-    db_path = agents_db_path(toolang_root)
+    db_path = ToolangRoot.resolve(toolang_root).agents_db_path
     agent_ref = _resolve_cli_agent(agent, db_path=db_path)
     _drop_stale_running_agent(db_path, agent_ref)
 
@@ -218,7 +214,7 @@ def _drop_stale_running_agent(db_path: Path, agent: AgentRef) -> None:
     ):
         return
     delete_running_agent(db_path, agent.uri)
-    run_path = agent_run_path(agent.home, agent.name)
+    run_path = AgentHome.resolve(agent.home).room(agent.name).run_path
     if run_path.exists():
         now = datetime.now(timezone.utc)
         run_state = ActivationState.load(run_path)
