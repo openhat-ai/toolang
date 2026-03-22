@@ -53,7 +53,7 @@ def activate_running_agent(
     now = datetime.now(timezone.utc)
     upsert_known_agent(
         agents_db_path,
-        KnownAgentRecord.from_resolved_agent(prepared.ref, updated_at=now),
+        KnownAgentRecord.from_agent(prepared.ref, updated_at=now),
     )
     upsert_running_agent(
         agents_db_path,
@@ -77,7 +77,7 @@ def activate_running_agent(
             sandbox=sandbox_spec,
             endpoint=endpoint,
             agent_home=str(prepared.ref.home),
-            source_file=prepared.source_path.name,
+            source_file=prepared.ref.source.name,
         )
     )
     write_agent_run_state(
@@ -135,7 +135,7 @@ def deactivate_running_agent(
             detail="server stopped",
             endpoint=endpoint,
             agent_home=str(prepared.ref.home),
-            source_file=prepared.source_path.name,
+            source_file=prepared.ref.source.name,
         )
     )
     write_agent_run_state(
@@ -165,7 +165,7 @@ def write_agent_run_state(
         agent_id=prepared.ref.id[:SHORT_AGENT_ID_LENGTH],
         agent_name=prepared.ref.name,
         agent_home=str(prepared.ref.home),
-        source_file=prepared.source_path.name,
+        source_file=prepared.ref.source.name,
         pid=os.getpid(),
         status=status,
         endpoint=endpoint,

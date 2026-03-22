@@ -21,7 +21,7 @@ class KnownAgentRecord(BaseModel):
     updated_at: datetime
 
     @classmethod
-    def from_resolved_agent(
+    def from_agent(
         cls,
         agent: AgentRef,
         *,

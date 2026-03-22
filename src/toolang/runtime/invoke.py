@@ -296,7 +296,7 @@ def _prompt_trace(
         agent_uri=prepared.ref.uri,
         agent_id=prepared.ref.id,
         agent_name=prepared.ref.name,
-        source_file=str(prepared.source_path),
+        source_file=str(prepared.ref.source),
         working_directory=str(prepared.ref.home),
         thunk_name=thunk.name,
         origin=origin,

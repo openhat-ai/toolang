@@ -1,4 +1,5 @@
-from .db import ensure_agent_registry
+"""Local known-agent and running-agent registry."""
+
 from .models import (
     KnownAgentRecord,
     KnownAgentSnapshot,
@@ -26,7 +27,6 @@ __all__ = [
     "RunningAgentSnapshot",
     "delete_known_agent",
     "delete_running_agent",
-    "ensure_agent_registry",
     "find_known_agents_by_id_prefix",
     "find_known_agents_by_name",
     "get_running_agent",

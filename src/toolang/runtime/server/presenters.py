@@ -36,7 +36,7 @@ def fallback_agent_snapshot(
         endpoint=endpoint,
         sandbox=sandbox,
         agent_home=str(prepared.ref.home),
-        source_file=prepared.source_path.name,
+        source_file=prepared.ref.source.name,
         detail=None,
         created_at=now,
         updated_at=now,
