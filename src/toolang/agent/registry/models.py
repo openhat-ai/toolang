@@ -28,11 +28,11 @@ class KnownAgentRecord(BaseModel):
         updated_at: datetime,
     ) -> "KnownAgentRecord":
         return cls(
-            agent_uri=agent.agent_uri,
-            agent_id=agent.agent_id[:12],
-            agent_name=agent.agent_name,
-            agent_home=str(agent.agent_home),
-            source_file=agent.source_path.name,
+            agent_uri=agent.uri,
+            agent_id=agent.id[:12],
+            agent_name=agent.name,
+            agent_home=str(agent.home),
+            source_file=agent.source.name,
             updated_at=updated_at,
         )
 

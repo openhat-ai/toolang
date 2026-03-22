@@ -179,10 +179,10 @@ def _skill_scope_layers(
 ) -> list[dict[str, SkillCapView]]:
     layers: list[dict[str, SkillCapView]] = []
     if cap_scopes.include_global:
-        layers.append(_load_skills(global_synced_caps_root(ref.toolang_root)))
+        layers.append(_load_skills(global_synced_caps_root(ref.root)))
     if cap_scopes.include_shared:
-        layers.append(_load_skills(synced_caps_root(ref.agent_home)))
-    layers.append(_load_skills(agent_synced_caps_root(ref.agent_home, ref.agent_name)))
+        layers.append(_load_skills(synced_caps_root(ref.home)))
+    layers.append(_load_skills(agent_synced_caps_root(ref.home, ref.name)))
     return layers
 
 
@@ -194,8 +194,8 @@ def _inline_scope_layers(
 ) -> list[dict[str, CapSidecar]]:
     layers: list[dict[str, CapSidecar]] = []
     if cap_scopes.include_global:
-        layers.append(_load_inline_meta(global_synced_caps_root(ref.toolang_root), kind))
+        layers.append(_load_inline_meta(global_synced_caps_root(ref.root), kind))
     if cap_scopes.include_shared:
-        layers.append(_load_inline_meta(synced_caps_root(ref.agent_home), kind))
-    layers.append(_load_inline_meta(agent_synced_caps_root(ref.agent_home, ref.agent_name), kind))
+        layers.append(_load_inline_meta(synced_caps_root(ref.home), kind))
+    layers.append(_load_inline_meta(agent_synced_caps_root(ref.home, ref.name), kind))
     return layers

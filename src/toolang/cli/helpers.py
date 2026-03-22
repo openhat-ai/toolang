@@ -30,7 +30,7 @@ def register_helper_commands(app: typer.Typer) -> None:
             return
         db_path = agents_db_path(toolang_root)
         resolved = _resolve_cli_agent(agent, db_path=db_path)
-        typer.echo(str(resolved.agent_home))
+        typer.echo(str(resolved.home))
 
     @app.command(
         hidden=True,
@@ -43,7 +43,7 @@ def register_helper_commands(app: typer.Typer) -> None:
     ) -> None:
         db_path = agents_db_path(_toolang_root())
         resolved = _resolve_cli_agent(agent, db_path=db_path)
-        typer.echo(str(agent_source_path(resolved.agent_home, resolved.agent_name)))
+        typer.echo(str(agent_source_path(resolved.home, resolved.name)))
 
     @app.command(
         hidden=True,
@@ -56,7 +56,7 @@ def register_helper_commands(app: typer.Typer) -> None:
     ) -> None:
         db_path = agents_db_path(_toolang_root())
         resolved = _resolve_cli_agent(agent, db_path=db_path)
-        typer.echo(str(agent_room(resolved.agent_home, resolved.agent_name)))
+        typer.echo(str(agent_room(resolved.home, resolved.name)))
 
     @app.command(
         hidden=True,

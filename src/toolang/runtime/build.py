@@ -198,12 +198,12 @@ def build_prompt_error_trace_data(
         "message_context": _message_context(message) if message is not None else None,
         "runtime_context": {
             "agent": {
-                "uri": prepared.ref.agent_uri,
-                "id": prepared.ref.agent_id,
-                "name": prepared.ref.agent_name,
-                "kind": prepared.ref.agent_kind,
+                "uri": prepared.ref.uri,
+                "id": prepared.ref.id,
+                "name": prepared.ref.name,
+                "kind": prepared.ref.kind,
             },
-            "working_directory": str(prepared.ref.agent_home),
+            "working_directory": str(prepared.ref.home),
             "sandbox": sandbox,
             "cap_scopes": list(prepared.cap_scopes.labels()),
             "origin": origin,
@@ -226,12 +226,12 @@ def _build_runtime_context(
     caps = load_prepared_caps(prepared).model_dump(mode="python")
     return {
         "agent": {
-            "uri": prepared.ref.agent_uri,
-            "id": prepared.ref.agent_id,
-            "name": prepared.ref.agent_name,
-            "kind": prepared.ref.agent_kind,
+            "uri": prepared.ref.uri,
+            "id": prepared.ref.id,
+            "name": prepared.ref.name,
+            "kind": prepared.ref.kind,
         },
-        "working_directory": str(prepared.ref.agent_home),
+        "working_directory": str(prepared.ref.home),
         "sandbox": sandbox,
         "cap_scopes": list(prepared.cap_scopes.labels()),
         "origin": origin,

@@ -252,13 +252,13 @@ def _resolve_cap_scope_target(
     if agent is not None:
         resolved = _resolve_cli_agent(agent, db_path=agents_db_path(toolang_root))
         if scope == "shared":
-            source_path = shared_source_path(resolved.agent_home)
+            source_path = shared_source_path(resolved.home)
         else:
-            source_path = agent_source_path(resolved.agent_home, resolved.agent_name)
+            source_path = agent_source_path(resolved.home, resolved.name)
         return CapSourceTarget(
             toolang_root=toolang_root,
-            agent_home=resolved.agent_home,
-            agent_name=resolved.agent_name,
+            agent_home=resolved.home,
+            agent_name=resolved.name,
             source_path=source_path,
         )
 
@@ -305,10 +305,10 @@ def _resolve_cap_local_target(
 
     if agent is not None:
         resolved = _resolve_cli_agent(agent, db_path=agents_db_path(toolang_root))
-        kind_dir = shared_caps_dir(resolved.agent_home, kind)
+        kind_dir = shared_caps_dir(resolved.home, kind)
         return CapLocalTarget(
             toolang_root=toolang_root,
-            agent_home=resolved.agent_home,
+            agent_home=resolved.home,
             kind=kind,
             kind_dir=kind_dir,
             cap_path=local_cap_path(kind_dir, kind, name),

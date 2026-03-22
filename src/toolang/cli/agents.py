@@ -34,7 +34,7 @@ def register_agent_commands(app: typer.Typer) -> None:
         toolang_root = _toolang_root()
         db_path = agents_db_path(toolang_root)
         agent_ref = _resolve_resident_target(target)
-        create_resident_agent(agent_ref.source_path, agent_name=agent_ref.agent_name)
+        create_resident_agent(agent_ref.source, agent_name=agent_ref.name)
         _remember_agent(agent_ref, db_path=db_path)
         _append_agent_updated(
             toolang_root,
@@ -42,7 +42,7 @@ def register_agent_commands(app: typer.Typer) -> None:
             update_kind="create",
             detail="agent created",
         )
-        typer.echo(str(agent_ref.source_path))
+        typer.echo(str(agent_ref.source))
 
     @app.command("clone", help="Clone an existing agent.", no_args_is_help=True)
     def agent_clone(
@@ -57,7 +57,7 @@ def register_agent_commands(app: typer.Typer) -> None:
         source_ref = _resolve_cli_agent(source, db_path=db_path)
         target_ref = _resolve_resident_target(target)
         clone_resident_agent(
-            target_ref.source_path,
+            target_ref.source,
             source_text=_load_clone_source_text(source_ref),
         )
         _remember_agent(target_ref, db_path=db_path)
@@ -65,9 +65,9 @@ def register_agent_commands(app: typer.Typer) -> None:
             toolang_root,
             target_ref,
             update_kind="clone",
-            detail=f"cloned from {source_ref.agent_uri}",
+            detail=f"cloned from {source_ref.uri}",
         )
-        typer.echo(str(target_ref.source_path))
+        typer.echo(str(target_ref.source))
 
     @app.command("remove", help="Remove an agent and its local state.", no_args_is_help=True)
     def agent_remove(
@@ -76,19 +76,19 @@ def register_agent_commands(app: typer.Typer) -> None:
         toolang_root = _toolang_root()
         db_path = agents_db_path(toolang_root)
         agent_ref = _resolve_cli_agent(agent, db_path=db_path)
-        if agent_ref.agent_kind != "resident":
+        if agent_ref.kind != "resident":
             raise ToolangError("toolang remove only supports managed agents.")
 
         _drop_stale_running_agent(db_path, agent_ref)
-        if get_running_agent(db_path, agent_ref.agent_uri) is not None:
+        if get_running_agent(db_path, agent_ref.uri) is not None:
             raise ToolangError(
-                f"Agent {agent_ref.agent_uri} is currently running. Stop it before removal."
+                f"Agent {agent_ref.uri} is currently running. Stop it before removal."
             )
 
-        removed_files = remove_resident_agent(agent_ref.agent_home, agent_name=agent_ref.agent_name)
-        removed_registry = delete_known_agent(db_path, agent_ref.agent_uri)
+        removed_files = remove_resident_agent(agent_ref.home, agent_name=agent_ref.name)
+        removed_registry = delete_known_agent(db_path, agent_ref.uri)
         if not removed_files and not removed_registry:
-            raise ToolangError(f"Resident agent not found: {agent_ref.source_path}")
+            raise ToolangError(f"Resident agent not found: {agent_ref.source}")
 
         _append_agent_updated(
             toolang_root,
@@ -96,7 +96,7 @@ def register_agent_commands(app: typer.Typer) -> None:
             update_kind="remove",
             detail="agent removed",
         )
-        typer.echo(str(agent_ref.source_path))
+        typer.echo(str(agent_ref.source))
 
     @app.command("list", help="List known agents and their current status.")
     def list_agents() -> None:

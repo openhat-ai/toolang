@@ -19,14 +19,14 @@ GuestResolver = Callable[[str], str]
 
 
 def resolve_agent_ref(
-    raw: AgentSelector,
+    selector: AgentSelector,
     *,
     cwd: Path,
     toolang_root: Path,
     guest_resolver: GuestResolver | None = None,
 ) -> AgentRef:
     """Resolve one agent selector into a canonical local runtime reference."""
-    text = raw.strip()
+    text = selector.strip()
     if not text:
         raise ToolangError("Agent reference may not be empty.")
 
@@ -94,14 +94,14 @@ def _resolve_agent_uri(parsed: SplitResult, *, toolang_root: Path) -> AgentRef:
     home = resident_agent_home(toolang_root, home_name)
     agent_uri = f"agent://{home_name}/{filename}"
     return AgentRef(
-        raw=agent_uri,
-        agent_kind="resident",
-        agent_uri=agent_uri,
-        agent_id=agent_id(agent_uri),
-        toolang_root=toolang_root,
-        agent_home=home,
-        agent_name=agent_name,
-        source_path=agent_source_path(home, agent_name),
+        selector=agent_uri,
+        kind="resident",
+        uri=agent_uri,
+        id=agent_id(agent_uri),
+        root=toolang_root,
+        home=home,
+        name=agent_name,
+        source=agent_source_path(home, agent_name),
     )
 
 
@@ -122,14 +122,14 @@ def _resolve_https(text: str, *, toolang_root: Path) -> AgentRef:
     home_name = agent_home_name(agent_uri, agent_name=agent_name, kind="visiting")
     home = visiting_agent_home(toolang_root, home_name)
     return AgentRef(
-        raw=text,
-        agent_kind="visiting",
-        agent_uri=agent_uri,
-        agent_id=agent_id(agent_uri),
-        toolang_root=toolang_root,
-        agent_home=home,
-        agent_name=agent_name,
-        source_path=home / filename,
+        selector=text,
+        kind="visiting",
+        uri=agent_uri,
+        id=agent_id(agent_uri),
+        root=toolang_root,
+        home=home,
+        name=agent_name,
+        source=home / filename,
     )
 
 
@@ -158,26 +158,26 @@ def _resolve_absolute_local_path(
             agent_uri = f"agent://{home_name}/{filename}"
             home = resident_agent_home(toolang_root, home_name)
             return AgentRef(
-                raw=raw,
-                agent_kind="resident",
-                agent_uri=agent_uri,
-                agent_id=agent_id(agent_uri),
-                toolang_root=toolang_root,
-                agent_home=home,
-                agent_name=agent_name,
-                source_path=path,
+                selector=raw,
+                kind="resident",
+                uri=agent_uri,
+                id=agent_id(agent_uri),
+                root=toolang_root,
+                home=home,
+                name=agent_name,
+                source=path,
             )
 
     agent_uri = path.as_uri()
     return AgentRef(
-        raw=raw,
-        agent_kind="roaming",
-        agent_uri=agent_uri,
-        agent_id=agent_id(agent_uri),
-        toolang_root=toolang_root,
-        agent_home=path.parent,
-        agent_name=path.stem,
-        source_path=path,
+        selector=raw,
+        kind="roaming",
+        uri=agent_uri,
+        id=agent_id(agent_uri),
+        root=toolang_root,
+        home=path.parent,
+        name=path.stem,
+        source=path,
     )
 
 
@@ -196,14 +196,14 @@ def _resolve_resident_shorthand(text: str, *, toolang_root: Path) -> AgentRef:
     agent_uri = f"agent://{home_name}/{filename}"
     home = resident_agent_home(toolang_root, home_name)
     return AgentRef(
-        raw=text,
-        agent_kind="resident",
-        agent_uri=agent_uri,
-        agent_id=agent_id(agent_uri),
-        toolang_root=toolang_root,
-        agent_home=home,
-        agent_name=agent_name,
-        source_path=agent_source_path(home, agent_name),
+        selector=text,
+        kind="resident",
+        uri=agent_uri,
+        id=agent_id(agent_uri),
+        root=toolang_root,
+        home=home,
+        name=agent_name,
+        source=agent_source_path(home, agent_name),
     )
 
 

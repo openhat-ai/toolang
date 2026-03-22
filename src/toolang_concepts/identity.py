@@ -15,11 +15,11 @@ AgentUri: TypeAlias = str
 class AgentRef:
     """A canonical agent identity paired with local placement details."""
 
-    raw: AgentSelector
-    agent_kind: AgentKind
-    agent_uri: AgentUri
-    agent_id: str
-    toolang_root: Path
-    agent_home: Path
-    agent_name: str
-    source_path: Path
+    selector: AgentSelector
+    kind: AgentKind
+    uri: AgentUri
+    id: str
+    root: Path
+    home: Path
+    name: str
+    source: Path

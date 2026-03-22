@@ -82,9 +82,9 @@ def _resolve_runtime_cap_scopes(
 
 
 def _default_runtime_cap_scopes(agent: AgentRef) -> CapScopeSelection:
-    if agent.agent_kind == "resident":
+    if agent.kind == "resident":
         return CapScopeSelection(include_shared=True, include_global=True)
-    if agent.agent_kind == "roaming":
+    if agent.kind == "roaming":
         return CapScopeSelection(include_shared=True, include_global=False)
     return CapScopeSelection(include_shared=False, include_global=False)
 
@@ -97,7 +97,7 @@ def _resolve_resident_target(raw: str) -> AgentRef:
         toolang_root=toolang_root,
         guest_resolver=_guest_resolver(),
     )
-    if agent_ref.agent_kind != "resident":
+    if agent_ref.kind != "resident":
         raise ToolangError(
             "Resident agent targets must use resident shorthand or an agent:// URI."
         )
@@ -105,15 +105,15 @@ def _resolve_resident_target(raw: str) -> AgentRef:
 
 
 def _load_clone_source_text(agent: AgentRef) -> str:
-    if agent.source_path.exists():
-        return agent.source_path.read_text(encoding="utf-8")
+    if agent.source.exists():
+        return agent.source.read_text(encoding="utf-8")
 
-    if agent.agent_kind == "visiting":
-        response = httpx.get(agent.agent_uri, follow_redirects=True, timeout=10.0)
+    if agent.kind == "visiting":
+        response = httpx.get(agent.uri, follow_redirects=True, timeout=10.0)
         response.raise_for_status()
         return response.text
 
-    raise ToolangError(f"Agent source file not found: {agent.source_path}")
+    raise ToolangError(f"Agent source file not found: {agent.source}")
 
 
 def _append_agent_updated(
@@ -127,13 +127,13 @@ def _append_agent_updated(
     bus.append(
         AgentUpdated(
             at=utc_now(),
-            agent_uri=agent.agent_uri,
-            agent_id=agent.agent_id[:12],
-            name=agent.agent_name,
+            agent_uri=agent.uri,
+            agent_id=agent.id[:12],
+            name=agent.name,
             update_kind=update_kind,
             detail=detail,
-            agent_home=str(agent.agent_home),
-            source_file=agent.source_path.name,
+            agent_home=str(agent.home),
+            source_file=agent.source.name,
         )
     )
     bus.close()
