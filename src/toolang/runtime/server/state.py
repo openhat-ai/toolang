@@ -15,16 +15,11 @@ from toolang.agent.registry import (
 )
 from toolang.bus.db import BusStore
 from toolang.bus.events import AgentStarted, AgentStopped, utc_now
+from toolang.concepts.sandbox import SandboxSpec, SandboxState
 from toolang.errors import ToolangError
 from toolang.layout import agent_run_path
-from toolang.sandbox import (
-    docker_container_name,
-    normalize_sandbox_spec,
-    parse_sandbox_spec,
-    sandbox_process_alive,
-)
 from toolang.concepts.persisted.activation_state import ActivationState
-from toolang.concepts.sandbox import SandboxRuntimeInfo, SandboxState
+from toolang.sandbox import sandbox_alive
 
 SHORT_AGENT_ID_LENGTH = 12
 
@@ -38,14 +33,17 @@ def activate_running_agent(
     sandbox: str,
 ) -> None:
     current_pid = os.getpid()
-    sandbox_spec = normalize_sandbox_spec(sandbox)
+    parsed_sandbox = SandboxSpec.parse(sandbox)
+    sandbox_spec = parsed_sandbox.spec
     existing = get_running_agent(agents_db_path, prepared.ref.uri)
     if existing is not None:
-        alive = sandbox_process_alive(
-            sandbox_spec=existing.sandbox,
-            pid=existing.pid,
-            agent_name=prepared.ref.name,
-            agent_id=prepared.ref.id[:SHORT_AGENT_ID_LENGTH],
+        alive = sandbox_alive(
+            SandboxState.for_spec(
+                SandboxSpec.parse(existing.sandbox),
+                agent_name=prepared.ref.name,
+                agent_id=prepared.ref.id[:SHORT_AGENT_ID_LENGTH],
+                pid=existing.pid,
+            )
         )
         if alive and existing.pid != current_pid:
             raise ToolangError(f"Agent is already being served: {prepared.ref.uri}")
@@ -126,7 +124,7 @@ def deactivate_running_agent(
     now = datetime.now(timezone.utc)
     started_at = current.started_at if current is not None else now
     delete_running_agent(agents_db_path, prepared.ref.uri)
-    sandbox_spec = normalize_sandbox_spec(sandbox)
+    sandbox_spec = SandboxSpec.parse(sandbox).spec
     bus.append(
         AgentStopped(
             at=utc_now(),
@@ -159,8 +157,7 @@ def write_agent_run_state(
     heartbeat_at: datetime,
     sandbox: str,
 ) -> None:
-    sandbox_spec = normalize_sandbox_spec(sandbox)
-    parsed_sandbox = parse_sandbox_spec(sandbox_spec)
+    parsed_sandbox = SandboxSpec.parse(sandbox)
     run_path = agent_run_path(prepared.ref.home, prepared.ref.name)
     run_path.parent.mkdir(parents=True, exist_ok=True)
     ActivationState(
@@ -174,18 +171,12 @@ def write_agent_run_state(
         endpoint=endpoint,
         started_at=started_at,
         heartbeat_at=heartbeat_at,
-        sandbox=SandboxState(
-            type=parsed_sandbox.kind,
-            container_name=(
-                docker_container_name(
-                    prepared.ref.name,
-                    prepared.ref.id[:SHORT_AGENT_ID_LENGTH],
-                )
-                if parsed_sandbox.kind == "docker"
-                else None
-            ),
-            image_name=parsed_sandbox.image,
-            run=SandboxRuntimeInfo(pid=os.getpid(), port=port_from_endpoint(endpoint)),
+        sandbox=SandboxState.for_spec(
+            parsed_sandbox,
+            agent_name=prepared.ref.name,
+            agent_id=prepared.ref.id[:SHORT_AGENT_ID_LENGTH],
+            pid=os.getpid(),
+            port=port_from_endpoint(endpoint),
         ),
     ).save(run_path)
 

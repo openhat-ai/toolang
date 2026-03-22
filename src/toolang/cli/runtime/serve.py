@@ -1,11 +1,6 @@
 from __future__ import annotations
 
-import os
-import shlex
 import socket
-import signal
-import subprocess
-import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,36 +8,21 @@ from typing import Annotated
 
 import typer
 
-from toolang.agent.prepared import PreparedAgent, prepare_agent
+from toolang.agent.prepared import prepare_agent
 from toolang.agent.registry import delete_running_agent, get_running_agent
 from toolang.errors import ToolangError
 from toolang.http import agent_link_for_port
 from toolang.layout import (
     agent_log_path,
-    agent_room_sandbox_dir,
     agent_run_path,
     agents_db_path,
     bus_events_db_path,
-    sandbox_args_path,
-    sandbox_exec_path,
-    sandbox_host,
 )
 from toolang.runtime.server import serve_agent
-from toolang.sandbox import (
-    HOST_SANDBOX,
-    docker_container_name,
-    docker_remove_container,
-    docker_run_detached,
-    forwarded_sandbox_env_names,
-    normalize_sandbox_spec,
-    parse_sandbox_spec,
-    sandbox_key,
-    sandbox_process_alive,
-    write_sandbox_args_file,
-    write_sandbox_exec_file,
-)
 from toolang.concepts.identity import AgentRef
+from toolang.concepts.sandbox import HOST_SANDBOX, SandboxSpec, SandboxState
 from toolang.concepts.persisted.activation_state import ActivationState
+from toolang.sandbox import sandbox_alive, start_sandbox, stop_sandbox
 
 from ..support import (
     _cors_allow_origins,
@@ -83,8 +63,8 @@ def serve_command(
     toolang_root = _toolang_root()
     db_path = agents_db_path(toolang_root)
     bus_db_path = bus_events_db_path(toolang_root)
-    sandbox_spec = normalize_sandbox_spec(sandbox)
-    parsed_sandbox = _parse_sandbox_or_raise(sandbox_spec)
+    parsed_sandbox = _parse_sandbox_or_raise(sandbox)
+    sandbox_spec = parsed_sandbox.spec
     if parsed_sandbox.kind != "host":
         raise ToolangError("toolang serve only supports host sandbox; use start for docker.")
     agent_ref = _resolve_cli_agent(agent, db_path=db_path)
@@ -149,34 +129,31 @@ def start_command(
     if active is not None:
         raise ToolangError(f"Agent is already being served: {prepared.ref.uri}")
 
-    sandbox_spec = normalize_sandbox_spec(sandbox)
-    parsed_sandbox = _parse_sandbox_or_raise(sandbox_spec)
+    parsed_sandbox = _parse_sandbox_or_raise(sandbox)
     selected_port = port if port is not None else _pick_free_port(host)
     endpoint = f"http://{host}:{selected_port}"
     agent_link = agent_link_for_port(selected_port)
     log_path = agent_log_path(prepared.ref.home, prepared.ref.name)
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    started = start_sandbox(
+        spec=parsed_sandbox,
+        prepared=prepared,
+        toolang_root=toolang_root,
+        host=host,
+        port=selected_port,
+        endpoint=endpoint,
+        log_path=log_path,
+    )
     if parsed_sandbox.kind == "docker":
-        _start_docker_agent(
-            prepared=prepared,
-            host=host,
-            port=selected_port,
-            sandbox_image=parsed_sandbox.image or "",
-            endpoint=endpoint,
-        )
         _wait_for_running_agent_sandbox(
             db_path=db_path,
             agent=prepared.ref,
-            sandbox_spec=sandbox_spec,
+            sandbox_state=started.state,
             endpoint=endpoint,
         )
     else:
         process = _start_host_agent(
-            prepared=prepared,
-            host=host,
-            port=selected_port,
-            sandbox_spec=sandbox_spec,
-            log_path=log_path,
+            started=started,
         )
         _wait_for_running_agent_process(
             db_path=db_path,
@@ -201,10 +178,13 @@ def stop_command(
         raise ToolangError(f"Agent is not running: {agent_ref.uri}")
 
     _stop_running_agent_process(
-        sandbox_spec=active.sandbox,
+        sandbox_state=SandboxState.for_spec(
+            SandboxSpec.parse(active.sandbox),
+            agent_name=agent_ref.name,
+            agent_id=agent_ref.id[:12],
+            pid=active.pid,
+        ),
         pid=active.pid,
-        agent_name=agent_ref.name,
-        agent_id=agent_ref.id[:12],
     )
     _wait_for_running_agent_stop(db_path=db_path, agent=agent_ref)
     typer.echo(f"stopped {agent_ref.id[:12]}")
@@ -218,34 +198,23 @@ def _pick_free_port(host: str) -> int:
 
 def _stop_running_agent_process(
     *,
-    sandbox_spec: str,
+    sandbox_state: SandboxState,
     pid: int | None,
-    agent_name: str,
-    agent_id: str,
 ) -> None:
-    parsed = _parse_sandbox_or_raise(sandbox_spec)
-    if parsed.kind == "docker":
-        docker_remove_container(docker_container_name(agent_name, agent_id))
-        return
-    if pid is None or pid <= 0:
-        raise ToolangError("Running agent has no valid process id.")
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
-    except PermissionError as exc:
-        raise ToolangError(f"Failed to stop agent process {pid}: {exc}") from exc
+    stop_sandbox(sandbox_state, pid=pid)
 
 
 def _drop_stale_running_agent(db_path: Path, agent: AgentRef) -> None:
     existing = get_running_agent(db_path, agent.uri)
     if existing is None:
         return
-    if sandbox_process_alive(
-        sandbox_spec=existing.sandbox,
-        pid=existing.pid,
-        agent_name=agent.name,
-        agent_id=agent.id[:12],
+    if sandbox_alive(
+        SandboxState.for_spec(
+            SandboxSpec.parse(existing.sandbox),
+            agent_name=agent.name,
+            agent_id=agent.id[:12],
+            pid=existing.pid,
+        )
     ):
         return
     delete_running_agent(db_path, agent.uri)
@@ -274,7 +243,7 @@ def _wait_for_running_agent_process(
     *,
     db_path: Path,
     agent: AgentRef,
-    process: subprocess.Popen,
+    process,
     endpoint: str,
     log_path: Path,
 ) -> None:
@@ -295,7 +264,7 @@ def _wait_for_running_agent_sandbox(
     *,
     db_path: Path,
     agent: AgentRef,
-    sandbox_spec: str,
+    sandbox_state: SandboxState,
     endpoint: str,
 ) -> None:
     deadline = time.monotonic() + 5.0
@@ -303,13 +272,8 @@ def _wait_for_running_agent_sandbox(
         active = get_running_agent(db_path, agent.uri)
         if active is not None:
             return
-        if not sandbox_process_alive(
-            sandbox_spec=sandbox_spec,
-            pid=None,
-            agent_name=agent.name,
-            agent_id=agent.id[:12],
-        ):
-            container_name = docker_container_name(agent.name, agent.id[:12])
+        if not sandbox_alive(sandbox_state):
+            container_name = sandbox_state.container_name or "<unknown>"
             raise ToolangError(
                 f"Sandboxed agent exited before startup completed: {container_name}"
             )
@@ -319,142 +283,13 @@ def _wait_for_running_agent_sandbox(
 
 def _start_host_agent(
     *,
-    prepared: PreparedAgent,
-    host: str,
-    port: int,
-    sandbox_spec: str,
-    log_path: Path,
-) -> subprocess.Popen:
-    command = [
-        sys.executable,
-        "-c",
-        "from toolang.cli import main; raise SystemExit(main())",
-        "serve",
-        prepared.ref.uri,
-        "--host",
-        host,
-        "--port",
-        str(port),
-        "--sandbox",
-        sandbox_spec,
-        "--shared" if prepared.cap_scopes.include_shared else "--no-shared",
-        "--global" if prepared.cap_scopes.include_global else "--no-global",
-    ]
-    with log_path.open("ab") as log_file:
-        return subprocess.Popen(
-            command,
-            cwd=str(prepared.ref.home),
-            env=os.environ.copy(),
-            stdin=subprocess.DEVNULL,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-
-
-def _start_docker_agent(
-    *,
-    prepared: PreparedAgent,
-    host: str,
-    port: int,
-    sandbox_image: str,
-    endpoint: str,
-) -> None:
-    if not sandbox_image:
-        raise ToolangError("docker sandbox must include an image")
-    toolang_root = _toolang_root()
-    key = sandbox_key(prepared.ref.name, prepared.ref.id[:12])
-    stage_dir = sandbox_host(toolang_root, key)
-    stage_dir.mkdir(parents=True, exist_ok=True)
-    args_path = sandbox_args_path(toolang_root, key)
-    exec_path = sandbox_exec_path(toolang_root, key)
-    room_sandbox_dir = agent_room_sandbox_dir(prepared.ref.home, prepared.ref.name)
-    room_sandbox_dir.mkdir(parents=True, exist_ok=True)
-    log_path = agent_log_path(prepared.ref.home, prepared.ref.name)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-
-    write_sandbox_args_file(
-        args_path,
-        {
-            "version": 1,
-            "agent_uri": prepared.ref.uri,
-            "agent_id": prepared.ref.id[:12],
-            "host": host,
-            "port": port,
-            "endpoint": endpoint,
-            "sandbox": {
-                "type": "docker",
-                "container_name": docker_container_name(
-                    prepared.ref.name,
-                    prepared.ref.id[:12],
-                ),
-                "image_name": sandbox_image,
-            },
-        },
-    )
-    write_sandbox_exec_file(
-        exec_path,
-        shell_command=(
-            "exec "
-            + shlex.join(
-                [
-                    "toolang",
-                    "serve",
-                    prepared.ref.uri,
-                    "--host",
-                    "0.0.0.0",
-                    "--public-host",
-                    host,
-                    "--port",
-                    str(port),
-                    "--sandbox",
-                    f"docker:{sandbox_image}",
-                    "--shared" if prepared.cap_scopes.include_shared else "--no-shared",
-                    "--global" if prepared.cap_scopes.include_global else "--no-global",
-                ]
-            )
-            + f" >> {shlex.quote(str(log_path))} 2>&1"
-        ),
-    )
-
-    container_name = docker_container_name(prepared.ref.name, prepared.ref.id[:12])
-    docker_remove_container(container_name)
-
-    mounts = [(toolang_root, toolang_root)]
-    if not _path_is_within(prepared.ref.home, toolang_root):
-        mounts.append((prepared.ref.home, prepared.ref.home))
-    mounts.append((stage_dir, room_sandbox_dir))
-
-    env_names = [
-        name for name in forwarded_sandbox_env_names(os.environ) if name != "TOOLANG_ROOT"
-    ]
-    env_values = {"TOOLANG_ROOT": str(toolang_root)}
-    try:
-        docker_run_detached(
-            image=sandbox_image,
-            container_name=container_name,
-            workdir=prepared.ref.home,
-            command=["/bin/sh", "-lc", str(room_sandbox_dir / "exec.sh")],
-            mounts=mounts,
-            published_host=host,
-            published_port=port,
-            env_names=env_names,
-            env_values=env_values,
-        )
-    except RuntimeError as exc:
-        raise ToolangError(f"Could not start docker sandbox: {exc}") from exc
-
-
-def _path_is_within(path: Path, parent: Path) -> bool:
-    try:
-        path.resolve().relative_to(parent.resolve())
-    except ValueError:
-        return False
-    return True
+    started,
+):
+    return started.process
 
 
 def _parse_sandbox_or_raise(spec: str):
     try:
-        return parse_sandbox_spec(spec)
+        return SandboxSpec.parse(spec)
     except ValueError as exc:
         raise ToolangError(str(exc)) from exc

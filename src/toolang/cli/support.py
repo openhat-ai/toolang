@@ -32,8 +32,8 @@ from toolang.layout import (
 from toolang.concepts.identity import AgentRef
 from toolang.concepts.persisted._toml import load_toml
 from toolang.concepts.persisted.activation_state import ActivationState
-from toolang.concepts.sandbox import HOST_SANDBOX
-from toolang.sandbox import sandbox_process_alive
+from toolang.concepts.sandbox import HOST_SANDBOX, SandboxSpec, SandboxState
+from toolang.sandbox import sandbox_alive
 
 
 def _toolang_root() -> Path:
@@ -227,11 +227,13 @@ def _fresh_known_agents(db_path: Path) -> list[KnownAgentSnapshot]:
         snapshot
         for snapshot in snapshots
         if snapshot.running_status is not None
-        and not sandbox_process_alive(
-            sandbox_spec=snapshot.sandbox or HOST_SANDBOX,
-            pid=snapshot.pid,
-            agent_name=snapshot.agent_name,
-            agent_id=snapshot.agent_id,
+        and not sandbox_alive(
+            SandboxState.for_spec(
+                SandboxSpec.parse(snapshot.sandbox or HOST_SANDBOX),
+                agent_name=snapshot.agent_name,
+                agent_id=snapshot.agent_id,
+                pid=snapshot.pid,
+            )
         )
     ]
     if not stale_snapshots:

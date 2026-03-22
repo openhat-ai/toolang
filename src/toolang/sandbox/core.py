@@ -1,72 +1,260 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
+import signal
+import subprocess
+import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping
 
-from toolang.concepts.sandbox import HOST_SANDBOX, SandboxSpec
+from toolang.agent.prepared import PreparedAgent
+from toolang.concepts.sandbox import SandboxSpec, SandboxState
+from toolang.errors import ToolangError
+from toolang.layout import (
+    agent_room_sandbox_dir,
+    sandbox_args_path,
+    sandbox_exec_path,
+    sandbox_host,
+)
 
-from .docker import docker_container_name, docker_container_running
-
-
-def normalize_sandbox_spec(value: str | None, *, fallback: str = HOST_SANDBOX) -> str:
-    raw = (value or fallback).strip()
-    if not raw or raw == "none":
-        return HOST_SANDBOX
-    return raw
-
-
-def parse_sandbox_spec(value: str | None, *, fallback: str = HOST_SANDBOX) -> SandboxSpec:
-    spec = normalize_sandbox_spec(value, fallback=fallback)
-    if spec == HOST_SANDBOX:
-        return SandboxSpec(kind="host")
-    if not spec.startswith("docker:"):
-        raise ValueError("unsupported sandbox value; use 'host' or 'docker:<image>'")
-    image = spec.split(":", 1)[1].strip()
-    if not image:
-        raise ValueError("docker sandbox must include an image")
-    return SandboxSpec(kind="docker", image=image)
+from .docker import docker_container_running, docker_remove_container, docker_run_detached
 
 
-def sandbox_key(agent_name: str, agent_id: str) -> str:
+@dataclass(frozen=True, slots=True)
+class StartedSandbox:
+    """Result of starting one sandboxed agent runtime."""
+
+    state: SandboxState
+    process: subprocess.Popen | None = None
+
+
+def sandbox_alive(state: SandboxState) -> bool:
+    """Return whether one sandbox runtime still appears to be alive."""
+
+    if state.type == "docker":
+        if not state.container_name:
+            return False
+        return docker_container_running(state.container_name)
+    return _host_pid_exists(state.run.pid if state.run is not None else None)
+
+
+def stop_sandbox(state: SandboxState, *, pid: int | None = None) -> None:
+    """Stop one running sandbox."""
+
+    if state.type == "docker":
+        if state.container_name:
+            docker_remove_container(state.container_name)
+        return
+
+    target_pid = pid if pid is not None else (state.run.pid if state.run is not None else None)
+    if target_pid is None or target_pid <= 0:
+        raise ToolangError("Running agent has no valid process id.")
+    try:
+        os.kill(target_pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    except PermissionError as exc:
+        raise ToolangError(f"Failed to stop agent process {target_pid}: {exc}") from exc
+
+
+def start_sandbox(
+    *,
+    spec: SandboxSpec,
+    prepared: PreparedAgent,
+    toolang_root: Path,
+    host: str,
+    port: int,
+    endpoint: str,
+    log_path: Path,
+) -> StartedSandbox:
+    """Start one sandboxed long-lived agent runtime."""
+
+    if spec.kind == "docker":
+        state = _start_docker_sandbox(
+            spec=spec,
+            prepared=prepared,
+            toolang_root=toolang_root,
+            host=host,
+            port=port,
+            endpoint=endpoint,
+            log_path=log_path,
+        )
+        return StartedSandbox(state=state, process=None)
+
+    process = _start_host_sandbox(
+        spec=spec,
+        prepared=prepared,
+        host=host,
+        port=port,
+        log_path=log_path,
+    )
+    return StartedSandbox(
+        state=SandboxState.for_spec(
+            spec,
+            agent_name=prepared.ref.name,
+            agent_id=prepared.ref.id,
+            pid=process.pid,
+            port=port,
+        ),
+        process=process,
+    )
+
+
+def _start_host_sandbox(
+    *,
+    spec: SandboxSpec,
+    prepared: PreparedAgent,
+    host: str,
+    port: int,
+    log_path: Path,
+) -> subprocess.Popen:
+    command = [
+        sys.executable,
+        "-c",
+        "from toolang.cli import main; raise SystemExit(main())",
+        "serve",
+        prepared.ref.uri,
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--sandbox",
+        spec.spec,
+        "--shared" if prepared.cap_scopes.include_shared else "--no-shared",
+        "--global" if prepared.cap_scopes.include_global else "--no-global",
+    ]
+    with log_path.open("ab") as log_file:
+        return subprocess.Popen(
+            command,
+            cwd=str(prepared.ref.home),
+            env=os.environ.copy(),
+            stdin=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+
+def _start_docker_sandbox(
+    *,
+    spec: SandboxSpec,
+    prepared: PreparedAgent,
+    toolang_root: Path,
+    host: str,
+    port: int,
+    endpoint: str,
+    log_path: Path,
+) -> SandboxState:
+    if not spec.image:
+        raise ToolangError("docker sandbox must include an image")
+    key = _sandbox_key(prepared.ref.name, prepared.ref.id)
+    stage_dir = sandbox_host(toolang_root, key)
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    args_path = sandbox_args_path(toolang_root, key)
+    exec_path = sandbox_exec_path(toolang_root, key)
+    room_sandbox_dir = agent_room_sandbox_dir(prepared.ref.home, prepared.ref.name)
+    room_sandbox_dir.mkdir(parents=True, exist_ok=True)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    state = SandboxState.for_spec(
+        spec,
+        agent_name=prepared.ref.name,
+        agent_id=prepared.ref.id,
+        port=port,
+    )
+    _write_sandbox_args_file(
+        args_path,
+        {
+            "version": 1,
+            "agent_uri": prepared.ref.uri,
+            "agent_id": prepared.ref.id[:12],
+            "host": host,
+            "port": port,
+            "endpoint": endpoint,
+            "sandbox": {
+                "type": state.type,
+                "container_name": state.container_name,
+                "image_name": state.image_name,
+            },
+        },
+    )
+    _write_sandbox_exec_file(
+        exec_path,
+        shell_command=(
+            "exec "
+            + shlex.join(
+                [
+                    "toolang",
+                    "serve",
+                    prepared.ref.uri,
+                    "--host",
+                    "0.0.0.0",
+                    "--public-host",
+                    host,
+                    "--port",
+                    str(port),
+                    "--sandbox",
+                    spec.spec,
+                    "--shared" if prepared.cap_scopes.include_shared else "--no-shared",
+                    "--global" if prepared.cap_scopes.include_global else "--no-global",
+                ]
+            )
+            + f" >> {shlex.quote(str(log_path))} 2>&1"
+        ),
+    )
+
+    if state.container_name:
+        docker_remove_container(state.container_name)
+
+    mounts = [(toolang_root, toolang_root)]
+    if not _path_is_within(prepared.ref.home, toolang_root):
+        mounts.append((prepared.ref.home, prepared.ref.home))
+    mounts.append((stage_dir, room_sandbox_dir))
+
+    env_names = [
+        name for name in _forwarded_sandbox_env_names(os.environ) if name != "TOOLANG_ROOT"
+    ]
+    env_values = {"TOOLANG_ROOT": str(toolang_root)}
+    try:
+        docker_run_detached(
+            image=spec.image,
+            container_name=state.container_name or "",
+            workdir=prepared.ref.home,
+            command=["/bin/sh", "-lc", str(room_sandbox_dir / "exec.sh")],
+            mounts=mounts,
+            published_host=host,
+            published_port=port,
+            env_names=env_names,
+            env_values=env_values,
+        )
+    except RuntimeError as exc:
+        raise ToolangError(f"Could not start docker sandbox: {exc}") from exc
+    return state
+
+
+def _sandbox_key(agent_name: str, agent_id: str) -> str:
     return f"{agent_name}-{agent_id[:12]}"
 
 
-def host_pid_exists(pid: int | None) -> bool:
+def _host_pid_exists(pid: int | None) -> bool:
     if pid is None or pid <= 0:
         return False
     try:
-        import os
-
         os.kill(pid, 0)
     except OSError:
         return False
     return True
 
 
-def sandbox_process_alive(
-    *,
-    sandbox_spec: str,
-    pid: int | None,
-    agent_name: str,
-    agent_id: str,
-) -> bool:
-    try:
-        parsed = parse_sandbox_spec(sandbox_spec)
-    except ValueError:
-        return host_pid_exists(pid)
-    if parsed.kind == "docker":
-        return docker_container_running(docker_container_name(agent_name, agent_id))
-    return host_pid_exists(pid)
-
-
-def write_sandbox_args_file(path: Path, payload: Mapping[str, object]) -> None:
+def _write_sandbox_args_file(path: Path, payload: Mapping[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(dict(payload), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def write_sandbox_exec_file(
+def _write_sandbox_exec_file(
     path: Path,
     *,
     command: Iterable[str] | None = None,
@@ -82,7 +270,7 @@ def write_sandbox_exec_file(
     path.chmod(0o755)
 
 
-def forwarded_sandbox_env_names(environment: Mapping[str, str]) -> list[str]:
+def _forwarded_sandbox_env_names(environment: Mapping[str, str]) -> list[str]:
     names: set[str] = set()
     for name in environment:
         if name.startswith("TOOLANG_"):
@@ -106,3 +294,11 @@ def forwarded_sandbox_env_names(environment: Mapping[str, str]) -> list[str]:
         }:
             names.add(name)
     return sorted(names)
+
+
+def _path_is_within(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+    except ValueError:
+        return False
+    return True
