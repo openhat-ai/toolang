@@ -38,10 +38,8 @@ Examples:
   - agent identity, resolution, preparation, and registry
 - `toolang.runtime`
   - turn execution, prompt build, chat state, and serving
-- `toolang.sync`
-  - sync orchestration and materialization
 - `toolang.caps`
-  - cap overlay and scope-aware runtime views
+  - cap sync, overlay, and scope-aware runtime views
 - `toolang.layout`
   - canonical path and layout helpers
 

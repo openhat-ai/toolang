@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import cast
 
 from toolang.agent.refs import resolve_agent_ref
+from toolang.caps import ensure_agent_synced, sync_agent
 from toolang.concepts.persisted.program import SyncedProgram
 from toolang.concepts.persisted.sync_state import SyncState
 from toolang.layout import (
@@ -18,7 +19,6 @@ from toolang.layout import (
     shared_source_path,
     synced_caps_root,
 )
-from toolang.sync import ensure_agent_synced, sync_agent
 from toolang.program import parse
 from toolang.concepts.caps import CapKind, CapRef, CapSidecar, ServiceFrontmatter
 

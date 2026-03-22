@@ -1,7 +1,7 @@
-"""Sync orchestration.
+"""Capability sync orchestration.
 
-This module owns the public sync entry points that parse source files, resolve
-refs, materialize sync artifacts, and persist synced program state.
+This module owns the public source-to-sync flow that resolves cap refs,
+materializes synced artifacts, and persists one agent's synced program state.
 """
 
 from __future__ import annotations
@@ -10,15 +10,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import get_args
 
-from toolang.caps.materialize import (
-    has_expected_agent_scope_caps,
-    has_expected_scope_caps,
-    sync_agent_caps,
-    sync_scope_caps,
-)
-from toolang.caps.refs import (
-    load_local_entries_for_scope,
-    resolve_cap_uses,
+from toolang.concepts.caps import CapKind
+from toolang.concepts.identity import AgentRef
+from toolang.concepts.persisted.program import SyncedProgram
+from toolang.concepts.persisted.sync_state import (
+    InputFingerprint,
+    LockedAgentRefs,
+    SyncState,
 )
 from toolang.errors import ToolangError
 from toolang.layout import (
@@ -32,26 +30,26 @@ from toolang.layout import (
     synced_caps_root,
 )
 from toolang.program import Program, parse
-from toolang.concepts.caps import CapKind
-from toolang.concepts.identity import AgentRef
-from toolang.concepts.persisted.program import SyncedProgram
-from toolang.concepts.persisted.sync_state import (
-    InputFingerprint,
-    LockedAgentRefs,
-    SyncState,
-)
 
 from .cleanup import (
     remove_legacy_agent_programs,
     remove_legacy_lock_files,
     remove_stale_sync_root_entries,
 )
+from .materialize import (
+    has_expected_agent_scope_caps,
+    has_expected_scope_caps,
+    sync_agent_caps,
+    sync_scope_caps,
+)
+from .refs import load_local_entries_for_scope, resolve_cap_uses
 
 ALL_CAP_KINDS = get_args(CapKind)
 
 
 def sync_agent(agent: AgentRef) -> SyncedProgram:
     """Parse, resolve, materialize, and persist synced state for one agent."""
+
     _existing_source_path(agent)
 
     source_paths = _home_source_paths(agent.home)
@@ -124,9 +122,20 @@ def sync_agent(agent: AgentRef) -> SyncedProgram:
 
 def ensure_agent_synced(agent: AgentRef) -> SyncedProgram:
     """Return synced program state, refreshing it first when inputs changed."""
+
     if _is_sync_fresh(agent):
         return SyncState.load(agent_sync_path(agent.home, agent.name)).program
     return sync_agent(agent)
+
+
+def load_scope_refs(path: Path, *, scope_label: str) -> LockedAgentRefs:
+    if not path.exists():
+        return LockedAgentRefs()
+
+    program = parse(path.read_text(encoding="utf-8"))
+    if program.declarations or program.thunks:
+        raise ToolangError(f"{scope_label} may only contain 'use ...' statements.")
+    return resolve_cap_uses(program.uses, scope_label=scope_label)
 
 
 def _existing_source_path(agent: AgentRef) -> Path:
@@ -149,16 +158,6 @@ def _home_source_paths(agent_home: Path) -> list[Path]:
     if not paths:
         raise ToolangError(f"No .too source files found in agent home: {agent_home}")
     return paths
-
-
-def load_scope_refs(path: Path, *, scope_label: str) -> LockedAgentRefs:
-    if not path.exists():
-        return LockedAgentRefs()
-
-    program = parse(path.read_text(encoding="utf-8"))
-    if program.declarations or program.thunks:
-        raise ToolangError(f"{scope_label} may only contain 'use ...' statements.")
-    return resolve_cap_uses(program.uses, scope_label=scope_label)
 
 
 def _parse_home_programs(source_paths: list[Path]) -> dict[str, Program]:

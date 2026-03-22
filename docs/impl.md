@@ -55,12 +55,10 @@ Current internal packages:
   - parsing and syntax analysis
 - `toolang.agent`
   - agent resolution, homes, preparation, and registry
-- `toolang.sync`
-  - sync orchestration and materialization
 - `toolang.runtime`
   - prompt build, invoke, chat, and server runtime
 - `toolang.caps`
-  - cap refs, source ops, front matter, materialization, and runtime cap views
+  - cap refs, sync orchestration, materialization, and runtime cap views
 - `toolang.concepts`
   - shared identity, execution, sandbox, cap, and persisted-state constructs
 - `toolang.bus`
