@@ -7,18 +7,15 @@ from .contracts import (
     HookRequest,
     PluginHealth,
 )
-from .hooks import HookMatch, decode_hook_delivery, find_hook_binding
-from .load import create_channel_plugin, load_channel_plugin_factory
+from .hooks import decode_hook_delivery
+from .load import create_channel_plugin
 
 __all__ = [
     "ChannelPlugin",
     "ChannelState",
     "DeliveryResult",
-    "HookMatch",
     "HookRequest",
     "PluginHealth",
     "create_channel_plugin",
     "decode_hook_delivery",
-    "find_hook_binding",
-    "load_channel_plugin_factory",
 ]
