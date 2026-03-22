@@ -17,6 +17,7 @@ from toolang.bus.db import BusStore
 from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.concepts.persisted.activation_state import ActivationState
 from toolang.concepts.persisted.prompt_trace import PromptTrace
+from toolang.runtime.execution_store import ExecutionStore
 from toolang.runtime.server import create_agent_app
 
 
@@ -30,6 +31,10 @@ def agent_run_path(agent_home: Path, agent_name: str) -> Path:
 
 def agent_run_prompt_path(agent_home: Path, agent_name: str, run_id: str) -> Path:
     return AgentHome.resolve(agent_home).room(agent_name).prompt_trace_path(run_id)
+
+
+def agent_execution_db_path(agent_home: Path, agent_name: str) -> Path:
+    return AgentHome.resolve(agent_home).room(agent_name).execution_db_path
 
 
 def agents_db_path(root: Path) -> Path:
@@ -56,6 +61,7 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
     db_path = agents_db_path(root)
     events_path = bus_events_db_path(root)
     run_path = agent_run_path(home, "alice")
+    execution_db_path = agent_execution_db_path(home, "alice")
 
     def fake_execute(build) -> str:
         thunk_name = build.runtime_context["program"]["thunk"]["name"] or "default"
@@ -227,8 +233,21 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
             "run_finished",
         ]
 
+        execution = ExecutionStore(execution_db_path)
+        activations = execution.list_activations(agent_uri=agent.uri)
+        turns = execution.list_turns(activation_id=activations[0].activation_id)
+        execution.close()
+        assert len(activations) == 1
+        assert activations[0].activation_kind == "runtime"
+        assert activations[0].status == "running"
+        assert {turn.turn_id for turn in turns} >= {first_run_id, run_response.json()["run_id"]}
+
     assert get_running_agent(db_path, agent.uri) is None
     assert ActivationState.load(run_path).status == "stopped"
+    execution = ExecutionStore(execution_db_path)
+    activations = execution.list_activations(agent_uri=agent.uri)
+    execution.close()
+    assert activations[0].status == "stopped"
     store = BusStore(events_path)
     events = store.list_events(agent_uri=agent.uri)
     store.close()
