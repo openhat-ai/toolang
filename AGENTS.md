@@ -71,10 +71,14 @@
 - `toolang.program` owns `.too` parsing, authored source semantics, and source
   editing.
 - `toolang.agent` owns agent selector resolution, managed local-agent
-  operations, prepared runtime inputs, and the local agent registry.
+  operations, API helpers, prepared runtime inputs, and the local agent
+  registry.
 - `toolang.caps` owns cap refs, sync/materialization, local cap files, and
   runtime cap views. It should consume normalized program and concept objects
   rather than reinterpret raw `.too` syntax.
+- `toolang.layout` is a stable facade over `toolang.concepts.layout`. Put
+  durable layout behavior on layout concepts such as the Toolang root, agent
+  home, and agent room; keep top-level wrapper functions thin.
 - `toolang.sandbox` owns sandbox lifecycle helpers. Sandbox concepts and
   persisted sandbox state live in `toolang.concepts.sandbox`.
 - Stable shared constructs live in `toolang.concepts` so runtime, caps, and

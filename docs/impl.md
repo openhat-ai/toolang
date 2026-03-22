@@ -54,13 +54,15 @@ Current internal packages:
 - `toolang.program`
   - parsing and syntax analysis
 - `toolang.agent`
-  - agent resolution, managed local-agent operations, preparation, and registry
+  - agent resolution, API helpers, managed local-agent operations, preparation,
+    and registry
 - `toolang.runtime`
   - prompt build, invoke, chat, and server runtime
 - `toolang.caps`
   - cap refs, sync orchestration, materialization, and runtime cap views
 - `toolang.concepts`
-  - shared identity, execution, sandbox, cap, and persisted-state constructs
+  - shared identity, execution, layout, sandbox, cap, and persisted-state
+    constructs
 - `toolang.bus`
   - shared bus projection and bus API
 - `toolang.sandbox`
@@ -68,7 +70,7 @@ Current internal packages:
 - `toolang.cli`
   - CLI surfaces and command registration
 - `toolang.layout`
-  - canonical path and layout helpers
+  - canonical layout facade built on shared layout concepts
 
 Reason:
 

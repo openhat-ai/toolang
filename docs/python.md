@@ -41,7 +41,7 @@ Examples:
 - `toolang.caps`
   - cap sync, overlay, and scope-aware runtime views
 - `toolang.layout`
-  - canonical path and layout helpers
+  - canonical layout facade built on shared layout concepts
 
 Rules:
 

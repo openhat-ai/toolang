@@ -11,7 +11,7 @@ import typer
 from toolang.agent.prepared import prepare_agent
 from toolang.agent.registry import delete_running_agent, get_running_agent
 from toolang.errors import ToolangError
-from toolang.http import agent_link_for_port
+from toolang.agent.api import agent_link_for_port
 from toolang.layout import (
     agent_log_path,
     agent_run_path,

@@ -11,7 +11,7 @@ from toolang.agent.managed import (
 )
 from toolang.agent.registry import delete_known_agent, get_running_agent
 from toolang.errors import ToolangError
-from toolang.http import agent_link_from_endpoint
+from toolang.agent.api import agent_link_from_endpoint
 from toolang.layout import agents_db_path
 
 from .runtime.serve import _drop_stale_running_agent

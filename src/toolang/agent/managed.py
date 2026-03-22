@@ -7,7 +7,7 @@ from pathlib import Path
 
 from toolang.errors import ToolangError
 from toolang.concepts.identity import AgentRef
-from toolang.layout import agent_room, agent_sync_path
+from toolang.concepts.layout import AgentHome
 
 
 def create_managed_agent(agent: AgentRef) -> None:
@@ -34,23 +34,24 @@ def remove_managed_agent(agent: AgentRef) -> bool:
     """Remove one managed agent source file and local runtime state."""
 
     changed = False
+    home = AgentHome.resolve(agent.home)
+    room = home.room(agent.name)
 
     if agent.source.exists():
         agent.source.unlink()
         changed = True
 
-    state_path = agent_sync_path(agent.home, agent.name)
+    state_path = home.sync_state_path(agent.name)
     if state_path.exists():
         state_path.unlink()
         changed = True
 
-    room_path = agent_room(agent.home, agent.name)
-    if room_path.exists():
-        shutil.rmtree(room_path)
+    if room.path.exists():
+        shutil.rmtree(room.path)
         changed = True
 
-    _prune_empty_tree(agent.home / ".toolang")
-    _prune_empty_tree(agent.home)
+    _prune_empty_tree(home.shared_caps_root)
+    _prune_empty_tree(home.path)
     return changed
 
 

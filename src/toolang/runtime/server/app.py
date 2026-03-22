@@ -18,7 +18,7 @@ from toolang.bus.events import utc_now
 from toolang.caps import load_prepared_caps
 from toolang.concepts.sandbox import SandboxSpec
 from toolang.errors import ToolangError
-from toolang.http import add_cors
+from toolang.agent.api import add_cors
 from toolang.layout import agent_chats_db_path
 
 from ..api_models import (
