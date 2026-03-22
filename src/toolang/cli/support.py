@@ -8,7 +8,7 @@ from typing import Literal, Sequence
 
 import httpx
 
-from toolang.agent.refs import AgentRef, resolve_agent_ref
+from toolang.agent.refs import resolve_agent_ref
 from toolang.agent.registry import (
     KnownAgentRecord,
     KnownAgentSnapshot,
@@ -22,8 +22,6 @@ from toolang.bus.db import BusStore
 from toolang.bus.events import AgentUpdated, utc_now
 from toolang.caps import CapScopeSelection
 from toolang.errors import ToolangError
-from toolang.files._toml import load_toml
-from toolang.files.agent_run import ActivationState
 from toolang.layout import (
     agent_run_path,
     agents_db_path,
@@ -31,7 +29,11 @@ from toolang.layout import (
     ensure_toolang_root_layout,
     resolve_toolang_root,
 )
-from toolang.sandbox import HOST_SANDBOX, sandbox_process_alive
+from toolang_concepts.identity import AgentRef
+from toolang_concepts.persisted._toml import load_toml
+from toolang_concepts.persisted.activation_state import ActivationState
+from toolang_concepts.sandbox import HOST_SANDBOX
+from toolang.sandbox import sandbox_process_alive
 
 
 def _toolang_root() -> Path:

@@ -14,10 +14,8 @@ from typing import Annotated
 import typer
 
 from toolang.agent.prepared import PreparedAgent, prepare_agent
-from toolang.agent.refs import AgentRef
 from toolang.agent.registry import delete_running_agent, get_running_agent
 from toolang.errors import ToolangError
-from toolang.files.agent_run import ActivationState
 from toolang.http import agent_link_for_port
 from toolang.layout import (
     agent_log_path,
@@ -43,6 +41,8 @@ from toolang.sandbox import (
     write_sandbox_args_file,
     write_sandbox_exec_file,
 )
+from toolang_concepts.identity import AgentRef
+from toolang_concepts.persisted.activation_state import ActivationState
 
 from ..support import (
     _cors_allow_origins,

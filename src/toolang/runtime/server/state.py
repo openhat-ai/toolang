@@ -16,7 +16,6 @@ from toolang.agent.registry import (
 from toolang.bus.db import BusStore
 from toolang.bus.events import AgentStarted, AgentStopped, utc_now
 from toolang.errors import ToolangError
-from toolang.files.agent_run import ActivationState, SandboxRuntimeInfo, SandboxState
 from toolang.layout import agent_run_path
 from toolang.sandbox import (
     docker_container_name,
@@ -24,6 +23,8 @@ from toolang.sandbox import (
     parse_sandbox_spec,
     sandbox_process_alive,
 )
+from toolang_concepts.persisted.activation_state import ActivationState
+from toolang_concepts.sandbox import SandboxRuntimeInfo, SandboxState
 
 SHORT_AGENT_ID_LENGTH = 12
 

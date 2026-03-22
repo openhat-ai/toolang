@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 
 from toolang_caps.frontmatter import parse_cap_body
-from toolang_caps.models import (
+from toolang_concepts.caps import (
     CAP_KINDS,
     CapContent,
     CapParam,

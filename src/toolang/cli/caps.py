@@ -17,7 +17,7 @@ from toolang.layout import (
     shared_source_path,
 )
 from toolang_caps.github import fetch_github_artifact, resolve_github_cap_ref
-from toolang_caps.models import CapKind
+from toolang_concepts.caps import CapKind
 from toolang_caps.source_ops import (
     add_cap_ref,
     create_local_cap,

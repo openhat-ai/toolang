@@ -3,7 +3,6 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from toolang.files.sync_state import LockEntry
 from toolang_caps.files import (
     remove_stale_skill_materializations,
     skill_cap_dir,
@@ -11,7 +10,8 @@ from toolang_caps.files import (
     sync_local_skill_materialization,
     sync_skill_materialization,
 )
-from toolang_caps.models import CapRef, CapSidecar, section_name
+from toolang_concepts.caps import CapRef, CapSidecar, section_name
+from toolang_concepts.persisted.sync_state import LockEntry
 
 from .. import remote
 

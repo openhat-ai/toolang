@@ -6,35 +6,20 @@ home placement, and local source paths.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
-from typing import Callable, Literal
+from typing import Callable
 from urllib.parse import SplitResult, urlsplit
 
 from toolang.errors import ToolangError
 from toolang.layout import agent_source_path, resident_agent_home, visiting_agent_home
+from toolang_concepts.identity import AgentKind, AgentRef, AgentSelector, AgentUri
 
-AgentKind = Literal["resident", "roaming", "visiting"]
 GuestResolver = Callable[[str], str]
 
 
-@dataclass(frozen=True, slots=True)
-class AgentRef:
-    """A resolved agent selector with canonical identity and local placement."""
-
-    raw: str
-    agent_kind: AgentKind
-    agent_uri: str
-    agent_id: str
-    toolang_root: Path
-    agent_home: Path
-    agent_name: str
-    source_path: Path
-
-
 def resolve_agent_ref(
-    raw: str,
+    raw: AgentSelector,
     *,
     cwd: Path,
     toolang_root: Path,
@@ -69,7 +54,7 @@ def resolve_agent_ref(
     return _resolve_resident_shorthand(text, toolang_root=toolang_root)
 
 
-def agent_home_name(agent_uri: str, *, agent_name: str, kind: AgentKind) -> str:
+def agent_home_name(agent_uri: AgentUri, *, agent_name: str, kind: AgentKind) -> str:
     """Return the local home directory name used for one canonical agent URI."""
     if kind == "resident":
         parsed = urlsplit(agent_uri)
@@ -79,7 +64,7 @@ def agent_home_name(agent_uri: str, *, agent_name: str, kind: AgentKind) -> str:
     return f"{agent_name}-{agent_id(agent_uri)[:12]}"
 
 
-def agent_id(agent_uri: str) -> str:
+def agent_id(agent_uri: AgentUri) -> str:
     """Return the stable short-hash basis for one canonical agent URI."""
     return sha256(agent_uri.encode("utf-8")).hexdigest()
 

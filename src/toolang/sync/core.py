@@ -9,10 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from toolang.agent.refs import AgentRef
 from toolang.errors import ToolangError
-from toolang.files.program import SyncedProgram
-from toolang.files.sync_state import InputFingerprint, LockedAgentRefs, SyncState
 from toolang.layout import (
     agent_source_path,
     agent_sync_path,
@@ -23,7 +20,14 @@ from toolang.layout import (
     synced_caps_root,
 )
 from toolang.syntax import Program, analyze_program, parse_program
-from toolang_caps.models import CAP_KINDS, section_name
+from toolang_concepts.caps import CAP_KINDS, section_name
+from toolang_concepts.identity import AgentRef
+from toolang_concepts.persisted.program import SyncedProgram
+from toolang_concepts.persisted.sync_state import (
+    InputFingerprint,
+    LockedAgentRefs,
+    SyncState,
+)
 
 from .materialize import (
     has_expected_agent_scope_caps,

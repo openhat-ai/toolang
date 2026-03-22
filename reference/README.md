@@ -36,3 +36,9 @@ Configuration for the generation step lives in:
 Generated output is written to:
 
 - `reference/generated/html/`
+
+The generated site currently covers:
+
+- `toolang`
+- `toolang_concepts`
+- `toolang_caps`

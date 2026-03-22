@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 
 from toolang.errors import ToolangError
-from toolang_caps.models import CapKind, CapRef
+from toolang_concepts.caps import CapKind, CapRef
 
 CAP_REPO_CANDIDATES: dict[CapKind, tuple[tuple[str, str, str | None], ...]] = {
     "skill": (

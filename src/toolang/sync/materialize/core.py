@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from toolang.files.sync_state import LockedAgentRefs, SyncState
 from toolang.layout import agent_synced_caps_root
 from toolang.syntax import Program
-from toolang_caps.models import TEXT_CAP_KINDS, InlineCapKind
+from toolang_concepts.caps import TEXT_CAP_KINDS, InlineCapKind
+from toolang_concepts.persisted.sync_state import LockedAgentRefs, SyncState
 
 from ..refs import agent_inline_caps, entries_for_kind
 from .skills import has_expected_scope_skills, sync_scope_skills

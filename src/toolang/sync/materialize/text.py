@@ -3,7 +3,6 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from toolang.files.sync_state import LockEntry
 from toolang_caps.files import (
     inline_cap_meta_path,
     inline_cap_path,
@@ -11,13 +10,14 @@ from toolang_caps.files import (
     sync_file_cap_materialization,
     sync_text_cap_materialization,
 )
-from toolang_caps.models import (
+from toolang_concepts.caps import (
     CapContent,
     CapRef,
     CapSidecar,
     InlineCapKind,
     section_name,
 )
+from toolang_concepts.persisted.sync_state import LockEntry
 
 from .. import remote
 

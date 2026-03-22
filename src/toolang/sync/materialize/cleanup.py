@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from toolang_caps.models import TEXT_CAP_KINDS, section_name
+from toolang_concepts.caps import TEXT_CAP_KINDS, section_name
 
 
 def remove_stale_sync_root_entries(sync_root: Path) -> None:

@@ -4,9 +4,8 @@ from pathlib import Path
 from typing import cast
 
 from toolang.errors import ToolangError
-from toolang.files.sync_state import LockEntry, LockedAgentRefs
 from toolang.syntax import Program
-from toolang_caps.models import (
+from toolang_concepts.caps import (
     CAP_KINDS,
     CapContent,
     CapKind,
@@ -14,6 +13,7 @@ from toolang_caps.models import (
     InlineCapKind,
     refs_attr_name,
 )
+from toolang_concepts.persisted.sync_state import LockEntry, LockedAgentRefs
 
 from . import remote
 

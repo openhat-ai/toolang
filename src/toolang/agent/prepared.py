@@ -13,8 +13,7 @@ from toolang.caps import CapScopeSelection, build_effective_program
 from toolang.layout import agent_sync_path
 from toolang.sync import ensure_agent_synced
 from toolang.syntax import Program
-
-from .refs import AgentRef
+from toolang_concepts.identity import AgentRef
 
 
 @dataclass(frozen=True, slots=True)

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from toolang_caps.models import CAP_KINDS, CapKind, section_name
+from toolang_concepts.caps import CAP_KINDS, CapKind, section_name
 
 
 def resolve_toolang_root(root: Path | str) -> Path:

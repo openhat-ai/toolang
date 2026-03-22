@@ -7,7 +7,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from ..refs import AgentRef
+from toolang_concepts.identity import AgentRef
 
 
 class KnownAgentRecord(BaseModel):

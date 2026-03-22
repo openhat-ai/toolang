@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 
 from toolang.errors import ToolangError
-from toolang_caps.models import CapKind
+from toolang_concepts.caps import CapKind
 
 USE_CAP_RE = re.compile(r"^\s*use\s+(skill|service|prompt|psyche)\s+(\S+)\s*$")
 

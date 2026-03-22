@@ -67,10 +67,10 @@ Current internal packages:
   - sandbox runtime helpers
 - `toolang.cli`
   - CLI surfaces and command registration
-- `toolang.files`
-  - file-shape models and serialization helpers
 - `toolang.layout`
   - canonical path and layout helpers
+- `toolang_concepts`
+  - shared identity, execution, sandbox, cap, and persisted-state constructs
 
 Separate but colocated package:
 
@@ -79,6 +79,8 @@ Separate but colocated package:
 
 Reason:
 
+- shared constructs should live in one explicit package instead of being
+  redefined across runtime, sync, and caps modules
 - caps logic already has a cleaner extraction boundary than the rest of the
   runtime
 - the runtime package should stay focused on execution and state
