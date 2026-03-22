@@ -66,7 +66,7 @@ def sync_declared_cap_materialization(
     (root / cap_section_dir_name(kind)).mkdir(parents=True, exist_ok=True)
     raw_path = declared_cap_path(root, kind, name, language)
     meta_path = declared_cap_meta_path(root, kind, name)
-    parsed = parse_cap_body(language, raw_text)
+    parsed = parse_cap_body(kind, language, raw_text)
 
     raw_path.write_text(raw_text, encoding="utf-8")
     meta = CapSidecar(
@@ -140,12 +140,18 @@ def sync_local_skill_materialization(
 ) -> None:
     skill_dir = skill_cap_dir(root, name)
     meta_path = skill_cap_meta_path(root, name)
+    skill_text = (source_dir / "SKILL.md").read_text(encoding="utf-8")
+    parsed = parse_cap_body("skill", "md", skill_text)
     _remove_path(skill_dir)
     shutil.copytree(source_dir, skill_dir)
     meta = CapSidecar(
         kind="skill",
         name=name,
         path=str(skill_dir.relative_to(root)) + "/",
+        language="md",
+        front_matter=parsed.front_matter,
+        content=parsed.content,
+        raw_text=skill_text,
         entry_path=str((skill_dir / "SKILL.md").relative_to(root)),
         asset_files=sorted(files),
         ref=ref,

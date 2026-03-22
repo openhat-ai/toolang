@@ -5,6 +5,7 @@ import json
 from toolang.agent.prepared import PreparedAgent
 from toolang.bus.db import AgentSnapshot, RunSnapshot, StoredEvent
 from toolang.caps import CapView, SkillCapView
+from toolang_concepts.caps import ServiceFrontmatter
 from toolang.runtime.api_models import (
     AgentCapsResponse,
     AgentChatMessage,
@@ -63,7 +64,7 @@ def skill_item(item: SkillCapView) -> CapItem:
 
 
 def service_item(item: CapView) -> CapItem:
-    source = item.front_matter.get("target") if isinstance(item.front_matter, dict) else None
+    source = item.front_matter.target if isinstance(item.front_matter, ServiceFrontmatter) else None
     return CapItem(name=item.name, source=string_or_none(source), effective=item.path)
 
 

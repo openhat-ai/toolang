@@ -20,8 +20,7 @@ from toolang.layout import (
 )
 from toolang.sync import ensure_agent_synced, sync_agent
 from toolang.syntax import parse_program
-from toolang_caps.models import CapRef
-from toolang_caps.models import CapKind
+from toolang_caps.models import CapKind, CapRef, CapSidecar, ServiceFrontmatter
 
 PARSE_FIXTURE = Path(__file__).parent / "fixtures" / "sample.too"
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"
@@ -60,8 +59,12 @@ def test_sync_agent_writes_program_and_source_caps(tmp_path) -> None:
     assert (agent_sync_root / "prompts" / "summarize.md").exists()
     assert (agent_sync_root / "prompts" / "summarize.meta.json").exists()
     assert (agent_sync_root / "services" / "github.md").read_text(encoding="utf-8").startswith("---\n")
-    service_meta = (agent_sync_root / "services" / "github.meta.json").read_text(encoding="utf-8")
-    assert '"transport": "http"' in service_meta
+    service_meta = CapSidecar.model_validate_json(
+        (agent_sync_root / "services" / "github.meta.json").read_text(encoding="utf-8")
+    )
+    assert isinstance(service_meta.front_matter, ServiceFrontmatter)
+    assert service_meta.front_matter.transport == "http"
+    assert service_meta.front_matter.target == "https://mcp.github.com/mcp"
     assert not (synced_caps_root(home) / "prompts" / "summarize.md").exists()
     assert synced_program.to_program().to_dict() == parse_program(source_path.read_text()).to_dict()
 
@@ -132,6 +135,14 @@ thunk review:
     assert alice_state.agent_refs.skills["pdf-processing"].repo == "by3gus/agent-skills"
     assert bob_state.agent_refs.skills["pdf-processing"].path == "skills/pdf-processing"
     assert alice_state.agent_refs.skills["pdf-processing"].rev == "abc123"
+    skill_meta = CapSidecar.model_validate_json(
+        (agent_synced_caps_root(home, "alice") / "skills" / "pdf-processing.meta.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert skill_meta.raw_text.startswith("# PDF Processing")
+    assert skill_meta.content.startswith("# PDF Processing")
+    assert skill_meta.front_matter is None
     assert not (home / "toolang.lock").exists()
     assert not (synced_caps_root(home) / "skills" / "pdf-processing").exists()
     assert (agent_synced_caps_root(home, "bob") / "skills" / "pdf-processing" / "SKILL.md").exists()

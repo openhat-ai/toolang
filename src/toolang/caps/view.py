@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from toolang.layout import agent_synced_caps_root, global_synced_caps_root, synced_caps_root
 from toolang.syntax import DeclBlock, ParamDecl, Program, SourceSpan
 from toolang_concepts.caps import (
+    CapFrontmatter,
     CapKind,
     CapSidecar,
 )
@@ -35,7 +36,7 @@ class CapView(BaseModel):
     language: str | None = None
     path: str
     params: list[dict[str, Any]] = Field(default_factory=list)
-    front_matter: dict[str, Any] | None = None
+    front_matter: CapFrontmatter | None = None
 
 
 class SkillCapView(BaseModel):
@@ -46,6 +47,7 @@ class SkillCapView(BaseModel):
     path: str
     entry_path: str
     files: list[str] = Field(default_factory=list)
+    front_matter: CapFrontmatter | None = None
     ref: str | None = None
     repo: str | None = None
     source_path: str
@@ -108,6 +110,7 @@ def _load_skills(root) -> dict[str, SkillCapView]:
             path=meta.path,
             entry_path=meta.entry_path or "",
             files=list(meta.asset_files),
+            front_matter=meta.front_matter,
             ref=meta.ref,
             repo=meta.repo,
             source_path=meta.source_path or "",
