@@ -9,7 +9,7 @@ from typing import Any, cast, get_args
 from toolang.concepts.channel import InboundDelivery, OutboundMessage, ReplyTarget
 from toolang.concepts.execution import MessageOrigin, MessageSender
 
-from ..contracts import ChannelState, DeliveryResult, HookRequest, PluginHealth
+from ..contracts import ChannelState, DeliveryResult, HookRequest, PluginHealth, PollResult
 
 _ORIGINS = frozenset(get_args(MessageOrigin))
 _SENDERS = frozenset(get_args(MessageSender))
@@ -21,10 +21,10 @@ class WebhookPlugin:
 
     config: dict[str, Any]
 
-    def poll(self, state: ChannelState) -> list[InboundDelivery]:
+    def poll(self, state: ChannelState) -> PollResult:
         """Webhook plugins do not support polling."""
 
-        return []
+        return PollResult(next_state=state)
 
     def decode_hook(self, request: HookRequest) -> InboundDelivery | None:
         """Decode one JSON hook request into an inbound delivery."""

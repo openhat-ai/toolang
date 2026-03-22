@@ -73,11 +73,16 @@ Conceptual interface:
 
 ```python
 class ChannelPlugin(Protocol):
-    def poll(self, state: ChannelState) -> list[InboundDelivery]: ...
+    def poll(self, state: ChannelState) -> PollResult: ...
     def decode_hook(self, request: HookRequest) -> InboundDelivery | None: ...
     def deliver(self, target: ReplyTarget, message: OutboundMessage) -> DeliveryResult: ...
     def health(self) -> PluginHealth: ...
 ```
+
+`PollResult` carries:
+
+- zero or more `InboundDelivery` values
+- the next plugin-owned poll cursor and metadata snapshot
 
 ### 3.3 Sandbox
 
@@ -237,6 +242,14 @@ Channel-facing runtime loops should use explicit agent-home source files:
   - named channel bindings with one plugin name and one config object
 - `hooks.toml`
   - named hook bindings with request-path matching and plugin config
+
+The current first-party channel plugins include:
+
+- `telegram`
+  - long polling ingress
+  - outbound text replies
+- `webhook`
+  - hook decoding only
 
 Plugins decode or deliver channel traffic, but runtime still owns:
 

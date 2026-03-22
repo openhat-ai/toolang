@@ -192,6 +192,9 @@ class AgentRoom:
     def hooks_dir(self) -> Path:
         return self.path / "hooks"
 
+    def poll_state_path(self, binding_name: str) -> Path:
+        return self.poll_dir / f"{binding_name}.json"
+
     @property
     def synced_caps_root(self) -> Path:
         return self.path / "sync"

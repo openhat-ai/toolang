@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import Any, Literal, Sequence, cast, get_args
 from urllib.parse import urlsplit
 
 import httpx
@@ -22,15 +22,18 @@ from toolang.agent.registry import (
 from toolang.bus.db import BusStore
 from toolang.bus.events import AgentUpdated, utc_now
 from toolang.caps import CapScopeSelection
+from toolang.concepts.execution import RuntimeLoop
 from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.errors import ToolangError
 from toolang.concepts.identity import AgentRef
+from toolang.concepts.persisted import ChannelsConfig
 from toolang.concepts.persisted._toml import load_toml
 from toolang.concepts.persisted.activation_state import ActivationState
 from toolang.concepts.sandbox import HOST_SANDBOX, SandboxSpec, SandboxState
 from toolang.sandbox import sandbox_alive
 
 DEFAULT_AGENT_LINK_BASE = "https://too.run"
+_ALL_RUNTIME_LOOPS = frozenset(cast(tuple[RuntimeLoop, ...], get_args(RuntimeLoop)))
 
 
 def _toolang_root() -> Path:
@@ -157,6 +160,43 @@ def _cors_allow_origins() -> list[str] | None:
     return items or None
 
 
+def _resolve_runtime_loops(
+    raw_loops: Sequence[str] | None,
+    *,
+    default: tuple[RuntimeLoop, ...],
+) -> tuple[RuntimeLoop, ...]:
+    selected = [item.strip() for item in raw_loops or () if item.strip()]
+    if not selected:
+        return default
+
+    loops: list[RuntimeLoop] = []
+    for item in selected:
+        if item not in _ALL_RUNTIME_LOOPS:
+            raise ToolangError(f"Unknown runtime loop: {item}")
+        loop = cast(RuntimeLoop, item)
+        if loop in {"hook", "pulse"}:
+            raise ToolangError(f"Runtime loop is not implemented yet: {loop}")
+        if loop not in loops:
+            loops.append(loop)
+    return tuple(loops)
+
+
+def _load_runtime_channels(agent_home: Path) -> tuple[ChannelsConfig, tuple[str, ...]]:
+    path = AgentHome.resolve(agent_home).channels_config_path
+    if not path.exists():
+        return ChannelsConfig(), ()
+
+    raw = ChannelsConfig.load(path)
+    env_names: set[str] = set()
+    resolved = {
+        name: binding.model_copy(
+            update={"config": _resolve_channel_config_envs(binding.config, env_names)}
+        )
+        for name, binding in raw.channels.items()
+    }
+    return ChannelsConfig(channels=resolved), tuple(sorted(env_names))
+
+
 def _agent_link_for_port(port: int) -> str:
     return f"{DEFAULT_AGENT_LINK_BASE.rstrip('/')}/{port}"
 
@@ -171,6 +211,32 @@ def _agent_link_from_endpoint(endpoint: str | None) -> str | None:
     if port is None:
         return None
     return _agent_link_for_port(port)
+
+
+def _resolve_channel_config_envs(config: dict[str, Any], env_names: set[str]) -> dict[str, Any]:
+    resolved: dict[str, Any] = {}
+    for key, value in config.items():
+        if key.endswith("_env") and isinstance(value, str):
+            env_name = value.strip()
+            if not env_name:
+                raise ToolangError(f"Channel config environment name may not be empty: {key}")
+            env_value = os.environ.get(env_name)
+            if env_value is None:
+                raise ToolangError(f"Missing channel config environment variable: {env_name}")
+            env_names.add(env_name)
+            resolved[key[:-4]] = env_value
+            continue
+        if isinstance(value, dict):
+            resolved[key] = _resolve_channel_config_envs(value, env_names)
+            continue
+        if isinstance(value, list):
+            resolved[key] = [
+                _resolve_channel_config_envs(item, env_names) if isinstance(item, dict) else item
+                for item in value
+            ]
+            continue
+        resolved[key] = value
+    return resolved
 
 
 def _resolve_known_agent(

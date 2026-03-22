@@ -14,7 +14,10 @@ from toolang.agent.prepared import prepare_agent
 from toolang.agent.resolve import resolve_agent_ref
 from toolang.agent.registry import get_running_agent
 from toolang.bus.db import BusStore
+from toolang.channels import ChannelState, DeliveryResult, PluginHealth, PollResult
+from toolang.concepts.channel import InboundDelivery, OutboundMessage, ReplyTarget
 from toolang.concepts.layout import AgentHome, ToolangRoot
+from toolang.concepts.persisted import ChannelBinding, ChannelsConfig, PollState
 from toolang.concepts.persisted.activation_state import ActivationState
 from toolang.concepts.persisted.prompt_trace import PromptTrace
 from toolang.runtime.execution_store import ExecutionStore
@@ -297,6 +300,98 @@ def test_create_agent_app_reports_docker_sandbox_state(
         assert run_state.sandbox.container_name is not None
 
 
+def test_create_agent_app_polls_channel_bindings_and_delivers_replies(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    prepared = prepare_agent(agent)
+    db_path = agents_db_path(root)
+    events_path = bus_events_db_path(root)
+    execution_db_path = agent_execution_db_path(home, "alice")
+    poll_state_path = AgentHome.resolve(home).room("alice").poll_state_path("telegram")
+
+    class FakeTelegramPlugin:
+        def __init__(self) -> None:
+            self._emitted = False
+            self.deliveries: list[tuple[ReplyTarget, OutboundMessage]] = []
+
+        def poll(self, state: ChannelState) -> PollResult:
+            if self._emitted:
+                return PollResult(next_state=state)
+            self._emitted = True
+            return PollResult(
+                deliveries=[
+                    InboundDelivery(
+                        origin="chat",
+                        channel="telegram",
+                        sender="owner",
+                        thread_id="telegram:123",
+                        text="hello from poll",
+                        reply_target=ReplyTarget(channel="telegram", address="chat:123"),
+                    )
+                ],
+                next_state=ChannelState(cursor="43"),
+            )
+
+        def decode_hook(self, request):
+            return None
+
+        def deliver(self, target: ReplyTarget, message: OutboundMessage) -> DeliveryResult:
+            self.deliveries.append((target, message))
+            return DeliveryResult(ok=True, remote_id="99")
+
+        def health(self) -> PluginHealth:
+            return PluginHealth(ok=True)
+
+    fake_plugin = FakeTelegramPlugin()
+    monkeypatch.setattr(
+        "toolang.runtime.host.create_channel_plugin",
+        lambda plugin, *, config=None: fake_plugin,
+    )
+    monkeypatch.setattr(
+        "toolang.runtime.invoke.execute_prompt_build",
+        lambda build: f"polled:{build.raw_input}:{build.model}",
+    )
+
+    app = create_agent_app(
+        prepared,
+        agents_db_path=db_path,
+        bus_db_path=events_path,
+        host="127.0.0.1",
+        port=8767,
+        sandbox="host",
+        runtime_loops=("server", "poll"),
+        channels_config=ChannelsConfig(
+            channels={"telegram": ChannelBinding(plugin="telegram", config={"token": "secret"})}
+        ),
+    )
+
+    with TestClient(app):
+        _wait_for(lambda: len(fake_plugin.deliveries) == 1, label="telegram reply delivery")
+
+        execution = ExecutionStore(execution_db_path)
+        activations = execution.list_activations(agent_uri=agent.uri)
+        turns = execution.list_turns(activation_id=activations[0].activation_id)
+        steps = execution.list_steps(turn_id=turns[0].turn_id)
+        execution.close()
+
+        assert activations[0].runtime_loops == ("server", "poll")
+        assert turns[0].thread_id == "telegram:123"
+        assert turns[0].origin == "chat"
+        assert turns[0].status == "finished"
+        assert any(step.step_kind == "delivery" for step in steps)
+        assert fake_plugin.deliveries[0][0].channel == "telegram"
+        assert fake_plugin.deliveries[0][1].text == "polled:hello from poll:gpt-5"
+        assert poll_state_path.exists()
+        assert PollState.load(poll_state_path).cursor == "43"
+
+
 def test_serve_process_writes_stopped_state_after_termination(tmp_path: Path) -> None:
     root = resolve_toolang_root(tmp_path / "toolang-root")
     home = root / "agents" / "alice"
@@ -370,3 +465,12 @@ def _wait_for_stopped_state(run_path: Path) -> None:
             return
         time.sleep(0.05)
     raise AssertionError(f"Timed out waiting for stopped state at {run_path}")
+
+
+def _wait_for(predicate, *, label: str, timeout_sec: float = 3.0) -> None:
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"Timed out waiting for {label}")
