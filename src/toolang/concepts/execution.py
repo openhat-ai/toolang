@@ -13,7 +13,7 @@ ActivationKind = Literal["runtime", "invoke"]
 ActivationStatus = Literal["running", "finished", "failed", "stopped"]
 ThreadGroup = Literal["invoke", "chat", "task", "chore", "will"]
 TurnStatus = Literal["running", "finished", "failed"]
-StepKind = Literal["prompt_build", "model_call"]
+StepKind = Literal["prompt_build", "model_call", "delivery"]
 StepStatus = Literal["finished", "failed"]
 
 

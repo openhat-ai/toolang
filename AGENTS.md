@@ -100,6 +100,8 @@
 
 - The CLI is responsible for reading `TOOLANG_ROOT` and any other environment
   variables.
+- The CLI is responsible for resolving channel config environment references
+  such as `token_env` before constructing long-lived runtime inputs.
 - The CLI resolves `agent_ref` values into explicit runtime inputs before
   calling lower-level modules.
 - The CLI should orchestrate work, but not absorb all parsing, file-shape, or

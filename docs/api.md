@@ -42,8 +42,13 @@ Rules:
 
 - all execution commands accept an `agent selector`
 - `invoke` is caller-driven one-shot foreground execution
-- `serve` runs the `server` runtime loop in the foreground
+- `serve` runs the `server` runtime loop in the foreground and may enable extra
+  loops with repeated `--loop` flags
 - `start` launches the selected runtime-loop set in the background
+- current `serve` and `start` surfaces always include the `server` loop because
+  the long-lived runtime process is still hosted by the per-agent FastAPI app
+- `start` defaults to `server,poll`
+- `serve` defaults to `server`
 - grammar inspection belongs in the sibling grammar package, not in the
   Toolang runtime CLI
 

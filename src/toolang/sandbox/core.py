@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Iterable, Mapping
 
 from toolang.agent.prepared import PreparedAgent
+from toolang.concepts.execution import RuntimeLoop
 from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.concepts.sandbox import SandboxSpec, SandboxState
 from toolang.errors import ToolangError
@@ -64,6 +65,8 @@ def start_sandbox(
     port: int,
     endpoint: str,
     log_path: Path,
+    runtime_loops: tuple[RuntimeLoop, ...] = ("server",),
+    forward_env_names: Iterable[str] = (),
 ) -> StartedSandbox:
     """Start one sandboxed long-lived agent runtime."""
 
@@ -76,6 +79,8 @@ def start_sandbox(
             port=port,
             endpoint=endpoint,
             log_path=log_path,
+            runtime_loops=runtime_loops,
+            forward_env_names=forward_env_names,
         )
         return StartedSandbox(state=state, process=None)
 
@@ -85,6 +90,7 @@ def start_sandbox(
         host=host,
         port=port,
         log_path=log_path,
+        runtime_loops=runtime_loops,
     )
     return StartedSandbox(
         state=SandboxState.for_spec(
@@ -105,6 +111,7 @@ def _start_host_sandbox(
     host: str,
     port: int,
     log_path: Path,
+    runtime_loops: tuple[RuntimeLoop, ...],
 ) -> subprocess.Popen:
     command = [
         sys.executable,
@@ -121,6 +128,8 @@ def _start_host_sandbox(
         "--shared" if prepared.cap_scopes.include_shared else "--no-shared",
         "--global" if prepared.cap_scopes.include_global else "--no-global",
     ]
+    for loop in runtime_loops:
+        command.extend(["--loop", loop])
     with log_path.open("ab") as log_file:
         return subprocess.Popen(
             command,
@@ -142,6 +151,8 @@ def _start_docker_sandbox(
     port: int,
     endpoint: str,
     log_path: Path,
+    runtime_loops: tuple[RuntimeLoop, ...],
+    forward_env_names: Iterable[str],
 ) -> SandboxState:
     if not spec.image:
         raise ToolangError("docker sandbox must include an image")
@@ -170,6 +181,7 @@ def _start_docker_sandbox(
             "host": host,
             "port": port,
             "endpoint": endpoint,
+            "runtime_loops": list(runtime_loops),
             "sandbox": {
                 "type": state.type,
                 "container_name": state.container_name,
@@ -198,6 +210,7 @@ def _start_docker_sandbox(
                     "--global" if prepared.cap_scopes.include_global else "--no-global",
                 ]
             )
+            + "".join(f" --loop {shlex.quote(loop)}" for loop in runtime_loops)
             + f" >> {shlex.quote(str(log_path))} 2>&1"
         ),
     )
@@ -211,7 +224,12 @@ def _start_docker_sandbox(
     mounts.append((stage_dir, room_sandbox_dir))
 
     env_names = [
-        name for name in _forwarded_sandbox_env_names(os.environ) if name != "TOOLANG_ROOT"
+        name
+        for name in _forwarded_sandbox_env_names(
+            os.environ,
+            extra_names=forward_env_names,
+        )
+        if name != "TOOLANG_ROOT"
     ]
     env_values = {"TOOLANG_ROOT": str(toolang_root)}
     try:
@@ -266,8 +284,15 @@ def _write_sandbox_exec_file(
     path.chmod(0o755)
 
 
-def _forwarded_sandbox_env_names(environment: Mapping[str, str]) -> list[str]:
+def _forwarded_sandbox_env_names(
+    environment: Mapping[str, str],
+    *,
+    extra_names: Iterable[str] = (),
+) -> list[str]:
     names: set[str] = set()
+    for name in extra_names:
+        if name in environment:
+            names.add(name)
     for name in environment:
         if name.startswith("TOOLANG_"):
             names.add(name)

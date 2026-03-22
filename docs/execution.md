@@ -81,6 +81,7 @@ Toolang defines four runtime loops:
 - `poll`
   - polls external channels
   - usually emits `chat`
+  - keeps one plugin-owned poll cursor per binding under `${AGENT_ROOM}/poll/`
 - `hook`
   - accepts hook deliveries
   - usually emits `invoke`
@@ -94,6 +95,8 @@ Rules:
 - `toolang invoke` starts no runtime loops
 - `toolang serve` starts only `server`
 - `toolang start` starts a selected runtime-loop set
+- the current runtime host serializes turns by `thread_id` even when multiple
+  poll bindings are active
 
 
 ## 4. Execution Strategies

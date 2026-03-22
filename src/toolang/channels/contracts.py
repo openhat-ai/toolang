@@ -17,6 +17,14 @@ class ChannelState:
 
 
 @dataclass(frozen=True, slots=True)
+class PollResult:
+    """One polling result with deliveries and the next plugin state."""
+
+    deliveries: list[InboundDelivery] = field(default_factory=list)
+    next_state: ChannelState = field(default_factory=ChannelState)
+
+
+@dataclass(frozen=True, slots=True)
 class HookRequest:
     """One normalized hook request passed into a channel plugin."""
 
@@ -50,7 +58,7 @@ class PluginHealth:
 class ChannelPlugin(Protocol):
     """Protocol implemented by one loaded channel plugin instance."""
 
-    def poll(self, state: ChannelState) -> list[InboundDelivery]:
+    def poll(self, state: ChannelState) -> PollResult:
         """Poll for zero or more inbound deliveries."""
 
     def decode_hook(self, request: HookRequest) -> InboundDelivery | None:

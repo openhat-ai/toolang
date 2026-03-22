@@ -10,10 +10,12 @@ import typer
 
 from toolang.agent.prepared import prepare_agent
 from toolang.agent.registry import delete_running_agent, get_running_agent
+from toolang.concepts.execution import RuntimeLoop
 from toolang.errors import ToolangError
 from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.runtime.server import serve_agent
 from toolang.concepts.identity import AgentRef
+from toolang.concepts.persisted import ChannelsConfig
 from toolang.concepts.sandbox import HOST_SANDBOX, SandboxSpec, SandboxState
 from toolang.concepts.persisted.activation_state import ActivationState
 from toolang.sandbox import sandbox_alive, start_sandbox, stop_sandbox
@@ -21,9 +23,11 @@ from toolang.sandbox import sandbox_alive, start_sandbox, stop_sandbox
 from .support import (
     _agent_link_for_port,
     _cors_allow_origins,
+    _load_runtime_channels,
     _remember_agent,
     _resolve_cli_agent,
     _resolve_runtime_cap_scopes,
+    _resolve_runtime_loops,
     _toolang_root,
 )
 
@@ -54,6 +58,10 @@ def serve_command(
             help="Enable or disable global caps. Defaults to on only for resident agents.",
         ),
     ] = None,
+    loops: Annotated[
+        list[str] | None,
+        typer.Option("--loop", help="Runtime loop to enable. Repeat for multiple loops."),
+    ] = None,
 ) -> None:
     toolang_root = _toolang_root()
     root = ToolangRoot.resolve(toolang_root)
@@ -71,6 +79,8 @@ def serve_command(
     )
     prepared = prepare_agent(agent_ref, cap_scopes=cap_scopes)
     _remember_agent(prepared.ref, db_path=db_path)
+    runtime_loops = _with_server_loop(_resolve_runtime_loops(loops, default=("server",)))
+    channels_config = _runtime_channels_for_loops(prepared.ref.home, runtime_loops)
     serve_agent(
         prepared,
         agents_db_path=db_path,
@@ -80,6 +90,8 @@ def serve_command(
         sandbox=sandbox_spec,
         public_host=public_host,
         cors_allow_origins=_cors_allow_origins(),
+        runtime_loops=runtime_loops,
+        channels_config=channels_config,
     )
 
 
@@ -108,6 +120,10 @@ def start_command(
             help="Enable or disable global caps. Defaults to on only for resident agents.",
         ),
     ] = None,
+    loops: Annotated[
+        list[str] | None,
+        typer.Option("--loop", help="Runtime loop to enable. Repeat for multiple loops."),
+    ] = None,
 ) -> None:
     toolang_root = _toolang_root()
     db_path = ToolangRoot.resolve(toolang_root).agents_db_path
@@ -126,6 +142,11 @@ def start_command(
         raise ToolangError(f"Agent is already being served: {prepared.ref.uri}")
 
     parsed_sandbox = _parse_sandbox_or_raise(sandbox)
+    runtime_loops = _with_server_loop(_resolve_runtime_loops(loops, default=("server", "poll")))
+    _channels_config, channel_env_names = _runtime_channels_with_env_names_for_loops(
+        prepared.ref.home,
+        runtime_loops,
+    )
     selected_port = port if port is not None else _pick_free_port(host)
     endpoint = f"http://{host}:{selected_port}"
     agent_link = _agent_link_for_port(selected_port)
@@ -139,6 +160,8 @@ def start_command(
         port=selected_port,
         endpoint=endpoint,
         log_path=log_path,
+        runtime_loops=runtime_loops,
+        forward_env_names=channel_env_names,
     )
     if parsed_sandbox.kind == "docker":
         _wait_for_running_agent_sandbox(
@@ -159,6 +182,31 @@ def start_command(
             log_path=log_path,
         )
     typer.echo(f"started {prepared.ref.id[:12]} {agent_link}")
+
+
+def _runtime_channels_for_loops(
+    agent_home: Path,
+    runtime_loops: tuple[RuntimeLoop, ...],
+) -> ChannelsConfig:
+    if "poll" not in runtime_loops:
+        return ChannelsConfig()
+    channels_config, _env_names = _load_runtime_channels(agent_home)
+    return channels_config
+
+
+def _runtime_channels_with_env_names_for_loops(
+    agent_home: Path,
+    runtime_loops: tuple[RuntimeLoop, ...],
+) -> tuple[ChannelsConfig, tuple[str, ...]]:
+    if "poll" not in runtime_loops:
+        return ChannelsConfig(), ()
+    return _load_runtime_channels(agent_home)
+
+
+def _with_server_loop(runtime_loops: tuple[RuntimeLoop, ...]) -> tuple[RuntimeLoop, ...]:
+    if "server" in runtime_loops:
+        return runtime_loops
+    return ("server",) + runtime_loops
 
 
 def stop_command(

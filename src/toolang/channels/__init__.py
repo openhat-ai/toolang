@@ -5,6 +5,7 @@ from .contracts import (
     ChannelState,
     DeliveryResult,
     HookRequest,
+    PollResult,
     PluginHealth,
 )
 from .hooks import decode_hook_delivery
@@ -15,6 +16,7 @@ __all__ = [
     "ChannelState",
     "DeliveryResult",
     "HookRequest",
+    "PollResult",
     "PluginHealth",
     "create_channel_plugin",
     "decode_hook_delivery",

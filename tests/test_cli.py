@@ -29,6 +29,7 @@ from toolang.cli.support import (
     _resolve_cli_agent,
 )
 from toolang.concepts.layout import AgentHome, ToolangRoot
+from toolang.concepts.persisted import ChannelBinding, ChannelsConfig
 from toolang.errors import ToolangError
 from toolang.concepts.persisted.activation_state import ActivationState
 from toolang.concepts.caps import CapKind
@@ -431,6 +432,35 @@ def test_cli_serve_rejects_docker_sandbox(tmp_path: Path, monkeypatch) -> None:
     assert "toolang serve only supports host sandbox" in str(result.exception)
 
 
+def test_cli_serve_passes_runtime_loops_and_channels(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    ChannelsConfig(
+        channels={"telegram": ChannelBinding(plugin="telegram", config={"token": "secret"})}
+    ).save(home / "channels.toml")
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+
+    calls: dict[str, object] = {}
+
+    def fake_serve_agent(*args, **kwargs) -> None:
+        calls.update(kwargs)
+
+    monkeypatch.setattr("toolang.cli.serve.serve_agent", fake_serve_agent)
+
+    result = runner.invoke(app, ["serve", "alice", "--loop", "poll"])
+
+    assert result.exit_code == 0
+    assert calls["runtime_loops"] == ("server", "poll")
+    channels_config = cast(ChannelsConfig, calls["channels_config"])
+    assert tuple(channels_config.channels) == ("telegram",)
+    assert channels_config.channels["telegram"].plugin == "telegram"
+
+
 def test_cli_start_docker_stages_sandbox_launch(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "toolang-root"
     home = root / "agents" / "alice"
@@ -440,7 +470,16 @@ def test_cli_start_docker_stages_sandbox_launch(tmp_path: Path, monkeypatch) -> 
         SOURCE_FIXTURE.read_text(encoding="utf-8"),
         encoding="utf-8",
     )
+    ChannelsConfig(
+        channels={
+            "telegram": ChannelBinding(
+                plugin="telegram",
+                config={"token_env": "TELEGRAM_BOT_TOKEN"},
+            )
+        }
+    ).save(home / "channels.toml")
     monkeypatch.setenv("TOOLANG_ROOT", str(root))
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "secret")
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     calls: dict[str, object] = {}
@@ -487,6 +526,7 @@ def test_cli_start_docker_stages_sandbox_launch(tmp_path: Path, monkeypatch) -> 
     assert calls["published_port"] == 8779
     assert calls["workdir"] == home.resolve()
     assert calls["env_values"] == {"TOOLANG_ROOT": str(root.resolve())}
+    assert "TELEGRAM_BOT_TOKEN" in cast(list[str], calls["env_names"])
     mounts = [(str(source), str(target)) for source, target in cast(list[tuple[Path, Path]], calls["mounts"])]
     assert (str(root.resolve()), str(root.resolve())) in mounts
     assert (str(stage_dir.resolve()), str((home / ".toolang" / "agents" / "alice" / "sandbox").resolve())) in mounts
@@ -497,6 +537,8 @@ def test_cli_start_docker_stages_sandbox_launch(tmp_path: Path, monkeypatch) -> 
     assert "toolang serve" in exec_text
     assert "--host 0.0.0.0" in exec_text
     assert "--sandbox docker:python:3.13-slim" in exec_text
+    assert "--loop server" in exec_text
+    assert "--loop poll" in exec_text
     assert "--shared" in exec_text
     assert "--global" in exec_text
 

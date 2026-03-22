@@ -8,9 +8,11 @@ from typing import Any
 from toolang.errors import ToolangError
 
 from .contracts import ChannelPlugin, ChannelPluginFactory
+from .plugins.telegram import create_telegram_plugin
 from .plugins.webhook import create_webhook_plugin
 
 _BUILTIN_CHANNEL_FACTORIES: dict[str, ChannelPluginFactory] = {
+    "telegram": create_telegram_plugin,
     "webhook": create_webhook_plugin,
 }
 

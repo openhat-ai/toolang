@@ -15,6 +15,8 @@ from toolang.agent.prepared import PreparedAgent, prepare_agent
 from toolang.agent.registry import get_running_agent
 from toolang.bus.events import utc_now
 from toolang.caps import load_prepared_caps
+from toolang.concepts.execution import RuntimeLoop
+from toolang.concepts.persisted import ChannelsConfig
 from toolang.concepts.sandbox import SandboxSpec
 from toolang.errors import ToolangError
 from toolang.web import add_cors
@@ -62,6 +64,8 @@ def serve_agent(
     sandbox: str = "host",
     public_host: str | None = None,
     cors_allow_origins: list[str] | None = None,
+    runtime_loops: tuple[RuntimeLoop, ...] = ("server",),
+    channels_config: ChannelsConfig | None = None,
 ) -> None:
     app = create_agent_app(
         prepared,
@@ -72,6 +76,8 @@ def serve_agent(
         sandbox=sandbox,
         public_host=public_host,
         cors_allow_origins=cors_allow_origins,
+        runtime_loops=runtime_loops,
+        channels_config=channels_config,
     )
     uvicorn.run(app, host=host, port=port, log_level="info")
 
@@ -86,6 +92,8 @@ def create_agent_app(
     sandbox: str = "host",
     public_host: str | None = None,
     cors_allow_origins: list[str] | None = None,
+    runtime_loops: tuple[RuntimeLoop, ...] = ("server",),
+    channels_config: ChannelsConfig | None = None,
 ) -> FastAPI:
     runtime_host = RuntimeHost(
         prepared,
@@ -95,6 +103,8 @@ def create_agent_app(
         port=port,
         sandbox=sandbox,
         public_host=public_host,
+        runtime_loops=runtime_loops,
+        channels_config=channels_config,
     )
 
     @asynccontextmanager
