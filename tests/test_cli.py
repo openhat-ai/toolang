@@ -233,7 +233,7 @@ def test_cli_resolves_known_agent_by_name_from_registry(tmp_path: Path, monkeypa
 
     resolved = _resolve_cli_agent("reviewer", db_path=db_path)
 
-    assert resolved.agent_uri == agent.agent_uri
+    assert resolved.uri == agent.uri
 
 
 def test_cli_resolves_known_agent_by_id_prefix(tmp_path: Path, monkeypatch) -> None:
@@ -251,9 +251,9 @@ def test_cli_resolves_known_agent_by_id_prefix(tmp_path: Path, monkeypatch) -> N
     db_path = agents_db_path(root)
     _remember_agent(agent, db_path=db_path)
 
-    resolved = _resolve_cli_agent(agent.agent_id[:8], db_path=db_path)
+    resolved = _resolve_cli_agent(agent.id[:8], db_path=db_path)
 
-    assert resolved.agent_uri == agent.agent_uri
+    assert resolved.uri == agent.uri
 
 
 def test_cli_runtime_cap_scope_defaults_follow_agent_kind(tmp_path: Path) -> None:
@@ -307,7 +307,7 @@ def test_cli_drops_stale_running_agent_and_updates_run_file(tmp_path: Path, monk
     upsert_running_agent(
         db_path,
         RunningAgentRecord(
-            agent_uri=agent.agent_uri,
+            agent_uri=agent.uri,
             pid=999999,
             status="running",
             endpoint="http://127.0.0.1:8778",
@@ -318,11 +318,11 @@ def test_cli_drops_stale_running_agent_and_updates_run_file(tmp_path: Path, monk
     run_path = agent_run_path(home, "alice")
     run_path.parent.mkdir(parents=True, exist_ok=True)
     ActivationState(
-        agent_uri=agent.agent_uri,
-        agent_id=agent.agent_id[:12],
-        agent_name=agent.agent_name,
-        agent_home=str(agent.agent_home),
-        source_file=agent.source_path.name,
+        agent_uri=agent.uri,
+        agent_id=agent.id[:12],
+        agent_name=agent.name,
+        agent_home=str(agent.home),
+        source_file=agent.source.name,
         pid=999999,
         status="running",
         endpoint="http://127.0.0.1:8778",
@@ -332,7 +332,7 @@ def test_cli_drops_stale_running_agent_and_updates_run_file(tmp_path: Path, monk
 
     _drop_stale_running_agent(db_path, agent)
 
-    assert get_running_agent(db_path, agent.agent_uri) is None
+    assert get_running_agent(db_path, agent.uri) is None
     assert ActivationState.load(run_path).status == "stopped"
 
 
@@ -378,7 +378,7 @@ def test_cli_list_marks_active_agent_running(tmp_path: Path, monkeypatch) -> Non
     upsert_running_agent(
         db_path,
         RunningAgentRecord(
-            agent_uri=agent.agent_uri,
+            agent_uri=agent.uri,
             pid=os.getpid(),
             status="running",
             endpoint="http://127.0.0.1:8778",
@@ -445,18 +445,18 @@ def test_cli_start_docker_stages_sandbox_launch(tmp_path: Path, monkeypatch) -> 
         ],
     )
 
-    key = f"alice-{agent.agent_id[:12]}"
+    key = f"alice-{agent.id[:12]}"
     args_path = sandbox_args_path(root, key)
     exec_path = sandbox_exec_path(root, key)
     stage_dir = sandbox_host(root, key)
 
     assert result.exit_code == 0
-    assert result.stdout.strip() == f"started {agent.agent_id[:12]} https://too.run/8779"
+    assert result.stdout.strip() == f"started {agent.id[:12]} https://too.run/8779"
     assert args_path.exists()
     assert exec_path.exists()
     assert stage_dir.exists()
     assert calls["image"] == "python:3.13-slim"
-    assert calls["container_name"] == f"toolang-agent-alice-{agent.agent_id[:12]}"
+    assert calls["container_name"] == f"toolang-agent-alice-{agent.id[:12]}"
     assert calls["published_host"] == "127.0.0.1"
     assert calls["published_port"] == 8779
     assert calls["workdir"] == home.resolve()
@@ -491,7 +491,7 @@ def test_cli_stop_host_agent_terminates_process(tmp_path: Path, monkeypatch) -> 
     upsert_running_agent(
         db_path,
         RunningAgentRecord(
-            agent_uri=agent.agent_uri,
+            agent_uri=agent.uri,
             pid=4242,
             status="running",
             endpoint="http://127.0.0.1:8778",
@@ -510,13 +510,13 @@ def test_cli_stop_host_agent_terminates_process(tmp_path: Path, monkeypatch) -> 
     monkeypatch.setattr("toolang.cli.runtime.serve.sandbox_process_alive", lambda **_: True)
     monkeypatch.setattr(
         "toolang.cli.runtime.serve._wait_for_running_agent_stop",
-        lambda **kwargs: delete_running_agent(db_path, agent.agent_uri),
+        lambda **kwargs: delete_running_agent(db_path, agent.uri),
     )
 
     result = runner.invoke(app, ["stop", "alice"])
 
     assert result.exit_code == 0
-    assert result.stdout.strip() == f"stopped {agent.agent_id[:12]}"
+    assert result.stdout.strip() == f"stopped {agent.id[:12]}"
     assert calls == [(4242, signal.SIGTERM)]
 
 
@@ -536,7 +536,7 @@ def test_cli_stop_docker_agent_removes_container(tmp_path: Path, monkeypatch) ->
     upsert_running_agent(
         db_path,
         RunningAgentRecord(
-            agent_uri=agent.agent_uri,
+            agent_uri=agent.uri,
             pid=None,
             status="running",
             endpoint="http://127.0.0.1:8778",
@@ -555,14 +555,14 @@ def test_cli_stop_docker_agent_removes_container(tmp_path: Path, monkeypatch) ->
     monkeypatch.setattr("toolang.cli.runtime.serve.sandbox_process_alive", lambda **_: True)
     monkeypatch.setattr(
         "toolang.cli.runtime.serve._wait_for_running_agent_stop",
-        lambda **kwargs: delete_running_agent(db_path, agent.agent_uri),
+        lambda **kwargs: delete_running_agent(db_path, agent.uri),
     )
 
     result = runner.invoke(app, ["stop", "alice"])
 
     assert result.exit_code == 0
-    assert result.stdout.strip() == f"stopped {agent.agent_id[:12]}"
-    assert removed == [f"toolang-agent-alice-{agent.agent_id[:12]}"]
+    assert result.stdout.strip() == f"stopped {agent.id[:12]}"
+    assert removed == [f"toolang-agent-alice-{agent.id[:12]}"]
 
 
 def test_cli_stop_requires_running_agent(tmp_path: Path, monkeypatch) -> None:

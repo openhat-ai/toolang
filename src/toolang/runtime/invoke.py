@@ -8,9 +8,9 @@ import uuid
 from toolang.agent.prepared import PreparedAgent
 from toolang.bus.db import BusStore
 from toolang.bus.events import RunFailed, RunFinished, RunOrigin, RunStarted, utc_now
-from toolang.files.prompt_trace import PromptTrace
 from toolang.layout import agent_run_prompt_path
 from toolang.syntax import Thunk
+from toolang_concepts.persisted.prompt_trace import PromptTrace
 
 from . import execute_prompt_build
 from .build import (
@@ -82,9 +82,9 @@ def chat_prepared_agent(
     run_id = uuid.uuid4().hex
 
     chat_store.append_message(
-        agent_uri=prepared.ref.agent_uri,
-        agent_id=prepared.ref.agent_id[:12],
-        agent_name=prepared.ref.agent_name,
+        agent_uri=prepared.ref.uri,
+        agent_id=prepared.ref.id[:12],
+        agent_name=prepared.ref.name,
         thread_id=message.thread_id,
         turn_id=run_id,
         role="user",
@@ -117,9 +117,9 @@ def chat_prepared_agent(
         ),
     )
     assistant_message = chat_store.append_message(
-        agent_uri=prepared.ref.agent_uri,
-        agent_id=prepared.ref.agent_id[:12],
-        agent_name=prepared.ref.agent_name,
+        agent_uri=prepared.ref.uri,
+        agent_id=prepared.ref.id[:12],
+        agent_name=prepared.ref.name,
         thread_id=message.thread_id,
         turn_id=tracked.run_id,
         role="assistant",
@@ -158,18 +158,18 @@ def _tracked_turn(
 ) -> _TrackedTurnResult:
     bus = BusStore(bus_db_path)
     resolved_run_id = run_id or uuid.uuid4().hex
-    summary = _summary(prepared.ref.agent_name, thunk)
+    summary = _summary(prepared.ref.name, thunk)
     now = utc_now()
     trace_path = agent_run_prompt_path(
-        prepared.ref.agent_home,
-        prepared.ref.agent_name,
+        prepared.ref.home,
+        prepared.ref.name,
         resolved_run_id,
     )
     bus.append(
         RunStarted(
             at=now,
-            agent_uri=prepared.ref.agent_uri,
-            agent_id=prepared.ref.agent_id[:12],
+            agent_uri=prepared.ref.uri,
+            agent_id=prepared.ref.id[:12],
             run_id=resolved_run_id,
             run_type="turn",
             origin=origin,
@@ -212,8 +212,8 @@ def _tracked_turn(
         bus.append(
             RunFailed(
                 at=utc_now(),
-                agent_uri=prepared.ref.agent_uri,
-                agent_id=prepared.ref.agent_id[:12],
+                agent_uri=prepared.ref.uri,
+                agent_id=prepared.ref.id[:12],
                 run_id=resolved_run_id,
                 run_type="turn",
                 origin=origin,
@@ -230,8 +230,8 @@ def _tracked_turn(
     bus.append(
         RunFinished(
             at=utc_now(),
-            agent_uri=prepared.ref.agent_uri,
-            agent_id=prepared.ref.agent_id[:12],
+            agent_uri=prepared.ref.uri,
+            agent_id=prepared.ref.id[:12],
             run_id=resolved_run_id,
             run_type="turn",
             origin=origin,
@@ -293,11 +293,11 @@ def _prompt_trace(
     return PromptTrace(
         run_id=run_id,
         created_at=datetime.now(timezone.utc),
-        agent_uri=prepared.ref.agent_uri,
-        agent_id=prepared.ref.agent_id,
-        agent_name=prepared.ref.agent_name,
+        agent_uri=prepared.ref.uri,
+        agent_id=prepared.ref.id,
+        agent_name=prepared.ref.name,
         source_file=str(prepared.source_path),
-        working_directory=str(prepared.ref.agent_home),
+        working_directory=str(prepared.ref.home),
         thunk_name=thunk.name,
         origin=origin,
         thread_id=thread_id,

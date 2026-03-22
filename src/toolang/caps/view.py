@@ -6,14 +6,13 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
-from toolang.agent.refs import AgentRef
 from toolang.layout import agent_synced_caps_root, global_synced_caps_root, synced_caps_root
 from toolang.syntax import DeclBlock, ParamDecl, Program, SourceSpan
-from toolang_caps.models import (
-    InlineCapKind,
+from toolang_concepts.caps import (
+    CapKind,
     CapSidecar,
-    TEXT_CAP_KINDS,
 )
+from toolang_concepts.identity import AgentRef
 
 from .scope import CapScopeSelection
 
@@ -21,8 +20,15 @@ if TYPE_CHECKING:
     from toolang.agent.prepared import PreparedAgent
 
 
-class InlineCapView(BaseModel):
-    """Runtime view of one inline text cap."""
+DECLARED_CAP_KINDS: tuple[Literal["service", "prompt", "psyche"], ...] = (
+    "service",
+    "prompt",
+    "psyche",
+)
+
+
+class CapView(BaseModel):
+    """Runtime view of one materialized non-skill capability."""
 
     kind: Literal["service", "prompt", "psyche"]
     name: str
@@ -50,9 +56,9 @@ class CapsView(BaseModel):
     """Effective capability set visible to one prepared agent."""
 
     skills: list[SkillCapView] = Field(default_factory=list)
-    services: list[InlineCapView] = Field(default_factory=list)
-    prompts: list[InlineCapView] = Field(default_factory=list)
-    psyches: list[InlineCapView] = Field(default_factory=list)
+    services: list[CapView] = Field(default_factory=list)
+    prompts: list[CapView] = Field(default_factory=list)
+    psyches: list[CapView] = Field(default_factory=list)
 
 
 def build_effective_program(
@@ -64,10 +70,10 @@ def build_effective_program(
     declarations = [
         declaration
         for declaration in source_program.declarations
-        if declaration.kind not in TEXT_CAP_KINDS
+        if declaration.kind not in DECLARED_CAP_KINDS
     ]
-    for kind in TEXT_CAP_KINDS:
-        for declaration in _load_text_declarations(ref, kind, cap_scopes=cap_scopes):
+    for kind in DECLARED_CAP_KINDS:
+        for declaration in _load_cap_declarations(ref, kind, cap_scopes=cap_scopes):
             declarations.append(declaration)
     return Program(
         uses=list(source_program.uses),
@@ -79,9 +85,9 @@ def build_effective_program(
 def load_prepared_caps(prepared: PreparedAgent) -> CapsView:
     return CapsView(
         skills=_load_skill_views(prepared.ref, cap_scopes=prepared.cap_scopes),
-        services=_load_inline_views(prepared.ref, "service", cap_scopes=prepared.cap_scopes),
-        prompts=_load_inline_views(prepared.ref, "prompt", cap_scopes=prepared.cap_scopes),
-        psyches=_load_inline_views(prepared.ref, "psyche", cap_scopes=prepared.cap_scopes),
+        services=_load_cap_views(prepared.ref, "service", cap_scopes=prepared.cap_scopes),
+        prompts=_load_cap_views(prepared.ref, "prompt", cap_scopes=prepared.cap_scopes),
+        psyches=_load_cap_views(prepared.ref, "psyche", cap_scopes=prepared.cap_scopes),
     )
 
 
@@ -110,15 +116,15 @@ def _load_skills(root) -> dict[str, SkillCapView]:
     return items
 
 
-def _load_inline_views(
+def _load_cap_views(
     ref: AgentRef,
     kind: Literal["service", "prompt", "psyche"],
     *,
     cap_scopes: CapScopeSelection,
-) -> list[InlineCapView]:
-    items = _overlay_layers(*_inline_scope_layers(ref, kind, cap_scopes=cap_scopes))
+) -> list[CapView]:
+    items = _overlay_layers(*_cap_scope_layers(ref, kind, cap_scopes=cap_scopes))
     return [
-        InlineCapView(
+        CapView(
             kind=kind,
             name=meta.name,
             language=meta.language,
@@ -130,13 +136,13 @@ def _load_inline_views(
     ]
 
 
-def _load_text_declarations(
+def _load_cap_declarations(
     ref: AgentRef,
-    kind: InlineCapKind,
+    kind: CapKind,
     *,
     cap_scopes: CapScopeSelection,
 ) -> list[DeclBlock]:
-    items = _overlay_layers(*_inline_scope_layers(ref, kind, cap_scopes=cap_scopes))
+    items = _overlay_layers(*_cap_scope_layers(ref, kind, cap_scopes=cap_scopes))
     return [
         DeclBlock(
             kind=kind,
@@ -154,7 +160,7 @@ def _load_text_declarations(
     ]
 
 
-def _load_inline_meta(root, kind: InlineCapKind) -> dict[str, CapSidecar]:
+def _load_cap_meta(root, kind: CapKind) -> dict[str, CapSidecar]:
     kind_dir = root / f"{kind}s" if kind != "psyche" else root / "psyches"
     items: dict[str, CapSidecar] = {}
     if not kind_dir.exists():
@@ -179,23 +185,23 @@ def _skill_scope_layers(
 ) -> list[dict[str, SkillCapView]]:
     layers: list[dict[str, SkillCapView]] = []
     if cap_scopes.include_global:
-        layers.append(_load_skills(global_synced_caps_root(ref.toolang_root)))
+        layers.append(_load_skills(global_synced_caps_root(ref.root)))
     if cap_scopes.include_shared:
-        layers.append(_load_skills(synced_caps_root(ref.agent_home)))
-    layers.append(_load_skills(agent_synced_caps_root(ref.agent_home, ref.agent_name)))
+        layers.append(_load_skills(synced_caps_root(ref.home)))
+    layers.append(_load_skills(agent_synced_caps_root(ref.home, ref.name)))
     return layers
 
 
-def _inline_scope_layers(
+def _cap_scope_layers(
     ref: AgentRef,
-    kind: InlineCapKind,
+    kind: CapKind,
     *,
     cap_scopes: CapScopeSelection,
 ) -> list[dict[str, CapSidecar]]:
     layers: list[dict[str, CapSidecar]] = []
     if cap_scopes.include_global:
-        layers.append(_load_inline_meta(global_synced_caps_root(ref.toolang_root), kind))
+        layers.append(_load_cap_meta(global_synced_caps_root(ref.root), kind))
     if cap_scopes.include_shared:
-        layers.append(_load_inline_meta(synced_caps_root(ref.agent_home), kind))
-    layers.append(_load_inline_meta(agent_synced_caps_root(ref.agent_home, ref.agent_name), kind))
+        layers.append(_load_cap_meta(synced_caps_root(ref.home), kind))
+    layers.append(_load_cap_meta(agent_synced_caps_root(ref.home, ref.name), kind))
     return layers

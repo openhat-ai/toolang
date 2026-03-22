@@ -7,8 +7,18 @@ agent rooms, sync state, local caps, and sandbox staging.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import get_args
 
-from toolang_caps.models import CAP_KINDS, CapKind, section_name
+from toolang_concepts.caps import CapKind
+
+SECTION_DIR_BY_CAP_KIND = {
+    "skill": "skills",
+    "service": "services",
+    "prompt": "prompts",
+    "psyche": "psyches",
+}
+
+ALL_CAP_KINDS = get_args(CapKind)
 
 
 def resolve_toolang_root(root: Path | str) -> Path:
@@ -143,7 +153,7 @@ def synced_caps_root(agent_home: Path | str) -> Path:
 
 def synced_caps_dir(agent_home: Path | str, kind: CapKind) -> Path:
     """Return the shared synced-cap directory for one cap kind."""
-    return synced_caps_root(agent_home) / section_name(kind)
+    return synced_caps_root(agent_home) / cap_section_dir_name(kind)
 
 
 def agent_synced_caps_root(agent_home: Path | str, agent_name: str) -> Path:
@@ -153,7 +163,7 @@ def agent_synced_caps_root(agent_home: Path | str, agent_name: str) -> Path:
 
 def agent_synced_caps_dir(agent_home: Path | str, agent_name: str, kind: CapKind) -> Path:
     """Return the agent-only synced-cap directory for one cap kind."""
-    return agent_synced_caps_root(agent_home, agent_name) / section_name(kind)
+    return agent_synced_caps_root(agent_home, agent_name) / cap_section_dir_name(kind)
 
 
 def global_synced_caps_root(root: Path | str) -> Path:
@@ -163,7 +173,7 @@ def global_synced_caps_root(root: Path | str) -> Path:
 
 def global_synced_caps_dir(root: Path | str, kind: CapKind) -> Path:
     """Return the global synced-cap directory for one cap kind."""
-    return global_synced_caps_root(root) / section_name(kind)
+    return global_synced_caps_root(root) / cap_section_dir_name(kind)
 
 
 def shared_caps_root(agent_home: Path | str) -> Path:
@@ -173,7 +183,7 @@ def shared_caps_root(agent_home: Path | str) -> Path:
 
 def shared_caps_dir(agent_home: Path | str, kind: CapKind) -> Path:
     """Return the shared local-cap directory for one cap kind."""
-    return shared_caps_root(agent_home) / section_name(kind)
+    return shared_caps_root(agent_home) / cap_section_dir_name(kind)
 
 
 def global_caps_root(root: Path | str) -> Path:
@@ -183,7 +193,13 @@ def global_caps_root(root: Path | str) -> Path:
 
 def global_caps_dir(root: Path | str, kind: CapKind) -> Path:
     """Return the global local-cap directory for one cap kind."""
-    return global_caps_root(root) / section_name(kind)
+    return global_caps_root(root) / cap_section_dir_name(kind)
+
+
+def cap_section_dir_name(kind: CapKind) -> str:
+    """Return the directory section name used for one cap kind."""
+
+    return SECTION_DIR_BY_CAP_KIND[kind]
 
 
 def ensure_toolang_root_layout(root: Path | str) -> Path:
@@ -207,6 +223,6 @@ def ensure_agent_home_layout(agent_home: Path | str, agent_name: str) -> Path:
     sync_root = synced_caps_root(resolved_home)
     for path in (resolved_home, room, sync_root):
         path.mkdir(parents=True, exist_ok=True)
-    for kind in CAP_KINDS:
-        (sync_root / section_name(kind)).mkdir(parents=True, exist_ok=True)
+    for kind in ALL_CAP_KINDS:
+        (sync_root / cap_section_dir_name(kind)).mkdir(parents=True, exist_ok=True)
     return resolved_home

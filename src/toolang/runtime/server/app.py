@@ -119,7 +119,7 @@ def create_agent_app(
     endpoint_host = public_host or host
     endpoint = f"http://{endpoint_host}:{port}"
     bus = BusStore(bus_db_path)
-    chats = ChatStore(agent_chats_db_path(prepared.ref.agent_home, prepared.ref.agent_name))
+    chats = ChatStore(agent_chats_db_path(prepared.ref.home, prepared.ref.name))
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -146,7 +146,7 @@ def create_agent_app(
                 bus.close()
 
     app = FastAPI(
-        title=f"Toolang Agent Server: {prepared.ref.agent_name}",
+        title=f"Toolang Agent Server: {prepared.ref.name}",
         lifespan=lifespan,
     )
     add_cors(app, allow_origins=cors_allow_origins)
@@ -162,23 +162,23 @@ def create_agent_app(
 
     @app.get("/healthz")
     def healthz() -> dict[str, object]:
-        return {"ok": True, "agent": prepared.ref.agent_name}
+        return {"ok": True, "agent": prepared.ref.name}
 
     @app.get("/api/v1/health")
     @app.get("/health")
     def health() -> dict[str, str]:
         return {
             "status": "ok",
-            "agent_uri": prepared.ref.agent_uri,
-            "agent_id": prepared.ref.agent_id[:SHORT_AGENT_ID_LENGTH],
-            "agent_name": prepared.ref.agent_name,
+            "agent_uri": prepared.ref.uri,
+            "agent_id": prepared.ref.id[:SHORT_AGENT_ID_LENGTH],
+            "agent_name": prepared.ref.name,
             "endpoint": endpoint,
         }
 
     @app.get("/api/v1/agent")
     @app.get("/agent", response_model_exclude_none=True)
     def agent_info():
-        snapshot = bus.get_agent(prepared.ref.agent_uri)
+        snapshot = bus.get_agent(prepared.ref.uri)
         if snapshot is not None:
             return snapshot
         return fallback_agent_snapshot(
@@ -190,18 +190,18 @@ def create_agent_app(
 
     @app.get("/api/v1/profile", response_model=AgentProfile)
     def profile() -> AgentProfile:
-        return AgentProfile(agent=prepared.ref.agent_name)
+        return AgentProfile(agent=prepared.ref.name)
 
     @app.get("/api/v1/runtime", response_model=AgentRuntimeResponse)
     def runtime_info() -> AgentRuntimeResponse:
-        current_run = get_running_agent(agents_db_path, prepared.ref.agent_uri)
+        current_run = get_running_agent(agents_db_path, prepared.ref.uri)
         current = prepare_agent(prepared.ref, cap_scopes=prepared.cap_scopes)
         return AgentRuntimeResponse(
             status="online",
             checked_at=utc_now(),
             endpoint=endpoint,
             execution_host=parsed_sandbox.execution_host,
-            working_directory=str(prepared.ref.agent_home),
+            working_directory=str(prepared.ref.home),
             sandbox=sandbox_spec,
             network="enabled",
             approvals="n/a",
@@ -224,21 +224,21 @@ def create_agent_app(
     def list_caps() -> AgentCapsResponse:
         current = prepare_agent(prepared.ref, cap_scopes=prepared.cap_scopes)
         caps = load_prepared_caps(current)
-        return caps_response(prepared.ref.agent_name, caps)
+        return caps_response(prepared.ref.name, caps)
 
     @app.get("/api/v1/chats", response_model=ChatThreadListResponse)
     def list_chats(limit: int = Query(50, ge=1, le=500)) -> ChatThreadListResponse:
         return ChatThreadListResponse(
             items=[
                 thread_item(item)
-                for item in chats.list_threads(agent_uri=prepared.ref.agent_uri, limit=limit)
+                for item in chats.list_threads(agent_uri=prepared.ref.uri, limit=limit)
             ]
         )
 
     @app.get("/api/v1/chats/{thread_id}", response_model=ChatThreadResponse)
     def get_chat(thread_id: str, limit: int = Query(50, ge=1, le=500)) -> ChatThreadResponse:
         thread = chats.get_thread(thread_id=thread_id)
-        if thread is None or thread.agent_uri != prepared.ref.agent_uri:
+        if thread is None or thread.agent_uri != prepared.ref.uri:
             raise HTTPException(status_code=404, detail="thread not found")
         turns = chats.recent_turns(thread_id=thread_id, limit=limit)
         return ChatThreadResponse(
@@ -248,20 +248,20 @@ def create_agent_app(
 
     @app.get("/api/v1/runs", response_model=RunListResponse)
     def list_runs(limit: int = Query(50, ge=1, le=500)) -> RunListResponse:
-        runs = bus.list_runs(agent_uri=prepared.ref.agent_uri, limit=limit)
+        runs = bus.list_runs(agent_uri=prepared.ref.uri, limit=limit)
         return RunListResponse(items=[run_item(item) for item in runs])
 
     @app.get("/api/v1/runs/{run_id}", response_model=RunDetailResponse)
     def get_run(run_id: str) -> RunDetailResponse:
         run = bus.get_run(run_id)
-        if run is None or run.agent_uri != prepared.ref.agent_uri:
+        if run is None or run.agent_uri != prepared.ref.uri:
             raise HTTPException(status_code=404, detail="run not found")
         children = [
             item
-            for item in bus.list_runs(agent_uri=prepared.ref.agent_uri, limit=500)
+            for item in bus.list_runs(agent_uri=prepared.ref.uri, limit=500)
             if item.parent_run_id == run_id
         ]
-        events = bus.list_events(agent_uri=prepared.ref.agent_uri, run_id=run_id, limit=500)
+        events = bus.list_events(agent_uri=prepared.ref.uri, run_id=run_id, limit=500)
         turn = None
         if run.thread_id:
             loaded = chats.get_turn(thread_id=run.thread_id, turn_id=run_id)
@@ -280,7 +280,7 @@ def create_agent_app(
         limit: int = Query(100, ge=1, le=2000),
     ) -> EventListResponse:
         events = bus.list_events(
-            agent_uri=prepared.ref.agent_uri,
+            agent_uri=prepared.ref.uri,
             from_event_id=from_event_id,
             limit=limit,
         )
@@ -291,7 +291,7 @@ def create_agent_app(
         async def stream() -> AsyncIterator[str]:
             min_event_id = await asyncio.to_thread(
                 bus.max_event_id,
-                agent_uri=prepared.ref.agent_uri,
+                agent_uri=prepared.ref.uri,
             )
             last_emitted = min_event_id
             last_ping_at = asyncio.get_running_loop().time()
@@ -299,7 +299,7 @@ def create_agent_app(
                 "sub_ready",
                 {
                     "min_event_id": min_event_id,
-                    "agent_id": prepared.ref.agent_id[:SHORT_AGENT_ID_LENGTH],
+                    "agent_id": prepared.ref.id[:SHORT_AGENT_ID_LENGTH],
                 },
             )
             while True:
@@ -307,7 +307,7 @@ def create_agent_app(
                     break
                 rows = await asyncio.to_thread(
                     bus.list_events,
-                    agent_uri=prepared.ref.agent_uri,
+                    agent_uri=prepared.ref.uri,
                     from_event_id=last_emitted,
                     limit=200,
                 )

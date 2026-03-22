@@ -1,5 +1,5 @@
-"""File-shape models and serialization helpers.
+"""Compatibility exports for persisted Toolang file shapes.
 
-This package owns the durable on-disk formats used by Toolang state and trace
-files. It does not own path resolution or runtime orchestration.
+The canonical definitions now live under ``toolang_concepts.persisted``.
+This package remains as a thin import layer for legacy call sites.
 """

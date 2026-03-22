@@ -38,8 +38,8 @@ def test_invoke_prepared_agent_records_run_events(tmp_path: Path, monkeypatch) -
     )
 
     store = BusStore(bus_events_db_path(root))
-    runs = store.list_runs(agent_uri=agent.agent_uri)
-    events = store.list_events(agent_uri=agent.agent_uri)
+    runs = store.list_runs(agent_uri=agent.uri)
+    events = store.list_events(agent_uri=agent.uri)
     store.close()
     trace = PromptTrace.load(agent_run_prompt_path(home, "alice", result.run_id))
 

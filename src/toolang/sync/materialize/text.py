@@ -3,57 +3,57 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from toolang.files.sync_state import LockEntry
+from toolang.layout import cap_section_dir_name
 from toolang_caps.files import (
-    inline_cap_meta_path,
-    inline_cap_path,
-    remove_stale_text_cap_materializations,
+    declared_cap_meta_path,
+    declared_cap_path,
+    remove_stale_declared_cap_materializations,
     sync_file_cap_materialization,
-    sync_text_cap_materialization,
+    sync_declared_cap_materialization,
 )
-from toolang_caps.models import (
+from toolang_concepts.caps import (
     CapContent,
+    CapKind,
     CapRef,
     CapSidecar,
-    InlineCapKind,
-    section_name,
 )
+from toolang_concepts.persisted.sync_state import LockEntry
 
 from .. import remote
 
 
-def sync_scope_text_caps(
+def sync_scope_declared_caps(
     sync_root: Path,
-    kind: InlineCapKind,
+    kind: CapKind,
     entries: dict[str, LockEntry],
     *,
     scope_source_root: Path,
 ) -> None:
-    expected_names = _sync_locked_text_caps(
+    expected_names = _sync_locked_declared_caps(
         sync_root,
         kind,
         entries,
         scope_source_root=scope_source_root,
     )
-    remove_stale_text_cap_materializations(sync_root, kind, expected_names)
+    remove_stale_declared_cap_materializations(sync_root, kind, expected_names)
 
 
-def sync_agent_text_caps(
+def sync_agent_declared_caps(
     sync_root: Path,
-    kind: InlineCapKind,
+    kind: CapKind,
     entries: dict[str, LockEntry],
-    inline_caps: list[CapContent],
+    declared_caps: list[CapContent],
     *,
     scope_source_root: Path,
 ) -> None:
-    expected_names = _sync_locked_text_caps(
+    expected_names = _sync_locked_declared_caps(
         sync_root,
         kind,
         entries,
         scope_source_root=scope_source_root,
     )
-    for cap in inline_caps:
-        sync_text_cap_materialization(
+    for cap in declared_caps:
+        sync_declared_cap_materialization(
             sync_root,
             cap.kind,
             cap.name,
@@ -62,28 +62,28 @@ def sync_agent_text_caps(
             params=cap.params,
         )
         expected_names.add(cap.name)
-    remove_stale_text_cap_materializations(sync_root, kind, expected_names)
+    remove_stale_declared_cap_materializations(sync_root, kind, expected_names)
 
 
-def has_expected_scope_text_caps(
+def has_expected_scope_declared_caps(
     sync_root: Path,
-    kind: InlineCapKind,
+    kind: CapKind,
     entries: dict[str, LockEntry],
 ) -> bool:
-    kind_dir = sync_root / section_name(kind)
+    kind_dir = sync_root / cap_section_dir_name(kind)
     if not kind_dir.exists():
         return False
-    expected_paths = {inline_cap_path(sync_root, kind, name, "md") for name in entries} | {
-        inline_cap_meta_path(sync_root, kind, name) for name in entries
+    expected_paths = {declared_cap_path(sync_root, kind, name, "md") for name in entries} | {
+        declared_cap_meta_path(sync_root, kind, name) for name in entries
     }
     if set(kind_dir.iterdir()) != expected_paths:
         return False
     for name, entry in entries.items():
-        meta_path = inline_cap_meta_path(sync_root, kind, name)
+        meta_path = declared_cap_meta_path(sync_root, kind, name)
         if not meta_path.exists():
             return False
         meta = CapSidecar.model_validate_json(meta_path.read_text(encoding="utf-8"))
-        if not _text_meta_matches_entry(meta, entry):
+        if not _declared_meta_matches_entry(meta, entry):
             return False
         raw_path = sync_root / meta.path
         if not raw_path.exists() or raw_path.read_text(encoding="utf-8") != meta.raw_text:
@@ -91,24 +91,24 @@ def has_expected_scope_text_caps(
     return True
 
 
-def has_expected_agent_text_caps(
+def has_expected_agent_declared_caps(
     sync_root: Path,
-    kind: InlineCapKind,
+    kind: CapKind,
     entries: dict[str, LockEntry],
-    inline_caps: list[CapContent],
+    declared_caps: list[CapContent],
 ) -> bool:
-    kind_dir = sync_root / section_name(kind)
+    kind_dir = sync_root / cap_section_dir_name(kind)
     if not kind_dir.exists():
         return False
 
-    inline_by_name = {cap.name: cap for cap in inline_caps}
-    expected_names = set(entries) | set(inline_by_name)
-    expected_paths = {inline_cap_meta_path(sync_root, kind, name) for name in expected_names} | {
-        inline_cap_path(
+    declared_by_name = {cap.name: cap for cap in declared_caps}
+    expected_names = set(entries) | set(declared_by_name)
+    expected_paths = {declared_cap_meta_path(sync_root, kind, name) for name in expected_names} | {
+        declared_cap_path(
             sync_root,
             kind,
             name,
-            inline_by_name[name].language if name in inline_by_name else "md",
+            declared_by_name[name].language if name in declared_by_name else "md",
         )
         for name in expected_names
     }
@@ -117,35 +117,35 @@ def has_expected_agent_text_caps(
 
     for name in expected_names:
         meta = CapSidecar.model_validate_json(
-            inline_cap_meta_path(sync_root, kind, name).read_text(encoding="utf-8")
+            declared_cap_meta_path(sync_root, kind, name).read_text(encoding="utf-8")
         )
         raw_path = sync_root / meta.path
         if not raw_path.exists() or raw_path.read_text(encoding="utf-8") != meta.raw_text:
             return False
-        inline_cap = inline_by_name.get(name)
-        if inline_cap is not None:
+        declared_cap = declared_by_name.get(name)
+        if declared_cap is not None:
             if (
-                meta.language != inline_cap.language
-                or meta.raw_text != inline_cap.raw_text
-                or meta.params != inline_cap.params
+                meta.language != declared_cap.language
+                or meta.raw_text != declared_cap.raw_text
+                or meta.params != declared_cap.params
             ):
                 return False
             continue
-        if not _text_meta_matches_entry(meta, entries[name]):
+        if not _declared_meta_matches_entry(meta, entries[name]):
             return False
     return True
 
 
-def _sync_locked_text_caps(
+def _sync_locked_declared_caps(
     sync_root: Path,
-    kind: InlineCapKind,
+    kind: CapKind,
     entries: dict[str, LockEntry],
     *,
     scope_source_root: Path,
 ) -> set[str]:
     expected_names: set[str] = set()
     for name, entry in entries.items():
-        _sync_locked_text_cap(
+        _sync_locked_declared_cap(
             sync_root,
             kind,
             name,
@@ -156,9 +156,9 @@ def _sync_locked_text_caps(
     return expected_names
 
 
-def _sync_locked_text_cap(
+def _sync_locked_declared_cap(
     sync_root: Path,
-    kind: InlineCapKind,
+    kind: CapKind,
     name: str,
     entry: LockEntry,
     *,
@@ -173,7 +173,7 @@ def _sync_locked_text_cap(
             source_path=entry.path,
         )
         return
-    resolved = _resolved_text_ref(kind, name, entry)
+    resolved = _resolved_declared_ref(kind, name, entry)
     source_path, _ = remote.fetch_github_artifact(resolved)
     try:
         sync_file_cap_materialization(
@@ -190,8 +190,8 @@ def _sync_locked_text_cap(
         shutil.rmtree(source_path.parent.parent, ignore_errors=True)
 
 
-def _resolved_text_ref(
-    kind: InlineCapKind,
+def _resolved_declared_ref(
+    kind: CapKind,
     name: str,
     entry: LockEntry,
 ) -> CapRef:
@@ -205,7 +205,7 @@ def _resolved_text_ref(
     )
 
 
-def _text_meta_matches_entry(meta: CapSidecar, entry: LockEntry) -> bool:
+def _declared_meta_matches_entry(meta: CapSidecar, entry: LockEntry) -> bool:
     return (
         meta.ref == entry.ref
         and meta.repo == entry.repo

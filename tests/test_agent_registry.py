@@ -38,7 +38,7 @@ def test_known_agent_registry_supports_name_and_id_lookup(tmp_path: Path) -> Non
     upsert_known_agent(db_path, record)
 
     assert find_known_agents_by_name(db_path, "reviewer") == [record]
-    assert find_known_agents_by_id_prefix(db_path, agent.agent_id[:8]) == [record]
+    assert find_known_agents_by_id_prefix(db_path, agent.id[:8]) == [record]
 
 
 def test_running_agent_registry_tracks_active_served_agents(tmp_path: Path) -> None:
@@ -57,7 +57,7 @@ def test_running_agent_registry_tracks_active_served_agents(tmp_path: Path) -> N
     upsert_running_agent(
         db_path,
         RunningAgentRecord(
-            agent_uri=agent.agent_uri,
+            agent_uri=agent.uri,
             pid=12345,
             status="running",
             endpoint="http://127.0.0.1:8765",
@@ -67,7 +67,7 @@ def test_running_agent_registry_tracks_active_served_agents(tmp_path: Path) -> N
         ),
     )
 
-    running = get_running_agent(db_path, agent.agent_uri)
+    running = get_running_agent(db_path, agent.uri)
     snapshots = list_running_agents(db_path)
 
     assert running is not None
@@ -75,12 +75,12 @@ def test_running_agent_registry_tracks_active_served_agents(tmp_path: Path) -> N
     assert running.sandbox == "host"
     assert len(snapshots) == 1
     assert snapshots[0].agent_name == "reviewer"
-    assert snapshots[0].agent_id == agent.agent_id[:12]
+    assert snapshots[0].agent_id == agent.id[:12]
     assert snapshots[0].sandbox == "host"
 
-    delete_running_agent(db_path, agent.agent_uri)
+    delete_running_agent(db_path, agent.uri)
 
-    assert get_running_agent(db_path, agent.agent_uri) is None
+    assert get_running_agent(db_path, agent.uri) is None
 
 
 def test_known_agent_registry_lists_known_agents_with_optional_running_state(
@@ -105,7 +105,7 @@ def test_known_agent_registry_lists_known_agents_with_optional_running_state(
     upsert_running_agent(
         db_path,
         RunningAgentRecord(
-            agent_uri=agent.agent_uri,
+            agent_uri=agent.uri,
             pid=12345,
             status="running",
             endpoint="http://127.0.0.1:8765",
@@ -139,5 +139,5 @@ def test_delete_known_agent_removes_registry_row(tmp_path: Path) -> None:
         ),
     )
 
-    assert delete_known_agent(db_path, agent.agent_uri) is True
+    assert delete_known_agent(db_path, agent.uri) is True
     assert find_known_agents_by_name(db_path, "reviewer") == []

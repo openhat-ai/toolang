@@ -54,6 +54,8 @@
 - Caps logic lives in the separate `toolang_caps` package, even while it is
   still shipped from this repository, so it can be split out later without a
   large refactor.
+- Stable shared constructs live in the separate `toolang_concepts` package so
+  runtime, sync, and caps code can depend on one explicit concept source.
 
 
 ## Agent Identity

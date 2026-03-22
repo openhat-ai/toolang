@@ -35,7 +35,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/toolang", "src/toolang_caps"]
+packages = ["src/toolang", "src/toolang_caps", "src/toolang_concepts"]
 
 [tool.ruff]
 exclude = ["archive", "dist", "scratch"]

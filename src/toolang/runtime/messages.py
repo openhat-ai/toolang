@@ -1,22 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 
 from toolang.errors import ToolangError
-
-MessageOrigin = Literal["invoke", "chat", "task", "chore", "will"]
-MessageSender = Literal["owner", "peer", "guest", "self"]
-
-
-@dataclass(frozen=True, slots=True)
-class Message:
-    origin: MessageOrigin
-    channel: str | None
-    sender: MessageSender
-    thread_id: str
-    text: str
-    meta: dict[str, Any] = field(default_factory=dict)
+from toolang_concepts.execution import Message, MessageSender
 
 
 def chat_message(

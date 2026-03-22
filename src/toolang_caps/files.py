@@ -2,16 +2,15 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import Literal
 
 from toolang_caps.frontmatter import parse_cap_body
-from toolang_caps.models import (
-    CAP_KINDS,
+from toolang.layout import cap_section_dir_name
+from toolang_concepts.caps import (
     CapContent,
+    CapKind,
     CapParam,
-    InlineCapKind,
     CapSidecar,
-    TEXT_CAP_KINDS,
-    section_name,
 )
 
 LANGUAGE_EXTENSIONS = {
@@ -19,16 +18,21 @@ LANGUAGE_EXTENSIONS = {
     "md": ".md",
     "python": ".py",
 }
+DECLARED_CAP_KINDS: tuple[Literal["service", "prompt", "psyche"], ...] = (
+    "service",
+    "prompt",
+    "psyche",
+)
 
 
-def sync_inline_caps(root: Path, caps: list[CapContent]) -> None:
+def sync_declared_caps(root: Path, caps: list[CapContent]) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    for kind in CAP_KINDS:
-        (root / section_name(kind)).mkdir(parents=True, exist_ok=True)
+    for kind in (*DECLARED_CAP_KINDS, "skill"):
+        (root / cap_section_dir_name(kind)).mkdir(parents=True, exist_ok=True)
 
-    expected_by_kind = {kind: set() for kind in TEXT_CAP_KINDS}
+    expected_by_kind: dict[CapKind, set[str]] = {kind: set() for kind in DECLARED_CAP_KINDS}
     for cap in caps:
-        sync_text_cap_materialization(
+        sync_declared_cap_materialization(
             root,
             cap.kind,
             cap.name,
@@ -36,15 +40,18 @@ def sync_inline_caps(root: Path, caps: list[CapContent]) -> None:
             language=cap.language,
             params=cap.params,
         )
-        expected_by_kind[cap.kind].add(cap.name)
+        names = expected_by_kind.get(cap.kind)
+        if names is None:
+            raise ValueError(f"Unsupported declared cap kind: {cap.kind}")
+        names.add(cap.name)
 
-    for kind in TEXT_CAP_KINDS:
-        remove_stale_text_cap_materializations(root, kind, expected_by_kind[kind])
+    for kind in DECLARED_CAP_KINDS:
+        remove_stale_declared_cap_materializations(root, kind, expected_by_kind[kind])
 
 
-def sync_text_cap_materialization(
+def sync_declared_cap_materialization(
     root: Path,
-    kind: InlineCapKind,
+    kind: CapKind,
     name: str,
     raw_text: str,
     *,
@@ -56,9 +63,9 @@ def sync_text_cap_materialization(
     rev: str | None = None,
 ) -> tuple[Path, Path]:
     root.mkdir(parents=True, exist_ok=True)
-    (root / section_name(kind)).mkdir(parents=True, exist_ok=True)
-    raw_path = inline_cap_path(root, kind, name, language)
-    meta_path = inline_cap_meta_path(root, kind, name)
+    (root / cap_section_dir_name(kind)).mkdir(parents=True, exist_ok=True)
+    raw_path = declared_cap_path(root, kind, name, language)
+    meta_path = declared_cap_meta_path(root, kind, name)
     parsed = parse_cap_body(language, raw_text)
 
     raw_path.write_text(raw_text, encoding="utf-8")
@@ -85,7 +92,7 @@ def sync_text_cap_materialization(
 
 def sync_file_cap_materialization(
     root: Path,
-    kind: InlineCapKind,
+    kind: CapKind,
     name: str,
     source_file: Path,
     *,
@@ -94,7 +101,7 @@ def sync_file_cap_materialization(
     repo: str | None = None,
     rev: str | None = None,
 ) -> None:
-    sync_text_cap_materialization(
+    sync_declared_cap_materialization(
         root,
         kind,
         name,
@@ -149,12 +156,12 @@ def sync_local_skill_materialization(
     meta_path.write_text(meta.model_dump_json(indent=2), encoding="utf-8")
 
 
-def remove_stale_text_cap_materializations(
+def remove_stale_declared_cap_materializations(
     root: Path,
-    kind: InlineCapKind,
+    kind: CapKind,
     expected_names: set[str],
 ) -> None:
-    kind_dir = root / section_name(kind)
+    kind_dir = root / cap_section_dir_name(kind)
     kind_dir.mkdir(parents=True, exist_ok=True)
     for existing in kind_dir.iterdir():
         if existing.name.endswith(".meta.json"):
@@ -166,7 +173,7 @@ def remove_stale_text_cap_materializations(
 
 
 def remove_stale_skill_materializations(root: Path, expected_names: set[str]) -> None:
-    kind_dir = root / section_name("skill")
+    kind_dir = root / cap_section_dir_name("skill")
     kind_dir.mkdir(parents=True, exist_ok=True)
     expected_paths = {
         skill_cap_dir(root, name) for name in expected_names
@@ -178,21 +185,21 @@ def remove_stale_skill_materializations(root: Path, expected_names: set[str]) ->
             _remove_path(existing)
 
 
-def inline_cap_path(root: Path, kind: InlineCapKind, name: str, language: str | None) -> Path:
+def declared_cap_path(root: Path, kind: CapKind, name: str, language: str | None) -> Path:
     extension = LANGUAGE_EXTENSIONS.get(language or "", f".{language}" if language else ".txt")
-    return root / section_name(kind) / f"{name}{extension}"
+    return root / cap_section_dir_name(kind) / f"{name}{extension}"
 
 
-def inline_cap_meta_path(root: Path, kind: InlineCapKind, name: str) -> Path:
-    return root / section_name(kind) / f"{name}.meta.json"
+def declared_cap_meta_path(root: Path, kind: CapKind, name: str) -> Path:
+    return root / cap_section_dir_name(kind) / f"{name}.meta.json"
 
 
 def skill_cap_dir(root: Path, name: str) -> Path:
-    return root / section_name("skill") / name
+    return root / cap_section_dir_name("skill") / name
 
 
 def skill_cap_meta_path(root: Path, name: str) -> Path:
-    return root / section_name("skill") / f"{name}.meta.json"
+    return root / cap_section_dir_name("skill") / f"{name}.meta.json"
 
 
 def _language_from_path(path: Path) -> str | None:

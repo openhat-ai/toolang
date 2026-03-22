@@ -114,7 +114,7 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
             "chores": 0,
         }
 
-        active = get_running_agent(db_path, agent.agent_uri)
+        active = get_running_agent(db_path, agent.uri)
         assert active is not None
         assert active.status == "running"
         assert active.sandbox == "host"
@@ -213,10 +213,10 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
             "run_finished",
         ]
 
-    assert get_running_agent(db_path, agent.agent_uri) is None
+    assert get_running_agent(db_path, agent.uri) is None
     assert ActivationState.load(run_path).status == "stopped"
     store = BusStore(events_path)
-    events = store.list_events(agent_uri=agent.agent_uri)
+    events = store.list_events(agent_uri=agent.uri)
     store.close()
     assert events[-1].event_type == "agent_stopped"
 

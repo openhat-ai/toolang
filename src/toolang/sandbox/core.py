@@ -2,31 +2,12 @@ from __future__ import annotations
 
 import json
 import shlex
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Literal, Mapping
+from typing import Iterable, Mapping
+
+from toolang_concepts.sandbox import HOST_SANDBOX, SandboxSpec
 
 from .docker import docker_container_name, docker_container_running
-
-HOST_SANDBOX = "host"
-
-
-@dataclass(frozen=True, slots=True)
-class SandboxSpec:
-    kind: Literal["host", "docker"]
-    image: str | None = None
-
-    @property
-    def spec(self) -> str:
-        if self.kind == "docker" and self.image:
-            return f"docker:{self.image}"
-        return HOST_SANDBOX
-
-    @property
-    def execution_host(self) -> str:
-        if self.kind == "docker":
-            return "docker"
-        return "local"
 
 
 def normalize_sandbox_spec(value: str | None, *, fallback: str = HOST_SANDBOX) -> str:

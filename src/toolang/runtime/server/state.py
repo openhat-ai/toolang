@@ -16,7 +16,6 @@ from toolang.agent.registry import (
 from toolang.bus.db import BusStore
 from toolang.bus.events import AgentStarted, AgentStopped, utc_now
 from toolang.errors import ToolangError
-from toolang.files.agent_run import ActivationState, SandboxRuntimeInfo, SandboxState
 from toolang.layout import agent_run_path
 from toolang.sandbox import (
     docker_container_name,
@@ -24,6 +23,8 @@ from toolang.sandbox import (
     parse_sandbox_spec,
     sandbox_process_alive,
 )
+from toolang_concepts.persisted.activation_state import ActivationState
+from toolang_concepts.sandbox import SandboxRuntimeInfo, SandboxState
 
 SHORT_AGENT_ID_LENGTH = 12
 
@@ -38,18 +39,18 @@ def activate_running_agent(
 ) -> None:
     current_pid = os.getpid()
     sandbox_spec = normalize_sandbox_spec(sandbox)
-    existing = get_running_agent(agents_db_path, prepared.ref.agent_uri)
+    existing = get_running_agent(agents_db_path, prepared.ref.uri)
     if existing is not None:
         alive = sandbox_process_alive(
             sandbox_spec=existing.sandbox,
             pid=existing.pid,
-            agent_name=prepared.ref.agent_name,
-            agent_id=prepared.ref.agent_id[:SHORT_AGENT_ID_LENGTH],
+            agent_name=prepared.ref.name,
+            agent_id=prepared.ref.id[:SHORT_AGENT_ID_LENGTH],
         )
         if alive and existing.pid != current_pid:
-            raise ToolangError(f"Agent is already being served: {prepared.ref.agent_uri}")
+            raise ToolangError(f"Agent is already being served: {prepared.ref.uri}")
         if not alive:
-            delete_running_agent(agents_db_path, prepared.ref.agent_uri)
+            delete_running_agent(agents_db_path, prepared.ref.uri)
 
     now = datetime.now(timezone.utc)
     upsert_known_agent(
@@ -59,7 +60,7 @@ def activate_running_agent(
     upsert_running_agent(
         agents_db_path,
         RunningAgentRecord(
-            agent_uri=prepared.ref.agent_uri,
+            agent_uri=prepared.ref.uri,
             pid=current_pid,
             status="running",
             endpoint=endpoint,
@@ -71,13 +72,13 @@ def activate_running_agent(
     bus.append(
         AgentStarted(
             at=utc_now(),
-            agent_uri=prepared.ref.agent_uri,
-            agent_id=prepared.ref.agent_id[:SHORT_AGENT_ID_LENGTH],
-            name=prepared.ref.agent_name,
-            kind=prepared.ref.agent_kind,
+            agent_uri=prepared.ref.uri,
+            agent_id=prepared.ref.id[:SHORT_AGENT_ID_LENGTH],
+            name=prepared.ref.name,
+            kind=prepared.ref.kind,
             sandbox=sandbox_spec,
             endpoint=endpoint,
-            agent_home=str(prepared.ref.agent_home),
+            agent_home=str(prepared.ref.home),
             source_file=prepared.source_path.name,
         )
     )
@@ -97,7 +98,7 @@ def touch_running_agent(
     agents_db_path: Path,
     endpoint: str,
 ) -> None:
-    current = get_running_agent(agents_db_path, prepared.ref.agent_uri)
+    current = get_running_agent(agents_db_path, prepared.ref.uri)
     if current is None:
         return
     now = datetime.now(timezone.utc)
@@ -121,21 +122,21 @@ def deactivate_running_agent(
     endpoint: str,
     sandbox: str,
 ) -> None:
-    current = get_running_agent(agents_db_path, prepared.ref.agent_uri)
+    current = get_running_agent(agents_db_path, prepared.ref.uri)
     now = datetime.now(timezone.utc)
     started_at = current.started_at if current is not None else now
-    delete_running_agent(agents_db_path, prepared.ref.agent_uri)
+    delete_running_agent(agents_db_path, prepared.ref.uri)
     sandbox_spec = normalize_sandbox_spec(sandbox)
     bus.append(
         AgentStopped(
             at=utc_now(),
-            agent_uri=prepared.ref.agent_uri,
-            agent_id=prepared.ref.agent_id[:SHORT_AGENT_ID_LENGTH],
-            name=prepared.ref.agent_name,
+            agent_uri=prepared.ref.uri,
+            agent_id=prepared.ref.id[:SHORT_AGENT_ID_LENGTH],
+            name=prepared.ref.name,
             sandbox=sandbox_spec,
             detail="server stopped",
             endpoint=endpoint,
-            agent_home=str(prepared.ref.agent_home),
+            agent_home=str(prepared.ref.home),
             source_file=prepared.source_path.name,
         )
     )
@@ -160,13 +161,13 @@ def write_agent_run_state(
 ) -> None:
     sandbox_spec = normalize_sandbox_spec(sandbox)
     parsed_sandbox = parse_sandbox_spec(sandbox_spec)
-    run_path = agent_run_path(prepared.ref.agent_home, prepared.ref.agent_name)
+    run_path = agent_run_path(prepared.ref.home, prepared.ref.name)
     run_path.parent.mkdir(parents=True, exist_ok=True)
     ActivationState(
-        agent_uri=prepared.ref.agent_uri,
-        agent_id=prepared.ref.agent_id[:SHORT_AGENT_ID_LENGTH],
-        agent_name=prepared.ref.agent_name,
-        agent_home=str(prepared.ref.agent_home),
+        agent_uri=prepared.ref.uri,
+        agent_id=prepared.ref.id[:SHORT_AGENT_ID_LENGTH],
+        agent_name=prepared.ref.name,
+        agent_home=str(prepared.ref.home),
         source_file=prepared.source_path.name,
         pid=os.getpid(),
         status=status,
@@ -177,8 +178,8 @@ def write_agent_run_state(
             type=parsed_sandbox.kind,
             container_name=(
                 docker_container_name(
-                    prepared.ref.agent_name,
-                    prepared.ref.agent_id[:SHORT_AGENT_ID_LENGTH],
+                    prepared.ref.name,
+                    prepared.ref.id[:SHORT_AGENT_ID_LENGTH],
                 )
                 if parsed_sandbox.kind == "docker"
                 else None
@@ -194,9 +195,9 @@ def has_running_state(
     *,
     agents_db_path: Path,
 ) -> bool:
-    if get_running_agent(agents_db_path, prepared.ref.agent_uri) is not None:
+    if get_running_agent(agents_db_path, prepared.ref.uri) is not None:
         return True
-    run_path = agent_run_path(prepared.ref.agent_home, prepared.ref.agent_name)
+    run_path = agent_run_path(prepared.ref.home, prepared.ref.name)
     if not run_path.exists():
         return False
     return ActivationState.load(run_path).status == "running"

@@ -13,8 +13,7 @@ from toolang.caps import CapScopeSelection, build_effective_program
 from toolang.layout import agent_sync_path
 from toolang.sync import ensure_agent_synced
 from toolang.syntax import Program
-
-from .refs import AgentRef
+from toolang_concepts.identity import AgentRef
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,11 +33,11 @@ def prepare_agent(
     cap_scopes: CapScopeSelection = CapScopeSelection(),
 ) -> PreparedAgent:
     """Prepare one resolved agent for runtime execution."""
-    source_path = agent.source_path
+    source_path = agent.source
     if not source_path.exists():
-        if agent.agent_kind == "visiting":
+        if agent.kind == "visiting":
             raise FileNotFoundError(
-                f"Visiting agent is not materialized locally: {agent.agent_uri} -> {source_path}"
+                f"Visiting agent is not materialized locally: {agent.uri} -> {source_path}"
             )
         raise FileNotFoundError(f"Agent source not found: {source_path}")
 
@@ -47,7 +46,7 @@ def prepare_agent(
     return PreparedAgent(
         ref=agent,
         source_path=source_path,
-        sync_state_path=agent_sync_path(agent.agent_home, agent.agent_name),
+        sync_state_path=agent_sync_path(agent.home, agent.name),
         program=build_effective_program(source_program, agent, cap_scopes=cap_scopes),
         cap_scopes=cap_scopes,
     )

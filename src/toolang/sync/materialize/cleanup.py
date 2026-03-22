@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import Literal
 
-from toolang_caps.models import TEXT_CAP_KINDS, section_name
+from toolang.layout import cap_section_dir_name
+
+DECLARED_CAP_KINDS: tuple[Literal["service", "prompt", "psyche"], ...] = (
+    "service",
+    "prompt",
+    "psyche",
+)
 
 
 def remove_stale_sync_root_entries(sync_root: Path) -> None:
-    expected_dirs = {section_name(kind) for kind in ("skill", *TEXT_CAP_KINDS)}
+    expected_dirs = {cap_section_dir_name(kind) for kind in ("skill", *DECLARED_CAP_KINDS)}
     for path in sync_root.iterdir():
         if path.is_dir():
             if path.name not in expected_dirs:

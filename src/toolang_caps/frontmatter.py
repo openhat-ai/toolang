@@ -1,4 +1,4 @@
-"""Markdown front matter parsing for inline text caps."""
+"""Markdown front matter parsing for capability bodies."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ class ParsedCapBody(BaseModel):
 
 
 def parse_cap_body(language: str | None, raw_text: str) -> ParsedCapBody:
-    """Parse inline cap text, extracting front matter for Markdown bodies."""
+    """Parse capability text, extracting front matter for Markdown bodies."""
 
     if language != "md":
         return ParsedCapBody(content=raw_text)

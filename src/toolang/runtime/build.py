@@ -198,12 +198,12 @@ def build_prompt_error_trace_data(
         "message_context": _message_context(message) if message is not None else None,
         "runtime_context": {
             "agent": {
-                "uri": prepared.ref.agent_uri,
-                "id": prepared.ref.agent_id,
-                "name": prepared.ref.agent_name,
-                "kind": prepared.ref.agent_kind,
+                "uri": prepared.ref.uri,
+                "id": prepared.ref.id,
+                "name": prepared.ref.name,
+                "kind": prepared.ref.kind,
             },
-            "working_directory": str(prepared.ref.agent_home),
+            "working_directory": str(prepared.ref.home),
             "sandbox": sandbox,
             "cap_scopes": list(prepared.cap_scopes.labels()),
             "origin": origin,
@@ -226,12 +226,12 @@ def _build_runtime_context(
     caps = load_prepared_caps(prepared).model_dump(mode="python")
     return {
         "agent": {
-            "uri": prepared.ref.agent_uri,
-            "id": prepared.ref.agent_id,
-            "name": prepared.ref.agent_name,
-            "kind": prepared.ref.agent_kind,
+            "uri": prepared.ref.uri,
+            "id": prepared.ref.id,
+            "name": prepared.ref.name,
+            "kind": prepared.ref.kind,
         },
-        "working_directory": str(prepared.ref.agent_home),
+        "working_directory": str(prepared.ref.home),
         "sandbox": sandbox,
         "cap_scopes": list(prepared.cap_scopes.labels()),
         "origin": origin,
@@ -250,7 +250,7 @@ def _program_context(program: Program, thunk: Thunk, program_path: Path) -> dict
         decl.name: {"language": decl.language, "body": decl.body}
         for decl in program.declarations_by_kind("stash")
     }
-    inline_caps = [
+    cap_declarations = [
         {
             "kind": decl.kind,
             "name": decl.name,
@@ -264,7 +264,7 @@ def _program_context(program: Program, thunk: Thunk, program_path: Path) -> dict
     return {
         "program_path": str(program_path),
         "uses": [{"kind": item.kind, "reference": item.reference} for item in program.uses],
-        "inline_caps": inline_caps,
+        "cap_declarations": cap_declarations,
         "structs": structs,
         "stashes": stashes,
         "thunk": {
