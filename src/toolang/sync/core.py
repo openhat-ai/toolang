@@ -8,11 +8,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import get_args
 
 from toolang.errors import ToolangError
 from toolang.layout import (
     agent_source_path,
     agent_sync_path,
+    cap_section_dir_name,
     ensure_agent_home_layout,
     global_source_path,
     global_synced_caps_root,
@@ -20,7 +22,7 @@ from toolang.layout import (
     synced_caps_root,
 )
 from toolang.syntax import Program, analyze_program, parse_program
-from toolang_concepts.caps import CAP_KINDS, section_name
+from toolang_concepts.caps import CapKind
 from toolang_concepts.identity import AgentRef
 from toolang_concepts.persisted.program import SyncedProgram
 from toolang_concepts.persisted.sync_state import (
@@ -44,6 +46,8 @@ from .refs import (
     overlay_ref_entries,
     resolve_home_refs,
 )
+
+ALL_CAP_KINDS = get_args(CapKind)
 
 
 def sync_agent(agent: AgentRef) -> SyncedProgram:
@@ -166,9 +170,9 @@ def _current_inputs(
         inputs["shared/agents.too"] = _fingerprint(shared_source)
     if global_source.exists():
         inputs["global/agents.too"] = _fingerprint(global_source)
-    for kind in CAP_KINDS:
-        inputs.update(_tree_fingerprints("shared", shared_local_root / section_name(kind)))
-        inputs.update(_tree_fingerprints("global", global_local_root / section_name(kind)))
+    for kind in ALL_CAP_KINDS:
+        inputs.update(_tree_fingerprints("shared", shared_local_root / cap_section_dir_name(kind)))
+        inputs.update(_tree_fingerprints("global", global_local_root / cap_section_dir_name(kind)))
     return inputs
 
 

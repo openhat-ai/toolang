@@ -5,17 +5,12 @@ sync, caps, and storage code. It owns reusable concepts, not orchestration.
 """
 
 from .caps import (
-    CAP_KINDS,
-    TEXT_CAP_KINDS,
     CapContent,
     CapEntry,
     CapKind,
     CapParam,
     CapRef,
     CapSidecar,
-    InlineCapKind,
-    refs_attr_name,
-    section_name,
 )
 from .execution import (
     ExecutionStrategy,
@@ -37,8 +32,6 @@ __all__ = [
     "AgentRef",
     "AgentSelector",
     "AgentUri",
-    "CAP_KINDS",
-    "TEXT_CAP_KINDS",
     "CapContent",
     "CapEntry",
     "CapKind",
@@ -47,7 +40,6 @@ __all__ = [
     "CapSidecar",
     "ExecutionStrategy",
     "HOST_SANDBOX",
-    "InlineCapKind",
     "Message",
     "MessageOrigin",
     "MessageSender",
@@ -55,6 +47,4 @@ __all__ = [
     "SandboxRuntimeInfo",
     "SandboxSpec",
     "SandboxState",
-    "refs_attr_name",
-    "section_name",
 ]

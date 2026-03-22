@@ -250,7 +250,7 @@ def _program_context(program: Program, thunk: Thunk, program_path: Path) -> dict
         decl.name: {"language": decl.language, "body": decl.body}
         for decl in program.declarations_by_kind("stash")
     }
-    inline_caps = [
+    cap_declarations = [
         {
             "kind": decl.kind,
             "name": decl.name,
@@ -264,7 +264,7 @@ def _program_context(program: Program, thunk: Thunk, program_path: Path) -> dict
     return {
         "program_path": str(program_path),
         "uses": [{"kind": item.kind, "reference": item.reference} for item in program.uses],
-        "inline_caps": inline_caps,
+        "cap_declarations": cap_declarations,
         "structs": structs,
         "stashes": stashes,
         "thunk": {

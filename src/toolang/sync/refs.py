@@ -1,30 +1,35 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
+from typing import cast, get_args
 
 from toolang.errors import ToolangError
 from toolang.syntax import Program
 from toolang_concepts.caps import (
-    CAP_KINDS,
     CapContent,
     CapKind,
     CapParam,
-    InlineCapKind,
-    refs_attr_name,
 )
 from toolang_concepts.persisted.sync_state import LockEntry, LockedAgentRefs
 
 from . import remote
 
-SOURCE_DECL_TO_CAP_KIND: dict[str, InlineCapKind] = {
+ALL_CAP_KINDS = get_args(CapKind)
+REFS_ATTR_BY_KIND: dict[CapKind, str] = {
+    "skill": "skills",
+    "service": "services",
+    "prompt": "prompts",
+    "psyche": "psyches",
+}
+
+SOURCE_DECL_TO_CAP_KIND: dict[str, CapKind] = {
     "service": "service",
     "prompt": "prompt",
     "psyche": "psyche",
 }
 
 
-def agent_inline_caps(program: Program) -> list[CapContent]:
+def agent_declared_caps(program: Program) -> list[CapContent]:
     caps: list[CapContent] = []
     for declaration in program.declarations:
         kind = SOURCE_DECL_TO_CAP_KIND.get(declaration.kind)
@@ -57,7 +62,7 @@ def load_scope_refs(path: Path, *, scope_label: str) -> LockedAgentRefs:
 
     refs = LockedAgentRefs()
     for use in program.uses:
-        if use.kind not in CAP_KINDS:
+        if use.kind not in ALL_CAP_KINDS:
             raise ToolangError(f"Unsupported cap kind in {scope_label}: {use.kind}")
         kind = cast(CapKind, use.kind)
         resolved = remote.resolve_github_cap_ref(kind, use.reference)
@@ -82,7 +87,7 @@ def resolve_home_refs(programs: dict[str, Program]) -> dict[str, LockedAgentRefs
     for agent_name, program in sorted(programs.items()):
         refs = LockedAgentRefs()
         for use in program.uses:
-            if use.kind not in CAP_KINDS:
+            if use.kind not in ALL_CAP_KINDS:
                 raise ToolangError(
                     f"Unsupported capability ref kind in {agent_name}.too: {use.kind}."
                 )
@@ -114,7 +119,7 @@ def load_local_entries_for_scope(
     from toolang.layout import global_caps_dir, shared_caps_dir
 
     refs = LockedAgentRefs()
-    for kind in CAP_KINDS:
+    for kind in ALL_CAP_KINDS:
         kind_dir = (
             shared_caps_dir(root, kind) if scope == "shared" else global_caps_dir(root, kind)
         )
@@ -134,28 +139,28 @@ def load_local_entries_for_scope(
 
 def overlay_ref_entries(refs: LockedAgentRefs, locals_by_name: LockedAgentRefs) -> LockedAgentRefs:
     effective = LockedAgentRefs()
-    for kind in CAP_KINDS:
+    for kind in ALL_CAP_KINDS:
         merged = dict(entries_for_kind(refs, kind))
         merged.update(entries_for_kind(locals_by_name, kind))
         setattr(
             effective,
-            refs_attr_name(kind),
+            REFS_ATTR_BY_KIND[kind],
             {name: merged[name] for name in sorted(merged)},
         )
     return effective
 
 
 def entries_for_kind(refs: LockedAgentRefs, kind: CapKind) -> dict[str, LockEntry]:
-    return getattr(refs, refs_attr_name(kind))
+    return getattr(refs, REFS_ATTR_BY_KIND[kind])
 
 
 def sorted_entries(refs: LockedAgentRefs) -> LockedAgentRefs:
     sorted_refs = LockedAgentRefs()
-    for kind in CAP_KINDS:
+    for kind in ALL_CAP_KINDS:
         entries = entries_for_kind(refs, kind)
         setattr(
             sorted_refs,
-            refs_attr_name(kind),
+            REFS_ATTR_BY_KIND[kind],
             {name: entries[name] for name in sorted(entries)},
         )
     return sorted_refs

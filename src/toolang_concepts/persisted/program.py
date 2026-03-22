@@ -35,7 +35,7 @@ class ProgramParam(BaseModel):
 
 
 class ProgramDecl(BaseModel):
-    """Serialized form of one inline declaration block."""
+    """Serialized form of one declaration block."""
 
     kind: str
     name: str
