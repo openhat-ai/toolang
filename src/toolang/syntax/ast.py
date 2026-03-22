@@ -51,6 +51,12 @@ class Program:
     declarations: list[DeclBlock] = field(default_factory=list)
     thunks: list[Thunk] = field(default_factory=list)
 
+    def uses_by_kind(self, kind: str) -> list[UseDecl]:
+        return [item for item in self.uses if item.kind == kind]
+
+    def has_use(self, kind: str, reference: str) -> bool:
+        return any(item.kind == kind and item.reference == reference for item in self.uses)
+
     def declarations_by_kind(self, kind: str) -> list[DeclBlock]:
         return [item for item in self.declarations if item.kind == kind]
 

@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Literal
 
+from toolang.errors import ToolangError
 from toolang.layout import cap_section_dir_name
 from toolang.concepts.caps import (
     CapContent,
@@ -164,6 +165,68 @@ def sync_local_skill_materialization(
     meta_path.write_text(meta.model_dump_json(indent=2), encoding="utf-8")
 
 
+def local_cap_path(kind_dir: Path, kind: CapKind, name: str) -> Path:
+    """Return the authored local capability path for one scope and kind."""
+
+    if kind == "skill":
+        return kind_dir / name
+    return kind_dir / f"{name}.md"
+
+
+def create_local_cap(target: Path, kind: CapKind, name: str) -> None:
+    """Create one new local authored capability."""
+
+    if target.exists():
+        raise ToolangError(f"Local {kind} already exists: {target}")
+    if kind == "skill":
+        target.mkdir(parents=True, exist_ok=False)
+        (target / "SKILL.md").write_text(
+            f"# {name.replace('-', ' ').title()}\n\nDescribe this skill.\n",
+            encoding="utf-8",
+        )
+        return
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(_default_cap_body(kind, name), encoding="utf-8")
+
+
+def install_local_cap(target: Path, kind: CapKind, source_path: Path) -> None:
+    """Install one local capability from an existing authored source."""
+
+    if target.exists():
+        raise ToolangError(f"Local {kind} already exists: {target}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    if kind == "skill":
+        if not source_path.is_dir():
+            raise ToolangError(f"Expected a skill directory, got {source_path}")
+        shutil.copytree(source_path, target)
+        return
+
+    if not source_path.is_file():
+        raise ToolangError(f"Expected a {kind} file, got {source_path}")
+    shutil.copy2(source_path, target)
+
+
+def delete_local_cap(target: Path) -> bool:
+    """Delete one local authored capability path if it exists."""
+
+    if not target.exists():
+        return False
+    if target.is_dir():
+        shutil.rmtree(target)
+    else:
+        target.unlink()
+    return True
+
+
+def prune_empty_local_kind_dir(kind_dir: Path) -> None:
+    """Remove one empty local-kind directory after deleting a capability."""
+
+    if kind_dir.exists() and not any(kind_dir.iterdir()):
+        kind_dir.rmdir()
+
+
 def remove_stale_declared_cap_materializations(
     root: Path,
     kind: CapKind,
@@ -215,6 +278,24 @@ def _language_from_path(path: Path) -> str | None:
     if not suffix:
         return None
     return suffix
+
+
+def _default_cap_body(kind: CapKind, name: str) -> str:
+    title = name.replace("-", " ").title()
+    if kind == "service":
+        return (
+            "---\n"
+            "transport: http\n"
+            "target: https://example.com\n"
+            f"description: {title} service\n"
+            "---\n\n"
+            "Describe how and when to use this service.\n"
+        )
+    if kind == "prompt":
+        return f"Write the {title} prompt here.\n\n{{{{input}}}}\n"
+    if kind == "psyche":
+        return f"Describe the {title} behavior here.\n"
+    raise ToolangError(f"Unsupported local cap kind: {kind}")
 
 
 def _remove_path(path: Path) -> None:

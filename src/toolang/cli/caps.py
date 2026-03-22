@@ -17,16 +17,15 @@ from toolang.layout import (
     shared_source_path,
 )
 from toolang.caps.github import fetch_github_artifact, resolve_github_cap_ref
-from toolang.concepts.caps import CapKind
-from toolang.caps.source_ops import (
-    add_cap_ref,
+from toolang.caps.files import (
     create_local_cap,
     delete_local_cap,
     install_local_cap,
     local_cap_path,
     prune_empty_local_kind_dir,
-    remove_cap_ref,
 )
+from toolang.concepts.caps import CapKind
+from toolang.syntax import add_cap_ref, remove_cap_ref
 
 from .support import _resolve_cli_agent, _toolang_root
 
