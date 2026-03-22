@@ -10,7 +10,8 @@ from typing import Any
 
 from toolang.caps import load_prepared_caps
 from toolang.errors import ToolangError
-from toolang.syntax import Program, Thunk
+from toolang.program import Program
+from toolang.program.ast import Thunk
 
 from .messages import Message, context_prompt
 

@@ -10,6 +10,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import get_args
 
+from toolang.caps.materialize import (
+    has_expected_agent_scope_caps,
+    has_expected_scope_caps,
+    sync_agent_caps,
+    sync_scope_caps,
+)
+from toolang.caps.refs import (
+    load_local_entries_for_scope,
+    load_scope_refs,
+    overlay_ref_entries,
+    resolve_home_refs,
+)
 from toolang.errors import ToolangError
 from toolang.layout import (
     agent_source_path,
@@ -21,7 +33,7 @@ from toolang.layout import (
     shared_source_path,
     synced_caps_root,
 )
-from toolang.syntax import Program, analyze_program, parse_program
+from toolang.program import Program, parse
 from toolang.concepts.caps import CapKind
 from toolang.concepts.identity import AgentRef
 from toolang.concepts.persisted.program import SyncedProgram
@@ -31,20 +43,10 @@ from toolang.concepts.persisted.sync_state import (
     SyncState,
 )
 
-from .materialize import (
-    has_expected_agent_scope_caps,
-    has_expected_scope_caps,
+from .cleanup import (
     remove_legacy_agent_programs,
     remove_legacy_lock_files,
     remove_stale_sync_root_entries,
-    sync_agent_caps,
-    sync_scope_caps,
-)
-from .refs import (
-    load_local_entries_for_scope,
-    load_scope_refs,
-    overlay_ref_entries,
-    resolve_home_refs,
 )
 
 ALL_CAP_KINDS = get_args(CapKind)
@@ -151,8 +153,8 @@ def _home_source_paths(agent_home: Path) -> list[Path]:
 def _parse_home_programs(source_paths: list[Path]) -> dict[str, Program]:
     programs: dict[str, Program] = {}
     for source_path in source_paths:
-        program = parse_program(source_path.read_text(encoding="utf-8"))
-        analyze_program(program)
+        program = parse(source_path.read_text(encoding="utf-8"))
+        program.validate()
         programs[source_path.stem] = program
     return programs
 

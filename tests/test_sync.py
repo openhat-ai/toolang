@@ -5,8 +5,8 @@ from pathlib import Path
 from typing import cast
 
 from toolang.agent.refs import resolve_agent_ref
-from toolang.files.program import SyncedProgram
-from toolang.files.sync_state import SyncState
+from toolang.concepts.persisted.program import SyncedProgram
+from toolang.concepts.persisted.sync_state import SyncState
 from toolang.layout import (
     agent_synced_caps_root,
     agent_sync_path,
@@ -19,7 +19,7 @@ from toolang.layout import (
     synced_caps_root,
 )
 from toolang.sync import ensure_agent_synced, sync_agent
-from toolang.syntax import parse_program
+from toolang.program import parse
 from toolang.concepts.caps import CapKind, CapRef, CapSidecar, ServiceFrontmatter
 
 PARSE_FIXTURE = Path(__file__).parent / "fixtures" / "sample.too"
@@ -32,7 +32,7 @@ REMOTE_PSYCHE_FIXTURE = Path(__file__).parent / "fixtures" / "remote-psyche" / "
 
 def test_synced_program_round_trip(tmp_path) -> None:
     path = tmp_path / "program.json"
-    program = parse_program(PARSE_FIXTURE.read_text(encoding="utf-8"))
+    program = parse(PARSE_FIXTURE.read_text(encoding="utf-8"))
     synced_program = SyncedProgram.from_program(program)
 
     synced_program.save(path)
@@ -66,7 +66,7 @@ def test_sync_agent_writes_program_and_source_caps(tmp_path) -> None:
     assert service_meta.front_matter.transport == "http"
     assert service_meta.front_matter.target == "https://mcp.github.com/mcp"
     assert not (synced_caps_root(home) / "prompts" / "summarize.md").exists()
-    assert synced_program.to_program().to_dict() == parse_program(source_path.read_text()).to_dict()
+    assert synced_program.to_program().to_dict() == parse(source_path.read_text()).to_dict()
 
 
 def test_sync_agent_materializes_used_skills_and_writes_agent_refs_into_state(
@@ -116,8 +116,8 @@ thunk review:
         )
         return fetched_root, files
 
-    monkeypatch.setattr("toolang.sync.remote.resolve_github_cap_ref", fake_resolve)
-    monkeypatch.setattr("toolang.sync.remote.fetch_github_artifact", fake_fetch)
+    monkeypatch.setattr("toolang.caps.github.resolve_github_cap_ref", fake_resolve)
+    monkeypatch.setattr("toolang.caps.github.fetch_github_artifact", fake_fetch)
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     sync_agent(agent)
@@ -254,8 +254,8 @@ thunk review:
         )
         return fetched_root, files
 
-    monkeypatch.setattr("toolang.sync.remote.resolve_github_cap_ref", fake_resolve)
-    monkeypatch.setattr("toolang.sync.remote.fetch_github_artifact", fake_fetch)
+    monkeypatch.setattr("toolang.caps.github.resolve_github_cap_ref", fake_resolve)
+    monkeypatch.setattr("toolang.caps.github.fetch_github_artifact", fake_fetch)
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     sync_agent(agent)
@@ -358,8 +358,8 @@ thunk review(user):
         shutil.copy2(fixture, fetched_file)
         return fetched_file, [fixture.name]
 
-    monkeypatch.setattr("toolang.sync.remote.resolve_github_cap_ref", fake_resolve)
-    monkeypatch.setattr("toolang.sync.remote.fetch_github_artifact", fake_fetch)
+    monkeypatch.setattr("toolang.caps.github.resolve_github_cap_ref", fake_resolve)
+    monkeypatch.setattr("toolang.caps.github.fetch_github_artifact", fake_fetch)
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     sync_agent(agent)

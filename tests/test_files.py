@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from toolang.files.program import SyncedProgram
-from toolang.files.sync_state import InputFingerprint, LockEntry, LockedAgentRefs, SyncState
+from toolang.concepts.persisted.program import SyncedProgram
+from toolang.concepts.persisted.sync_state import (
+    InputFingerprint,
+    LockEntry,
+    LockedAgentRefs,
+    SyncState,
+)
 
 
 def test_sync_state_round_trip(tmp_path) -> None:

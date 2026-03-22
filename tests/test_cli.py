@@ -29,7 +29,7 @@ from toolang.cli.support import (
     _resolve_cli_agent,
 )
 from toolang.errors import ToolangError
-from toolang.files.agent_run import ActivationState
+from toolang.concepts.persisted.activation_state import ActivationState
 from toolang.layout import (
     agent_run_path,
     agents_db_path,

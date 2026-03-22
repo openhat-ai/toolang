@@ -1,19 +1,10 @@
-"""Capability support for refs, parsing, materialization, and runtime views.
+"""Capability runtime facade.
 
-This package owns capability fetch/source operations, synced sidecar
-materialization, scope-aware overlay rules, and the effective runtime view of
-visible caps.
+This package exposes the stable runtime-facing capability surface: scope
+selection and loading the effective visible caps for one prepared agent.
 """
 
-from .scope import CapScope, CapScopeSelection
-from .view import CapView, CapsView, SkillCapView, build_effective_program, load_prepared_caps
+from .scope import CapScopeSelection
+from .view import load_prepared_caps
 
-__all__ = [
-    "CapScope",
-    "CapScopeSelection",
-    "CapView",
-    "CapsView",
-    "SkillCapView",
-    "build_effective_program",
-    "load_prepared_caps",
-]
+__all__ = ["CapScopeSelection", "load_prepared_caps"]

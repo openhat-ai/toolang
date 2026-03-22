@@ -9,10 +9,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from toolang.caps import CapScopeSelection, build_effective_program
+from toolang.caps import CapScopeSelection
+from toolang.caps.view import build_effective_program
 from toolang.layout import agent_sync_path
 from toolang.sync import ensure_agent_synced
-from toolang.syntax import Program
+from toolang.program import Program
 from toolang.concepts.identity import AgentRef
 
 

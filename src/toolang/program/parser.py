@@ -9,7 +9,9 @@ from toolang.errors import ToolangError
 from .ast import DeclBlock, ParamDecl, Program, SourceSpan, Thunk, UseDecl
 
 
-def parse_program(source: str) -> Program:
+def parse(source: str) -> Program:
+    """Parse one Toolang program source string into a Program."""
+
     source_bytes = source.encode("utf-8")
     tree = _parse_tree(source_bytes)
     lines = source.splitlines()
