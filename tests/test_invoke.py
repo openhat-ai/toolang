@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from toolang.agent.prepared import prepare_agent
-from toolang.agent.refs import resolve_agent_ref
+from toolang.agent.resolve import resolve_agent_ref
 from toolang.bus.db import BusStore
 from toolang.concepts.persisted.prompt_trace import PromptTrace
 from toolang.layout import agent_run_prompt_path, bus_events_db_path, resolve_toolang_root

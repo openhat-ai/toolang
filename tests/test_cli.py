@@ -13,7 +13,7 @@ from typing import cast
 import pytest
 from typer.testing import CliRunner
 
-from toolang.agent.refs import resolve_agent_ref
+from toolang.agent.resolve import resolve_agent_ref
 from toolang.agent.registry import (
     RunningAgentRecord,
     delete_running_agent,

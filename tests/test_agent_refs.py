@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from toolang.agent.refs import resolve_agent_ref
+from toolang.agent.resolve import resolve_agent_ref
 
 
 def test_resolve_resident_shorthand(tmp_path: Path) -> None:

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import cast
 
 from toolang.agent.prepared import prepare_agent
-from toolang.agent.refs import resolve_agent_ref
+from toolang.agent.resolve import resolve_agent_ref
 from toolang.caps import CapScopeSelection, load_prepared_caps
 from toolang.layout import global_caps_dir
 from toolang.layout import resolve_toolang_root
