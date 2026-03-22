@@ -23,8 +23,8 @@ from toolang.sandbox import (
     parse_sandbox_spec,
     sandbox_process_alive,
 )
-from toolang_concepts.persisted.activation_state import ActivationState
-from toolang_concepts.sandbox import SandboxRuntimeInfo, SandboxState
+from toolang.concepts.persisted.activation_state import ActivationState
+from toolang.concepts.sandbox import SandboxRuntimeInfo, SandboxState
 
 SHORT_AGENT_ID_LENGTH = 12
 

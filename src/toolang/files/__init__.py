@@ -1,5 +1,6 @@
-"""Compatibility exports for persisted Toolang file shapes.
+"""File-oriented imports for persisted Toolang state models.
 
-The canonical definitions now live under ``toolang_concepts.persisted``.
-This package remains as a thin import layer for legacy call sites.
+The canonical persisted model definitions live under ``toolang.concepts``.
+This package keeps short file-shape import paths for callers that prefer the
+storage-oriented layout.
 """

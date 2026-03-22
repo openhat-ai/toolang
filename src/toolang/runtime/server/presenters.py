@@ -5,7 +5,7 @@ import json
 from toolang.agent.prepared import PreparedAgent
 from toolang.bus.db import AgentSnapshot, RunSnapshot, StoredEvent
 from toolang.caps import CapView, SkillCapView
-from toolang_concepts.caps import ServiceFrontmatter
+from toolang.concepts.caps import ServiceFrontmatter
 from toolang.runtime.api_models import (
     AgentCapsResponse,
     AgentChatMessage,

@@ -5,7 +5,7 @@ import shlex
 from pathlib import Path
 from typing import Iterable, Mapping
 
-from toolang_concepts.sandbox import HOST_SANDBOX, SandboxSpec
+from toolang.concepts.sandbox import HOST_SANDBOX, SandboxSpec
 
 from .docker import docker_container_name, docker_container_running
 

@@ -5,12 +5,12 @@ from typing import cast, get_args
 
 from toolang.errors import ToolangError
 from toolang.syntax import Program
-from toolang_concepts.caps import (
+from toolang.concepts.caps import (
     CapContent,
     CapKind,
     CapParam,
 )
-from toolang_concepts.persisted.sync_state import LockEntry, LockedAgentRefs
+from toolang.concepts.persisted.sync_state import LockEntry, LockedAgentRefs
 
 from . import remote
 

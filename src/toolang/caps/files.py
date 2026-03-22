@@ -1,12 +1,14 @@
+"""Capability materialization helpers for synced local artifacts."""
+
 from __future__ import annotations
 
 import shutil
 from pathlib import Path
 from typing import Literal
 
-from toolang_caps.frontmatter import parse_cap_body
+from .frontmatter import parse_cap_body
 from toolang.layout import cap_section_dir_name
-from toolang_concepts.caps import (
+from toolang.concepts.caps import (
     CapContent,
     CapKind,
     CapParam,

@@ -40,5 +40,5 @@ Generated output is written to:
 The generated site currently covers:
 
 - `toolang`
-- `toolang_concepts`
-- `toolang_caps`
+  - including `toolang.concepts`
+  - including `toolang.caps`

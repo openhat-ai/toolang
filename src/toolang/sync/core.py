@@ -22,10 +22,10 @@ from toolang.layout import (
     synced_caps_root,
 )
 from toolang.syntax import Program, analyze_program, parse_program
-from toolang_concepts.caps import CapKind
-from toolang_concepts.identity import AgentRef
-from toolang_concepts.persisted.program import SyncedProgram
-from toolang_concepts.persisted.sync_state import (
+from toolang.concepts.caps import CapKind
+from toolang.concepts.identity import AgentRef
+from toolang.concepts.persisted.program import SyncedProgram
+from toolang.concepts.persisted.sync_state import (
     InputFingerprint,
     LockedAgentRefs,
     SyncState,

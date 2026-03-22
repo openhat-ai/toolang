@@ -8,7 +8,7 @@ import typer
 from toolang.agent.prepared import prepare_agent
 from toolang.layout import agents_db_path, bus_events_db_path
 from toolang.runtime.invoke import invoke_prepared_agent
-from toolang_concepts.sandbox import HOST_SANDBOX
+from toolang.concepts.sandbox import HOST_SANDBOX
 from toolang.sync import sync_agent
 
 from ..support import (

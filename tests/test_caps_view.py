@@ -9,7 +9,7 @@ from toolang.caps import CapScopeSelection, load_prepared_caps
 from toolang.layout import global_caps_dir
 from toolang.layout import resolve_toolang_root
 from toolang.layout import global_source_path, shared_caps_dir, shared_source_path
-from toolang_caps.models import CapKind, CapRef, ServiceFrontmatter
+from toolang.concepts.caps import CapKind, CapRef, ServiceFrontmatter
 
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"
 REMOTE_SKILL_FIXTURE = Path(__file__).parent / "fixtures" / "remote-skill" / "pdf-processing"

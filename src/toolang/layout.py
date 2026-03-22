@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import get_args
 
-from toolang_concepts.caps import CapKind
+from toolang.concepts.caps import CapKind
 
 SECTION_DIR_BY_CAP_KIND = {
     "skill": "skills",

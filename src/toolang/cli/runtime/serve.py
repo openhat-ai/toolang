@@ -41,8 +41,8 @@ from toolang.sandbox import (
     write_sandbox_args_file,
     write_sandbox_exec_file,
 )
-from toolang_concepts.identity import AgentRef
-from toolang_concepts.persisted.activation_state import ActivationState
+from toolang.concepts.identity import AgentRef
+from toolang.concepts.persisted.activation_state import ActivationState
 
 from ..support import (
     _cors_allow_origins,

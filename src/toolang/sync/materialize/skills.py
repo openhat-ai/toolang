@@ -4,15 +4,15 @@ import shutil
 from pathlib import Path
 
 from toolang.layout import cap_section_dir_name
-from toolang_caps.files import (
+from toolang.caps.files import (
     remove_stale_skill_materializations,
     skill_cap_dir,
     skill_cap_meta_path,
     sync_local_skill_materialization,
     sync_skill_materialization,
 )
-from toolang_concepts.caps import CapRef, CapSidecar
-from toolang_concepts.persisted.sync_state import LockEntry
+from toolang.concepts.caps import CapRef, CapSidecar
+from toolang.concepts.persisted.sync_state import LockEntry
 
 from .. import remote
 

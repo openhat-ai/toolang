@@ -11,12 +11,12 @@
 {% extends "frame.html.jinja2" %}
 {% set primary_modules = [
     "toolang",
+    "toolang.concepts",
     "toolang.cli",
     "toolang.agent",
     "toolang.runtime",
     "toolang.sync",
     "toolang.caps",
-    "toolang_caps",
 ] %}
 {% block title %}Toolang Reference{% endblock %}
 {% block style %}
@@ -211,6 +211,12 @@
                         <p>CLI entrypoints and command wiring for agent, runtime, cap, and helper commands.</p>
                     </article>
                 {% endif %}
+                {% if "toolang.concepts" in all_modules %}
+                    <article class="reference-card">
+                        <h3><a href="toolang/concepts.html"><code>toolang.concepts</code></a></h3>
+                        <p>Shared identity, execution, sandbox, capability, and persisted-state constructs reused across the codebase.</p>
+                    </article>
+                {% endif %}
                 {% if "toolang.agent" in all_modules %}
                     <article class="reference-card">
                         <h3><a href="toolang/agent.html"><code>toolang.agent</code></a></h3>
@@ -232,13 +238,7 @@
                 {% if "toolang.caps" in all_modules %}
                     <article class="reference-card">
                         <h3><a href="toolang/caps.html"><code>toolang.caps</code></a></h3>
-                        <p>Runtime cap scope handling and the overlay used to expose visible capabilities.</p>
-                    </article>
-                {% endif %}
-                {% if "toolang_caps" in all_modules %}
-                    <article class="reference-card">
-                        <h3><a href="toolang_caps.html"><code>toolang_caps</code></a></h3>
-                        <p>Separate cap package for refs, inline cap models, fetch/materialize logic, and frontmatter parsing.</p>
+                        <p>Capability refs, source operations, front matter parsing, materialization, and runtime overlay logic.</p>
                     </article>
                 {% endif %}
             </div>

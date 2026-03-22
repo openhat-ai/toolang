@@ -1,3 +1,5 @@
+"""Authored-source operations for adding and managing local capabilities."""
+
 from __future__ import annotations
 
 import re
@@ -5,7 +7,7 @@ import shutil
 from pathlib import Path
 
 from toolang.errors import ToolangError
-from toolang_concepts.caps import CapKind
+from toolang.concepts.caps import CapKind
 
 USE_CAP_RE = re.compile(r"^\s*use\s+(skill|service|prompt|psyche)\s+(\S+)\s*$")
 

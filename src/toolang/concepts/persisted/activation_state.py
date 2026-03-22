@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from toolang_concepts.sandbox import SandboxState
+from toolang.concepts.sandbox import SandboxState
 
 
 class ActivationState(BaseModel):

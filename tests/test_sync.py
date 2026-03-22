@@ -20,7 +20,7 @@ from toolang.layout import (
 )
 from toolang.sync import ensure_agent_synced, sync_agent
 from toolang.syntax import parse_program
-from toolang_caps.models import CapKind, CapRef, CapSidecar, ServiceFrontmatter
+from toolang.concepts.caps import CapKind, CapRef, CapSidecar, ServiceFrontmatter
 
 PARSE_FIXTURE = Path(__file__).parent / "fixtures" / "sample.too"
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"

@@ -60,7 +60,9 @@ Current internal packages:
 - `toolang.runtime`
   - prompt build, invoke, chat, and server runtime
 - `toolang.caps`
-  - runtime cap overlay and scope-aware cap views
+  - cap refs, source ops, front matter, materialization, and runtime cap views
+- `toolang.concepts`
+  - shared identity, execution, sandbox, cap, and persisted-state constructs
 - `toolang.bus`
   - shared bus projection and bus API
 - `toolang.sandbox`
@@ -69,20 +71,13 @@ Current internal packages:
   - CLI surfaces and command registration
 - `toolang.layout`
   - canonical path and layout helpers
-- `toolang_concepts`
-  - shared identity, execution, sandbox, cap, and persisted-state constructs
-
-Separate but colocated package:
-
-- `toolang_caps`
-  - cap fetch, source ops, and materialization
 
 Reason:
 
-- shared constructs should live in one explicit package instead of being
-  redefined across runtime, sync, and caps modules
-- caps logic already has a cleaner extraction boundary than the rest of the
-  runtime
+- shared constructs should live in one explicit internal package instead of
+  being redefined across runtime, sync, and caps modules
+- caps logic should stay grouped under one package, even while it still spans
+  authoring, materialization, and runtime view concerns
 - the runtime package should stay focused on execution and state
 
 
@@ -129,7 +124,7 @@ This repository owns:
 - runtime code
 - CLI code
 - sync integration
-- the colocated `toolang_caps` package until it is split out
+- the internal `toolang.caps` package until it is split out if needed
 - tests for runtime behavior
 
 Sibling repositories own:
