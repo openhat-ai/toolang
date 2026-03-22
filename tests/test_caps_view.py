@@ -94,8 +94,8 @@ thunk review:
         )
         return fetched_root, files
 
-    monkeypatch.setattr("toolang.sync.remote.resolve_github_cap_ref", fake_resolve)
-    monkeypatch.setattr("toolang.sync.remote.fetch_github_artifact", fake_fetch)
+    monkeypatch.setattr("toolang.caps.github.resolve_github_cap_ref", fake_resolve)
+    monkeypatch.setattr("toolang.caps.github.fetch_github_artifact", fake_fetch)
 
     prepared = prepare_agent(resolve_agent_ref("team/alice", cwd=tmp_path, toolang_root=root))
     caps = load_prepared_caps(prepared)
@@ -174,8 +174,8 @@ thunk review(user):
         shutil.copy2(fixture, fetched_file)
         return fetched_file, [fixture.name]
 
-    monkeypatch.setattr("toolang.sync.remote.resolve_github_cap_ref", fake_resolve)
-    monkeypatch.setattr("toolang.sync.remote.fetch_github_artifact", fake_fetch)
+    monkeypatch.setattr("toolang.caps.github.resolve_github_cap_ref", fake_resolve)
+    monkeypatch.setattr("toolang.caps.github.fetch_github_artifact", fake_fetch)
 
     prepared = prepare_agent(resolve_agent_ref("team/alice", cwd=tmp_path, toolang_root=root))
     caps = load_prepared_caps(prepared)
@@ -259,8 +259,8 @@ thunk review(user):
         shutil.copy2(fixture, fetched_file)
         return fetched_file, [fixture.name]
 
-    monkeypatch.setattr("toolang.sync.remote.resolve_github_cap_ref", fake_resolve)
-    monkeypatch.setattr("toolang.sync.remote.fetch_github_artifact", fake_fetch)
+    monkeypatch.setattr("toolang.caps.github.resolve_github_cap_ref", fake_resolve)
+    monkeypatch.setattr("toolang.caps.github.fetch_github_artifact", fake_fetch)
 
     prepared = prepare_agent(
         resolve_agent_ref("team/alice", cwd=tmp_path, toolang_root=root),

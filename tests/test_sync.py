@@ -5,8 +5,8 @@ from pathlib import Path
 from typing import cast
 
 from toolang.agent.refs import resolve_agent_ref
-from toolang.files.program import SyncedProgram
-from toolang.files.sync_state import SyncState
+from toolang.concepts.persisted.program import SyncedProgram
+from toolang.concepts.persisted.sync_state import SyncState
 from toolang.layout import (
     agent_synced_caps_root,
     agent_sync_path,
@@ -116,8 +116,8 @@ thunk review:
         )
         return fetched_root, files
 
-    monkeypatch.setattr("toolang.sync.remote.resolve_github_cap_ref", fake_resolve)
-    monkeypatch.setattr("toolang.sync.remote.fetch_github_artifact", fake_fetch)
+    monkeypatch.setattr("toolang.caps.github.resolve_github_cap_ref", fake_resolve)
+    monkeypatch.setattr("toolang.caps.github.fetch_github_artifact", fake_fetch)
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     sync_agent(agent)
@@ -254,8 +254,8 @@ thunk review:
         )
         return fetched_root, files
 
-    monkeypatch.setattr("toolang.sync.remote.resolve_github_cap_ref", fake_resolve)
-    monkeypatch.setattr("toolang.sync.remote.fetch_github_artifact", fake_fetch)
+    monkeypatch.setattr("toolang.caps.github.resolve_github_cap_ref", fake_resolve)
+    monkeypatch.setattr("toolang.caps.github.fetch_github_artifact", fake_fetch)
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     sync_agent(agent)
@@ -358,8 +358,8 @@ thunk review(user):
         shutil.copy2(fixture, fetched_file)
         return fetched_file, [fixture.name]
 
-    monkeypatch.setattr("toolang.sync.remote.resolve_github_cap_ref", fake_resolve)
-    monkeypatch.setattr("toolang.sync.remote.fetch_github_artifact", fake_fetch)
+    monkeypatch.setattr("toolang.caps.github.resolve_github_cap_ref", fake_resolve)
+    monkeypatch.setattr("toolang.caps.github.fetch_github_artifact", fake_fetch)
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     sync_agent(agent)

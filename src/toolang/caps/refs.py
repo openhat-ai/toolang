@@ -1,3 +1,5 @@
+"""Capability ref resolution and local-entry loading helpers."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -12,7 +14,7 @@ from toolang.concepts.caps import (
 )
 from toolang.concepts.persisted.sync_state import LockEntry, LockedAgentRefs
 
-from . import remote
+from . import github
 
 ALL_CAP_KINDS = get_args(CapKind)
 REFS_ATTR_BY_KIND: dict[CapKind, str] = {
@@ -65,7 +67,7 @@ def load_scope_refs(path: Path, *, scope_label: str) -> LockedAgentRefs:
         if use.kind not in ALL_CAP_KINDS:
             raise ToolangError(f"Unsupported cap kind in {scope_label}: {use.kind}")
         kind = cast(CapKind, use.kind)
-        resolved = remote.resolve_github_cap_ref(kind, use.reference)
+        resolved = github.resolve_github_cap_ref(kind, use.reference)
         entries = entries_for_kind(refs, kind)
         entry = LockEntry(
             ref=resolved.ref,
@@ -92,7 +94,7 @@ def resolve_home_refs(programs: dict[str, Program]) -> dict[str, LockedAgentRefs
                     f"Unsupported capability ref kind in {agent_name}.too: {use.kind}."
                 )
             kind = cast(CapKind, use.kind)
-            resolved = remote.resolve_github_cap_ref(kind, use.reference)
+            resolved = github.resolve_github_cap_ref(kind, use.reference)
             entries = entries_for_kind(refs, kind)
             entry = LockEntry(
                 ref=resolved.ref,
