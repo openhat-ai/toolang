@@ -16,10 +16,10 @@ from toolang.agent.registry import get_running_agent
 from toolang.bus.db import BusStore
 from toolang.bus.events import utc_now
 from toolang.caps import load_prepared_caps
+from toolang.concepts.sandbox import SandboxSpec
 from toolang.errors import ToolangError
 from toolang.http import add_cors
 from toolang.layout import agent_chats_db_path
-from toolang.sandbox import normalize_sandbox_spec, parse_sandbox_spec
 
 from ..api_models import (
     AgentCapsResponse,
@@ -73,7 +73,7 @@ def serve_agent(
     public_host: str | None = None,
     cors_allow_origins: list[str] | None = None,
 ) -> None:
-    sandbox_spec = normalize_sandbox_spec(sandbox)
+    sandbox_spec = SandboxSpec.parse(sandbox).spec
     endpoint_host = public_host or host
     endpoint = f"http://{endpoint_host}:{port}"
     app = create_agent_app(
@@ -114,8 +114,8 @@ def create_agent_app(
     public_host: str | None = None,
     cors_allow_origins: list[str] | None = None,
 ) -> FastAPI:
-    sandbox_spec = normalize_sandbox_spec(sandbox)
-    parsed_sandbox = parse_sandbox_spec(sandbox_spec)
+    parsed_sandbox = SandboxSpec.parse(sandbox)
+    sandbox_spec = parsed_sandbox.spec
     endpoint_host = public_host or host
     endpoint = f"http://{endpoint_host}:{port}"
     bus = BusStore(bus_db_path)

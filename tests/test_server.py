@@ -120,7 +120,7 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
         assert active.sandbox == "host"
         assert run_path.exists()
         assert ActivationState.load(run_path).status == "running"
-        assert ActivationState.load(run_path).sandbox.spec() == "host"
+        assert ActivationState.load(run_path).sandbox.spec == "host"
 
         first_chat = client.post(
             "/api/v1/chat",

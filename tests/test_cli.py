@@ -426,8 +426,8 @@ def test_cli_start_docker_stages_sandbox_launch(tmp_path: Path, monkeypatch) -> 
         calls.update(kwargs)
         return "container-123"
 
-    monkeypatch.setattr("toolang.cli.runtime.serve.docker_remove_container", fake_remove)
-    monkeypatch.setattr("toolang.cli.runtime.serve.docker_run_detached", fake_run)
+    monkeypatch.setattr("toolang.sandbox.core.docker_remove_container", fake_remove)
+    monkeypatch.setattr("toolang.sandbox.core.docker_run_detached", fake_run)
     monkeypatch.setattr(
         "toolang.cli.runtime.serve._wait_for_running_agent_sandbox",
         lambda **kwargs: None,
@@ -506,8 +506,8 @@ def test_cli_stop_host_agent_terminates_process(tmp_path: Path, monkeypatch) -> 
     def fake_kill(pid: int, sig: int) -> None:
         calls.append((pid, sig))
 
-    monkeypatch.setattr("toolang.cli.runtime.serve.os.kill", fake_kill)
-    monkeypatch.setattr("toolang.cli.runtime.serve.sandbox_process_alive", lambda **_: True)
+    monkeypatch.setattr("toolang.sandbox.core.os.kill", fake_kill)
+    monkeypatch.setattr("toolang.cli.runtime.serve.sandbox_alive", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         "toolang.cli.runtime.serve._wait_for_running_agent_stop",
         lambda **kwargs: delete_running_agent(db_path, agent.uri),
@@ -549,10 +549,10 @@ def test_cli_stop_docker_agent_removes_container(tmp_path: Path, monkeypatch) ->
     removed: list[str] = []
 
     monkeypatch.setattr(
-        "toolang.cli.runtime.serve.docker_remove_container",
+        "toolang.sandbox.core.docker_remove_container",
         lambda name: removed.append(name),
     )
-    monkeypatch.setattr("toolang.cli.runtime.serve.sandbox_process_alive", lambda **_: True)
+    monkeypatch.setattr("toolang.cli.runtime.serve.sandbox_alive", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         "toolang.cli.runtime.serve._wait_for_running_agent_stop",
         lambda **kwargs: delete_running_agent(db_path, agent.uri),

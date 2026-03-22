@@ -1,41 +1,14 @@
-"""Sandbox helpers.
+"""Sandbox lifecycle helpers.
 
-This package owns sandbox specification parsing and runtime helpers for host
-and docker execution environments.
+This package owns runtime sandbox lifecycle operations. Sandbox concepts and
+persisted state shapes live in `toolang.concepts.sandbox`.
 """
 
-from .core import (
-    HOST_SANDBOX,
-    SandboxSpec,
-    forwarded_sandbox_env_names,
-    host_pid_exists,
-    normalize_sandbox_spec,
-    parse_sandbox_spec,
-    sandbox_key,
-    sandbox_process_alive,
-    write_sandbox_args_file,
-    write_sandbox_exec_file,
-)
-from .docker import (
-    docker_container_name,
-    docker_container_running,
-    docker_remove_container,
-    docker_run_detached,
-)
+from .core import StartedSandbox, sandbox_alive, start_sandbox, stop_sandbox
 
 __all__ = [
-    "HOST_SANDBOX",
-    "SandboxSpec",
-    "docker_container_name",
-    "docker_container_running",
-    "docker_remove_container",
-    "docker_run_detached",
-    "forwarded_sandbox_env_names",
-    "host_pid_exists",
-    "normalize_sandbox_spec",
-    "parse_sandbox_spec",
-    "sandbox_key",
-    "sandbox_process_alive",
-    "write_sandbox_args_file",
-    "write_sandbox_exec_file",
+    "StartedSandbox",
+    "sandbox_alive",
+    "start_sandbox",
+    "stop_sandbox",
 ]
