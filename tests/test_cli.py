@@ -22,7 +22,7 @@ from toolang.agent.registry import (
     upsert_running_agent,
 )
 from toolang.cli import app, main
-from toolang.cli.runtime.serve import _drop_stale_running_agent
+from toolang.cli.serve import _drop_stale_running_agent
 from toolang.cli.support import (
     _default_runtime_cap_scopes,
     _remember_agent,
@@ -455,7 +455,7 @@ def test_cli_start_docker_stages_sandbox_launch(tmp_path: Path, monkeypatch) -> 
     monkeypatch.setattr("toolang.sandbox.core.docker_remove_container", fake_remove)
     monkeypatch.setattr("toolang.sandbox.core.docker_run_detached", fake_run)
     monkeypatch.setattr(
-        "toolang.cli.runtime.serve._wait_for_running_agent_sandbox",
+        "toolang.cli.serve._wait_for_running_agent_sandbox",
         lambda **kwargs: None,
     )
 
@@ -533,9 +533,9 @@ def test_cli_stop_host_agent_terminates_process(tmp_path: Path, monkeypatch) -> 
         calls.append((pid, sig))
 
     monkeypatch.setattr("toolang.sandbox.core.os.kill", fake_kill)
-    monkeypatch.setattr("toolang.cli.runtime.serve.sandbox_alive", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("toolang.cli.serve.sandbox_alive", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
-        "toolang.cli.runtime.serve._wait_for_running_agent_stop",
+        "toolang.cli.serve._wait_for_running_agent_stop",
         lambda **kwargs: delete_running_agent(db_path, agent.uri),
     )
 
@@ -578,9 +578,9 @@ def test_cli_stop_docker_agent_removes_container(tmp_path: Path, monkeypatch) ->
         "toolang.sandbox.core.docker_remove_container",
         lambda name: removed.append(name),
     )
-    monkeypatch.setattr("toolang.cli.runtime.serve.sandbox_alive", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("toolang.cli.serve.sandbox_alive", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
-        "toolang.cli.runtime.serve._wait_for_running_agent_stop",
+        "toolang.cli.serve._wait_for_running_agent_stop",
         lambda **kwargs: delete_running_agent(db_path, agent.uri),
     )
 

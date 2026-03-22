@@ -71,8 +71,7 @@
 - `toolang.program` owns `.too` parsing, authored source semantics, and source
   editing.
 - `toolang.agent` owns agent selector resolution, managed local-agent
-  operations, API helpers, prepared runtime inputs, and the local agent
-  registry.
+  operations, prepared runtime inputs, and the local agent registry.
 - `toolang.caps` owns cap refs, sync/materialization, local cap files, and
   runtime cap views. It should consume normalized program and concept objects
   rather than reinterpret raw `.too` syntax.
@@ -81,6 +80,8 @@
   objects instead of rebuilding paths ad hoc.
 - `toolang.sandbox` owns sandbox lifecycle helpers. Sandbox concepts and
   persisted sandbox state live in `toolang.concepts.sandbox`.
+- `toolang.web` owns the small shared web/app helpers used by FastAPI app
+  modules.
 - Stable shared constructs live in `toolang.concepts` so runtime, caps, and
   storage code can depend on one explicit concept source. Shared concepts may
   include small operations that eliminate repeated implementation glue.

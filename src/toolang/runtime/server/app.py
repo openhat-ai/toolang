@@ -19,7 +19,7 @@ from toolang.caps import load_prepared_caps
 from toolang.concepts.layout import AgentHome
 from toolang.concepts.sandbox import SandboxSpec
 from toolang.errors import ToolangError
-from toolang.agent.api import add_cors
+from toolang.web import add_cors
 
 from ..api_models import (
     AgentCapsResponse,

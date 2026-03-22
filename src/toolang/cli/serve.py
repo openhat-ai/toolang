@@ -11,7 +11,6 @@ import typer
 from toolang.agent.prepared import prepare_agent
 from toolang.agent.registry import delete_running_agent, get_running_agent
 from toolang.errors import ToolangError
-from toolang.agent.api import agent_link_for_port
 from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.runtime.server import serve_agent
 from toolang.concepts.identity import AgentRef
@@ -19,7 +18,8 @@ from toolang.concepts.sandbox import HOST_SANDBOX, SandboxSpec, SandboxState
 from toolang.concepts.persisted.activation_state import ActivationState
 from toolang.sandbox import sandbox_alive, start_sandbox, stop_sandbox
 
-from ..support import (
+from .support import (
+    _agent_link_for_port,
     _cors_allow_origins,
     _remember_agent,
     _resolve_cli_agent,
@@ -128,7 +128,7 @@ def start_command(
     parsed_sandbox = _parse_sandbox_or_raise(sandbox)
     selected_port = port if port is not None else _pick_free_port(host)
     endpoint = f"http://{host}:{selected_port}"
-    agent_link = agent_link_for_port(selected_port)
+    agent_link = _agent_link_for_port(selected_port)
     log_path = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name).log_path
     log_path.parent.mkdir(parents=True, exist_ok=True)
     started = start_sandbox(

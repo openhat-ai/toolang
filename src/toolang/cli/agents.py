@@ -11,11 +11,10 @@ from toolang.agent.managed import (
 )
 from toolang.agent.registry import delete_known_agent, get_running_agent
 from toolang.errors import ToolangError
-from toolang.agent.api import agent_link_from_endpoint
 from toolang.concepts.layout import ToolangRoot
 
-from .runtime.serve import _drop_stale_running_agent
 from .support import (
+    _agent_link_from_endpoint,
     _append_agent_updated,
     _format_rows,
     _fresh_known_agents,
@@ -25,6 +24,7 @@ from .support import (
     _resolve_resident_target,
     _toolang_root,
 )
+from .serve import _drop_stale_running_agent
 
 
 def register_agent_commands(app: typer.Typer) -> None:
@@ -113,7 +113,7 @@ def register_agent_commands(app: typer.Typer) -> None:
                 snapshot.running_status or "stopped",
                 snapshot.agent_name,
                 snapshot.agent_uri,
-                agent_link_from_endpoint(snapshot.endpoint) or "-",
+                _agent_link_from_endpoint(snapshot.endpoint) or "-",
             )
             for snapshot in snapshots
         ]

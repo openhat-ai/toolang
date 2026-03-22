@@ -11,7 +11,7 @@ from toolang.concepts.layout import ToolangRoot
 from toolang.runtime.invoke import invoke_prepared_agent
 from toolang.concepts.sandbox import HOST_SANDBOX
 
-from ..support import (
+from .support import (
     _append_agent_updated,
     _remember_agent,
     _resolve_cli_agent,

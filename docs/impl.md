@@ -54,8 +54,7 @@ Current internal packages:
 - `toolang.program`
   - parsing and syntax analysis
 - `toolang.agent`
-  - agent resolution, API helpers, managed local-agent operations, preparation,
-    and registry
+  - agent resolution, managed local-agent operations, preparation, and registry
 - `toolang.runtime`
   - prompt build, invoke, chat, and server runtime
 - `toolang.caps`
@@ -69,6 +68,8 @@ Current internal packages:
   - sandbox runtime helpers
 - `toolang.cli`
   - CLI surfaces and command registration
+- `toolang.web`
+  - small shared FastAPI app helpers
 Reason:
 
 - shared constructs should live in one explicit internal package instead of

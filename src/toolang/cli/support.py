@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 from typing import Literal, Sequence
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -28,6 +29,8 @@ from toolang.concepts.persisted._toml import load_toml
 from toolang.concepts.persisted.activation_state import ActivationState
 from toolang.concepts.sandbox import HOST_SANDBOX, SandboxSpec, SandboxState
 from toolang.sandbox import sandbox_alive
+
+DEFAULT_AGENT_LINK_BASE = "https://too.run"
 
 
 def _toolang_root() -> Path:
@@ -152,6 +155,22 @@ def _cors_allow_origins() -> list[str] | None:
         return None
     items = [item.strip() for item in raw.split(",") if item.strip()]
     return items or None
+
+
+def _agent_link_for_port(port: int) -> str:
+    return f"{DEFAULT_AGENT_LINK_BASE.rstrip('/')}/{port}"
+
+
+def _agent_link_from_endpoint(endpoint: str | None) -> str | None:
+    if endpoint is None or not endpoint.strip():
+        return None
+    try:
+        port = urlsplit(endpoint).port
+    except ValueError:
+        return None
+    if port is None:
+        return None
+    return _agent_link_for_port(port)
 
 
 def _resolve_known_agent(

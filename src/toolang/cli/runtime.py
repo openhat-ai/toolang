@@ -6,7 +6,7 @@ import typer
 
 from toolang.concepts.layout import ToolangRoot
 
-from ..support import _cors_allow_origins, _toolang_root
+from .support import _cors_allow_origins, _toolang_root
 from .invoke import invoke_command, sync_command
 from .serve import serve_command, start_command, stop_command
 
