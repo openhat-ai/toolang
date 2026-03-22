@@ -8,20 +8,20 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 
-class SandboxRunInfo(BaseModel):
+class SandboxRuntimeInfo(BaseModel):
     """Runtime details reported by the active sandbox process."""
 
     pid: int | None = None
     port: int | None = None
 
 
-class SandboxInfo(BaseModel):
+class SandboxState(BaseModel):
     """Sandbox identity and runtime data for one running agent."""
 
     type: str = "host"
     container_name: str | None = None
     image_name: str | None = None
-    run: SandboxRunInfo | None = None
+    run: SandboxRuntimeInfo | None = None
 
     def spec(self) -> str:
         """Return the canonical sandbox spec string for persisted state."""
@@ -31,7 +31,7 @@ class SandboxInfo(BaseModel):
         return self.type or "host"
 
 
-class AgentRunState(BaseModel):
+class ActivationState(BaseModel):
     """Persisted local state for one active agent activation."""
 
     version: int = 1
@@ -45,10 +45,10 @@ class AgentRunState(BaseModel):
     endpoint: str | None = None
     started_at: datetime
     heartbeat_at: datetime
-    sandbox: SandboxInfo = Field(default_factory=SandboxInfo)
+    sandbox: SandboxState = Field(default_factory=SandboxState)
 
     @classmethod
-    def load(cls, path: Path) -> "AgentRunState":
+    def load(cls, path: Path) -> "ActivationState":
         """Load one agent run state document from disk."""
 
         return cls.model_validate_json(path.read_text(encoding="utf-8"))

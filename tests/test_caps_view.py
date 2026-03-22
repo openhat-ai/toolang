@@ -9,7 +9,7 @@ from toolang.caps import CapScopeSelection, load_prepared_caps
 from toolang.layout import global_caps_dir
 from toolang.layout import resolve_toolang_root
 from toolang.layout import global_source_path, shared_caps_dir, shared_source_path
-from toolang_caps.models import CapKind, ResolvedCapRef
+from toolang_caps.models import CapKind, CapRef
 
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"
 REMOTE_SKILL_FIXTURE = Path(__file__).parent / "fixtures" / "remote-skill" / "pdf-processing"
@@ -66,13 +66,13 @@ thunk review:
     shared_source_path(home).write_text("use skill by3gus/repo-search\n", encoding="utf-8")
     global_source_path(root).write_text("use skill by3hak/repo-search\n", encoding="utf-8")
 
-    def fake_resolve(kind: str, ref: str) -> ResolvedCapRef:
+    def fake_resolve(kind: str, ref: str) -> CapRef:
         typed_kind = cast(CapKind, kind)
         owner, _, name = ref.partition("/")
         assert typed_kind == "skill"
         repo_name = "agent-skills" if owner == "by3gus" else "skills"
         path = f"skills/{name}" if repo_name == "agent-skills" else name
-        return ResolvedCapRef(
+        return CapRef(
             kind=typed_kind,
             name=name,
             ref=ref,
@@ -81,7 +81,7 @@ thunk review:
             rev=f"rev-{owner}",
         )
 
-    def fake_fetch(resolved: ResolvedCapRef):
+    def fake_fetch(resolved: CapRef):
         fetched_root = tmp_path / "fetched" / resolved.repo.replace("/", "__") / resolved.name
         fetched_root.parent.mkdir(parents=True, exist_ok=True)
         import shutil
@@ -139,7 +139,7 @@ thunk review(user):
         encoding="utf-8",
     )
 
-    def fake_resolve(kind: str, ref: str) -> ResolvedCapRef:
+    def fake_resolve(kind: str, ref: str) -> CapRef:
         typed_kind = cast(CapKind, kind)
         owner, _, name = ref.partition("/")
         repo_name = {
@@ -152,7 +152,7 @@ thunk review(user):
             "prompt": f"prompts/{name}.md" if repo_name == "agent-prompts" else f"{name}.md",
             "psyche": f"psyches/{name}.md" if repo_name == "agent-psyches" else f"{name}.md",
         }[typed_kind]
-        return ResolvedCapRef(
+        return CapRef(
             kind=typed_kind,
             name=name,
             ref=ref,
@@ -161,7 +161,7 @@ thunk review(user):
             rev=f"rev-{owner}",
         )
 
-    def fake_fetch(resolved: ResolvedCapRef):
+    def fake_fetch(resolved: CapRef):
         import shutil
 
         fixture = {
@@ -222,7 +222,7 @@ thunk review(user):
         encoding="utf-8",
     )
 
-    def fake_resolve(kind: str, ref: str) -> ResolvedCapRef:
+    def fake_resolve(kind: str, ref: str) -> CapRef:
         typed_kind = cast(CapKind, kind)
         owner, _, name = ref.partition("/")
         repo_name = {
@@ -235,7 +235,7 @@ thunk review(user):
             "prompt": f"prompts/{name}.md" if repo_name == "agent-prompts" else f"{name}.md",
             "psyche": f"psyches/{name}.md" if repo_name == "agent-psyches" else f"{name}.md",
         }[typed_kind]
-        return ResolvedCapRef(
+        return CapRef(
             kind=typed_kind,
             name=name,
             ref=ref,
@@ -244,7 +244,7 @@ thunk review(user):
             rev=f"rev-{owner}",
         )
 
-    def fake_fetch(resolved: ResolvedCapRef):
+    def fake_fetch(resolved: CapRef):
         import shutil
 
         fixture = {

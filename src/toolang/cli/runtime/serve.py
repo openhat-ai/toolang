@@ -14,10 +14,10 @@ from typing import Annotated
 import typer
 
 from toolang.agent.prepared import PreparedAgent, prepare_agent
-from toolang.agent.refs import ResolvedAgentRef
+from toolang.agent.refs import AgentRef
 from toolang.agent.registry import delete_running_agent, get_running_agent
 from toolang.errors import ToolangError
-from toolang.files.agent_run import AgentRunState
+from toolang.files.agent_run import ActivationState
 from toolang.http import agent_link_for_port
 from toolang.layout import (
     agent_log_path,
@@ -237,7 +237,7 @@ def _stop_running_agent_process(
         raise ToolangError(f"Failed to stop agent process {pid}: {exc}") from exc
 
 
-def _drop_stale_running_agent(db_path: Path, agent: ResolvedAgentRef) -> None:
+def _drop_stale_running_agent(db_path: Path, agent: AgentRef) -> None:
     existing = get_running_agent(db_path, agent.agent_uri)
     if existing is None:
         return
@@ -252,14 +252,14 @@ def _drop_stale_running_agent(db_path: Path, agent: ResolvedAgentRef) -> None:
     run_path = agent_run_path(agent.agent_home, agent.agent_name)
     if run_path.exists():
         now = datetime.now(timezone.utc)
-        run_state = AgentRunState.load(run_path)
+        run_state = ActivationState.load(run_path)
         run_state.model_copy(update={"status": "stopped", "heartbeat_at": now}).save(run_path)
 
 
 def _wait_for_running_agent_stop(
     *,
     db_path: Path,
-    agent: ResolvedAgentRef,
+    agent: AgentRef,
 ) -> None:
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
@@ -273,7 +273,7 @@ def _wait_for_running_agent_stop(
 def _wait_for_running_agent_process(
     *,
     db_path: Path,
-    agent: ResolvedAgentRef,
+    agent: AgentRef,
     process: subprocess.Popen,
     endpoint: str,
     log_path: Path,
@@ -294,7 +294,7 @@ def _wait_for_running_agent_process(
 def _wait_for_running_agent_sandbox(
     *,
     db_path: Path,
-    agent: ResolvedAgentRef,
+    agent: AgentRef,
     sandbox_spec: str,
     endpoint: str,
 ) -> None:

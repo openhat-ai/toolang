@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 
 from toolang.errors import ToolangError
-from toolang_caps.models import CapKind, ResolvedCapRef
+from toolang_caps.models import CapKind, CapRef
 
 CAP_REPO_CANDIDATES: dict[CapKind, tuple[tuple[str, str, str | None], ...]] = {
     "skill": (
@@ -30,7 +30,7 @@ CAP_REPO_CANDIDATES: dict[CapKind, tuple[tuple[str, str, str | None], ...]] = {
 }
 
 
-def resolve_github_cap_ref(kind: CapKind, ref: str) -> ResolvedCapRef:
+def resolve_github_cap_ref(kind: CapKind, ref: str) -> CapRef:
     owner, name = _parse_cap_ref(ref)
     with httpx.Client(
         follow_redirects=True,
@@ -46,7 +46,7 @@ def resolve_github_cap_ref(kind: CapKind, ref: str) -> ResolvedCapRef:
             path = path_template.format(name=name)
             check_path = f"{path}/{required_child}" if required_child is not None else path
             if _github_file_exists(client, repo, rev, check_path):
-                return ResolvedCapRef(
+                return CapRef(
                     kind=kind,
                     name=name,
                     ref=ref,
@@ -57,11 +57,11 @@ def resolve_github_cap_ref(kind: CapKind, ref: str) -> ResolvedCapRef:
     raise ToolangError(f"{kind.title()} ref could not be resolved from GitHub: {ref}")
 
 
-def resolve_github_skill_ref(ref: str) -> ResolvedCapRef:
+def resolve_github_skill_ref(ref: str) -> CapRef:
     return resolve_github_cap_ref("skill", ref)
 
 
-def fetch_github_artifact(resolved: ResolvedCapRef) -> tuple[Path, list[str]]:
+def fetch_github_artifact(resolved: CapRef) -> tuple[Path, list[str]]:
     archive = _download_repo_archive(resolved.repo, resolved.rev)
     temp_root = Path(tempfile.mkdtemp(prefix="toolang-cap-tree-"))
     _extract_repo_archive(archive, temp_root)
@@ -91,7 +91,7 @@ def fetch_github_artifact(resolved: ResolvedCapRef) -> tuple[Path, list[str]]:
     return materialized_path, files
 
 
-def fetch_github_tree(resolved: ResolvedCapRef) -> tuple[Path, list[str]]:
+def fetch_github_tree(resolved: CapRef) -> tuple[Path, list[str]]:
     return fetch_github_artifact(resolved)
 
 

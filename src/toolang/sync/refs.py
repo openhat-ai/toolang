@@ -8,9 +8,9 @@ from toolang.files.sync_state import LockEntry, LockedAgentRefs
 from toolang.syntax import Program
 from toolang_caps.models import (
     CAP_KINDS,
+    CapContent,
     CapKind,
     CapParam,
-    InlineCap,
     InlineCapKind,
     refs_attr_name,
 )
@@ -24,14 +24,14 @@ SOURCE_DECL_TO_CAP_KIND: dict[str, InlineCapKind] = {
 }
 
 
-def agent_inline_caps(program: Program) -> list[InlineCap]:
-    caps: list[InlineCap] = []
+def agent_inline_caps(program: Program) -> list[CapContent]:
+    caps: list[CapContent] = []
     for declaration in program.declarations:
         kind = SOURCE_DECL_TO_CAP_KIND.get(declaration.kind)
         if kind is None:
             continue
         caps.append(
-            InlineCap(
+            CapContent(
                 kind=kind,
                 name=declaration.name,
                 language=declaration.language,

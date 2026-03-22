@@ -47,8 +47,8 @@ class CapParam(BaseModel):
     optional: bool = False
 
 
-class InlineCap(BaseModel):
-    """Parsed inline text capability definition."""
+class CapContent(BaseModel):
+    """Parsed text capability content defined in agent source."""
 
     kind: InlineCapKind
     name: str
@@ -57,24 +57,26 @@ class InlineCap(BaseModel):
     params: list[CapParam] = Field(default_factory=list)
 
 
-class InlineCapMeta(BaseModel):
-    """Materialized metadata stored for one inline text capability."""
+class CapSidecar(BaseModel):
+    """Materialized sidecar metadata stored for one synced capability."""
 
-    kind: InlineCapKind
+    kind: CapKind
     name: str
-    language: str | None = None
     path: str
+    language: str | None = None
     params: list[CapParam] = Field(default_factory=list)
     front_matter: dict[str, Any] | None = None
     content: str = ""
     raw_text: str = ""
+    entry_path: str | None = None
+    asset_files: list[str] = Field(default_factory=list)
     ref: str | None = None
     repo: str | None = None
     source_path: str | None = None
     rev: str | None = None
 
 
-class ResolvedCapRef(BaseModel):
+class CapRef(BaseModel):
     """Resolved remote reference for one capability import."""
 
     kind: CapKind
@@ -83,17 +85,3 @@ class ResolvedCapRef(BaseModel):
     repo: str
     path: str
     rev: str
-
-
-class SkillMeta(BaseModel):
-    """Materialized metadata stored for one skill capability."""
-
-    kind: Literal["skill"] = "skill"
-    name: str
-    path: str
-    entry_path: str
-    files: list[str] = Field(default_factory=list)
-    ref: str | None = None
-    repo: str | None = None
-    source_path: str
-    rev: str | None = None

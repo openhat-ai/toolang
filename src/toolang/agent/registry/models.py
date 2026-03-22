@@ -7,7 +7,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from ..refs import ResolvedAgentRef
+from ..refs import AgentRef
 
 
 class KnownAgentRecord(BaseModel):
@@ -23,7 +23,7 @@ class KnownAgentRecord(BaseModel):
     @classmethod
     def from_resolved_agent(
         cls,
-        agent: ResolvedAgentRef,
+        agent: AgentRef,
         *,
         updated_at: datetime,
     ) -> "KnownAgentRecord":

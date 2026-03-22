@@ -6,13 +6,12 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
-from toolang.agent.refs import ResolvedAgentRef
+from toolang.agent.refs import AgentRef
 from toolang.layout import agent_synced_caps_root, global_synced_caps_root, synced_caps_root
 from toolang.syntax import DeclBlock, ParamDecl, Program, SourceSpan
 from toolang_caps.models import (
     InlineCapKind,
-    InlineCapMeta,
-    SkillMeta,
+    CapSidecar,
     TEXT_CAP_KINDS,
 )
 
@@ -58,7 +57,7 @@ class CapsView(BaseModel):
 
 def build_effective_program(
     source_program: Program,
-    ref: ResolvedAgentRef,
+    ref: AgentRef,
     *,
     cap_scopes: CapScopeSelection,
 ) -> Program:
@@ -86,7 +85,7 @@ def load_prepared_caps(prepared: PreparedAgent) -> CapsView:
     )
 
 
-def _load_skill_views(ref: ResolvedAgentRef, *, cap_scopes: CapScopeSelection) -> list[SkillCapView]:
+def _load_skill_views(ref: AgentRef, *, cap_scopes: CapScopeSelection) -> list[SkillCapView]:
     items = _overlay_layers(*_skill_scope_layers(ref, cap_scopes=cap_scopes))
     return [items[name] for name in sorted(items)]
 
@@ -97,22 +96,22 @@ def _load_skills(root) -> dict[str, SkillCapView]:
     if not skill_dir.exists():
         return items
     for meta_path in sorted(skill_dir.glob("*.meta.json")):
-        meta = SkillMeta.model_validate_json(meta_path.read_text(encoding="utf-8"))
+        meta = CapSidecar.model_validate_json(meta_path.read_text(encoding="utf-8"))
         items[meta.name] = SkillCapView(
             name=meta.name,
             path=meta.path,
-            entry_path=meta.entry_path,
-            files=list(meta.files),
+            entry_path=meta.entry_path or "",
+            files=list(meta.asset_files),
             ref=meta.ref,
             repo=meta.repo,
-            source_path=meta.source_path,
+            source_path=meta.source_path or "",
             rev=meta.rev,
         )
     return items
 
 
 def _load_inline_views(
-    ref: ResolvedAgentRef,
+    ref: AgentRef,
     kind: Literal["service", "prompt", "psyche"],
     *,
     cap_scopes: CapScopeSelection,
@@ -132,7 +131,7 @@ def _load_inline_views(
 
 
 def _load_text_declarations(
-    ref: ResolvedAgentRef,
+    ref: AgentRef,
     kind: InlineCapKind,
     *,
     cap_scopes: CapScopeSelection,
@@ -155,13 +154,13 @@ def _load_text_declarations(
     ]
 
 
-def _load_inline_meta(root, kind: InlineCapKind) -> dict[str, InlineCapMeta]:
+def _load_inline_meta(root, kind: InlineCapKind) -> dict[str, CapSidecar]:
     kind_dir = root / f"{kind}s" if kind != "psyche" else root / "psyches"
-    items: dict[str, InlineCapMeta] = {}
+    items: dict[str, CapSidecar] = {}
     if not kind_dir.exists():
         return items
     for meta_path in sorted(kind_dir.glob("*.meta.json")):
-        meta = InlineCapMeta.model_validate_json(meta_path.read_text(encoding="utf-8"))
+        meta = CapSidecar.model_validate_json(meta_path.read_text(encoding="utf-8"))
         items[meta.name] = meta
     return items
 
@@ -174,7 +173,7 @@ def _overlay_layers(*layers: dict[str, Any]) -> dict[str, Any]:
 
 
 def _skill_scope_layers(
-    ref: ResolvedAgentRef,
+    ref: AgentRef,
     *,
     cap_scopes: CapScopeSelection,
 ) -> list[dict[str, SkillCapView]]:
@@ -188,12 +187,12 @@ def _skill_scope_layers(
 
 
 def _inline_scope_layers(
-    ref: ResolvedAgentRef,
+    ref: AgentRef,
     kind: InlineCapKind,
     *,
     cap_scopes: CapScopeSelection,
-) -> list[dict[str, InlineCapMeta]]:
-    layers: list[dict[str, InlineCapMeta]] = []
+) -> list[dict[str, CapSidecar]]:
+    layers: list[dict[str, CapSidecar]] = []
     if cap_scopes.include_global:
         layers.append(_load_inline_meta(global_synced_caps_root(ref.toolang_root), kind))
     if cap_scopes.include_shared:

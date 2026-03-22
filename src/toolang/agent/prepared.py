@@ -14,14 +14,14 @@ from toolang.layout import agent_sync_path
 from toolang.sync import ensure_agent_synced
 from toolang.syntax import Program
 
-from .refs import ResolvedAgentRef
+from .refs import AgentRef
 
 
 @dataclass(frozen=True, slots=True)
 class PreparedAgent:
     """One sync-backed agent snapshot ready for execution."""
 
-    ref: ResolvedAgentRef
+    ref: AgentRef
     source_path: Path
     sync_state_path: Path
     program: Program
@@ -29,7 +29,7 @@ class PreparedAgent:
 
 
 def prepare_agent(
-    agent: ResolvedAgentRef,
+    agent: AgentRef,
     *,
     cap_scopes: CapScopeSelection = CapScopeSelection(),
 ) -> PreparedAgent:

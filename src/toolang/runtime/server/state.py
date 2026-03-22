@@ -16,7 +16,7 @@ from toolang.agent.registry import (
 from toolang.bus.db import BusStore
 from toolang.bus.events import AgentStarted, AgentStopped, utc_now
 from toolang.errors import ToolangError
-from toolang.files.agent_run import AgentRunState, SandboxInfo, SandboxRunInfo
+from toolang.files.agent_run import ActivationState, SandboxRuntimeInfo, SandboxState
 from toolang.layout import agent_run_path
 from toolang.sandbox import (
     docker_container_name,
@@ -162,7 +162,7 @@ def write_agent_run_state(
     parsed_sandbox = parse_sandbox_spec(sandbox_spec)
     run_path = agent_run_path(prepared.ref.agent_home, prepared.ref.agent_name)
     run_path.parent.mkdir(parents=True, exist_ok=True)
-    AgentRunState(
+    ActivationState(
         agent_uri=prepared.ref.agent_uri,
         agent_id=prepared.ref.agent_id[:SHORT_AGENT_ID_LENGTH],
         agent_name=prepared.ref.agent_name,
@@ -173,7 +173,7 @@ def write_agent_run_state(
         endpoint=endpoint,
         started_at=started_at,
         heartbeat_at=heartbeat_at,
-        sandbox=SandboxInfo(
+        sandbox=SandboxState(
             type=parsed_sandbox.kind,
             container_name=(
                 docker_container_name(
@@ -184,7 +184,7 @@ def write_agent_run_state(
                 else None
             ),
             image_name=parsed_sandbox.image,
-            run=SandboxRunInfo(pid=os.getpid(), port=port_from_endpoint(endpoint)),
+            run=SandboxRuntimeInfo(pid=os.getpid(), port=port_from_endpoint(endpoint)),
         ),
     ).save(run_path)
 
@@ -199,7 +199,7 @@ def has_running_state(
     run_path = agent_run_path(prepared.ref.agent_home, prepared.ref.agent_name)
     if not run_path.exists():
         return False
-    return AgentRunState.load(run_path).status == "running"
+    return ActivationState.load(run_path).status == "running"
 
 
 def port_from_endpoint(endpoint: str) -> int | None:

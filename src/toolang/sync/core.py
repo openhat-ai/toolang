@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from toolang.agent.refs import ResolvedAgentRef
+from toolang.agent.refs import AgentRef
 from toolang.errors import ToolangError
 from toolang.files.program import SyncedProgram
 from toolang.files.sync_state import InputFingerprint, LockedAgentRefs, SyncState
@@ -42,7 +42,7 @@ from .refs import (
 )
 
 
-def sync_agent(agent: ResolvedAgentRef) -> SyncedProgram:
+def sync_agent(agent: AgentRef) -> SyncedProgram:
     """Parse, resolve, materialize, and persist synced state for one agent."""
     _existing_source_path(agent)
 
@@ -111,14 +111,14 @@ def sync_agent(agent: ResolvedAgentRef) -> SyncedProgram:
     return SyncState.load(agent_sync_path(agent.agent_home, agent.agent_name)).program
 
 
-def ensure_agent_synced(agent: ResolvedAgentRef) -> SyncedProgram:
+def ensure_agent_synced(agent: AgentRef) -> SyncedProgram:
     """Return synced program state, refreshing it first when inputs changed."""
     if _is_sync_fresh(agent):
         return SyncState.load(agent_sync_path(agent.agent_home, agent.agent_name)).program
     return sync_agent(agent)
 
 
-def _existing_source_path(agent: ResolvedAgentRef) -> Path:
+def _existing_source_path(agent: AgentRef) -> Path:
     source_path = agent.source_path
     if source_path.exists():
         return source_path
@@ -178,7 +178,7 @@ def _tree_fingerprints(scope: str, root: Path) -> dict[str, InputFingerprint]:
     }
 
 
-def _is_sync_fresh(agent: ResolvedAgentRef) -> bool:
+def _is_sync_fresh(agent: AgentRef) -> bool:
     source_path = agent.source_path
     state_path = agent_sync_path(agent.agent_home, agent.agent_name)
     shared_sync_root = synced_caps_root(agent.agent_home)
@@ -230,7 +230,7 @@ def _load_agent_states(agent_home: Path, agent_names: list[str]) -> dict[str, Sy
 
 def _sync_agent_states(
     *,
-    agent: ResolvedAgentRef,
+    agent: AgentRef,
     programs: dict[str, Program],
     agent_ref_entries: dict[str, LockedAgentRefs],
     shared_entries: LockedAgentRefs,

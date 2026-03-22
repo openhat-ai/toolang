@@ -20,7 +20,7 @@ GuestResolver = Callable[[str], str]
 
 
 @dataclass(frozen=True, slots=True)
-class ResolvedAgentRef:
+class AgentRef:
     """A resolved agent selector with canonical identity and local placement."""
 
     raw: str
@@ -39,7 +39,7 @@ def resolve_agent_ref(
     cwd: Path,
     toolang_root: Path,
     guest_resolver: GuestResolver | None = None,
-) -> ResolvedAgentRef:
+) -> AgentRef:
     """Resolve one agent selector into a canonical local runtime reference."""
     text = raw.strip()
     if not text:
@@ -84,7 +84,7 @@ def agent_id(agent_uri: str) -> str:
     return sha256(agent_uri.encode("utf-8")).hexdigest()
 
 
-def _resolve_uri(text: str, *, toolang_root: Path) -> ResolvedAgentRef:
+def _resolve_uri(text: str, *, toolang_root: Path) -> AgentRef:
     parsed = urlsplit(text)
     if parsed.scheme == "agent":
         return _resolve_agent_uri(parsed, toolang_root=toolang_root)
@@ -95,7 +95,7 @@ def _resolve_uri(text: str, *, toolang_root: Path) -> ResolvedAgentRef:
     raise ToolangError(f"Unsupported agent URI scheme: {parsed.scheme}")
 
 
-def _resolve_agent_uri(parsed: SplitResult, *, toolang_root: Path) -> ResolvedAgentRef:
+def _resolve_agent_uri(parsed: SplitResult, *, toolang_root: Path) -> AgentRef:
     home_name = parsed.netloc
     if not home_name:
         raise ToolangError("Resident agent URI must include a home name.")
@@ -108,7 +108,7 @@ def _resolve_agent_uri(parsed: SplitResult, *, toolang_root: Path) -> ResolvedAg
     agent_name = filename[:-4]
     home = resident_agent_home(toolang_root, home_name)
     agent_uri = f"agent://{home_name}/{filename}"
-    return ResolvedAgentRef(
+    return AgentRef(
         raw=agent_uri,
         agent_kind="resident",
         agent_uri=agent_uri,
@@ -120,12 +120,12 @@ def _resolve_agent_uri(parsed: SplitResult, *, toolang_root: Path) -> ResolvedAg
     )
 
 
-def _resolve_file_uri(parsed: SplitResult, *, toolang_root: Path) -> ResolvedAgentRef:
+def _resolve_file_uri(parsed: SplitResult, *, toolang_root: Path) -> AgentRef:
     path = Path(parsed.path).expanduser().resolve()
     return _resolve_absolute_local_path(path, toolang_root=toolang_root, raw=parsed.geturl())
 
 
-def _resolve_https(text: str, *, toolang_root: Path) -> ResolvedAgentRef:
+def _resolve_https(text: str, *, toolang_root: Path) -> AgentRef:
     parsed = urlsplit(text)
     if not parsed.netloc:
         raise ToolangError(f"Invalid visiting agent URI: {text}")
@@ -136,7 +136,7 @@ def _resolve_https(text: str, *, toolang_root: Path) -> ResolvedAgentRef:
     agent_uri = parsed.geturl()
     home_name = agent_home_name(agent_uri, agent_name=agent_name, kind="visiting")
     home = visiting_agent_home(toolang_root, home_name)
-    return ResolvedAgentRef(
+    return AgentRef(
         raw=text,
         agent_kind="visiting",
         agent_uri=agent_uri,
@@ -148,7 +148,7 @@ def _resolve_https(text: str, *, toolang_root: Path) -> ResolvedAgentRef:
     )
 
 
-def _resolve_local_path(text: str, *, cwd: Path, toolang_root: Path) -> ResolvedAgentRef:
+def _resolve_local_path(text: str, *, cwd: Path, toolang_root: Path) -> AgentRef:
     raw_path = Path(text).expanduser()
     path = raw_path if raw_path.is_absolute() else (cwd / raw_path)
     return _resolve_absolute_local_path(path.resolve(), toolang_root=toolang_root, raw=text)
@@ -156,7 +156,7 @@ def _resolve_local_path(text: str, *, cwd: Path, toolang_root: Path) -> Resolved
 
 def _resolve_absolute_local_path(
     path: Path, *, toolang_root: Path, raw: str
-) -> ResolvedAgentRef:
+) -> AgentRef:
     if path.suffix != ".too":
         raise ToolangError(f"Local agent path must end with .too: {path}")
 
@@ -172,7 +172,7 @@ def _resolve_absolute_local_path(
             agent_name = filename[:-4]
             agent_uri = f"agent://{home_name}/{filename}"
             home = resident_agent_home(toolang_root, home_name)
-            return ResolvedAgentRef(
+            return AgentRef(
                 raw=raw,
                 agent_kind="resident",
                 agent_uri=agent_uri,
@@ -184,7 +184,7 @@ def _resolve_absolute_local_path(
             )
 
     agent_uri = path.as_uri()
-    return ResolvedAgentRef(
+    return AgentRef(
         raw=raw,
         agent_kind="roaming",
         agent_uri=agent_uri,
@@ -196,7 +196,7 @@ def _resolve_absolute_local_path(
     )
 
 
-def _resolve_resident_shorthand(text: str, *, toolang_root: Path) -> ResolvedAgentRef:
+def _resolve_resident_shorthand(text: str, *, toolang_root: Path) -> AgentRef:
     parts = [part for part in text.split("/") if part]
     if not parts or len(parts) > 2:
         raise ToolangError(f"Unsupported resident shorthand: {text}")
@@ -210,7 +210,7 @@ def _resolve_resident_shorthand(text: str, *, toolang_root: Path) -> ResolvedAge
     filename = f"{agent_name}.too"
     agent_uri = f"agent://{home_name}/{filename}"
     home = resident_agent_home(toolang_root, home_name)
-    return ResolvedAgentRef(
+    return AgentRef(
         raw=text,
         agent_kind="resident",
         agent_uri=agent_uri,

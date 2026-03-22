@@ -29,7 +29,7 @@ from toolang.cli.support import (
     _resolve_cli_agent,
 )
 from toolang.errors import ToolangError
-from toolang.files.agent_run import AgentRunState
+from toolang.files.agent_run import ActivationState
 from toolang.layout import (
     agent_run_path,
     agents_db_path,
@@ -317,7 +317,7 @@ def test_cli_drops_stale_running_agent_and_updates_run_file(tmp_path: Path, monk
     )
     run_path = agent_run_path(home, "alice")
     run_path.parent.mkdir(parents=True, exist_ok=True)
-    AgentRunState(
+    ActivationState(
         agent_uri=agent.agent_uri,
         agent_id=agent.agent_id[:12],
         agent_name=agent.agent_name,
@@ -333,7 +333,7 @@ def test_cli_drops_stale_running_agent_and_updates_run_file(tmp_path: Path, monk
     _drop_stale_running_agent(db_path, agent)
 
     assert get_running_agent(db_path, agent.agent_uri) is None
-    assert AgentRunState.load(run_path).status == "stopped"
+    assert ActivationState.load(run_path).status == "stopped"
 
 
 def test_cli_list_shows_known_agents_and_status(tmp_path: Path, monkeypatch) -> None:
@@ -825,10 +825,10 @@ thunk review:
     monkeypatch.chdir(home)
 
     def fake_resolve(kind: str, ref: str):
-        from toolang_caps.models import ResolvedCapRef
+        from toolang_caps.models import CapRef
 
         assert kind == "skill"
-        return ResolvedCapRef(
+        return CapRef(
             kind="skill",
             name="repo-search",
             ref=ref,
@@ -959,11 +959,11 @@ thunk review:
     monkeypatch.chdir(home)
 
     def fake_resolve(actual_kind: CapKind, actual_ref: str):
-        from toolang_caps.models import ResolvedCapRef
+        from toolang_caps.models import CapRef
 
         assert actual_kind == typed_kind
         assert actual_ref == ref
-        return ResolvedCapRef(
+        return CapRef(
             kind=typed_kind,
             name=Path(fixture).stem,
             ref=ref,

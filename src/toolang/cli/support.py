@@ -8,7 +8,7 @@ from typing import Literal, Sequence
 
 import httpx
 
-from toolang.agent.refs import ResolvedAgentRef, resolve_agent_ref
+from toolang.agent.refs import AgentRef, resolve_agent_ref
 from toolang.agent.registry import (
     KnownAgentRecord,
     KnownAgentSnapshot,
@@ -23,7 +23,7 @@ from toolang.bus.events import AgentUpdated, utc_now
 from toolang.caps import CapScopeSelection
 from toolang.errors import ToolangError
 from toolang.files._toml import load_toml
-from toolang.files.agent_run import AgentRunState
+from toolang.files.agent_run import ActivationState
 from toolang.layout import (
     agent_run_path,
     agents_db_path,
@@ -39,7 +39,7 @@ def _toolang_root() -> Path:
     return ensure_toolang_root_layout(root)
 
 
-def _resolve_cli_agent(raw: str, *, db_path: Path | None = None) -> ResolvedAgentRef:
+def _resolve_cli_agent(raw: str, *, db_path: Path | None = None) -> AgentRef:
     text = raw.strip()
     if not text:
         raise ToolangError("Agent selector may not be empty.")
@@ -67,7 +67,7 @@ def _resolve_cli_agent(raw: str, *, db_path: Path | None = None) -> ResolvedAgen
 
 
 def _resolve_runtime_cap_scopes(
-    agent: ResolvedAgentRef,
+    agent: AgentRef,
     *,
     shared_caps: bool | None,
     global_caps: bool | None,
@@ -79,7 +79,7 @@ def _resolve_runtime_cap_scopes(
     )
 
 
-def _default_runtime_cap_scopes(agent: ResolvedAgentRef) -> CapScopeSelection:
+def _default_runtime_cap_scopes(agent: AgentRef) -> CapScopeSelection:
     if agent.agent_kind == "resident":
         return CapScopeSelection(include_shared=True, include_global=True)
     if agent.agent_kind == "roaming":
@@ -87,7 +87,7 @@ def _default_runtime_cap_scopes(agent: ResolvedAgentRef) -> CapScopeSelection:
     return CapScopeSelection(include_shared=False, include_global=False)
 
 
-def _resolve_resident_target(raw: str) -> ResolvedAgentRef:
+def _resolve_resident_target(raw: str) -> AgentRef:
     toolang_root = _toolang_root()
     agent_ref = resolve_agent_ref(
         raw,
@@ -102,7 +102,7 @@ def _resolve_resident_target(raw: str) -> ResolvedAgentRef:
     return agent_ref
 
 
-def _load_clone_source_text(agent: ResolvedAgentRef) -> str:
+def _load_clone_source_text(agent: AgentRef) -> str:
     if agent.source_path.exists():
         return agent.source_path.read_text(encoding="utf-8")
 
@@ -116,7 +116,7 @@ def _load_clone_source_text(agent: ResolvedAgentRef) -> str:
 
 def _append_agent_updated(
     toolang_root: Path,
-    agent: ResolvedAgentRef,
+    agent: AgentRef,
     *,
     update_kind: str,
     detail: str,
@@ -164,7 +164,7 @@ def _resolve_known_agent(
     db_path: Path,
     toolang_root: Path,
     guest_resolver,
-) -> ResolvedAgentRef | None:
+) -> AgentRef | None:
     if _looks_like_agent_id(raw):
         by_id = _select_known_agent(find_known_agents_by_id_prefix(db_path, raw), raw, "agent id")
         if by_id is not None:
@@ -209,7 +209,7 @@ def _select_known_agent(
     return records[0]
 
 
-def _remember_agent(agent: ResolvedAgentRef, *, db_path: Path) -> None:
+def _remember_agent(agent: AgentRef, *, db_path: Path) -> None:
     upsert_known_agent(
         db_path,
         KnownAgentRecord.from_resolved_agent(
@@ -240,7 +240,7 @@ def _fresh_known_agents(db_path: Path) -> list[KnownAgentSnapshot]:
         run_path = agent_run_path(Path(snapshot.agent_home), snapshot.agent_name)
         if run_path.exists():
             now = datetime.now(timezone.utc)
-            run_state = AgentRunState.load(run_path)
+            run_state = ActivationState.load(run_path)
             run_state.model_copy(update={"status": "stopped", "heartbeat_at": now}).save(
                 run_path
             )

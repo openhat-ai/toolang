@@ -12,10 +12,10 @@ from toolang_caps.files import (
     sync_text_cap_materialization,
 )
 from toolang_caps.models import (
-    InlineCap,
+    CapContent,
+    CapRef,
+    CapSidecar,
     InlineCapKind,
-    InlineCapMeta,
-    ResolvedCapRef,
     section_name,
 )
 
@@ -42,7 +42,7 @@ def sync_agent_text_caps(
     sync_root: Path,
     kind: InlineCapKind,
     entries: dict[str, LockEntry],
-    inline_caps: list[InlineCap],
+    inline_caps: list[CapContent],
     *,
     scope_source_root: Path,
 ) -> None:
@@ -82,7 +82,7 @@ def has_expected_scope_text_caps(
         meta_path = inline_cap_meta_path(sync_root, kind, name)
         if not meta_path.exists():
             return False
-        meta = InlineCapMeta.model_validate_json(meta_path.read_text(encoding="utf-8"))
+        meta = CapSidecar.model_validate_json(meta_path.read_text(encoding="utf-8"))
         if not _text_meta_matches_entry(meta, entry):
             return False
         raw_path = sync_root / meta.path
@@ -95,7 +95,7 @@ def has_expected_agent_text_caps(
     sync_root: Path,
     kind: InlineCapKind,
     entries: dict[str, LockEntry],
-    inline_caps: list[InlineCap],
+    inline_caps: list[CapContent],
 ) -> bool:
     kind_dir = sync_root / section_name(kind)
     if not kind_dir.exists():
@@ -116,7 +116,7 @@ def has_expected_agent_text_caps(
         return False
 
     for name in expected_names:
-        meta = InlineCapMeta.model_validate_json(
+        meta = CapSidecar.model_validate_json(
             inline_cap_meta_path(sync_root, kind, name).read_text(encoding="utf-8")
         )
         raw_path = sync_root / meta.path
@@ -194,8 +194,8 @@ def _resolved_text_ref(
     kind: InlineCapKind,
     name: str,
     entry: LockEntry,
-) -> ResolvedCapRef:
-    return ResolvedCapRef(
+) -> CapRef:
+    return CapRef(
         kind=kind,
         name=name,
         ref=entry.ref or "",
@@ -205,7 +205,7 @@ def _resolved_text_ref(
     )
 
 
-def _text_meta_matches_entry(meta: InlineCapMeta, entry: LockEntry) -> bool:
+def _text_meta_matches_entry(meta: CapSidecar, entry: LockEntry) -> bool:
     return (
         meta.ref == entry.ref
         and meta.repo == entry.repo

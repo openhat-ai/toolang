@@ -14,7 +14,7 @@ from toolang.agent.prepared import prepare_agent
 from toolang.agent.refs import resolve_agent_ref
 from toolang.agent.registry import get_running_agent
 from toolang.bus.db import BusStore
-from toolang.files.agent_run import AgentRunState
+from toolang.files.agent_run import ActivationState
 from toolang.files.prompt_trace import PromptTrace
 from toolang.layout import (
     agent_run_path,
@@ -119,8 +119,8 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
         assert active.status == "running"
         assert active.sandbox == "host"
         assert run_path.exists()
-        assert AgentRunState.load(run_path).status == "running"
-        assert AgentRunState.load(run_path).sandbox.spec() == "host"
+        assert ActivationState.load(run_path).status == "running"
+        assert ActivationState.load(run_path).sandbox.spec() == "host"
 
         first_chat = client.post(
             "/api/v1/chat",
@@ -214,7 +214,7 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
         ]
 
     assert get_running_agent(db_path, agent.agent_uri) is None
-    assert AgentRunState.load(run_path).status == "stopped"
+    assert ActivationState.load(run_path).status == "stopped"
     store = BusStore(events_path)
     events = store.list_events(agent_uri=agent.agent_uri)
     store.close()
@@ -258,7 +258,7 @@ def test_create_agent_app_reports_docker_sandbox_state(
         assert runtime.json()["execution_host"] == "docker"
         assert runtime.json()["sandbox"] == "docker:python:3.13-slim"
 
-        run_state = AgentRunState.load(run_path)
+        run_state = ActivationState.load(run_path)
         assert run_state.sandbox.type == "docker"
         assert run_state.sandbox.image_name == "python:3.13-slim"
         assert run_state.sandbox.container_name is not None
@@ -295,14 +295,14 @@ def test_serve_process_writes_stopped_state_after_termination(tmp_path: Path) ->
 
     try:
         _wait_for_server(port)
-        assert AgentRunState.load(run_path).status == "running"
+        assert ActivationState.load(run_path).status == "running"
 
         process.terminate()
         process.wait(timeout=5)
         _wait_for_stopped_state(run_path)
 
         assert get_running_agent(db_path, "agent://alice/alice.too") is None
-        assert AgentRunState.load(run_path).status == "stopped"
+        assert ActivationState.load(run_path).status == "stopped"
     finally:
         if process.poll() is None:
             process.kill()
@@ -333,7 +333,7 @@ def _wait_for_server(port: int) -> None:
 def _wait_for_stopped_state(run_path: Path) -> None:
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
-        if run_path.exists() and AgentRunState.load(run_path).status == "stopped":
+        if run_path.exists() and ActivationState.load(run_path).status == "stopped":
             return
         time.sleep(0.05)
     raise AssertionError(f"Timed out waiting for stopped state at {run_path}")
