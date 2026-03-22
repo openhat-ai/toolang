@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from toolang_concepts.caps import CapEntry
+from toolang.concepts.caps import CapEntry
 
 from ._toml import load_toml, write_toml
 

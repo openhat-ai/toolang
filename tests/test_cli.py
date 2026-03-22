@@ -41,7 +41,7 @@ from toolang.layout import (
     sandbox_exec_path,
     sandbox_host,
 )
-from toolang_caps.models import CapKind
+from toolang.concepts.caps import CapKind
 
 runner = CliRunner()
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"
@@ -825,7 +825,7 @@ thunk review:
     monkeypatch.chdir(home)
 
     def fake_resolve(kind: str, ref: str):
-        from toolang_caps.models import CapRef
+        from toolang.concepts.caps import CapRef
 
         assert kind == "skill"
         return CapRef(
@@ -959,7 +959,7 @@ thunk review:
     monkeypatch.chdir(home)
 
     def fake_resolve(actual_kind: CapKind, actual_ref: str):
-        from toolang_caps.models import CapRef
+        from toolang.concepts.caps import CapRef
 
         assert actual_kind == typed_kind
         assert actual_ref == ref

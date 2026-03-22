@@ -1,4 +1,4 @@
-"""Capability concepts shared by Toolang and toolang_caps."""
+"""Capability concepts shared across Toolang modules."""
 
 from __future__ import annotations
 

@@ -51,11 +51,11 @@
   `tree-sitter-toolang` repository. Toolang consumes the Python extension
   package exposed by that repository rather than compiling grammar sources at
   runtime.
-- Caps logic lives in the separate `toolang_caps` package, even while it is
-  still shipped from this repository, so it can be split out later without a
-  large refactor.
-- Stable shared constructs live in the separate `toolang_concepts` package so
-  runtime, sync, and caps code can depend on one explicit concept source.
+- Caps logic lives in `toolang.caps`. Keep capability fetch, source ops,
+  materialization, and runtime cap views together unless there is a concrete
+  need to split them out again.
+- Stable shared constructs live in `toolang.concepts` so runtime, sync, and
+  caps code can depend on one explicit concept source.
 
 
 ## Agent Identity

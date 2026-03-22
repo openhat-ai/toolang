@@ -1,3 +1,5 @@
+"""GitHub-backed capability ref resolution and artifact fetching."""
+
 from __future__ import annotations
 
 import tarfile
@@ -8,7 +10,7 @@ from pathlib import Path
 import httpx
 
 from toolang.errors import ToolangError
-from toolang_concepts.caps import CapKind, CapRef
+from toolang.concepts.caps import CapKind, CapRef
 
 CAP_REPO_CANDIDATES: dict[CapKind, tuple[tuple[str, str, str | None], ...]] = {
     "skill": (

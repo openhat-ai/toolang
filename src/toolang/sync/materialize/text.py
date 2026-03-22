@@ -4,20 +4,20 @@ import shutil
 from pathlib import Path
 
 from toolang.layout import cap_section_dir_name
-from toolang_caps.files import (
+from toolang.caps.files import (
     declared_cap_meta_path,
     declared_cap_path,
     remove_stale_declared_cap_materializations,
     sync_file_cap_materialization,
     sync_declared_cap_materialization,
 )
-from toolang_concepts.caps import (
+from toolang.concepts.caps import (
     CapContent,
     CapKind,
     CapRef,
     CapSidecar,
 )
-from toolang_concepts.persisted.sync_state import LockEntry
+from toolang.concepts.persisted.sync_state import LockEntry
 
 from .. import remote
 

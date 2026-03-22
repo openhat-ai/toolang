@@ -1,7 +1,8 @@
-"""Runtime capability views.
+"""Capability support for refs, parsing, materialization, and runtime views.
 
-This package owns scope-aware capability selection, overlay rules, and the
-effective runtime view of caps used during execution.
+This package owns capability fetch/source operations, synced sidecar
+materialization, scope-aware overlay rules, and the effective runtime view of
+visible caps.
 """
 
 from .scope import CapScope, CapScopeSelection

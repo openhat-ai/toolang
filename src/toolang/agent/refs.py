@@ -13,7 +13,7 @@ from urllib.parse import SplitResult, urlsplit
 
 from toolang.errors import ToolangError
 from toolang.layout import agent_source_path, resident_agent_home, visiting_agent_home
-from toolang_concepts.identity import AgentKind, AgentRef, AgentSelector, AgentUri
+from toolang.concepts.identity import AgentKind, AgentRef, AgentSelector, AgentUri
 
 GuestResolver = Callable[[str], str]
 

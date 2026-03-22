@@ -1,6 +1,6 @@
 """Compatibility exports for persisted synced-program concepts."""
 
-from toolang_concepts.persisted.program import (
+from toolang.concepts.persisted.program import (
     ProgramDecl,
     ProgramParam,
     ProgramThunk,

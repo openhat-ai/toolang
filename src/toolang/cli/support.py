@@ -29,10 +29,10 @@ from toolang.layout import (
     ensure_toolang_root_layout,
     resolve_toolang_root,
 )
-from toolang_concepts.identity import AgentRef
-from toolang_concepts.persisted._toml import load_toml
-from toolang_concepts.persisted.activation_state import ActivationState
-from toolang_concepts.sandbox import HOST_SANDBOX
+from toolang.concepts.identity import AgentRef
+from toolang.concepts.persisted._toml import load_toml
+from toolang.concepts.persisted.activation_state import ActivationState
+from toolang.concepts.sandbox import HOST_SANDBOX
 from toolang.sandbox import sandbox_process_alive
 
 

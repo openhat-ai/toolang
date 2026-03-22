@@ -5,8 +5,8 @@ from typing import Literal
 
 from toolang.layout import agent_synced_caps_root
 from toolang.syntax import Program
-from toolang_concepts.caps import CapKind
-from toolang_concepts.persisted.sync_state import LockedAgentRefs, SyncState
+from toolang.concepts.caps import CapKind
+from toolang.concepts.persisted.sync_state import LockedAgentRefs, SyncState
 
 from ..refs import agent_declared_caps, entries_for_kind
 from .skills import has_expected_scope_skills, sync_scope_skills

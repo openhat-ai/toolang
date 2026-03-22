@@ -10,7 +10,7 @@ from toolang.bus.db import BusStore
 from toolang.bus.events import RunFailed, RunFinished, RunOrigin, RunStarted, utc_now
 from toolang.layout import agent_run_prompt_path
 from toolang.syntax import Thunk
-from toolang_concepts.persisted.prompt_trace import PromptTrace
+from toolang.concepts.persisted.prompt_trace import PromptTrace
 
 from . import execute_prompt_build
 from .build import (

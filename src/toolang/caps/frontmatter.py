@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import frontmatter
 from pydantic import BaseModel
-from toolang_concepts.caps import (
+from toolang.concepts.caps import (
     CapFrontmatter,
     CapKind,
     parse_front_matter,

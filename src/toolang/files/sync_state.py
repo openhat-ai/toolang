@@ -1,6 +1,6 @@
 """Compatibility exports for persisted sync-state concepts."""
 
-from toolang_concepts.persisted.sync_state import (
+from toolang.concepts.persisted.sync_state import (
     InputFingerprint,
     LockEntry,
     LockedAgentRefs,

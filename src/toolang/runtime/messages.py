@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from toolang.errors import ToolangError
-from toolang_concepts.execution import Message, MessageSender
+from toolang.concepts.execution import Message, MessageSender
 
 
 def chat_message(

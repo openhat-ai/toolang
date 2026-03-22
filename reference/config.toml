@@ -7,11 +7,7 @@ template_directory = "templates"
 
 modules = [
   "toolang",
-  "toolang_concepts",
-  "toolang_caps",
 ]
 
 [edit_url]
 toolang = "https://github.com/openhat-ai/toolang/blob/main/src/toolang/"
-toolang_concepts = "https://github.com/openhat-ai/toolang/blob/main/src/toolang_concepts/"
-toolang_caps = "https://github.com/openhat-ai/toolang/blob/main/src/toolang_caps/"
