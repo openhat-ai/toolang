@@ -56,6 +56,8 @@ def resolve_agent_ref(
         return _resolve_https(f"https://{text}", toolang_root=toolang_root)
 
     return _resolve_resident_shorthand(text, toolang_root=toolang_root)
+
+
 def _resolve_uri(text: str, *, toolang_root: Path) -> AgentRef:
     parsed = urlsplit(text)
     if parsed.scheme == "agent":

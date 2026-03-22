@@ -5,7 +5,7 @@ prepared runtime inputs, and the local known-agent registry.
 """
 
 from .prepared import PreparedAgent, prepare_agent
-from .refs import resolve_agent_ref
+from .resolve import resolve_agent_ref
 
 __all__ = [
     "PreparedAgent",

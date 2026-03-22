@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 from typing import cast
 
-from toolang.agent.refs import resolve_agent_ref
+from toolang.agent.resolve import resolve_agent_ref
 from toolang.caps import ensure_agent_synced, sync_agent
 from toolang.concepts.persisted.program import SyncedProgram
 from toolang.concepts.persisted.sync_state import SyncState

@@ -11,7 +11,7 @@ import httpx
 from fastapi.testclient import TestClient
 
 from toolang.agent.prepared import prepare_agent
-from toolang.agent.refs import resolve_agent_ref
+from toolang.agent.resolve import resolve_agent_ref
 from toolang.agent.registry import get_running_agent
 from toolang.bus.db import BusStore
 from toolang.concepts.persisted.activation_state import ActivationState

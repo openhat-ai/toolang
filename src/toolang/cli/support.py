@@ -8,7 +8,7 @@ from typing import Literal, Sequence
 
 import httpx
 
-from toolang.agent.refs import resolve_agent_ref
+from toolang.agent.resolve import resolve_agent_ref
 from toolang.agent.registry import (
     KnownAgentRecord,
     KnownAgentSnapshot,
