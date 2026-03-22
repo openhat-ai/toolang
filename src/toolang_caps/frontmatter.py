@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import frontmatter
 from pydantic import BaseModel
+from toolang_concepts.caps import (
+    CapFrontmatter,
+    CapKind,
+    parse_front_matter,
+)
 
 
 class ParsedCapBody(BaseModel):
     """Parsed markdown body with optional front matter metadata."""
 
-    front_matter: dict[str, Any] | None = None
+    front_matter: CapFrontmatter | None = None
     content: str = ""
 
 
-def parse_cap_body(language: str | None, raw_text: str) -> ParsedCapBody:
+def parse_cap_body(kind: CapKind, language: str | None, raw_text: str) -> ParsedCapBody:
     """Parse capability text, extracting front matter for Markdown bodies."""
 
     if language != "md":
@@ -23,4 +26,7 @@ def parse_cap_body(language: str | None, raw_text: str) -> ParsedCapBody:
 
     post = frontmatter.loads(raw_text)
     metadata = dict(post.metadata) or None
-    return ParsedCapBody(front_matter=metadata, content=post.content)
+    return ParsedCapBody(
+        front_matter=parse_front_matter(kind, metadata),
+        content=post.content,
+    )

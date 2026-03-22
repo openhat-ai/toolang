@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 CapKind = Literal["skill", "service", "prompt", "psyche"]
 
@@ -31,6 +31,65 @@ class CapParam(BaseModel):
     optional: bool = False
 
 
+class _FrontmatterBase(BaseModel):
+    """Base model for capability front matter with room for extension."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class ServiceFrontmatter(_FrontmatterBase):
+    """Structured front matter for a service capability."""
+
+    transport: str | None = None
+    target: str | None = None
+    description: str | None = None
+
+
+class PromptFrontmatter(_FrontmatterBase):
+    """Structured front matter for a prompt capability."""
+
+    description: str | None = None
+
+
+class PsycheFrontmatter(_FrontmatterBase):
+    """Structured front matter for a psyche capability."""
+
+    description: str | None = None
+
+
+class SkillFrontmatter(_FrontmatterBase):
+    """Structured front matter for a skill capability."""
+
+    description: str | None = None
+
+
+CapFrontmatter = (
+    ServiceFrontmatter | PromptFrontmatter | PsycheFrontmatter | SkillFrontmatter
+)
+_FRONTMATTER_MODEL_BY_KIND = {
+    "service": ServiceFrontmatter,
+    "prompt": PromptFrontmatter,
+    "psyche": PsycheFrontmatter,
+    "skill": SkillFrontmatter,
+}
+
+
+def parse_front_matter(
+    kind: CapKind,
+    value: dict[str, Any] | CapFrontmatter | None,
+) -> CapFrontmatter | None:
+    """Normalize one capability front matter value to its typed model."""
+
+    if value is None:
+        return None
+    if isinstance(
+        value,
+        (ServiceFrontmatter, PromptFrontmatter, PsycheFrontmatter, SkillFrontmatter),
+    ):
+        return value
+    return _FRONTMATTER_MODEL_BY_KIND[kind].model_validate(value)
+
+
 class CapContent(BaseModel):
     """Parsed capability content defined in authored source."""
 
@@ -49,7 +108,7 @@ class CapSidecar(BaseModel):
     path: str
     language: str | None = None
     params: list[CapParam] = Field(default_factory=list)
-    front_matter: dict[str, Any] | None = None
+    front_matter: CapFrontmatter | None = None
     content: str = ""
     raw_text: str = ""
     entry_path: str | None = None
@@ -58,6 +117,22 @@ class CapSidecar(BaseModel):
     repo: str | None = None
     source_path: str | None = None
     rev: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_front_matter(cls, data: object) -> object:
+        """Type front matter using the sidecar kind before model validation."""
+
+        if not isinstance(data, dict):
+            return data
+        payload = cast(dict[str, Any], data)
+        kind = payload.get("kind")
+        if kind not in _FRONTMATTER_MODEL_BY_KIND:
+            return data
+        return {
+            **payload,
+            "front_matter": parse_front_matter(kind, payload.get("front_matter")),
+        }
 
 
 class CapRef(BaseModel):

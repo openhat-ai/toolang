@@ -9,7 +9,7 @@ from toolang.caps import CapScopeSelection, load_prepared_caps
 from toolang.layout import global_caps_dir
 from toolang.layout import resolve_toolang_root
 from toolang.layout import global_source_path, shared_caps_dir, shared_source_path
-from toolang_caps.models import CapKind, CapRef
+from toolang_caps.models import CapKind, CapRef, ServiceFrontmatter
 
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"
 REMOTE_SKILL_FIXTURE = Path(__file__).parent / "fixtures" / "remote-skill" / "pdf-processing"
@@ -188,6 +188,8 @@ thunk review(user):
     assert github_service is not None
     assert github_service.body.startswith("---\n")
     assert [item.name for item in caps.services] == ["github"]
+    assert isinstance(caps.services[0].front_matter, ServiceFrontmatter)
+    assert caps.services[0].front_matter.target == "https://mcp.github.com/mcp"
     assert sorted(item.name for item in caps.prompts) == ["rewrite", "summarize"]
     assert [item.name for item in caps.psyches] == ["reviewer"]
 
