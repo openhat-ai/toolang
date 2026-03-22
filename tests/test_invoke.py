@@ -7,6 +7,7 @@ from toolang.agent.resolve import resolve_agent_ref
 from toolang.bus.db import BusStore
 from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.concepts.persisted.prompt_trace import PromptTrace
+from toolang.runtime.execution_store import ExecutionStore
 from toolang.runtime.invoke import invoke_prepared_agent
 
 
@@ -20,6 +21,10 @@ def bus_events_db_path(root: Path) -> Path:
 
 def agent_run_prompt_path(agent_home: Path, agent_name: str, run_id: str) -> Path:
     return AgentHome.resolve(agent_home).room(agent_name).prompt_trace_path(run_id)
+
+
+def execution_db_path(agent_home: Path, agent_name: str) -> Path:
+    return AgentHome.resolve(agent_home).room(agent_name).execution_db_path
 
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"
 
@@ -53,6 +58,11 @@ def test_invoke_prepared_agent_records_run_events(tmp_path: Path, monkeypatch) -
     runs = store.list_runs(agent_uri=agent.uri)
     events = store.list_events(agent_uri=agent.uri)
     store.close()
+    execution = ExecutionStore(execution_db_path(home, "alice"))
+    activations = execution.list_activations(agent_uri=agent.uri)
+    turns = execution.list_turns(activation_id=activations[0].activation_id)
+    steps = execution.list_steps(turn_id=result.run_id)
+    execution.close()
     trace = PromptTrace.load(agent_run_prompt_path(home, "alice", result.run_id))
 
     assert result.output == "ran:summarize:hello:gpt-5.3"
@@ -60,6 +70,13 @@ def test_invoke_prepared_agent_records_run_events(tmp_path: Path, monkeypatch) -
     assert [run.status for run in runs] == ["finished"]
     assert runs[0].summary == "alice:summarize"
     assert [event.event_type for event in events] == ["run_started", "run_finished"]
+    assert len(activations) == 1
+    assert activations[0].activation_kind == "invoke"
+    assert activations[0].status == "finished"
+    assert [turn.turn_id for turn in turns] == [result.run_id]
+    assert turns[0].thread_id == f"invoke:{result.run_id}"
+    assert turns[0].status == "finished"
+    assert [step.step_kind for step in steps] == ["prompt_build", "model_call"]
     assert trace.sandbox == "host"
     assert trace.cap_scopes == ["agent", "shared", "global"]
     assert trace.runtime_context["program"]["thunk"]["name"] == "summarize"

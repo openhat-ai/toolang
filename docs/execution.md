@@ -124,6 +124,10 @@ Toolang execution is organized around:
 - `turn`
 - `step`
 
+The local execution truth layer should live in `${AGENT_ROOM}/execution.db`.
+The existing `${AGENT_ROOM}/agent.run` file remains a current-running summary,
+not the historical execution truth.
+
 
 ## 6. Activations
 

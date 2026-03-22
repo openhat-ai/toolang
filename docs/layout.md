@@ -189,6 +189,7 @@ Layout:
 ${AGENT_ROOM}/
   agent.run
   agent.log
+  execution.db
   runs/
     {RUN_ID}/
       prompt.json
@@ -213,6 +214,8 @@ Notes:
   - current running state for one started agent
 - `agent.log`
   - managed runtime log
+- `execution.db`
+  - local execution truth layer for activations, threads, turns, and steps
 - `runs/{RUN_ID}/prompt.json`
   - prompt-build diagnostics for one turn
 - `sync/`
