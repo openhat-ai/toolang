@@ -1,0 +1,263 @@
+{# this template is used to render the top-level index.html. #}
+{% if root_module_name %}
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="refresh" content="0; url=./{{ root_module_name.replace(".","/") }}.html"/>
+</head>
+</html>
+{% else %}
+{% extends "frame.html.jinja2" %}
+{% set primary_modules = [
+    "toolang",
+    "toolang.cli",
+    "toolang.agent",
+    "toolang.runtime",
+    "toolang.sync",
+    "toolang.caps",
+    "toolang_caps",
+] %}
+{% block title %}Toolang Reference{% endblock %}
+{% block style %}
+    {{ super() | safe }}
+    <style>
+        .reference-hero {
+            padding: 2.5rem 0 1.5rem;
+        }
+
+        .reference-hero h1 {
+            font-size: clamp(2.2rem, 4vw, 3.6rem);
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            margin-bottom: 1rem;
+        }
+
+        .reference-hero p {
+            color: var(--muted);
+            font-size: 1.05rem;
+            max-width: 52rem;
+            margin-bottom: 1rem;
+        }
+
+        .reference-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: .75rem;
+            margin: 1.25rem 0 1.5rem;
+        }
+
+        .reference-pill {
+            background: var(--accent);
+            border: 1px solid var(--accent2);
+            border-radius: 999px;
+            color: var(--muted);
+            display: inline-flex;
+            font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            font-size: .9rem;
+            gap: .35rem;
+            padding: .45rem .8rem;
+        }
+
+        .reference-pill strong {
+            color: var(--text);
+            font-weight: 600;
+        }
+
+        .reference-grid {
+            display: grid;
+            gap: 1.25rem;
+            grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+            margin: 2rem 0;
+        }
+
+        .reference-card {
+            background: color-mix(in srgb, var(--accent) 45%, white);
+            border: 1px solid var(--accent2);
+            border-radius: 14px;
+            padding: 1.1rem 1.15rem 1rem;
+        }
+
+        .reference-card h3 {
+            font-size: 1.1rem;
+            margin-bottom: .35rem;
+        }
+
+        .reference-card p {
+            color: var(--muted);
+            font-size: .95rem;
+            margin-bottom: .6rem;
+        }
+
+        .reference-card code {
+            color: inherit;
+            font-size: .9rem;
+        }
+
+        .reference-card a {
+            font-weight: 600;
+            text-decoration: none;
+        }
+
+        .reference-card a:hover {
+            text-decoration: underline;
+        }
+
+        .reference-section {
+            margin-top: 2.25rem;
+        }
+
+        .reference-section h2 {
+            font-size: 1.35rem;
+            margin-bottom: .85rem;
+        }
+
+        .reference-list {
+            display: grid;
+            gap: .65rem 1.5rem;
+            grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+            list-style: none;
+            padding: 0;
+        }
+
+        .reference-list li {
+            margin: 0;
+        }
+
+        .reference-list a {
+            text-decoration: none;
+        }
+
+        .reference-list a:hover {
+            text-decoration: underline;
+        }
+
+        .reference-list code {
+            color: inherit;
+        }
+
+        .reference-note {
+            color: var(--muted);
+            margin-top: .75rem;
+        }
+
+        header.pdoc.reference-header {
+            align-items: center;
+            gap: 1rem 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        header.pdoc.reference-header input[type=search] {
+            font-size: 1.15rem;
+            margin: 0;
+            min-width: min(100%, 24rem);
+        }
+    </style>
+{% endblock %}
+{% block nav %}
+    <h2>Reference</h2>
+    <ul>
+        <li><a href="#packages">Core Packages</a></li>
+        <li><a href="#modules">Module Index</a></li>
+    </ul>
+    <h2>Core Packages</h2>
+    <ul>
+        {% for name in primary_modules if name in all_modules %}
+            <li><a href="{{ name.replace('.', '/') }}.html">{{ name }}</a></li>
+        {% endfor %}
+    </ul>
+    <h2>All Modules</h2>
+    <ul>
+        {% for submodule in all_modules if "._" not in submodule and not submodule.startswith("_") %}
+            <li><a href="{{ submodule.replace(".", "/") }}.html">{{ submodule }}</a></li>
+        {% endfor %}
+    </ul>
+{% endblock %}
+{% block content %}
+    <header class="pdoc reference-header">
+        <div>
+            <h1>Toolang Reference</h1>
+            <p>Generated implementation reference for the current Python codebase. Design semantics and architectural decisions live separately in <code>docs/</code>.</p>
+        </div>
+        {% if search %}
+            <input type="search" placeholder="Search reference..." aria-label="search box">
+        {% endif %}
+    </header>
+    <main class="pdoc">
+        <section class="reference-hero">
+            <div class="reference-meta">
+                <span class="reference-pill"><strong>Generated</strong> from code</span>
+                <span class="reference-pill"><strong>Build</strong> <code>uv run python reference/build.py</code></span>
+                <span class="reference-pill"><strong>Design docs</strong> <code>docs/</code></span>
+            </div>
+            <p>
+                Use this site to inspect package boundaries, module APIs, data models, and public helper surfaces.
+                The most useful entry points are listed below.
+            </p>
+        </section>
+
+        <section class="reference-section" id="packages">
+            <h2>Core Packages</h2>
+            <div class="reference-grid">
+                {% if "toolang" in all_modules %}
+                    <article class="reference-card">
+                        <h3><a href="toolang.html"><code>toolang</code></a></h3>
+                        <p>Main package boundary for CLI, agent identity, sync, runtime, layout, and storage helpers.</p>
+                    </article>
+                {% endif %}
+                {% if "toolang.cli" in all_modules %}
+                    <article class="reference-card">
+                        <h3><a href="toolang/cli.html"><code>toolang.cli</code></a></h3>
+                        <p>CLI entrypoints and command wiring for agent, runtime, cap, and helper commands.</p>
+                    </article>
+                {% endif %}
+                {% if "toolang.agent" in all_modules %}
+                    <article class="reference-card">
+                        <h3><a href="toolang/agent.html"><code>toolang.agent</code></a></h3>
+                        <p>Agent identity, home resolution, registry records, and prepared execution inputs.</p>
+                    </article>
+                {% endif %}
+                {% if "toolang.runtime" in all_modules %}
+                    <article class="reference-card">
+                        <h3><a href="toolang/runtime.html"><code>toolang.runtime</code></a></h3>
+                        <p>Turn execution, prompt building, chat state, API models, and running agent server surfaces.</p>
+                    </article>
+                {% endif %}
+                {% if "toolang.sync" in all_modules %}
+                    <article class="reference-card">
+                        <h3><a href="toolang/sync.html"><code>toolang.sync</code></a></h3>
+                        <p>Sync orchestration, remote resolution, and materialization of reusable synced state.</p>
+                    </article>
+                {% endif %}
+                {% if "toolang.caps" in all_modules %}
+                    <article class="reference-card">
+                        <h3><a href="toolang/caps.html"><code>toolang.caps</code></a></h3>
+                        <p>Runtime cap scope handling and the overlay used to expose visible capabilities.</p>
+                    </article>
+                {% endif %}
+                {% if "toolang_caps" in all_modules %}
+                    <article class="reference-card">
+                        <h3><a href="toolang_caps.html"><code>toolang_caps</code></a></h3>
+                        <p>Separate cap package for refs, inline cap models, fetch/materialize logic, and frontmatter parsing.</p>
+                    </article>
+                {% endif %}
+            </div>
+        </section>
+
+        <section class="reference-section" id="modules">
+            <h2>Module Index</h2>
+            <ul class="reference-list">
+                {% for submodule in all_modules if "._" not in submodule and not submodule.startswith("_") %}
+                    <li><a href="{{ submodule.replace(".", "/") }}.html"><code>{{ submodule }}</code></a></li>
+                {% endfor %}
+            </ul>
+            <p class="reference-note">
+                This reference is generated from code and docstrings. If a page is too sparse, add module, class, or function docstrings rather than hand-editing generated HTML.
+            </p>
+        </section>
+    </main>
+    {% if search %}
+        {% include "search.html.jinja2" %}
+    {% endif %}
+{% endblock %}
+{% endif %}

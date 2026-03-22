@@ -45,6 +45,8 @@
 - `docs/impl.md` defines implementation direction and stack choices.
 - `docs/plugins.md` defines plugin boundaries and loading.
 - `docs/memory.md` defines the memory-plugin contract.
+- `reference/README.md` is the entry point for generated implementation
+  reference derived from code. `reference/` is not a design-doc directory.
 - The Tree-sitter grammar source of truth lives in the sibling
   `tree-sitter-toolang` repository. Toolang consumes the Python extension
   package exposed by that repository rather than compiling grammar sources at

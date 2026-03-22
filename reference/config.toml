@@ -1,0 +1,15 @@
+docformat = "google"
+include_undocumented = false
+search = true
+show_source = false
+output_directory = "generated/html"
+template_directory = "templates"
+
+modules = [
+  "toolang",
+  "toolang_caps",
+]
+
+[edit_url]
+toolang = "https://github.com/openhat-ai/toolang/blob/main/src/toolang/"
+toolang_caps = "https://github.com/openhat-ai/toolang/blob/main/src/toolang_caps/"

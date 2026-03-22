@@ -1,3 +1,5 @@
+"""Trace file written for one completed or failed run prompt build."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -8,6 +10,8 @@ from pydantic import BaseModel, Field
 
 
 class PromptTrace(BaseModel):
+    """Persisted prompt-build trace for one run."""
+
     version: int = 1
     run_id: str
     created_at: datetime
@@ -34,9 +38,13 @@ class PromptTrace(BaseModel):
 
     @classmethod
     def load(cls, path: Path) -> "PromptTrace":
+        """Load one prompt trace document from disk."""
+
         return cls.model_validate_json(path.read_text(encoding="utf-8"))
 
     def save(self, path: Path) -> None:
+        """Write this prompt trace document to disk."""
+
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             self.model_dump_json(indent=2, exclude_none=True),

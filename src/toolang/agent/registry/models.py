@@ -1,3 +1,5 @@
+"""Typed records used by the local known-agent registry."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -9,6 +11,8 @@ from ..refs import ResolvedAgentRef
 
 
 class KnownAgentRecord(BaseModel):
+    """Stored identity row for one known agent."""
+
     agent_uri: str
     agent_id: str
     agent_name: str
@@ -34,6 +38,8 @@ class KnownAgentRecord(BaseModel):
 
 
 class RunningAgentRecord(BaseModel):
+    """Stored running-state row for one active agent."""
+
     agent_uri: str
     pid: int | None = None
     status: str
@@ -44,6 +50,8 @@ class RunningAgentRecord(BaseModel):
 
 
 class RunningAgentSnapshot(BaseModel):
+    """Joined view of one active agent with stable identity fields."""
+
     agent_uri: str
     agent_id: str
     agent_name: str
@@ -58,6 +66,8 @@ class RunningAgentSnapshot(BaseModel):
 
 
 class KnownAgentSnapshot(BaseModel):
+    """Known agent record with optional running-state fields attached."""
+
     agent_uri: str
     agent_id: str
     agent_name: str

@@ -1,3 +1,5 @@
+"""Shared data models for capability references and materialized metadata."""
+
 from __future__ import annotations
 
 from typing import Any, Literal
@@ -26,6 +28,8 @@ def refs_attr_name(kind: CapKind) -> str:
 
 
 class CapEntry(BaseModel):
+    """Authored capability entry pointing to either a ref or a local path."""
+
     ref: str | None = None
     path: str | None = None
 
@@ -37,11 +41,15 @@ class CapEntry(BaseModel):
 
 
 class CapParam(BaseModel):
+    """One declared parameter on an inline capability."""
+
     name: str
     optional: bool = False
 
 
 class InlineCap(BaseModel):
+    """Parsed inline text capability definition."""
+
     kind: InlineCapKind
     name: str
     language: str | None = None
@@ -50,6 +58,8 @@ class InlineCap(BaseModel):
 
 
 class InlineCapMeta(BaseModel):
+    """Materialized metadata stored for one inline text capability."""
+
     kind: InlineCapKind
     name: str
     language: str | None = None
@@ -65,6 +75,8 @@ class InlineCapMeta(BaseModel):
 
 
 class ResolvedCapRef(BaseModel):
+    """Resolved remote reference for one capability import."""
+
     kind: CapKind
     name: str
     ref: str
@@ -74,6 +86,8 @@ class ResolvedCapRef(BaseModel):
 
 
 class SkillMeta(BaseModel):
+    """Materialized metadata stored for one skill capability."""
+
     kind: Literal["skill"] = "skill"
     name: str
     path: str

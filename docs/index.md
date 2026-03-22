@@ -6,6 +6,9 @@ durable synced state, and explicit long-lived runtime processes.
 This directory holds the design documents for the runtime. Each document owns
 one topic so the same rules do not need to be repeated in multiple places.
 
+Generated implementation reference does not live here. It belongs under
+`reference/`.
+
 
 ## Design Map
 
@@ -39,6 +42,10 @@ one topic so the same rules do not need to be repeated in multiple places.
   - chosen stack
   - package boundaries
   - implementation constraints
+- [python.md](./python.md)
+  - Python module and package style
+  - docstrings, comments, and `__all__`
+  - how code should express design directly
 
 
 ## Core Vocabulary

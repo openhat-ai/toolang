@@ -1,3 +1,5 @@
+"""Persisted synced-program representation for one agent source."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,6 +10,8 @@ from toolang.syntax import DeclBlock, ParamDecl, Program, SourceSpan, Thunk, Use
 
 
 class ProgramUse(BaseModel):
+    """Serialized form of one `use` declaration."""
+
     kind: str
     reference: str
     line: int
@@ -17,6 +21,8 @@ class ProgramUse(BaseModel):
 
 
 class ProgramParam(BaseModel):
+    """Serialized form of one declaration parameter."""
+
     name: str
     optional: bool = False
 
@@ -25,6 +31,8 @@ class ProgramParam(BaseModel):
 
 
 class ProgramDecl(BaseModel):
+    """Serialized form of one inline declaration block."""
+
     kind: str
     name: str
     language: str | None = None
@@ -46,6 +54,8 @@ class ProgramDecl(BaseModel):
 
 
 class ProgramThunk(BaseModel):
+    """Serialized form of one thunk definition."""
+
     name: str | None = None
     input_name: str | None = None
     output: str | None = None
@@ -65,12 +75,16 @@ class ProgramThunk(BaseModel):
 
 
 class SyncedProgram(BaseModel):
+    """Persisted program document used by synced runtime state."""
+
     uses: list[ProgramUse] = Field(default_factory=list)
     declarations: list[ProgramDecl] = Field(default_factory=list)
     thunks: list[ProgramThunk] = Field(default_factory=list)
 
     @classmethod
     def from_program(cls, program: Program) -> "SyncedProgram":
+        """Build a persisted program document from parsed syntax objects."""
+
         return cls(
             uses=[
                 ProgramUse(kind=item.kind, reference=item.reference, line=item.span.line)
@@ -106,15 +120,21 @@ class SyncedProgram(BaseModel):
 
     @classmethod
     def load(cls, path: Path) -> "SyncedProgram":
+        """Load a synced program document from disk."""
+
         return cls.model_validate_json(path.read_text(encoding="utf-8"))
 
     def save(self, path: Path) -> None:
+        """Write this synced program document to disk."""
+
         path.write_text(
             self.model_dump_json(indent=2, exclude_none=True),
             encoding="utf-8",
         )
 
     def to_program(self) -> Program:
+        """Rebuild syntax objects from the persisted program document."""
+
         return Program(
             uses=[item.to_ast() for item in self.uses],
             declarations=[item.to_ast() for item in self.declarations],

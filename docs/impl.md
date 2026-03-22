@@ -10,6 +10,7 @@ Design semantics live in:
 - [execution.md](./execution.md)
 - [api.md](./api.md)
 - [plugins.md](./plugins.md)
+- [python.md](./python.md)
 
 
 ## 1. Language And Packaging

@@ -1,3 +1,9 @@
+"""HTTP-facing helpers.
+
+This module owns small shared HTTP helpers used by agent and bus applications,
+including default CORS setup and human-facing agent link formatting.
+"""
+
 from __future__ import annotations
 
 from typing import Any, cast
@@ -19,6 +25,7 @@ def add_cors(
     *,
     allow_origins: list[str] | None = None,
 ) -> None:
+    """Install Toolang's default CORS policy on one FastAPI application."""
     origins = list(allow_origins or DEFAULT_CORS_ORIGINS)
     if not origins:
         return
@@ -33,10 +40,12 @@ def add_cors(
 
 
 def agent_link_for_port(port: int) -> str:
+    """Return the human-facing agent page URL for one local port."""
     return f"{DEFAULT_AGENT_LINK_BASE.rstrip('/')}/{port}"
 
 
 def agent_link_from_endpoint(endpoint: str | None) -> str | None:
+    """Return a human-facing agent page URL derived from one local endpoint."""
     if endpoint is None or not endpoint.strip():
         return None
     try:

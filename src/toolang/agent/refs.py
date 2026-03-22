@@ -1,3 +1,9 @@
+"""Agent reference resolution.
+
+This module resolves user-facing agent selectors into canonical agent identity,
+home placement, and local source paths.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -15,6 +21,8 @@ GuestResolver = Callable[[str], str]
 
 @dataclass(frozen=True, slots=True)
 class ResolvedAgentRef:
+    """A resolved agent selector with canonical identity and local placement."""
+
     raw: str
     agent_kind: AgentKind
     agent_uri: str
@@ -32,6 +40,7 @@ def resolve_agent_ref(
     toolang_root: Path,
     guest_resolver: GuestResolver | None = None,
 ) -> ResolvedAgentRef:
+    """Resolve one agent selector into a canonical local runtime reference."""
     text = raw.strip()
     if not text:
         raise ToolangError("Agent reference may not be empty.")
@@ -61,6 +70,7 @@ def resolve_agent_ref(
 
 
 def agent_home_name(agent_uri: str, *, agent_name: str, kind: AgentKind) -> str:
+    """Return the local home directory name used for one canonical agent URI."""
     if kind == "resident":
         parsed = urlsplit(agent_uri)
         return parsed.netloc
@@ -70,6 +80,7 @@ def agent_home_name(agent_uri: str, *, agent_name: str, kind: AgentKind) -> str:
 
 
 def agent_id(agent_uri: str) -> str:
+    """Return the stable short-hash basis for one canonical agent URI."""
     return sha256(agent_uri.encode("utf-8")).hexdigest()
 
 

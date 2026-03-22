@@ -1,3 +1,9 @@
+"""Sync orchestration.
+
+This module owns the public sync entry points that parse source files, resolve
+refs, materialize sync artifacts, and persist synced program state.
+"""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -37,6 +43,7 @@ from .refs import (
 
 
 def sync_agent(agent: ResolvedAgentRef) -> SyncedProgram:
+    """Parse, resolve, materialize, and persist synced state for one agent."""
     _existing_source_path(agent)
 
     source_paths = _home_source_paths(agent.agent_home)
@@ -105,6 +112,7 @@ def sync_agent(agent: ResolvedAgentRef) -> SyncedProgram:
 
 
 def ensure_agent_synced(agent: ResolvedAgentRef) -> SyncedProgram:
+    """Return synced program state, refreshing it first when inputs changed."""
     if _is_sync_fresh(agent):
         return SyncState.load(agent_sync_path(agent.agent_home, agent.agent_name)).program
     return sync_agent(agent)

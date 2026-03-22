@@ -1,3 +1,5 @@
+"""Scope-aware capability views used during runtime preparation."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
@@ -21,6 +23,8 @@ if TYPE_CHECKING:
 
 
 class InlineCapView(BaseModel):
+    """Runtime view of one inline text cap."""
+
     kind: Literal["service", "prompt", "psyche"]
     name: str
     language: str | None = None
@@ -30,6 +34,8 @@ class InlineCapView(BaseModel):
 
 
 class SkillCapView(BaseModel):
+    """Runtime view of one materialized skill cap."""
+
     kind: Literal["skill"] = "skill"
     name: str
     path: str
@@ -42,6 +48,8 @@ class SkillCapView(BaseModel):
 
 
 class CapsView(BaseModel):
+    """Effective capability set visible to one prepared agent."""
+
     skills: list[SkillCapView] = Field(default_factory=list)
     services: list[InlineCapView] = Field(default_factory=list)
     prompts: list[InlineCapView] = Field(default_factory=list)

@@ -1,3 +1,5 @@
+"""SQLite-backed bus event store and read models."""
+
 from __future__ import annotations
 
 import json
@@ -23,6 +25,8 @@ from toolang.bus.events import (
 
 
 class StoredEvent(BaseModel):
+    """Persisted bus event row with decoded payload."""
+
     event_id: int
     event_type: str
     at: str
@@ -33,6 +37,8 @@ class StoredEvent(BaseModel):
 
 
 class AgentSnapshot(BaseModel):
+    """Projected bus view of one known agent."""
+
     agent_uri: str
     agent_id: str
     name: str
@@ -48,6 +54,8 @@ class AgentSnapshot(BaseModel):
 
 
 class RunSnapshot(BaseModel):
+    """Projected bus view of one recorded run."""
+
     run_id: str
     agent_uri: str
     agent_id: str
@@ -64,6 +72,8 @@ class RunSnapshot(BaseModel):
 
 
 class BusStore:
+    """Append-only event store with agent and run projections."""
+
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
