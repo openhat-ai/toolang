@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, cast
 
+from toolang.concepts.caps import CapContent, CapKind, CapParam
 from toolang.errors import ToolangError
 
 
@@ -59,6 +60,28 @@ class Program:
 
     def declarations_by_kind(self, kind: str) -> list[DeclBlock]:
         return [item for item in self.declarations if item.kind == kind]
+
+    def declared_caps(self) -> list[CapContent]:
+        """Return authored capability declarations defined in this program."""
+
+        caps: list[CapContent] = []
+        for declaration in self.declarations:
+            if declaration.kind not in {"service", "prompt", "psyche"}:
+                continue
+            kind = cast(CapKind, declaration.kind)
+            caps.append(
+                CapContent(
+                    kind=kind,
+                    name=declaration.name,
+                    language=declaration.language,
+                    raw_text=declaration.body,
+                    params=[
+                        CapParam(name=param.name, optional=param.optional)
+                        for param in declaration.params
+                    ],
+                )
+            )
+        return caps
 
     def get_decl(self, kind: str, name: str) -> DeclBlock | None:
         for item in self.declarations:

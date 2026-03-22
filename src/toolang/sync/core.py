@@ -18,9 +18,7 @@ from toolang.caps.materialize import (
 )
 from toolang.caps.refs import (
     load_local_entries_for_scope,
-    load_scope_refs,
-    overlay_ref_entries,
-    resolve_home_refs,
+    resolve_cap_uses,
 )
 from toolang.errors import ToolangError
 from toolang.layout import (
@@ -72,7 +70,10 @@ def sync_agent(agent: AgentRef) -> SyncedProgram:
         shared_source_path(agent.home),
         scope_label="shared agents.too",
     )
-    agent_ref_entries = resolve_home_refs(programs)
+    agent_ref_entries = {
+        agent_name: resolve_cap_uses(program.uses, scope_label=f"{agent_name}.too")
+        for agent_name, program in sorted(programs.items())
+    }
 
     global_local_entries = load_local_entries_for_scope(
         root=agent.root,
@@ -85,8 +86,8 @@ def sync_agent(agent: AgentRef) -> SyncedProgram:
         scope="shared",
     )
 
-    global_effective_entries = overlay_ref_entries(global_ref_entries, global_local_entries)
-    shared_effective_entries = overlay_ref_entries(shared_ref_entries, shared_local_entries)
+    global_effective_entries = global_ref_entries.overlay(global_local_entries)
+    shared_effective_entries = shared_ref_entries.overlay(shared_local_entries)
 
     sync_scope_caps(
         global_synced_caps_root(agent.root),
@@ -148,6 +149,16 @@ def _home_source_paths(agent_home: Path) -> list[Path]:
     if not paths:
         raise ToolangError(f"No .too source files found in agent home: {agent_home}")
     return paths
+
+
+def load_scope_refs(path: Path, *, scope_label: str) -> LockedAgentRefs:
+    if not path.exists():
+        return LockedAgentRefs()
+
+    program = parse(path.read_text(encoding="utf-8"))
+    if program.declarations or program.thunks:
+        raise ToolangError(f"{scope_label} may only contain 'use ...' statements.")
+    return resolve_cap_uses(program.uses, scope_label=scope_label)
 
 
 def _parse_home_programs(source_paths: list[Path]) -> dict[str, Program]:

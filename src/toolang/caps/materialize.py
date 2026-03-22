@@ -24,7 +24,6 @@ from .files import (
     sync_skill_materialization,
 )
 from . import github
-from .refs import agent_declared_caps, entries_for_kind
 
 DECLARED_CAP_KINDS: tuple[Literal["service", "prompt", "psyche"], ...] = (
     "service",
@@ -50,7 +49,7 @@ def sync_scope_caps(
         _sync_scope_declared_caps(
             sync_root,
             kind,
-            entries_for_kind(entries, kind),
+            entries.entries(kind),
             scope_source_root=scope_source_root,
         )
 
@@ -69,12 +68,12 @@ def sync_agent_caps(
             refs_by_agent[agent_name].skills,
             scope_source_root=agent_home,
         )
-        declared_caps = agent_declared_caps(program)
+        declared_caps = program.declared_caps()
         for kind in DECLARED_CAP_KINDS:
             _sync_agent_declared_caps(
                 sync_root,
                 kind,
-                entries_for_kind(refs_by_agent[agent_name], kind),
+                refs_by_agent[agent_name].entries(kind),
                 _declared_caps_for_kind(declared_caps, kind),
                 scope_source_root=agent_home,
             )
@@ -89,7 +88,7 @@ def has_expected_scope_caps(
     if not _has_expected_scope_skills(sync_root, entries.skills):
         return False
     for kind in DECLARED_CAP_KINDS:
-        if not _has_expected_scope_declared_caps(sync_root, kind, entries_for_kind(entries, kind)):
+        if not _has_expected_scope_declared_caps(sync_root, kind, entries.entries(kind)):
             return False
     return True
 
@@ -105,12 +104,12 @@ def has_expected_agent_scope_caps(
         sync_root = agent_synced_caps_root(agent_home, agent_name)
         if not _has_expected_scope_skills(sync_root, state.agent_refs.skills):
             return False
-        declared_caps = agent_declared_caps(programs[agent_name])
+        declared_caps = programs[agent_name].declared_caps()
         for kind in DECLARED_CAP_KINDS:
             if not _has_expected_agent_declared_caps(
                 sync_root,
                 kind,
-                entries_for_kind(state.agent_refs, kind),
+                state.agent_refs.entries(kind),
                 _declared_caps_for_kind(declared_caps, kind),
             ):
                 return False

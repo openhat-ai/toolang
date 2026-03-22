@@ -6,9 +6,17 @@ from datetime import datetime
 from pathlib import Path
 
 from pydantic import BaseModel, Field
+from toolang.concepts.caps import CapKind
 from toolang.program import Program
 
 from .program import SyncedProgram
+
+_REFS_ATTR_BY_KIND: dict[CapKind, str] = {
+    "skill": "skills",
+    "service": "services",
+    "prompt": "prompts",
+    "psyche": "psyches",
+}
 
 
 class InputFingerprint(BaseModel):
@@ -34,6 +42,38 @@ class LockedAgentRefs(BaseModel):
     services: dict[str, LockEntry] = Field(default_factory=dict)
     prompts: dict[str, LockEntry] = Field(default_factory=dict)
     psyches: dict[str, LockEntry] = Field(default_factory=dict)
+
+    def entries(self, kind: CapKind) -> dict[str, LockEntry]:
+        """Return the ref entries for one capability kind."""
+
+        return getattr(self, _REFS_ATTR_BY_KIND[kind])
+
+    def set_entries(self, kind: CapKind, entries: dict[str, LockEntry]) -> None:
+        """Replace the ref entries for one capability kind."""
+
+        setattr(self, _REFS_ATTR_BY_KIND[kind], entries)
+
+    def sorted_copy(self) -> "LockedAgentRefs":
+        """Return a copy with each kind map sorted by name."""
+
+        sorted_refs = LockedAgentRefs()
+        for kind in _REFS_ATTR_BY_KIND:
+            entries = self.entries(kind)
+            sorted_refs.set_entries(
+                kind,
+                {name: entries[name] for name in sorted(entries)},
+            )
+        return sorted_refs
+
+    def overlay(self, overriding: "LockedAgentRefs") -> "LockedAgentRefs":
+        """Return one refs object with later entries overriding earlier ones."""
+
+        merged = LockedAgentRefs()
+        for kind in _REFS_ATTR_BY_KIND:
+            items = dict(self.entries(kind))
+            items.update(overriding.entries(kind))
+            merged.set_entries(kind, {name: items[name] for name in sorted(items)})
+        return merged
 
 
 class SyncState(BaseModel):
