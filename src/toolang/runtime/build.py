@@ -107,7 +107,7 @@ def build_invoke_prompt(
         )
 
     expanded_user_input = expand_prompt_input(prepared.program, user_input) if user_input else ""
-    source_text = prepared.source_path.read_text(encoding="utf-8")
+    source_text = prepared.ref.source.read_text(encoding="utf-8")
     runtime_context = _build_runtime_context(
         prepared,
         thunk,
@@ -150,7 +150,7 @@ def build_chat_prompt(
     model: str | None,
     sandbox: str,
 ) -> PromptBuild:
-    source_text = prepared.source_path.read_text(encoding="utf-8")
+    source_text = prepared.ref.source.read_text(encoding="utf-8")
     runtime_context = _build_runtime_context(
         prepared,
         thunk,
@@ -191,7 +191,7 @@ def build_prompt_error_trace_data(
     raw_input: str | None,
     message: Message | None = None,
 ) -> dict[str, Any]:
-    source_text = prepared.source_path.read_text(encoding="utf-8")
+    source_text = prepared.ref.source.read_text(encoding="utf-8")
     return {
         "model": infer_model(thunk, override=model),
         "raw_input": raw_input,
@@ -238,7 +238,7 @@ def _build_runtime_context(
         "origin": origin,
         "thread_id": thread_id,
         "visible_caps": caps,
-        "program": _program_context(prepared.program, thunk, prepared.source_path),
+        "program": _program_context(prepared.program, thunk, prepared.ref.source),
     }
 
 

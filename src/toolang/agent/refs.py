@@ -6,14 +6,18 @@ home placement, and local source paths.
 
 from __future__ import annotations
 
-from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from typing import Callable
 from urllib.parse import SplitResult, urlsplit
 
 from toolang.errors import ToolangError
 from toolang.layout import agent_source_path, resident_agent_home, visiting_agent_home
-from toolang.concepts.identity import AgentKind, AgentRef, AgentSelector, AgentUri
+from toolang.concepts.identity import (
+    AgentRef,
+    AgentSelector,
+    agent_home_name,
+    agent_id,
+)
 
 GuestResolver = Callable[[str], str]
 
@@ -52,23 +56,6 @@ def resolve_agent_ref(
         return _resolve_https(f"https://{text}", toolang_root=toolang_root)
 
     return _resolve_resident_shorthand(text, toolang_root=toolang_root)
-
-
-def agent_home_name(agent_uri: AgentUri, *, agent_name: str, kind: AgentKind) -> str:
-    """Return the local home directory name used for one canonical agent URI."""
-    if kind == "resident":
-        parsed = urlsplit(agent_uri)
-        return parsed.netloc
-    if kind == "roaming":
-        return agent_name
-    return f"{agent_name}-{agent_id(agent_uri)[:12]}"
-
-
-def agent_id(agent_uri: AgentUri) -> str:
-    """Return the stable short-hash basis for one canonical agent URI."""
-    return sha256(agent_uri.encode("utf-8")).hexdigest()
-
-
 def _resolve_uri(text: str, *, toolang_root: Path) -> AgentRef:
     parsed = urlsplit(text)
     if parsed.scheme == "agent":

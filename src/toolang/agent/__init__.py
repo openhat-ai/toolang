@@ -1,15 +1,14 @@
-"""Agent identity and preparation.
+"""Agent resolution, preparation, and registry.
 
-This package owns agent reference resolution, prepared runtime inputs, and the
-small public facade for agent-focused runtime entry points.
+This package owns agent selector resolution, managed local-agent operations,
+prepared runtime inputs, and the local known-agent registry.
 """
 
 from .prepared import PreparedAgent, prepare_agent
-from .refs import AgentRef, resolve_agent_ref
+from .refs import resolve_agent_ref
 
 __all__ = [
     "PreparedAgent",
-    "AgentRef",
     "prepare_agent",
     "resolve_agent_ref",
 ]

@@ -54,7 +54,7 @@ Current internal packages:
 - `toolang.program`
   - parsing and syntax analysis
 - `toolang.agent`
-  - agent resolution, homes, preparation, and registry
+  - agent resolution, managed local-agent operations, preparation, and registry
 - `toolang.runtime`
   - prompt build, invoke, chat, and server runtime
 - `toolang.caps`

@@ -4,7 +4,11 @@ from typing import Annotated
 
 import typer
 
-from toolang.agent.homes import clone_resident_agent, create_resident_agent, remove_resident_agent
+from toolang.agent.managed import (
+    clone_managed_agent,
+    create_managed_agent,
+    remove_managed_agent,
+)
 from toolang.agent.registry import delete_known_agent, get_running_agent
 from toolang.errors import ToolangError
 from toolang.http import agent_link_from_endpoint
@@ -34,7 +38,7 @@ def register_agent_commands(app: typer.Typer) -> None:
         toolang_root = _toolang_root()
         db_path = agents_db_path(toolang_root)
         agent_ref = _resolve_resident_target(target)
-        create_resident_agent(agent_ref.source, agent_name=agent_ref.name)
+        create_managed_agent(agent_ref)
         _remember_agent(agent_ref, db_path=db_path)
         _append_agent_updated(
             toolang_root,
@@ -56,10 +60,7 @@ def register_agent_commands(app: typer.Typer) -> None:
         db_path = agents_db_path(toolang_root)
         source_ref = _resolve_cli_agent(source, db_path=db_path)
         target_ref = _resolve_resident_target(target)
-        clone_resident_agent(
-            target_ref.source,
-            source_text=_load_clone_source_text(source_ref),
-        )
+        clone_managed_agent(target_ref, source_text=_load_clone_source_text(source_ref))
         _remember_agent(target_ref, db_path=db_path)
         _append_agent_updated(
             toolang_root,
@@ -85,7 +86,7 @@ def register_agent_commands(app: typer.Typer) -> None:
                 f"Agent {agent_ref.uri} is currently running. Stop it before removal."
             )
 
-        removed_files = remove_resident_agent(agent_ref.home, agent_name=agent_ref.name)
+        removed_files = remove_managed_agent(agent_ref)
         removed_registry = delete_known_agent(db_path, agent_ref.uri)
         if not removed_files and not removed_registry:
             raise ToolangError(f"Resident agent not found: {agent_ref.source}")

@@ -214,7 +214,7 @@ def _select_known_agent(
 def _remember_agent(agent: AgentRef, *, db_path: Path) -> None:
     upsert_known_agent(
         db_path,
-        KnownAgentRecord.from_resolved_agent(
+        KnownAgentRecord.from_agent(
             agent,
             updated_at=datetime.now(timezone.utc),
         ),

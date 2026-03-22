@@ -31,6 +31,23 @@
   site, then pass explicit values into lower-level functions.
 - Use mature libraries when they clearly reduce code size or validation
   complexity.
+- Keep package facades narrow. Export only stable entry points from
+  `__init__.py`; import internal view models or helpers from concrete modules
+  at the call site.
+- Put behavior on the concept or persisted model when it is part of that
+  concept's meaning. Do not duplicate the same mapping, overlay, sorting, or
+  serialization logic across multiple modules.
+- Persisted Pydantic models should own their `load()` / `save()` methods.
+  Do not add serializer wrapper modules unless they add real meaning.
+- Let the package that owns a source format own its parsing and source-editing
+  semantics. For example, `.too` parsing and authored source edits belong to
+  `toolang.program`, not to adjacent packages that merely consume programs.
+- Prefer APIs built around concept objects over loose primitive bundles. If a
+  runtime operation naturally works on `SandboxSpec`, `SandboxState`,
+  `AgentRef`, or similar constructs, expose that object directly instead of
+  passing separate strings, ids, and paths.
+- When a split package no longer clarifies ownership, merge it back into the
+  owning package instead of preserving an empty abstraction boundary.
 
 
 ## Current Design Boundaries
@@ -51,11 +68,18 @@
   `tree-sitter-toolang` repository. Toolang consumes the Python extension
   package exposed by that repository rather than compiling grammar sources at
   runtime.
-- Caps logic lives in `toolang.caps`. Keep capability fetch, source ops,
-  materialization, and runtime cap views together unless there is a concrete
-  need to split them out again.
-- Stable shared constructs live in `toolang.concepts` so runtime, sync, and
-  caps code can depend on one explicit concept source.
+- `toolang.program` owns `.too` parsing, authored source semantics, and source
+  editing.
+- `toolang.agent` owns agent selector resolution, managed local-agent
+  operations, prepared runtime inputs, and the local agent registry.
+- `toolang.caps` owns cap refs, sync/materialization, local cap files, and
+  runtime cap views. It should consume normalized program and concept objects
+  rather than reinterpret raw `.too` syntax.
+- `toolang.sandbox` owns sandbox lifecycle helpers. Sandbox concepts and
+  persisted sandbox state live in `toolang.concepts.sandbox`.
+- Stable shared constructs live in `toolang.concepts` so runtime, caps, and
+  storage code can depend on one explicit concept source. Shared concepts may
+  include small operations that eliminate repeated implementation glue.
 
 
 ## Agent Identity
