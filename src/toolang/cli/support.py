@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 from typing import Literal, Sequence
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -21,24 +22,20 @@ from toolang.agent.registry import (
 from toolang.bus.db import BusStore
 from toolang.bus.events import AgentUpdated, utc_now
 from toolang.caps import CapScopeSelection
+from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.errors import ToolangError
-from toolang.layout import (
-    agent_run_path,
-    agents_db_path,
-    bus_events_db_path,
-    ensure_toolang_root_layout,
-    resolve_toolang_root,
-)
 from toolang.concepts.identity import AgentRef
 from toolang.concepts.persisted._toml import load_toml
 from toolang.concepts.persisted.activation_state import ActivationState
 from toolang.concepts.sandbox import HOST_SANDBOX, SandboxSpec, SandboxState
 from toolang.sandbox import sandbox_alive
 
+DEFAULT_AGENT_LINK_BASE = "https://too.run"
+
 
 def _toolang_root() -> Path:
-    root = resolve_toolang_root(os.environ.get("TOOLANG_ROOT", "~/.toolang"))
-    return ensure_toolang_root_layout(root)
+    root = ToolangRoot.resolve(os.environ.get("TOOLANG_ROOT", "~/.toolang"))
+    return root.ensure_layout().path
 
 
 def _resolve_cli_agent(raw: str, *, db_path: Path | None = None) -> AgentRef:
@@ -47,7 +44,7 @@ def _resolve_cli_agent(raw: str, *, db_path: Path | None = None) -> AgentRef:
         raise ToolangError("Agent selector may not be empty.")
 
     toolang_root = _toolang_root()
-    registry_path = db_path or agents_db_path(toolang_root)
+    registry_path = db_path or ToolangRoot.resolve(toolang_root).agents_db_path
     guest_resolver = _guest_resolver()
 
     if not _looks_like_explicit_source_selector(text):
@@ -123,7 +120,7 @@ def _append_agent_updated(
     update_kind: str,
     detail: str,
 ) -> None:
-    bus = BusStore(bus_events_db_path(toolang_root))
+    bus = BusStore(ToolangRoot.resolve(toolang_root).bus_events_db_path)
     bus.append(
         AgentUpdated(
             at=utc_now(),
@@ -158,6 +155,22 @@ def _cors_allow_origins() -> list[str] | None:
         return None
     items = [item.strip() for item in raw.split(",") if item.strip()]
     return items or None
+
+
+def _agent_link_for_port(port: int) -> str:
+    return f"{DEFAULT_AGENT_LINK_BASE.rstrip('/')}/{port}"
+
+
+def _agent_link_from_endpoint(endpoint: str | None) -> str | None:
+    if endpoint is None or not endpoint.strip():
+        return None
+    try:
+        port = urlsplit(endpoint).port
+    except ValueError:
+        return None
+    if port is None:
+        return None
+    return _agent_link_for_port(port)
 
 
 def _resolve_known_agent(
@@ -241,7 +254,7 @@ def _fresh_known_agents(db_path: Path) -> list[KnownAgentSnapshot]:
 
     for snapshot in stale_snapshots:
         delete_running_agent(db_path, snapshot.agent_uri)
-        run_path = agent_run_path(Path(snapshot.agent_home), snapshot.agent_name)
+        run_path = AgentHome.resolve(snapshot.agent_home).room(snapshot.agent_name).run_path
         if run_path.exists():
             now = datetime.now(timezone.utc)
             run_state = ActivationState.load(run_path)

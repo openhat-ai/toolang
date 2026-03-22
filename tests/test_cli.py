@@ -22,26 +22,52 @@ from toolang.agent.registry import (
     upsert_running_agent,
 )
 from toolang.cli import app, main
-from toolang.cli.runtime.serve import _drop_stale_running_agent
+from toolang.cli.serve import _drop_stale_running_agent
 from toolang.cli.support import (
     _default_runtime_cap_scopes,
     _remember_agent,
     _resolve_cli_agent,
 )
+from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.errors import ToolangError
 from toolang.concepts.persisted.activation_state import ActivationState
-from toolang.layout import (
-    agent_run_path,
-    agents_db_path,
-    global_caps_dir,
-    global_source_path,
-    shared_caps_dir,
-    shared_source_path,
-    sandbox_args_path,
-    sandbox_exec_path,
-    sandbox_host,
-)
 from toolang.concepts.caps import CapKind
+
+
+def agent_run_path(agent_home: Path, agent_name: str) -> Path:
+    return AgentHome.resolve(agent_home).room(agent_name).run_path
+
+
+def agents_db_path(root: Path) -> Path:
+    return ToolangRoot.resolve(root).agents_db_path
+
+
+def global_caps_dir(root: Path, kind: CapKind) -> Path:
+    return ToolangRoot.resolve(root).global_caps_dir(kind)
+
+
+def global_source_path(root: Path) -> Path:
+    return ToolangRoot.resolve(root).global_source_path
+
+
+def shared_caps_dir(agent_home: Path, kind: CapKind) -> Path:
+    return AgentHome.resolve(agent_home).shared_caps_dir(kind)
+
+
+def shared_source_path(agent_home: Path) -> Path:
+    return AgentHome.resolve(agent_home).shared_source_path
+
+
+def sandbox_args_path(root: Path, sandbox_name: str) -> Path:
+    return ToolangRoot.resolve(root).sandbox_args_path(sandbox_name)
+
+
+def sandbox_exec_path(root: Path, sandbox_name: str) -> Path:
+    return ToolangRoot.resolve(root).sandbox_exec_path(sandbox_name)
+
+
+def sandbox_host(root: Path, sandbox_name: str) -> Path:
+    return ToolangRoot.resolve(root).sandbox_dir(sandbox_name)
 
 runner = CliRunner()
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"
@@ -429,7 +455,7 @@ def test_cli_start_docker_stages_sandbox_launch(tmp_path: Path, monkeypatch) -> 
     monkeypatch.setattr("toolang.sandbox.core.docker_remove_container", fake_remove)
     monkeypatch.setattr("toolang.sandbox.core.docker_run_detached", fake_run)
     monkeypatch.setattr(
-        "toolang.cli.runtime.serve._wait_for_running_agent_sandbox",
+        "toolang.cli.serve._wait_for_running_agent_sandbox",
         lambda **kwargs: None,
     )
 
@@ -507,9 +533,9 @@ def test_cli_stop_host_agent_terminates_process(tmp_path: Path, monkeypatch) -> 
         calls.append((pid, sig))
 
     monkeypatch.setattr("toolang.sandbox.core.os.kill", fake_kill)
-    monkeypatch.setattr("toolang.cli.runtime.serve.sandbox_alive", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("toolang.cli.serve.sandbox_alive", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
-        "toolang.cli.runtime.serve._wait_for_running_agent_stop",
+        "toolang.cli.serve._wait_for_running_agent_stop",
         lambda **kwargs: delete_running_agent(db_path, agent.uri),
     )
 
@@ -552,9 +578,9 @@ def test_cli_stop_docker_agent_removes_container(tmp_path: Path, monkeypatch) ->
         "toolang.sandbox.core.docker_remove_container",
         lambda name: removed.append(name),
     )
-    monkeypatch.setattr("toolang.cli.runtime.serve.sandbox_alive", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("toolang.cli.serve.sandbox_alive", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
-        "toolang.cli.runtime.serve._wait_for_running_agent_stop",
+        "toolang.cli.serve._wait_for_running_agent_stop",
         lambda **kwargs: delete_running_agent(db_path, agent.uri),
     )
 

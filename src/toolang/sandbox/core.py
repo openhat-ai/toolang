@@ -11,14 +11,9 @@ from pathlib import Path
 from typing import Iterable, Mapping
 
 from toolang.agent.prepared import PreparedAgent
+from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.concepts.sandbox import SandboxSpec, SandboxState
 from toolang.errors import ToolangError
-from toolang.layout import (
-    agent_room_sandbox_dir,
-    sandbox_args_path,
-    sandbox_exec_path,
-    sandbox_host,
-)
 
 from .docker import docker_container_running, docker_remove_container, docker_run_detached
 
@@ -151,11 +146,12 @@ def _start_docker_sandbox(
     if not spec.image:
         raise ToolangError("docker sandbox must include an image")
     key = _sandbox_key(prepared.ref.name, prepared.ref.id)
-    stage_dir = sandbox_host(toolang_root, key)
+    root = ToolangRoot.resolve(toolang_root)
+    stage_dir = root.sandbox_dir(key)
     stage_dir.mkdir(parents=True, exist_ok=True)
-    args_path = sandbox_args_path(toolang_root, key)
-    exec_path = sandbox_exec_path(toolang_root, key)
-    room_sandbox_dir = agent_room_sandbox_dir(prepared.ref.home, prepared.ref.name)
+    args_path = root.sandbox_args_path(key)
+    exec_path = root.sandbox_exec_path(key)
+    room_sandbox_dir = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name).sandbox_dir
     room_sandbox_dir.mkdir(parents=True, exist_ok=True)
     log_path.parent.mkdir(parents=True, exist_ok=True)
 

@@ -60,16 +60,16 @@ Current internal packages:
 - `toolang.caps`
   - cap refs, sync orchestration, materialization, and runtime cap views
 - `toolang.concepts`
-  - shared identity, execution, sandbox, cap, and persisted-state constructs
+  - shared identity, execution, layout, sandbox, cap, and persisted-state
+    constructs
 - `toolang.bus`
   - shared bus projection and bus API
 - `toolang.sandbox`
   - sandbox runtime helpers
 - `toolang.cli`
   - CLI surfaces and command registration
-- `toolang.layout`
-  - canonical path and layout helpers
-
+- `toolang.web`
+  - small shared FastAPI app helpers
 Reason:
 
 - shared constructs should live in one explicit internal package instead of

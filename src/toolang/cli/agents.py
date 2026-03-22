@@ -11,11 +11,10 @@ from toolang.agent.managed import (
 )
 from toolang.agent.registry import delete_known_agent, get_running_agent
 from toolang.errors import ToolangError
-from toolang.http import agent_link_from_endpoint
-from toolang.layout import agents_db_path
+from toolang.concepts.layout import ToolangRoot
 
-from .runtime.serve import _drop_stale_running_agent
 from .support import (
+    _agent_link_from_endpoint,
     _append_agent_updated,
     _format_rows,
     _fresh_known_agents,
@@ -25,6 +24,7 @@ from .support import (
     _resolve_resident_target,
     _toolang_root,
 )
+from .serve import _drop_stale_running_agent
 
 
 def register_agent_commands(app: typer.Typer) -> None:
@@ -36,7 +36,7 @@ def register_agent_commands(app: typer.Typer) -> None:
         ],
     ) -> None:
         toolang_root = _toolang_root()
-        db_path = agents_db_path(toolang_root)
+        db_path = ToolangRoot.resolve(toolang_root).agents_db_path
         agent_ref = _resolve_resident_target(target)
         create_managed_agent(agent_ref)
         _remember_agent(agent_ref, db_path=db_path)
@@ -57,7 +57,7 @@ def register_agent_commands(app: typer.Typer) -> None:
         ],
     ) -> None:
         toolang_root = _toolang_root()
-        db_path = agents_db_path(toolang_root)
+        db_path = ToolangRoot.resolve(toolang_root).agents_db_path
         source_ref = _resolve_cli_agent(source, db_path=db_path)
         target_ref = _resolve_resident_target(target)
         clone_managed_agent(target_ref, source_text=_load_clone_source_text(source_ref))
@@ -75,7 +75,7 @@ def register_agent_commands(app: typer.Typer) -> None:
         agent: Annotated[str, typer.Argument(help="Agent to remove")],
     ) -> None:
         toolang_root = _toolang_root()
-        db_path = agents_db_path(toolang_root)
+        db_path = ToolangRoot.resolve(toolang_root).agents_db_path
         agent_ref = _resolve_cli_agent(agent, db_path=db_path)
         if agent_ref.kind != "resident":
             raise ToolangError("toolang remove only supports managed agents.")
@@ -101,7 +101,7 @@ def register_agent_commands(app: typer.Typer) -> None:
 
     @app.command("list", help="List known agents and their current status.")
     def list_agents() -> None:
-        db_path = agents_db_path(_toolang_root())
+        db_path = ToolangRoot.resolve(_toolang_root()).agents_db_path
         snapshots = _fresh_known_agents(db_path)
         if not snapshots:
             typer.echo("No agents found.")
@@ -113,7 +113,7 @@ def register_agent_commands(app: typer.Typer) -> None:
                 snapshot.running_status or "stopped",
                 snapshot.agent_name,
                 snapshot.agent_uri,
-                agent_link_from_endpoint(snapshot.endpoint) or "-",
+                _agent_link_from_endpoint(snapshot.endpoint) or "-",
             )
             for snapshot in snapshots
         ]

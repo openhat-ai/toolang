@@ -10,8 +10,8 @@ from pathlib import Path, PurePosixPath
 from typing import Callable
 from urllib.parse import SplitResult, urlsplit
 
+from toolang.concepts.layout import ToolangRoot
 from toolang.errors import ToolangError
-from toolang.layout import agent_source_path, resident_agent_home, visiting_agent_home
 from toolang.concepts.identity import (
     AgentRef,
     AgentSelector,
@@ -70,6 +70,7 @@ def _resolve_uri(text: str, *, toolang_root: Path) -> AgentRef:
 
 
 def _resolve_agent_uri(parsed: SplitResult, *, toolang_root: Path) -> AgentRef:
+    root = ToolangRoot.resolve(toolang_root)
     home_name = parsed.netloc
     if not home_name:
         raise ToolangError("Resident agent URI must include a home name.")
@@ -80,17 +81,17 @@ def _resolve_agent_uri(parsed: SplitResult, *, toolang_root: Path) -> AgentRef:
         raise ToolangError("Resident agent URI must look like agent://<home>/<agent>.too")
 
     agent_name = filename[:-4]
-    home = resident_agent_home(toolang_root, home_name)
+    home = root.resident_home(home_name)
     agent_uri = f"agent://{home_name}/{filename}"
     return AgentRef(
         selector=agent_uri,
         kind="resident",
         uri=agent_uri,
         id=agent_id(agent_uri),
-        root=toolang_root,
-        home=home,
+        root=root.path,
+        home=home.path,
         name=agent_name,
-        source=agent_source_path(home, agent_name),
+        source=home.source(agent_name),
     )
 
 
@@ -100,6 +101,7 @@ def _resolve_file_uri(parsed: SplitResult, *, toolang_root: Path) -> AgentRef:
 
 
 def _resolve_https(text: str, *, toolang_root: Path) -> AgentRef:
+    root = ToolangRoot.resolve(toolang_root)
     parsed = urlsplit(text)
     if not parsed.netloc:
         raise ToolangError(f"Invalid visiting agent URI: {text}")
@@ -109,16 +111,16 @@ def _resolve_https(text: str, *, toolang_root: Path) -> AgentRef:
     agent_name = filename[:-4]
     agent_uri = parsed.geturl()
     home_name = agent_home_name(agent_uri, agent_name=agent_name, kind="visiting")
-    home = visiting_agent_home(toolang_root, home_name)
+    home = root.visiting_home(home_name)
     return AgentRef(
         selector=text,
         kind="visiting",
         uri=agent_uri,
         id=agent_id(agent_uri),
-        root=toolang_root,
-        home=home,
+        root=root.path,
+        home=home.path,
         name=agent_name,
-        source=home / filename,
+        source=home.source(agent_name),
     )
 
 
@@ -131,10 +133,11 @@ def _resolve_local_path(text: str, *, cwd: Path, toolang_root: Path) -> AgentRef
 def _resolve_absolute_local_path(
     path: Path, *, toolang_root: Path, raw: str
 ) -> AgentRef:
+    root = ToolangRoot.resolve(toolang_root)
     if path.suffix != ".too":
         raise ToolangError(f"Local agent path must end with .too: {path}")
 
-    resident_prefix = toolang_root / "agents"
+    resident_prefix = root.path / "agents"
     try:
         relative = path.relative_to(resident_prefix)
     except ValueError:
@@ -145,14 +148,14 @@ def _resolve_absolute_local_path(
         if filename.endswith(".too"):
             agent_name = filename[:-4]
             agent_uri = f"agent://{home_name}/{filename}"
-            home = resident_agent_home(toolang_root, home_name)
+            home = root.resident_home(home_name)
             return AgentRef(
                 selector=raw,
                 kind="resident",
                 uri=agent_uri,
                 id=agent_id(agent_uri),
-                root=toolang_root,
-                home=home,
+                root=root.path,
+                home=home.path,
                 name=agent_name,
                 source=path,
             )
@@ -163,7 +166,7 @@ def _resolve_absolute_local_path(
         kind="roaming",
         uri=agent_uri,
         id=agent_id(agent_uri),
-        root=toolang_root,
+        root=root.path,
         home=path.parent,
         name=path.stem,
         source=path,
@@ -171,6 +174,7 @@ def _resolve_absolute_local_path(
 
 
 def _resolve_resident_shorthand(text: str, *, toolang_root: Path) -> AgentRef:
+    root = ToolangRoot.resolve(toolang_root)
     parts = [part for part in text.split("/") if part]
     if not parts or len(parts) > 2:
         raise ToolangError(f"Unsupported resident shorthand: {text}")
@@ -183,16 +187,16 @@ def _resolve_resident_shorthand(text: str, *, toolang_root: Path) -> AgentRef:
 
     filename = f"{agent_name}.too"
     agent_uri = f"agent://{home_name}/{filename}"
-    home = resident_agent_home(toolang_root, home_name)
+    home = root.resident_home(home_name)
     return AgentRef(
         selector=text,
         kind="resident",
         uri=agent_uri,
         id=agent_id(agent_uri),
-        root=toolang_root,
-        home=home,
+        root=root.path,
+        home=home.path,
         name=agent_name,
-        source=agent_source_path(home, agent_name),
+        source=home.source(agent_name),
     )
 
 

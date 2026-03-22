@@ -8,7 +8,7 @@ import uuid
 from toolang.agent.prepared import PreparedAgent
 from toolang.bus.db import BusStore
 from toolang.bus.events import RunFailed, RunFinished, RunOrigin, RunStarted, utc_now
-from toolang.layout import agent_run_prompt_path
+from toolang.concepts.layout import AgentHome
 from toolang.concepts.persisted.prompt_trace import PromptTrace
 from toolang.program.ast import Thunk
 
@@ -160,11 +160,9 @@ def _tracked_turn(
     resolved_run_id = run_id or uuid.uuid4().hex
     summary = _summary(prepared.ref.name, thunk)
     now = utc_now()
-    trace_path = agent_run_prompt_path(
-        prepared.ref.home,
-        prepared.ref.name,
-        resolved_run_id,
-    )
+    trace_path = AgentHome.resolve(prepared.ref.home).room(
+        prepared.ref.name
+    ).prompt_trace_path(resolved_run_id)
     bus.append(
         RunStarted(
             at=now,

@@ -75,8 +75,13 @@
 - `toolang.caps` owns cap refs, sync/materialization, local cap files, and
   runtime cap views. It should consume normalized program and concept objects
   rather than reinterpret raw `.too` syntax.
+- `toolang.concepts.layout` owns layout concepts such as the Toolang root,
+  agent home, and agent room. Put durable layout behavior on those concept
+  objects instead of rebuilding paths ad hoc.
 - `toolang.sandbox` owns sandbox lifecycle helpers. Sandbox concepts and
   persisted sandbox state live in `toolang.concepts.sandbox`.
+- `toolang.web` owns the small shared web/app helpers used by FastAPI app
+  modules.
 - Stable shared constructs live in `toolang.concepts` so runtime, caps, and
   storage code can depend on one explicit concept source. Shared concepts may
   include small operations that eliminate repeated implementation glue.

@@ -5,9 +5,21 @@ from pathlib import Path
 from toolang.agent.prepared import prepare_agent
 from toolang.agent.resolve import resolve_agent_ref
 from toolang.bus.db import BusStore
+from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.concepts.persisted.prompt_trace import PromptTrace
-from toolang.layout import agent_run_prompt_path, bus_events_db_path, resolve_toolang_root
 from toolang.runtime.invoke import invoke_prepared_agent
+
+
+def resolve_toolang_root(root: Path) -> Path:
+    return ToolangRoot.resolve(root).path
+
+
+def bus_events_db_path(root: Path) -> Path:
+    return ToolangRoot.resolve(root).bus_events_db_path
+
+
+def agent_run_prompt_path(agent_home: Path, agent_name: str, run_id: str) -> Path:
+    return AgentHome.resolve(agent_home).room(agent_name).prompt_trace_path(run_id)
 
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"
 

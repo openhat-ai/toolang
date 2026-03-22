@@ -28,6 +28,7 @@ from .execution import (
     RuntimeLoop,
 )
 from .identity import AgentKind, AgentRef, AgentSelector, AgentUri
+from .layout import AgentHome, AgentRoom, ToolangRoot
 from .sandbox import (
     HOST_SANDBOX,
     SandboxRuntimeInfo,
@@ -40,6 +41,8 @@ __all__ = [
     "AgentRef",
     "AgentSelector",
     "AgentUri",
+    "AgentHome",
+    "AgentRoom",
     "CapFrontmatter",
     "CapContent",
     "CapEntry",
@@ -63,4 +66,5 @@ __all__ = [
     "SandboxSpec",
     "SandboxState",
     "SkillFrontmatter",
+    "ToolangRoot",
 ]

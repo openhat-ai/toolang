@@ -22,7 +22,7 @@ from toolang.runtime.api_models import (
     RunListResponse,
 )
 from toolang.bus.db import AgentSnapshot, BusStore, RunSnapshot, StoredEvent
-from toolang.http import add_cors
+from toolang.web import add_cors
 
 SSE_POLL_INTERVAL_SEC = 0.5
 SSE_PING_INTERVAL_SEC = 20.0

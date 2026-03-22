@@ -7,15 +7,8 @@ from typing import Annotated, Literal
 
 import typer
 
+from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.errors import ToolangError
-from toolang.layout import (
-    agent_source_path,
-    agents_db_path,
-    global_caps_dir,
-    global_source_path,
-    shared_caps_dir,
-    shared_source_path,
-)
 from toolang.caps.github import fetch_github_artifact, resolve_github_cap_ref
 from toolang.caps.files import (
     create_local_cap,
@@ -247,20 +240,22 @@ def _resolve_cap_scope_target(
     agent: str | None,
 ) -> CapSourceTarget:
     toolang_root = _toolang_root()
+    root = ToolangRoot.resolve(toolang_root)
     if scope == "global":
         return CapSourceTarget(
             toolang_root=toolang_root,
             agent_home=None,
             agent_name=None,
-            source_path=global_source_path(toolang_root),
+            source_path=root.global_source_path,
         )
 
     if agent is not None:
-        resolved = _resolve_cli_agent(agent, db_path=agents_db_path(toolang_root))
+        resolved = _resolve_cli_agent(agent, db_path=root.agents_db_path)
+        home = AgentHome.resolve(resolved.home)
         if scope == "shared":
-            source_path = shared_source_path(resolved.home)
+            source_path = home.shared_source_path
         else:
-            source_path = agent_source_path(resolved.home, resolved.name)
+            source_path = home.source(resolved.name)
         return CapSourceTarget(
             toolang_root=toolang_root,
             agent_home=resolved.home,
@@ -279,9 +274,9 @@ def _resolve_cap_scope_target(
             "Could not infer a single agent source from the current directory. Pass --agent."
         )
     source_path = (
-        shared_source_path(inferred.agent_home)
+        AgentHome.resolve(inferred.agent_home).shared_source_path
         if scope == "shared"
-        else agent_source_path(inferred.agent_home, inferred.agent_name or "")
+        else AgentHome.resolve(inferred.agent_home).source(inferred.agent_name or "")
     )
     return CapSourceTarget(
         toolang_root=toolang_root,
@@ -299,8 +294,9 @@ def _resolve_cap_local_target(
     name: str,
 ) -> CapLocalTarget:
     toolang_root = _toolang_root()
+    root = ToolangRoot.resolve(toolang_root)
     if scope == "global":
-        kind_dir = global_caps_dir(toolang_root, kind)
+        kind_dir = root.global_caps_dir(kind)
         return CapLocalTarget(
             toolang_root=toolang_root,
             agent_home=None,
@@ -310,8 +306,8 @@ def _resolve_cap_local_target(
         )
 
     if agent is not None:
-        resolved = _resolve_cli_agent(agent, db_path=agents_db_path(toolang_root))
-        kind_dir = shared_caps_dir(resolved.home, kind)
+        resolved = _resolve_cli_agent(agent, db_path=root.agents_db_path)
+        kind_dir = AgentHome.resolve(resolved.home).shared_caps_dir(kind)
         return CapLocalTarget(
             toolang_root=toolang_root,
             agent_home=resolved.home,
@@ -326,7 +322,7 @@ def _resolve_cap_local_target(
             "Could not infer a shared scope target from the current directory. "
             "Run the command from an agent home or pass --agent."
         )
-    kind_dir = shared_caps_dir(inferred.agent_home, kind)
+    kind_dir = AgentHome.resolve(inferred.agent_home).shared_caps_dir(kind)
     return CapLocalTarget(
         toolang_root=toolang_root,
         agent_home=inferred.agent_home,

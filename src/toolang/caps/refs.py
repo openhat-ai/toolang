@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import cast, get_args
 
 from toolang.concepts.caps import CapKind
+from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.concepts.persisted.sync_state import LockEntry, LockedAgentRefs
 from toolang.errors import ToolangError
 from toolang.program.ast import UseDecl
@@ -46,12 +47,13 @@ def load_local_entries_for_scope(
     scope_root: Path,
     scope: str,
 ) -> LockedAgentRefs:
-    from toolang.layout import global_caps_dir, shared_caps_dir
-
     refs = LockedAgentRefs()
+    root_layout = ToolangRoot.resolve(root)
     for kind in ALL_CAP_KINDS:
         kind_dir = (
-            shared_caps_dir(root, kind) if scope == "shared" else global_caps_dir(root, kind)
+            AgentHome.resolve(root).shared_caps_dir(kind)
+            if scope == "shared"
+            else root_layout.global_caps_dir(kind)
         )
         entries = refs.entries(kind)
         if not kind_dir.exists():
