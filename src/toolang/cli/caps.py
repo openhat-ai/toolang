@@ -25,7 +25,7 @@ from toolang.caps.files import (
     prune_empty_local_kind_dir,
 )
 from toolang.concepts.caps import CapKind
-from toolang.program.source_ops import add_cap_ref, remove_cap_ref
+from toolang.program import Program
 
 from .support import _resolve_cli_agent, _toolang_root
 
@@ -161,7 +161,9 @@ def _cap_add(
     agent: str | None,
 ) -> None:
     target = _resolve_cap_scope_target(scope=scope, agent=agent)
-    changed = add_cap_ref(target.source_path, kind, ref)
+    program = Program.load(target.source_path)
+    changed = program.add_cap_ref(kind, ref)
+    program.save(target.source_path)
     typer.echo(str(target.source_path))
     if not changed:
         typer.echo("unchanged", err=True)
@@ -175,14 +177,19 @@ def _cap_remove(
     agent: str | None,
 ) -> None:
     target = _resolve_cap_scope_target(scope=scope, agent=agent)
-    changed = remove_cap_ref(
-        target.source_path,
+    program = Program.load(target.source_path)
+    changed = program.remove_cap_ref(
         kind,
         name,
         delete_when_empty=target.source_path.name == "agents.too",
     )
     if not changed:
         raise ToolangError(f"{kind.title()} {name!r} is not referenced in {target.source_path}.")
+    if target.source_path.name == "agents.too" and not program.to_source():
+        if target.source_path.exists():
+            target.source_path.unlink()
+    else:
+        program.save(target.source_path)
     typer.echo(str(target.source_path))
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any, cast
 
 from toolang.concepts.caps import CapContent, CapKind, CapParam
@@ -51,6 +52,24 @@ class Program:
     uses: list[UseDecl] = field(default_factory=list)
     declarations: list[DeclBlock] = field(default_factory=list)
     thunks: list[Thunk] = field(default_factory=list)
+    _source_lines: list[str] | None = field(default=None, repr=False, compare=False)
+
+    @classmethod
+    def load(cls, path: Path) -> "Program":
+        """Load one authored Toolang program from disk."""
+
+        if not path.exists():
+            return cls(_source_lines=[])
+
+        from .parser import parse
+
+        return parse(path.read_text(encoding="utf-8"))
+
+    def save(self, path: Path) -> None:
+        """Write this program back to disk."""
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(self.to_source(), encoding="utf-8")
 
     def uses_by_kind(self, kind: str) -> list[UseDecl]:
         return [item for item in self.uses if item.kind == kind]
@@ -105,6 +124,76 @@ class Program:
                 return thunk
         raise ToolangError(f"Thunk not found: {name}")
 
+    def add_cap_ref(self, kind: CapKind, ref: str) -> bool:
+        """Add one `use <kind> <ref>` statement to this program."""
+
+        name = _cap_name_from_ref(ref)
+        if self.has_use(kind, ref):
+            return False
+
+        for use in self.uses_by_kind(kind):
+            if _cap_name_from_ref(use.reference) == name:
+                raise ToolangError(
+                    f"{kind.title()} {name!r} is already referenced as {use.reference!r}."
+                )
+
+        lines = self._editable_lines()
+        use_line = f"use {kind} {ref}"
+
+        if not lines:
+            self._replace_from_source_lines([use_line])
+            return True
+
+        use_indexes = [index for index, line in enumerate(lines) if _is_cap_use_line(line)]
+        insert_at = use_indexes[-1] + 1 if use_indexes else _leading_header_length(lines)
+
+        updated = list(lines)
+        updated.insert(insert_at, use_line)
+        if insert_at == 0 and len(updated) > 1 and updated[1].strip():
+            updated.insert(1, "")
+
+        self._replace_from_source_lines(updated)
+        return True
+
+    def remove_cap_ref(
+        self,
+        kind: CapKind,
+        name: str,
+        *,
+        delete_when_empty: bool = False,
+    ) -> bool:
+        """Remove `use` statements for one capability name."""
+
+        lines = self._editable_lines()
+        if not lines:
+            return False
+
+        remove_indexes = {
+            use.span.line - 1
+            for use in self.uses_by_kind(kind)
+            if _cap_name_from_ref(use.reference) == name
+        }
+        if not remove_indexes:
+            return False
+
+        updated = [line for index, line in enumerate(lines) if index not in remove_indexes]
+        while updated and not updated[0].strip():
+            updated.pop(0)
+        while len(updated) >= 2 and not updated[0].strip() and not updated[1].strip():
+            updated.pop(0)
+        while len(updated) >= 2 and not updated[-1].strip() and not updated[-2].strip():
+            updated.pop()
+
+        if delete_when_empty and not updated:
+            self.uses = []
+            self.declarations = []
+            self.thunks = []
+            self._source_lines = []
+            return True
+
+        self._replace_from_source_lines(updated)
+        return True
+
     def validate(self) -> None:
         self._validate_declarations()
         self._validate_thunks()
@@ -115,6 +204,47 @@ class Program:
             "declarations": [asdict(item) for item in self.declarations],
             "thunks": [asdict(item) for item in self.thunks],
         }
+
+    def to_source(self) -> str:
+        """Render this program back to Toolang source text."""
+
+        lines = self._render_source_lines()
+        if not lines:
+            return ""
+        return "\n".join(lines).rstrip() + "\n"
+
+    def _editable_lines(self) -> list[str]:
+        if self._source_lines is not None:
+            return list(self._source_lines)
+        return _render_program_lines(self)
+
+    def _render_source_lines(self) -> list[str]:
+        if self._source_lines is None:
+            return _render_program_lines(self)
+
+        from .parser import parse
+
+        source_text = "\n".join(self._source_lines)
+        reparsed = parse(source_text)
+        if reparsed.to_dict() == self.to_dict():
+            return list(self._source_lines)
+        return _render_program_lines(self)
+
+    def _replace_from_source_lines(self, lines: list[str]) -> None:
+        if not lines:
+            self.uses = []
+            self.declarations = []
+            self.thunks = []
+            self._source_lines = []
+            return
+
+        from .parser import parse
+
+        reparsed = parse("\n".join(lines))
+        self.uses = reparsed.uses
+        self.declarations = reparsed.declarations
+        self.thunks = reparsed.thunks
+        self._source_lines = list(lines)
 
     def _validate_declarations(self) -> None:
         seen: set[tuple[str, str]] = set()
@@ -148,3 +278,86 @@ class Program:
                 raise ToolangError(
                     f"Thunk {thunk.name or '<default>'} refers to unknown output struct {thunk.output!r} at line {thunk.span.line}."
                 )
+
+
+def _cap_name_from_ref(ref: str) -> str:
+    owner, sep, name = ref.partition("/")
+    if not owner or not sep or not name:
+        raise ToolangError(f"Capability ref must look like owner/name: {ref}")
+    return name
+
+
+def _is_cap_use_line(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith("use ") and len(stripped.split()) == 3
+
+
+def _leading_header_length(lines: list[str]) -> int:
+    index = 0
+    while index < len(lines):
+        stripped = lines[index].strip()
+        if not stripped or stripped.startswith("#"):
+            index += 1
+            continue
+        break
+    return index
+
+
+def _render_program_lines(program: Program) -> list[str]:
+    lines: list[str] = []
+
+    for use in program.uses:
+        lines.append(f"use {use.kind} {use.reference}")
+
+    if program.uses and (program.declarations or program.thunks):
+        lines.append("")
+
+    declaration_blocks = [_render_declaration(item) for item in program.declarations]
+    thunk_blocks = [_render_thunk(item) for item in program.thunks]
+    blocks = declaration_blocks + thunk_blocks
+
+    for index, block in enumerate(blocks):
+        if index > 0:
+            lines.append("")
+        lines.extend(block)
+
+    return lines
+
+
+def _render_declaration(declaration: DeclBlock) -> list[str]:
+    params = ""
+    if declaration.params:
+        rendered_params = []
+        for param in declaration.params:
+            rendered_params.append(f"{param.name}{'?' if param.optional else ''}")
+        params = "(" + ", ".join(rendered_params) + ")"
+
+    if declaration.language is None:
+        return [f"{declaration.kind} {declaration.name}{params}:"]
+
+    header = f"{declaration.kind} {declaration.name}{params}: ```{declaration.language}"
+    lines = [header]
+    body_lines = declaration.body.splitlines() if declaration.body else []
+    lines.extend(body_lines)
+    lines.append("```")
+    return lines
+
+
+def _render_thunk(thunk: Thunk) -> list[str]:
+    header = "thunk"
+    if thunk.name is not None:
+        header += f" {thunk.name}"
+
+    if thunk.input_name is not None:
+        header += f"({thunk.input_name})"
+
+    if thunk.output is not None:
+        header += f" -> {thunk.output}"
+
+    header += ":"
+    lines = [header]
+    lines.extend(f"    {directive}" for directive in thunk.directives)
+
+    prompt_lines = thunk.prompt.splitlines() or [""]
+    lines.extend(f"    {line}" if line else "    " for line in prompt_lines)
+    return lines

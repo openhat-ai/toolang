@@ -15,7 +15,7 @@ def parse(source: str) -> Program:
     source_bytes = source.encode("utf-8")
     tree = _parse_tree(source_bytes)
     lines = source.splitlines()
-    program = Program()
+    program = Program(_source_lines=source.splitlines())
 
     error_node = _first_error_node(tree.root_node)
     if error_node is not None:

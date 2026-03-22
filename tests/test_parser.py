@@ -4,7 +4,7 @@ import pytest
 
 from toolang.errors import ToolangError
 from toolang.runtime.build import expand_prompt_input, infer_model
-from toolang.program import parse
+from toolang.program import Program, parse
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample.too"
 
@@ -70,3 +70,46 @@ thunk summarize:
 
     assert program.thunks[0].directives == []
     assert "model = gpt-5" in program.thunks[0].prompt
+
+
+def test_program_add_cap_ref_and_save_preserves_existing_body(tmp_path: Path) -> None:
+    path = tmp_path / "alice.too"
+    path.write_text(
+        """
+thunk review:
+    Review the change set.
+""".strip(),
+        encoding="utf-8",
+    )
+
+    program = Program.load(path)
+
+    assert program.add_cap_ref("skill", "by3gus/pdf-processing") is True
+
+    program.save(path)
+
+    assert path.read_text(encoding="utf-8").startswith(
+        "use skill by3gus/pdf-processing\n\nthunk review:\n"
+    )
+
+
+def test_program_remove_cap_ref_updates_source_text(tmp_path: Path) -> None:
+    path = tmp_path / "alice.too"
+    path.write_text(
+        """
+use skill by3gus/pdf-processing
+
+thunk review:
+    Review the change set.
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    program = Program.load(path)
+
+    assert program.remove_cap_ref("skill", "pdf-processing") is True
+
+    program.save(path)
+
+    assert path.read_text(encoding="utf-8") == "thunk review:\n    Review the change set.\n"
