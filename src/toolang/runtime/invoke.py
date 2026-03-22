@@ -38,6 +38,14 @@ class ChatResult:
     assistant: ChatMessage
 
 
+@dataclass(frozen=True, slots=True)
+class RuntimeExecutionContext:
+    """Execution truth-layer context for turns running inside one activation."""
+
+    store: ExecutionStore
+    activation_id: str
+
+
 def invoke_prepared_agent(
     prepared: PreparedAgent,
     thunk: Thunk,
@@ -48,6 +56,8 @@ def invoke_prepared_agent(
     origin: RunOrigin = "invoke",
     thread_id: str | None = None,
     sandbox: str = "host",
+    execution_store: ExecutionStore | None = None,
+    activation_id: str | None = None,
 ) -> InvokeResult:
     output = _tracked_turn(
         prepared=prepared,
@@ -58,7 +68,12 @@ def invoke_prepared_agent(
         model=model,
         sandbox=sandbox,
         raw_input=user_input,
-        activation_kind="invoke",
+        activation_kind="invoke" if execution_store is None else None,
+        execution_context=(
+            RuntimeExecutionContext(store=execution_store, activation_id=activation_id)
+            if execution_store is not None and activation_id is not None
+            else None
+        ),
         build_prompt=lambda: build_invoke_prompt(
             prepared,
             thunk,
@@ -81,6 +96,8 @@ def chat_prepared_agent(
     message: Message,
     model: str | None = None,
     sandbox: str = "host",
+    execution_store: ExecutionStore | None = None,
+    activation_id: str | None = None,
 ) -> ChatResult:
     run_id = uuid.uuid4().hex
 
@@ -110,6 +127,11 @@ def chat_prepared_agent(
         sandbox=sandbox,
         raw_input=message.text,
         message=message,
+        execution_context=(
+            RuntimeExecutionContext(store=execution_store, activation_id=activation_id)
+            if execution_store is not None and activation_id is not None
+            else None
+        ),
         build_prompt=lambda: build_chat_prompt(
             prepared,
             thunk,
@@ -159,14 +181,19 @@ def _tracked_turn(
     run_id: str | None = None,
     message: Message | None = None,
     activation_kind: ActivationKind | None = None,
+    execution_context: RuntimeExecutionContext | None = None,
 ) -> _TrackedTurnResult:
     bus = BusStore(bus_db_path)
     resolved_run_id = run_id or uuid.uuid4().hex
     effective_thread_id = thread_id or f"{origin}:{resolved_run_id}"
-    activation_id = uuid.uuid4().hex if activation_kind is not None else None
+    activation_id = (
+        execution_context.activation_id
+        if execution_context is not None
+        else uuid.uuid4().hex if activation_kind is not None else None
+    )
     summary = _summary(prepared.ref.name, thunk)
     now = utc_now()
-    execution = (
+    execution = execution_context.store if execution_context is not None else (
         ExecutionStore(AgentHome.resolve(prepared.ref.home).room(prepared.ref.name).execution_db_path)
         if activation_kind is not None
         else None
@@ -178,14 +205,15 @@ def _tracked_turn(
     try:
         if execution is not None:
             assert activation_id is not None
-            assert activation_kind is not None
-            execution.begin_activation(
-                agent=prepared.ref,
-                activation_id=activation_id,
-                activation_kind=activation_kind,
-                sandbox=sandbox,
-                cap_scopes=prepared.cap_scopes.labels(),
-            )
+            if execution_context is None:
+                assert activation_kind is not None
+                execution.begin_activation(
+                    agent=prepared.ref,
+                    activation_id=activation_id,
+                    activation_kind=activation_kind,
+                    sandbox=sandbox,
+                    cap_scopes=prepared.cap_scopes.labels(),
+                )
             execution.ensure_thread(
                 agent=prepared.ref,
                 thread_id=effective_thread_id,
@@ -264,7 +292,8 @@ def _tracked_turn(
         if execution is not None:
             assert activation_id is not None
             execution.finish_turn(turn_id=resolved_run_id, output_text=output)
-            execution.finish_activation(activation_id=activation_id, status="finished")
+            if execution_context is None:
+                execution.finish_activation(activation_id=activation_id, status="finished")
         bus.append(
             RunFinished(
                 at=utc_now(),
@@ -318,7 +347,8 @@ def _tracked_turn(
         if execution is not None:
             assert activation_id is not None
             execution.fail_turn(turn_id=resolved_run_id, error=str(exc))
-            execution.finish_activation(activation_id=activation_id, status="failed")
+            if execution_context is None:
+                execution.finish_activation(activation_id=activation_id, status="failed")
         bus.append(
             RunFailed(
                 at=utc_now(),
@@ -334,7 +364,7 @@ def _tracked_turn(
         )
         raise
     finally:
-        if execution is not None:
+        if execution is not None and execution_context is None:
             execution.close()
         bus.close()
 

@@ -13,10 +13,8 @@ from fastapi.responses import StreamingResponse
 
 from toolang.agent.prepared import PreparedAgent, prepare_agent
 from toolang.agent.registry import get_running_agent
-from toolang.bus.db import BusStore
 from toolang.bus.events import utc_now
 from toolang.caps import load_prepared_caps
-from toolang.concepts.layout import AgentHome
 from toolang.concepts.sandbox import SandboxSpec
 from toolang.errors import ToolangError
 from toolang.web import add_cors
@@ -36,9 +34,7 @@ from ..api_models import (
     RunResponse,
 )
 from ..build import infer_model
-from ..chats import ChatMessage, ChatStore
-from ..invoke import chat_prepared_agent, invoke_prepared_agent
-from ..messages import chat_message
+from ..host import RuntimeHost
 from .presenters import (
     SHORT_AGENT_ID_LENGTH,
     caps_response,
@@ -50,12 +46,6 @@ from .presenters import (
     sse,
     thread_item,
     turn_item,
-)
-from .state import (
-    activate_running_agent,
-    deactivate_running_agent,
-    has_running_state,
-    touch_running_agent,
 )
 
 SSE_POLL_INTERVAL_SEC = 0.5
@@ -73,34 +63,17 @@ def serve_agent(
     public_host: str | None = None,
     cors_allow_origins: list[str] | None = None,
 ) -> None:
-    sandbox_spec = SandboxSpec.parse(sandbox).spec
-    endpoint_host = public_host or host
-    endpoint = f"http://{endpoint_host}:{port}"
     app = create_agent_app(
         prepared,
         agents_db_path=agents_db_path,
         bus_db_path=bus_db_path,
         host=host,
         port=port,
-        sandbox=sandbox_spec,
-        public_host=endpoint_host,
+        sandbox=sandbox,
+        public_host=public_host,
         cors_allow_origins=cors_allow_origins,
     )
-    try:
-        uvicorn.run(app, host=host, port=port, log_level="info")
-    finally:
-        if has_running_state(prepared, agents_db_path=agents_db_path):
-            bus = BusStore(bus_db_path)
-            try:
-                deactivate_running_agent(
-                    prepared,
-                    agents_db_path=agents_db_path,
-                    bus=bus,
-                    endpoint=endpoint,
-                    sandbox=sandbox_spec,
-                )
-            finally:
-                bus.close()
+    uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 def create_agent_app(
@@ -114,36 +87,23 @@ def create_agent_app(
     public_host: str | None = None,
     cors_allow_origins: list[str] | None = None,
 ) -> FastAPI:
-    parsed_sandbox = SandboxSpec.parse(sandbox)
-    sandbox_spec = parsed_sandbox.spec
-    endpoint_host = public_host or host
-    endpoint = f"http://{endpoint_host}:{port}"
-    bus = BusStore(bus_db_path)
-    chats = ChatStore(AgentHome.resolve(prepared.ref.home).room(prepared.ref.name).chats_db_path)
+    runtime_host = RuntimeHost(
+        prepared,
+        agents_db_path=agents_db_path,
+        bus_db_path=bus_db_path,
+        host=host,
+        port=port,
+        sandbox=sandbox,
+        public_host=public_host,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        activate_running_agent(
-            prepared,
-            agents_db_path=agents_db_path,
-            bus=bus,
-            endpoint=endpoint,
-            sandbox=sandbox_spec,
-        )
+        runtime_host.start()
         try:
             yield
         finally:
-            try:
-                deactivate_running_agent(
-                    prepared,
-                    agents_db_path=agents_db_path,
-                    bus=bus,
-                    endpoint=endpoint,
-                    sandbox=sandbox_spec,
-                )
-            finally:
-                chats.close()
-                bus.close()
+            runtime_host.stop()
 
     app = FastAPI(
         title=f"Toolang Agent Server: {prepared.ref.name}",
@@ -157,7 +117,7 @@ def create_agent_app(
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
         response = await call_next(request)
-        touch_running_agent(prepared, agents_db_path=agents_db_path, endpoint=endpoint)
+        runtime_host.touch()
         return response
 
     @app.get("/healthz")
@@ -172,19 +132,19 @@ def create_agent_app(
             "agent_uri": prepared.ref.uri,
             "agent_id": prepared.ref.id[:SHORT_AGENT_ID_LENGTH],
             "agent_name": prepared.ref.name,
-            "endpoint": endpoint,
+            "endpoint": runtime_host.endpoint,
         }
 
     @app.get("/api/v1/agent")
     @app.get("/agent", response_model_exclude_none=True)
     def agent_info():
-        snapshot = bus.get_agent(prepared.ref.uri)
+        snapshot = runtime_host.bus.get_agent(prepared.ref.uri)
         if snapshot is not None:
             return snapshot
         return fallback_agent_snapshot(
             prepared,
-            endpoint=endpoint,
-            sandbox=sandbox_spec,
+            endpoint=runtime_host.endpoint,
+            sandbox=runtime_host.sandbox,
             now=utc_now(),
         )
 
@@ -199,10 +159,10 @@ def create_agent_app(
         return AgentRuntimeResponse(
             status="online",
             checked_at=utc_now(),
-            endpoint=endpoint,
-            execution_host=parsed_sandbox.execution_host,
+            endpoint=runtime_host.endpoint,
+            execution_host=SandboxSpec.parse(runtime_host.sandbox).execution_host,
             working_directory=str(prepared.ref.home),
-            sandbox=sandbox_spec,
+            sandbox=runtime_host.sandbox,
             network="enabled",
             approvals="n/a",
             filesystem_scope="agent-home",
@@ -231,16 +191,16 @@ def create_agent_app(
         return ChatThreadListResponse(
             items=[
                 thread_item(item)
-                for item in chats.list_threads(agent_uri=prepared.ref.uri, limit=limit)
+                for item in runtime_host.chats.list_threads(agent_uri=prepared.ref.uri, limit=limit)
             ]
         )
 
     @app.get("/api/v1/chats/{thread_id}", response_model=ChatThreadResponse)
     def get_chat(thread_id: str, limit: int = Query(50, ge=1, le=500)) -> ChatThreadResponse:
-        thread = chats.get_thread(thread_id=thread_id)
+        thread = runtime_host.chats.get_thread(thread_id=thread_id)
         if thread is None or thread.agent_uri != prepared.ref.uri:
             raise HTTPException(status_code=404, detail="thread not found")
-        turns = chats.recent_turns(thread_id=thread_id, limit=limit)
+        turns = runtime_host.chats.recent_turns(thread_id=thread_id, limit=limit)
         return ChatThreadResponse(
             thread=thread_item(thread),
             turns=[turn_item(item) for item in turns],
@@ -248,23 +208,23 @@ def create_agent_app(
 
     @app.get("/api/v1/runs", response_model=RunListResponse)
     def list_runs(limit: int = Query(50, ge=1, le=500)) -> RunListResponse:
-        runs = bus.list_runs(agent_uri=prepared.ref.uri, limit=limit)
+        runs = runtime_host.bus.list_runs(agent_uri=prepared.ref.uri, limit=limit)
         return RunListResponse(items=[run_item(item) for item in runs])
 
     @app.get("/api/v1/runs/{run_id}", response_model=RunDetailResponse)
     def get_run(run_id: str) -> RunDetailResponse:
-        run = bus.get_run(run_id)
+        run = runtime_host.bus.get_run(run_id)
         if run is None or run.agent_uri != prepared.ref.uri:
             raise HTTPException(status_code=404, detail="run not found")
         children = [
             item
-            for item in bus.list_runs(agent_uri=prepared.ref.uri, limit=500)
+            for item in runtime_host.bus.list_runs(agent_uri=prepared.ref.uri, limit=500)
             if item.parent_run_id == run_id
         ]
-        events = bus.list_events(agent_uri=prepared.ref.uri, run_id=run_id, limit=500)
+        events = runtime_host.bus.list_events(agent_uri=prepared.ref.uri, run_id=run_id, limit=500)
         turn = None
         if run.thread_id:
-            loaded = chats.get_turn(thread_id=run.thread_id, turn_id=run_id)
+            loaded = runtime_host.chats.get_turn(thread_id=run.thread_id, turn_id=run_id)
             if loaded is not None:
                 turn = turn_item(loaded)
         return RunDetailResponse(
@@ -279,7 +239,7 @@ def create_agent_app(
         from_event_id: int = Query(0, ge=0),
         limit: int = Query(100, ge=1, le=2000),
     ) -> EventListResponse:
-        events = bus.list_events(
+        events = runtime_host.bus.list_events(
             agent_uri=prepared.ref.uri,
             from_event_id=from_event_id,
             limit=limit,
@@ -290,7 +250,7 @@ def create_agent_app(
     async def stream_events(request: Request) -> StreamingResponse:
         async def stream() -> AsyncIterator[str]:
             min_event_id = await asyncio.to_thread(
-                bus.max_event_id,
+                runtime_host.bus.max_event_id,
                 agent_uri=prepared.ref.uri,
             )
             last_emitted = min_event_id
@@ -306,7 +266,7 @@ def create_agent_app(
                 if await request.is_disconnected():
                     break
                 rows = await asyncio.to_thread(
-                    bus.list_events,
+                    runtime_host.bus.list_events,
                     agent_uri=prepared.ref.uri,
                     from_event_id=last_emitted,
                     limit=200,
@@ -334,13 +294,7 @@ def create_agent_app(
 
     @app.post("/api/v1/chat", response_model=ChatResponse)
     def chat(request: ChatRequest) -> ChatResponse:
-        assistant = _chat_once(
-            prepared=prepared,
-            chats=chats,
-            bus_db_path=bus_db_path,
-            request=request,
-            sandbox=sandbox_spec,
-        )
+        assistant = runtime_host.submit_chat(request).assistant
         item = message_item(assistant)
         return ChatResponse(
             thread_id=assistant.thread_id,
@@ -354,13 +308,7 @@ def create_agent_app(
         def stream() -> Iterator[str]:
             yield data_sse({"type": "start"})
             try:
-                assistant = _chat_once(
-                    prepared=prepared,
-                    chats=chats,
-                    bus_db_path=bus_db_path,
-                    request=request,
-                    sandbox=sandbox_spec,
-                )
+                assistant = runtime_host.submit_chat(request).assistant
             except Exception as exc:
                 message = str(exc).strip() or type(exc).__name__
                 yield data_sse({"type": "error", "errorText": message})
@@ -394,66 +342,13 @@ def create_agent_app(
     @app.post("/api/v1/runs", response_model=RunResponse)
     @app.post("/runs", response_model=RunResponse)
     def run_thunk(request: RunRequest) -> RunResponse:
-        current = prepare_agent(prepared.ref, cap_scopes=prepared.cap_scopes)
         try:
-            selected_thunk = current.program.get_thunk(request.thunk)
-            result = invoke_prepared_agent(
-                current,
-                selected_thunk,
-                bus_db_path=bus_db_path,
-                user_input=request.input,
-                model=request.model,
-                sandbox=sandbox_spec,
-            )
+            result = runtime_host.submit_run(request)
         except ToolangError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return RunResponse(run_id=result.run_id, output=result.output)
 
     return app
-
-
-def _chat_once(
-    *,
-    prepared: PreparedAgent,
-    chats: ChatStore,
-    bus_db_path: Path,
-    request: ChatRequest,
-    sandbox: str,
-) -> ChatMessage:
-    thread_id = request.thread.strip()
-    if not thread_id:
-        raise ToolangError("Chat thread may not be empty.")
-    text = request.message.strip()
-    if not text:
-        raise ToolangError("Chat message may not be empty.")
-
-    current = prepare_agent(prepared.ref, cap_scopes=prepared.cap_scopes)
-    selected_thunk = _select_chat_thunk(current, request.thunk)
-    incoming = chat_message(
-        channel="api",
-        sender="owner",
-        thread_id=thread_id,
-        text=text,
-    )
-    result = chat_prepared_agent(
-        current,
-        selected_thunk,
-        bus_db_path=bus_db_path,
-        chat_store=chats,
-        message=incoming,
-        model=request.model,
-        sandbox=sandbox,
-    )
-    return result.assistant
-
-
-def _select_chat_thunk(prepared: PreparedAgent, thunk_name: str | None):
-    if thunk_name is not None:
-        return prepared.program.get_thunk(thunk_name)
-    try:
-        return prepared.program.get_thunk("chat")
-    except ToolangError:
-        return prepared.program.default_thunk()
 
 
 def _default_model(prepared: PreparedAgent) -> str | None:
