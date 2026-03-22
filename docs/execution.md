@@ -60,12 +60,14 @@ Common values:
 - `peer`
 - `guest`
 - `self`
+- `service`
 
 Rules:
 
 - `origin == chat` requires a non-null `channel`
 - `origin in {invoke, task, chore, will}` requires `channel = null`
 - `task`, `chore`, and `will` use `sender = self`
+- hook deliveries commonly use `sender = service`
 - `serve` and `start` are process surfaces, not message origins
 
 

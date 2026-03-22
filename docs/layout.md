@@ -147,6 +147,8 @@ Layout:
 ${AGENT_HOME}/
   {AGENT}.too
   agents.too                         # optional
+  channels.toml                      # optional
+  hooks.toml                         # optional
   .env                               # optional
   .toolang/                          # machine-managed, created lazily
     agents/{AGENT}/
@@ -168,6 +170,10 @@ Notes:
   - runnable source for one agent
 - `agents.too`
   - optional shared source for all agents in that home
+- `channels.toml`
+  - optional channel bindings for runtime loops
+- `hooks.toml`
+  - optional hook bindings for runtime loops
 - `.toolang/sync/`
   - shared synced caps plus per-agent sync state
 - `.toolang/{skills,services,prompts,psyches}/`
@@ -193,6 +199,8 @@ ${AGENT_ROOM}/
   runs/
     {RUN_ID}/
       prompt.json
+  poll/
+  hooks/
   sync/
     skills/
     services/
@@ -218,6 +226,10 @@ Notes:
   - local execution truth layer for activations, threads, turns, and steps
 - `runs/{RUN_ID}/prompt.json`
   - prompt-build diagnostics for one turn
+- `poll/`
+  - runtime-owned poll loop state
+- `hooks/`
+  - runtime-owned hook loop state
 - `sync/`
   - agent-scoped synced caps
 - `chats/chats.db`

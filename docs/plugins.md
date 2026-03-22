@@ -227,3 +227,20 @@ Reasonable first-party plugins:
 - sandbox
   - `host`
   - `docker`
+
+
+## 10. Loop-Owned Source Files
+
+Channel-facing runtime loops should use explicit agent-home source files:
+
+- `channels.toml`
+  - named channel bindings with one plugin name and one config object
+- `hooks.toml`
+  - named hook bindings with request-path matching and plugin config
+
+Plugins decode or deliver channel traffic, but runtime still owns:
+
+- `Message` creation
+- thread and turn persistence
+- activation lifecycle
+- bus projection writes
