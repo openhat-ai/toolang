@@ -13,7 +13,6 @@ from toolang.concepts.layout import AgentHome
 from toolang.concepts.persisted.prompt_trace import PromptTrace
 from toolang.program.ast import Thunk
 
-from . import execute_prompt_build
 from .build import (
     PromptBuild,
     build_chat_prompt,
@@ -23,6 +22,7 @@ from .build import (
 from .chats import ChatMessage, ChatStore
 from .execution_store import ExecutionStore
 from .messages import Message
+from .model_exec import execute_prompt_build
 
 
 @dataclass(frozen=True, slots=True)

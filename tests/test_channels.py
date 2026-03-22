@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from toolang.channels import create_channel_plugin, decode_hook_delivery, find_hook_binding
+from toolang.channels import create_channel_plugin, decode_hook_delivery
+from toolang.channels.hooks import find_hook_binding
 from toolang.concepts.persisted import (
     ChannelBinding,
     ChannelsConfig,
