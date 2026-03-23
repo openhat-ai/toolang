@@ -197,6 +197,7 @@ ${AGENT_ROOM}/
   agent.log
   execution.db
   pulse.json
+  task_mirrors.json
   runs/
     {RUN_ID}/
       prompt.json
@@ -228,6 +229,8 @@ Notes:
 - `pulse.json`
   - persisted scheduling state and latest run feedback for local task, chore,
     and will scans
+- `task_mirrors.json`
+  - remote-task mirror bindings keyed by provider and remote ref
 - `runs/{RUN_ID}/prompt.json`
   - prompt-build diagnostics for one turn
 - `poll/`
