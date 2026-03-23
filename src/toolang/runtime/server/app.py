@@ -16,6 +16,7 @@ from toolang.agent.registry import get_running_agent
 from toolang.bus.events import utc_now
 from toolang.caps import load_prepared_caps
 from toolang.concepts.execution import RuntimeLoop
+from toolang.concepts.layout import AgentHome
 from toolang.concepts.persisted import ChannelsConfig
 from toolang.concepts.sandbox import SandboxSpec
 from toolang.errors import ToolangError
@@ -26,6 +27,7 @@ from ..api_models import (
     AgentProfile,
     AgentRuntimeResponse,
     ChatRequest,
+    ChoreListResponse,
     ChatResponse,
     ChatThreadListResponse,
     ChatThreadResponse,
@@ -34,9 +36,12 @@ from ..api_models import (
     RunListResponse,
     RunRequest,
     RunResponse,
+    TaskListResponse,
+    WillResponse,
 )
 from ..build import infer_model
 from ..host import RuntimeHost
+from ..work import list_chore_items, list_task_items, load_will_item
 from .presenters import (
     SHORT_AGENT_ID_LENGTH,
     caps_response,
@@ -195,6 +200,21 @@ def create_agent_app(
         current = prepare_agent(prepared.ref, cap_scopes=prepared.cap_scopes)
         caps = load_prepared_caps(current)
         return caps_response(prepared.ref.name, caps)
+
+    @app.get("/api/v1/tasks", response_model=TaskListResponse)
+    def list_tasks() -> TaskListResponse:
+        room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
+        return TaskListResponse(items=list_task_items(room))
+
+    @app.get("/api/v1/chores", response_model=ChoreListResponse)
+    def list_chores() -> ChoreListResponse:
+        room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
+        return ChoreListResponse(items=list_chore_items(room))
+
+    @app.get("/api/v1/will", response_model=WillResponse)
+    def get_will() -> WillResponse:
+        room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
+        return WillResponse(item=load_will_item(room, agent=prepared.ref))
 
     @app.get("/api/v1/chats", response_model=ChatThreadListResponse)
     def list_chats(limit: int = Query(50, ge=1, le=500)) -> ChatThreadListResponse:

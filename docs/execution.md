@@ -80,7 +80,7 @@ Toolang defines four runtime loops:
   - usually emits `chat` or `invoke`
 - `poll`
   - polls external channels
-  - usually emits `chat`
+  - usually emits `chat` or `task`
   - keeps one plugin-owned poll cursor per binding under `${AGENT_ROOM}/poll/`
 - `hook`
   - accepts hook deliveries
@@ -405,7 +405,8 @@ Recommended runtime state in the agent room:
 - `poll/`
 - `hooks/`
 - `pulse.json`
-  - persisted scheduling state for task, chore, and will scans
+  - persisted scheduling state plus latest run feedback for task, chore, and
+    will scans
 
 Current pulse-loop behavior:
 

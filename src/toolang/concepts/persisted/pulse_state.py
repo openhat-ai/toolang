@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field
+
+PulseRunStatus = Literal["finished", "failed"]
 
 
 class PulseItemState(BaseModel):
@@ -13,6 +16,10 @@ class PulseItemState(BaseModel):
 
     content_hash: str | None = None
     last_enqueued_at: datetime | None = None
+    last_started_at: datetime | None = None
+    last_finished_at: datetime | None = None
+    last_status: PulseRunStatus | None = None
+    last_run_id: str | None = None
     next_due_at: datetime | None = None
 
 

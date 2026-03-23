@@ -17,7 +17,14 @@ from toolang.bus.db import BusStore
 from toolang.channels import ChannelState, DeliveryResult, PluginHealth, PollResult
 from toolang.concepts.channel import InboundDelivery, OutboundMessage, ReplyTarget
 from toolang.concepts.layout import AgentHome, ToolangRoot
-from toolang.concepts.persisted import ChannelBinding, ChannelsConfig, PollState
+from toolang.concepts.persisted import (
+    ChannelBinding,
+    ChannelsConfig,
+    ChoreFile,
+    PollState,
+    TaskFile,
+    WillFile,
+)
 from toolang.concepts.persisted.run_state import RunState
 from toolang.concepts.persisted.prompt_trace import PromptTrace
 from toolang.runtime.execution_store import ExecutionStore
@@ -392,6 +399,193 @@ def test_create_agent_app_polls_channel_bindings_and_delivers_replies(
         assert PollState.load(poll_state_path).cursor == "43"
 
 
+def test_create_agent_app_polls_task_deliveries(tmp_path: Path, monkeypatch) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    prepared = prepare_agent(agent)
+    db_path = agents_db_path(root)
+    events_path = bus_events_db_path(root)
+    execution_db_path = agent_execution_db_path(home, "alice")
+
+    class FakeTaskPlugin:
+        def __init__(self) -> None:
+            self._emitted = False
+
+        def poll(self, state: ChannelState) -> PollResult:
+            if self._emitted:
+                return PollResult(next_state=state)
+            self._emitted = True
+            return PollResult(
+                deliveries=[
+                    InboundDelivery(
+                        origin="task",
+                        channel=None,
+                        sender="service",
+                        thread_id="task:linear/42",
+                        text="Investigate the regression and report back.",
+                    )
+                ],
+                next_state=ChannelState(cursor="next-task"),
+            )
+
+        def decode_hook(self, request):
+            return None
+
+        def deliver(self, target: ReplyTarget, message: OutboundMessage) -> DeliveryResult:
+            return DeliveryResult(ok=True)
+
+        def health(self) -> PluginHealth:
+            return PluginHealth(ok=True)
+
+    monkeypatch.setattr(
+        "toolang.runtime.host.create_channel_plugin",
+        lambda plugin, *, config=None: FakeTaskPlugin(),
+    )
+    monkeypatch.setattr(
+        "toolang.runtime.invoke.execute_prompt_build",
+        lambda build: f"tasked:{build.runtime_context['origin']}:{build.raw_input}:{build.model}",
+    )
+
+    app = create_agent_app(
+        prepared,
+        agents_db_path=db_path,
+        bus_db_path=events_path,
+        host="127.0.0.1",
+        port=8768,
+        sandbox="host",
+        runtime_loops=("server", "poll"),
+        channels_config=ChannelsConfig(
+            channels={"linear": ChannelBinding(plugin="linear", config={"token": "secret"})}
+        ),
+    )
+
+    with TestClient(app):
+        execution = ExecutionStore(execution_db_path)
+        try:
+            _wait_for(
+                lambda: _turn_origins(execution, agent.uri) >= {"task"},
+                label="task poll turn",
+                timeout_sec=5.0,
+            )
+            runs = execution.list_runs(agent_uri=agent.uri)
+            turns = execution.list_turns(run_id=runs[0].run_id)
+        finally:
+            execution.close()
+
+    task_turns = [turn for turn in turns if turn.origin == "task"]
+    assert len(task_turns) == 1
+    assert task_turns[0].thread_id == "task:linear/42"
+    assert task_turns[0].sender == "service"
+    assert task_turns[0].output_text == "tasked:task:Investigate the regression and report back.:gpt-5"
+
+
+def test_create_agent_app_lists_local_work_documents(tmp_path: Path) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+
+    room = AgentHome.resolve(home).room("alice")
+    TaskFile(
+        title="Review roadmap",
+        body="Read the current milestone and comment.",
+        assignee="self",
+        thread_id="task:roadmap",
+        thunk="task",
+    ).save(room.tasks_dir / "roadmap.md")
+    ChoreFile(
+        title="Sync backlog",
+        body="Sync backlog from the project tool.",
+        interval_sec=1800,
+        thunk="chore",
+    ).save(room.chores_dir / "sync.md")
+    WillFile(
+        title="Reflect",
+        body="Think about the next milestone.",
+        interval_sec=3600,
+        thunk="will",
+    ).save(room.will_path)
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    prepared = prepare_agent(agent)
+
+    app = create_agent_app(
+        prepared,
+        agents_db_path=agents_db_path(root),
+        bus_db_path=bus_events_db_path(root),
+        host="127.0.0.1",
+        port=8769,
+        sandbox="host",
+    )
+
+    with TestClient(app) as client:
+        tasks = client.get("/api/v1/tasks")
+        chores = client.get("/api/v1/chores")
+        will = client.get("/api/v1/will")
+
+    assert tasks.status_code == 200
+    assert tasks.json()["items"] == [
+        {
+            "id": "roadmap",
+            "title": "Review roadmap",
+            "status": "open",
+            "assignee": "self",
+            "thread_id": "task:roadmap",
+            "thunk": "task",
+            "model": None,
+            "path": str(room.tasks_dir / "roadmap.md"),
+            "last_enqueued_at": None,
+            "last_started_at": None,
+            "last_finished_at": None,
+            "last_status": None,
+            "last_run_id": None,
+            "updated_at": tasks.json()["items"][0]["updated_at"],
+            "paused": False,
+        }
+    ]
+    assert chores.status_code == 200
+    assert chores.json()["items"] == [
+        {
+            "id": "sync",
+            "title": "Sync backlog",
+            "thread_id": "chore:sync",
+            "interval_sec": 1800,
+            "thunk": "chore",
+            "model": None,
+            "path": str(room.chores_dir / "sync.md"),
+            "last_enqueued_at": None,
+            "last_started_at": None,
+            "last_finished_at": None,
+            "last_status": None,
+            "last_run_id": None,
+            "next_due_at": None,
+            "updated_at": chores.json()["items"][0]["updated_at"],
+            "paused": False,
+        }
+    ]
+    assert will.status_code == 200
+    assert will.json()["item"] == {
+        "title": "Reflect",
+        "thread_id": f"will:{agent.id}",
+        "interval_sec": 3600,
+        "thunk": "will",
+        "model": None,
+        "path": str(room.will_path),
+        "last_enqueued_at": None,
+        "last_started_at": None,
+        "last_finished_at": None,
+        "last_status": None,
+        "last_run_id": None,
+        "next_due_at": None,
+        "updated_at": will.json()["item"]["updated_at"],
+        "paused": False,
+    }
+
+
 def test_run_process_writes_stopped_state_after_termination(tmp_path: Path) -> None:
     root = resolve_toolang_root(tmp_path / "toolang-root")
     home = root / "agents" / "alice"
@@ -474,3 +668,11 @@ def _wait_for(predicate, *, label: str, timeout_sec: float = 3.0) -> None:
             return
         time.sleep(0.05)
     raise AssertionError(f"Timed out waiting for {label}")
+
+
+def _turn_origins(execution: ExecutionStore, agent_uri: str) -> set[str]:
+    runs = execution.list_runs(agent_uri=agent_uri)
+    if not runs:
+        return set()
+    turns = execution.list_turns(run_id=runs[0].run_id)
+    return {turn.origin for turn in turns}

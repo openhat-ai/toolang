@@ -93,13 +93,61 @@ class CapItem(BaseModel):
 
 
 class ChoreItem(BaseModel):
-    """One chore entry shown by the runtime API."""
+    """One local chore entry shown by the runtime API."""
 
-    name: str
-    created_at: str | None = None
+    id: str
+    title: str | None = None
+    thread_id: str
+    interval_sec: int
+    thunk: str | None = None
+    model: str | None = None
+    path: str
+    last_enqueued_at: str | None = None
+    last_started_at: str | None = None
+    last_finished_at: str | None = None
+    last_status: str | None = None
+    last_run_id: str | None = None
+    next_due_at: str | None = None
     updated_at: str | None = None
-    compiled_at: str | None = None
-    needs_recompile: bool | None = None
+    paused: bool | None = None
+
+
+class TaskItem(BaseModel):
+    """One local task entry shown by the runtime API."""
+
+    id: str
+    title: str | None = None
+    status: str
+    assignee: str | None = None
+    thread_id: str
+    thunk: str | None = None
+    model: str | None = None
+    path: str
+    last_enqueued_at: str | None = None
+    last_started_at: str | None = None
+    last_finished_at: str | None = None
+    last_status: str | None = None
+    last_run_id: str | None = None
+    updated_at: str | None = None
+    paused: bool | None = None
+
+
+class WillItem(BaseModel):
+    """The local will document shown by the runtime API."""
+
+    title: str | None = None
+    thread_id: str
+    interval_sec: int
+    thunk: str | None = None
+    model: str | None = None
+    path: str
+    last_enqueued_at: str | None = None
+    last_started_at: str | None = None
+    last_finished_at: str | None = None
+    last_status: str | None = None
+    last_run_id: str | None = None
+    next_due_at: str | None = None
+    updated_at: str | None = None
     paused: bool | None = None
 
 
@@ -128,6 +176,24 @@ class ChatThreadListResponse(BaseModel):
     """Collection response for chat thread listings."""
 
     items: list[ChatThreadItem]
+
+
+class TaskListResponse(BaseModel):
+    """Collection response for local task listings."""
+
+    items: list[TaskItem]
+
+
+class ChoreListResponse(BaseModel):
+    """Collection response for local chore listings."""
+
+    items: list[ChoreItem]
+
+
+class WillResponse(BaseModel):
+    """Response containing the local will document, if present."""
+
+    item: WillItem | None = None
 
 
 class ChatTurnItem(BaseModel):
