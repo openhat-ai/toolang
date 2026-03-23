@@ -37,11 +37,14 @@ from ..api_models import (
     RunRequest,
     RunResponse,
     TaskListResponse,
+    TaskPatchRequest,
+    TaskPutRequest,
+    TaskItem,
     WillResponse,
 )
 from ..build import infer_model
 from ..host import RuntimeHost
-from ..work import list_chore_items, list_task_items, load_will_item
+from ..work import list_chore_items, list_task_items, load_will_item, patch_task_item, put_task_item
 from .presenters import (
     SHORT_AGENT_ID_LENGTH,
     caps_response,
@@ -205,6 +208,16 @@ def create_agent_app(
     def list_tasks() -> TaskListResponse:
         room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
         return TaskListResponse(items=list_task_items(room))
+
+    @app.put("/api/v1/tasks/{task_id:path}", response_model=TaskItem)
+    def put_task(task_id: str, request: TaskPutRequest) -> TaskItem:
+        room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
+        return put_task_item(room, task_id, request)
+
+    @app.patch("/api/v1/tasks/{task_id:path}", response_model=TaskItem)
+    def patch_task(task_id: str, request: TaskPatchRequest) -> TaskItem:
+        room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
+        return patch_task_item(room, task_id, request)
 
     @app.get("/api/v1/chores", response_model=ChoreListResponse)
     def list_chores() -> ChoreListResponse:

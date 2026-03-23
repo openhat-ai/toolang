@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from pydantic import BaseModel, Field
+from toolang.concepts.persisted.work import TaskStatus
 
 
 class RunRequest(BaseModel):
@@ -129,6 +130,33 @@ class TaskItem(BaseModel):
     last_status: str | None = None
     last_run_id: str | None = None
     updated_at: str | None = None
+    paused: bool | None = None
+
+
+class TaskPutRequest(BaseModel):
+    """Full task document written through the runtime API."""
+
+    title: str | None = None
+    body: str = ""
+    status: TaskStatus = "open"
+    assignee: str | None = None
+    thread_id: str | None = None
+    thunk: str | None = None
+    model: str | None = None
+    paused: bool = False
+
+
+class TaskPatchRequest(BaseModel):
+    """Partial task document update written through the runtime API."""
+
+    title: str | None = None
+    body: str | None = None
+    body_append: str | None = None
+    status: TaskStatus | None = None
+    assignee: str | None = None
+    thread_id: str | None = None
+    thunk: str | None = None
+    model: str | None = None
     paused: bool | None = None
 
 

@@ -135,6 +135,8 @@ Endpoints:
 - `GET /api/v1/runtime`
 - `GET /api/v1/caps`
 - `GET /api/v1/tasks`
+- `PUT /api/v1/tasks/{task_id}`
+- `PATCH /api/v1/tasks/{task_id}`
 - `GET /api/v1/chores`
 - `GET /api/v1/will`
 - `POST /api/v1/chat`
@@ -160,6 +162,8 @@ Responsibility summary:
 - `/api/v1/tasks`
   - local durable task documents under the agent room, plus latest pulse
     scheduler feedback when available
+- `/api/v1/tasks/{task_id}`
+  - create or update one local task document directly through the agent API
 - `/api/v1/chores`
   - local recurring chore documents under the agent room, plus latest pulse
     scheduler feedback when available
