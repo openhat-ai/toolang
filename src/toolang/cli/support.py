@@ -174,7 +174,7 @@ def _resolve_runtime_loops(
         if item not in _ALL_RUNTIME_LOOPS:
             raise ToolangError(f"Unknown runtime loop: {item}")
         loop = cast(RuntimeLoop, item)
-        if loop in {"hook", "pulse"}:
+        if loop == "hook":
             raise ToolangError(f"Runtime loop is not implemented yet: {loop}")
         if loop not in loops:
             loops.append(loop)

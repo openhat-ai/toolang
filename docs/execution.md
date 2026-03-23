@@ -394,16 +394,22 @@ Recommended source files:
 - `hooks.toml`
   - hook declarations
 - `tasks/`
-  - task source files
+  - local markdown task documents
 - `chores/`
-  - chore source files
+  - local markdown chore documents
 - `will.md`
-  - durable agent-local intent
+  - durable agent-local intent document
 
 Recommended runtime state in the agent room:
 
 - `poll/`
 - `hooks/`
-- `tasks/`
-- `chores/`
-- `will.md`
+- `pulse.json`
+  - persisted scheduling state for task, chore, and will scans
+
+Current pulse-loop behavior:
+
+- `task` turns are enqueued when a local task document changes and the task is
+  still active for the current agent
+- `chore` turns are enqueued when a local chore document becomes due
+- `will` turns are enqueued from `will.md` on its configured interval

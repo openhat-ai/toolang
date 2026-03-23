@@ -79,7 +79,7 @@ def run_command(
     )
     prepared = prepare_agent(agent_ref, cap_scopes=cap_scopes)
     _remember_agent(prepared.ref, db_path=db_path)
-    runtime_loops = _with_server_loop(_resolve_runtime_loops(loops, default=("server",)))
+    runtime_loops = _with_server_loop(_resolve_runtime_loops(loops, default=("server", "pulse")))
     channels_config = _runtime_channels_for_loops(prepared.ref.home, runtime_loops)
     run_agent(
         prepared,
@@ -142,7 +142,7 @@ def start_command(
         raise ToolangError(f"Agent is already running: {prepared.ref.uri}")
 
     parsed_sandbox = _parse_sandbox_or_raise(sandbox)
-    runtime_loops = _with_server_loop(_resolve_runtime_loops(loops, default=("server", "poll")))
+    runtime_loops = _with_server_loop(_resolve_runtime_loops(loops, default=("server", "poll", "pulse")))
     _channels_config, channel_env_names = _runtime_channels_with_env_names_for_loops(
         prepared.ref.home,
         runtime_loops,

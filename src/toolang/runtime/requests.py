@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
 
-from .messages import Message
+from toolang.concepts.execution import Message, MessageOrigin
 
-TurnRequestKind = Literal["invoke", "chat"]
+TurnRequestKind = MessageOrigin
 
 
 @dataclass(frozen=True, slots=True)
