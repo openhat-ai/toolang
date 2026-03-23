@@ -15,16 +15,19 @@ Toolang should not implement a different execution model for each task system.
 Examples:
 
 - local markdown task files
-- Taskwarrior
 - Linear
 - GitHub issues
+- Taskwarrior
 
-All of these should enter the runtime as the same primitive:
+The runtime should execute only one kind of task object:
+
+- a local task file under `${AGENT_ROOM}/tasks/`
+
+Remote task systems should be mirrored into local task files first. Runtime
+turns still use the same task primitive:
 
 - `origin = task`
-- `thread_id = task:<provider-specific-ref>`
-
-The runtime only needs to know that one turn is task-driven.
+- `thread_id = task:local:<task_id>`
 
 
 ## 2. Keep Runtime Semantics Small
@@ -33,7 +36,7 @@ The runtime should provide only a small amount of task-specific structure:
 
 - provider
 - task ref
-- title
+- task name
 - body
 - status
 - requester
@@ -78,7 +81,7 @@ Suggested shape:
   "task": {
     "provider": "local|taskwarrior|linear|github",
     "ref": "task:...",
-    "title": "...",
+    "name": "...",
     "body": "...",
     "status": "...",
     "requester": "...",
@@ -187,23 +190,94 @@ The runtime should not use `.doing` or `.done` directories to represent normal
 status changes. Status belongs in front matter so file paths remain stable.
 
 
-## 7. External Task Providers
+## 7. Remote Task Mirrors
 
-External task systems should still map to the same task primitive.
+Remote task systems should not enter runtime directly through `poll` as
+task-origin deliveries.
+
+Instead, one `chore` should periodically synchronize remote tasks that belong
+to the current agent into local task files.
 
 Examples:
 
-- Linear issue
-- GitHub issue
-- Taskwarrior task
+- Linear issue assigned to the current account
+- GitHub issue assigned to the configured user
+- Taskwarrior task tagged for the current agent
 
-The runtime should not split them into different execution paths.
+Suggested flow:
 
-Instead:
+1. one `chore` queries the remote provider for tasks that belong to the current
+   agent
+2. each discovered remote task is matched against local mirror state
+3. Toolang creates or updates one local task file under `${AGENT_ROOM}/tasks/`
+4. `pulse` sees that local task file and schedules a normal `origin = task`
+   turn
+5. a later chore or service call pushes local progress back to the remote
+   provider
 
-- external events become `origin = task`
-- the built-in task prompt decides what to do
-- configured services perform the provider-specific read or write operations
+This keeps runtime execution simple:
+
+- runtime executes local task files only
+- remote provider differences stay in chore logic and services
+
+### 7.1 Identifying Tasks That Belong To The Current Agent
+
+Determining "tasks assigned to me" should be provider logic, not runtime core
+logic.
+
+Examples:
+
+- Linear provider resolves the current user from its token and lists issues
+  assigned to that user
+- GitHub provider resolves the current user and lists assigned issues or pull
+  requests
+- Taskwarrior provider uses its own filters
+
+Toolang core should not maintain a universal "who am I" mapping for task
+providers.
+
+### 7.2 Mirror State
+
+Mirror bookkeeping should not bloat local task front matter. Human-written
+task files should stay small.
+
+Instead, each agent room should persist:
+
+- `${AGENT_ROOM}/task_mirrors.json`
+
+Each mirror entry should record:
+
+- `provider`
+- `remote_ref`
+- `local_task_id`
+- `path`
+- `remote_updated_at`
+- `last_synced_at`
+
+Rules:
+
+- local task ids stay short and stable
+- remote mirrors get a local task id the first time they are imported
+- future syncs use `provider + remote_ref -> local_task_id`
+- local task identity does not depend on path or remote title
+
+### 7.3 Local Task Files For Remote Mirrors
+
+Remote mirror tasks still use the same local markdown shape:
+
+- front matter:
+  - `id`
+  - `requester`
+  - `status`
+  - `paused`
+- filename:
+  - human-readable task name
+- body:
+  - current working copy of the task input
+
+The expected default requester for imported remote tasks is:
+
+- `requester = service:<provider>`
 
 
 ## 8. Agent Behavior When Configuration Is Missing
@@ -236,23 +310,25 @@ It should implement:
 - service availability checks
 - local task file read and write helpers
 - local task id generation and persistence
-- runtime API and channel ingress needed to surface task turns
+- task mirror state for remote-to-local synchronization
+- runtime API needed to surface task turns
 
 It should not implement:
 
 - provider-specific task strategies
 - large workflow state machines
 - separate execution logic per task provider
+- direct remote-provider task execution paths inside runtime
 
 
 ## 10. Immediate Implementation Direction
 
 The next useful implementation steps are:
 
-1. inject explicit task context into `origin = task` turns
-2. add a built-in task prompt used automatically for task-driven turns
-3. expose the minimum service-availability signals needed by that prompt
-4. keep local task-file updates as direct markdown mutations with stable short
-   task ids
-5. later connect external providers through configured services, not new task
-   runtime abstractions
+1. keep local task files minimal and stable
+2. persist `task_mirrors.json` in the agent room
+3. add chore-driven remote task synchronization
+4. use the built-in task prompt for both human-authored and mirrored local
+   tasks
+5. later connect provider-specific sync and update services without changing
+   runtime task semantics

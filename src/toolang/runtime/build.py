@@ -9,6 +9,8 @@ from re import Match
 from typing import Any
 
 from toolang.caps import load_prepared_caps
+from toolang.concepts.layout import AgentHome
+from toolang.concepts.persisted import find_local_task, task_id_from_thread_id
 from toolang.errors import ToolangError
 from toolang.program import Program
 from toolang.program.ast import Thunk
@@ -96,6 +98,7 @@ def build_invoke_prompt(
     origin: str,
     thread_id: str | None,
     sandbox: str,
+    input_meta: dict[str, Any] | None = None,
 ) -> PromptBuild:
     if thunk.input_name and user_input is None:
         raise ToolangError(
@@ -114,6 +117,8 @@ def build_invoke_prompt(
         sandbox=sandbox,
         origin=origin,
         thread_id=thread_id,
+        raw_input=user_input,
+        input_meta=input_meta,
     )
     developer_message = _build_developer_message(
         prepared.program,
@@ -157,6 +162,8 @@ def build_chat_prompt(
         sandbox=sandbox,
         origin=message.origin,
         thread_id=message.thread_id,
+        raw_input=message.text,
+        input_meta=message.meta,
     )
     developer_message = _build_developer_message(
         prepared.program,
@@ -190,26 +197,24 @@ def build_prompt_error_trace_data(
     model: str | None,
     raw_input: str | None,
     message: Message | None = None,
+    input_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    runtime_context = _build_runtime_context(
+        prepared,
+        thunk,
+        sandbox=sandbox,
+        origin=origin,
+        thread_id=thread_id,
+        raw_input=raw_input,
+        input_meta=input_meta if message is None else message.meta,
+    )
     source_text = prepared.ref.source.read_text(encoding="utf-8")
     return {
         "model": infer_model(thunk, override=model),
         "raw_input": raw_input,
         "expanded_input": None,
         "message_context": _message_context(message) if message is not None else None,
-        "runtime_context": {
-            "agent": {
-                "uri": prepared.ref.uri,
-                "id": prepared.ref.id,
-                "name": prepared.ref.name,
-                "kind": prepared.ref.kind,
-            },
-            "working_directory": str(prepared.ref.home),
-            "sandbox": sandbox,
-            "cap_scopes": list(prepared.cap_scopes.labels()),
-            "origin": origin,
-            "thread_id": thread_id,
-        },
+        "runtime_context": runtime_context,
         "developer_message": "",
         "messages": [],
         "source_text": source_text,
@@ -223,9 +228,11 @@ def _build_runtime_context(
     sandbox: str,
     origin: str,
     thread_id: str | None,
+    raw_input: str | None,
+    input_meta: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    caps = load_prepared_caps(prepared).model_dump(mode="python")
-    return {
+    visible_caps = load_prepared_caps(prepared)
+    context = {
         "agent": {
             "uri": prepared.ref.uri,
             "id": prepared.ref.id,
@@ -237,9 +244,21 @@ def _build_runtime_context(
         "cap_scopes": list(prepared.cap_scopes.labels()),
         "origin": origin,
         "thread_id": thread_id,
-        "visible_caps": caps,
+        "visible_caps": visible_caps.model_dump(mode="python"),
         "program": _program_context(prepared.program, thunk, prepared.ref.source),
     }
+    task_context = _task_context(
+        prepared,
+        origin=origin,
+        thread_id=thread_id,
+        raw_input=raw_input,
+        input_meta=input_meta,
+        visible_caps=visible_caps,
+    )
+    if task_context is not None:
+        context["task"] = task_context["task"]
+        context["task_services"] = task_context["task_services"]
+    return context
 
 
 def _program_context(program: Program, thunk: Thunk, program_path: Path) -> dict[str, Any]:
@@ -295,6 +314,9 @@ def _build_developer_message(
     ]
     if message is not None:
         developer_sections.append(context_prompt(message))
+    task_prompt = _task_prompt(runtime_context)
+    if task_prompt is not None:
+        developer_sections.append(task_prompt)
     developer_sections.extend(
         [
             "Runtime context:",
@@ -315,6 +337,142 @@ def _build_developer_message(
         if output_decl.language == "json":
             developer_sections.append("Return valid JSON only.")
     return "\n\n".join(section for section in developer_sections if section.strip())
+
+
+def _task_context(
+    prepared,
+    *,
+    origin: str,
+    thread_id: str | None,
+    raw_input: str | None,
+    input_meta: dict[str, Any] | None,
+    visible_caps,
+) -> dict[str, Any] | None:
+    if origin != "task" or thread_id is None:
+        return None
+
+    local_task_id = task_id_from_thread_id(thread_id)
+    if local_task_id is not None:
+        room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
+        loaded = find_local_task(room.tasks_dir, local_task_id)
+        if loaded is not None:
+            path, task = loaded
+            return {
+                "task": {
+                    "provider": "local",
+                    "ref": task.thread_id(),
+                    "name": path.stem,
+                    "body": task.body,
+                    "status": task.status,
+                    "requester": task.requester,
+                    "thread_id": task.thread_id(),
+                    "path": str(path),
+                },
+                "task_services": {
+                    "provider": "local",
+                    "read": True,
+                    "write": True,
+                    "comment": True,
+                    "path": str(path),
+                },
+            }
+
+    provider = _task_provider(thread_id)
+    meta = dict(input_meta or {})
+    service_available = _task_service_available(visible_caps.services, provider)
+    return {
+        "task": {
+            "provider": provider,
+            "ref": _task_text(meta.get("ref")) or thread_id,
+            "name": _task_text(meta.get("name")) or _task_text(meta.get("title")),
+            "body": _task_text(meta.get("body")) or raw_input or "",
+            "status": _task_text(meta.get("status")),
+            "requester": _task_text(meta.get("requester")) or "service",
+            "thread_id": thread_id,
+            "path": None,
+        },
+        "task_services": {
+            "provider": provider,
+            "read": service_available,
+            "write": service_available,
+            "comment": service_available,
+            "path": None,
+        },
+    }
+
+
+def _task_prompt(runtime_context: dict[str, Any]) -> str | None:
+    task = runtime_context.get("task")
+    services = runtime_context.get("task_services")
+    if not isinstance(task, dict) or not isinstance(services, dict):
+        return None
+
+    provider = _task_text(task.get("provider")) or "unknown"
+    can_read = bool(services.get("read"))
+    can_write = bool(services.get("write"))
+    can_comment = bool(services.get("comment"))
+    lines = [
+        "Task execution protocol:",
+        "- You are handling one task-driven turn.",
+        "- Understand the current task before acting.",
+        "- Keep the task itself as the durable record of progress and outcome.",
+        f"- Task provider: {provider}.",
+        f"- Task read available: {'yes' if can_read else 'no'}.",
+        f"- Task write available: {'yes' if can_write else 'no'}.",
+        f"- Task comment available: {'yes' if can_comment else 'no'}.",
+    ]
+    if provider == "local":
+        path = _task_text(services.get("path")) or _task_text(task.get("path"))
+        lines.extend(
+            [
+                "- This task is backed by a local markdown file.",
+                f"- Update the task file directly at: {path or '<unknown path>'}.",
+                "- Keep front matter minimal: id, requester, status, paused.",
+                "- Use the markdown body as the durable task input and append progress or outcome notes there.",
+            ]
+        )
+    else:
+        lines.append("- Use configured task services for provider-specific updates.")
+    if not can_read:
+        lines.append("- If task read is unavailable, do not continue execution. Explain the missing configuration.")
+    elif not can_write:
+        lines.append("- If task write is unavailable, you may proceed, but you must clearly state that the task could not be updated.")
+    else:
+        lines.append("- Update the task at important milestones and before finishing.")
+    return "\n".join(lines)
+
+
+def _task_provider(thread_id: str) -> str:
+    if thread_id.startswith("task:"):
+        remainder = thread_id.removeprefix("task:")
+        if ":" in remainder:
+            return remainder.split(":", 1)[0]
+        if "/" in remainder:
+            return remainder.split("/", 1)[0]
+        return remainder or "unknown"
+    return "unknown"
+
+
+def _task_service_available(services: list[Any], provider: str) -> bool:
+    if provider == "local":
+        return True
+    for item in services:
+        if item.name == provider:
+            return True
+        front_matter = item.front_matter
+        target = getattr(front_matter, "target", None)
+        if isinstance(target, str) and target.strip() == provider:
+            return True
+    return False
+
+
+def _task_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text
 
 
 def _message_context(message: Message) -> dict[str, Any]:

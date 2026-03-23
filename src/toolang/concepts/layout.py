@@ -197,6 +197,10 @@ class AgentRoom:
         return self.path / "tasks"
 
     @property
+    def task_mirrors_path(self) -> Path:
+        return self.path / "task_mirrors.json"
+
+    @property
     def chores_dir(self) -> Path:
         return self.path / "chores"
 

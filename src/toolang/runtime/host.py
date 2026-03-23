@@ -466,6 +466,7 @@ class RuntimeHost:
             sandbox=self.sandbox,
             execution_store=self.execution,
             process_run_id=self.run_id,
+            input_meta=dict(delivery.meta),
         )
         if delivery.reply_target is not None:
             self._deliver_reply(

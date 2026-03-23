@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Any
 
 from fastapi.testclient import TestClient
 
@@ -86,10 +87,13 @@ def test_create_agent_app_processes_pulse_work_files(tmp_path: Path, monkeypatch
     )
     WillFile(title="Reflect", body="Think about the next step.", interval_sec=3600).save(room.will_path)
 
-    monkeypatch.setattr(
-        "toolang.runtime.invoke.execute_prompt_build",
-        lambda build: f"{build.runtime_context['origin']}:{build.raw_input}:{build.model}",
-    )
+    builds: list[Any] = []
+
+    def fake_execute(build) -> str:
+        builds.append(build)
+        return f"{build.runtime_context['origin']}:{build.raw_input}:{build.model}"
+
+    monkeypatch.setattr("toolang.runtime.invoke.execute_prompt_build", fake_execute)
 
     prepared = prepare_agent(agent)
     app = create_agent_app(
@@ -120,12 +124,34 @@ def test_create_agent_app_processes_pulse_work_files(tmp_path: Path, monkeypatch
     pulse_state = PulseState.load(pulse_state_path(home, "alice"))
     task = TaskFile.load(room.tasks_dir / "review.md", persist_id=True)
     task_id = task.task_id()
+    task_build = next(
+        build for build in builds if build.runtime_context["origin"] == "task"
+    )
     assert pulse_state.tasks[task_id].last_started_at is not None
     assert pulse_state.tasks[task_id].last_finished_at is not None
     assert pulse_state.tasks[task_id].last_status == "finished"
     assert pulse_state.tasks[task_id].last_run_id is not None
     assert pulse_state.chores["refresh"].last_status == "finished"
     assert pulse_state.will.last_status == "finished"
+    assert task_build.runtime_context["task"] == {
+        "provider": "local",
+        "ref": f"task:local:{task_id}",
+        "name": "review",
+        "body": task.body,
+        "status": "todo",
+        "requester": "owner",
+        "thread_id": f"task:local:{task_id}",
+        "path": str(room.tasks_dir / "review.md"),
+    }
+    assert task_build.runtime_context["task_services"] == {
+        "provider": "local",
+        "read": True,
+        "write": True,
+        "comment": True,
+        "path": str(room.tasks_dir / "review.md"),
+    }
+    assert "Task execution protocol:" in task_build.developer_message
+    assert "Update the task file directly at:" in task_build.developer_message
 
 
 def _turn_origins(execution: ExecutionStore, agent_uri: str) -> set[str]:
