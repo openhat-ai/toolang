@@ -539,6 +539,7 @@ def test_cli_start_docker_stages_sandbox_launch(tmp_path: Path, monkeypatch) -> 
     assert "--sandbox docker:python:3.13-slim" in exec_text
     assert "--loop server" in exec_text
     assert "--loop poll" in exec_text
+    assert "--loop pulse" in exec_text
     assert "--shared" in exec_text
     assert "--global" in exec_text
 

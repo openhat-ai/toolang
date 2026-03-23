@@ -7,7 +7,9 @@ from .hooks_config import HookBinding, HooksConfig
 from .program import ProgramDecl, ProgramParam, ProgramThunk, ProgramUse, SyncedProgram
 from .prompt_trace import PromptTrace
 from .poll_state import PollState
+from .pulse_state import PulseItemState, PulseState
 from .sync_state import InputFingerprint, LockEntry, LockedAgentRefs, SyncState
+from .work import ChoreFile, TaskFile, WillFile
 
 __all__ = [
     "RunState",
@@ -26,7 +28,12 @@ __all__ = [
     "ProgramUse",
     "PromptTrace",
     "PollState",
+    "PulseItemState",
+    "PulseState",
     "SyncState",
     "SyncedProgram",
+    "TaskFile",
     "ToolangConfig",
+    "ChoreFile",
+    "WillFile",
 ]

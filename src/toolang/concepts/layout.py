@@ -192,6 +192,22 @@ class AgentRoom:
     def hooks_dir(self) -> Path:
         return self.path / "hooks"
 
+    @property
+    def tasks_dir(self) -> Path:
+        return self.path / "tasks"
+
+    @property
+    def chores_dir(self) -> Path:
+        return self.path / "chores"
+
+    @property
+    def will_path(self) -> Path:
+        return self.path / "will.md"
+
+    @property
+    def pulse_state_path(self) -> Path:
+        return self.path / "pulse.json"
+
     def poll_state_path(self, binding_name: str) -> Path:
         return self.poll_dir / f"{binding_name}.json"
 

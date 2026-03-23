@@ -8,7 +8,7 @@ import uuid
 from toolang.agent.prepared import PreparedAgent
 from toolang.bus.db import BusStore
 from toolang.bus.events import RunFailed, RunFinished, RunOrigin, RunStarted, utc_now
-from toolang.concepts.execution import RunKind, thread_group_for_origin
+from toolang.concepts.execution import MessageSender, RunKind, thread_group_for_origin
 from toolang.concepts.layout import AgentHome
 from toolang.concepts.persisted.prompt_trace import PromptTrace
 from toolang.program.ast import Thunk
@@ -55,6 +55,7 @@ def invoke_prepared_agent(
     model: str | None = None,
     origin: RunOrigin = "invoke",
     thread_id: str | None = None,
+    sender: MessageSender = "owner",
     sandbox: str = "host",
     execution_store: ExecutionStore | None = None,
     process_run_id: str | None = None,
@@ -65,6 +66,7 @@ def invoke_prepared_agent(
         bus_db_path=bus_db_path,
         origin=origin,
         thread_id=thread_id,
+        sender=sender,
         model=model,
         sandbox=sandbox,
         raw_input=user_input,
@@ -122,6 +124,7 @@ def chat_prepared_agent(
         bus_db_path=bus_db_path,
         origin="chat",
         thread_id=message.thread_id,
+        sender=message.sender,
         model=model,
         run_id=turn_run_id,
         sandbox=sandbox,
@@ -174,6 +177,7 @@ def _tracked_turn(
     bus_db_path: Path,
     origin: RunOrigin,
     thread_id: str | None,
+    sender: MessageSender,
     model: str | None,
     sandbox: str,
     raw_input: str | None,
@@ -227,7 +231,7 @@ def _tracked_turn(
                 thread_id=effective_thread_id,
                 origin=origin,
                 channel=message.channel if message is not None else None,
-                sender=message.sender if message is not None else "owner",
+                sender=message.sender if message is not None else sender,
                 execution_strategy="direct",
                 input_text=raw_input,
                 at=now,

@@ -196,6 +196,7 @@ ${AGENT_ROOM}/
   agent.run
   agent.log
   execution.db
+  pulse.json
   runs/
     {RUN_ID}/
       prompt.json
@@ -224,6 +225,8 @@ Notes:
   - managed runtime log
 - `execution.db`
   - local execution truth layer for runs, threads, turns, and steps
+- `pulse.json`
+  - persisted scheduling state for local task, chore, and will scans
 - `runs/{RUN_ID}/prompt.json`
   - prompt-build diagnostics for one turn
 - `poll/`

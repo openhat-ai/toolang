@@ -14,7 +14,7 @@ from toolang.channels import ChannelPlugin, ChannelState, create_channel_plugin
 from toolang.concepts.channel import InboundDelivery, OutboundMessage, ReplyTarget
 from toolang.concepts.execution import Message, RuntimeLoop
 from toolang.concepts.layout import AgentHome
-from toolang.concepts.persisted import ChannelBinding, ChannelsConfig, PollState
+from toolang.concepts.persisted import ChannelBinding, ChannelsConfig, PollState, PulseState
 from toolang.concepts.sandbox import SandboxSpec
 from toolang.errors import ToolangError
 from toolang.program.ast import Thunk
@@ -29,7 +29,8 @@ from .invoke import (
     invoke_prepared_agent,
 )
 from .messages import chat_message
-from .requests import TurnRequest
+from .pulse import PulseSubmission, collect_pulse_submissions
+from .requests import TurnRequest, TurnRequestKind
 from .scheduler import RuntimeScheduler
 from .server.state import (
     activate_running_agent,
@@ -41,6 +42,7 @@ from .server.state import (
 HEARTBEAT_INTERVAL_SEC = 5.0
 IDLE_POLL_SLEEP_SEC = 0.25
 FAILED_POLL_SLEEP_SEC = 1.0
+PULSE_SCAN_INTERVAL_SEC = 1.0
 
 
 class RuntimeHost:
@@ -75,6 +77,8 @@ class RuntimeHost:
         self._chats: ChatStore | None = None
         self._execution: ExecutionStore | None = None
         self._channel_plugins: dict[str, ChannelPlugin] = {}
+        self._pulse_pending: set[str] = set()
+        self._pulse_pending_lock = threading.Lock()
         self._stop_event: threading.Event | None = None
         self._threads: list[threading.Thread] = []
         self._started = False
@@ -138,6 +142,12 @@ class RuntimeHost:
                     target=self._poll_binding_loop,
                     args=(room, binding_name, self.channels_config.channels[binding_name]),
                 )
+        if "pulse" in self.runtime_loops:
+            self._start_background_thread(
+                name=f"toolang-pulse-{self.prepared.ref.name}",
+                target=self._pulse_loop,
+                args=(room,),
+            )
 
     def stop(self) -> None:
         """Stop the runtime host and persist one stopped run."""
@@ -150,6 +160,7 @@ class RuntimeHost:
         for thread in self._threads:
             thread.join(timeout=5.0)
         self._threads.clear()
+        self.scheduler.close()
         try:
             self.execution.finish_run(
                 run_id=self.run_id,
@@ -171,6 +182,7 @@ class RuntimeHost:
             self._chats = None
             self._execution = None
             self._channel_plugins = {}
+            self._pulse_pending = set()
             self._stop_event = None
             self._started = False
 
@@ -246,6 +258,31 @@ class RuntimeHost:
                 ),
             )
         raise ToolangError(f"Inbound channel delivery origin is not supported yet: {bound_delivery.origin}")
+
+    def _run_self_turn(
+        self,
+        *,
+        origin: TurnRequestKind,
+        thread_id: str,
+        text: str,
+        thunk_name: str | None,
+        model: str | None,
+    ) -> InvokeResult:
+        current = prepare_agent(self.prepared.ref, cap_scopes=self.prepared.cap_scopes)
+        selected_thunk = _select_named_or_origin_thunk(current, thunk_name, origin)
+        return invoke_prepared_agent(
+            current,
+            selected_thunk,
+            bus_db_path=self.bus_db_path,
+            user_input=text,
+            model=model,
+            origin=origin,
+            thread_id=thread_id,
+            sender="self",
+            sandbox=self.sandbox,
+            execution_store=self.execution,
+            process_run_id=self.run_id,
+        )
 
     def _run_chat_turn(self, *, request: ChatRequest, message: Message) -> ChatResult:
         current = prepare_agent(self.prepared.ref, cap_scopes=self.prepared.cap_scopes)
@@ -422,17 +459,77 @@ class RuntimeHost:
                 traceback.print_exc()
                 stop_event.wait(FAILED_POLL_SLEEP_SEC)
 
+    def _pulse_loop(self, room) -> None:
+        stop_event = self._require_stop_event()
+        state_path = room.pulse_state_path
+        while not stop_event.is_set():
+            try:
+                persisted = PulseState.load(state_path) if state_path.exists() else PulseState()
+                next_state, submissions = collect_pulse_submissions(
+                    room,
+                    self.prepared.ref,
+                    persisted,
+                    pending_keys=self._pulse_pending_keys(),
+                )
+                if next_state != persisted:
+                    next_state.save(state_path)
+                for submission in submissions:
+                    self._submit_pulse(submission)
+                stop_event.wait(PULSE_SCAN_INTERVAL_SEC)
+            except Exception:
+                traceback.print_exc()
+                stop_event.wait(FAILED_POLL_SLEEP_SEC)
+
     def _require_stop_event(self) -> threading.Event:
         if self._stop_event is None:
             raise ToolangError("Runtime host has not been started.")
         return self._stop_event
 
+    def _submit_pulse(self, submission: PulseSubmission) -> None:
+        pending_key = f"{submission.kind}:{submission.key}"
+        if not self._mark_pulse_pending(pending_key):
+            return
+        future = self.scheduler.submit_async(
+            TurnRequest(kind=submission.kind, thread_id=submission.thread_id),
+            lambda: self._run_self_turn(
+                origin=submission.kind,
+                thread_id=submission.thread_id,
+                text=submission.text,
+                thunk_name=submission.thunk,
+                model=submission.model,
+            ),
+        )
+        future.add_done_callback(lambda _future: self._clear_pulse_pending(pending_key))
+
+    def _pulse_pending_keys(self) -> set[str]:
+        with self._pulse_pending_lock:
+            return set(self._pulse_pending)
+
+    def _mark_pulse_pending(self, pending_key: str) -> bool:
+        with self._pulse_pending_lock:
+            if pending_key in self._pulse_pending:
+                return False
+            self._pulse_pending.add(pending_key)
+            return True
+
+    def _clear_pulse_pending(self, pending_key: str) -> None:
+        with self._pulse_pending_lock:
+            self._pulse_pending.discard(pending_key)
+
 
 def _select_chat_thunk(prepared: PreparedAgent, thunk_name: str | None) -> Thunk:
+    return _select_named_or_origin_thunk(prepared, thunk_name, "chat")
+
+
+def _select_named_or_origin_thunk(
+    prepared: PreparedAgent,
+    thunk_name: str | None,
+    origin_name: str,
+) -> Thunk:
     if thunk_name is not None:
         return prepared.program.get_thunk(thunk_name)
     try:
-        return prepared.program.get_thunk("chat")
+        return prepared.program.get_thunk(origin_name)
     except ToolangError:
         return prepared.program.default_thunk()
 
