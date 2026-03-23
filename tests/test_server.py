@@ -586,6 +586,66 @@ def test_create_agent_app_lists_local_work_documents(tmp_path: Path) -> None:
     }
 
 
+def test_create_agent_app_puts_and_patches_local_tasks(tmp_path: Path) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    prepared = prepare_agent(agent)
+    room = AgentHome.resolve(home).room("alice")
+
+    app = create_agent_app(
+        prepared,
+        agents_db_path=agents_db_path(root),
+        bus_db_path=bus_events_db_path(root),
+        host="127.0.0.1",
+        port=8770,
+        sandbox="host",
+    )
+
+    with TestClient(app) as client:
+        created = client.put(
+            "/api/v1/tasks/planning/roadmap",
+            json={
+                "title": "Planning task",
+                "body": "Draft the roadmap update.",
+                "status": "open",
+                "assignee": "self",
+                "thread_id": "task:planning/roadmap",
+                "thunk": "summarize",
+            },
+        )
+        assert created.status_code == 200
+        assert created.json()["id"] == "planning/roadmap"
+        assert created.json()["path"] == str(room.tasks_dir / "planning" / "roadmap.md")
+
+        patched = client.patch(
+            "/api/v1/tasks/planning/roadmap",
+            json={
+                "status": "doing",
+                "body_append": "Started working on the outline.",
+                "paused": True,
+            },
+        )
+        assert patched.status_code == 200
+        assert patched.json()["status"] == "doing"
+        assert patched.json()["paused"] is True
+
+        tasks = client.get("/api/v1/tasks")
+        assert tasks.status_code == 200
+        assert tasks.json()["items"][0]["id"] == "planning/roadmap"
+        assert tasks.json()["items"][0]["status"] == "doing"
+        assert tasks.json()["items"][0]["paused"] is True
+
+    saved = TaskFile.load(room.tasks_dir / "planning" / "roadmap.md")
+    assert saved.title == "Planning task"
+    assert saved.status == "doing"
+    assert saved.paused is True
+    assert "Started working on the outline." in saved.body
+
+
 def test_run_process_writes_stopped_state_after_termination(tmp_path: Path) -> None:
     root = resolve_toolang_root(tmp_path / "toolang-root")
     home = root / "agents" / "alice"
