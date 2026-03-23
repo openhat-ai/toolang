@@ -24,8 +24,12 @@ Generated implementation reference does not live here. It belongs under
 - [execution.md](./execution.md)
   - message model
   - runtime loops and execution strategies
-  - activation, thread, turn, and step
+  - run, thread, turn, and step
   - scheduling, truth layers, and projection guidance
+- [collaboration.md](./collaboration.md)
+  - inbox and scheduler model for long-lived runtimes
+  - chat, task, chore, invoke, and will as turn-request sources
+  - minimal agent collaboration through chat and task
 - [api.md](./api.md)
   - CLI surface
   - registry state
@@ -68,7 +72,7 @@ Generated implementation reference does not live here. It belongs under
   - a long-lived trigger source such as `server` or `poll`
 - `execution strategy`
   - the strategy used to complete one turn, such as `direct` or `react`
-- `activation`
+- `run`
   - one continuous active interval of one agent process
 - `thread`
   - a durable execution context
@@ -87,7 +91,7 @@ Main CLI groups:
 - state materialization
   - `sync`
 - execution
-  - `invoke`, `serve`, `start`
+  - `invoke`, `run`, `start`
 - capability management
   - `skill`, `service`, `prompt`, `psyche`
 - shared multi-agent API

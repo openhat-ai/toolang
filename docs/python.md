@@ -58,7 +58,7 @@ When Toolang defines a stable concept, the code should use the same word:
 
 - `runtime loop`
 - `execution strategy`
-- `activation`
+- `run`
 - `thread`
 - `turn`
 - `step`
@@ -93,7 +93,7 @@ Example direction:
 class Turn:
     turn_id: str
     thread_id: str
-    activation_id: str
+    run_id: str
     origin: Origin
     strategy: ExecutionStrategy
 ```
@@ -257,8 +257,8 @@ For this repository:
 - package docstrings should describe boundaries
 - module docstrings should describe local responsibility
 - comments should explain invariants such as:
-  - `thread` may outlive an `activation`
-  - a `turn` always belongs to exactly one `activation`
+  - `thread` may outlive an `run`
+  - a `turn` always belongs to exactly one `run`
   - `runtime loop` and `execution strategy` are orthogonal
   - shared bus state is a projection, not execution truth
 

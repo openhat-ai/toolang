@@ -18,7 +18,7 @@ from toolang.bus.events import AgentStarted, AgentStopped, utc_now
 from toolang.concepts.layout import AgentHome
 from toolang.concepts.sandbox import SandboxSpec, SandboxState
 from toolang.errors import ToolangError
-from toolang.concepts.persisted.activation_state import ActivationState
+from toolang.concepts.persisted.run_state import RunState
 from toolang.sandbox import sandbox_alive
 
 SHORT_AGENT_ID_LENGTH = 12
@@ -46,7 +46,7 @@ def activate_running_agent(
             )
         )
         if alive and existing.pid != current_pid:
-            raise ToolangError(f"Agent is already being served: {prepared.ref.uri}")
+            raise ToolangError(f"Agent is already running: {prepared.ref.uri}")
         if not alive:
             delete_running_agent(agents_db_path, prepared.ref.uri)
 
@@ -132,7 +132,7 @@ def deactivate_running_agent(
             agent_id=prepared.ref.id[:SHORT_AGENT_ID_LENGTH],
             name=prepared.ref.name,
             sandbox=sandbox_spec,
-            detail="server stopped",
+            detail="run stopped",
             endpoint=endpoint,
             agent_home=str(prepared.ref.home),
             source_file=prepared.ref.source.name,
@@ -160,7 +160,7 @@ def write_agent_run_state(
     parsed_sandbox = SandboxSpec.parse(sandbox)
     run_path = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name).run_path
     run_path.parent.mkdir(parents=True, exist_ok=True)
-    ActivationState(
+    RunState(
         agent_uri=prepared.ref.uri,
         agent_id=prepared.ref.id[:SHORT_AGENT_ID_LENGTH],
         agent_name=prepared.ref.name,
@@ -191,7 +191,7 @@ def has_running_state(
     run_path = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name).run_path
     if not run_path.exists():
         return False
-    return ActivationState.load(run_path).status == "running"
+    return RunState.load(run_path).status == "running"
 
 
 def port_from_endpoint(endpoint: str) -> int | None:

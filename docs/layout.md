@@ -223,7 +223,7 @@ Notes:
 - `agent.log`
   - managed runtime log
 - `execution.db`
-  - local execution truth layer for activations, threads, turns, and steps
+  - local execution truth layer for runs, threads, turns, and steps
 - `runs/{RUN_ID}/prompt.json`
   - prompt-build diagnostics for one turn
 - `poll/`
@@ -268,7 +268,7 @@ Supported sandbox specs:
 Rules:
 
 - `none` normalizes to `host`
-- `toolang serve` uses `host` only
+- `toolang run` uses `host` only
 - `toolang start` may use `host` or `docker:<image>`
 - `${TOOLANG_ROOT}/sandbox/{AGENT_KEY}/`
   - staged docker start files such as `args.json` and `exec.sh`

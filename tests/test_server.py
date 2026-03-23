@@ -18,7 +18,7 @@ from toolang.channels import ChannelState, DeliveryResult, PluginHealth, PollRes
 from toolang.concepts.channel import InboundDelivery, OutboundMessage, ReplyTarget
 from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.concepts.persisted import ChannelBinding, ChannelsConfig, PollState
-from toolang.concepts.persisted.activation_state import ActivationState
+from toolang.concepts.persisted.run_state import RunState
 from toolang.concepts.persisted.prompt_trace import PromptTrace
 from toolang.runtime.execution_store import ExecutionStore
 from toolang.runtime.server import create_agent_app
@@ -142,8 +142,8 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
         assert active.status == "running"
         assert active.sandbox == "host"
         assert run_path.exists()
-        assert ActivationState.load(run_path).status == "running"
-        assert ActivationState.load(run_path).sandbox.spec == "host"
+        assert RunState.load(run_path).status == "running"
+        assert RunState.load(run_path).sandbox.spec == "host"
 
         first_chat = client.post(
             "/api/v1/chat",
@@ -237,20 +237,20 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
         ]
 
         execution = ExecutionStore(execution_db_path)
-        activations = execution.list_activations(agent_uri=agent.uri)
-        turns = execution.list_turns(activation_id=activations[0].activation_id)
+        runs = execution.list_runs(agent_uri=agent.uri)
+        turns = execution.list_turns(run_id=runs[0].run_id)
         execution.close()
-        assert len(activations) == 1
-        assert activations[0].activation_kind == "runtime"
-        assert activations[0].status == "running"
+        assert len(runs) == 1
+        assert runs[0].run_kind == "runtime"
+        assert runs[0].status == "running"
         assert {turn.turn_id for turn in turns} >= {first_run_id, run_response.json()["run_id"]}
 
     assert get_running_agent(db_path, agent.uri) is None
-    assert ActivationState.load(run_path).status == "stopped"
+    assert RunState.load(run_path).status == "stopped"
     execution = ExecutionStore(execution_db_path)
-    activations = execution.list_activations(agent_uri=agent.uri)
+    runs = execution.list_runs(agent_uri=agent.uri)
     execution.close()
-    assert activations[0].status == "stopped"
+    assert runs[0].status == "stopped"
     store = BusStore(events_path)
     events = store.list_events(agent_uri=agent.uri)
     store.close()
@@ -294,7 +294,7 @@ def test_create_agent_app_reports_docker_sandbox_state(
         assert runtime.json()["execution_host"] == "docker"
         assert runtime.json()["sandbox"] == "docker:python:3.13-slim"
 
-        run_state = ActivationState.load(run_path)
+        run_state = RunState.load(run_path)
         assert run_state.sandbox.type == "docker"
         assert run_state.sandbox.image_name == "python:3.13-slim"
         assert run_state.sandbox.container_name is not None
@@ -376,12 +376,12 @@ def test_create_agent_app_polls_channel_bindings_and_delivers_replies(
         _wait_for(lambda: len(fake_plugin.deliveries) == 1, label="telegram reply delivery")
 
         execution = ExecutionStore(execution_db_path)
-        activations = execution.list_activations(agent_uri=agent.uri)
-        turns = execution.list_turns(activation_id=activations[0].activation_id)
+        runs = execution.list_runs(agent_uri=agent.uri)
+        turns = execution.list_turns(run_id=runs[0].run_id)
         steps = execution.list_steps(turn_id=turns[0].turn_id)
         execution.close()
 
-        assert activations[0].runtime_loops == ("server", "poll")
+        assert runs[0].runtime_loops == ("server", "poll")
         assert turns[0].thread_id == "telegram:123"
         assert turns[0].origin == "chat"
         assert turns[0].status == "finished"
@@ -392,7 +392,7 @@ def test_create_agent_app_polls_channel_bindings_and_delivers_replies(
         assert PollState.load(poll_state_path).cursor == "43"
 
 
-def test_serve_process_writes_stopped_state_after_termination(tmp_path: Path) -> None:
+def test_run_process_writes_stopped_state_after_termination(tmp_path: Path) -> None:
     root = resolve_toolang_root(tmp_path / "toolang-root")
     home = root / "agents" / "alice"
     home.mkdir(parents=True)
@@ -408,7 +408,7 @@ def test_serve_process_writes_stopped_state_after_termination(tmp_path: Path) ->
             sys.executable,
             "-c",
             "from toolang.cli import main; raise SystemExit(main())",
-            "serve",
+            "run",
             "alice",
             "--port",
             str(port),
@@ -423,14 +423,14 @@ def test_serve_process_writes_stopped_state_after_termination(tmp_path: Path) ->
 
     try:
         _wait_for_server(port)
-        assert ActivationState.load(run_path).status == "running"
+        assert RunState.load(run_path).status == "running"
 
         process.terminate()
         process.wait(timeout=5)
         _wait_for_stopped_state(run_path)
 
         assert get_running_agent(db_path, "agent://alice/alice.too") is None
-        assert ActivationState.load(run_path).status == "stopped"
+        assert RunState.load(run_path).status == "stopped"
     finally:
         if process.poll() is None:
             process.kill()
@@ -461,7 +461,7 @@ def _wait_for_server(port: int) -> None:
 def _wait_for_stopped_state(run_path: Path) -> None:
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
-        if run_path.exists() and ActivationState.load(run_path).status == "stopped":
+        if run_path.exists() and RunState.load(run_path).status == "stopped":
             return
         time.sleep(0.05)
     raise AssertionError(f"Timed out waiting for stopped state at {run_path}")

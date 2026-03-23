@@ -1,6 +1,6 @@
 """Persisted file-shape concepts."""
 
-from .activation_state import ActivationState
+from .run_state import RunState
 from .channels_config import ChannelBinding, ChannelsConfig
 from .config import ModelEntry, ModelsSection, ToolangConfig
 from .hooks_config import HookBinding, HooksConfig
@@ -10,7 +10,7 @@ from .poll_state import PollState
 from .sync_state import InputFingerprint, LockEntry, LockedAgentRefs, SyncState
 
 __all__ = [
-    "ActivationState",
+    "RunState",
     "ChannelBinding",
     "ChannelsConfig",
     "HookBinding",

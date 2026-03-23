@@ -13,11 +13,11 @@ from toolang.agent.registry import delete_running_agent, get_running_agent
 from toolang.concepts.execution import RuntimeLoop
 from toolang.errors import ToolangError
 from toolang.concepts.layout import AgentHome, ToolangRoot
-from toolang.runtime.server import serve_agent
+from toolang.runtime.server import run_agent
 from toolang.concepts.identity import AgentRef
 from toolang.concepts.persisted import ChannelsConfig
 from toolang.concepts.sandbox import HOST_SANDBOX, SandboxSpec, SandboxState
-from toolang.concepts.persisted.activation_state import ActivationState
+from toolang.concepts.persisted.run_state import RunState
 from toolang.sandbox import sandbox_alive, start_sandbox, stop_sandbox
 
 from .support import (
@@ -32,7 +32,7 @@ from .support import (
 )
 
 
-def serve_command(
+def run_command(
     agent: Annotated[str, typer.Argument(help="Agent selector")],
     host: Annotated[str, typer.Option(help="Host interface to bind")] = "127.0.0.1",
     port: Annotated[int, typer.Option(help="Port to listen on")] = 8765,
@@ -70,7 +70,7 @@ def serve_command(
     parsed_sandbox = _parse_sandbox_or_raise(sandbox)
     sandbox_spec = parsed_sandbox.spec
     if parsed_sandbox.kind != "host":
-        raise ToolangError("toolang serve only supports host sandbox; use start for docker.")
+        raise ToolangError("toolang run only supports host sandbox; use start for docker.")
     agent_ref = _resolve_cli_agent(agent, db_path=db_path)
     cap_scopes = _resolve_runtime_cap_scopes(
         agent_ref,
@@ -81,7 +81,7 @@ def serve_command(
     _remember_agent(prepared.ref, db_path=db_path)
     runtime_loops = _with_server_loop(_resolve_runtime_loops(loops, default=("server",)))
     channels_config = _runtime_channels_for_loops(prepared.ref.home, runtime_loops)
-    serve_agent(
+    run_agent(
         prepared,
         agents_db_path=db_path,
         bus_db_path=bus_db_path,
@@ -139,7 +139,7 @@ def start_command(
 
     active = get_running_agent(db_path, prepared.ref.uri)
     if active is not None:
-        raise ToolangError(f"Agent is already being served: {prepared.ref.uri}")
+        raise ToolangError(f"Agent is already running: {prepared.ref.uri}")
 
     parsed_sandbox = _parse_sandbox_or_raise(sandbox)
     runtime_loops = _with_server_loop(_resolve_runtime_loops(loops, default=("server", "poll")))
@@ -265,7 +265,7 @@ def _drop_stale_running_agent(db_path: Path, agent: AgentRef) -> None:
     run_path = AgentHome.resolve(agent.home).room(agent.name).run_path
     if run_path.exists():
         now = datetime.now(timezone.utc)
-        run_state = ActivationState.load(run_path)
+        run_state = RunState.load(run_path)
         run_state.model_copy(update={"status": "stopped", "heartbeat_at": now}).save(run_path)
 
 
@@ -294,14 +294,12 @@ def _wait_for_running_agent_process(
     deadline = time.monotonic() + 3.0
     while time.monotonic() < deadline:
         if process.poll() is not None:
-            raise ToolangError(
-                f"Agent server exited before startup completed. See log: {log_path}"
-            )
+            raise ToolangError(f"Agent run exited before startup completed. See log: {log_path}")
         active = get_running_agent(db_path, agent.uri)
         if active is not None:
             return
         time.sleep(0.1)
-    raise ToolangError(f"Timed out waiting for agent server startup at {endpoint}.")
+    raise ToolangError(f"Timed out waiting for agent startup at {endpoint}.")
 
 
 def _wait_for_running_agent_sandbox(
@@ -322,7 +320,7 @@ def _wait_for_running_agent_sandbox(
                 f"Sandboxed agent exited before startup completed: {container_name}"
             )
         time.sleep(0.1)
-    raise ToolangError(f"Timed out waiting for agent server startup at {endpoint}.")
+    raise ToolangError(f"Timed out waiting for agent startup at {endpoint}.")
 
 
 def _start_host_agent(

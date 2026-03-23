@@ -8,7 +8,7 @@ import uuid
 from toolang.agent.prepared import PreparedAgent
 from toolang.bus.db import BusStore
 from toolang.bus.events import RunFailed, RunFinished, RunOrigin, RunStarted, utc_now
-from toolang.concepts.execution import ActivationKind, thread_group_for_origin
+from toolang.concepts.execution import RunKind, thread_group_for_origin
 from toolang.concepts.layout import AgentHome
 from toolang.concepts.persisted.prompt_trace import PromptTrace
 from toolang.program.ast import Thunk
@@ -40,10 +40,10 @@ class ChatResult:
 
 @dataclass(frozen=True, slots=True)
 class RuntimeExecutionContext:
-    """Execution truth-layer context for turns running inside one activation."""
+    """Execution truth-layer context for turns running inside one long-lived run."""
 
     store: ExecutionStore
-    activation_id: str
+    run_id: str
 
 
 def invoke_prepared_agent(
@@ -57,7 +57,7 @@ def invoke_prepared_agent(
     thread_id: str | None = None,
     sandbox: str = "host",
     execution_store: ExecutionStore | None = None,
-    activation_id: str | None = None,
+    process_run_id: str | None = None,
 ) -> InvokeResult:
     output = _tracked_turn(
         prepared=prepared,
@@ -68,10 +68,10 @@ def invoke_prepared_agent(
         model=model,
         sandbox=sandbox,
         raw_input=user_input,
-        activation_kind="invoke" if execution_store is None else None,
+        run_kind="invoke" if execution_store is None else None,
         execution_context=(
-            RuntimeExecutionContext(store=execution_store, activation_id=activation_id)
-            if execution_store is not None and activation_id is not None
+            RuntimeExecutionContext(store=execution_store, run_id=process_run_id)
+            if execution_store is not None and process_run_id is not None
             else None
         ),
         build_prompt=lambda: build_invoke_prompt(
@@ -97,16 +97,16 @@ def chat_prepared_agent(
     model: str | None = None,
     sandbox: str = "host",
     execution_store: ExecutionStore | None = None,
-    activation_id: str | None = None,
+    process_run_id: str | None = None,
 ) -> ChatResult:
-    run_id = uuid.uuid4().hex
+    turn_run_id = uuid.uuid4().hex
 
     chat_store.append_message(
         agent_uri=prepared.ref.uri,
         agent_id=prepared.ref.id[:12],
         agent_name=prepared.ref.name,
         thread_id=message.thread_id,
-        turn_id=run_id,
+        turn_id=turn_run_id,
         role="user",
         origin=message.origin,
         channel=message.channel,
@@ -123,13 +123,13 @@ def chat_prepared_agent(
         origin="chat",
         thread_id=message.thread_id,
         model=model,
-        run_id=run_id,
+        run_id=turn_run_id,
         sandbox=sandbox,
         raw_input=message.text,
         message=message,
         execution_context=(
-            RuntimeExecutionContext(store=execution_store, activation_id=activation_id)
-            if execution_store is not None and activation_id is not None
+            RuntimeExecutionContext(store=execution_store, run_id=process_run_id)
+            if execution_store is not None and process_run_id is not None
             else None
         ),
         build_prompt=lambda: build_chat_prompt(
@@ -180,22 +180,22 @@ def _tracked_turn(
     build_prompt,
     run_id: str | None = None,
     message: Message | None = None,
-    activation_kind: ActivationKind | None = None,
+    run_kind: RunKind | None = None,
     execution_context: RuntimeExecutionContext | None = None,
 ) -> _TrackedTurnResult:
     bus = BusStore(bus_db_path)
     resolved_run_id = run_id or uuid.uuid4().hex
     effective_thread_id = thread_id or f"{origin}:{resolved_run_id}"
-    activation_id = (
-        execution_context.activation_id
+    process_run_id = (
+        execution_context.run_id
         if execution_context is not None
-        else uuid.uuid4().hex if activation_kind is not None else None
+        else uuid.uuid4().hex if run_kind is not None else None
     )
     summary = _summary(prepared.ref.name, thunk)
     now = utc_now()
     execution = execution_context.store if execution_context is not None else (
         ExecutionStore(AgentHome.resolve(prepared.ref.home).room(prepared.ref.name).execution_db_path)
-        if activation_kind is not None
+        if run_kind is not None
         else None
     )
     trace_path = AgentHome.resolve(prepared.ref.home).room(
@@ -204,13 +204,13 @@ def _tracked_turn(
     prompt_trace: PromptTrace | None = None
     try:
         if execution is not None:
-            assert activation_id is not None
+            assert process_run_id is not None
             if execution_context is None:
-                assert activation_kind is not None
-                execution.begin_activation(
+                assert run_kind is not None
+                execution.begin_run(
                     agent=prepared.ref,
-                    activation_id=activation_id,
-                    activation_kind=activation_kind,
+                    run_id=process_run_id,
+                    run_kind=run_kind,
                     sandbox=sandbox,
                     cap_scopes=prepared.cap_scopes.labels(),
                 )
@@ -223,7 +223,7 @@ def _tracked_turn(
             )
             execution.start_turn(
                 turn_id=resolved_run_id,
-                activation_id=activation_id,
+                run_id=process_run_id,
                 thread_id=effective_thread_id,
                 origin=origin,
                 channel=message.channel if message is not None else None,
@@ -290,10 +290,10 @@ def _tracked_turn(
         prompt_trace.response_text = output
         prompt_trace.save(trace_path)
         if execution is not None:
-            assert activation_id is not None
+            assert process_run_id is not None
             execution.finish_turn(turn_id=resolved_run_id, output_text=output)
             if execution_context is None:
-                execution.finish_activation(activation_id=activation_id, status="finished")
+                execution.finish_run(run_id=process_run_id, status="finished")
         bus.append(
             RunFinished(
                 at=utc_now(),
@@ -345,10 +345,10 @@ def _tracked_turn(
         prompt_trace.error = str(exc)
         prompt_trace.save(trace_path)
         if execution is not None:
-            assert activation_id is not None
+            assert process_run_id is not None
             execution.fail_turn(turn_id=resolved_run_id, error=str(exc))
             if execution_context is None:
-                execution.finish_activation(activation_id=activation_id, status="failed")
+                execution.finish_run(run_id=process_run_id, status="failed")
         bus.append(
             RunFailed(
                 at=utc_now(),

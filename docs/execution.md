@@ -68,7 +68,7 @@ Rules:
 - `origin in {invoke, task, chore, will}` requires `channel = null`
 - `task`, `chore`, and `will` use `sender = self`
 - hook deliveries commonly use `sender = service`
-- `serve` and `start` are process surfaces, not message origins
+- `run` and `start` are process surfaces, not message origins
 
 
 ## 3. Runtime Loops
@@ -93,7 +93,7 @@ Rules:
 - runtime loops create turn requests
 - runtime loops do not execute turns directly
 - `toolang invoke` starts no runtime loops
-- `toolang serve` starts only `server`
+- `toolang run` starts only `server`
 - `toolang start` starts a selected runtime-loop set
 - the current runtime host serializes turns by `thread_id` even when multiple
   poll bindings are active
@@ -123,7 +123,7 @@ Rules:
 
 Toolang execution is organized around:
 
-- `activation`
+- `run`
 - `thread_group`
 - `thread`
 - `turn`
@@ -134,20 +134,20 @@ The existing `${AGENT_ROOM}/agent.run` file remains a current-running summary,
 not the historical execution truth.
 
 
-## 6. Activations
+## 6. Runs
 
-An activation is one continuous active interval of agent execution.
+A run is one continuous active interval of agent execution.
 
 Examples:
 
-- one foreground `toolang serve`
+- one foreground `toolang run`
 - one background `toolang start`
 - one one-shot `toolang invoke`
 
 Suggested fields:
 
-- `activation_id`
-- `activation_kind`
+- `run_id`
+- `run_kind`
   - `runtime`
   - `invoke`
 - `agent_uri`
@@ -162,11 +162,11 @@ Suggested fields:
 
 Rules:
 
-- each activation has a clear start and end
-- the same agent may have many activations over time
-- old activations remain queryable after later restarts
-- one thread may span multiple activations
-- every turn belongs to exactly one activation
+- each run has a clear start and end
+- the same agent may have many runs over time
+- old runs remain queryable after later restarts
+- one thread may span multiple runs
+- every turn belongs to exactly one run
 
 
 ## 7. Thread Groups
@@ -218,7 +218,7 @@ Default intent:
 `turn`
 
 - one complete handling attempt inside a thread
-- belongs to one `thread` and one `activation`
+- belongs to one `thread` and one `run`
 - carries:
   - `origin`
   - `sender`
@@ -272,7 +272,7 @@ Reason:
 
 ### 9.2 Long-Lived Runtime Process
 
-`toolang serve` and `toolang start` run one long-lived runtime process per
+`toolang run` and `toolang start` run one long-lived runtime process per
 agent.
 
 That process hosts:
@@ -336,8 +336,8 @@ Rules:
 
 Recommended local truth-layer stores:
 
-- `activations`
-- `activation_events`
+- `runs`
+- `run_events`
 - `threads`
 - `turns`
 - `turn_events`
@@ -370,7 +370,7 @@ Recommended write order:
 
 1. ingress
   - resolve or create `thread`
-  - resolve the active `activation`
+  - resolve the active `run`
   - create queued `turn`
 2. admission
   - scheduler marks the turn runnable
