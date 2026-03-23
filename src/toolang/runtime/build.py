@@ -10,7 +10,11 @@ from typing import Any
 
 from toolang.caps import load_prepared_caps
 from toolang.concepts.layout import AgentHome
-from toolang.concepts.persisted import find_local_task, task_id_from_thread_id
+from toolang.concepts.persisted import (
+    TaskMirrorState,
+    find_local_task,
+    task_id_from_thread_id,
+)
 from toolang.errors import ToolangError
 from toolang.program import Program
 from toolang.program.ast import Thunk
@@ -357,10 +361,18 @@ def _task_context(
         loaded = find_local_task(room.tasks_dir, local_task_id)
         if loaded is not None:
             path, task = loaded
+            mirror_state = (
+                TaskMirrorState.load(room.task_mirrors_path)
+                if room.task_mirrors_path.exists()
+                else TaskMirrorState()
+            )
+            mirror = mirror_state.find_by_local_task_id(local_task_id)
+            provider = "local" if mirror is None else mirror.provider
+            service_available = _task_service_available(visible_caps.services, provider)
             return {
                 "task": {
-                    "provider": "local",
-                    "ref": task.thread_id(),
+                    "provider": provider,
+                    "ref": task.thread_id() if mirror is None else mirror.remote_ref,
                     "name": path.stem,
                     "body": task.body,
                     "status": task.status,
@@ -369,10 +381,10 @@ def _task_context(
                     "path": str(path),
                 },
                 "task_services": {
-                    "provider": "local",
-                    "read": True,
-                    "write": True,
-                    "comment": True,
+                    "provider": provider,
+                    "read": True if mirror is None else service_available,
+                    "write": True if mirror is None else service_available,
+                    "comment": True if mirror is None else service_available,
                     "path": str(path),
                 },
             }
@@ -411,6 +423,7 @@ def _task_prompt(runtime_context: dict[str, Any]) -> str | None:
     can_read = bool(services.get("read"))
     can_write = bool(services.get("write"))
     can_comment = bool(services.get("comment"))
+    local_path = _task_text(services.get("path")) or _task_text(task.get("path"))
     lines = [
         "Task execution protocol:",
         "- You are handling one task-driven turn.",
@@ -422,18 +435,22 @@ def _task_prompt(runtime_context: dict[str, Any]) -> str | None:
         f"- Task comment available: {'yes' if can_comment else 'no'}.",
     ]
     if provider == "local":
-        path = _task_text(services.get("path")) or _task_text(task.get("path"))
         lines.extend(
             [
                 "- This task is backed by a local markdown file.",
-                f"- Update the task file directly at: {path or '<unknown path>'}.",
+                f"- Update the task file directly at: {local_path or '<unknown path>'}.",
                 "- Keep front matter minimal: id, requester, status, paused.",
                 "- Use the markdown body as the durable task input and append progress or outcome notes there.",
             ]
         )
     else:
-        lines.append("- Use configured task services for provider-specific updates.")
-    if not can_read:
+        lines.extend(
+            [
+                f"- Use the local mirrored task file as the working copy at: {local_path or '<unknown path>'}.",
+                "- Use configured task services for provider-specific updates.",
+            ]
+        )
+    if not can_read and local_path is None:
         lines.append("- If task read is unavailable, do not continue execution. Explain the missing configuration.")
     elif not can_write:
         lines.append("- If task write is unavailable, you may proceed, but you must clearly state that the task could not be updated.")
