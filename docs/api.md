@@ -21,7 +21,7 @@ Top-level command groups:
   - `sync`
 - execution
   - `invoke`
-  - `serve`
+  - `run`
   - `start`
 - capability management
   - `skill`
@@ -42,13 +42,13 @@ Rules:
 
 - all execution commands accept an `agent selector`
 - `invoke` is caller-driven one-shot foreground execution
-- `serve` runs the `server` runtime loop in the foreground and may enable extra
+- `run` runs the `server` runtime loop in the foreground and may enable extra
   loops with repeated `--loop` flags
 - `start` launches the selected runtime-loop set in the background
-- current `serve` and `start` surfaces always include the `server` loop because
+- current `run` and `start` surfaces always include the `server` loop because
   the long-lived runtime process is still hosted by the per-agent FastAPI app
 - `start` defaults to `server,poll`
-- `serve` defaults to `server`
+- `run` defaults to `server`
 - grammar inspection belongs in the sibling grammar package, not in the
   Toolang runtime CLI
 
@@ -88,7 +88,7 @@ Running-agent fields include:
 Rules:
 
 - `invoke` may add or refresh a known-agent record
-- only `serve` and `start` create running-agent records
+- only `run` and `start` create running-agent records
 - at most one active started process may exist per `agent_uri`
 
 
@@ -117,7 +117,7 @@ Core event families:
 
 Rules:
 
-- `serve` and `start` publish agent lifecycle events
+- `run` and `start` publish agent lifecycle events
 - `invoke` and server-side run requests publish top-level run events
 - event records use a monotonic `event_id`
 

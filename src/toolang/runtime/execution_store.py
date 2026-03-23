@@ -1,4 +1,4 @@
-"""Execution truth-layer storage for activations, threads, turns, and steps."""
+"""Execution truth-layer storage for runs, threads, turns, and steps."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Any
 
 from toolang.concepts.execution import (
-    ActivationKind,
-    ActivationRecord,
-    ActivationStatus,
+    RunKind,
+    RunRecord,
+    RunStatus,
     ExecutionStrategy,
     MessageOrigin,
     MessageSender,
@@ -35,7 +35,7 @@ def utc_now() -> str:
 
 
 class ExecutionStore:
-    """SQLite-backed truth layer for execution records."""
+    """SQLite-backed truth layer for run, thread, turn, and step records."""
 
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
@@ -51,18 +51,18 @@ class ExecutionStore:
         with self._lock:
             self._conn.close()
 
-    def begin_activation(
+    def begin_run(
         self,
         *,
         agent: AgentRef,
-        activation_id: str,
-        activation_kind: ActivationKind,
+        run_id: str,
+        run_kind: RunKind,
         sandbox: str,
         cap_scopes: tuple[str, ...],
         runtime_loops: tuple[RuntimeLoop, ...] = (),
         started_at: str | None = None,
-    ) -> ActivationRecord:
-        """Persist one newly started activation."""
+    ) -> RunRecord:
+        """Persist one newly started run."""
 
         now = started_at or utc_now()
         runtime_loops_json = _dump_json(list(runtime_loops))
@@ -71,12 +71,12 @@ class ExecutionStore:
         with self._lock:
             self._conn.execute(
                 """
-                INSERT INTO activations(
-                    activation_id,
+                INSERT INTO runs(
+                    run_id,
                     agent_uri,
                     agent_id,
                     agent_name,
-                    activation_kind,
+                    run_kind,
                     status,
                     started_at,
                     finished_at,
@@ -88,11 +88,11 @@ class ExecutionStore:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?)
                 """,
                 (
-                    activation_id,
+                    run_id,
                     agent.uri,
                     agent.id,
                     agent.name,
-                    activation_kind,
+                    run_kind,
                     "running",
                     now,
                     runtime_loops_json,
@@ -102,41 +102,41 @@ class ExecutionStore:
                 ),
             )
             row = self._conn.execute(
-                "SELECT * FROM activations WHERE activation_id = ?",
-                (activation_id,),
+                "SELECT * FROM runs WHERE run_id = ?",
+                (run_id,),
             ).fetchone()
             self._conn.commit()
         if row is None:
-            raise RuntimeError("activation insert returned no row")
-        return _activation_from_row(row)
+            raise RuntimeError("run insert returned no row")
+        return _run_from_row(row)
 
-    def finish_activation(
+    def finish_run(
         self,
         *,
-        activation_id: str,
-        status: ActivationStatus,
+        run_id: str,
+        status: RunStatus,
         finished_at: str | None = None,
-    ) -> ActivationRecord:
-        """Persist one completed or failed activation."""
+    ) -> RunRecord:
+        """Persist one completed or failed run."""
 
         now = finished_at or utc_now()
         with self._lock:
             self._conn.execute(
                 """
-                UPDATE activations
+                UPDATE runs
                 SET status = ?, finished_at = ?
-                WHERE activation_id = ?
+                WHERE run_id = ?
                 """,
-                (status, now, activation_id),
+                (status, now, run_id),
             )
             row = self._conn.execute(
-                "SELECT * FROM activations WHERE activation_id = ?",
-                (activation_id,),
+                "SELECT * FROM runs WHERE run_id = ?",
+                (run_id,),
             ).fetchone()
             self._conn.commit()
         if row is None:
-            raise RuntimeError(f"activation not found: {activation_id}")
-        return _activation_from_row(row)
+            raise RuntimeError(f"run not found: {run_id}")
+        return _run_from_row(row)
 
     def ensure_thread(
         self,
@@ -177,7 +177,7 @@ class ExecutionStore:
         self,
         *,
         turn_id: str,
-        activation_id: str,
+        run_id: str,
         thread_id: str,
         origin: MessageOrigin,
         channel: str | None,
@@ -194,7 +194,7 @@ class ExecutionStore:
                 """
                 INSERT INTO turns(
                     turn_id,
-                    activation_id,
+                    run_id,
                     thread_id,
                     origin,
                     channel,
@@ -211,7 +211,7 @@ class ExecutionStore:
                 """,
                 (
                     turn_id,
-                    activation_id,
+                    run_id,
                     thread_id,
                     origin,
                     channel,
@@ -350,28 +350,28 @@ class ExecutionStore:
             raise RuntimeError("step insert returned no row")
         return _step_from_row(inserted)
 
-    def list_activations(self, *, agent_uri: str | None = None) -> list[ActivationRecord]:
-        """List persisted activations, newest first."""
+    def list_runs(self, *, agent_uri: str | None = None) -> list[RunRecord]:
+        """List persisted runs, newest first."""
 
         if agent_uri is None:
-            query = "SELECT * FROM activations ORDER BY started_at DESC"
+            query = "SELECT * FROM runs ORDER BY started_at DESC"
             params: tuple[Any, ...] = ()
         else:
-            query = "SELECT * FROM activations WHERE agent_uri = ? ORDER BY started_at DESC"
+            query = "SELECT * FROM runs WHERE agent_uri = ? ORDER BY started_at DESC"
             params = (agent_uri,)
         with self._lock:
             rows = self._conn.execute(query, params).fetchall()
-        return [_activation_from_row(row) for row in rows]
+        return [_run_from_row(row) for row in rows]
 
-    def list_turns(self, *, activation_id: str | None = None) -> list[TurnRecord]:
+    def list_turns(self, *, run_id: str | None = None) -> list[TurnRecord]:
         """List persisted turns, newest first."""
 
-        if activation_id is None:
+        if run_id is None:
             query = "SELECT * FROM turns ORDER BY created_at DESC"
             params: tuple[Any, ...] = ()
         else:
-            query = "SELECT * FROM turns WHERE activation_id = ? ORDER BY created_at DESC"
-            params = (activation_id,)
+            query = "SELECT * FROM turns WHERE run_id = ? ORDER BY created_at DESC"
+            params = (run_id,)
         with self._lock:
             rows = self._conn.execute(query, params).fetchall()
         return [_turn_from_row(row) for row in rows]
@@ -392,12 +392,12 @@ class ExecutionStore:
             self._conn.execute("PRAGMA synchronous=NORMAL;")
             self._conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS activations (
-                    activation_id TEXT PRIMARY KEY,
+                CREATE TABLE IF NOT EXISTS runs (
+                    run_id TEXT PRIMARY KEY,
                     agent_uri TEXT NOT NULL,
                     agent_id TEXT NOT NULL,
                     agent_name TEXT NOT NULL,
-                    activation_kind TEXT NOT NULL,
+                    run_kind TEXT NOT NULL,
                     status TEXT NOT NULL,
                     started_at TEXT NOT NULL,
                     finished_at TEXT,
@@ -425,7 +425,7 @@ class ExecutionStore:
                 """
                 CREATE TABLE IF NOT EXISTS turns (
                     turn_id TEXT PRIMARY KEY,
-                    activation_id TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
                     thread_id TEXT NOT NULL,
                     origin TEXT NOT NULL,
                     channel TEXT,
@@ -438,7 +438,7 @@ class ExecutionStore:
                     created_at TEXT NOT NULL,
                     started_at TEXT NOT NULL,
                     finished_at TEXT,
-                    FOREIGN KEY(activation_id) REFERENCES activations(activation_id),
+                    FOREIGN KEY(run_id) REFERENCES runs(run_id),
                     FOREIGN KEY(thread_id) REFERENCES threads(thread_id)
                 )
                 """
@@ -461,13 +461,13 @@ class ExecutionStore:
                 """
             )
             self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_execution_activations_agent_started ON activations(agent_uri, started_at)"
+                "CREATE INDEX IF NOT EXISTS idx_execution_runs_agent_started ON runs(agent_uri, started_at)"
             )
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_execution_threads_agent_updated ON threads(agent_uri, updated_at)"
             )
             self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_execution_turns_activation_created ON turns(activation_id, created_at)"
+                "CREATE INDEX IF NOT EXISTS idx_execution_turns_run_created ON turns(run_id, created_at)"
             )
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_execution_turns_thread_created ON turns(thread_id, created_at)"
@@ -486,13 +486,13 @@ def _load_json(value: str) -> Any:
     return json.loads(value)
 
 
-def _activation_from_row(row: sqlite3.Row) -> ActivationRecord:
-    return ActivationRecord(
-        activation_id=str(row["activation_id"]),
+def _run_from_row(row: sqlite3.Row) -> RunRecord:
+    return RunRecord(
+        run_id=str(row["run_id"]),
         agent_uri=str(row["agent_uri"]),
         agent_id=str(row["agent_id"]),
         agent_name=str(row["agent_name"]),
-        activation_kind=row["activation_kind"],
+        run_kind=row["run_kind"],
         status=row["status"],
         started_at=str(row["started_at"]),
         finished_at=str(row["finished_at"]) if row["finished_at"] is not None else None,
@@ -518,7 +518,7 @@ def _thread_from_row(row: sqlite3.Row) -> ThreadRecord:
 def _turn_from_row(row: sqlite3.Row) -> TurnRecord:
     return TurnRecord(
         turn_id=str(row["turn_id"]),
-        activation_id=str(row["activation_id"]),
+        run_id=str(row["run_id"]),
         thread_id=str(row["thread_id"]),
         origin=row["origin"],
         channel=str(row["channel"]) if row["channel"] is not None else None,

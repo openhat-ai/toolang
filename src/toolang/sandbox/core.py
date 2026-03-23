@@ -117,7 +117,7 @@ def _start_host_sandbox(
         sys.executable,
         "-c",
         "from toolang.cli import main; raise SystemExit(main())",
-        "serve",
+        "run",
         prepared.ref.uri,
         "--host",
         host,
@@ -196,7 +196,7 @@ def _start_docker_sandbox(
             + shlex.join(
                 [
                     "toolang",
-                    "serve",
+                    "run",
                     prepared.ref.uri,
                     "--host",
                     "0.0.0.0",

@@ -28,7 +28,7 @@ from toolang.errors import ToolangError
 from toolang.concepts.identity import AgentRef
 from toolang.concepts.persisted import ChannelsConfig
 from toolang.concepts.persisted._toml import load_toml
-from toolang.concepts.persisted.activation_state import ActivationState
+from toolang.concepts.persisted.run_state import RunState
 from toolang.concepts.sandbox import HOST_SANDBOX, SandboxSpec, SandboxState
 from toolang.sandbox import sandbox_alive
 
@@ -323,7 +323,7 @@ def _fresh_known_agents(db_path: Path) -> list[KnownAgentSnapshot]:
         run_path = AgentHome.resolve(snapshot.agent_home).room(snapshot.agent_name).run_path
         if run_path.exists():
             now = datetime.now(timezone.utc)
-            run_state = ActivationState.load(run_path)
+            run_state = RunState.load(run_path)
             run_state.model_copy(update={"status": "stopped", "heartbeat_at": now}).save(
                 run_path
             )

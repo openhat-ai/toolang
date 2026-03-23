@@ -113,7 +113,7 @@ def _reorder_help_entries() -> None:
         "list": 3,
         "sync": 4,
         "invoke": 5,
-        "serve": 6,
+        "run": 6,
         "start": 7,
         "stop": 8,
         "home": 100,

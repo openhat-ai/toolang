@@ -92,7 +92,7 @@ Current or expected uses:
 - shared bus projection
   - `${TOOLANG_ROOT}/bus/events.db`
 - future execution truth layer
-  - activation, thread, turn, and step records
+  - run, thread, turn, and step records
 
 Other durable formats:
 

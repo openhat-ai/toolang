@@ -255,5 +255,5 @@ Plugins decode or deliver channel traffic, but runtime still owns:
 
 - `Message` creation
 - thread and turn persistence
-- activation lifecycle
+- run lifecycle
 - bus projection writes

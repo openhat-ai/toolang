@@ -44,7 +44,7 @@ FAILED_POLL_SLEEP_SEC = 1.0
 
 
 class RuntimeHost:
-    """One long-lived runtime activation with shared stores and scheduler."""
+    """One long-lived runtime run with shared stores and scheduler."""
 
     def __init__(
         self,
@@ -70,7 +70,7 @@ class RuntimeHost:
         self.channels_config = channels_config or ChannelsConfig()
         self.endpoint = f"http://{self.public_host}:{self.port}"
         self.scheduler = RuntimeScheduler()
-        self.activation_id = uuid.uuid4().hex
+        self.run_id = uuid.uuid4().hex
         self._bus: BusStore | None = None
         self._chats: ChatStore | None = None
         self._execution: ExecutionStore | None = None
@@ -98,7 +98,7 @@ class RuntimeHost:
         return self._execution
 
     def start(self) -> None:
-        """Start the runtime host and persist one running activation."""
+        """Start the runtime host and persist one started run."""
 
         if self._started:
             return
@@ -110,10 +110,10 @@ class RuntimeHost:
             name: create_channel_plugin(binding.plugin, config=binding.config)
             for name, binding in self.channels_config.channels.items()
         }
-        self.execution.begin_activation(
+        self.execution.begin_run(
             agent=self.prepared.ref,
-            activation_id=self.activation_id,
-            activation_kind="runtime",
+            run_id=self.run_id,
+            run_kind="runtime",
             sandbox=self.sandbox,
             cap_scopes=self.prepared.cap_scopes.labels(),
             runtime_loops=self.runtime_loops,
@@ -140,7 +140,7 @@ class RuntimeHost:
                 )
 
     def stop(self) -> None:
-        """Stop the runtime host and persist a stopped activation."""
+        """Stop the runtime host and persist one stopped run."""
 
         if not self._started:
             return
@@ -151,8 +151,8 @@ class RuntimeHost:
             thread.join(timeout=5.0)
         self._threads.clear()
         try:
-            self.execution.finish_activation(
-                activation_id=self.activation_id,
+            self.execution.finish_run(
+                run_id=self.run_id,
                 status="stopped",
             )
             if has_running_state(self.prepared, agents_db_path=self.agents_db_path):
@@ -259,7 +259,7 @@ class RuntimeHost:
             model=request.model,
             sandbox=self.sandbox,
             execution_store=self.execution,
-            activation_id=self.activation_id,
+            process_run_id=self.run_id,
         )
 
     def _run_invoke_turn(self, *, request: RunRequest) -> InvokeResult:
@@ -273,7 +273,7 @@ class RuntimeHost:
             model=request.model,
             sandbox=self.sandbox,
             execution_store=self.execution,
-            activation_id=self.activation_id,
+            process_run_id=self.run_id,
         )
 
     def _run_inbound_chat(
@@ -295,7 +295,7 @@ class RuntimeHost:
             model=_optional_text(delivery.meta.get("model")),
             sandbox=self.sandbox,
             execution_store=self.execution,
-            activation_id=self.activation_id,
+            process_run_id=self.run_id,
         )
         if delivery.reply_target is not None:
             self._deliver_reply(
@@ -329,7 +329,7 @@ class RuntimeHost:
             thread_id=delivery.thread_id,
             sandbox=self.sandbox,
             execution_store=self.execution,
-            activation_id=self.activation_id,
+            process_run_id=self.run_id,
         )
         if delivery.reply_target is not None:
             self._deliver_reply(

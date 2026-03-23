@@ -54,7 +54,7 @@ SSE_POLL_INTERVAL_SEC = 0.5
 SSE_PING_INTERVAL_SEC = 20.0
 
 
-def serve_agent(
+def run_agent(
     prepared: PreparedAgent,
     *,
     agents_db_path: Path,
@@ -116,7 +116,7 @@ def create_agent_app(
             runtime_host.stop()
 
     app = FastAPI(
-        title=f"Toolang Agent Server: {prepared.ref.name}",
+        title=f"Toolang Agent API: {prepared.ref.name}",
         lifespan=lifespan,
     )
     add_cors(app, allow_origins=cors_allow_origins)

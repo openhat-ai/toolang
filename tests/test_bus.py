@@ -65,7 +65,7 @@ def test_bus_store_projects_agent_and_run_events(tmp_path) -> None:
             agent_id=agent_id,
             name="alice",
             sandbox="host",
-            detail="server stopped",
+            detail="run stopped",
             endpoint="http://127.0.0.1:8765",
             agent_home="/tmp/toolang-root/agents/alice",
             source_file="alice.too",
@@ -81,7 +81,7 @@ def test_bus_store_projects_agent_and_run_events(tmp_path) -> None:
     assert agent.status == "stopped"
     assert agent.kind == "resident"
     assert agent.sandbox == "host"
-    assert agent.detail == "server stopped"
+    assert agent.detail == "run stopped"
     assert [run.run_id for run in runs] == ["run-1"]
     assert runs[0].status == "finished"
     assert runs[0].origin == "invoke"

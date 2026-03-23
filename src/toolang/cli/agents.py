@@ -24,7 +24,7 @@ from .support import (
     _resolve_resident_target,
     _toolang_root,
 )
-from .serve import _drop_stale_running_agent
+from .run import _drop_stale_running_agent
 
 
 def register_agent_commands(app: typer.Typer) -> None:

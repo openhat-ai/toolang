@@ -22,7 +22,7 @@ from toolang.agent.registry import (
     upsert_running_agent,
 )
 from toolang.cli import app, main
-from toolang.cli.serve import _drop_stale_running_agent
+from toolang.cli.run import _drop_stale_running_agent
 from toolang.cli.support import (
     _default_runtime_cap_scopes,
     _remember_agent,
@@ -31,7 +31,7 @@ from toolang.cli.support import (
 from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.concepts.persisted import ChannelBinding, ChannelsConfig
 from toolang.errors import ToolangError
-from toolang.concepts.persisted.activation_state import ActivationState
+from toolang.concepts.persisted.run_state import RunState
 from toolang.concepts.caps import CapKind
 
 
@@ -94,10 +94,10 @@ def test_cli_has_expected_subcommands() -> None:
     assert "Sync one agent state." in result.output
     assert "invoke" in result.output
     assert "Run one non-interactive agent turn." in result.output
-    assert "serve" in result.output
-    assert "Serve one agent in the foreground." in result.output
+    assert "run" in result.output
+    assert "Run one agent in the foreground." in result.output
     assert "start" in result.output
-    assert "Start serving one agent in the background." in result.output
+    assert "Start one agent in the background." in result.output
     assert "stop" in result.output
     assert "Stop one running agent." in result.output
     assert "psyche" in result.output
@@ -119,7 +119,7 @@ def test_cli_has_expected_subcommands() -> None:
             "clone",
             "sync",
             "invoke",
-            "serve",
+            "run",
             "start",
             "stop",
             "remove",
@@ -137,7 +137,7 @@ def test_cli_has_expected_subcommands() -> None:
         "list",
         "sync",
         "invoke",
-        "serve",
+        "run",
         "start",
         "stop",
         "psyche",
@@ -185,7 +185,7 @@ def test_cli_commands_show_help_when_called_without_required_arguments() -> None
         ["remove"],
         ["invoke"],
         ["sync"],
-        ["serve"],
+        ["run"],
         ["start"],
         ["skill"],
         ["skill", "add"],
@@ -344,7 +344,7 @@ def test_cli_drops_stale_running_agent_and_updates_run_file(tmp_path: Path, monk
     )
     run_path = agent_run_path(home, "alice")
     run_path.parent.mkdir(parents=True, exist_ok=True)
-    ActivationState(
+    RunState(
         agent_uri=agent.uri,
         agent_id=agent.id[:12],
         agent_name=agent.name,
@@ -360,7 +360,7 @@ def test_cli_drops_stale_running_agent_and_updates_run_file(tmp_path: Path, monk
     _drop_stale_running_agent(db_path, agent)
 
     assert get_running_agent(db_path, agent.uri) is None
-    assert ActivationState.load(run_path).status == "stopped"
+    assert RunState.load(run_path).status == "stopped"
 
 
 def test_cli_list_shows_known_agents_and_status(tmp_path: Path, monkeypatch) -> None:
@@ -421,18 +421,18 @@ def test_cli_list_marks_active_agent_running(tmp_path: Path, monkeypatch) -> Non
     assert "https://too.run/8778" in result.output
 
 
-def test_cli_serve_rejects_docker_sandbox(tmp_path: Path, monkeypatch) -> None:
+def test_cli_run_rejects_docker_sandbox(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "toolang-root"
     monkeypatch.setenv("TOOLANG_ROOT", str(root))
 
-    result = runner.invoke(app, ["serve", "alice", "--sandbox", "docker:python:3.13-slim"])
+    result = runner.invoke(app, ["run", "alice", "--sandbox", "docker:python:3.13-slim"])
 
     assert result.exit_code == 1
     assert isinstance(result.exception, ToolangError)
-    assert "toolang serve only supports host sandbox" in str(result.exception)
+    assert "toolang run only supports host sandbox" in str(result.exception)
 
 
-def test_cli_serve_passes_runtime_loops_and_channels(tmp_path: Path, monkeypatch) -> None:
+def test_cli_run_passes_runtime_loops_and_channels(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "toolang-root"
     home = root / "agents" / "alice"
     home.mkdir(parents=True)
@@ -447,12 +447,12 @@ def test_cli_serve_passes_runtime_loops_and_channels(tmp_path: Path, monkeypatch
 
     calls: dict[str, object] = {}
 
-    def fake_serve_agent(*args, **kwargs) -> None:
+    def fake_run_agent(*args, **kwargs) -> None:
         calls.update(kwargs)
 
-    monkeypatch.setattr("toolang.cli.serve.serve_agent", fake_serve_agent)
+    monkeypatch.setattr("toolang.cli.run.run_agent", fake_run_agent)
 
-    result = runner.invoke(app, ["serve", "alice", "--loop", "poll"])
+    result = runner.invoke(app, ["run", "alice", "--loop", "poll"])
 
     assert result.exit_code == 0
     assert calls["runtime_loops"] == ("server", "poll")
@@ -494,7 +494,7 @@ def test_cli_start_docker_stages_sandbox_launch(tmp_path: Path, monkeypatch) -> 
     monkeypatch.setattr("toolang.sandbox.core.docker_remove_container", fake_remove)
     monkeypatch.setattr("toolang.sandbox.core.docker_run_detached", fake_run)
     monkeypatch.setattr(
-        "toolang.cli.serve._wait_for_running_agent_sandbox",
+        "toolang.cli.run._wait_for_running_agent_sandbox",
         lambda **kwargs: None,
     )
 
@@ -534,7 +534,7 @@ def test_cli_start_docker_stages_sandbox_launch(tmp_path: Path, monkeypatch) -> 
     args_payload = __import__("json").loads(args_path.read_text(encoding="utf-8"))
     assert args_payload["sandbox"]["image_name"] == "python:3.13-slim"
     exec_text = exec_path.read_text(encoding="utf-8")
-    assert "toolang serve" in exec_text
+    assert "toolang run" in exec_text
     assert "--host 0.0.0.0" in exec_text
     assert "--sandbox docker:python:3.13-slim" in exec_text
     assert "--loop server" in exec_text
@@ -575,9 +575,9 @@ def test_cli_stop_host_agent_terminates_process(tmp_path: Path, monkeypatch) -> 
         calls.append((pid, sig))
 
     monkeypatch.setattr("toolang.sandbox.core.os.kill", fake_kill)
-    monkeypatch.setattr("toolang.cli.serve.sandbox_alive", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("toolang.cli.run.sandbox_alive", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
-        "toolang.cli.serve._wait_for_running_agent_stop",
+        "toolang.cli.run._wait_for_running_agent_stop",
         lambda **kwargs: delete_running_agent(db_path, agent.uri),
     )
 
@@ -620,9 +620,9 @@ def test_cli_stop_docker_agent_removes_container(tmp_path: Path, monkeypatch) ->
         "toolang.sandbox.core.docker_remove_container",
         lambda name: removed.append(name),
     )
-    monkeypatch.setattr("toolang.cli.serve.sandbox_alive", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("toolang.cli.run.sandbox_alive", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
-        "toolang.cli.serve._wait_for_running_agent_stop",
+        "toolang.cli.run._wait_for_running_agent_stop",
         lambda **kwargs: delete_running_agent(db_path, agent.uri),
     )
 

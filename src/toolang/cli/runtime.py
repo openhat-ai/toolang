@@ -8,7 +8,7 @@ from toolang.concepts.layout import ToolangRoot
 
 from .support import _cors_allow_origins, _toolang_root
 from .invoke import invoke_command, sync_command
-from .serve import serve_command, start_command, stop_command
+from .run import run_command, start_command, stop_command
 
 bus_app = typer.Typer(
     help="Bus commands",
@@ -31,13 +31,13 @@ def register_runtime_commands(app: typer.Typer) -> None:
         no_args_is_help=True,
     )(sync_command)
     app.command(
-        "serve",
-        help="Serve one agent in the foreground.",
+        "run",
+        help="Run one agent in the foreground.",
         no_args_is_help=True,
-    )(serve_command)
+    )(run_command)
     app.command(
         "start",
-        help="Start serving one agent in the background.",
+        help="Start one agent in the background.",
         no_args_is_help=True,
     )(start_command)
     app.command(

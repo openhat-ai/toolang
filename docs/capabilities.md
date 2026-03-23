@@ -61,7 +61,7 @@ Important rule:
 
 ## 4. Runtime Scope Visibility
 
-`invoke`, `serve`, and `start` always load agent-scoped caps.
+`invoke`, `run`, and `start` always load agent-scoped caps.
 
 Two CLI switches control whether wider scopes are enabled at runtime:
 

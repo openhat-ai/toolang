@@ -9,8 +9,8 @@ MessageOrigin = Literal["invoke", "chat", "task", "chore", "will"]
 MessageSender = Literal["owner", "peer", "guest", "self", "service"]
 RuntimeLoop = Literal["server", "poll", "hook", "pulse"]
 ExecutionStrategy = Literal["direct", "react"]
-ActivationKind = Literal["runtime", "invoke"]
-ActivationStatus = Literal["running", "finished", "failed", "stopped"]
+RunKind = Literal["runtime", "invoke"]
+RunStatus = Literal["running", "finished", "failed", "stopped"]
 ThreadGroup = Literal["invoke", "chat", "task", "chore", "will"]
 TurnStatus = Literal["running", "finished", "failed"]
 StepKind = Literal["prompt_build", "model_call", "delivery"]
@@ -30,15 +30,15 @@ class Message:
 
 
 @dataclass(frozen=True, slots=True)
-class ActivationRecord:
-    """One persisted activation record in the execution truth layer."""
+class RunRecord:
+    """One persisted run record in the execution truth layer."""
 
-    activation_id: str
+    run_id: str
     agent_uri: str
     agent_id: str
     agent_name: str
-    activation_kind: ActivationKind
-    status: ActivationStatus
+    run_kind: RunKind
+    status: RunStatus
     started_at: str
     finished_at: str | None
     runtime_loops: tuple[RuntimeLoop, ...]
@@ -62,10 +62,10 @@ class ThreadRecord:
 
 @dataclass(frozen=True, slots=True)
 class TurnRecord:
-    """One persisted turn within a thread and activation."""
+    """One persisted turn within a thread and run."""
 
     turn_id: str
-    activation_id: str
+    run_id: str
     thread_id: str
     origin: MessageOrigin
     channel: str | None
