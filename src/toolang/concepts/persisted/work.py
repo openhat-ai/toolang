@@ -186,3 +186,27 @@ def generate_task_id() -> str:
     """Return one short local task id."""
 
     return base64.b32encode(secrets.token_bytes(5)).decode("ascii").lower()
+
+
+def task_id_from_thread_id(thread_id: str) -> str | None:
+    """Extract one local task id from a canonical local task thread id."""
+
+    prefix = "task:local:"
+    if not thread_id.startswith(prefix):
+        return None
+    task_id = thread_id.removeprefix(prefix).strip()
+    return task_id or None
+
+
+def find_local_task(root: Path, task_id: str) -> tuple[Path, TaskFile] | None:
+    """Find one local task file by stable task id."""
+
+    if not root.exists():
+        return None
+    for path in sorted(root.rglob("*.md")):
+        if not path.is_file():
+            continue
+        task = TaskFile.load(path, persist_id=True)
+        if task.task_id() == task_id:
+            return path, task
+    return None

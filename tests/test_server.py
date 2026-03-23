@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import httpx
 from fastapi.testclient import TestClient
@@ -447,6 +448,7 @@ def test_create_agent_app_polls_task_deliveries(tmp_path: Path, monkeypatch) -> 
     db_path = agents_db_path(root)
     events_path = bus_events_db_path(root)
     execution_db_path = agent_execution_db_path(home, "alice")
+    builds: list[Any] = []
 
     class FakeTaskPlugin:
         def __init__(self) -> None:
@@ -464,6 +466,12 @@ def test_create_agent_app_polls_task_deliveries(tmp_path: Path, monkeypatch) -> 
                         sender="service",
                         thread_id="task:linear/42",
                         text="Investigate the regression and report back.",
+                        meta={
+                            "ref": "linear:42",
+                            "name": "Regression triage",
+                            "status": "todo",
+                            "requester": "service:linear",
+                        },
                     )
                 ],
                 next_state=ChannelState(cursor="next-task"),
@@ -484,12 +492,12 @@ def test_create_agent_app_polls_task_deliveries(tmp_path: Path, monkeypatch) -> 
         "toolang.runtime.host.create_channel_plugin",
         lambda plugin, *, config=None: FakeTaskPlugin(),
     )
-    monkeypatch.setattr(
-        "toolang.runtime.invoke.execute_prompt_build",
-        lambda build: (
-            f"tasked:{build.runtime_context['origin']}:{build.raw_input}:{build.model}"
-        ),
-    )
+
+    def fake_execute(build) -> str:
+        builds.append(build)
+        return f"tasked:{build.runtime_context['origin']}:{build.raw_input}:{build.model}"
+
+    monkeypatch.setattr("toolang.runtime.invoke.execute_prompt_build", fake_execute)
 
     app = create_agent_app(
         prepared,
@@ -520,6 +528,7 @@ def test_create_agent_app_polls_task_deliveries(tmp_path: Path, monkeypatch) -> 
             execution.close()
 
     task_turns = [turn for turn in turns if turn.origin == "task"]
+    task_build = next(build for build in builds if build.runtime_context["origin"] == "task")
     assert len(task_turns) == 1
     assert task_turns[0].thread_id == "task:linear/42"
     assert task_turns[0].sender == "service"
@@ -527,6 +536,26 @@ def test_create_agent_app_polls_task_deliveries(tmp_path: Path, monkeypatch) -> 
         task_turns[0].output_text
         == "tasked:task:Investigate the regression and report back.:gpt-5"
     )
+    assert task_build.runtime_context["task"] == {
+        "provider": "linear",
+        "ref": "linear:42",
+        "name": "Regression triage",
+        "body": "Investigate the regression and report back.",
+        "status": "todo",
+        "requester": "service:linear",
+        "thread_id": "task:linear/42",
+        "path": None,
+    }
+    assert task_build.runtime_context["task_services"] == {
+        "provider": "linear",
+        "read": False,
+        "write": False,
+        "comment": False,
+        "path": None,
+    }
+    assert "Task execution protocol:" in task_build.developer_message
+    assert "Task provider: linear." in task_build.developer_message
+    assert "Task read available: no." in task_build.developer_message
 
 
 def test_create_agent_app_lists_local_work_documents(tmp_path: Path) -> None:

@@ -9,7 +9,7 @@ from .prompt_trace import PromptTrace
 from .poll_state import PollState
 from .pulse_state import PulseItemState, PulseState
 from .sync_state import InputFingerprint, LockEntry, LockedAgentRefs, SyncState
-from .work import ChoreFile, TaskFile, WillFile
+from .work import ChoreFile, TaskFile, WillFile, find_local_task, task_id_from_thread_id
 
 __all__ = [
     "RunState",
@@ -33,6 +33,8 @@ __all__ = [
     "SyncState",
     "SyncedProgram",
     "TaskFile",
+    "find_local_task",
+    "task_id_from_thread_id",
     "ToolangConfig",
     "ChoreFile",
     "WillFile",

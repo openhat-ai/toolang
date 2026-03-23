@@ -59,6 +59,7 @@ def invoke_prepared_agent(
     sandbox: str = "host",
     execution_store: ExecutionStore | None = None,
     process_run_id: str | None = None,
+    input_meta: dict[str, object] | None = None,
 ) -> InvokeResult:
     output = _tracked_turn(
         prepared=prepared,
@@ -84,7 +85,9 @@ def invoke_prepared_agent(
             origin=origin,
             thread_id=thread_id,
             sandbox=sandbox,
+            input_meta=input_meta,
         ),
+        input_meta=input_meta,
     )
     return InvokeResult(run_id=output.run_id, output=output.output)
 
@@ -186,6 +189,7 @@ def _tracked_turn(
     message: Message | None = None,
     run_kind: RunKind | None = None,
     execution_context: RuntimeExecutionContext | None = None,
+    input_meta: dict[str, object] | None = None,
 ) -> _TrackedTurnResult:
     bus = BusStore(bus_db_path)
     resolved_run_id = run_id or uuid.uuid4().hex
@@ -345,6 +349,7 @@ def _tracked_turn(
                 model=model,
                 raw_input=raw_input,
                 message=message,
+                input_meta=input_meta,
             )
         prompt_trace.error = str(exc)
         prompt_trace.save(trace_path)
@@ -390,6 +395,7 @@ def _prompt_trace(
     model: str | None = None,
     raw_input: str | None = None,
     message: Message | None = None,
+    input_meta: dict[str, object] | None = None,
 ) -> PromptTrace:
     if build is not None:
         prompt_model = build.model
@@ -410,6 +416,7 @@ def _prompt_trace(
             model=model,
             raw_input=raw_input,
             message=message,
+            input_meta=input_meta,
         )
         prompt_model = str(prompt_data["model"])
         trace_raw_input = prompt_data["raw_input"]
