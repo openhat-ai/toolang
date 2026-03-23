@@ -1,4 +1,4 @@
-"""Persisted mapping between remote tasks and local mirrored task files."""
+"""Persisted mapping and sync payloads for mirrored remote tasks."""
 
 from __future__ import annotations
 
@@ -6,6 +6,25 @@ from datetime import datetime
 from pathlib import Path
 
 from pydantic import BaseModel, Field
+
+from .work import TaskStatus
+
+
+class TaskMirrorSpec(BaseModel):
+    """One remote task snapshot ready to be mirrored into a local task file."""
+
+    provider: str
+    remote_ref: str
+    name: str
+    body: str = ""
+    status: TaskStatus = "todo"
+    remote_updated_at: datetime | None = None
+
+
+class TaskMirrorBatch(BaseModel):
+    """One chore output payload containing mirrored remote task snapshots."""
+
+    task_mirrors: list[TaskMirrorSpec] = Field(default_factory=list)
 
 
 class TaskMirrorEntry(BaseModel):

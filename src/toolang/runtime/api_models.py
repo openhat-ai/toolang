@@ -122,6 +122,9 @@ class TaskItem(BaseModel):
     body: str
     status: str
     requester: str | None = None
+    mirrored: bool = False
+    provider: str | None = None
+    remote_ref: str | None = None
     thread_id: str
     path: str
     last_enqueued_at: str | None = None

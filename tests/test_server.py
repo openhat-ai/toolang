@@ -611,6 +611,9 @@ def test_create_agent_app_lists_local_work_documents(tmp_path: Path) -> None:
             "body": saved_task.body,
             "status": "todo",
             "requester": saved_task.requester,
+            "mirrored": False,
+            "provider": None,
+            "remote_ref": None,
             "thread_id": f"task:local:{saved_task.id}",
             "path": str(room.tasks_dir / "roadmap.md"),
             "last_enqueued_at": None,
@@ -695,6 +698,9 @@ def test_create_agent_app_puts_and_patches_local_tasks(tmp_path: Path) -> None:
         created_id = created.json()["id"]
         assert created_id
         assert created.json()["name"] == "roadmap"
+        assert created.json()["mirrored"] is False
+        assert created.json()["provider"] is None
+        assert created.json()["remote_ref"] is None
         assert created.json()["thread_id"] == f"task:local:{created_id}"
         assert created.json()["path"] == str(room.tasks_dir / "planning" / "roadmap.md")
 

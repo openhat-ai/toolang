@@ -40,6 +40,7 @@ from .messages import chat_message
 from .pulse import PulseSubmission, collect_pulse_submissions
 from .requests import TurnRequest, TurnRequestKind
 from .scheduler import RuntimeScheduler
+from .work import materialize_task_mirror_output
 from .server.state import (
     activate_running_agent,
     deactivate_running_agent,
@@ -646,6 +647,8 @@ class RuntimeHost:
             exc = future.exception()
             if exc is None:
                 result = future.result()
+                if submission.kind == "chore":
+                    materialize_task_mirror_output(self._require_room(), result.output)
                 self._update_pulse_item(
                     submission.kind,
                     submission.key,

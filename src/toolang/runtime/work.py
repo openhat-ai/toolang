@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 
 from toolang.concepts.identity import AgentRef
 from toolang.concepts.layout import AgentRoom
@@ -11,6 +12,10 @@ from toolang.concepts.persisted import (
     ChoreFile,
     PulseItemState,
     PulseState,
+    TaskMirrorBatch,
+    TaskMirrorEntry,
+    TaskMirrorSpec,
+    TaskMirrorState,
     TaskFile,
     WillFile,
 )
@@ -33,8 +38,9 @@ def list_task_items(room: AgentRoom) -> list[TaskItem]:
     """Return local task documents under one agent room."""
 
     pulse_state = _load_pulse_state(room)
+    mirror_state = _load_task_mirror_state(room)
     return [
-        _task_item(room, path, document, pulse_state)
+        _task_item(room, path, document, pulse_state, mirror_state)
         for path, document in _load_markdown_documents(
             room.tasks_dir,
             lambda value: TaskFile.load(value, persist_id=True),
@@ -60,6 +66,7 @@ def put_task_item(
         path,
         TaskFile.load(path, persist_id=True),
         _load_pulse_state(room),
+        _load_task_mirror_state(room),
     )
 
 
@@ -91,7 +98,72 @@ def patch_task_item(
         path,
         TaskFile.load(path, persist_id=True),
         _load_pulse_state(room),
+        _load_task_mirror_state(room),
     )
+
+
+def materialize_task_mirror_output(room: AgentRoom, output: str) -> int:
+    """Write mirrored local task files from one chore output payload."""
+
+    text = output.strip()
+    if not text or not text.startswith("{"):
+        return 0
+    try:
+        batch = TaskMirrorBatch.model_validate_json(text)
+    except Exception:
+        return 0
+    if not batch.task_mirrors:
+        return 0
+    return materialize_task_mirrors(room, batch)
+
+
+def materialize_task_mirrors(
+    room: AgentRoom,
+    batch: TaskMirrorBatch,
+    *,
+    synced_at: datetime | None = None,
+) -> int:
+    """Create or update local mirrored task files from remote task snapshots."""
+
+    now = synced_at or datetime.now(timezone.utc)
+    state = _load_task_mirror_state(room)
+    written = 0
+    for item in batch.task_mirrors:
+        existing = state.find(provider=item.provider, remote_ref=item.remote_ref)
+        if existing is None:
+            task = TaskFile(
+                requester=f"service:{item.provider}",
+                status=item.status,
+                body=item.body,
+            ).with_id()
+            task_id = task.task_id()
+            path = _new_mirror_task_path(room, item, task_id)
+        else:
+            task_id = existing.local_task_id
+            path = _mirror_task_path(room, existing)
+            current = TaskFile.load(path, persist_id=True) if path.exists() else TaskFile(id=task_id)
+            task = current.model_copy(
+                update={
+                    "id": task_id,
+                    "requester": f"service:{item.provider}",
+                    "status": item.status,
+                    "body": item.body,
+                }
+            )
+        task.save(path)
+        state = state.upsert(
+            TaskMirrorEntry(
+                provider=item.provider,
+                remote_ref=item.remote_ref,
+                local_task_id=task.task_id(),
+                path=str(path.relative_to(room.path)),
+                remote_updated_at=item.remote_updated_at,
+                last_synced_at=now,
+            )
+        )
+        written += 1
+    state.save(room.task_mirrors_path)
+    return written
 
 
 def put_chore_item(
@@ -247,6 +319,13 @@ def _load_pulse_state(room: AgentRoom) -> PulseState:
     return PulseState.load(path)
 
 
+def _load_task_mirror_state(room: AgentRoom) -> TaskMirrorState:
+    path = room.task_mirrors_path
+    if not path.exists():
+        return TaskMirrorState()
+    return TaskMirrorState.load(path)
+
+
 def _iso(value: datetime | None) -> str | None:
     if value is None:
         return None
@@ -267,16 +346,24 @@ def _patched_body(
 
 
 def _task_item(
-    room: AgentRoom, path: Path, document: TaskFile, pulse_state: PulseState
+    room: AgentRoom,
+    path: Path,
+    document: TaskFile,
+    pulse_state: PulseState,
+    mirror_state: TaskMirrorState,
 ) -> TaskItem:
     task_id = document.task_id()
     state = pulse_state.tasks.get(task_id, PulseItemState())
+    mirror = mirror_state.find_by_local_task_id(task_id)
     return TaskItem(
         id=task_id,
         name=path.stem,
         body=document.body,
         status=document.status,
         requester=document.requester,
+        mirrored=mirror is not None,
+        provider=mirror.provider if mirror is not None else None,
+        remote_ref=mirror.remote_ref if mirror is not None else None,
         thread_id=document.thread_id(),
         path=str(path),
         last_enqueued_at=_iso(state.last_enqueued_at),
@@ -344,6 +431,20 @@ def _task_path(room: AgentRoom, task_name: str) -> Path:
     return _work_path(room.tasks_dir, task_name, label="Task")
 
 
+def _mirror_task_path(room: AgentRoom, entry: TaskMirrorEntry) -> Path:
+    stored = Path(entry.path)
+    if stored.is_absolute():
+        return stored
+    return room.path / stored
+
+
+def _new_mirror_task_path(
+    room: AgentRoom, item: TaskMirrorSpec, task_id: str
+) -> Path:
+    slug = _task_slug(item.name) or _task_slug(item.remote_ref) or "task"
+    return room.tasks_dir / item.provider / f"{slug}-{task_id[:6]}.md"
+
+
 def _chore_path(room: AgentRoom, chore_id: str) -> Path:
     return _work_path(room.chores_dir, chore_id, label="Chore")
 
@@ -356,3 +457,8 @@ def _work_path(root: Path, work_id: str, *, label: str) -> Path:
     if not parts or any(part == ".." for part in parts):
         raise ToolangError(f"Invalid {label.lower()} id: {work_id}")
     return root.joinpath(*parts).with_suffix(".md")
+
+
+def _task_slug(value: str) -> str:
+    text = re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")
+    return text[:48]
