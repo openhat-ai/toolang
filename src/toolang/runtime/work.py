@@ -35,57 +35,63 @@ def list_task_items(room: AgentRoom) -> list[TaskItem]:
     pulse_state = _load_pulse_state(room)
     return [
         _task_item(room, path, document, pulse_state)
-        for path, document in _load_markdown_documents(room.tasks_dir, TaskFile.load)
+        for path, document in _load_markdown_documents(
+            room.tasks_dir,
+            lambda value: TaskFile.load(value, persist_id=True),
+        )
     ]
 
 
-def put_task_item(room: AgentRoom, task_id: str, request: TaskPutRequest) -> TaskItem:
+def put_task_item(
+    room: AgentRoom, task_name: str, request: TaskPutRequest
+) -> TaskItem:
     """Write one full local task document and return its runtime view."""
 
-    path = _task_path(room, task_id)
+    path = _task_path(room, task_name)
     TaskFile(
-        title=request.title,
+        id=request.id,
         body=request.body,
         status=request.status,
-        assignee=request.assignee,
-        thread_id=request.thread_id,
-        thunk=request.thunk,
-        model=request.model,
+        requester=request.requester or "owner",
         paused=request.paused,
     ).save(path)
-    return _task_item(room, path, TaskFile.load(path), _load_pulse_state(room))
+    return _task_item(
+        room,
+        path,
+        TaskFile.load(path, persist_id=True),
+        _load_pulse_state(room),
+    )
 
 
 def patch_task_item(
-    room: AgentRoom, task_id: str, request: TaskPatchRequest
+    room: AgentRoom, task_name: str, request: TaskPatchRequest
 ) -> TaskItem:
     """Patch one existing local task document and return its runtime view."""
 
-    path = _task_path(room, task_id)
+    path = _task_path(room, task_name)
     if not path.exists():
-        raise ToolangError(f"Task not found: {task_id}")
-    current = TaskFile.load(path)
+        raise ToolangError(f"Task not found: {task_name}")
+    current = TaskFile.load(path, persist_id=True)
     body = _patched_body(
         current.body, body=request.body, body_append=request.body_append
     )
     updated = current.model_copy(
         update={
-            "title": request.title if request.title is not None else current.title,
             "body": body,
             "status": request.status if request.status is not None else current.status,
-            "assignee": request.assignee
-            if request.assignee is not None
-            else current.assignee,
-            "thread_id": request.thread_id
-            if request.thread_id is not None
-            else current.thread_id,
-            "thunk": request.thunk if request.thunk is not None else current.thunk,
-            "model": request.model if request.model is not None else current.model,
+            "requester": request.requester
+            if request.requester is not None
+            else current.requester,
             "paused": request.paused if request.paused is not None else current.paused,
         }
     )
     TaskFile.model_validate(updated.model_dump(mode="python")).save(path)
-    return _task_item(room, path, TaskFile.load(path), _load_pulse_state(room))
+    return _task_item(
+        room,
+        path,
+        TaskFile.load(path, persist_id=True),
+        _load_pulse_state(room),
+    )
 
 
 def put_chore_item(
@@ -263,16 +269,15 @@ def _patched_body(
 def _task_item(
     room: AgentRoom, path: Path, document: TaskFile, pulse_state: PulseState
 ) -> TaskItem:
-    key = _work_key(room.tasks_dir, path)
-    state = pulse_state.tasks.get(key, PulseItemState())
+    task_id = document.task_id()
+    state = pulse_state.tasks.get(task_id, PulseItemState())
     return TaskItem(
-        id=key,
-        title=document.title,
+        id=task_id,
+        name=path.stem,
+        body=document.body,
         status=document.status,
-        assignee=document.assignee,
-        thread_id=document.effective_thread_id(f"task:{key}"),
-        thunk=document.thunk,
-        model=document.model,
+        requester=document.requester,
+        thread_id=document.thread_id(),
         path=str(path),
         last_enqueued_at=_iso(state.last_enqueued_at),
         last_started_at=_iso(state.last_started_at),
@@ -335,8 +340,8 @@ def _will_item(
     )
 
 
-def _task_path(room: AgentRoom, task_id: str) -> Path:
-    return _work_path(room.tasks_dir, task_id, label="Task")
+def _task_path(room: AgentRoom, task_name: str) -> Path:
+    return _work_path(room.tasks_dir, task_name, label="Task")
 
 
 def _chore_path(room: AgentRoom, chore_id: str) -> Path:

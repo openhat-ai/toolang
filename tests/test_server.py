@@ -538,13 +538,11 @@ def test_create_agent_app_lists_local_work_documents(tmp_path: Path) -> None:
     )
 
     room = AgentHome.resolve(home).room("alice")
-    TaskFile(
-        title="Review roadmap",
-        body="Read the current milestone and comment.",
-        assignee="self",
-        thread_id="task:roadmap",
-        thunk="task",
-    ).save(room.tasks_dir / "roadmap.md")
+    (room.tasks_dir / "roadmap.md").parent.mkdir(parents=True, exist_ok=True)
+    (room.tasks_dir / "roadmap.md").write_text(
+        "---\nrequester: owner\nstatus: todo\n---\nRead the current milestone and comment.\n",
+        encoding="utf-8",
+    )
     ChoreFile(
         title="Sync backlog",
         body="Sync backlog from the project tool.",
@@ -574,17 +572,17 @@ def test_create_agent_app_lists_local_work_documents(tmp_path: Path) -> None:
         tasks = client.get("/api/v1/tasks")
         chores = client.get("/api/v1/chores")
         will = client.get("/api/v1/will")
+    saved_task = TaskFile.load(room.tasks_dir / "roadmap.md", persist_id=True)
 
     assert tasks.status_code == 200
     assert tasks.json()["items"] == [
         {
-            "id": "roadmap",
-            "title": "Review roadmap",
-            "status": "open",
-            "assignee": "self",
-            "thread_id": "task:roadmap",
-            "thunk": "task",
-            "model": None,
+            "id": saved_task.id,
+            "name": "roadmap",
+            "body": saved_task.body,
+            "status": "todo",
+            "requester": saved_task.requester,
+            "thread_id": f"task:local:{saved_task.id}",
             "path": str(room.tasks_dir / "roadmap.md"),
             "last_enqueued_at": None,
             "last_started_at": None,
@@ -659,16 +657,16 @@ def test_create_agent_app_puts_and_patches_local_tasks(tmp_path: Path) -> None:
         created = client.put(
             "/api/v1/tasks/planning/roadmap",
             json={
-                "title": "Planning task",
                 "body": "Draft the roadmap update.",
-                "status": "open",
-                "assignee": "self",
-                "thread_id": "task:planning/roadmap",
-                "thunk": "summarize",
+                "status": "todo",
+                "requester": "owner",
             },
         )
         assert created.status_code == 200
-        assert created.json()["id"] == "planning/roadmap"
+        created_id = created.json()["id"]
+        assert created_id
+        assert created.json()["name"] == "roadmap"
+        assert created.json()["thread_id"] == f"task:local:{created_id}"
         assert created.json()["path"] == str(room.tasks_dir / "planning" / "roadmap.md")
 
         patched = client.patch(
@@ -685,12 +683,13 @@ def test_create_agent_app_puts_and_patches_local_tasks(tmp_path: Path) -> None:
 
         tasks = client.get("/api/v1/tasks")
         assert tasks.status_code == 200
-        assert tasks.json()["items"][0]["id"] == "planning/roadmap"
+        assert tasks.json()["items"][0]["id"] == created_id
         assert tasks.json()["items"][0]["status"] == "doing"
         assert tasks.json()["items"][0]["paused"] is True
 
-    saved = TaskFile.load(room.tasks_dir / "planning" / "roadmap.md")
-    assert saved.title == "Planning task"
+    saved = TaskFile.load(room.tasks_dir / "planning" / "roadmap.md", persist_id=True)
+    assert saved.id == created_id
+    assert saved.requester == "owner"
     assert saved.status == "doing"
     assert saved.paused is True
     assert "Started working on the outline." in saved.body

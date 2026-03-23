@@ -38,19 +38,25 @@ def test_collect_pulse_submissions_detects_task_chore_and_will(tmp_path: Path) -
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     room = AgentHome.resolve(home).room("alice")
-    TaskFile(title="Review PR", body="Look at the latest changes.").save(room.tasks_dir / "review.md")
+    (room.tasks_dir / "review.md").parent.mkdir(parents=True, exist_ok=True)
+    (room.tasks_dir / "review.md").write_text(
+        "---\nstatus: todo\nrequester: owner\n---\nLook at the latest changes.\n",
+        encoding="utf-8",
+    )
     ChoreFile(title="Refresh tasks", body="Refresh local tasks.", interval_sec=3600).save(
         room.chores_dir / "refresh.md"
     )
     WillFile(title="Reflect", body="Think about the next step.", interval_sec=3600).save(room.will_path)
 
     state, submissions = collect_pulse_submissions(room, agent, PulseState())
+    task = TaskFile.load(room.tasks_dir / "review.md", persist_id=True)
+    task_id = task.task_id()
 
-    assert state.tasks["review"].content_hash is not None
+    assert state.tasks[task_id].content_hash is not None
     assert state.chores["refresh"].next_due_at is not None
     assert state.will.next_due_at is not None
     assert [(item.kind, item.thread_id) for item in submissions] == [
-        ("task", "task:review"),
+        ("task", f"task:local:{task_id}"),
         ("chore", "chore:refresh"),
         ("will", f"will:{agent.id}"),
     ]
@@ -70,7 +76,11 @@ def test_create_agent_app_processes_pulse_work_files(tmp_path: Path, monkeypatch
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     room = AgentHome.resolve(home).room("alice")
-    TaskFile(title="Review PR", body="Look at the latest changes.").save(room.tasks_dir / "review.md")
+    (room.tasks_dir / "review.md").parent.mkdir(parents=True, exist_ok=True)
+    (room.tasks_dir / "review.md").write_text(
+        "---\nstatus: todo\nrequester: owner\n---\nLook at the latest changes.\n",
+        encoding="utf-8",
+    )
     ChoreFile(title="Refresh tasks", body="Refresh local tasks.", interval_sec=3600).save(
         room.chores_dir / "refresh.md"
     )
@@ -108,10 +118,12 @@ def test_create_agent_app_processes_pulse_work_files(tmp_path: Path, monkeypatch
     assert {turn.sender for turn in turns if turn.origin in {"task", "chore", "will"}} == {"self"}
     assert pulse_state_path(home, "alice").exists()
     pulse_state = PulseState.load(pulse_state_path(home, "alice"))
-    assert pulse_state.tasks["review"].last_started_at is not None
-    assert pulse_state.tasks["review"].last_finished_at is not None
-    assert pulse_state.tasks["review"].last_status == "finished"
-    assert pulse_state.tasks["review"].last_run_id is not None
+    task = TaskFile.load(room.tasks_dir / "review.md", persist_id=True)
+    task_id = task.task_id()
+    assert pulse_state.tasks[task_id].last_started_at is not None
+    assert pulse_state.tasks[task_id].last_finished_at is not None
+    assert pulse_state.tasks[task_id].last_status == "finished"
+    assert pulse_state.tasks[task_id].last_run_id is not None
     assert pulse_state.chores["refresh"].last_status == "finished"
     assert pulse_state.will.last_status == "finished"
 

@@ -230,15 +230,15 @@ def create_agent_app(
         room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
         return TaskListResponse(items=list_task_items(room))
 
-    @app.put("/api/v1/tasks/{task_id:path}", response_model=TaskItem)
-    def put_task(task_id: str, request: TaskPutRequest) -> TaskItem:
+    @app.put("/api/v1/tasks/{task_name:path}", response_model=TaskItem)
+    def put_task(task_name: str, request: TaskPutRequest) -> TaskItem:
         room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
-        return put_task_item(room, task_id, request)
+        return put_task_item(room, task_name, request)
 
-    @app.patch("/api/v1/tasks/{task_id:path}", response_model=TaskItem)
-    def patch_task(task_id: str, request: TaskPatchRequest) -> TaskItem:
+    @app.patch("/api/v1/tasks/{task_name:path}", response_model=TaskItem)
+    def patch_task(task_name: str, request: TaskPatchRequest) -> TaskItem:
         room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
-        return patch_task_item(room, task_id, request)
+        return patch_task_item(room, task_name, request)
 
     @app.get("/api/v1/chores", response_model=ChoreListResponse)
     def list_chores() -> ChoreListResponse:
