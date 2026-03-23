@@ -15,7 +15,14 @@ from toolang.channels import ChannelPlugin, ChannelState, create_channel_plugin
 from toolang.concepts.channel import InboundDelivery, OutboundMessage, ReplyTarget
 from toolang.concepts.execution import Message, RuntimeLoop
 from toolang.concepts.layout import AgentHome
-from toolang.concepts.persisted import ChannelBinding, ChannelsConfig, PollState, PulseItemState, PulseState
+from toolang.concepts.persisted import (
+    ChannelBinding,
+    ChannelsConfig,
+    HooksConfig,
+    PollState,
+    PulseItemState,
+    PulseState,
+)
 from toolang.concepts.sandbox import SandboxSpec
 from toolang.errors import ToolangError
 from toolang.program.ast import Thunk
@@ -144,7 +151,11 @@ class RuntimeHost:
                 self._start_background_thread(
                     name=f"toolang-poll-{self.prepared.ref.name}-{binding_name}",
                     target=self._poll_binding_loop,
-                    args=(room, binding_name, self.channels_config.channels[binding_name]),
+                    args=(
+                        room,
+                        binding_name,
+                        self.channels_config.channels[binding_name],
+                    ),
                 )
         if "pulse" in self.runtime_loops:
             self._start_background_thread(
@@ -200,6 +211,82 @@ class RuntimeHost:
             endpoint=self.endpoint,
         )
 
+    def diagnostics_snapshot(self) -> dict[str, object]:
+        """Return one operational diagnostics snapshot for the active runtime."""
+
+        room = self._require_room()
+        home = AgentHome.resolve(self.prepared.ref.home)
+        hooks_config = (
+            HooksConfig.load(home.hooks_config_path)
+            if home.hooks_config_path.exists()
+            else HooksConfig()
+        )
+
+        channels: list[dict[str, object]] = []
+        for name, binding in sorted(self.channels_config.channels.items()):
+            plugin = self._channel_plugins.get(name)
+            health_ok: bool | None = None
+            health_detail: str | None = None
+            health_meta: dict[str, object] = {}
+            if plugin is not None:
+                try:
+                    health = plugin.health()
+                except Exception as exc:
+                    health_ok = False
+                    health_detail = str(exc)
+                else:
+                    health_ok = health.ok
+                    health_detail = health.detail
+                    health_meta = dict(health.meta)
+            poll_state_path = room.poll_state_path(name)
+            poll_state = (
+                PollState.load(poll_state_path) if poll_state_path.exists() else None
+            )
+            channels.append(
+                {
+                    "name": name,
+                    "plugin": binding.plugin,
+                    "ok": health_ok,
+                    "detail": health_detail,
+                    "meta": health_meta,
+                    "poll_state_path": str(poll_state_path),
+                    "poll_cursor": poll_state.cursor
+                    if poll_state is not None
+                    else None,
+                    "poll_meta": dict(poll_state.meta)
+                    if poll_state is not None
+                    else {},
+                }
+            )
+
+        hooks = [
+            {
+                "name": name,
+                "path": binding.path,
+                "method": binding.method,
+                "plugin": binding.plugin,
+            }
+            for name, binding in sorted(hooks_config.hooks.items())
+        ]
+        pulse = None
+        if (
+            "pulse" in self.runtime_loops
+            or room.pulse_state_path.exists()
+            or self._pulse_pending_keys()
+        ):
+            pulse = {
+                "state_path": str(room.pulse_state_path),
+                "pending": sorted(self._pulse_pending_keys()),
+            }
+        return {
+            "runtime_loops": list(self.runtime_loops),
+            "hook_loop_enabled": "hook" in self.runtime_loops,
+            "scheduler": self.scheduler.snapshot(),
+            "channels": channels,
+            "hooks": hooks,
+            "pulse": pulse,
+        }
+
     def submit_chat(self, request: ChatRequest) -> ChatResult:
         """Submit one API chat turn through the runtime scheduler."""
 
@@ -231,7 +318,9 @@ class RuntimeHost:
             lambda: self._run_invoke_turn(request=request),
         )
 
-    def submit_inbound(self, binding_name: str, delivery: InboundDelivery) -> ChatResult | InvokeResult:
+    def submit_inbound(
+        self, binding_name: str, delivery: InboundDelivery
+    ) -> ChatResult | InvokeResult:
         """Submit one channel delivery through the runtime scheduler."""
 
         bound_delivery = _bind_delivery(binding_name, delivery)
@@ -244,7 +333,9 @@ class RuntimeHost:
                 text=bound_delivery.text,
                 meta=dict(bound_delivery.meta),
             )
-            turn_request = TurnRequest(kind="chat", thread_id=bound_delivery.thread_id, message=message)
+            turn_request = TurnRequest(
+                kind="chat", thread_id=bound_delivery.thread_id, message=message
+            )
             return self.scheduler.submit(
                 turn_request,
                 lambda: self._run_inbound_chat(
@@ -254,7 +345,9 @@ class RuntimeHost:
                 ),
             )
         if bound_delivery.origin in {"invoke", "task", "chore", "will"}:
-            turn_request = TurnRequest(kind=bound_delivery.origin, thread_id=bound_delivery.thread_id)
+            turn_request = TurnRequest(
+                kind=bound_delivery.origin, thread_id=bound_delivery.thread_id
+            )
             return self.scheduler.submit(
                 turn_request,
                 lambda: self._run_inbound_turn(
@@ -262,7 +355,9 @@ class RuntimeHost:
                     delivery=bound_delivery,
                 ),
             )
-        raise ToolangError(f"Inbound channel delivery origin is not supported yet: {bound_delivery.origin}")
+        raise ToolangError(
+            f"Inbound channel delivery origin is not supported yet: {bound_delivery.origin}"
+        )
 
     def _run_self_turn(
         self,
@@ -356,7 +451,9 @@ class RuntimeHost:
     ) -> InvokeResult:
         current = prepare_agent(self.prepared.ref, cap_scopes=self.prepared.cap_scopes)
         thunk_name = _optional_text(delivery.meta.get("thunk"))
-        selected_thunk = _select_named_or_origin_thunk(current, thunk_name, delivery.origin)
+        selected_thunk = _select_named_or_origin_thunk(
+            current, thunk_name, delivery.origin
+        )
         result = invoke_prepared_agent(
             current,
             selected_thunk,
@@ -397,7 +494,11 @@ class RuntimeHost:
                 turn_id=turn_id,
                 step_kind="delivery",
                 status="failed",
-                input_json={"channel": binding_name, "address": target.address, "text": text},
+                input_json={
+                    "channel": binding_name,
+                    "address": target.address,
+                    "text": text,
+                },
                 output_json={},
                 error=str(exc),
             )
@@ -406,7 +507,11 @@ class RuntimeHost:
             turn_id=turn_id,
             step_kind="delivery",
             status="finished" if result.ok else "failed",
-            input_json={"channel": binding_name, "address": target.address, "text": text},
+            input_json={
+                "channel": binding_name,
+                "address": target.address,
+                "text": text,
+            },
             output_json={
                 "ok": result.ok,
                 "remote_id": result.remote_id,
@@ -444,10 +549,14 @@ class RuntimeHost:
         stop_event = self._require_stop_event()
         state_path = room.poll_state_path(binding_name)
         while not stop_event.is_set():
-            persisted_state = PollState.load(state_path) if state_path.exists() else PollState()
+            persisted_state = (
+                PollState.load(state_path) if state_path.exists() else PollState()
+            )
             try:
                 result = plugin.poll(
-                    ChannelState(cursor=persisted_state.cursor, meta=dict(persisted_state.meta))
+                    ChannelState(
+                        cursor=persisted_state.cursor, meta=dict(persisted_state.meta)
+                    )
                 )
                 PollState(
                     cursor=result.next_state.cursor,
@@ -509,7 +618,9 @@ class RuntimeHost:
             ),
         )
         future.add_done_callback(
-            lambda completed: self._finish_pulse_submission(pending_key, submission, completed)
+            lambda completed: self._finish_pulse_submission(
+                pending_key, submission, completed
+            )
         )
 
     def _pulse_pending_keys(self) -> set[str]:
@@ -527,7 +638,9 @@ class RuntimeHost:
         with self._pulse_pending_lock:
             self._pulse_pending.discard(pending_key)
 
-    def _finish_pulse_submission(self, pending_key: str, submission: PulseSubmission, future) -> None:
+    def _finish_pulse_submission(
+        self, pending_key: str, submission: PulseSubmission, future
+    ) -> None:
         try:
             exc = future.exception()
             if exc is None:

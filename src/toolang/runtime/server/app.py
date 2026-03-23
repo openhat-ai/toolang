@@ -9,7 +9,7 @@ from typing import AsyncIterator, Awaitable, Callable, Iterator
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from toolang.agent.prepared import PreparedAgent, prepare_agent
 from toolang.agent.registry import get_running_agent
@@ -17,7 +17,7 @@ from toolang.bus.events import utc_now
 from toolang.caps import load_prepared_caps
 from toolang.concepts.execution import RuntimeLoop
 from toolang.concepts.layout import AgentHome
-from toolang.concepts.persisted import ChannelsConfig
+from toolang.concepts.persisted import ChannelsConfig, PromptTrace
 from toolang.concepts.sandbox import SandboxSpec
 from toolang.errors import ToolangError
 from toolang.web import add_cors
@@ -27,11 +27,16 @@ from ..api_models import (
     AgentProfile,
     AgentRuntimeResponse,
     ChatRequest,
+    ChoreItem,
+    ChorePatchRequest,
+    ChorePutRequest,
     ChoreListResponse,
     ChatResponse,
     ChatThreadListResponse,
     ChatThreadResponse,
     EventListResponse,
+    PromptTraceItem,
+    RuntimeDiagnosticsResponse,
     RunDetailResponse,
     RunListResponse,
     RunRequest,
@@ -40,11 +45,23 @@ from ..api_models import (
     TaskPatchRequest,
     TaskPutRequest,
     TaskItem,
+    WillPatchRequest,
+    WillPutRequest,
     WillResponse,
 )
 from ..build import infer_model
 from ..host import RuntimeHost
-from ..work import list_chore_items, list_task_items, load_will_item, patch_task_item, put_task_item
+from ..work import (
+    list_chore_items,
+    list_task_items,
+    load_will_item,
+    patch_chore_item,
+    patch_task_item,
+    patch_will_item,
+    put_chore_item,
+    put_task_item,
+    put_will_item,
+)
 from .presenters import (
     SHORT_AGENT_ID_LENGTH,
     caps_response,
@@ -138,6 +155,10 @@ def create_agent_app(
         runtime_host.touch()
         return response
 
+    @app.exception_handler(ToolangError)
+    async def handle_toolang_error(_: Request, exc: ToolangError) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+
     @app.get("/healthz")
     def healthz() -> dict[str, object]:
         return {"ok": True, "agent": prepared.ref.name}
@@ -224,22 +245,46 @@ def create_agent_app(
         room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
         return ChoreListResponse(items=list_chore_items(room))
 
+    @app.put("/api/v1/chores/{chore_id:path}", response_model=ChoreItem)
+    def put_chore(chore_id: str, request: ChorePutRequest) -> ChoreItem:
+        room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
+        return put_chore_item(room, chore_id, request)
+
+    @app.patch("/api/v1/chores/{chore_id:path}", response_model=ChoreItem)
+    def patch_chore(chore_id: str, request: ChorePatchRequest) -> ChoreItem:
+        room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
+        return patch_chore_item(room, chore_id, request)
+
     @app.get("/api/v1/will", response_model=WillResponse)
     def get_will() -> WillResponse:
         room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
         return WillResponse(item=load_will_item(room, agent=prepared.ref))
+
+    @app.put("/api/v1/will", response_model=WillResponse)
+    def put_will(request: WillPutRequest) -> WillResponse:
+        room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
+        return WillResponse(item=put_will_item(room, request, agent=prepared.ref))
+
+    @app.patch("/api/v1/will", response_model=WillResponse)
+    def patch_will(request: WillPatchRequest) -> WillResponse:
+        room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
+        return WillResponse(item=patch_will_item(room, request, agent=prepared.ref))
 
     @app.get("/api/v1/chats", response_model=ChatThreadListResponse)
     def list_chats(limit: int = Query(50, ge=1, le=500)) -> ChatThreadListResponse:
         return ChatThreadListResponse(
             items=[
                 thread_item(item)
-                for item in runtime_host.chats.list_threads(agent_uri=prepared.ref.uri, limit=limit)
+                for item in runtime_host.chats.list_threads(
+                    agent_uri=prepared.ref.uri, limit=limit
+                )
             ]
         )
 
     @app.get("/api/v1/chats/{thread_id}", response_model=ChatThreadResponse)
-    def get_chat(thread_id: str, limit: int = Query(50, ge=1, le=500)) -> ChatThreadResponse:
+    def get_chat(
+        thread_id: str, limit: int = Query(50, ge=1, le=500)
+    ) -> ChatThreadResponse:
         thread = runtime_host.chats.get_thread(thread_id=thread_id)
         if thread is None or thread.agent_uri != prepared.ref.uri:
             raise HTTPException(status_code=404, detail="thread not found")
@@ -261,13 +306,19 @@ def create_agent_app(
             raise HTTPException(status_code=404, detail="run not found")
         children = [
             item
-            for item in runtime_host.bus.list_runs(agent_uri=prepared.ref.uri, limit=500)
+            for item in runtime_host.bus.list_runs(
+                agent_uri=prepared.ref.uri, limit=500
+            )
             if item.parent_run_id == run_id
         ]
-        events = runtime_host.bus.list_events(agent_uri=prepared.ref.uri, run_id=run_id, limit=500)
+        events = runtime_host.bus.list_events(
+            agent_uri=prepared.ref.uri, run_id=run_id, limit=500
+        )
         turn = None
         if run.thread_id:
-            loaded = runtime_host.chats.get_turn(thread_id=run.thread_id, turn_id=run_id)
+            loaded = runtime_host.chats.get_turn(
+                thread_id=run.thread_id, turn_id=run_id
+            )
             if loaded is not None:
                 turn = turn_item(loaded)
         return RunDetailResponse(
@@ -276,6 +327,15 @@ def create_agent_app(
             events=[event_item(item) for item in events],
             turn=turn,
         )
+
+    @app.get("/api/v1/runs/{run_id}/prompt", response_model=PromptTraceItem)
+    def get_run_prompt(run_id: str) -> PromptTraceItem:
+        room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
+        trace_path = room.prompt_trace_path(run_id)
+        if not trace_path.exists():
+            raise HTTPException(status_code=404, detail="prompt trace not found")
+        trace = PromptTrace.load(trace_path)
+        return PromptTraceItem.model_validate(trace.model_dump(mode="python"))
 
     @app.get("/api/v1/events", response_model=EventListResponse)
     def list_events(
@@ -317,7 +377,11 @@ def create_agent_app(
                 emitted = False
                 for row in rows:
                     last_emitted = row.event_id
-                    yield sse("event", event_item(row).model_dump(mode="json"), event_id=row.event_id)
+                    yield sse(
+                        "event",
+                        event_item(row).model_dump(mode="json"),
+                        event_id=row.event_id,
+                    )
                     emitted = True
                 now = asyncio.get_running_loop().time()
                 if (not emitted) and (now - last_ping_at >= SSE_PING_INTERVAL_SEC):
@@ -333,6 +397,13 @@ def create_agent_app(
                 "Connection": "keep-alive",
                 "X-Accel-Buffering": "no",
             },
+        )
+
+    @app.get("/api/v1/diagnostics", response_model=RuntimeDiagnosticsResponse)
+    @app.get("/api/v1/runtime/diagnostics", response_model=RuntimeDiagnosticsResponse)
+    def runtime_diagnostics() -> RuntimeDiagnosticsResponse:
+        return RuntimeDiagnosticsResponse.model_validate(
+            runtime_host.diagnostics_snapshot()
         )
 
     @app.post("/api/v1/chat", response_model=ChatResponse)
