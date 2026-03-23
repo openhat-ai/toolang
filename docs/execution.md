@@ -80,7 +80,7 @@ Toolang defines four runtime loops:
   - usually emits `chat` or `invoke`
 - `poll`
   - polls external channels
-  - usually emits `chat`
+  - usually emits `chat` or `task`
   - keeps one plugin-owned poll cursor per binding under `${AGENT_ROOM}/poll/`
 - `hook`
   - accepts hook deliveries

@@ -248,11 +248,11 @@ class RuntimeHost:
                     message=message,
                 ),
             )
-        if bound_delivery.origin == "invoke":
-            turn_request = TurnRequest(kind="invoke", thread_id=bound_delivery.thread_id)
+        if bound_delivery.origin in {"invoke", "task", "chore", "will"}:
+            turn_request = TurnRequest(kind=bound_delivery.origin, thread_id=bound_delivery.thread_id)
             return self.scheduler.submit(
                 turn_request,
-                lambda: self._run_inbound_invoke(
+                lambda: self._run_inbound_turn(
                     binding_name=binding_name,
                     delivery=bound_delivery,
                 ),
@@ -343,7 +343,7 @@ class RuntimeHost:
             )
         return result
 
-    def _run_inbound_invoke(
+    def _run_inbound_turn(
         self,
         *,
         binding_name: str,
@@ -351,19 +351,16 @@ class RuntimeHost:
     ) -> InvokeResult:
         current = prepare_agent(self.prepared.ref, cap_scopes=self.prepared.cap_scopes)
         thunk_name = _optional_text(delivery.meta.get("thunk"))
-        selected_thunk = (
-            current.program.get_thunk(thunk_name)
-            if thunk_name is not None
-            else current.program.default_thunk()
-        )
+        selected_thunk = _select_named_or_origin_thunk(current, thunk_name, delivery.origin)
         result = invoke_prepared_agent(
             current,
             selected_thunk,
             bus_db_path=self.bus_db_path,
             user_input=delivery.text,
             model=_optional_text(delivery.meta.get("model")),
-            origin="invoke",
+            origin=delivery.origin,
             thread_id=delivery.thread_id,
+            sender=delivery.sender,
             sandbox=self.sandbox,
             execution_store=self.execution,
             process_run_id=self.run_id,

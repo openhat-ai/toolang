@@ -47,8 +47,8 @@ Rules:
 - `start` launches the selected runtime-loop set in the background
 - current `run` and `start` surfaces always include the `server` loop because
   the long-lived runtime process is still hosted by the per-agent FastAPI app
-- `start` defaults to `server,poll`
-- `run` defaults to `server`
+- `start` defaults to `server,poll,pulse`
+- `run` defaults to `server,pulse`
 - grammar inspection belongs in the sibling grammar package, not in the
   Toolang runtime CLI
 
@@ -134,6 +134,9 @@ Endpoints:
 - `GET /api/v1/profile`
 - `GET /api/v1/runtime`
 - `GET /api/v1/caps`
+- `GET /api/v1/tasks`
+- `GET /api/v1/chores`
+- `GET /api/v1/will`
 - `POST /api/v1/chat`
 - `POST /api/v1/chat/stream`
 - `GET /api/v1/chats`
@@ -154,6 +157,12 @@ Responsibility summary:
   - current runtime environment and trust context
 - `/api/v1/caps`
   - synced capability metadata visible to the running agent
+- `/api/v1/tasks`
+  - local durable task documents under the agent room
+- `/api/v1/chores`
+  - local recurring chore documents under the agent room
+- `/api/v1/will`
+  - the local will document, if present
 - `/api/v1/chat*`
   - durable thread-based chat turns
 - `/api/v1/runs*`
