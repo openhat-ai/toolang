@@ -21,6 +21,8 @@ from toolang.concepts.persisted import (
     ChannelBinding,
     ChannelsConfig,
     ChoreFile,
+    HookBinding,
+    HooksConfig,
     PollState,
     TaskFile,
     WillFile,
@@ -54,6 +56,7 @@ def agents_db_path(root: Path) -> Path:
 def bus_events_db_path(root: Path) -> Path:
     return ToolangRoot.resolve(root).bus_events_db_path
 
+
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"
 
 
@@ -64,7 +67,9 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
     root = resolve_toolang_root(tmp_path / "toolang-root")
     home = root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "alice.too").write_text(SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     prepared = prepare_agent(agent)
@@ -107,13 +112,19 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
             "/api/v1/runtime",
             headers={"Origin": "http://localhost:3000"},
         )
-        assert cors_runtime.headers["access-control-allow-origin"] == "http://localhost:3000"
+        assert (
+            cors_runtime.headers["access-control-allow-origin"]
+            == "http://localhost:3000"
+        )
 
         cors_runtime_too_run = client.get(
             "/api/v1/runtime",
             headers={"Origin": "https://too.run"},
         )
-        assert cors_runtime_too_run.headers["access-control-allow-origin"] == "https://too.run"
+        assert (
+            cors_runtime_too_run.headers["access-control-allow-origin"]
+            == "https://too.run"
+        )
 
         pna_runtime = client.options(
             "/api/v1/runtime",
@@ -161,11 +172,16 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
         assert first_chat_body["thread_id"] == "owner"
         assert first_chat_body["message"]["parts"][0]["text"] == "chat:1:hello:gpt-5"
         first_run_id = first_chat_body["turn_id"]
-        first_trace = PromptTrace.load(agent_run_prompt_path(home, "alice", first_run_id))
+        first_trace = PromptTrace.load(
+            agent_run_prompt_path(home, "alice", first_run_id)
+        )
         assert first_trace.message_context is not None
         assert first_trace.message_context["channel"] == "api"
         assert first_trace.sandbox == "host"
-        assert first_trace.runtime_context["visible_caps"]["psyches"][0]["name"] == "reviewer"
+        assert (
+            first_trace.runtime_context["visible_caps"]["psyches"][0]["name"]
+            == "reviewer"
+        )
 
         second_chat = client.post(
             "/api/v1/chat",
@@ -181,7 +197,9 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
             json={"thread": "owner", "message": "stream me"},
         ) as response:
             assert response.status_code == 200
-            stream_text = "".join(chunk.decode("utf-8") for chunk in response.iter_raw())
+            stream_text = "".join(
+                chunk.decode("utf-8") for chunk in response.iter_raw()
+            )
         assert '"type":"start"' in stream_text
         assert '"type":"text-delta"' in stream_text
         assert "chat:5:stream me:gpt-5" in stream_text
@@ -250,7 +268,10 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
         assert len(runs) == 1
         assert runs[0].run_kind == "runtime"
         assert runs[0].status == "running"
-        assert {turn.turn_id for turn in turns} >= {first_run_id, run_response.json()["run_id"]}
+        assert {turn.turn_id for turn in turns} >= {
+            first_run_id,
+            run_response.json()["run_id"],
+        }
 
     assert get_running_agent(db_path, agent.uri) is None
     assert RunState.load(run_path).status == "stopped"
@@ -271,7 +292,9 @@ def test_create_agent_app_reports_docker_sandbox_state(
     root = resolve_toolang_root(tmp_path / "toolang-root")
     home = root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "alice.too").write_text(SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     prepared = prepare_agent(agent)
@@ -314,7 +337,9 @@ def test_create_agent_app_polls_channel_bindings_and_delivers_replies(
     root = resolve_toolang_root(tmp_path / "toolang-root")
     home = root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "alice.too").write_text(SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     prepared = prepare_agent(agent)
@@ -340,7 +365,9 @@ def test_create_agent_app_polls_channel_bindings_and_delivers_replies(
                         sender="owner",
                         thread_id="telegram:123",
                         text="hello from poll",
-                        reply_target=ReplyTarget(channel="telegram", address="chat:123"),
+                        reply_target=ReplyTarget(
+                            channel="telegram", address="chat:123"
+                        ),
                     )
                 ],
                 next_state=ChannelState(cursor="43"),
@@ -349,7 +376,9 @@ def test_create_agent_app_polls_channel_bindings_and_delivers_replies(
         def decode_hook(self, request):
             return None
 
-        def deliver(self, target: ReplyTarget, message: OutboundMessage) -> DeliveryResult:
+        def deliver(
+            self, target: ReplyTarget, message: OutboundMessage
+        ) -> DeliveryResult:
             self.deliveries.append((target, message))
             return DeliveryResult(ok=True, remote_id="99")
 
@@ -375,12 +404,18 @@ def test_create_agent_app_polls_channel_bindings_and_delivers_replies(
         sandbox="host",
         runtime_loops=("server", "poll"),
         channels_config=ChannelsConfig(
-            channels={"telegram": ChannelBinding(plugin="telegram", config={"token": "secret"})}
+            channels={
+                "telegram": ChannelBinding(
+                    plugin="telegram", config={"token": "secret"}
+                )
+            }
         ),
     )
 
     with TestClient(app):
-        _wait_for(lambda: len(fake_plugin.deliveries) == 1, label="telegram reply delivery")
+        _wait_for(
+            lambda: len(fake_plugin.deliveries) == 1, label="telegram reply delivery"
+        )
 
         execution = ExecutionStore(execution_db_path)
         runs = execution.list_runs(agent_uri=agent.uri)
@@ -403,7 +438,9 @@ def test_create_agent_app_polls_task_deliveries(tmp_path: Path, monkeypatch) -> 
     root = resolve_toolang_root(tmp_path / "toolang-root")
     home = root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "alice.too").write_text(SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     prepared = prepare_agent(agent)
@@ -435,7 +472,9 @@ def test_create_agent_app_polls_task_deliveries(tmp_path: Path, monkeypatch) -> 
         def decode_hook(self, request):
             return None
 
-        def deliver(self, target: ReplyTarget, message: OutboundMessage) -> DeliveryResult:
+        def deliver(
+            self, target: ReplyTarget, message: OutboundMessage
+        ) -> DeliveryResult:
             return DeliveryResult(ok=True)
 
         def health(self) -> PluginHealth:
@@ -447,7 +486,9 @@ def test_create_agent_app_polls_task_deliveries(tmp_path: Path, monkeypatch) -> 
     )
     monkeypatch.setattr(
         "toolang.runtime.invoke.execute_prompt_build",
-        lambda build: f"tasked:{build.runtime_context['origin']}:{build.raw_input}:{build.model}",
+        lambda build: (
+            f"tasked:{build.runtime_context['origin']}:{build.raw_input}:{build.model}"
+        ),
     )
 
     app = create_agent_app(
@@ -459,7 +500,9 @@ def test_create_agent_app_polls_task_deliveries(tmp_path: Path, monkeypatch) -> 
         sandbox="host",
         runtime_loops=("server", "poll"),
         channels_config=ChannelsConfig(
-            channels={"linear": ChannelBinding(plugin="linear", config={"token": "secret"})}
+            channels={
+                "linear": ChannelBinding(plugin="linear", config={"token": "secret"})
+            }
         ),
     )
 
@@ -480,14 +523,19 @@ def test_create_agent_app_polls_task_deliveries(tmp_path: Path, monkeypatch) -> 
     assert len(task_turns) == 1
     assert task_turns[0].thread_id == "task:linear/42"
     assert task_turns[0].sender == "service"
-    assert task_turns[0].output_text == "tasked:task:Investigate the regression and report back.:gpt-5"
+    assert (
+        task_turns[0].output_text
+        == "tasked:task:Investigate the regression and report back.:gpt-5"
+    )
 
 
 def test_create_agent_app_lists_local_work_documents(tmp_path: Path) -> None:
     root = resolve_toolang_root(tmp_path / "toolang-root")
     home = root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "alice.too").write_text(SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
 
     room = AgentHome.resolve(home).room("alice")
     TaskFile(
@@ -590,7 +638,9 @@ def test_create_agent_app_puts_and_patches_local_tasks(tmp_path: Path) -> None:
     root = resolve_toolang_root(tmp_path / "toolang-root")
     home = root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "alice.too").write_text(SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
     prepared = prepare_agent(agent)
@@ -646,11 +696,255 @@ def test_create_agent_app_puts_and_patches_local_tasks(tmp_path: Path) -> None:
     assert "Started working on the outline." in saved.body
 
 
+def test_create_agent_app_puts_and_patches_local_chores_and_will(
+    tmp_path: Path,
+) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    prepared = prepare_agent(agent)
+    room = AgentHome.resolve(home).room("alice")
+
+    app = create_agent_app(
+        prepared,
+        agents_db_path=agents_db_path(root),
+        bus_db_path=bus_events_db_path(root),
+        host="127.0.0.1",
+        port=8771,
+        sandbox="host",
+    )
+
+    with TestClient(app) as client:
+        created_chore = client.put(
+            "/api/v1/chores/maintenance/sync",
+            json={
+                "title": "Sync maintenance",
+                "body": "Refresh the maintenance plan.",
+                "interval_sec": 1800,
+                "thunk": "chore",
+                "model": "gpt-5.3",
+            },
+        )
+        assert created_chore.status_code == 200
+        assert created_chore.json()["id"] == "maintenance/sync"
+        assert created_chore.json()["thread_id"] == "chore:maintenance/sync"
+        assert created_chore.json()["path"] == str(
+            room.chores_dir / "maintenance" / "sync.md"
+        )
+
+        patched_chore = client.patch(
+            "/api/v1/chores/maintenance/sync",
+            json={
+                "interval_sec": 900,
+                "body_append": "Also refresh labels.",
+                "paused": True,
+                "thread_id": "chore:maintenance/custom",
+            },
+        )
+        assert patched_chore.status_code == 200
+        assert patched_chore.json()["interval_sec"] == 900
+        assert patched_chore.json()["paused"] is True
+        assert patched_chore.json()["thread_id"] == "chore:maintenance/custom"
+
+        created_will = client.put(
+            "/api/v1/will",
+            json={
+                "title": "Stay aligned",
+                "body": "Review the current milestone and choose the next move.",
+                "interval_sec": 3600,
+                "thunk": "will",
+            },
+        )
+        assert created_will.status_code == 200
+        assert created_will.json()["item"]["path"] == str(room.will_path)
+        assert created_will.json()["item"]["thread_id"] == f"will:{agent.id}"
+
+        patched_will = client.patch(
+            "/api/v1/will",
+            json={
+                "interval_sec": 7200,
+                "body_append": "Prefer quieter work in the afternoon.",
+                "paused": True,
+                "thread_id": "will:custom",
+                "model": "gpt-5.3",
+            },
+        )
+        assert patched_will.status_code == 200
+        assert patched_will.json()["item"]["interval_sec"] == 7200
+        assert patched_will.json()["item"]["paused"] is True
+        assert patched_will.json()["item"]["thread_id"] == "will:custom"
+        assert patched_will.json()["item"]["model"] == "gpt-5.3"
+
+        chores = client.get("/api/v1/chores")
+        assert chores.status_code == 200
+        assert chores.json()["items"][0]["id"] == "maintenance/sync"
+        assert chores.json()["items"][0]["interval_sec"] == 900
+        assert chores.json()["items"][0]["paused"] is True
+
+        will = client.get("/api/v1/will")
+        assert will.status_code == 200
+        assert will.json()["item"]["interval_sec"] == 7200
+        assert will.json()["item"]["paused"] is True
+
+    saved_chore = ChoreFile.load(room.chores_dir / "maintenance" / "sync.md")
+    assert saved_chore.title == "Sync maintenance"
+    assert saved_chore.interval_sec == 900
+    assert saved_chore.thread_id == "chore:maintenance/custom"
+    assert saved_chore.paused is True
+    assert "Also refresh labels." in saved_chore.body
+
+    saved_will = WillFile.load(room.will_path)
+    assert saved_will.title == "Stay aligned"
+    assert saved_will.interval_sec == 7200
+    assert saved_will.thread_id == "will:custom"
+    assert saved_will.paused is True
+    assert saved_will.model == "gpt-5.3"
+    assert "Prefer quieter work in the afternoon." in saved_will.body
+
+
+def test_create_agent_app_exposes_prompt_trace_and_runtime_diagnostics(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    room = AgentHome.resolve(home).room("alice")
+    AgentHome.resolve(home).ensure_layout(agent_name="alice")
+    HooksConfig(
+        hooks={
+            "incoming": HookBinding(
+                path="/hooks/incoming",
+                plugin="webhook",
+            )
+        }
+    ).save(AgentHome.resolve(home).hooks_config_path)
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    prepared = prepare_agent(agent)
+    poll_state_path = room.poll_state_path("telegram")
+
+    class HealthyTelegramPlugin:
+        def poll(self, state: ChannelState) -> PollResult:
+            return PollResult(
+                next_state=ChannelState(cursor="cursor-1", meta={"seen": 1}),
+            )
+
+        def decode_hook(self, request):
+            return None
+
+        def deliver(
+            self, target: ReplyTarget, message: OutboundMessage
+        ) -> DeliveryResult:
+            return DeliveryResult(ok=True)
+
+        def health(self) -> PluginHealth:
+            return PluginHealth(ok=True, detail="ready", meta={"binding": "telegram"})
+
+    fake_plugin = HealthyTelegramPlugin()
+    monkeypatch.setattr(
+        "toolang.runtime.host.create_channel_plugin",
+        lambda plugin, *, config=None: fake_plugin,
+    )
+    monkeypatch.setattr(
+        "toolang.runtime.invoke.execute_prompt_build",
+        lambda build: f"invoke:{build.raw_input}:{build.model}",
+    )
+
+    app = create_agent_app(
+        prepared,
+        agents_db_path=agents_db_path(root),
+        bus_db_path=bus_events_db_path(root),
+        host="127.0.0.1",
+        port=8772,
+        sandbox="host",
+        runtime_loops=("server", "poll", "pulse"),
+        channels_config=ChannelsConfig(
+            channels={
+                "telegram": ChannelBinding(
+                    plugin="telegram", config={"token": "secret"}
+                )
+            }
+        ),
+    )
+
+    with TestClient(app) as client:
+        run_response = client.post("/api/v1/runs", json={"input": "hello"})
+        assert run_response.status_code == 200
+        run_id = run_response.json()["run_id"]
+
+        _wait_for(
+            lambda: (
+                poll_state_path.exists()
+                and PollState.load(poll_state_path).cursor == "cursor-1"
+            ),
+            label="telegram poll state",
+        )
+
+        prompt = client.get(f"/api/v1/runs/{run_id}/prompt")
+        assert prompt.status_code == 200
+        assert prompt.json()["run_id"] == run_id
+        assert prompt.json()["raw_input"] == "hello"
+        assert prompt.json()["model"] == "gpt-5"
+
+        diagnostics = client.get("/api/v1/diagnostics")
+        assert diagnostics.status_code == 200
+        diagnostics_alias = client.get("/api/v1/runtime/diagnostics")
+        assert diagnostics_alias.status_code == 200
+        assert diagnostics_alias.json() == diagnostics.json()
+
+    body = diagnostics.json()
+    assert body["runtime_loops"] == ["server", "poll", "pulse"]
+    assert body["hook_loop_enabled"] is False
+    assert {item["kind"] for item in body["scheduler"]["thread_groups"]} == {
+        "invoke",
+        "chat",
+        "task",
+        "chore",
+        "will",
+    }
+    assert body["channels"] == [
+        {
+            "name": "telegram",
+            "plugin": "telegram",
+            "ok": True,
+            "detail": "ready",
+            "meta": {"binding": "telegram"},
+            "poll_state_path": str(poll_state_path),
+            "poll_cursor": "cursor-1",
+            "poll_meta": {"seen": 1},
+        }
+    ]
+    assert body["hooks"] == [
+        {
+            "name": "incoming",
+            "path": "/hooks/incoming",
+            "method": "POST",
+            "plugin": "webhook",
+        }
+    ]
+    assert body["pulse"] == {
+        "state_path": str(room.pulse_state_path),
+        "pending": [],
+    }
+
+
 def test_run_process_writes_stopped_state_after_termination(tmp_path: Path) -> None:
     root = resolve_toolang_root(tmp_path / "toolang-root")
     home = root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "alice.too").write_text(SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
 
     run_path = agent_run_path(home, "alice")
     db_path = agents_db_path(root)

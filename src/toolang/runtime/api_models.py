@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from pydantic import BaseModel, Field
+from toolang.concepts.persisted.prompt_trace import PromptTrace as PersistedPromptTrace
 from toolang.concepts.persisted.work import TaskStatus
 
 
@@ -160,6 +161,31 @@ class TaskPatchRequest(BaseModel):
     paused: bool | None = None
 
 
+class ChorePutRequest(BaseModel):
+    """Full chore document written through the runtime API."""
+
+    title: str | None = None
+    body: str = ""
+    thread_id: str | None = None
+    interval_sec: int = Field(default=300, ge=1)
+    thunk: str | None = None
+    model: str | None = None
+    paused: bool = False
+
+
+class ChorePatchRequest(BaseModel):
+    """Partial chore document update written through the runtime API."""
+
+    title: str | None = None
+    body: str | None = None
+    body_append: str | None = None
+    thread_id: str | None = None
+    interval_sec: int | None = Field(default=None, ge=1)
+    thunk: str | None = None
+    model: str | None = None
+    paused: bool | None = None
+
+
 class WillItem(BaseModel):
     """The local will document shown by the runtime API."""
 
@@ -176,6 +202,31 @@ class WillItem(BaseModel):
     last_run_id: str | None = None
     next_due_at: str | None = None
     updated_at: str | None = None
+    paused: bool | None = None
+
+
+class WillPutRequest(BaseModel):
+    """Full will document written through the runtime API."""
+
+    title: str | None = None
+    body: str = ""
+    thread_id: str | None = None
+    interval_sec: int = Field(default=300, ge=1)
+    thunk: str | None = None
+    model: str | None = None
+    paused: bool = False
+
+
+class WillPatchRequest(BaseModel):
+    """Partial will document update written through the runtime API."""
+
+    title: str | None = None
+    body: str | None = None
+    body_append: str | None = None
+    thread_id: str | None = None
+    interval_sec: int | None = Field(default=None, ge=1)
+    thunk: str | None = None
+    model: str | None = None
     paused: bool | None = None
 
 
@@ -224,6 +275,10 @@ class WillResponse(BaseModel):
     item: WillItem | None = None
 
 
+class PromptTraceItem(PersistedPromptTrace):
+    """Prompt trace payload returned by the runtime API."""
+
+
 class ChatTurnItem(BaseModel):
     """One stored turn within a chat thread."""
 
@@ -257,6 +312,63 @@ class EventListResponse(BaseModel):
     """Collection response for event listings."""
 
     items: list[EventItem]
+
+
+class SchedulerThreadGroupDiagnostics(BaseModel):
+    """Concurrency diagnostics for one scheduler thread group."""
+
+    kind: str
+    limit: int
+    in_flight: int
+    available: int
+
+
+class SchedulerDiagnostics(BaseModel):
+    """Runtime scheduler diagnostics."""
+
+    max_workers: int
+    tracked_threads: int
+    thread_groups: list[SchedulerThreadGroupDiagnostics] = Field(default_factory=list)
+
+
+class ChannelDiagnostics(BaseModel):
+    """Runtime diagnostics for one configured channel binding."""
+
+    name: str
+    plugin: str
+    ok: bool | None = None
+    detail: str | None = None
+    meta: dict[str, Any] = Field(default_factory=dict)
+    poll_state_path: str | None = None
+    poll_cursor: str | None = None
+    poll_meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class HookDiagnostics(BaseModel):
+    """Runtime diagnostics for one configured hook binding."""
+
+    name: str
+    path: str
+    method: str
+    plugin: str
+
+
+class PulseDiagnostics(BaseModel):
+    """Runtime diagnostics for pulse submissions."""
+
+    state_path: str
+    pending: list[str] = Field(default_factory=list)
+
+
+class RuntimeDiagnosticsResponse(BaseModel):
+    """Operational diagnostics returned by the runtime API."""
+
+    runtime_loops: list[str] = Field(default_factory=list)
+    hook_loop_enabled: bool = False
+    scheduler: SchedulerDiagnostics
+    channels: list[ChannelDiagnostics] = Field(default_factory=list)
+    hooks: list[HookDiagnostics] = Field(default_factory=list)
+    pulse: PulseDiagnostics | None = None
 
 
 class RunItem(BaseModel):
