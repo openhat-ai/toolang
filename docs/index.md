@@ -30,6 +30,10 @@ Generated implementation reference does not live here. It belongs under
   - inbox and scheduler model for long-lived runtimes
   - chat, task, chore, invoke, and will as turn-request sources
   - minimal agent collaboration through chat and task
+- [tasks.md](./tasks.md)
+  - task as one cross-provider collaboration primitive
+  - local markdown task-file rules
+  - built-in task prompt and task-service expectations
 - [api.md](./api.md)
   - CLI surface
   - registry state

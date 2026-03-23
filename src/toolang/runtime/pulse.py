@@ -47,14 +47,12 @@ def collect_pulse_submissions(
 
     task_items: dict[str, PulseItemState] = {}
     for path in _markdown_paths(room.tasks_dir):
-        key = _work_key(room.tasks_dir, path)
-        task = TaskFile.load(path)
-        item_state = state.tasks.get(key, PulseItemState())
-        task_items[key] = _next_task_state(
-            key=key,
+        task = TaskFile.load(path, persist_id=True)
+        task_id = task.task_id()
+        item_state = state.tasks.get(task_id, PulseItemState())
+        task_items[task_id] = _next_task_state(
             task=task,
             path=path,
-            agent=agent,
             state=item_state,
             now=current,
             pending_keys=blocked,
@@ -98,23 +96,18 @@ def collect_pulse_submissions(
 
 def _next_task_state(
     *,
-    key: str,
     task: TaskFile,
     path: Path,
-    agent: AgentRef,
     state: PulseItemState,
     now: datetime,
     pending_keys: set[str],
     submissions: list[PulseSubmission],
 ) -> PulseItemState:
+    task_id = task.task_id()
     content_hash = task.content_hash()
     next_state = state.model_copy(update={"content_hash": content_hash})
-    active = (
-        not task.paused
-        and not task_terminal(task.status)
-        and _task_matches_agent(task, agent)
-    )
-    pending_key = f"task:{key}"
+    active = not task.paused and not task_terminal(task.status)
+    pending_key = f"task:{task_id}"
     if pending_key in pending_keys:
         if active and state.content_hash != content_hash:
             return state
@@ -123,11 +116,9 @@ def _next_task_state(
         submissions.append(
             PulseSubmission(
                 kind="task",
-                key=key,
-                thread_id=task.effective_thread_id(f"task:{key}"),
-                text=task.render_input(fallback_title=path.stem),
-                thunk=task.thunk,
-                model=task.model,
+                key=task_id,
+                thread_id=task.thread_id(),
+                text=task.render_input(fallback_name=path.stem),
             )
         )
         return next_state.model_copy(update={"last_enqueued_at": now})
@@ -189,16 +180,6 @@ def _next_scheduled_state(
             "next_due_at": now + timedelta(seconds=document.interval_sec),
         }
     )
-
-
-def _task_matches_agent(task: TaskFile, agent: AgentRef) -> bool:
-    assignee = (task.assignee or "").strip()
-    if not assignee:
-        return True
-    if assignee == "self":
-        return True
-    return assignee in {agent.uri, agent.id, agent.id[:12], agent.name}
-
 
 def _markdown_paths(root: Path) -> list[Path]:
     if not root.exists():

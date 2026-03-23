@@ -118,12 +118,11 @@ class TaskItem(BaseModel):
     """One local task entry shown by the runtime API."""
 
     id: str
-    title: str | None = None
+    name: str
+    body: str
     status: str
-    assignee: str | None = None
+    requester: str | None = None
     thread_id: str
-    thunk: str | None = None
-    model: str | None = None
     path: str
     last_enqueued_at: str | None = None
     last_started_at: str | None = None
@@ -137,27 +136,20 @@ class TaskItem(BaseModel):
 class TaskPutRequest(BaseModel):
     """Full task document written through the runtime API."""
 
-    title: str | None = None
+    id: str | None = None
     body: str = ""
-    status: TaskStatus = "open"
-    assignee: str | None = None
-    thread_id: str | None = None
-    thunk: str | None = None
-    model: str | None = None
+    status: TaskStatus = "todo"
+    requester: str | None = None
     paused: bool = False
 
 
 class TaskPatchRequest(BaseModel):
     """Partial task document update written through the runtime API."""
 
-    title: str | None = None
     body: str | None = None
     body_append: str | None = None
     status: TaskStatus | None = None
-    assignee: str | None = None
-    thread_id: str | None = None
-    thunk: str | None = None
-    model: str | None = None
+    requester: str | None = None
     paused: bool | None = None
 
 
