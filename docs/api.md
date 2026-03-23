@@ -158,11 +158,13 @@ Responsibility summary:
 - `/api/v1/caps`
   - synced capability metadata visible to the running agent
 - `/api/v1/tasks`
-  - local durable task documents under the agent room
+  - local durable task documents under the agent room, plus latest pulse
+    scheduler feedback when available
 - `/api/v1/chores`
-  - local recurring chore documents under the agent room
+  - local recurring chore documents under the agent room, plus latest pulse
+    scheduler feedback when available
 - `/api/v1/will`
-  - the local will document, if present
+  - the local will document, if present, plus latest pulse scheduler feedback
 - `/api/v1/chat*`
   - durable thread-based chat turns
 - `/api/v1/runs*`

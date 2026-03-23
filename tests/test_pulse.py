@@ -107,6 +107,13 @@ def test_create_agent_app_processes_pulse_work_files(tmp_path: Path, monkeypatch
     assert {turn.origin for turn in turns} >= {"task", "chore", "will"}
     assert {turn.sender for turn in turns if turn.origin in {"task", "chore", "will"}} == {"self"}
     assert pulse_state_path(home, "alice").exists()
+    pulse_state = PulseState.load(pulse_state_path(home, "alice"))
+    assert pulse_state.tasks["review"].last_started_at is not None
+    assert pulse_state.tasks["review"].last_finished_at is not None
+    assert pulse_state.tasks["review"].last_status == "finished"
+    assert pulse_state.tasks["review"].last_run_id is not None
+    assert pulse_state.chores["refresh"].last_status == "finished"
+    assert pulse_state.will.last_status == "finished"
 
 
 def _turn_origins(execution: ExecutionStore, agent_uri: str) -> set[str]:

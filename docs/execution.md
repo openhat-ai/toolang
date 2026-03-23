@@ -405,7 +405,8 @@ Recommended runtime state in the agent room:
 - `poll/`
 - `hooks/`
 - `pulse.json`
-  - persisted scheduling state for task, chore, and will scans
+  - persisted scheduling state plus latest run feedback for task, chore, and
+    will scans
 
 Current pulse-loop behavior:
 

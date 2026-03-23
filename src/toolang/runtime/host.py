@@ -6,6 +6,7 @@ from dataclasses import replace
 import threading
 import traceback
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from toolang.agent.prepared import PreparedAgent, prepare_agent
@@ -14,7 +15,7 @@ from toolang.channels import ChannelPlugin, ChannelState, create_channel_plugin
 from toolang.concepts.channel import InboundDelivery, OutboundMessage, ReplyTarget
 from toolang.concepts.execution import Message, RuntimeLoop
 from toolang.concepts.layout import AgentHome
-from toolang.concepts.persisted import ChannelBinding, ChannelsConfig, PollState, PulseState
+from toolang.concepts.persisted import ChannelBinding, ChannelsConfig, PollState, PulseItemState, PulseState
 from toolang.concepts.sandbox import SandboxSpec
 from toolang.errors import ToolangError
 from toolang.program.ast import Thunk
@@ -76,9 +77,11 @@ class RuntimeHost:
         self._bus: BusStore | None = None
         self._chats: ChatStore | None = None
         self._execution: ExecutionStore | None = None
+        self._room = None
         self._channel_plugins: dict[str, ChannelPlugin] = {}
         self._pulse_pending: set[str] = set()
         self._pulse_pending_lock = threading.Lock()
+        self._pulse_state_lock = threading.Lock()
         self._stop_event: threading.Event | None = None
         self._threads: list[threading.Thread] = []
         self._started = False
@@ -107,6 +110,7 @@ class RuntimeHost:
         if self._started:
             return
         room = AgentHome.resolve(self.prepared.ref.home).room(self.prepared.ref.name)
+        self._room = room
         self._bus = BusStore(self.bus_db_path)
         self._chats = ChatStore(room.chats_db_path)
         self._execution = ExecutionStore(room.execution_db_path)
@@ -183,6 +187,7 @@ class RuntimeHost:
             self._execution = None
             self._channel_plugins = {}
             self._pulse_pending = set()
+            self._room = None
             self._stop_event = None
             self._started = False
 
@@ -461,7 +466,7 @@ class RuntimeHost:
         state_path = room.pulse_state_path
         while not stop_event.is_set():
             try:
-                persisted = PulseState.load(state_path) if state_path.exists() else PulseState()
+                persisted = self._load_pulse_state(state_path)
                 next_state, submissions = collect_pulse_submissions(
                     room,
                     self.prepared.ref,
@@ -469,7 +474,7 @@ class RuntimeHost:
                     pending_keys=self._pulse_pending_keys(),
                 )
                 if next_state != persisted:
-                    next_state.save(state_path)
+                    self._save_pulse_state(state_path, next_state)
                 for submission in submissions:
                     self._submit_pulse(submission)
                 stop_event.wait(PULSE_SCAN_INTERVAL_SEC)
@@ -486,6 +491,13 @@ class RuntimeHost:
         pending_key = f"{submission.kind}:{submission.key}"
         if not self._mark_pulse_pending(pending_key):
             return
+        self._update_pulse_item(
+            submission.kind,
+            submission.key,
+            last_started_at=_utc_datetime_now(),
+            last_status=None,
+            last_run_id=None,
+        )
         future = self.scheduler.submit_async(
             TurnRequest(kind=submission.kind, thread_id=submission.thread_id),
             lambda: self._run_self_turn(
@@ -496,7 +508,9 @@ class RuntimeHost:
                 model=submission.model,
             ),
         )
-        future.add_done_callback(lambda _future: self._clear_pulse_pending(pending_key))
+        future.add_done_callback(
+            lambda completed: self._finish_pulse_submission(pending_key, submission, completed)
+        )
 
     def _pulse_pending_keys(self) -> set[str]:
         with self._pulse_pending_lock:
@@ -512,6 +526,59 @@ class RuntimeHost:
     def _clear_pulse_pending(self, pending_key: str) -> None:
         with self._pulse_pending_lock:
             self._pulse_pending.discard(pending_key)
+
+    def _finish_pulse_submission(self, pending_key: str, submission: PulseSubmission, future) -> None:
+        try:
+            exc = future.exception()
+            if exc is None:
+                result = future.result()
+                self._update_pulse_item(
+                    submission.kind,
+                    submission.key,
+                    last_finished_at=_utc_datetime_now(),
+                    last_status="finished",
+                    last_run_id=result.run_id,
+                )
+            else:
+                self._update_pulse_item(
+                    submission.kind,
+                    submission.key,
+                    last_finished_at=_utc_datetime_now(),
+                    last_status="failed",
+                )
+        finally:
+            self._clear_pulse_pending(pending_key)
+
+    def _update_pulse_item(self, kind: TurnRequestKind, key: str, **changes) -> None:
+        room = self._require_room()
+        state_path = room.pulse_state_path
+        state = self._load_pulse_state(state_path)
+        if kind == "task":
+            current = state.tasks.get(key, PulseItemState())
+            state.tasks[key] = current.model_copy(update=changes)
+        elif kind == "chore":
+            current = state.chores.get(key, PulseItemState())
+            state.chores[key] = current.model_copy(update=changes)
+        elif kind == "will":
+            state.will = state.will.model_copy(update=changes)
+        else:
+            return
+        self._save_pulse_state(state_path, state)
+
+    def _load_pulse_state(self, state_path: Path) -> PulseState:
+        with self._pulse_state_lock:
+            if state_path.exists():
+                return PulseState.load(state_path)
+            return PulseState()
+
+    def _save_pulse_state(self, state_path: Path, state: PulseState) -> None:
+        with self._pulse_state_lock:
+            state.save(state_path)
+
+    def _require_room(self):
+        if self._room is None:
+            raise ToolangError("Runtime host has not been started.")
+        return self._room
 
 
 def _select_chat_thunk(prepared: PreparedAgent, thunk_name: str | None) -> Thunk:
@@ -545,3 +612,7 @@ def _optional_text(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _utc_datetime_now() -> datetime:
+    return datetime.now(timezone.utc)

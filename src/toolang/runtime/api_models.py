@@ -102,6 +102,12 @@ class ChoreItem(BaseModel):
     thunk: str | None = None
     model: str | None = None
     path: str
+    last_enqueued_at: str | None = None
+    last_started_at: str | None = None
+    last_finished_at: str | None = None
+    last_status: str | None = None
+    last_run_id: str | None = None
+    next_due_at: str | None = None
     updated_at: str | None = None
     paused: bool | None = None
 
@@ -117,6 +123,11 @@ class TaskItem(BaseModel):
     thunk: str | None = None
     model: str | None = None
     path: str
+    last_enqueued_at: str | None = None
+    last_started_at: str | None = None
+    last_finished_at: str | None = None
+    last_status: str | None = None
+    last_run_id: str | None = None
     updated_at: str | None = None
     paused: bool | None = None
 
@@ -130,6 +141,12 @@ class WillItem(BaseModel):
     thunk: str | None = None
     model: str | None = None
     path: str
+    last_enqueued_at: str | None = None
+    last_started_at: str | None = None
+    last_finished_at: str | None = None
+    last_status: str | None = None
+    last_run_id: str | None = None
+    next_due_at: str | None = None
     updated_at: str | None = None
     paused: bool | None = None
 

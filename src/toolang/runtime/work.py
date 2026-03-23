@@ -7,7 +7,7 @@ from pathlib import Path
 
 from toolang.concepts.identity import AgentRef
 from toolang.concepts.layout import AgentRoom
-from toolang.concepts.persisted import ChoreFile, TaskFile, WillFile
+from toolang.concepts.persisted import ChoreFile, PulseItemState, PulseState, TaskFile, WillFile
 
 from .api_models import ChoreItem, TaskItem, WillItem
 
@@ -15,6 +15,7 @@ from .api_models import ChoreItem, TaskItem, WillItem
 def list_task_items(room: AgentRoom) -> list[TaskItem]:
     """Return local task documents under one agent room."""
 
+    pulse_state = _load_pulse_state(room)
     return [
         TaskItem(
             id=_work_key(room.tasks_dir, path),
@@ -25,6 +26,11 @@ def list_task_items(room: AgentRoom) -> list[TaskItem]:
             thunk=document.thunk,
             model=document.model,
             path=str(path),
+            last_enqueued_at=_iso(pulse_state.tasks.get(_work_key(room.tasks_dir, path), PulseItemState()).last_enqueued_at),
+            last_started_at=_iso(pulse_state.tasks.get(_work_key(room.tasks_dir, path), PulseItemState()).last_started_at),
+            last_finished_at=_iso(pulse_state.tasks.get(_work_key(room.tasks_dir, path), PulseItemState()).last_finished_at),
+            last_status=pulse_state.tasks.get(_work_key(room.tasks_dir, path), PulseItemState()).last_status,
+            last_run_id=pulse_state.tasks.get(_work_key(room.tasks_dir, path), PulseItemState()).last_run_id,
             updated_at=_updated_at(path),
             paused=document.paused,
         )
@@ -35,6 +41,7 @@ def list_task_items(room: AgentRoom) -> list[TaskItem]:
 def list_chore_items(room: AgentRoom) -> list[ChoreItem]:
     """Return local chore documents under one agent room."""
 
+    pulse_state = _load_pulse_state(room)
     return [
         ChoreItem(
             id=_work_key(room.chores_dir, path),
@@ -44,6 +51,12 @@ def list_chore_items(room: AgentRoom) -> list[ChoreItem]:
             thunk=document.thunk,
             model=document.model,
             path=str(path),
+            last_enqueued_at=_iso(pulse_state.chores.get(_work_key(room.chores_dir, path), PulseItemState()).last_enqueued_at),
+            last_started_at=_iso(pulse_state.chores.get(_work_key(room.chores_dir, path), PulseItemState()).last_started_at),
+            last_finished_at=_iso(pulse_state.chores.get(_work_key(room.chores_dir, path), PulseItemState()).last_finished_at),
+            last_status=pulse_state.chores.get(_work_key(room.chores_dir, path), PulseItemState()).last_status,
+            last_run_id=pulse_state.chores.get(_work_key(room.chores_dir, path), PulseItemState()).last_run_id,
+            next_due_at=_iso(pulse_state.chores.get(_work_key(room.chores_dir, path), PulseItemState()).next_due_at),
             updated_at=_updated_at(path),
             paused=document.paused,
         )
@@ -58,6 +71,8 @@ def load_will_item(room: AgentRoom, *, agent: AgentRef) -> WillItem | None:
     if not path.exists():
         return None
     document = WillFile.load(path)
+    pulse_state = _load_pulse_state(room)
+    state = pulse_state.will
     return WillItem(
         title=document.title,
         thread_id=document.effective_thread_id(f"will:{agent.id}"),
@@ -65,6 +80,12 @@ def load_will_item(room: AgentRoom, *, agent: AgentRef) -> WillItem | None:
         thunk=document.thunk,
         model=document.model,
         path=str(path),
+        last_enqueued_at=_iso(state.last_enqueued_at),
+        last_started_at=_iso(state.last_started_at),
+        last_finished_at=_iso(state.last_finished_at),
+        last_status=state.last_status,
+        last_run_id=state.last_run_id,
+        next_due_at=_iso(state.next_due_at),
         updated_at=_updated_at(path),
         paused=document.paused,
     )
@@ -87,3 +108,16 @@ def _work_key(root: Path, path: Path) -> str:
 def _updated_at(path: Path) -> str:
     modified = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
     return modified.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _load_pulse_state(room: AgentRoom) -> PulseState:
+    path = room.pulse_state_path
+    if not path.exists():
+        return PulseState()
+    return PulseState.load(path)
+
+
+def _iso(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
