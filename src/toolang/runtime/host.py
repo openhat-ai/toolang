@@ -11,10 +11,11 @@ from pathlib import Path
 
 from toolang.agent.prepared import PreparedAgent, prepare_agent
 from toolang.bus.db import BusStore
+from toolang.caps import load_prepared_caps
 from toolang.channels import ChannelPlugin, ChannelState, create_channel_plugin
 from toolang.concepts.channel import InboundDelivery, OutboundMessage, ReplyTarget
 from toolang.concepts.execution import Message, RuntimeLoop
-from toolang.concepts.layout import AgentHome
+from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.concepts.persisted import (
     ChannelBinding,
     ChannelsConfig,
@@ -282,10 +283,51 @@ class RuntimeHost:
         return {
             "runtime_loops": list(self.runtime_loops),
             "hook_loop_enabled": "hook" in self.runtime_loops,
+            "security": self.security_snapshot(),
             "scheduler": self.scheduler.snapshot(),
             "channels": channels,
             "hooks": hooks,
             "pulse": pulse,
+        }
+
+    def security_snapshot(
+        self, *, prepared: PreparedAgent | None = None
+    ) -> dict[str, object]:
+        """Return one structured security snapshot for the active runtime."""
+
+        current = prepared or self.prepared
+        room = self._require_room()
+        spec = SandboxSpec.parse(self.sandbox)
+        visible_caps = load_prepared_caps(current)
+        pulse_enabled = "pulse" in self.runtime_loops
+        return {
+            "sandbox": _sandbox_security_snapshot(
+                spec=spec,
+                prepared=current,
+                room=room,
+            ),
+            "tools": {
+                "filesystem": False,
+                "shell": False,
+                "browser_use": False,
+                "computer_use": False,
+                "services_use": bool(visible_caps.services),
+                "web_search": False,
+                "mem_search": False,
+                "file_search": False,
+            },
+            "autonomy": {
+                "chores_enabled": pulse_enabled,
+                "tasks_enabled": pulse_enabled,
+                "will_enabled": pulse_enabled,
+                "will_path_exists": room.will_path.exists(),
+            },
+            "self_modification": {
+                "can_add_caps": False,
+                "can_edit_will": False,
+                "can_write_source": False,
+                "can_persist_changes": False,
+            },
         }
 
     def submit_chat(self, request: ChatRequest) -> ChatResult:
@@ -733,3 +775,47 @@ def _optional_text(value: object) -> str | None:
 
 def _utc_datetime_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _sandbox_security_snapshot(
+    *,
+    spec: SandboxSpec,
+    prepared: PreparedAgent,
+    room,
+) -> dict[str, object]:
+    if spec.kind != "docker":
+        return {
+            "image": None,
+            "volumes": [],
+            "network_mode": "host",
+            "bridge": None,
+            "dns": [],
+            "host_reachability": True,
+        }
+
+    root = ToolangRoot.resolve(prepared.ref.root)
+    stage_dir = root.sandbox_dir(_sandbox_key(prepared.ref.name, prepared.ref.id))
+    volumes = [f"{root.path}:{root.path}"]
+    if not _path_is_within(prepared.ref.home, root.path):
+        volumes.append(f"{prepared.ref.home}:{prepared.ref.home}")
+    volumes.append(f"{stage_dir}:{room.sandbox_dir}")
+    return {
+        "image": spec.image,
+        "volumes": volumes,
+        "network_mode": "bridge",
+        "bridge": "default",
+        "dns": [],
+        "host_reachability": False,
+    }
+
+
+def _sandbox_key(agent_name: str, agent_id: str) -> str:
+    return f"{agent_name}-{agent_id[:12]}"
+
+
+def _path_is_within(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+    except ValueError:
+        return False
+    return True

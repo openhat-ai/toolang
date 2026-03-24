@@ -37,6 +37,7 @@ from ..api_models import (
     EventListResponse,
     PromptTraceItem,
     RuntimeDiagnosticsResponse,
+    RuntimeSecurityResponse,
     RunDetailResponse,
     RunListResponse,
     RunRequest,
@@ -217,6 +218,9 @@ def create_agent_app(
                 else None
             ),
             model=_default_model(current),
+            security=RuntimeSecurityResponse.model_validate(
+                runtime_host.security_snapshot(prepared=current)
+            ),
         )
 
     @app.get("/api/v1/caps", response_model=AgentCapsResponse)
