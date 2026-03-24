@@ -108,6 +108,38 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
         assert runtime.json()["working_directory"] == str(home)
         assert runtime.json()["sandbox"] == "host"
         assert runtime.json()["model"] == "gpt-5"
+        assert runtime.json()["security"] == {
+            "sandbox": {
+                "image": None,
+                "volumes": [],
+                "network_mode": "host",
+                "bridge": None,
+                "dns": [],
+                "host_reachability": True,
+            },
+            "tools": {
+                "filesystem": False,
+                "shell": False,
+                "browser_use": False,
+                "computer_use": False,
+                "services_use": True,
+                "web_search": False,
+                "mem_search": False,
+                "file_search": False,
+            },
+            "autonomy": {
+                "chores_enabled": False,
+                "tasks_enabled": False,
+                "will_enabled": False,
+                "will_path_exists": False,
+            },
+            "self_modification": {
+                "can_add_caps": False,
+                "can_edit_will": False,
+                "can_write_source": False,
+                "can_persist_changes": False,
+            },
+        }
 
         cors_runtime = client.get(
             "/api/v1/runtime",
@@ -324,6 +356,11 @@ def test_create_agent_app_reports_docker_sandbox_state(
         assert runtime.json()["endpoint"] == "http://127.0.0.1:8766"
         assert runtime.json()["execution_host"] == "docker"
         assert runtime.json()["sandbox"] == "docker:python:3.13-slim"
+        assert runtime.json()["security"]["sandbox"]["image"] == "python:3.13-slim"
+        assert runtime.json()["security"]["sandbox"]["network_mode"] == "bridge"
+        assert runtime.json()["security"]["sandbox"]["bridge"] == "default"
+        assert runtime.json()["security"]["sandbox"]["host_reachability"] is False
+        assert len(runtime.json()["security"]["sandbox"]["volumes"]) == 2
 
         run_state = RunState.load(run_path)
         assert run_state.sandbox.type == "docker"
@@ -939,6 +976,38 @@ def test_create_agent_app_exposes_prompt_trace_and_runtime_diagnostics(
     body = diagnostics.json()
     assert body["runtime_loops"] == ["server", "poll", "pulse"]
     assert body["hook_loop_enabled"] is False
+    assert body["security"] == {
+        "sandbox": {
+            "image": None,
+            "volumes": [],
+            "network_mode": "host",
+            "bridge": None,
+            "dns": [],
+            "host_reachability": True,
+        },
+        "tools": {
+            "filesystem": False,
+            "shell": False,
+            "browser_use": False,
+            "computer_use": False,
+            "services_use": True,
+            "web_search": False,
+            "mem_search": False,
+            "file_search": False,
+        },
+        "autonomy": {
+            "chores_enabled": True,
+            "tasks_enabled": True,
+            "will_enabled": True,
+            "will_path_exists": False,
+        },
+        "self_modification": {
+            "can_add_caps": False,
+            "can_edit_will": False,
+            "can_write_source": False,
+            "can_persist_changes": False,
+        },
+    }
     assert {item["kind"] for item in body["scheduler"]["thread_groups"]} == {
         "invoke",
         "chat",

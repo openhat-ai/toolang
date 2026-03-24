@@ -66,6 +66,57 @@ class AgentProfile(BaseModel):
     avatar: str | None = None
 
 
+class SandboxSecurityInfo(BaseModel):
+    """Structured sandbox signals used by the WebUI security view."""
+
+    image: str | None = None
+    volumes: list[str] = Field(default_factory=list)
+    network_mode: str
+    bridge: str | None = None
+    dns: list[str] = Field(default_factory=list)
+    host_reachability: bool
+
+
+class ToolSecurityInfo(BaseModel):
+    """Structured tool-availability signals used by the WebUI security view."""
+
+    filesystem: bool
+    shell: bool
+    browser_use: bool
+    computer_use: bool
+    services_use: bool
+    web_search: bool
+    mem_search: bool
+    file_search: bool
+
+
+class AutonomySecurityInfo(BaseModel):
+    """Structured autonomy signals used by the WebUI security view."""
+
+    chores_enabled: bool
+    tasks_enabled: bool
+    will_enabled: bool
+    will_path_exists: bool
+
+
+class SelfModificationSecurityInfo(BaseModel):
+    """Structured self-modification signals used by the WebUI security view."""
+
+    can_add_caps: bool
+    can_edit_will: bool
+    can_write_source: bool
+    can_persist_changes: bool
+
+
+class RuntimeSecurityResponse(BaseModel):
+    """Security-oriented runtime capability snapshot."""
+
+    sandbox: SandboxSecurityInfo
+    tools: ToolSecurityInfo
+    autonomy: AutonomySecurityInfo
+    self_modification: SelfModificationSecurityInfo
+
+
 class AgentRuntimeResponse(BaseModel):
     """Runtime status payload for one running agent."""
 
@@ -84,6 +135,7 @@ class AgentRuntimeResponse(BaseModel):
     runtime_version: str
     started_at: str | None = None
     model: str | None = None
+    security: RuntimeSecurityResponse
 
 
 class CapItem(BaseModel):
@@ -360,6 +412,7 @@ class RuntimeDiagnosticsResponse(BaseModel):
 
     runtime_loops: list[str] = Field(default_factory=list)
     hook_loop_enabled: bool = False
+    security: RuntimeSecurityResponse
     scheduler: SchedulerDiagnostics
     channels: list[ChannelDiagnostics] = Field(default_factory=list)
     hooks: list[HookDiagnostics] = Field(default_factory=list)
