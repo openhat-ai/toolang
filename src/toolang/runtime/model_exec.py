@@ -115,7 +115,9 @@ def _continue_with_tools(
         pending_calls = _tool_calls_from_response(current, tool_runtime)
         if not pending_calls:
             return ModelExecutionResult(
-                output_text=_coerce_response_text(current),
+                output_text=_coerce_response_text(
+                    current, allow_empty=bool(executed_calls)
+                ),
                 tool_calls=executed_calls,
             )
         followup_input = []
@@ -174,7 +176,9 @@ def _continue_with_stream(
         pending_calls = _tool_calls_from_response(current, tool_runtime)
         if not pending_calls:
             return ModelExecutionResult(
-                output_text=_coerce_response_text(current),
+                output_text=_coerce_response_text(
+                    current, allow_empty=bool(executed_calls)
+                ),
                 tool_calls=executed_calls,
             )
         followup_input = []
@@ -211,9 +215,11 @@ def _create_openai_client() -> Any:
     return OpenAI()
 
 
-def _coerce_response_text(response: Any) -> str:
+def _coerce_response_text(response: Any, *, allow_empty: bool = False) -> str:
     text = getattr(response, "output_text", None)
     if isinstance(text, str) and text.strip():
+        return text
+    if allow_empty and isinstance(text, str):
         return text
 
     collected: list[str] = []
@@ -227,6 +233,8 @@ def _coerce_response_text(response: Any) -> str:
 
     if collected:
         return "".join(collected)
+    if allow_empty:
+        return ""
     raise ToolangError("Model response did not contain text output.")
 
 
