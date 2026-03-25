@@ -294,10 +294,14 @@ def create_agent_app(
         thread = runtime_host.chats.get_thread(thread_id=thread_id)
         if thread is None or thread.agent_uri != prepared.ref.uri:
             raise HTTPException(status_code=404, detail="thread not found")
+        room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
         turns = runtime_host.chats.recent_turns(thread_id=thread_id, limit=limit)
         return ChatThreadResponse(
             thread=thread_item(thread),
-            turns=[turn_item(item) for item in turns],
+            turns=[
+                turn_item(item, tool_calls=_turn_tool_calls(room, item.turn_id))
+                for item in turns
+            ],
         )
 
     @app.get("/api/v1/runs", response_model=RunListResponse)
@@ -322,11 +326,15 @@ def create_agent_app(
         )
         turn = None
         if run.thread_id:
+            room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
             loaded = runtime_host.chats.get_turn(
                 thread_id=run.thread_id, turn_id=run_id
             )
             if loaded is not None:
-                turn = turn_item(loaded)
+                turn = turn_item(
+                    loaded,
+                    tool_calls=_turn_tool_calls(room, loaded.turn_id),
+                )
         return RunDetailResponse(
             run=run_item(run),
             children=[run_item(item) for item in children],
@@ -515,3 +523,14 @@ def _default_model(prepared: PreparedAgent) -> str | None:
         return infer_model(prepared.program.default_thunk())
     except ToolangError:
         return None
+
+
+def _turn_tool_calls(room, turn_id: str) -> list[dict[str, object]]:
+    trace_path = room.prompt_trace_path(turn_id)
+    if not trace_path.exists():
+        return []
+    try:
+        trace = PromptTrace.load(trace_path)
+    except Exception:
+        return []
+    return [dict(item) for item in trace.tool_calls]

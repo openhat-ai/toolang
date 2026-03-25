@@ -386,6 +386,132 @@ def test_chat_stream_emits_tool_call_events(tmp_path: Path, monkeypatch) -> None
     assert '"delta":"done"' in stream_text
 
 
+def test_chat_stream_allows_tool_only_turns(tmp_path: Path, monkeypatch) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    prepared = prepare_agent(agent)
+
+    def fake_execute_stream(build, *, on_event) -> ModelExecutionResult:
+        on_event(
+            ToolCallEvent(
+                result=ToolCallResult(
+                    family="shell",
+                    name="shell",
+                    arguments={"command": "pwd"},
+                    output={"ok": True, "stdout": "/tmp/alice"},
+                    error=None,
+                )
+            )
+        )
+        return ModelExecutionResult(output_text="")
+
+    monkeypatch.setattr(
+        "toolang.runtime.invoke.execute_prompt_build_stream",
+        fake_execute_stream,
+    )
+
+    app = create_agent_app(
+        prepared,
+        agents_db_path=agents_db_path(root),
+        bus_db_path=bus_events_db_path(root),
+        host="127.0.0.1",
+        port=8765,
+        sandbox="host",
+    )
+
+    with TestClient(app) as client:
+        with client.stream(
+            "POST",
+            "/api/v1/chat/stream",
+            json={"thread": "owner", "message": "tool only"},
+        ) as response:
+            assert response.status_code == 200
+            stream_text = "".join(
+                chunk.decode("utf-8") for chunk in response.iter_raw()
+            )
+
+    assert '"type":"tool-call"' in stream_text
+    assert '"family":"shell"' in stream_text
+    assert '"type":"text-delta"' not in stream_text
+    assert '"type":"finish"' in stream_text
+    assert "data: [DONE]" in stream_text
+
+
+def test_chat_turn_and_run_detail_include_tool_calls(tmp_path: Path, monkeypatch) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    prepared = prepare_agent(agent)
+
+    monkeypatch.setattr(
+        "toolang.runtime.invoke.execute_prompt_build",
+        lambda build: ModelExecutionResult(
+            output_text="done",
+            tool_calls=[
+                ToolCallResult(
+                    family="shell",
+                    name="shell",
+                    arguments={"command": "pwd"},
+                    output={"ok": True, "stdout": "/tmp/alice"},
+                    error=None,
+                )
+            ],
+        ),
+    )
+
+    app = create_agent_app(
+        prepared,
+        agents_db_path=agents_db_path(root),
+        bus_db_path=bus_events_db_path(root),
+        host="127.0.0.1",
+        port=8765,
+        sandbox="host",
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/chat",
+            json={"thread": "owner", "message": "tool me"},
+        )
+        assert response.status_code == 200
+        turn_id = response.json()["turn_id"]
+
+        thread = client.get("/api/v1/chats/owner")
+        assert thread.status_code == 200
+        assert thread.json()["turns"][0]["tool_calls"] == [
+            {
+                "family": "shell",
+                "name": "shell",
+                "arguments": {"command": "pwd"},
+                "output": {"ok": True, "stdout": "/tmp/alice"},
+                "error": None,
+            }
+        ]
+
+        detail = client.get(f"/api/v1/runs/{turn_id}")
+        assert detail.status_code == 200
+        assert detail.json()["turn"]["tool_calls"] == [
+            {
+                "family": "shell",
+                "name": "shell",
+                "arguments": {"command": "pwd"},
+                "output": {"ok": True, "stdout": "/tmp/alice"},
+                "error": None,
+            }
+        ]
+
+
 def test_create_agent_app_reports_docker_sandbox_state(
     tmp_path: Path,
     monkeypatch,
