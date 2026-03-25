@@ -30,7 +30,9 @@ from toolang.concepts.persisted import (
 )
 from toolang.concepts.persisted.run_state import RunState
 from toolang.concepts.persisted.prompt_trace import PromptTrace
+from toolang.concepts.tools import ToolCallResult
 from toolang.runtime.execution_store import ExecutionStore
+from toolang.runtime.model_exec import ModelExecutionResult, TextDeltaEvent, ToolCallEvent
 from toolang.runtime.server import create_agent_app
 
 
@@ -85,7 +87,16 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
             return f"chat:{len(build.messages) - 1}:{build.raw_input}:{build.model}"
         return f"invoke:{thunk_name}:{build.raw_input}:{build.model}"
 
+    def fake_execute_stream(build, *, on_event) -> ModelExecutionResult:
+        output = fake_execute(build)
+        on_event(TextDeltaEvent(delta=output))
+        return ModelExecutionResult(output_text=output)
+
     monkeypatch.setattr("toolang.runtime.invoke.execute_prompt_build", fake_execute)
+    monkeypatch.setattr(
+        "toolang.runtime.invoke.execute_prompt_build_stream",
+        fake_execute_stream,
+    )
 
     app = create_agent_app(
         prepared,
@@ -316,6 +327,63 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
     events = store.list_events(agent_uri=agent.uri)
     store.close()
     assert events[-1].event_type == "agent_stopped"
+
+
+def test_chat_stream_emits_tool_call_events(tmp_path: Path, monkeypatch) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    prepared = prepare_agent(agent)
+
+    def fake_execute_stream(build, *, on_event) -> ModelExecutionResult:
+        on_event(
+            ToolCallEvent(
+                result=ToolCallResult(
+                    family="shell",
+                    name="shell",
+                    arguments={"command": "pwd"},
+                    output={"ok": True, "stdout": "/tmp/alice"},
+                    error=None,
+                )
+            )
+        )
+        on_event(TextDeltaEvent(delta="done"))
+        return ModelExecutionResult(output_text="done")
+
+    monkeypatch.setattr(
+        "toolang.runtime.invoke.execute_prompt_build_stream",
+        fake_execute_stream,
+    )
+
+    app = create_agent_app(
+        prepared,
+        agents_db_path=agents_db_path(root),
+        bus_db_path=bus_events_db_path(root),
+        host="127.0.0.1",
+        port=8765,
+        sandbox="host",
+    )
+
+    with TestClient(app) as client:
+        with client.stream(
+            "POST",
+            "/api/v1/chat/stream",
+            json={"thread": "owner", "message": "stream tool"},
+        ) as response:
+            assert response.status_code == 200
+            stream_text = "".join(
+                chunk.decode("utf-8") for chunk in response.iter_raw()
+            )
+
+    assert '"type":"tool-call"' in stream_text
+    assert '"family":"shell"' in stream_text
+    assert '"type":"text-delta"' in stream_text
+    assert '"delta":"done"' in stream_text
 
 
 def test_create_agent_app_reports_docker_sandbox_state(

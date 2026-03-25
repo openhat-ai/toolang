@@ -5,6 +5,7 @@ import platform
 from contextlib import asynccontextmanager
 from datetime import timezone
 from pathlib import Path
+from queue import Empty, Queue
 from typing import AsyncIterator, Awaitable, Callable, Iterator
 
 import uvicorn
@@ -52,6 +53,7 @@ from ..api_models import (
 )
 from ..build import infer_model
 from ..host import RuntimeHost
+from ..model_exec import TextDeltaEvent, ToolCallEvent
 from ..work import (
     list_chore_items,
     list_task_items,
@@ -425,8 +427,45 @@ def create_agent_app(
     def chat_stream(request: ChatRequest) -> StreamingResponse:
         def stream() -> Iterator[str]:
             yield data_sse({"type": "start"})
+            event_queue: Queue[object] = Queue()
+            text_started = False
             try:
-                assistant = runtime_host.submit_chat(request).assistant
+                turn_id, future = runtime_host.submit_chat_stream(
+                    request,
+                    event_queue.put,
+                )
+                while True:
+                    try:
+                        event = event_queue.get(timeout=0.05)
+                    except Empty:
+                        if future.done():
+                            break
+                        continue
+                    if isinstance(event, TextDeltaEvent):
+                        if not text_started:
+                            text_started = True
+                            yield data_sse({"type": "text-start", "id": turn_id})
+                        yield data_sse(
+                            {
+                                "type": "text-delta",
+                                "id": turn_id,
+                                "delta": event.delta,
+                            }
+                        )
+                        continue
+                    if isinstance(event, ToolCallEvent):
+                        yield data_sse(
+                            {
+                                "type": "tool-call",
+                                "id": turn_id,
+                                "family": event.result.family,
+                                "name": event.result.name,
+                                "arguments": event.result.arguments,
+                                "output": event.result.output,
+                                "error": event.result.error,
+                            }
+                        )
+                assistant = future.result().assistant
             except Exception as exc:
                 message = str(exc).strip() or type(exc).__name__
                 yield data_sse({"type": "error", "errorText": message})
@@ -434,8 +473,9 @@ def create_agent_app(
                 yield "data: [DONE]\n\n"
                 return
 
-            yield data_sse({"type": "text-start", "id": assistant.turn_id})
-            if assistant.text:
+            if assistant.text and not text_started:
+                text_started = True
+                yield data_sse({"type": "text-start", "id": assistant.turn_id})
                 yield data_sse(
                     {
                         "type": "text-delta",
@@ -443,7 +483,8 @@ def create_agent_app(
                         "delta": assistant.text,
                     }
                 )
-            yield data_sse({"type": "text-end", "id": assistant.turn_id})
+            if text_started:
+                yield data_sse({"type": "text-end", "id": assistant.turn_id})
             yield data_sse({"type": "finish"})
             yield "data: [DONE]\n\n"
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import Future
 from dataclasses import replace
 import threading
 import traceback
@@ -39,6 +40,7 @@ from .invoke import (
     invoke_prepared_agent,
 )
 from .messages import chat_message
+from .model_exec import ModelExecutionEventHandler
 from .pulse import PulseSubmission, collect_pulse_submissions
 from .requests import TurnRequest, TurnRequestKind
 from .scheduler import RuntimeScheduler
@@ -346,24 +348,31 @@ class RuntimeHost:
     def submit_chat(self, request: ChatRequest) -> ChatResult:
         """Submit one API chat turn through the runtime scheduler."""
 
-        thread_id = request.thread.strip()
-        if not thread_id:
-            raise ToolangError("Chat thread may not be empty.")
-        text = request.message.strip()
-        if not text:
-            raise ToolangError("Chat message may not be empty.")
-
-        incoming = chat_message(
-            channel="api",
-            sender="owner",
-            thread_id=thread_id,
-            text=text,
-        )
-        turn_request = TurnRequest(kind="chat", thread_id=thread_id, message=incoming)
+        turn_request, incoming = _build_api_chat_request(request)
         return self.scheduler.submit(
             turn_request,
             lambda: self._run_chat_turn(request=request, message=incoming),
         )
+
+    def submit_chat_stream(
+        self,
+        request: ChatRequest,
+        on_event: ModelExecutionEventHandler,
+    ) -> tuple[str, Future[ChatResult]]:
+        """Submit one API chat turn and stream text and tool-call events."""
+
+        turn_id = uuid.uuid4().hex
+        turn_request, incoming = _build_api_chat_request(request)
+        future = self.scheduler.submit_async(
+            turn_request,
+            lambda: self._run_chat_turn(
+                request=request,
+                message=incoming,
+                run_id=turn_id,
+                stream_event=on_event,
+            ),
+        )
+        return turn_id, future
 
     def submit_run(self, request: RunRequest) -> InvokeResult:
         """Submit one API run turn through the runtime scheduler."""
@@ -440,7 +449,14 @@ class RuntimeHost:
             process_run_id=self.run_id,
         )
 
-    def _run_chat_turn(self, *, request: ChatRequest, message: Message) -> ChatResult:
+    def _run_chat_turn(
+        self,
+        *,
+        request: ChatRequest,
+        message: Message,
+        run_id: str | None = None,
+        stream_event: ModelExecutionEventHandler | None = None,
+    ) -> ChatResult:
         current = prepare_agent(self.prepared.ref, cap_scopes=self.prepared.cap_scopes)
         selected_thunk = _select_chat_thunk(current, request.thunk)
         return chat_prepared_agent(
@@ -453,6 +469,8 @@ class RuntimeHost:
             sandbox=self.sandbox,
             execution_store=self.execution,
             process_run_id=self.run_id,
+            run_id=run_id,
+            stream_event=stream_event,
         )
 
     def _run_invoke_turn(self, *, request: RunRequest) -> InvokeResult:
@@ -755,6 +773,22 @@ class RuntimeHost:
 
 def _select_chat_thunk(prepared: PreparedAgent, thunk_name: str | None) -> Thunk:
     return _select_named_or_origin_thunk(prepared, thunk_name, "chat")
+
+
+def _build_api_chat_request(request: ChatRequest) -> tuple[TurnRequest, Message]:
+    thread_id = request.thread.strip()
+    if not thread_id:
+        raise ToolangError("Chat thread may not be empty.")
+    text = request.message.strip()
+    if not text:
+        raise ToolangError("Chat message may not be empty.")
+    incoming = chat_message(
+        channel="api",
+        sender="owner",
+        thread_id=thread_id,
+        text=text,
+    )
+    return TurnRequest(kind="chat", thread_id=thread_id, message=incoming), incoming
 
 
 def _select_named_or_origin_thunk(
