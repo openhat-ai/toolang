@@ -7,9 +7,18 @@ from typing import Any
 import pytest
 
 from toolang.concepts.identity import AgentRef
-from toolang.concepts.tools import ToolDefinition
+from toolang.concepts.tools import ToolCallResult, ToolDefinition
 from toolang.runtime.build import PromptBuild
-from toolang.runtime.model_exec import execute_prompt_build
+from toolang.runtime.model_exec import (
+    ModelExecutionResult,
+    TextDeltaEvent,
+    ToolInputAvailableEvent,
+    ToolInputDeltaEvent,
+    ToolInputStartEvent,
+    ToolOutputAvailableEvent,
+    execute_prompt_build,
+    execute_prompt_build_stream,
+)
 from toolang.tools import ToolRuntime
 from toolang.tools.contracts import ToolContext
 from toolang.tools.plugins.filesystem import create_filesystem_tool
@@ -134,6 +143,7 @@ def test_execute_prompt_build_runs_local_tool_loop(monkeypatch, tmp_path: Path) 
         type = "function_call"
 
         def __init__(self) -> None:
+            self.id = "tool_item_1"
             self.name = "shell"
             self.arguments = json.dumps({"command": "pwd"})
             self.call_id = "call_1"
@@ -193,3 +203,284 @@ def test_execute_prompt_build_runs_local_tool_loop(monkeypatch, tmp_path: Path) 
     assert isinstance(followup_messages, list)
     first_message = followup_messages[0]
     assert first_message["type"] == "function_call_output"
+
+
+def test_execute_prompt_build_stream_emits_text_and_tool_events(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class FakeShellProvider:
+        family = "shell"
+
+        def definition(self) -> ToolDefinition:
+            return ToolDefinition(
+                family="shell",
+                name="shell",
+                description="Run shell commands.",
+                parameters={"type": "object", "properties": {"command": {"type": "string"}}},
+            )
+
+        def invoke(self, arguments, context):
+            return {"ok": True, "stdout": f"ran:{arguments['command']}"}
+
+    class FakeTextDelta:
+        type = "response.output_text.delta"
+
+        def __init__(self, delta: str) -> None:
+            self.delta = delta
+
+    class FakeToolArgsDelta:
+        type = "response.function_call_arguments.delta"
+
+        def __init__(self, delta: str) -> None:
+            self.delta = delta
+            self.item_id = "tool_item_1"
+            self.output_index = 0
+
+    class FakeFunctionCall:
+        type = "function_call"
+
+        def __init__(self) -> None:
+            self.id = "tool_item_1"
+            self.name = "shell"
+            self.arguments = json.dumps({"command": "pwd"})
+            self.call_id = "call_1"
+
+    class FakeResponse:
+        def __init__(self, response_id: str, *, output, output_text: str | None = None) -> None:
+            self.id = response_id
+            self.output = output
+            self.output_text = output_text
+
+    class FakeStream:
+        def __init__(self, events, final_response) -> None:
+            self._events = events
+            self._final_response = final_response
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, exc_tb) -> None:
+            return None
+
+        def __iter__(self):
+            return iter(self._events)
+
+        def get_final_response(self):
+            return self._final_response
+
+    streams = [
+        FakeStream(
+            [
+                FakeTextDelta("hel"),
+                FakeTextDelta("lo"),
+                FakeToolArgsDelta('{"command":"pwd"}'),
+            ],
+            FakeResponse("resp_1", output=[FakeFunctionCall()], output_text="hello"),
+        ),
+        FakeStream(
+            [FakeTextDelta("done")],
+            FakeResponse("resp_2", output=[], output_text="done"),
+        ),
+    ]
+
+    monkeypatch.setattr("toolang.runtime.model_exec._create_openai_client", lambda: object())
+    monkeypatch.setattr(
+        "toolang.runtime.model_exec._create_response_stream",
+        lambda client, **kwargs: streams.pop(0),
+    )
+
+    home = tmp_path / "alice"
+    home.mkdir()
+    build = PromptBuild(
+        model="gpt-5",
+        raw_input="hello",
+        expanded_input=None,
+        message_context=None,
+        runtime_context={},
+        developer_message="dev",
+        messages=[{"role": "user", "content": "hello"}],
+        source_text="source",
+        tool_runtime=ToolRuntime(
+            context=_tool_context(home),
+            providers={"shell": FakeShellProvider()},
+        ),
+    )
+
+    streamed_events: list[
+        TextDeltaEvent
+        | ToolInputStartEvent
+        | ToolInputDeltaEvent
+        | ToolInputAvailableEvent
+        | ToolOutputAvailableEvent
+    ] = []
+    result = execute_prompt_build_stream(
+        build,
+        on_event=streamed_events.append,
+    )
+
+    assert result == ModelExecutionResult(
+        output_text="done",
+        tool_calls=[
+            ToolCallResult(
+                family="shell",
+                name="shell",
+                arguments={"command": "pwd"},
+                output={"ok": True, "stdout": "ran:pwd"},
+                error=None,
+            )
+        ],
+    )
+    assert streamed_events == [
+        TextDeltaEvent(delta="hel"),
+        TextDeltaEvent(delta="lo"),
+        ToolInputStartEvent(
+            tool_call_id="tool_item_1",
+        ),
+        ToolInputDeltaEvent(
+            tool_call_id="tool_item_1",
+            delta='{"command":"pwd"}',
+        ),
+        ToolInputAvailableEvent(
+            tool_call_id="tool_item_1",
+            family="shell",
+            name="shell",
+            arguments={"command": "pwd"},
+        ),
+        ToolOutputAvailableEvent(
+            tool_call_id="tool_item_1",
+            result=ToolCallResult(
+                family="shell",
+                name="shell",
+                arguments={"command": "pwd"},
+                output={"ok": True, "stdout": "ran:pwd"},
+                error=None,
+            ),
+        ),
+        TextDeltaEvent(delta="done"),
+    ]
+
+
+def test_execute_prompt_build_stream_allows_tool_only_results(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class FakeShellProvider:
+        family = "shell"
+
+        def definition(self) -> ToolDefinition:
+            return ToolDefinition(
+                family="shell",
+                name="shell",
+                description="Run shell commands.",
+                parameters={"type": "object", "properties": {"command": {"type": "string"}}},
+            )
+
+        def invoke(self, arguments, context):
+            return {"ok": True, "stdout": f"ran:{arguments['command']}"}
+
+    class FakeFunctionCall:
+        type = "function_call"
+
+        def __init__(self) -> None:
+            self.id = "tool_item_1"
+            self.name = "shell"
+            self.arguments = json.dumps({"command": "pwd"})
+            self.call_id = "call_1"
+
+    class FakeResponse:
+        def __init__(self, response_id: str, *, output, output_text: str | None = None) -> None:
+            self.id = response_id
+            self.output = output
+            self.output_text = output_text
+
+    class FakeStream:
+        def __init__(self, events, final_response) -> None:
+            self._events = events
+            self._final_response = final_response
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, exc_tb) -> None:
+            return None
+
+        def __iter__(self):
+            return iter(self._events)
+
+        def get_final_response(self):
+            return self._final_response
+
+    streams = [
+        FakeStream([], FakeResponse("resp_1", output=[FakeFunctionCall()])),
+        FakeStream([], FakeResponse("resp_2", output=[], output_text="")),
+    ]
+
+    monkeypatch.setattr("toolang.runtime.model_exec._create_openai_client", lambda: object())
+    monkeypatch.setattr(
+        "toolang.runtime.model_exec._create_response_stream",
+        lambda client, **kwargs: streams.pop(0),
+    )
+
+    home = tmp_path / "alice"
+    home.mkdir()
+    build = PromptBuild(
+        model="gpt-5",
+        raw_input="hello",
+        expanded_input=None,
+        message_context=None,
+        runtime_context={},
+        developer_message="dev",
+        messages=[{"role": "user", "content": "hello"}],
+        source_text="source",
+        tool_runtime=ToolRuntime(
+            context=_tool_context(home),
+            providers={"shell": FakeShellProvider()},
+        ),
+    )
+
+    streamed_events: list[
+        TextDeltaEvent
+        | ToolInputStartEvent
+        | ToolInputDeltaEvent
+        | ToolInputAvailableEvent
+        | ToolOutputAvailableEvent
+    ] = []
+    result = execute_prompt_build_stream(
+        build,
+        on_event=streamed_events.append,
+    )
+
+    assert result == ModelExecutionResult(
+        output_text="",
+        tool_calls=[
+            ToolCallResult(
+                family="shell",
+                name="shell",
+                arguments={"command": "pwd"},
+                output={"ok": True, "stdout": "ran:pwd"},
+                error=None,
+            )
+        ],
+    )
+    assert streamed_events == [
+        ToolInputStartEvent(
+            tool_call_id="tool_item_1",
+        ),
+        ToolInputAvailableEvent(
+            tool_call_id="tool_item_1",
+            family="shell",
+            name="shell",
+            arguments={"command": "pwd"},
+        ),
+        ToolOutputAvailableEvent(
+            tool_call_id="tool_item_1",
+            result=ToolCallResult(
+                family="shell",
+                name="shell",
+                arguments={"command": "pwd"},
+                output={"ok": True, "stdout": "ran:pwd"},
+                error=None,
+            ),
+        )
+    ]

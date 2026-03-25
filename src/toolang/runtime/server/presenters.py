@@ -131,12 +131,16 @@ def thread_item(thread: ChatThread) -> ChatThreadItem:
     )
 
 
-def turn_item(turn: ChatTurn) -> ChatTurnItem:
+def turn_item(
+    turn: ChatTurn,
+    *,
+    tool_calls: list[dict[str, object]] | None = None,
+) -> ChatTurnItem:
     return ChatTurnItem(
         thread_id=turn.thread_id,
         turn_id=turn.turn_id,
         messages=[message_item(message) for message in turn.messages],
-        tool_calls=[],
+        tool_calls=tool_calls or [],
         started_at=turn.started_at,
         finished_at=turn.finished_at,
     )
