@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
-from typing import Any
+from typing import Any, Callable
 
 from toolang.concepts.tools import ToolCallResult, ToolDefinition
 from toolang.errors import ToolangError
@@ -27,6 +27,24 @@ class ModelExecutionResult:
 
     output_text: str
     tool_calls: list[ToolCallResult] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class TextDeltaEvent:
+    """One streamed text delta from model execution."""
+
+    delta: str
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCallEvent:
+    """One completed local tool call emitted during streamed execution."""
+
+    result: ToolCallResult
+
+
+ModelExecutionStreamEvent = TextDeltaEvent | ToolCallEvent
+ModelExecutionEventHandler = Callable[[ModelExecutionStreamEvent], None]
 
 
 def execute_prompt_build(build: PromptBuild) -> ModelExecutionResult:
@@ -53,6 +71,30 @@ def execute_prompt_build(build: PromptBuild) -> ModelExecutionResult:
         model=build.model,
         tool_runtime=tool_runtime,
         tool_definitions=tool_definitions,
+    )
+
+
+def execute_prompt_build_stream(
+    build: PromptBuild,
+    *,
+    on_event: ModelExecutionEventHandler,
+) -> ModelExecutionResult:
+    """Execute one prepared prompt build and emit streamed text and tool events."""
+
+    openai_client = _create_openai_client()
+    tool_runtime = build.tool_runtime
+    tool_definitions = (
+        tool_runtime.definitions()
+        if tool_runtime is not None and tool_runtime.providers
+        else []
+    )
+    return _continue_with_stream(
+        openai_client,
+        model=build.model,
+        messages=build.messages,
+        tool_runtime=tool_runtime,
+        tool_definitions=tool_definitions,
+        on_event=on_event,
     )
 
 
@@ -101,6 +143,61 @@ def _continue_with_tools(
             tools=tool_definitions,
             previous_response_id=getattr(current, "id", None),
         )
+    raise ToolangError("Model tool loop exceeded the maximum number of rounds.")
+
+
+def _continue_with_stream(
+    openai_client: Any,
+    *,
+    model: str,
+    messages: list[dict[str, Any]],
+    tool_runtime: ToolRuntime | None,
+    tool_definitions: list[ToolDefinition],
+    on_event: ModelExecutionEventHandler,
+) -> ModelExecutionResult:
+    executed_calls: list[ToolCallResult] = []
+    current_messages = messages
+    previous_response_id: str | None = None
+    for _ in range(MAX_TOOL_ROUNDS):
+        current, emitted_text = _create_streamed_response(
+            openai_client,
+            model=model,
+            messages=current_messages,
+            tools=tool_definitions,
+            previous_response_id=previous_response_id,
+            on_event=on_event,
+        )
+        if not emitted_text and current.output_text:
+            on_event(TextDeltaEvent(delta=current.output_text))
+        if tool_runtime is None:
+            return ModelExecutionResult(output_text=_coerce_response_text(current))
+        pending_calls = _tool_calls_from_response(current, tool_runtime)
+        if not pending_calls:
+            return ModelExecutionResult(
+                output_text=_coerce_response_text(current),
+                tool_calls=executed_calls,
+            )
+        followup_input = []
+        for call in pending_calls:
+            executed_calls.append(call.result)
+            on_event(ToolCallEvent(result=call.result))
+            payload = {
+                "ok": call.result.error is None,
+                "family": call.result.family,
+                "name": call.result.name,
+                "output": call.result.output,
+            }
+            if call.result.error is not None:
+                payload["error"] = call.result.error
+            followup_input.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": call.call_id,
+                    "output": json.dumps(payload, ensure_ascii=False),
+                }
+            )
+        current_messages = followup_input
+        previous_response_id = getattr(current, "id", None)
     raise ToolangError("Model tool loop exceeded the maximum number of rounds.")
 
 
@@ -211,3 +308,56 @@ def _create_response(
     if previous_response_id:
         payload["previous_response_id"] = previous_response_id
     return openai_client.responses.create(**payload)
+
+
+def _create_response_stream(
+    openai_client: Any,
+    *,
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: list[ToolDefinition] | None,
+    previous_response_id: str | None = None,
+) -> Any:
+    payload: dict[str, Any] = {
+        "model": model,
+        "input": messages,
+    }
+    if tools:
+        payload["tools"] = [
+            {
+                "type": "function",
+                "name": item.name,
+                "description": item.description,
+                "parameters": item.parameters,
+            }
+            for item in tools
+        ]
+    if previous_response_id:
+        payload["previous_response_id"] = previous_response_id
+    return openai_client.responses.stream(**payload)
+
+
+def _create_streamed_response(
+    openai_client: Any,
+    *,
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: list[ToolDefinition] | None,
+    previous_response_id: str | None,
+    on_event: ModelExecutionEventHandler,
+) -> tuple[Any, bool]:
+    emitted_text = False
+    with _create_response_stream(
+        openai_client,
+        model=model,
+        messages=messages,
+        tools=tools,
+        previous_response_id=previous_response_id,
+    ) as stream:
+        for event in stream:
+            if getattr(event, "type", None) == "response.output_text.delta":
+                delta = str(getattr(event, "delta", ""))
+                if delta:
+                    emitted_text = True
+                    on_event(TextDeltaEvent(delta=delta))
+        return stream.get_final_response(), emitted_text

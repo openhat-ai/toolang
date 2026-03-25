@@ -24,7 +24,11 @@ from .build import (
 from .chats import ChatMessage, ChatStore
 from .execution_store import ExecutionStore
 from .messages import Message
-from .model_exec import execute_prompt_build
+from .model_exec import (
+    ModelExecutionEventHandler,
+    execute_prompt_build,
+    execute_prompt_build_stream,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,8 +110,10 @@ def chat_prepared_agent(
     sandbox: str = "host",
     execution_store: ExecutionStore | None = None,
     process_run_id: str | None = None,
+    run_id: str | None = None,
+    stream_event: ModelExecutionEventHandler | None = None,
 ) -> ChatResult:
-    turn_run_id = uuid.uuid4().hex
+    turn_run_id = run_id or uuid.uuid4().hex
 
     chat_store.append_message(
         agent_uri=prepared.ref.uri,
@@ -150,6 +156,7 @@ def chat_prepared_agent(
             sandbox=sandbox,
             tool_runtime=tool_runtime,
         ),
+        stream_event=stream_event,
     )
     assistant_message = chat_store.append_message(
         agent_uri=prepared.ref.uri,
@@ -194,6 +201,7 @@ def _tracked_turn(
     run_kind: RunKind | None = None,
     execution_context: RuntimeExecutionContext | None = None,
     input_meta: dict[str, object] | None = None,
+    stream_event: ModelExecutionEventHandler | None = None,
 ) -> _TrackedTurnResult:
     bus = BusStore(bus_db_path)
     resolved_run_id = run_id or uuid.uuid4().hex
@@ -297,7 +305,11 @@ def _tracked_turn(
             build=prompt_build,
         )
         prompt_trace.save(trace_path)
-        execution_result = execute_prompt_build(prompt_build)
+        execution_result = (
+            execute_prompt_build_stream(prompt_build, on_event=stream_event)
+            if stream_event is not None
+            else execute_prompt_build(prompt_build)
+        )
         if isinstance(execution_result, str):
             output = execution_result
             tool_calls = []

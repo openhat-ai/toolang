@@ -171,6 +171,8 @@ Responsibility summary:
   - the local will document, if present, plus latest pulse scheduler feedback
 - `/api/v1/chat*`
   - durable thread-based chat turns
+  - `/api/v1/chat/stream` emits SSE events for text deltas and completed
+    tool calls
 - `/api/v1/runs*`
   - current and historical runs for this agent
 - `/api/v1/events*`
