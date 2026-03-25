@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import sqlite3
 
 from toolang.agent.resolve import resolve_agent_ref
+from toolang.agent.registry.db import _connect
 from toolang.agent.registry import (
     KnownAgentRecord,
     RunningAgentRecord,
@@ -149,3 +151,17 @@ def test_delete_known_agent_removes_registry_row(tmp_path: Path) -> None:
 
     assert delete_known_agent(db_path, agent.uri) is True
     assert find_known_agents_by_name(db_path, "reviewer") == []
+
+
+def test_registry_connect_closes_connection_after_context(tmp_path: Path) -> None:
+    db_path = tmp_path / "agents.db"
+
+    with _connect(db_path) as connection:
+        connection.execute("SELECT 1").fetchall()
+
+    try:
+        connection.execute("SELECT 1").fetchall()
+    except sqlite3.ProgrammingError as exc:
+        assert "closed" in str(exc).lower()
+    else:
+        raise AssertionError("registry connection should be closed after context exit")

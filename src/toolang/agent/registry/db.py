@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import sqlite3
 from pathlib import Path
+from typing import Iterator
 
 
 def ensure_agent_registry(db_path: Path) -> None:
@@ -49,11 +51,15 @@ def ensure_agent_registry(db_path: Path) -> None:
         connection.commit()
 
 
-def _connect(db_path: Path) -> sqlite3.Connection:
+@contextmanager
+def _connect(db_path: Path) -> Iterator[sqlite3.Connection]:
     connection = sqlite3.connect(db_path)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
-    return connection
+    try:
+        yield connection
+    finally:
+        connection.close()
 
 
 def _ensure_running_agents_schema(connection: sqlite3.Connection) -> None:
