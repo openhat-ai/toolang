@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import json
 from typing import Any, Callable
 
-from toolang.concepts.tools import ToolCallResult, ToolDefinition
+from toolang.concepts.tools import ToolCallResult, ToolDefinition, ToolFamily
 from toolang.errors import ToolangError
 from toolang.tools import ToolRuntime
 
@@ -19,6 +19,15 @@ MAX_TOOL_ROUNDS = 8
 class _PendingToolCall:
     call_id: str
     result: ToolCallResult
+
+
+@dataclass(frozen=True, slots=True)
+class _ParsedToolCall:
+    call_id: str
+    family: ToolFamily
+    name: str
+    arguments: dict[str, Any]
+    provider: Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,13 +46,24 @@ class TextDeltaEvent:
 
 
 @dataclass(frozen=True, slots=True)
-class ToolCallEvent:
+class ToolCallStartEvent:
+    """One local tool call start emitted during streamed execution."""
+
+    call_id: str
+    family: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCallFinishEvent:
     """One completed local tool call emitted during streamed execution."""
 
+    call_id: str
     result: ToolCallResult
 
 
-ModelExecutionStreamEvent = TextDeltaEvent | ToolCallEvent
+ModelExecutionStreamEvent = TextDeltaEvent | ToolCallStartEvent | ToolCallFinishEvent
 ModelExecutionEventHandler = Callable[[ModelExecutionStreamEvent], None]
 
 
@@ -112,7 +132,10 @@ def _continue_with_tools(
     executed_calls: list[ToolCallResult] = []
     current = response
     for _ in range(MAX_TOOL_ROUNDS):
-        pending_calls = _tool_calls_from_response(current, tool_runtime)
+        pending_calls = _execute_tool_calls(
+            _parse_tool_calls_from_response(current, tool_runtime),
+            tool_runtime,
+        )
         if not pending_calls:
             return ModelExecutionResult(
                 output_text=_coerce_response_text(
@@ -173,8 +196,8 @@ def _continue_with_stream(
             on_event(TextDeltaEvent(delta=current.output_text))
         if tool_runtime is None:
             return ModelExecutionResult(output_text=_coerce_response_text(current))
-        pending_calls = _tool_calls_from_response(current, tool_runtime)
-        if not pending_calls:
+        parsed_calls = _parse_tool_calls_from_response(current, tool_runtime)
+        if not parsed_calls:
             return ModelExecutionResult(
                 output_text=_coerce_response_text(
                     current, allow_empty=bool(executed_calls)
@@ -182,9 +205,18 @@ def _continue_with_stream(
                 tool_calls=executed_calls,
             )
         followup_input = []
-        for call in pending_calls:
+        for parsed in parsed_calls:
+            on_event(
+                ToolCallStartEvent(
+                    call_id=parsed.call_id,
+                    family=parsed.family,
+                    name=parsed.name,
+                    arguments=parsed.arguments,
+                )
+            )
+            call = _invoke_tool_call(parsed, tool_runtime)
             executed_calls.append(call.result)
-            on_event(ToolCallEvent(result=call.result))
+            on_event(ToolCallFinishEvent(call_id=call.call_id, result=call.result))
             payload = {
                 "ok": call.result.error is None,
                 "family": call.result.family,
@@ -238,11 +270,11 @@ def _coerce_response_text(response: Any, *, allow_empty: bool = False) -> str:
     raise ToolangError("Model response did not contain text output.")
 
 
-def _tool_calls_from_response(
+def _parse_tool_calls_from_response(
     response: Any,
     tool_runtime: ToolRuntime,
-) -> list[_PendingToolCall]:
-    results: list[_PendingToolCall] = []
+) -> list[_ParsedToolCall]:
+    results: list[_ParsedToolCall] = []
     providers_by_name = {
         provider.definition().name: provider
         for provider in tool_runtime.providers.values()
@@ -256,25 +288,44 @@ def _tool_calls_from_response(
         arguments = _parse_tool_arguments(getattr(item, "arguments", "{}"))
         if provider is None:
             raise ToolangError(f"unknown tool call: {name or '<empty>'}")
-        try:
-            output = provider.invoke(arguments, tool_runtime.context)
-            error = None
-        except Exception as exc:
-            output = {}
-            error = str(exc)
         results.append(
-            _PendingToolCall(
+            _ParsedToolCall(
                 call_id=call_id,
-                result=ToolCallResult(
-                    family=provider.family,
-                    name=name,
-                    arguments=arguments,
-                    output=output,
-                    error=error,
-                ),
+                family=provider.family,
+                name=name,
+                arguments=arguments,
+                provider=provider,
             )
         )
     return results
+
+
+def _execute_tool_calls(
+    calls: list[_ParsedToolCall], tool_runtime: ToolRuntime
+) -> list[_PendingToolCall]:
+    return [_invoke_tool_call(call, tool_runtime) for call in calls]
+
+
+def _invoke_tool_call(
+    call: _ParsedToolCall,
+    tool_runtime: ToolRuntime,
+) -> _PendingToolCall:
+    try:
+        output = call.provider.invoke(call.arguments, tool_runtime.context)
+        error = None
+    except Exception as exc:
+        output = {}
+        error = str(exc)
+    return _PendingToolCall(
+        call_id=call.call_id,
+        result=ToolCallResult(
+            family=call.family,
+            name=call.name,
+            arguments=call.arguments,
+            output=output,
+            error=error,
+        ),
+    )
 
 
 def _parse_tool_arguments(raw: object) -> dict[str, Any]:

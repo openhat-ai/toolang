@@ -12,7 +12,8 @@ from toolang.runtime.build import PromptBuild
 from toolang.runtime.model_exec import (
     ModelExecutionResult,
     TextDeltaEvent,
-    ToolCallEvent,
+    ToolCallFinishEvent,
+    ToolCallStartEvent,
     execute_prompt_build,
     execute_prompt_build_stream,
 )
@@ -290,7 +291,7 @@ def test_execute_prompt_build_stream_emits_text_and_tool_events(
         ),
     )
 
-    streamed_events: list[TextDeltaEvent | ToolCallEvent] = []
+    streamed_events: list[TextDeltaEvent | ToolCallStartEvent | ToolCallFinishEvent] = []
     result = execute_prompt_build_stream(
         build,
         on_event=streamed_events.append,
@@ -311,14 +312,21 @@ def test_execute_prompt_build_stream_emits_text_and_tool_events(
     assert streamed_events == [
         TextDeltaEvent(delta="hel"),
         TextDeltaEvent(delta="lo"),
-        ToolCallEvent(
+        ToolCallStartEvent(
+            call_id="call_1",
+            family="shell",
+            name="shell",
+            arguments={"command": "pwd"},
+        ),
+        ToolCallFinishEvent(
+            call_id="call_1",
             result=ToolCallResult(
                 family="shell",
                 name="shell",
                 arguments={"command": "pwd"},
                 output={"ok": True, "stdout": "ran:pwd"},
                 error=None,
-            )
+            ),
         ),
         TextDeltaEvent(delta="done"),
     ]
@@ -401,7 +409,7 @@ def test_execute_prompt_build_stream_allows_tool_only_results(
         ),
     )
 
-    streamed_events: list[TextDeltaEvent | ToolCallEvent] = []
+    streamed_events: list[TextDeltaEvent | ToolCallStartEvent | ToolCallFinishEvent] = []
     result = execute_prompt_build_stream(
         build,
         on_event=streamed_events.append,
@@ -420,13 +428,20 @@ def test_execute_prompt_build_stream_allows_tool_only_results(
         ],
     )
     assert streamed_events == [
-        ToolCallEvent(
+        ToolCallStartEvent(
+            call_id="call_1",
+            family="shell",
+            name="shell",
+            arguments={"command": "pwd"},
+        ),
+        ToolCallFinishEvent(
+            call_id="call_1",
             result=ToolCallResult(
                 family="shell",
                 name="shell",
                 arguments={"command": "pwd"},
                 output={"ok": True, "stdout": "ran:pwd"},
                 error=None,
-            )
+            ),
         )
     ]

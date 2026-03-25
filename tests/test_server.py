@@ -32,7 +32,12 @@ from toolang.concepts.persisted.run_state import RunState
 from toolang.concepts.persisted.prompt_trace import PromptTrace
 from toolang.concepts.tools import ToolCallResult
 from toolang.runtime.execution_store import ExecutionStore
-from toolang.runtime.model_exec import ModelExecutionResult, TextDeltaEvent, ToolCallEvent
+from toolang.runtime.model_exec import (
+    ModelExecutionResult,
+    TextDeltaEvent,
+    ToolCallFinishEvent,
+    ToolCallStartEvent,
+)
 from toolang.runtime.server import create_agent_app
 
 
@@ -342,14 +347,23 @@ def test_chat_stream_emits_tool_call_events(tmp_path: Path, monkeypatch) -> None
 
     def fake_execute_stream(build, *, on_event) -> ModelExecutionResult:
         on_event(
-            ToolCallEvent(
+            ToolCallStartEvent(
+                call_id="call_1",
+                family="shell",
+                name="shell",
+                arguments={"command": "pwd"},
+            )
+        )
+        on_event(
+            ToolCallFinishEvent(
+                call_id="call_1",
                 result=ToolCallResult(
                     family="shell",
                     name="shell",
                     arguments={"command": "pwd"},
                     output={"ok": True, "stdout": "/tmp/alice"},
                     error=None,
-                )
+                ),
             )
         )
         on_event(TextDeltaEvent(delta="done"))
@@ -380,7 +394,9 @@ def test_chat_stream_emits_tool_call_events(tmp_path: Path, monkeypatch) -> None
                 chunk.decode("utf-8") for chunk in response.iter_raw()
             )
 
-    assert '"type":"tool-call"' in stream_text
+    assert '"type":"tool-call-start"' in stream_text
+    assert '"type":"tool-call-finish"' in stream_text
+    assert '"tool_call_id":"call_1"' in stream_text
     assert '"family":"shell"' in stream_text
     assert '"type":"text-delta"' in stream_text
     assert '"delta":"done"' in stream_text
@@ -399,14 +415,23 @@ def test_chat_stream_allows_tool_only_turns(tmp_path: Path, monkeypatch) -> None
 
     def fake_execute_stream(build, *, on_event) -> ModelExecutionResult:
         on_event(
-            ToolCallEvent(
+            ToolCallStartEvent(
+                call_id="call_1",
+                family="shell",
+                name="shell",
+                arguments={"command": "pwd"},
+            )
+        )
+        on_event(
+            ToolCallFinishEvent(
+                call_id="call_1",
                 result=ToolCallResult(
                     family="shell",
                     name="shell",
                     arguments={"command": "pwd"},
                     output={"ok": True, "stdout": "/tmp/alice"},
                     error=None,
-                )
+                ),
             )
         )
         return ModelExecutionResult(output_text="")
@@ -436,7 +461,9 @@ def test_chat_stream_allows_tool_only_turns(tmp_path: Path, monkeypatch) -> None
                 chunk.decode("utf-8") for chunk in response.iter_raw()
             )
 
-    assert '"type":"tool-call"' in stream_text
+    assert '"type":"tool-call-start"' in stream_text
+    assert '"type":"tool-call-finish"' in stream_text
+    assert '"tool_call_id":"call_1"' in stream_text
     assert '"family":"shell"' in stream_text
     assert '"type":"text-delta"' not in stream_text
     assert '"type":"finish"' in stream_text

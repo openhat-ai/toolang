@@ -53,7 +53,7 @@ from ..api_models import (
 )
 from ..build import infer_model
 from ..host import RuntimeHost
-from ..model_exec import TextDeltaEvent, ToolCallEvent
+from ..model_exec import TextDeltaEvent, ToolCallFinishEvent, ToolCallStartEvent
 from ..work import (
     list_chore_items,
     list_task_items,
@@ -461,14 +461,26 @@ def create_agent_app(
                             }
                         )
                         continue
-                    if isinstance(event, ToolCallEvent):
+                    if isinstance(event, ToolCallStartEvent):
                         yield data_sse(
                             {
-                                "type": "tool-call",
+                                "type": "tool-call-start",
                                 "id": turn_id,
+                                "tool_call_id": event.call_id,
+                                "family": event.family,
+                                "name": event.name,
+                                "arguments": event.arguments,
+                            }
+                        )
+                        continue
+                    if isinstance(event, ToolCallFinishEvent):
+                        yield data_sse(
+                            {
+                                "type": "tool-call-finish",
+                                "id": turn_id,
+                                "tool_call_id": event.call_id,
                                 "family": event.result.family,
                                 "name": event.result.name,
-                                "arguments": event.result.arguments,
                                 "output": event.result.output,
                                 "error": event.result.error,
                             }
