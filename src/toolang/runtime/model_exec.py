@@ -18,12 +18,14 @@ MAX_TOOL_ROUNDS = 8
 @dataclass(frozen=True, slots=True)
 class _PendingToolCall:
     call_id: str
+    tool_call_id: str
     result: ToolCallResult
 
 
 @dataclass(frozen=True, slots=True)
 class _ParsedToolCall:
     call_id: str
+    tool_call_id: str
     family: ToolFamily
     name: str
     arguments: dict[str, Any]
@@ -46,24 +48,45 @@ class TextDeltaEvent:
 
 
 @dataclass(frozen=True, slots=True)
-class ToolCallStartEvent:
-    """One local tool call start emitted during streamed execution."""
+class ToolInputStartEvent:
+    """One streamed tool-input start event."""
 
-    call_id: str
-    family: str
+    tool_call_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class ToolInputDeltaEvent:
+    """One streamed tool-input delta event."""
+
+    tool_call_id: str
+    delta: str
+
+
+@dataclass(frozen=True, slots=True)
+class ToolInputAvailableEvent:
+    """One complete tool input ready for local execution."""
+
+    tool_call_id: str
+    family: ToolFamily
     name: str
     arguments: dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
-class ToolCallFinishEvent:
-    """One completed local tool call emitted during streamed execution."""
+class ToolOutputAvailableEvent:
+    """One completed local tool output event."""
 
-    call_id: str
+    tool_call_id: str
     result: ToolCallResult
 
 
-ModelExecutionStreamEvent = TextDeltaEvent | ToolCallStartEvent | ToolCallFinishEvent
+ModelExecutionStreamEvent = (
+    TextDeltaEvent
+    | ToolInputStartEvent
+    | ToolInputDeltaEvent
+    | ToolInputAvailableEvent
+    | ToolOutputAvailableEvent
+)
 ModelExecutionEventHandler = Callable[[ModelExecutionStreamEvent], None]
 
 
@@ -184,7 +207,7 @@ def _continue_with_stream(
     current_messages = messages
     previous_response_id: str | None = None
     for _ in range(MAX_TOOL_ROUNDS):
-        current, emitted_text = _create_streamed_response(
+        current, emitted_text, started_tool_inputs = _create_streamed_response(
             openai_client,
             model=model,
             messages=current_messages,
@@ -206,9 +229,11 @@ def _continue_with_stream(
             )
         followup_input = []
         for parsed in parsed_calls:
+            if parsed.tool_call_id not in started_tool_inputs:
+                on_event(ToolInputStartEvent(tool_call_id=parsed.tool_call_id))
             on_event(
-                ToolCallStartEvent(
-                    call_id=parsed.call_id,
+                ToolInputAvailableEvent(
+                    tool_call_id=parsed.tool_call_id,
                     family=parsed.family,
                     name=parsed.name,
                     arguments=parsed.arguments,
@@ -216,7 +241,12 @@ def _continue_with_stream(
             )
             call = _invoke_tool_call(parsed, tool_runtime)
             executed_calls.append(call.result)
-            on_event(ToolCallFinishEvent(call_id=call.call_id, result=call.result))
+            on_event(
+                ToolOutputAvailableEvent(
+                    tool_call_id=call.tool_call_id,
+                    result=call.result,
+                )
+            )
             payload = {
                 "ok": call.result.error is None,
                 "family": call.result.family,
@@ -291,6 +321,7 @@ def _parse_tool_calls_from_response(
         results.append(
             _ParsedToolCall(
                 call_id=call_id,
+                tool_call_id=_tool_call_id_from_item(item, fallback=call_id),
                 family=provider.family,
                 name=name,
                 arguments=arguments,
@@ -318,6 +349,7 @@ def _invoke_tool_call(
         error = str(exc)
     return _PendingToolCall(
         call_id=call.call_id,
+        tool_call_id=call.tool_call_id,
         result=ToolCallResult(
             family=call.family,
             name=call.name,
@@ -404,8 +436,9 @@ def _create_streamed_response(
     tools: list[ToolDefinition] | None,
     previous_response_id: str | None,
     on_event: ModelExecutionEventHandler,
-) -> tuple[Any, bool]:
+) -> tuple[Any, bool, set[str]]:
     emitted_text = False
+    started_tool_inputs: set[str] = set()
     with _create_response_stream(
         openai_client,
         model=model,
@@ -419,4 +452,38 @@ def _create_streamed_response(
                 if delta:
                     emitted_text = True
                     on_event(TextDeltaEvent(delta=delta))
-        return stream.get_final_response(), emitted_text
+            elif getattr(event, "type", None) == "response.function_call_arguments.delta":
+                delta = str(getattr(event, "delta", ""))
+                tool_call_id = _tool_call_id_from_event(event)
+                if tool_call_id not in started_tool_inputs:
+                    started_tool_inputs.add(tool_call_id)
+                    on_event(ToolInputStartEvent(tool_call_id=tool_call_id))
+                if delta:
+                    on_event(
+                        ToolInputDeltaEvent(
+                            tool_call_id=tool_call_id,
+                            delta=delta,
+                        )
+                    )
+        return stream.get_final_response(), emitted_text, started_tool_inputs
+
+
+def _tool_call_id_from_event(event: Any) -> str:
+    item_id = str(getattr(event, "item_id", "")).strip()
+    if item_id:
+        return item_id
+    call_id = str(getattr(event, "call_id", "")).strip()
+    if call_id:
+        return call_id
+    output_index = getattr(event, "output_index", None)
+    return f"tool-call-{output_index if output_index is not None else 'unknown'}"
+
+
+def _tool_call_id_from_item(item: Any, *, fallback: str) -> str:
+    item_id = str(getattr(item, "id", "")).strip()
+    if item_id:
+        return item_id
+    call_id = str(getattr(item, "call_id", "")).strip()
+    if call_id:
+        return call_id
+    return fallback

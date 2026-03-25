@@ -12,8 +12,10 @@ from toolang.runtime.build import PromptBuild
 from toolang.runtime.model_exec import (
     ModelExecutionResult,
     TextDeltaEvent,
-    ToolCallFinishEvent,
-    ToolCallStartEvent,
+    ToolInputAvailableEvent,
+    ToolInputDeltaEvent,
+    ToolInputStartEvent,
+    ToolOutputAvailableEvent,
     execute_prompt_build,
     execute_prompt_build_stream,
 )
@@ -141,6 +143,7 @@ def test_execute_prompt_build_runs_local_tool_loop(monkeypatch, tmp_path: Path) 
         type = "function_call"
 
         def __init__(self) -> None:
+            self.id = "tool_item_1"
             self.name = "shell"
             self.arguments = json.dumps({"command": "pwd"})
             self.call_id = "call_1"
@@ -226,10 +229,19 @@ def test_execute_prompt_build_stream_emits_text_and_tool_events(
         def __init__(self, delta: str) -> None:
             self.delta = delta
 
+    class FakeToolArgsDelta:
+        type = "response.function_call_arguments.delta"
+
+        def __init__(self, delta: str) -> None:
+            self.delta = delta
+            self.item_id = "tool_item_1"
+            self.output_index = 0
+
     class FakeFunctionCall:
         type = "function_call"
 
         def __init__(self) -> None:
+            self.id = "tool_item_1"
             self.name = "shell"
             self.arguments = json.dumps({"command": "pwd"})
             self.call_id = "call_1"
@@ -259,7 +271,11 @@ def test_execute_prompt_build_stream_emits_text_and_tool_events(
 
     streams = [
         FakeStream(
-            [FakeTextDelta("hel"), FakeTextDelta("lo")],
+            [
+                FakeTextDelta("hel"),
+                FakeTextDelta("lo"),
+                FakeToolArgsDelta('{"command":"pwd"}'),
+            ],
             FakeResponse("resp_1", output=[FakeFunctionCall()], output_text="hello"),
         ),
         FakeStream(
@@ -291,7 +307,13 @@ def test_execute_prompt_build_stream_emits_text_and_tool_events(
         ),
     )
 
-    streamed_events: list[TextDeltaEvent | ToolCallStartEvent | ToolCallFinishEvent] = []
+    streamed_events: list[
+        TextDeltaEvent
+        | ToolInputStartEvent
+        | ToolInputDeltaEvent
+        | ToolInputAvailableEvent
+        | ToolOutputAvailableEvent
+    ] = []
     result = execute_prompt_build_stream(
         build,
         on_event=streamed_events.append,
@@ -312,14 +334,21 @@ def test_execute_prompt_build_stream_emits_text_and_tool_events(
     assert streamed_events == [
         TextDeltaEvent(delta="hel"),
         TextDeltaEvent(delta="lo"),
-        ToolCallStartEvent(
-            call_id="call_1",
+        ToolInputStartEvent(
+            tool_call_id="tool_item_1",
+        ),
+        ToolInputDeltaEvent(
+            tool_call_id="tool_item_1",
+            delta='{"command":"pwd"}',
+        ),
+        ToolInputAvailableEvent(
+            tool_call_id="tool_item_1",
             family="shell",
             name="shell",
             arguments={"command": "pwd"},
         ),
-        ToolCallFinishEvent(
-            call_id="call_1",
+        ToolOutputAvailableEvent(
+            tool_call_id="tool_item_1",
             result=ToolCallResult(
                 family="shell",
                 name="shell",
@@ -354,6 +383,7 @@ def test_execute_prompt_build_stream_allows_tool_only_results(
         type = "function_call"
 
         def __init__(self) -> None:
+            self.id = "tool_item_1"
             self.name = "shell"
             self.arguments = json.dumps({"command": "pwd"})
             self.call_id = "call_1"
@@ -409,7 +439,13 @@ def test_execute_prompt_build_stream_allows_tool_only_results(
         ),
     )
 
-    streamed_events: list[TextDeltaEvent | ToolCallStartEvent | ToolCallFinishEvent] = []
+    streamed_events: list[
+        TextDeltaEvent
+        | ToolInputStartEvent
+        | ToolInputDeltaEvent
+        | ToolInputAvailableEvent
+        | ToolOutputAvailableEvent
+    ] = []
     result = execute_prompt_build_stream(
         build,
         on_event=streamed_events.append,
@@ -428,14 +464,17 @@ def test_execute_prompt_build_stream_allows_tool_only_results(
         ],
     )
     assert streamed_events == [
-        ToolCallStartEvent(
-            call_id="call_1",
+        ToolInputStartEvent(
+            tool_call_id="tool_item_1",
+        ),
+        ToolInputAvailableEvent(
+            tool_call_id="tool_item_1",
             family="shell",
             name="shell",
             arguments={"command": "pwd"},
         ),
-        ToolCallFinishEvent(
-            call_id="call_1",
+        ToolOutputAvailableEvent(
+            tool_call_id="tool_item_1",
             result=ToolCallResult(
                 family="shell",
                 name="shell",

@@ -35,8 +35,10 @@ from toolang.runtime.execution_store import ExecutionStore
 from toolang.runtime.model_exec import (
     ModelExecutionResult,
     TextDeltaEvent,
-    ToolCallFinishEvent,
-    ToolCallStartEvent,
+    ToolInputAvailableEvent,
+    ToolInputDeltaEvent,
+    ToolInputStartEvent,
+    ToolOutputAvailableEvent,
 )
 from toolang.runtime.server import create_agent_app
 
@@ -347,16 +349,27 @@ def test_chat_stream_emits_tool_call_events(tmp_path: Path, monkeypatch) -> None
 
     def fake_execute_stream(build, *, on_event) -> ModelExecutionResult:
         on_event(
-            ToolCallStartEvent(
-                call_id="call_1",
+            ToolInputStartEvent(
+                tool_call_id="call_1",
+            )
+        )
+        on_event(
+            ToolInputDeltaEvent(
+                tool_call_id="call_1",
+                delta='{"command":"pwd"}',
+            )
+        )
+        on_event(
+            ToolInputAvailableEvent(
+                tool_call_id="call_1",
                 family="shell",
                 name="shell",
                 arguments={"command": "pwd"},
             )
         )
         on_event(
-            ToolCallFinishEvent(
-                call_id="call_1",
+            ToolOutputAvailableEvent(
+                tool_call_id="call_1",
                 result=ToolCallResult(
                     family="shell",
                     name="shell",
@@ -394,9 +407,12 @@ def test_chat_stream_emits_tool_call_events(tmp_path: Path, monkeypatch) -> None
                 chunk.decode("utf-8") for chunk in response.iter_raw()
             )
 
-    assert '"type":"tool-call-start"' in stream_text
-    assert '"type":"tool-call-finish"' in stream_text
+    assert '"type":"tool-input-start"' in stream_text
+    assert '"type":"tool-input-delta"' in stream_text
+    assert '"type":"tool-input-available"' in stream_text
+    assert '"type":"tool-output-available"' in stream_text
     assert '"tool_call_id":"call_1"' in stream_text
+    assert '\\"command\\":\\"pwd\\"' in stream_text
     assert '"family":"shell"' in stream_text
     assert '"type":"text-delta"' in stream_text
     assert '"delta":"done"' in stream_text
@@ -415,16 +431,21 @@ def test_chat_stream_allows_tool_only_turns(tmp_path: Path, monkeypatch) -> None
 
     def fake_execute_stream(build, *, on_event) -> ModelExecutionResult:
         on_event(
-            ToolCallStartEvent(
-                call_id="call_1",
+            ToolInputStartEvent(
+                tool_call_id="call_1",
+            )
+        )
+        on_event(
+            ToolInputAvailableEvent(
+                tool_call_id="call_1",
                 family="shell",
                 name="shell",
                 arguments={"command": "pwd"},
             )
         )
         on_event(
-            ToolCallFinishEvent(
-                call_id="call_1",
+            ToolOutputAvailableEvent(
+                tool_call_id="call_1",
                 result=ToolCallResult(
                     family="shell",
                     name="shell",
@@ -461,8 +482,9 @@ def test_chat_stream_allows_tool_only_turns(tmp_path: Path, monkeypatch) -> None
                 chunk.decode("utf-8") for chunk in response.iter_raw()
             )
 
-    assert '"type":"tool-call-start"' in stream_text
-    assert '"type":"tool-call-finish"' in stream_text
+    assert '"type":"tool-input-start"' in stream_text
+    assert '"type":"tool-input-available"' in stream_text
+    assert '"type":"tool-output-available"' in stream_text
     assert '"tool_call_id":"call_1"' in stream_text
     assert '"family":"shell"' in stream_text
     assert '"type":"text-delta"' not in stream_text

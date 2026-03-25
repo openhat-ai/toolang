@@ -171,10 +171,16 @@ Responsibility summary:
   - the local will document, if present, plus latest pulse scheduler feedback
 - `/api/v1/chat*`
   - durable thread-based chat turns
-  - `/api/v1/chat/stream` emits SSE events for text deltas and tool-call
-    lifecycle chunks:
-    - `tool-call-start`
-    - `tool-call-finish`
+  - `/api/v1/chat/stream` emits SSE events for streamed text and tool-call
+    input/output chunks:
+    - `text-start`
+    - `text-delta`
+    - `text-end`
+    - `tool-input-start`
+    - `tool-input-delta`
+    - `tool-input-available`
+    - `tool-output-available`
+    - `finish`
 - `/api/v1/runs*`
   - current and historical runs for this agent
 - `/api/v1/events*`

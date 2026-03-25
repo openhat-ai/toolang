@@ -53,7 +53,13 @@ from ..api_models import (
 )
 from ..build import infer_model
 from ..host import RuntimeHost
-from ..model_exec import TextDeltaEvent, ToolCallFinishEvent, ToolCallStartEvent
+from ..model_exec import (
+    TextDeltaEvent,
+    ToolInputAvailableEvent,
+    ToolInputDeltaEvent,
+    ToolInputStartEvent,
+    ToolOutputAvailableEvent,
+)
 from ..work import (
     list_chore_items,
     list_task_items,
@@ -461,24 +467,43 @@ def create_agent_app(
                             }
                         )
                         continue
-                    if isinstance(event, ToolCallStartEvent):
+                    if isinstance(event, ToolInputStartEvent):
                         yield data_sse(
                             {
-                                "type": "tool-call-start",
+                                "type": "tool-input-start",
                                 "id": turn_id,
-                                "tool_call_id": event.call_id,
+                                "tool_call_id": event.tool_call_id,
+                            }
+                        )
+                        continue
+                    if isinstance(event, ToolInputDeltaEvent):
+                        yield data_sse(
+                            {
+                                "type": "tool-input-delta",
+                                "id": turn_id,
+                                "tool_call_id": event.tool_call_id,
+                                "delta": event.delta,
+                            }
+                        )
+                        continue
+                    if isinstance(event, ToolInputAvailableEvent):
+                        yield data_sse(
+                            {
+                                "type": "tool-input-available",
+                                "id": turn_id,
+                                "tool_call_id": event.tool_call_id,
                                 "family": event.family,
                                 "name": event.name,
                                 "arguments": event.arguments,
                             }
                         )
                         continue
-                    if isinstance(event, ToolCallFinishEvent):
+                    if isinstance(event, ToolOutputAvailableEvent):
                         yield data_sse(
                             {
-                                "type": "tool-call-finish",
+                                "type": "tool-output-available",
                                 "id": turn_id,
-                                "tool_call_id": event.call_id,
+                                "tool_call_id": event.tool_call_id,
                                 "family": event.result.family,
                                 "name": event.result.name,
                                 "output": event.result.output,
