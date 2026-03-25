@@ -11,7 +11,6 @@ from pathlib import Path
 
 from toolang.agent.prepared import PreparedAgent, prepare_agent
 from toolang.bus.db import BusStore
-from toolang.caps import load_prepared_caps
 from toolang.channels import ChannelPlugin, ChannelState, create_channel_plugin
 from toolang.concepts.channel import InboundDelivery, OutboundMessage, ReplyTarget
 from toolang.concepts.execution import Message, RuntimeLoop
@@ -23,10 +22,12 @@ from toolang.concepts.persisted import (
     PollState,
     PulseItemState,
     PulseState,
+    ToolsConfig,
 )
 from toolang.concepts.sandbox import SandboxSpec
 from toolang.errors import ToolangError
 from toolang.program.ast import Thunk
+from toolang.tools import create_tool_runtime
 
 from .api_models import ChatRequest, RunRequest
 from .chats import ChatStore
@@ -298,7 +299,19 @@ class RuntimeHost:
         current = prepared or self.prepared
         room = self._require_room()
         spec = SandboxSpec.parse(self.sandbox)
-        visible_caps = load_prepared_caps(current)
+        home = AgentHome.resolve(current.ref.home)
+        tools_config = (
+            ToolsConfig.load(home.tools_config_path)
+            if home.tools_config_path.exists()
+            else ToolsConfig()
+        )
+        tool_runtime = create_tool_runtime(
+            current.ref,
+            sandbox=self.sandbox,
+            tools_config=tools_config,
+            working_directory=current.ref.home,
+        )
+        enabled_families = set(tool_runtime.enabled_families())
         pulse_enabled = "pulse" in self.runtime_loops
         return {
             "sandbox": _sandbox_security_snapshot(
@@ -307,13 +320,13 @@ class RuntimeHost:
                 room=room,
             ),
             "tools": {
-                "filesystem": False,
-                "shell": False,
-                "browser_use": False,
-                "computer_use": False,
-                "services_use": bool(visible_caps.services),
-                "web_search": False,
-                "mem_search": False,
+                "filesystem": "filesystem" in enabled_families,
+                "shell": "shell" in enabled_families,
+                "browser_use": "browser_use" in enabled_families,
+                "computer_use": "computer_use" in enabled_families,
+                "services_use": "service_use" in enabled_families,
+                "web_search": "web_search" in enabled_families,
+                "mem_search": "memory_search" in enabled_families,
                 "file_search": False,
             },
             "autonomy": {

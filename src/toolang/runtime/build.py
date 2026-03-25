@@ -18,6 +18,7 @@ from toolang.concepts.persisted import (
 from toolang.errors import ToolangError
 from toolang.program import Program
 from toolang.program.ast import Thunk
+from toolang.tools import ToolRuntime
 
 from .messages import Message, context_prompt
 
@@ -37,6 +38,7 @@ class PromptBuild:
     developer_message: str
     messages: list[dict[str, Any]]
     source_text: str
+    tool_runtime: ToolRuntime | None = None
 
 
 def infer_model(thunk: Thunk, override: str | None = None) -> str:
@@ -103,6 +105,7 @@ def build_invoke_prompt(
     thread_id: str | None,
     sandbox: str,
     input_meta: dict[str, Any] | None = None,
+    tool_runtime: ToolRuntime | None = None,
 ) -> PromptBuild:
     if thunk.input_name and user_input is None:
         raise ToolangError(
@@ -123,6 +126,7 @@ def build_invoke_prompt(
         thread_id=thread_id,
         raw_input=user_input,
         input_meta=input_meta,
+        tool_runtime=tool_runtime,
     )
     developer_message = _build_developer_message(
         prepared.program,
@@ -147,6 +151,7 @@ def build_invoke_prompt(
             {"role": "user", "content": user_message},
         ],
         source_text=source_text,
+        tool_runtime=tool_runtime,
     )
 
 
@@ -158,6 +163,7 @@ def build_chat_prompt(
     message: Message,
     model: str | None,
     sandbox: str,
+    tool_runtime: ToolRuntime | None = None,
 ) -> PromptBuild:
     source_text = prepared.ref.source.read_text(encoding="utf-8")
     runtime_context = _build_runtime_context(
@@ -168,6 +174,7 @@ def build_chat_prompt(
         thread_id=message.thread_id,
         raw_input=message.text,
         input_meta=message.meta,
+        tool_runtime=tool_runtime,
     )
     developer_message = _build_developer_message(
         prepared.program,
@@ -188,6 +195,7 @@ def build_chat_prompt(
             *history_messages,
         ],
         source_text=source_text,
+        tool_runtime=tool_runtime,
     )
 
 
@@ -202,6 +210,7 @@ def build_prompt_error_trace_data(
     raw_input: str | None,
     message: Message | None = None,
     input_meta: dict[str, Any] | None = None,
+    tool_runtime: ToolRuntime | None = None,
 ) -> dict[str, Any]:
     runtime_context = _build_runtime_context(
         prepared,
@@ -211,6 +220,7 @@ def build_prompt_error_trace_data(
         thread_id=thread_id,
         raw_input=raw_input,
         input_meta=input_meta if message is None else message.meta,
+        tool_runtime=tool_runtime,
     )
     source_text = prepared.ref.source.read_text(encoding="utf-8")
     return {
@@ -234,6 +244,7 @@ def _build_runtime_context(
     thread_id: str | None,
     raw_input: str | None,
     input_meta: dict[str, Any] | None,
+    tool_runtime: ToolRuntime | None,
 ) -> dict[str, Any]:
     visible_caps = load_prepared_caps(prepared)
     context = {
@@ -250,6 +261,7 @@ def _build_runtime_context(
         "thread_id": thread_id,
         "visible_caps": visible_caps.model_dump(mode="python"),
         "program": _program_context(prepared.program, thunk, prepared.ref.source),
+        "tools": tool_runtime.enabled_families() if tool_runtime is not None else [],
     }
     task_context = _task_context(
         prepared,
