@@ -34,6 +34,10 @@ Generated implementation reference does not live here. It belongs under
   - task as one cross-provider collaboration primitive
   - local markdown task-file rules
   - built-in task prompt and task-service expectations
+- [tools.md](./tools.md)
+  - built-in runtime tool families
+  - local tool-provider loading
+  - tool-call recording and diagnostics
 - [api.md](./api.md)
   - CLI surface
   - registry state

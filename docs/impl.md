@@ -9,6 +9,7 @@ Design semantics live in:
 - [capabilities.md](./capabilities.md)
 - [execution.md](./execution.md)
 - [api.md](./api.md)
+- [tools.md](./tools.md)
 - [plugins.md](./plugins.md)
 - [python.md](./python.md)
 
@@ -62,6 +63,8 @@ Current internal packages:
 - `toolang.concepts`
   - shared identity, execution, layout, sandbox, cap, and persisted-state
     constructs
+- `toolang.tools`
+  - built-in runtime tool families, provider loading, and local tool execution
 - `toolang.bus`
   - shared bus projection and bus API
 - `toolang.sandbox`

@@ -36,6 +36,7 @@ from .sandbox import (
     SandboxSpec,
     SandboxState,
 )
+from .tools import ToolCallResult, ToolDefinition, ToolFamily
 
 __all__ = [
     "AgentKind",
@@ -72,4 +73,7 @@ __all__ = [
     "SkillFrontmatter",
     "ReplyTarget",
     "ToolangRoot",
+    "ToolCallResult",
+    "ToolDefinition",
+    "ToolFamily",
 ]

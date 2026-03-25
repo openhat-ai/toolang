@@ -33,6 +33,7 @@ class PromptTrace(BaseModel):
     developer_message: str
     messages: list[dict[str, Any]] = Field(default_factory=list)
     source_text: str
+    tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     response_text: str | None = None
     error: str | None = None
 

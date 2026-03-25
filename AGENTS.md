@@ -80,6 +80,9 @@
   objects instead of rebuilding paths ad hoc.
 - `toolang.sandbox` owns sandbox lifecycle helpers. Sandbox concepts and
   persisted sandbox state live in `toolang.concepts.sandbox`.
+- `toolang.tools` owns built-in runtime tool families, provider loading, and
+  local tool execution. Tool-family concepts and persisted tool config live in
+  `toolang.concepts.tools` and `toolang.concepts.persisted`.
 - `toolang.web` owns the small shared web/app helpers used by FastAPI app
   modules.
 - Stable shared constructs live in `toolang.concepts` so runtime, caps, and

@@ -10,8 +10,10 @@ from toolang.bus.db import BusStore
 from toolang.bus.events import RunFailed, RunFinished, RunOrigin, RunStarted, utc_now
 from toolang.concepts.execution import MessageSender, RunKind, thread_group_for_origin
 from toolang.concepts.layout import AgentHome
+from toolang.concepts.persisted import ToolsConfig
 from toolang.concepts.persisted.prompt_trace import PromptTrace
 from toolang.program.ast import Thunk
+from toolang.tools import ToolRuntime, create_tool_runtime
 
 from .build import (
     PromptBuild,
@@ -77,7 +79,7 @@ def invoke_prepared_agent(
             if execution_store is not None and process_run_id is not None
             else None
         ),
-        build_prompt=lambda: build_invoke_prompt(
+        build_prompt=lambda tool_runtime: build_invoke_prompt(
             prepared,
             thunk,
             user_input=user_input,
@@ -86,6 +88,7 @@ def invoke_prepared_agent(
             thread_id=thread_id,
             sandbox=sandbox,
             input_meta=input_meta,
+            tool_runtime=tool_runtime,
         ),
         input_meta=input_meta,
     )
@@ -138,13 +141,14 @@ def chat_prepared_agent(
             if execution_store is not None and process_run_id is not None
             else None
         ),
-        build_prompt=lambda: build_chat_prompt(
+        build_prompt=lambda tool_runtime: build_chat_prompt(
             prepared,
             thunk,
             history_messages=history_messages,
             message=message,
             model=model,
             sandbox=sandbox,
+            tool_runtime=tool_runtime,
         ),
     )
     assistant_message = chat_store.append_message(
@@ -206,9 +210,20 @@ def _tracked_turn(
         if run_kind is not None
         else None
     )
-    trace_path = AgentHome.resolve(prepared.ref.home).room(
-        prepared.ref.name
-    ).prompt_trace_path(resolved_run_id)
+    home = AgentHome.resolve(prepared.ref.home)
+    room = home.room(prepared.ref.name)
+    trace_path = room.prompt_trace_path(resolved_run_id)
+    tools_config = (
+        ToolsConfig.load(home.tools_config_path)
+        if home.tools_config_path.exists()
+        else ToolsConfig()
+    )
+    tool_runtime = create_tool_runtime(
+        prepared.ref,
+        sandbox=sandbox,
+        tools_config=tools_config,
+        working_directory=prepared.ref.home,
+    )
     prompt_trace: PromptTrace | None = None
     try:
         if execution is not None:
@@ -255,7 +270,7 @@ def _tracked_turn(
             )
         )
 
-        prompt_build = build_prompt()
+        prompt_build = build_prompt(tool_runtime)
         if execution is not None:
             execution.append_step(
                 turn_id=resolved_run_id,
@@ -282,8 +297,27 @@ def _tracked_turn(
             build=prompt_build,
         )
         prompt_trace.save(trace_path)
-        output = execute_prompt_build(prompt_build)
+        execution_result = execute_prompt_build(prompt_build)
+        if isinstance(execution_result, str):
+            output = execution_result
+            tool_calls = []
+        else:
+            output = execution_result.output_text
+            tool_calls = execution_result.tool_calls
         if execution is not None:
+            for tool_call in tool_calls:
+                execution.append_step(
+                    turn_id=resolved_run_id,
+                    step_kind="tool_call",
+                    status="failed" if tool_call.error is not None else "finished",
+                    input_json={
+                        "family": tool_call.family,
+                        "name": tool_call.name,
+                        "arguments": tool_call.arguments,
+                    },
+                    output_json=tool_call.output,
+                    error=tool_call.error,
+                )
             execution.append_step(
                 turn_id=resolved_run_id,
                 step_kind="model_call",
@@ -292,9 +326,22 @@ def _tracked_turn(
                     "model": prompt_build.model,
                     "message_count": len(prompt_build.messages),
                 },
-                output_json={"output_length": len(output)},
+                output_json={
+                    "output_length": len(output),
+                    "tool_call_count": len(tool_calls),
+                },
             )
 
+        prompt_trace.tool_calls = [
+            {
+                "family": item.family,
+                "name": item.name,
+                "arguments": item.arguments,
+                "output": item.output,
+                "error": item.error,
+            }
+            for item in tool_calls
+        ]
         prompt_trace.response_text = output
         prompt_trace.save(trace_path)
         if execution is not None:
@@ -350,6 +397,7 @@ def _tracked_turn(
                 raw_input=raw_input,
                 message=message,
                 input_meta=input_meta,
+                tool_runtime=tool_runtime,
             )
         prompt_trace.error = str(exc)
         prompt_trace.save(trace_path)
@@ -396,6 +444,7 @@ def _prompt_trace(
     raw_input: str | None = None,
     message: Message | None = None,
     input_meta: dict[str, object] | None = None,
+    tool_runtime: ToolRuntime | None = None,
 ) -> PromptTrace:
     if build is not None:
         prompt_model = build.model
@@ -406,6 +455,7 @@ def _prompt_trace(
         trace_developer_message = build.developer_message
         trace_messages = build.messages
         trace_source_text = build.source_text
+        trace_tool_calls = []
     else:
         prompt_data = build_prompt_error_trace_data(
             prepared,
@@ -417,6 +467,7 @@ def _prompt_trace(
             raw_input=raw_input,
             message=message,
             input_meta=input_meta,
+            tool_runtime=tool_runtime,
         )
         prompt_model = str(prompt_data["model"])
         trace_raw_input = prompt_data["raw_input"]
@@ -426,6 +477,7 @@ def _prompt_trace(
         trace_developer_message = str(prompt_data["developer_message"])
         trace_messages = list(prompt_data["messages"])
         trace_source_text = str(prompt_data["source_text"])
+        trace_tool_calls = []
     return PromptTrace(
         run_id=run_id,
         created_at=datetime.now(timezone.utc),
@@ -447,4 +499,5 @@ def _prompt_trace(
         developer_message=trace_developer_message,
         messages=trace_messages,
         source_text=trace_source_text,
+        tool_calls=trace_tool_calls,
     )

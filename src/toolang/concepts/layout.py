@@ -119,6 +119,10 @@ class AgentHome:
         return self.path / "hooks.toml"
 
     @property
+    def tools_config_path(self) -> Path:
+        return self.path / "tools.toml"
+
+    @property
     def synced_caps_root(self) -> Path:
         return self.path / ".toolang" / "sync"
 

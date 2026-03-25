@@ -7,8 +7,10 @@ from toolang.agent.resolve import resolve_agent_ref
 from toolang.bus.db import BusStore
 from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.concepts.persisted.prompt_trace import PromptTrace
+from toolang.concepts.tools import ToolCallResult
 from toolang.runtime.execution_store import ExecutionStore
 from toolang.runtime.invoke import invoke_prepared_agent
+from toolang.runtime.model_exec import ModelExecutionResult
 
 
 def resolve_toolang_root(root: Path) -> Path:
@@ -82,3 +84,53 @@ def test_invoke_prepared_agent_records_run_events(tmp_path: Path, monkeypatch) -
     assert trace.runtime_context["program"]["thunk"]["name"] == "summarize"
     assert trace.runtime_context["visible_caps"]["services"][0]["name"] == "github"
     assert trace.response_text == "ran:summarize:hello:gpt-5.3"
+
+
+def test_invoke_prepared_agent_records_tool_calls(tmp_path: Path, monkeypatch) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+
+    monkeypatch.setattr(
+        "toolang.runtime.invoke.execute_prompt_build",
+        lambda build: ModelExecutionResult(
+            output_text="done",
+            tool_calls=[
+                ToolCallResult(
+                    family="shell",
+                    name="shell",
+                    arguments={"command": "pwd"},
+                    output={"ok": True, "stdout": "/tmp/alice"},
+                )
+            ],
+        ),
+    )
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    prepared = prepare_agent(agent)
+    thunk = prepared.program.get_thunk("summarize")
+
+    result = invoke_prepared_agent(
+        prepared,
+        thunk,
+        bus_db_path=bus_events_db_path(root),
+        user_input="hello",
+    )
+
+    execution = ExecutionStore(execution_db_path(home, "alice"))
+    steps = execution.list_steps(turn_id=result.run_id)
+    execution.close()
+    trace = PromptTrace.load(agent_run_prompt_path(home, "alice", result.run_id))
+
+    assert [step.step_kind for step in steps] == ["prompt_build", "tool_call", "model_call"]
+    assert trace.runtime_context["tools"] == ["filesystem", "shell", "web_search"]
+    assert trace.tool_calls == [
+        {
+            "family": "shell",
+            "name": "shell",
+            "arguments": {"command": "pwd"},
+            "output": {"ok": True, "stdout": "/tmp/alice"},
+            "error": None,
+        }
+    ]
