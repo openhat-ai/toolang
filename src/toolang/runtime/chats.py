@@ -403,7 +403,7 @@ class ChatStore:
     def _backfill_messages(self) -> None:
         rows = self._conn.execute(
             """
-            SELECT rowid, message_id, turn_id, role, seq, text, parts_json
+            SELECT rowid AS message_rowid, message_id, turn_id, role, seq, text, parts_json
             FROM messages
             """
         ).fetchall()
@@ -431,7 +431,7 @@ class ChatStore:
                 SET message_id = ?, parts_json = ?
                 WHERE rowid = ?
                 """,
-                (message_id, parts_json, row["rowid"]),
+                (message_id, parts_json, row["message_rowid"]),
             )
 
 
