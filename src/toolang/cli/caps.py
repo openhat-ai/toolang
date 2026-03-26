@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -7,9 +8,11 @@ from typing import Annotated, Literal
 
 import typer
 
+from toolang.agent.prepared import prepare_agent
 from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.errors import ToolangError
 from toolang.caps.github import fetch_github_artifact, resolve_github_cap_ref
+from toolang.caps import load_prepared_caps
 from toolang.caps.files import (
     create_local_cap,
     delete_local_cap,
@@ -19,6 +22,7 @@ from toolang.caps.files import (
 )
 from toolang.concepts.caps import CapKind
 from toolang.program import Program
+from toolang.tools.plugins.service_use import start_service_auth
 
 from .support import _resolve_cli_agent, _toolang_root
 
@@ -103,6 +107,21 @@ def _build_cap_apps(spec: CapCommandSpec) -> tuple[typer.Typer, typer.Typer]:
         agent: ScopedAgent = None,
     ) -> None:
         _cap_remove(spec.kind, name=name, scope=scope, agent=agent)
+
+    if spec.kind == "service":
+        @cap_app.command("auth", no_args_is_help=True)
+        def auth(
+            agent: Annotated[str, typer.Argument(help="Agent selector")],
+            name: Annotated[str, typer.Argument(help="Service name")],
+            wait: Annotated[
+                bool,
+                typer.Option(
+                    "--wait/--no-wait",
+                    help="Wait for OAuth completion before returning.",
+                ),
+            ] = True,
+        ) -> None:
+            _service_auth(agent=agent, service_name=name, wait=wait)
 
     @local_app.command("new", no_args_is_help=True)
     def local_new(
@@ -232,6 +251,21 @@ def _cap_local_delete(
         raise ToolangError(f"Local {kind} not found: {target.cap_path}")
     prune_empty_local_kind_dir(target.kind_dir)
     typer.echo(str(target.cap_path))
+
+
+def _service_auth(*, agent: str, service_name: str, wait: bool) -> None:
+    toolang_root = _toolang_root()
+    db_path = ToolangRoot.resolve(toolang_root).agents_db_path
+    resolved = _resolve_cli_agent(agent, db_path=db_path)
+    prepared = prepare_agent(resolved)
+    visible_caps = load_prepared_caps(prepared)
+    result = start_service_auth(
+        resolved,
+        service_name=service_name,
+        visible_services=[item.service_catalog_item() for item in visible_caps.services],
+        wait=wait,
+    )
+    typer.echo(json.dumps(result, indent=2, ensure_ascii=False))
 
 
 def _resolve_cap_scope_target(

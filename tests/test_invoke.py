@@ -140,7 +140,6 @@ def test_invoke_prepared_agent_records_tool_calls(tmp_path: Path, monkeypatch) -
             "args": [],
             "port": None,
             "env_vars": ["GITHUB_TOKEN"],
-            "auth_env_var": "GITHUB_TOKEN",
         }
     ]
     assert "Service usage protocol:" in trace.developer_message
@@ -148,6 +147,9 @@ def test_invoke_prepared_agent_records_tool_calls(tmp_path: Path, monkeypatch) -
         trace.developer_message
     )
     assert "Required service env vars are declared directly in service front matter." in (
+        trace.developer_message
+    )
+    assert "OAuth tokens are managed by the service_use provider, not by .env." in (
         trace.developer_message
     )
     assert "- github: transport=http; target=https://mcp.github.com/mcp; description=GitHub MCP server; env=GITHUB_TOKEN" in (

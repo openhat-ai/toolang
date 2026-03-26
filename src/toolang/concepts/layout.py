@@ -234,6 +234,18 @@ class AgentRoom:
     def service_use_binding_dir(self, provider: str, service_name: str) -> Path:
         return self.service_use_provider_dir(provider) / service_name
 
+    def service_use_session_path(self, provider: str, service_name: str) -> Path:
+        return self.service_use_binding_dir(provider, service_name) / "session.json"
+
+    def service_use_proxy_path(self, provider: str, service_name: str) -> Path:
+        return self.service_use_binding_dir(provider, service_name) / "proxy.json"
+
+    def service_use_token_path(self, provider: str, service_name: str) -> Path:
+        return self.service_use_binding_dir(provider, service_name) / "token.json"
+
+    def service_use_auth_state_path(self, provider: str, service_name: str) -> Path:
+        return self.service_use_binding_dir(provider, service_name) / "auth.json"
+
     def poll_state_path(self, binding_name: str) -> Path:
         return self.poll_dir / f"{binding_name}.json"
 
