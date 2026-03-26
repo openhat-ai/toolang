@@ -579,7 +579,7 @@ def test_cli_stop_host_agent_terminates_process(tmp_path: Path, monkeypatch) -> 
     monkeypatch.setattr("toolang.cli.run.sandbox_alive", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         "toolang.cli.run._wait_for_running_agent_stop",
-        lambda **kwargs: delete_running_agent(db_path, agent.uri),
+        lambda **kwargs: (delete_running_agent(db_path, agent.uri), True)[1],
     )
 
     result = runner.invoke(app, ["stop", "alice"])
@@ -624,7 +624,7 @@ def test_cli_stop_docker_agent_removes_container(tmp_path: Path, monkeypatch) ->
     monkeypatch.setattr("toolang.cli.run.sandbox_alive", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         "toolang.cli.run._wait_for_running_agent_stop",
-        lambda **kwargs: delete_running_agent(db_path, agent.uri),
+        lambda **kwargs: (delete_running_agent(db_path, agent.uri), True)[1],
     )
 
     result = runner.invoke(app, ["stop", "alice"])
@@ -649,6 +649,52 @@ def test_cli_stop_requires_running_agent(tmp_path: Path, monkeypatch) -> None:
     assert result.exit_code == 1
     assert isinstance(result.exception, ToolangError)
     assert "Agent is not running" in str(result.exception)
+
+
+def test_cli_stop_escalates_after_grace_period(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    db_path = agents_db_path(root)
+    _remember_agent(agent, db_path=db_path)
+    upsert_running_agent(
+        db_path,
+        RunningAgentRecord(
+            agent_uri=agent.uri,
+            pid=4242,
+            status="running",
+            endpoint="http://127.0.0.1:8778",
+            sandbox="host",
+            started_at=datetime(2026, 3, 19, 9, 0, 0, tzinfo=timezone.utc),
+            heartbeat_at=datetime(2026, 3, 19, 9, 1, 0, tzinfo=timezone.utc),
+        ),
+    )
+
+    stop_calls: list[tuple[int | None, bool]] = []
+    wait_results = iter([False, True])
+
+    monkeypatch.setattr(
+        "toolang.cli.run.stop_sandbox",
+        lambda sandbox_state, *, pid=None, force=False: stop_calls.append((pid, force)),
+    )
+    monkeypatch.setattr("toolang.cli.run.sandbox_alive", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        "toolang.cli.run._wait_for_running_agent_stop",
+        lambda **kwargs: next(wait_results),
+    )
+
+    result = runner.invoke(app, ["stop", "alice"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == f"stopped {agent.id[:12]}"
+    assert stop_calls == [(4242, False), (4242, True)]
 
 
 def test_hidden_path_commands_resolve_agent_paths(tmp_path: Path, monkeypatch) -> None:
