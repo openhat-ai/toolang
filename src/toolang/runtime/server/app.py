@@ -52,14 +52,9 @@ from ..api_models import (
     WillResponse,
 )
 from ..build import infer_model
+from ..chat_protocol import AIMessageChunkEncoder, chunk_to_dict
 from ..host import RuntimeHost
-from ..model_exec import (
-    TextDeltaEvent,
-    ToolInputAvailableEvent,
-    ToolInputDeltaEvent,
-    ToolInputStartEvent,
-    ToolOutputAvailableEvent,
-)
+from ..model_exec import TextDeltaEvent
 from ..work import (
     list_chore_items,
     list_task_items,
@@ -440,14 +435,15 @@ def create_agent_app(
     @app.post("/api/v1/chat/stream")
     def chat_stream(request: ChatRequest) -> StreamingResponse:
         def stream() -> Iterator[str]:
-            yield data_sse({"type": "start"})
             event_queue: Queue[object] = Queue()
-            text_started = False
             try:
                 turn_id, future = runtime_host.submit_chat_stream(
                     request,
                     event_queue.put,
                 )
+                encoder = AIMessageChunkEncoder(message_id=turn_id)
+                for chunk in encoder.start():
+                    yield data_sse(chunk_to_dict(chunk))
                 while True:
                     try:
                         event = event_queue.get(timeout=0.05)
@@ -455,82 +451,26 @@ def create_agent_app(
                         if future.done():
                             break
                         continue
-                    if isinstance(event, TextDeltaEvent):
-                        if not text_started:
-                            text_started = True
-                            yield data_sse({"type": "text-start", "id": turn_id})
-                        yield data_sse(
-                            {
-                                "type": "text-delta",
-                                "id": turn_id,
-                                "delta": event.delta,
-                            }
-                        )
-                        continue
-                    if isinstance(event, ToolInputStartEvent):
-                        yield data_sse(
-                            {
-                                "type": "tool-input-start",
-                                "id": turn_id,
-                                "tool_call_id": event.tool_call_id,
-                            }
-                        )
-                        continue
-                    if isinstance(event, ToolInputDeltaEvent):
-                        yield data_sse(
-                            {
-                                "type": "tool-input-delta",
-                                "id": turn_id,
-                                "tool_call_id": event.tool_call_id,
-                                "delta": event.delta,
-                            }
-                        )
-                        continue
-                    if isinstance(event, ToolInputAvailableEvent):
-                        yield data_sse(
-                            {
-                                "type": "tool-input-available",
-                                "id": turn_id,
-                                "tool_call_id": event.tool_call_id,
-                                "family": event.family,
-                                "name": event.name,
-                                "arguments": event.arguments,
-                            }
-                        )
-                        continue
-                    if isinstance(event, ToolOutputAvailableEvent):
-                        yield data_sse(
-                            {
-                                "type": "tool-output-available",
-                                "id": turn_id,
-                                "tool_call_id": event.tool_call_id,
-                                "family": event.result.family,
-                                "name": event.result.name,
-                                "output": event.result.output,
-                                "error": event.result.error,
-                            }
-                        )
+                    for chunk in encoder.encode_event(event):
+                        yield data_sse(chunk_to_dict(chunk))
                 assistant = future.result().assistant
             except Exception as exc:
                 message = str(exc).strip() or type(exc).__name__
-                yield data_sse({"type": "error", "errorText": message})
-                yield data_sse({"type": "finish"})
+                encoder = locals().get("encoder")
+                if isinstance(encoder, AIMessageChunkEncoder):
+                    for chunk in encoder.error(message):
+                        yield data_sse(chunk_to_dict(chunk))
+                else:
+                    yield data_sse({"type": "error", "errorText": message})
+                    yield data_sse({"type": "finish"})
                 yield "data: [DONE]\n\n"
                 return
 
-            if assistant.text and not text_started:
-                text_started = True
-                yield data_sse({"type": "text-start", "id": assistant.turn_id})
-                yield data_sse(
-                    {
-                        "type": "text-delta",
-                        "id": assistant.turn_id,
-                        "delta": assistant.text,
-                    }
-                )
-            if text_started:
-                yield data_sse({"type": "text-end", "id": assistant.turn_id})
-            yield data_sse({"type": "finish"})
+            if assistant.text and not encoder.has_text:
+                for chunk in encoder.encode_event(TextDeltaEvent(delta=assistant.text)):
+                    yield data_sse(chunk_to_dict(chunk))
+            for chunk in encoder.finish():
+                yield data_sse(chunk_to_dict(chunk))
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(

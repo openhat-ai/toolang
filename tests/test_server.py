@@ -411,9 +411,11 @@ def test_chat_stream_emits_tool_call_events(tmp_path: Path, monkeypatch) -> None
     assert '"type":"tool-input-delta"' in stream_text
     assert '"type":"tool-input-available"' in stream_text
     assert '"type":"tool-output-available"' in stream_text
-    assert '"tool_call_id":"call_1"' in stream_text
-    assert '\\"command\\":\\"pwd\\"' in stream_text
-    assert '"family":"shell"' in stream_text
+    assert '"toolCallId":"call_1"' in stream_text
+    assert '"inputTextDelta":"{\\"command\\":\\"pwd\\"}"' in stream_text
+    assert '"toolName":"shell"' in stream_text
+    assert '"input":{"command":"pwd"}' in stream_text
+    assert '"providerMetadata":{"toolang":{"toolFamily":"shell"}}' in stream_text
     assert '"type":"text-delta"' in stream_text
     assert '"delta":"done"' in stream_text
 
@@ -485,8 +487,8 @@ def test_chat_stream_allows_tool_only_turns(tmp_path: Path, monkeypatch) -> None
     assert '"type":"tool-input-start"' in stream_text
     assert '"type":"tool-input-available"' in stream_text
     assert '"type":"tool-output-available"' in stream_text
-    assert '"tool_call_id":"call_1"' in stream_text
-    assert '"family":"shell"' in stream_text
+    assert '"toolCallId":"call_1"' in stream_text
+    assert '"toolName":"shell"' in stream_text
     assert '"type":"text-delta"' not in stream_text
     assert '"type":"finish"' in stream_text
     assert "data: [DONE]" in stream_text

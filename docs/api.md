@@ -183,6 +183,8 @@ Responsibility summary:
     - `tool-input-delta`
     - `tool-input-available`
     - `tool-output-available`
+    - uses AI SDK-compatible camelCase fields such as `toolCallId`,
+      `toolName`, and `inputTextDelta`
     - `finish`
 - `/api/v1/runs*`
   - current and historical runs for this agent
