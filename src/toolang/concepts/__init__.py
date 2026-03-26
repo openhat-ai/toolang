@@ -19,6 +19,7 @@ from .caps import (
     PsycheFrontmatter,
     ServiceFrontmatter,
     SkillFrontmatter,
+    service_env_var_name,
 )
 from .channel import ChannelName, InboundDelivery, OutboundMessage, ReplyTarget
 from .execution import (
@@ -83,6 +84,7 @@ __all__ = [
     "SandboxState",
     "SkillFrontmatter",
     "ReplyTarget",
+    "service_env_var_name",
     "TurnMessage",
     "TextPart",
     "ReasoningPart",

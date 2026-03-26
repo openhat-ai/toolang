@@ -7,7 +7,6 @@ from typing import Any
 import pytest
 
 from toolang.concepts.identity import AgentRef
-from toolang.concepts.persisted import ToolsConfig
 from toolang.concepts.tools import ToolCallResult, ToolDefinition
 from toolang.runtime.build import PromptBuild
 from toolang.runtime.model_exec import (
@@ -135,7 +134,6 @@ def test_create_tool_runtime_enables_service_use_when_services_are_visible(
     runtime = create_tool_runtime(
         _agent_ref(home),
         sandbox="host",
-        tools_config=ToolsConfig(),
         working_directory=home,
         visible_services=[
             {
@@ -143,6 +141,8 @@ def test_create_tool_runtime_enables_service_use_when_services_are_visible(
                 "transport": "http",
                 "target": "https://mcp.github.com/mcp",
                 "description": "GitHub MCP server",
+                "env_vars": ["TOOLANG_SERVICE_GITHUB_TOKEN"],
+                "auth_env_var": "TOOLANG_SERVICE_GITHUB_TOKEN",
             }
         ],
     )
@@ -159,7 +159,6 @@ def test_create_tool_runtime_enables_service_use_without_visible_services(
     runtime = create_tool_runtime(
         _agent_ref(home),
         sandbox="host",
-        tools_config=ToolsConfig(),
         working_directory=home,
         visible_services=[],
     )
@@ -170,6 +169,10 @@ def test_create_tool_runtime_enables_service_use_without_visible_services(
 def test_service_use_tool_calls_http_service_via_mcat(monkeypatch, tmp_path: Path) -> None:
     home = tmp_path / "alice"
     home.mkdir()
+    (home / ".env").write_text(
+        "TOOLANG_SERVICE_GITHUB_TOKEN=github-token\n",
+        encoding="utf-8",
+    )
     provider = create_service_use_tool(
         {
             "visible_services": [
@@ -178,23 +181,22 @@ def test_service_use_tool_calls_http_service_via_mcat(monkeypatch, tmp_path: Pat
                     "transport": "http",
                     "target": "https://mcp.github.com/mcp",
                     "description": "GitHub MCP server",
+                    "env_vars": ["TOOLANG_SERVICE_GITHUB_TOKEN"],
+                    "auth_env_var": "TOOLANG_SERVICE_GITHUB_TOKEN",
                 }
             ],
-            "services": {
-                "github": {
-                    "key_ref": "env://GITHUB_TOKEN",
-                }
-            },
         }
     )
     calls: list[list[str]] = []
 
-    def fake_init_session(*, runner, endpoint, session_path, key_ref, cwd):
+    def fake_init_session(*, runner, endpoint, session_path, key_ref, cwd, service_env):
         calls.append(["init", endpoint, key_ref or ""])
+        assert service_env == {"TOOLANG_SERVICE_GITHUB_TOKEN": "github-token"}
         session_path.write_text(json.dumps({"endpoint": endpoint}), encoding="utf-8")
 
-    def fake_run_mcat_json(runner, args, *, cwd):
+    def fake_run_mcat_json(runner, args, *, cwd, service_env):
         calls.append(args)
+        assert service_env == {"TOOLANG_SERVICE_GITHUB_TOKEN": "github-token"}
         return {"tools": [{"name": "list_issues"}]}
 
     monkeypatch.setattr("toolang.tools.plugins.service_use._init_session", fake_init_session)
@@ -208,7 +210,11 @@ def test_service_use_tool_calls_http_service_via_mcat(monkeypatch, tmp_path: Pat
     assert result["service"] == "github"
     assert result["transport"] == "http"
     assert result["result"] == {"tools": [{"name": "list_issues"}]}
-    assert calls[0] == ["init", "https://mcp.github.com/mcp", "env://GITHUB_TOKEN"]
+    assert calls[0] == [
+        "init",
+        "https://mcp.github.com/mcp",
+        "env://TOOLANG_SERVICE_GITHUB_TOKEN",
+    ]
     assert calls[1][0:2] == ["tool", "list"]
 
 
@@ -221,22 +227,19 @@ def test_service_use_tool_calls_stdio_service_via_mcat_proxy(monkeypatch, tmp_pa
             "visible_services": [
                 {
                     "name": "localdocs",
-                    "description": "Local docs MCP server",
-                }
-            ],
-            "services": {
-                "localdocs": {
                     "transport": "stdio",
+                    "description": "Local docs MCP server",
                     "command": ["uvx", "localdocs-mcp"],
                     "port": 6110,
                 }
-            },
+            ],
         }
     )
     calls: list[list[str]] = []
 
-    def fake_run_mcat_json(runner, args, *, cwd):
+    def fake_run_mcat_json(runner, args, *, cwd, service_env):
         calls.append(args)
+        assert service_env == {}
         if args[:2] == ["proxy", "up"]:
             return {"endpoint": "http://127.0.0.1:6110/mcp"}
         if args[0] == "init":
@@ -268,6 +271,31 @@ def test_service_use_tool_calls_stdio_service_via_mcat_proxy(monkeypatch, tmp_pa
     assert calls[0][0:3] == ["proxy", "up", "6110"]
     assert calls[1][0] == "init"
     assert calls[2][0:3] == ["tool", "call", "search_docs"]
+
+
+def test_service_use_tool_requires_declared_env_vars(monkeypatch, tmp_path: Path) -> None:
+    home = tmp_path / "alice"
+    home.mkdir()
+    provider = create_service_use_tool(
+        {
+            "visible_services": [
+                {
+                    "name": "github",
+                    "transport": "http",
+                    "target": "https://mcp.github.com/mcp",
+                    "env_vars": ["TOOLANG_SERVICE_GITHUB_TOKEN"],
+                    "auth_env_var": "TOOLANG_SERVICE_GITHUB_TOKEN",
+                }
+            ]
+        }
+    )
+    monkeypatch.setattr(
+        "toolang.tools.plugins.service_use._run_mcat_json",
+        lambda runner, args, *, cwd, service_env: {},
+    )
+
+    with pytest.raises(Exception, match="TOOLANG_SERVICE_GITHUB_TOKEN"):
+        provider.invoke({"service": "github", "action": "tool_list"}, _tool_context(home))
 
 
 def test_execute_prompt_build_runs_local_tool_loop(monkeypatch, tmp_path: Path) -> None:

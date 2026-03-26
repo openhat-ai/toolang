@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import socket
 import subprocess
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 from urllib.parse import urlsplit
 
+from dotenv import dotenv_values
 from pydantic import BaseModel, Field
 
 from toolang.concepts.layout import AgentHome
@@ -26,20 +28,15 @@ class _VisibleService(BaseModel):
     transport: str | None = None
     target: str | None = None
     description: str | None = None
-
-
-class _ServiceBinding(BaseModel):
-    transport: ServiceTransport | None = None
-    endpoint: str | None = None
-    key_ref: str | None = None
     command: str | list[str] | None = None
     args: list[str] = Field(default_factory=list)
     port: int | None = None
+    env_vars: list[str] = Field(default_factory=list)
+    auth_env_var: str | None = None
 
 
 class _ProviderConfig(BaseModel):
     runner: str | list[str] | None = None
-    services: dict[str, _ServiceBinding] = Field(default_factory=dict)
     visible_services: list[_VisibleService] = Field(default_factory=list)
 
 
@@ -55,6 +52,16 @@ class _ProxyState(BaseModel):
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(self.model_dump_json(indent=2), encoding="utf-8")
+
+
+class _ResolvedService(BaseModel):
+    name: str
+    transport: ServiceTransport
+    endpoint: str | None = None
+    command: list[str] = Field(default_factory=list)
+    port: int | None = None
+    env_vars: list[str] = Field(default_factory=list)
+    auth_env_var: str | None = None
 
 
 class ServiceUseTool(ToolProvider):
@@ -78,8 +85,7 @@ class ServiceUseTool(ToolProvider):
             family="service_use",
             name="service_use",
             description=(
-                "Use one configured MCP service via mcat-cli. "
-                + service_description
+                "Use one visible MCP service via mcat-cli. " + service_description
             ),
             parameters={
                 "type": "object",
@@ -116,12 +122,18 @@ class ServiceUseTool(ToolProvider):
         service_name = _required_text(arguments, "service")
         action = _required_text(arguments, "action")
         resolved = self._resolve_service(service_name)
-        session_path = self._ensure_session(resolved, context=context)
+        service_env = _load_service_env(context, resolved)
+        session_path = self._ensure_session(
+            resolved,
+            context=context,
+            service_env=service_env,
+        )
         result = self._invoke_service_action(
             resolved,
             action=action,
             arguments=arguments,
             session_path=session_path,
+            service_env=service_env,
             cwd=context.agent.home,
         )
         return {
@@ -131,47 +143,43 @@ class ServiceUseTool(ToolProvider):
             "result": result,
         }
 
-    def _resolve_service(self, service_name: str) -> "_ResolvedService":
+    def _resolve_service(self, service_name: str) -> _ResolvedService:
         visible = self._catalog.get(service_name)
         if visible is None:
             raise ToolangError(f"service is not visible to this agent: {service_name}")
-        binding = self._config.services.get(service_name, _ServiceBinding())
-        transport = binding.transport or _transport_from_visible(visible)
+        transport = _transport_from_visible(visible)
         if transport == "http":
-            endpoint = binding.endpoint or _normalized_text(visible.target)
+            endpoint = _normalized_text(visible.target)
             if endpoint is None:
                 raise ToolangError(
-                    f"service {service_name!r} is missing an MCP HTTP endpoint; "
-                    "set service target in the cap or endpoint in tools.toml."
+                    f"service {service_name!r} is missing an MCP HTTP endpoint in front matter."
                 )
             return _ResolvedService(
                 name=service_name,
                 transport="http",
                 endpoint=endpoint,
-                key_ref=_normalized_text(binding.key_ref),
-                command=[],
-                port=None,
+                env_vars=list(visible.env_vars),
+                auth_env_var=_normalized_text(visible.auth_env_var),
             )
         if transport == "stdio":
-            command = _service_command(binding)
             return _ResolvedService(
                 name=service_name,
                 transport="stdio",
-                endpoint=None,
-                key_ref=_normalized_text(binding.key_ref),
-                command=command,
-                port=_normalized_port(binding.port),
+                command=_service_command(visible),
+                port=_normalized_port(visible.port),
+                env_vars=list(visible.env_vars),
+                auth_env_var=_normalized_text(visible.auth_env_var),
             )
         raise ToolangError(
-            f"service {service_name!r} is missing a usable transport; "
-            "set transport=http/stdio in tools.toml or service front matter."
+            f"service {service_name!r} is missing a usable transport in service front matter."
         )
 
     def _ensure_session(
         self,
-        service: "_ResolvedService",
+        service: _ResolvedService,
         *,
         context: ToolContext,
+        service_env: dict[str, str],
     ) -> Path:
         state_dir = _service_state_dir(context, service.name)
         state_dir.mkdir(parents=True, exist_ok=True)
@@ -183,8 +191,11 @@ class ServiceUseTool(ToolProvider):
                 runner=self._runner,
                 endpoint=service.endpoint or "",
                 session_path=session_path,
-                key_ref=service.key_ref,
+                key_ref=(
+                    f"env://{service.auth_env_var}" if service.auth_env_var is not None else None
+                ),
                 cwd=context.agent.home,
+                service_env=service_env,
             )
             return session_path
 
@@ -194,6 +205,7 @@ class ServiceUseTool(ToolProvider):
             service=service,
             proxy_state_path=proxy_state_path,
             cwd=context.agent.home,
+            service_env=service_env,
         )
         if (
             not session_path.exists()
@@ -203,23 +215,32 @@ class ServiceUseTool(ToolProvider):
                 runner=self._runner,
                 endpoint=proxy_state.endpoint,
                 session_path=session_path,
-                key_ref=service.key_ref,
+                key_ref=(
+                    f"env://{service.auth_env_var}" if service.auth_env_var is not None else None
+                ),
                 cwd=context.agent.home,
+                service_env=service_env,
             )
         return session_path
 
     def _invoke_service_action(
         self,
-        service: "_ResolvedService",
+        service: _ResolvedService,
         *,
         action: str,
         arguments: dict[str, Any],
         session_path: Path,
+        service_env: dict[str, str],
         cwd: Path,
     ) -> dict[str, Any]:
         base = ["-s", str(session_path)]
         if action == "tool_list":
-            return _run_mcat_json(self._runner, ["tool", "list", *base], cwd=cwd)
+            return _run_mcat_json(
+                self._runner,
+                ["tool", "list", *base],
+                cwd=cwd,
+                service_env=service_env,
+            )
         if action == "tool_call":
             tool_name = _required_text(arguments, "tool_name")
             payload = _json_input(arguments.get("input"), name="input")
@@ -227,32 +248,34 @@ class ServiceUseTool(ToolProvider):
                 self._runner,
                 ["tool", "call", tool_name, "-i", json.dumps(payload, ensure_ascii=False), *base],
                 cwd=cwd,
+                service_env=service_env,
             )
         if action == "resource_list":
             args = ["resource", "list", *base]
             cursor = _normalized_text(arguments.get("cursor"))
             if cursor is not None:
                 args.extend(["--cursor", cursor])
-            return _run_mcat_json(self._runner, args, cwd=cwd)
+            return _run_mcat_json(self._runner, args, cwd=cwd, service_env=service_env)
         if action == "resource_list_template":
             args = ["resource", "list-template", *base]
             cursor = _normalized_text(arguments.get("cursor"))
             if cursor is not None:
                 args.extend(["--cursor", cursor])
-            return _run_mcat_json(self._runner, args, cwd=cwd)
+            return _run_mcat_json(self._runner, args, cwd=cwd, service_env=service_env)
         if action == "resource_read":
             resource_uri = _required_text(arguments, "resource_uri")
             return _run_mcat_json(
                 self._runner,
                 ["resource", "read", resource_uri, *base],
                 cwd=cwd,
+                service_env=service_env,
             )
         if action == "prompt_list":
             args = ["prompt", "list", *base]
             cursor = _normalized_text(arguments.get("cursor"))
             if cursor is not None:
                 args.extend(["--cursor", cursor])
-            return _run_mcat_json(self._runner, args, cwd=cwd)
+            return _run_mcat_json(self._runner, args, cwd=cwd, service_env=service_env)
         if action == "prompt_get":
             prompt_name = _required_text(arguments, "prompt_name")
             payload = _string_map_input(arguments.get("input"), name="input")
@@ -260,17 +283,9 @@ class ServiceUseTool(ToolProvider):
                 self._runner,
                 ["prompt", "get", prompt_name, "-i", json.dumps(payload, ensure_ascii=False), *base],
                 cwd=cwd,
+                service_env=service_env,
             )
         raise ToolangError(f"unsupported service_use action: {action}")
-
-
-class _ResolvedService(BaseModel):
-    name: str
-    transport: ServiceTransport
-    endpoint: str | None = None
-    key_ref: str | None = None
-    command: list[str] = Field(default_factory=list)
-    port: int | None = None
 
 
 def create_service_use_tool(config: dict[str, Any]) -> ToolProvider:
@@ -285,10 +300,16 @@ def _ensure_stdio_proxy(
     service: _ResolvedService,
     proxy_state_path: Path,
     cwd: Path,
+    service_env: dict[str, str],
 ) -> _ProxyState:
     if proxy_state_path.exists():
         state = _ProxyState.load(proxy_state_path)
-        status = _run_mcat_json(runner, ["proxy", "status", str(state.port)], cwd=cwd)
+        status = _run_mcat_json(
+            runner,
+            ["proxy", "status", str(state.port)],
+            cwd=cwd,
+            service_env=service_env,
+        )
         if status.get("running") is True:
             return state
     port = service.port or _pick_port()
@@ -296,6 +317,7 @@ def _ensure_stdio_proxy(
         runner,
         ["proxy", "up", str(port), "--", *service.command],
         cwd=cwd,
+        service_env=service_env,
     )
     endpoint = _required_result_text(result, "endpoint")
     actual_port = _port_from_endpoint(endpoint)
@@ -311,23 +333,33 @@ def _init_session(
     session_path: Path,
     key_ref: str | None,
     cwd: Path,
+    service_env: dict[str, str],
 ) -> None:
     session_path.parent.mkdir(parents=True, exist_ok=True)
     args = ["init", endpoint]
     if key_ref is not None:
         args.extend(["-k", key_ref])
     args.extend(["-o", str(session_path)])
-    _run_mcat_json(runner, args, cwd=cwd)
+    _run_mcat_json(runner, args, cwd=cwd, service_env=service_env)
     if not session_path.exists():
         raise ToolangError(f"mcat did not create session file: {session_path}")
 
 
-def _run_mcat_json(runner: list[str], args: list[str], *, cwd: Path) -> dict[str, Any]:
+def _run_mcat_json(
+    runner: list[str],
+    args: list[str],
+    *,
+    cwd: Path,
+    service_env: dict[str, str],
+) -> dict[str, Any]:
     command = [*runner, *args]
+    env = os.environ.copy()
+    env.update(service_env)
     try:
         completed = subprocess.run(
             command,
             cwd=str(cwd),
+            env=env,
             capture_output=True,
             text=True,
             check=False,
@@ -376,22 +408,45 @@ def _transport_from_visible(service: _VisibleService) -> ServiceTransport | None
         return cast(ServiceTransport, transport)
     if _normalized_text(service.target) is not None:
         return "http"
+    if service.command is not None:
+        return "stdio"
     return None
 
 
-def _service_command(binding: _ServiceBinding) -> list[str]:
-    raw = binding.command
+def _service_command(service: _VisibleService) -> list[str]:
+    raw = service.command
     if isinstance(raw, list):
         command = [str(item).strip() for item in raw if str(item).strip()]
         if command:
             return command
     elif isinstance(raw, str):
-        if binding.args:
-            return [raw, *binding.args]
-        return shlex.split(raw)
-    raise ToolangError(
-        "stdio service_use config requires a non-empty command or command array"
-    )
+        if service.args:
+            return [raw, *service.args]
+        command = shlex.split(raw)
+        if command:
+            return command
+    raise ToolangError("stdio service front matter requires a non-empty command.")
+
+
+def _load_service_env(context: ToolContext, service: _ResolvedService) -> dict[str, str]:
+    if not service.env_vars:
+        return {}
+    env_path = AgentHome.resolve(context.agent.home).env_path
+    raw_values = dotenv_values(env_path) if env_path.exists() else {}
+    loaded: dict[str, str] = {}
+    missing: list[str] = []
+    for env_name in service.env_vars:
+        value = raw_values.get(env_name)
+        if value is None or not str(value).strip():
+            missing.append(env_name)
+            continue
+        loaded[env_name] = str(value)
+    if missing:
+        missing_text = ", ".join(sorted(missing))
+        raise ToolangError(
+            f"service_use requires {missing_text} in {env_path}"
+        )
+    return loaded
 
 
 def _command_list(raw: object, *, default: list[str]) -> list[str]:

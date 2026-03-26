@@ -48,6 +48,15 @@ class CapView(BaseModel):
             "transport": front_matter.transport if front_matter is not None else None,
             "target": front_matter.target if front_matter is not None else None,
             "description": front_matter.description if front_matter is not None else None,
+            "command": front_matter.command if front_matter is not None else None,
+            "args": list(front_matter.args) if front_matter is not None else [],
+            "port": front_matter.port if front_matter is not None else None,
+            "env_vars": (
+                front_matter.required_env_vars(self.name) if front_matter is not None else []
+            ),
+            "auth_env_var": (
+                front_matter.auth_env_var(self.name) if front_matter is not None else None
+            ),
         }
 
 

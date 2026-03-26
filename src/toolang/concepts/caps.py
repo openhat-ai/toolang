@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal, cast
 
 import frontmatter
@@ -44,6 +45,39 @@ class ServiceFrontmatter(_FrontmatterBase):
     transport: str | None = None
     target: str | None = None
     description: str | None = None
+    command: str | list[str] | None = None
+    args: list[str] = Field(default_factory=list)
+    port: int | None = None
+    env: list[str] = Field(default_factory=list)
+    auth_env: str | None = None
+
+    @model_validator(mode="after")
+    def validate_service_envs(self) -> "ServiceFrontmatter":
+        """Keep service env declarations stable and predictable."""
+
+        normalized = [_normalize_service_env_name(item) for item in self.env]
+        deduped: list[str] = []
+        for item in normalized:
+            if item not in deduped:
+                deduped.append(item)
+        self.env = deduped
+        if self.auth_env is not None:
+            self.auth_env = _normalize_service_env_name(self.auth_env)
+            if self.auth_env not in self.env:
+                raise ValueError("auth_env must also be declared in env.")
+        return self
+
+    def required_env_vars(self, service_name: str) -> list[str]:
+        """Return concrete env-var names required by this service."""
+
+        return [service_env_var_name(service_name, item) for item in self.env]
+
+    def auth_env_var(self, service_name: str) -> str | None:
+        """Return the concrete env-var name used for HTTP auth, if declared."""
+
+        if self.auth_env is None:
+            return None
+        return service_env_var_name(service_name, self.auth_env)
 
 
 class PromptFrontmatter(_FrontmatterBase):
@@ -73,6 +107,28 @@ _FRONTMATTER_MODEL_BY_KIND = {
     "psyche": PsycheFrontmatter,
     "skill": SkillFrontmatter,
 }
+
+_SERVICE_ENV_TOKEN_RE = re.compile(r"[^A-Za-z0-9]+")
+
+
+def _normalize_service_env_name(value: str) -> str:
+    text = _SERVICE_ENV_TOKEN_RE.sub("_", str(value).strip()).strip("_").lower()
+    if not text:
+        raise ValueError("service env names may not be empty.")
+    return text
+
+
+def _service_env_token(value: str) -> str:
+    token = _SERVICE_ENV_TOKEN_RE.sub("_", str(value).strip()).strip("_").upper()
+    if not token:
+        raise ValueError("service env tokens may not be empty.")
+    return token
+
+
+def service_env_var_name(service_name: str, env_name: str) -> str:
+    """Return the canonical .env variable name for one service requirement."""
+
+    return f"TOOLANG_SERVICE_{_service_env_token(service_name)}_{_service_env_token(env_name)}"
 
 
 def parse_front_matter(

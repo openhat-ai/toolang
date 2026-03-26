@@ -158,7 +158,6 @@ ${AGENT_HOME}/
   agents.too                         # optional
   channels.toml                      # optional
   hooks.toml                         # optional
-  tools.toml                         # optional
   .env                               # optional
   .toolang/                          # machine-managed, created lazily
     agents/{AGENT}/
@@ -184,8 +183,10 @@ Notes:
   - optional channel bindings for runtime loops
 - `hooks.toml`
   - optional hook bindings for runtime loops
-- `tools.toml`
-  - optional tool-family provider bindings for runtime execution
+- `.env`
+  - optional agent-home env file
+  - service capabilities read required env vars from here using the canonical
+    `TOOLANG_SERVICE_<SERVICE_NAME>_<ENV_NAME>` naming rule
 - `.toolang/sync/`
   - shared synced caps plus per-agent sync state
 - `.toolang/{skills,services,prompts,psyches}/`

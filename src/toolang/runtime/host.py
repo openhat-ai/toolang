@@ -24,7 +24,6 @@ from toolang.concepts.persisted import (
     PollState,
     PulseItemState,
     PulseState,
-    ToolsConfig,
 )
 from toolang.concepts.sandbox import SandboxSpec
 from toolang.errors import ToolangError
@@ -314,17 +313,10 @@ class RuntimeHost:
         current = prepared or self.prepared
         room = self._require_room()
         spec = SandboxSpec.parse(self.sandbox)
-        home = AgentHome.resolve(current.ref.home)
-        tools_config = (
-            ToolsConfig.load(home.tools_config_path)
-            if home.tools_config_path.exists()
-            else ToolsConfig()
-        )
         visible_caps = load_prepared_caps(current)
         tool_runtime = create_tool_runtime(
             current.ref,
             sandbox=self.sandbox,
-            tools_config=tools_config,
             working_directory=current.ref.home,
             visible_services=[item.service_catalog_item() for item in visible_caps.services],
         )

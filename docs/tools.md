@@ -35,8 +35,7 @@ Planned but not yet implemented:
 
 Each family is one stable capability with one default provider.
 
-Unless explicitly reconfigured in `tools.toml`, built-in tool families load by
-default.
+Built-in tool families load by default.
 
 
 ## 3. Default Behavior
@@ -74,6 +73,13 @@ default.
 - exposes visible `service` caps as callable MCP services
 - loads even when no visible services exist, so the runtime capability surface
   stays stable
+- service connection details come from service-cap front matter
+- `description` is the trigger text loaded into the available-services prompt
+  section
+- service body may be loaded on demand and is usually empty
+- required service secrets come from `${AGENT_HOME}/.env`
+- concrete service env vars follow:
+  - `TOOLANG_SERVICE_<SERVICE_NAME>_<ENV_NAME>`
 - supports:
   - `tool_list`
   - `tool_call`
@@ -82,44 +88,48 @@ default.
   - `resource_read`
   - `prompt_list`
   - `prompt_get`
-- HTTP services may come directly from service-cap front matter
-- stdio services may be configured locally in `tools.toml`
+- HTTP services use:
+  - `transport`
+  - `target`
+- stdio services use:
+  - `transport`
+  - `command`
+  - `args`
+  - `port`
+- both may declare:
+  - `description`
+  - `env`
+  - `auth_env`
 
 
 ## 4. Loading
 
-Per-agent tool configuration lives at:
-
-- `${AGENT_HOME}/tools.toml`
-
-Minimal shape:
-
-```toml
-[tools.filesystem]
-provider = "default"
-
-[tools.shell]
-provider = "default"
-
-[tools.web_search]
-provider = "default"
-
-[tools.service_use]
-provider = "mcat"
-
-[tools.service_use.config.services.github]
-key_ref = "env://GITHUB_TOKEN"
-
-[tools.service_use.config.services.localdocs]
-transport = "stdio"
-command = ["uvx", "localdocs-mcp"]
-port = 6110
-```
-
-If `tools.toml` is absent, built-in defaults are used.
-
 Prompt builds should describe the current visible services and instruct the
 model to use `service_use` when it needs MCP-backed capabilities.
+
+For service capabilities, the prompt should also declare:
+
+- visible service names
+- trigger descriptions from service front matter
+- concrete required env vars
+- the rule that those env vars are read from `${AGENT_HOME}/.env`
+
+Example service front matter:
+
+```md
+---
+transport: http
+target: https://mcp.github.com/mcp
+description: GitHub MCP server
+env:
+  - token
+auth_env: token
+---
+```
+
+That service requires:
+
+- `TOOLANG_SERVICE_GITHUB_TOKEN`
 
 
 ## 5. Providers

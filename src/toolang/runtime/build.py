@@ -486,6 +486,9 @@ def _service_prompt(runtime_context: dict[str, Any]) -> str | None:
     lines = [
         "Service usage protocol:",
         "- Use the `service_use` tool whenever you need to access an MCP service.",
+        "- Service descriptions are trigger hints for when to use each service.",
+        "- Required service env vars live in the agent-home .env file.",
+        "- Service env naming rule: TOOLANG_SERVICE_<SERVICE_NAME>_<ENV_NAME>.",
     ]
     if not services:
         lines.append("- No services are currently visible to this agent.")
@@ -499,11 +502,14 @@ def _service_prompt(runtime_context: dict[str, Any]) -> str | None:
         transport = _task_text(item.get("transport")) or "unspecified"
         target = _task_text(item.get("target"))
         description = _task_text(item.get("description"))
+        env_vars = item.get("env_vars")
         detail_parts = [f"transport={transport}"]
         if target is not None:
             detail_parts.append(f"target={target}")
         if description is not None:
             detail_parts.append(f"description={description}")
+        if isinstance(env_vars, list) and env_vars:
+            detail_parts.append(f"env={', '.join(str(env_name) for env_name in env_vars)}")
         lines.append(f"- {name}: {'; '.join(detail_parts)}")
     lines.extend(
         [

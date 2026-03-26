@@ -136,13 +136,21 @@ def test_invoke_prepared_agent_records_tool_calls(tmp_path: Path, monkeypatch) -
             "transport": "http",
             "target": "https://mcp.github.com/mcp",
             "description": "GitHub MCP server",
+            "command": None,
+            "args": [],
+            "port": None,
+            "env_vars": ["TOOLANG_SERVICE_GITHUB_TOKEN"],
+            "auth_env_var": "TOOLANG_SERVICE_GITHUB_TOKEN",
         }
     ]
     assert "Service usage protocol:" in trace.developer_message
     assert "Use the `service_use` tool whenever you need to access an MCP service." in (
         trace.developer_message
     )
-    assert "- github: transport=http; target=https://mcp.github.com/mcp; description=GitHub MCP server" in (
+    assert "Service env naming rule: TOOLANG_SERVICE_<SERVICE_NAME>_<ENV_NAME>." in (
+        trace.developer_message
+    )
+    assert "- github: transport=http; target=https://mcp.github.com/mcp; description=GitHub MCP server; env=TOOLANG_SERVICE_GITHUB_TOKEN" in (
         trace.developer_message
     )
     assert trace.tool_calls == [

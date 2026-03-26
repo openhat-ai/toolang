@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 from toolang.concepts.identity import AgentRef
-from toolang.concepts.persisted import ToolBinding, ToolsConfig
 from toolang.concepts.tools import ToolDefinition, ToolFamily
 from toolang.errors import ToolangError
 
@@ -80,13 +79,11 @@ def create_tool_runtime(
     agent: AgentRef,
     *,
     sandbox: str,
-    tools_config: ToolsConfig | None = None,
     working_directory: Path | None = None,
     visible_services: list[dict[str, Any]] | None = None,
 ) -> ToolRuntime:
     """Resolve one local tool runtime for the current agent turn."""
 
-    config = tools_config or ToolsConfig()
     context = ToolContext(
         agent=agent,
         working_directory=Path(working_directory or agent.home).expanduser().resolve(),
@@ -94,14 +91,12 @@ def create_tool_runtime(
     )
     providers: dict[ToolFamily, ToolProvider] = {}
     for family, default_provider in _DEFAULT_PROVIDER_BY_FAMILY.items():
-        binding = config.tools.get(family)
-        binding = binding or ToolBinding(provider=default_provider)
-        provider_config: dict[str, object] = dict(binding.config)
+        provider_config: dict[str, object] = {}
         if family == "service_use":
             provider_config["visible_services"] = list(visible_services or [])
         providers[family] = create_tool_provider(
             family,
-            provider=binding.provider,
+            provider=default_provider,
             config=provider_config,
         )
     return ToolRuntime(context=context, providers=providers)

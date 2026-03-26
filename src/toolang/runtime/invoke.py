@@ -12,7 +12,6 @@ from toolang.caps import load_prepared_caps
 from toolang.concepts.execution import MessageSender, RunKind, thread_group_for_origin
 from toolang.concepts.layout import AgentHome
 from toolang.concepts.messages import TextPart, TurnMessage
-from toolang.concepts.persisted import ToolsConfig
 from toolang.concepts.persisted.prompt_trace import PromptTrace
 from toolang.concepts.tools import ToolCallResult
 from toolang.program.ast import Thunk
@@ -259,16 +258,10 @@ def _tracked_turn(
     home = AgentHome.resolve(prepared.ref.home)
     room = home.room(prepared.ref.name)
     trace_path = room.prompt_trace_path(resolved_run_id)
-    tools_config = (
-        ToolsConfig.load(home.tools_config_path)
-        if home.tools_config_path.exists()
-        else ToolsConfig()
-    )
     visible_caps = load_prepared_caps(prepared)
     tool_runtime = create_tool_runtime(
         prepared.ref,
         sandbox=sandbox,
-        tools_config=tools_config,
         working_directory=prepared.ref.home,
         visible_services=[item.service_catalog_item() for item in visible_caps.services],
     )
