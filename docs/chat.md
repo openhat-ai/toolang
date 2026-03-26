@@ -178,12 +178,17 @@ This keeps:
 all centered on one concept system.
 
 
-## 6. Recommended Migration Order
+## 6. Current Status
 
-1. Add canonical `TurnMessage` and `MessagePart` dataclasses.
-2. Add one AI SDK-compatible stream-mapping module.
-3. Add one assembler that produces final `TurnMessage` values while streaming.
-4. Move `/api/v1/chat/stream` to that mapping layer.
-5. Move `/api/v1/chats/{thread_id}` to return ordered canonical message parts.
-6. Replace chat storage that only stores plain text rows with storage that can
-   persist final message parts.
+The current chat runtime now follows this shape:
+
+1. `TurnMessage` and `MessagePart` are the canonical internal message model.
+2. `/api/v1/chat/stream` emits AI SDK-compatible SSE chunks through one
+   dedicated protocol layer.
+3. Assistant tool usage is persisted as ordered message parts, not as a
+   separate `tool_calls[]` side channel.
+4. `/api/v1/chats/{thread_id}` returns a transcript-shaped `messages[]` list
+   built from persisted canonical message parts.
+
+Remaining follow-up work should extend this same model rather than introduce a
+parallel chat representation.
