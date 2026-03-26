@@ -185,8 +185,8 @@ Notes:
   - optional hook bindings for runtime loops
 - `.env`
   - optional agent-home env file
-  - service capabilities read required env vars from here using the canonical
-    `<SERVICE_NAME>_<ENV_NAME>` naming rule
+  - service capabilities read required env vars from here using the concrete
+    env var names declared in service front matter
 - `.toolang/sync/`
   - shared synced caps plus per-agent sync state
 - `.toolang/{skills,services,prompts,psyches}/`

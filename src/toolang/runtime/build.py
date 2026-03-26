@@ -487,8 +487,8 @@ def _service_prompt(runtime_context: dict[str, Any]) -> str | None:
         "Service usage protocol:",
         "- Use the `service_use` tool whenever you need to access an MCP service.",
         "- Service descriptions are trigger hints for when to use each service.",
-        "- Required service env vars live in the agent-home .env file.",
-        "- Service env naming rule: <SERVICE_NAME>_<ENV_NAME>.",
+        "- Required service env vars are declared directly in service front matter.",
+        "- Those env vars live in the agent-home .env file.",
     ]
     if not services:
         lines.append("- No services are currently visible to this agent.")

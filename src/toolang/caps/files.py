@@ -290,8 +290,8 @@ def _default_cap_body(kind: CapKind, name: str) -> str:
             "target: https://example.com\n"
             f"description: {title} service\n"
             "env:\n"
-            "  - token\n"
-            "auth_env: token\n"
+            "  - SERVICE_TOKEN\n"
+            "auth_env: SERVICE_TOKEN\n"
             "---\n\n"
             "Describe how and when to use this service.\n"
         )

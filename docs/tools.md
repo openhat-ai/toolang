@@ -78,8 +78,7 @@ Built-in tool families load by default.
   section
 - service body may be loaded on demand and is usually empty
 - required service secrets come from `${AGENT_HOME}/.env`
-- concrete service env vars follow:
-  - `<SERVICE_NAME>_<ENV_NAME>`
+- service front matter declares concrete env var names directly
 - supports:
   - `tool_list`
   - `tool_call`
@@ -122,8 +121,8 @@ transport: http
 target: https://mcp.github.com/mcp
 description: GitHub MCP server
 env:
-  - token
-auth_env: token
+  - GITHUB_TOKEN
+auth_env: GITHUB_TOKEN
 ---
 ```
 

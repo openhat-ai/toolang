@@ -147,7 +147,7 @@ def test_invoke_prepared_agent_records_tool_calls(tmp_path: Path, monkeypatch) -
     assert "Use the `service_use` tool whenever you need to access an MCP service." in (
         trace.developer_message
     )
-    assert "Service env naming rule: <SERVICE_NAME>_<ENV_NAME>." in (
+    assert "Required service env vars are declared directly in service front matter." in (
         trace.developer_message
     )
     assert "- github: transport=http; target=https://mcp.github.com/mcp; description=GitHub MCP server; env=GITHUB_TOKEN" in (
