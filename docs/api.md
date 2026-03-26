@@ -7,6 +7,8 @@ This document defines the user-facing control surfaces for Toolang:
 - the per-agent HTTP API
 - the shared bus HTTP API
 
+Canonical ordered chat-message semantics live in [chat.md](./chat.md).
+
 
 ## 1. CLI Surface
 
