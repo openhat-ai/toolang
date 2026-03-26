@@ -41,6 +41,7 @@ Hidden helper commands:
 Rules:
 
 - all execution commands accept an `agent selector`
+- root-level defaults may be configured in `${TOOLANG_ROOT}/config.toml`
 - `invoke` is caller-driven one-shot foreground execution
 - `run` runs the `server` runtime loop in the foreground and may enable extra
   loops with repeated `--loop` flags
