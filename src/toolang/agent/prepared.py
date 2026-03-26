@@ -21,6 +21,7 @@ class PreparedAgent:
     ref: AgentRef
     program: Program
     cap_scopes: CapScopeSelection
+    source_text: str
 
 
 def prepare_agent(
@@ -36,10 +37,12 @@ def prepare_agent(
             )
         raise FileNotFoundError(f"Agent source not found: {agent.source}")
 
+    source_text = agent.source.read_text(encoding="utf-8")
     synced_program = ensure_agent_synced(agent)
     source_program = synced_program.to_program()
     return PreparedAgent(
         ref=agent,
         program=build_effective_program(source_program, agent, cap_scopes=cap_scopes),
         cap_scopes=cap_scopes,
+        source_text=source_text,
     )
