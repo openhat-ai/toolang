@@ -186,7 +186,7 @@ Notes:
 - `.env`
   - optional agent-home env file
   - service capabilities read required env vars from here using the canonical
-    `TOOLANG_SERVICE_<SERVICE_NAME>_<ENV_NAME>` naming rule
+    `<SERVICE_NAME>_<ENV_NAME>` naming rule
 - `.toolang/sync/`
   - shared synced caps plus per-agent sync state
 - `.toolang/{skills,services,prompts,psyches}/`

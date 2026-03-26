@@ -128,7 +128,7 @@ def _service_env_token(value: str) -> str:
 def service_env_var_name(service_name: str, env_name: str) -> str:
     """Return the canonical .env variable name for one service requirement."""
 
-    return f"TOOLANG_SERVICE_{_service_env_token(service_name)}_{_service_env_token(env_name)}"
+    return f"{_service_env_token(service_name)}_{_service_env_token(env_name)}"
 
 
 def parse_front_matter(

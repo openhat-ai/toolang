@@ -79,7 +79,7 @@ Built-in tool families load by default.
 - service body may be loaded on demand and is usually empty
 - required service secrets come from `${AGENT_HOME}/.env`
 - concrete service env vars follow:
-  - `TOOLANG_SERVICE_<SERVICE_NAME>_<ENV_NAME>`
+  - `<SERVICE_NAME>_<ENV_NAME>`
 - supports:
   - `tool_list`
   - `tool_call`
@@ -129,7 +129,7 @@ auth_env: token
 
 That service requires:
 
-- `TOOLANG_SERVICE_GITHUB_TOKEN`
+- `GITHUB_TOKEN`
 
 
 ## 5. Providers
