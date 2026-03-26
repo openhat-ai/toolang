@@ -37,7 +37,12 @@ def sandbox_alive(state: SandboxState) -> bool:
     return _host_pid_exists(state.run.pid if state.run is not None else None)
 
 
-def stop_sandbox(state: SandboxState, *, pid: int | None = None) -> None:
+def stop_sandbox(
+    state: SandboxState,
+    *,
+    pid: int | None = None,
+    force: bool = False,
+) -> None:
     """Stop one running sandbox."""
 
     if state.type == "docker":
@@ -49,7 +54,7 @@ def stop_sandbox(state: SandboxState, *, pid: int | None = None) -> None:
     if target_pid is None or target_pid <= 0:
         raise ToolangError("Running agent has no valid process id.")
     try:
-        os.kill(target_pid, signal.SIGTERM)
+        os.kill(target_pid, signal.SIGKILL if force else signal.SIGTERM)
     except ProcessLookupError:
         return
     except PermissionError as exc:

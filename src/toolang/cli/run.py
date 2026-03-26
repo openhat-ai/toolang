@@ -221,16 +221,29 @@ def stop_command(
     if active is None:
         raise ToolangError(f"Agent is not running: {agent_ref.uri}")
 
-    _stop_running_agent_process(
-        sandbox_state=SandboxState.for_spec(
-            SandboxSpec.parse(active.sandbox),
-            agent_name=agent_ref.name,
-            agent_id=agent_ref.id[:12],
-            pid=active.pid,
-        ),
+    sandbox_state = SandboxState.for_spec(
+        SandboxSpec.parse(active.sandbox),
+        agent_name=agent_ref.name,
+        agent_id=agent_ref.id[:12],
         pid=active.pid,
     )
-    _wait_for_running_agent_stop(db_path=db_path, agent=agent_ref)
+
+    _stop_running_agent_process(
+        sandbox_state=sandbox_state,
+        pid=active.pid,
+        force=False,
+    )
+    if _wait_for_running_agent_stop(db_path=db_path, agent=agent_ref, timeout_sec=2.0):
+        typer.echo(f"stopped {agent_ref.id[:12]}")
+        return
+
+    _stop_running_agent_process(
+        sandbox_state=sandbox_state,
+        pid=active.pid,
+        force=True,
+    )
+    if not _wait_for_running_agent_stop(db_path=db_path, agent=agent_ref, timeout_sec=3.0):
+        raise ToolangError(f"Timed out waiting for agent stop: {agent_ref.uri}")
     typer.echo(f"stopped {agent_ref.id[:12]}")
 
 
@@ -244,8 +257,9 @@ def _stop_running_agent_process(
     *,
     sandbox_state: SandboxState,
     pid: int | None,
+    force: bool,
 ) -> None:
-    stop_sandbox(sandbox_state, pid=pid)
+    stop_sandbox(sandbox_state, pid=pid, force=force)
 
 
 def _drop_stale_running_agent(db_path: Path, agent: AgentRef) -> None:
@@ -273,14 +287,15 @@ def _wait_for_running_agent_stop(
     *,
     db_path: Path,
     agent: AgentRef,
-) -> None:
-    deadline = time.monotonic() + 5.0
+    timeout_sec: float,
+) -> bool:
+    deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
         _drop_stale_running_agent(db_path, agent)
         if get_running_agent(db_path, agent.uri) is None:
-            return
+            return True
         time.sleep(0.1)
-    raise ToolangError(f"Timed out waiting for agent stop: {agent.uri}")
+    return False
 
 
 def _wait_for_running_agent_process(
