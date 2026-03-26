@@ -15,7 +15,8 @@ from toolang.concepts.layout import ToolangRoot
 
 from .support import (
     _agent_link_from_endpoint,
-    _append_agent_updated,
+    _append_agent_created,
+    _append_agent_removed,
     _format_rows,
     _fresh_known_agents,
     _load_clone_source_text,
@@ -40,10 +41,9 @@ def register_agent_commands(app: typer.Typer) -> None:
         agent_ref = _resolve_resident_target(target)
         create_managed_agent(agent_ref)
         _remember_agent(agent_ref, db_path=db_path)
-        _append_agent_updated(
+        _append_agent_created(
             toolang_root,
             agent_ref,
-            update_kind="create",
             detail="agent created",
         )
         typer.echo(str(agent_ref.source))
@@ -62,10 +62,9 @@ def register_agent_commands(app: typer.Typer) -> None:
         target_ref = _resolve_resident_target(target)
         clone_managed_agent(target_ref, source_text=_load_clone_source_text(source_ref))
         _remember_agent(target_ref, db_path=db_path)
-        _append_agent_updated(
+        _append_agent_created(
             toolang_root,
             target_ref,
-            update_kind="clone",
             detail=f"cloned from {source_ref.uri}",
         )
         typer.echo(str(target_ref.source))
@@ -91,10 +90,9 @@ def register_agent_commands(app: typer.Typer) -> None:
         if not removed_files and not removed_registry:
             raise ToolangError(f"Resident agent not found: {agent_ref.source}")
 
-        _append_agent_updated(
+        _append_agent_removed(
             toolang_root,
             agent_ref,
-            update_kind="remove",
             detail="agent removed",
         )
         typer.echo(str(agent_ref.source))

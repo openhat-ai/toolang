@@ -21,7 +21,7 @@ from toolang.agent.registry import (
     upsert_known_agent,
 )
 from toolang.bus.db import BusStore
-from toolang.bus.events import AgentUpdated, utc_now
+from toolang.bus.events import AgentChanged, AgentCreated, AgentRemoved, utc_now
 from toolang.caps import CapScopeSelection
 from toolang.concepts.execution import RuntimeLoop
 from toolang.concepts.layout import AgentHome, ToolangRoot
@@ -136,21 +136,72 @@ def _load_clone_source_text(agent: AgentRef) -> str:
     raise ToolangError(f"Agent source file not found: {agent.source}")
 
 
-def _append_agent_updated(
+def _append_agent_created(
     toolang_root: Path,
     agent: AgentRef,
     *,
-    update_kind: str,
     detail: str,
 ) -> None:
     bus = BusStore(ToolangRoot.resolve(toolang_root).bus_events_db_path)
     bus.append(
-        AgentUpdated(
+        AgentCreated(
             at=utc_now(),
             agent_uri=agent.uri,
             agent_id=agent.id[:12],
             name=agent.name,
-            update_kind=update_kind,
+            kind=agent.kind,
+            detail=detail,
+            agent_home=str(agent.home),
+            source_file=agent.source.name,
+        )
+    )
+    bus.close()
+
+
+def _append_agent_removed(
+    toolang_root: Path,
+    agent: AgentRef,
+    *,
+    detail: str,
+) -> None:
+    bus = BusStore(ToolangRoot.resolve(toolang_root).bus_events_db_path)
+    bus.append(
+        AgentRemoved(
+            at=utc_now(),
+            agent_uri=agent.uri,
+            agent_id=agent.id[:12],
+            name=agent.name,
+            kind=agent.kind,
+            detail=detail,
+            agent_home=str(agent.home),
+            source_file=agent.source.name,
+        )
+    )
+    bus.close()
+
+
+def _append_agent_changed(
+    toolang_root: Path,
+    agent: AgentRef,
+    *,
+    change_type: Literal[
+        "caps_updated",
+        "code_updated",
+        "config_updated",
+        "task_updated",
+        "chore_updated",
+        "will_updated",
+    ],
+    detail: str,
+) -> None:
+    bus = BusStore(ToolangRoot.resolve(toolang_root).bus_events_db_path)
+    bus.append(
+        AgentChanged(
+            at=utc_now(),
+            agent_uri=agent.uri,
+            agent_id=agent.id[:12],
+            name=agent.name,
+            change_type=change_type,
             detail=detail,
             agent_home=str(agent.home),
             source_file=agent.source.name,

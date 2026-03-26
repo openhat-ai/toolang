@@ -110,9 +110,17 @@ This database is:
 Core event families:
 
 - agent lifecycle
+  - `agent_created`
+  - `agent_removed`
   - `agent_started`
   - `agent_stopped`
-  - `agent_updated`
+- local changes
+  - `caps_updated`
+  - `code_updated`
+  - `config_updated`
+  - `task_updated`
+  - `chore_updated`
+  - `will_updated`
 - run lifecycle
   - `run_started`
   - `run_finished`
@@ -121,6 +129,9 @@ Core event families:
 Rules:
 
 - `run` and `start` publish agent lifecycle events
+- `new`, `clone`, and `remove` publish managed-agent lifecycle events
+- agent API event feeds are scoped to the current agent incarnation, starting at
+  the latest `agent_created`
 - `invoke` and server-side run requests publish top-level run events
 - event records use a monotonic `event_id`
 
