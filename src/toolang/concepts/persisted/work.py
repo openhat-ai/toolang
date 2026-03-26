@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import base64
 import secrets
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+from dateutil.rrule import rrulestr
 import frontmatter
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 TaskStatus = Literal["todo", "doing", "done", "cancelled"]
+DEFAULT_SCHEDULE_RRULE = "FREQ=MINUTELY;INTERVAL=5"
 
 
 class _MarkdownDocument(BaseModel):
@@ -103,9 +106,14 @@ class _ScheduledDocument(_MarkdownDocument):
     """Base model for scheduled local work documents."""
 
     title: str | None = None
-    thunk: str | None = None
-    model: str | None = None
-    thread_id: str | None = None
+    rrule: str = DEFAULT_SCHEDULE_RRULE
+
+    @field_validator("rrule", mode="before")
+    @classmethod
+    def _normalize_rrule(cls, value: object) -> str:
+        return normalize_rrule(
+            interval_sec_to_rrule(value) if isinstance(value, int) else value
+        )
 
     def render_input(self, *, fallback_title: str) -> str:
         """Return the textual prompt input for this work document."""
@@ -118,24 +126,15 @@ class _ScheduledDocument(_MarkdownDocument):
             return body
         return title
 
-    def effective_thread_id(self, default_thread_id: str) -> str:
-        """Return the explicit thread id or one call-site default."""
-
-        text = (self.thread_id or "").strip()
-        return text or default_thread_id
-
-
 class ChoreFile(_ScheduledDocument):
     """One scheduled local chore document."""
-
-    interval_sec: int = Field(default=300, ge=1)
 
     @classmethod
     def load(cls, path: Path) -> "ChoreFile":
         """Load one chore document from disk."""
 
         loaded = cls._load_markdown(path)
-        return cls.model_validate(loaded.model_dump(mode="python"))
+        return cls.model_validate(_scheduled_document_payload(loaded))
 
     def save(self, path: Path) -> None:
         """Write this chore document to disk."""
@@ -146,14 +145,12 @@ class ChoreFile(_ScheduledDocument):
 class WillFile(_ScheduledDocument):
     """One long-lived local will document."""
 
-    interval_sec: int = Field(default=300, ge=1)
-
     @classmethod
     def load(cls, path: Path) -> "WillFile":
         """Load one will document from disk."""
 
         loaded = cls._load_markdown(path)
-        return cls.model_validate(loaded.model_dump(mode="python"))
+        return cls.model_validate(_scheduled_document_payload(loaded))
 
     def save(self, path: Path) -> None:
         """Write this will document to disk."""
@@ -182,10 +179,70 @@ def work_content_hash(*, metadata: dict[str, Any], body: str) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def normalize_rrule(value: object) -> str:
+    """Return one validated RRULE string."""
+
+    text = str(value or "").strip()
+    candidate = text or DEFAULT_SCHEDULE_RRULE
+    rrulestr(candidate, dtstart=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    return candidate
+
+
+def next_scheduled_at(
+    rrule_text: str,
+    *,
+    anchor: datetime,
+    not_before: datetime,
+    inclusive: bool,
+) -> datetime | None:
+    """Return the next occurrence for one RRULE, normalized to UTC."""
+
+    anchor_utc = _as_utc(anchor)
+    floor_utc = _as_utc(not_before)
+    schedule = rrulestr(normalize_rrule(rrule_text), dtstart=anchor_utc)
+    candidate = schedule.after(floor_utc, inc=inclusive)
+    if candidate is None:
+        return None
+    return _as_utc(candidate)
+
+
+def interval_sec_to_rrule(value: object) -> str:
+    """Convert one legacy interval value into an equivalent RRULE."""
+
+    try:
+        seconds = int(str(value).strip())
+    except (TypeError, ValueError):
+        return DEFAULT_SCHEDULE_RRULE
+    if seconds <= 0:
+        return DEFAULT_SCHEDULE_RRULE
+    if seconds % 3600 == 0:
+        return f"FREQ=HOURLY;INTERVAL={seconds // 3600}"
+    if seconds % 60 == 0:
+        return f"FREQ=MINUTELY;INTERVAL={seconds // 60}"
+    return f"FREQ=SECONDLY;INTERVAL={seconds}"
+
+
 def generate_task_id() -> str:
     """Return one short local task id."""
 
     return base64.b32encode(secrets.token_bytes(5)).decode("ascii").lower()
+
+
+def _scheduled_document_payload(loaded: _MarkdownDocument) -> dict[str, Any]:
+    data = loaded.model_dump(mode="python")
+    legacy_interval_sec = data.pop("interval_sec", None)
+    data.pop("thread_id", None)
+    data.pop("thunk", None)
+    data.pop("model", None)
+    if not data.get("rrule"):
+        data["rrule"] = interval_sec_to_rrule(legacy_interval_sec)
+    return data
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def task_id_from_thread_id(thread_id: str) -> str | None:

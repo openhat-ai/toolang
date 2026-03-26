@@ -8,7 +8,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from toolang.concepts.messages import MessageRole, TextPart, TurnMessage, part_from_dict, part_to_dict
+from toolang.concepts.messages import (
+    MessageRole,
+    TextPart,
+    TurnMessage,
+    part_from_dict,
+    part_to_dict,
+)
 
 
 def utc_now() -> str:
@@ -32,7 +38,7 @@ class ChatThread:
 class ChatMessage:
     id: str
     thread_id: str
-    turn_id: str
+    run_id: str
     seq: int
     role: str
     origin: str
@@ -45,9 +51,9 @@ class ChatMessage:
 
 
 @dataclass(slots=True)
-class ChatTurn:
+class ChatRun:
     thread_id: str
-    turn_id: str
+    run_id: str
     messages: list[ChatMessage]
     started_at: str | None
     finished_at: str | None
@@ -112,7 +118,7 @@ class ChatStore:
         agent_id: str,
         agent_name: str,
         thread_id: str,
-        turn_id: str,
+        run_id: str,
         role: str,
         origin: str,
         channel: str | None,
@@ -127,9 +133,9 @@ class ChatStore:
         now = at or utc_now()
         message_role = cast(MessageRole, role)
         effective_message = message or TurnMessage(
-            id=f"{turn_id}:{role}",
+            id=f"{run_id}:{role}",
             role=message_role,
-            parts=(TextPart(id=f"{turn_id}:{role}:text:1", text=text),),
+            parts=(TextPart(id=f"{run_id}:{role}:text:1", text=text),),
             created_at=now,
             metadata=dict(meta or {}),
         )
@@ -157,13 +163,13 @@ class ChatStore:
             cursor = self._conn.execute(
                 """
                 INSERT INTO messages(
-                    message_id, thread_id, turn_id, seq, role, origin, channel, sender, text, created_at, meta_json, parts_json
+                    message_id, thread_id, run_id, seq, role, origin, channel, sender, text, created_at, meta_json, parts_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     effective_message.id,
                     thread_id,
-                    turn_id,
+                    run_id,
                     next_seq,
                     role,
                     origin,
@@ -182,7 +188,7 @@ class ChatStore:
             row = self._conn.execute(
                 """
                 SELECT
-                    message_id, thread_id, turn_id, seq, role, origin, channel, sender, text, created_at, meta_json, parts_json
+                    message_id, thread_id, run_id, seq, role, origin, channel, sender, text, created_at, meta_json, parts_json
                 FROM messages
                 WHERE rowid = ?
                 """,
@@ -198,7 +204,7 @@ class ChatStore:
             rows = self._conn.execute(
                 """
                 SELECT
-                    message_id, thread_id, turn_id, seq, role, origin, channel, sender, text, created_at, meta_json, parts_json
+                    message_id, thread_id, run_id, seq, role, origin, channel, sender, text, created_at, meta_json, parts_json
                 FROM messages
                 WHERE thread_id = ?
                 ORDER BY seq DESC
@@ -208,8 +214,13 @@ class ChatStore:
             ).fetchall()
         return [_message_from_row(row) for row in reversed(rows)]
 
-    def recent_openai_messages(self, *, thread_id: str, limit: int = 20) -> list[dict[str, Any]]:
-        return [self.to_openai_message(item) for item in self.recent_messages(thread_id=thread_id, limit=limit)]
+    def recent_openai_messages(
+        self, *, thread_id: str, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        return [
+            self.to_openai_message(item)
+            for item in self.recent_messages(thread_id=thread_id, limit=limit)
+        ]
 
     def get_thread(self, *, thread_id: str) -> ChatThread | None:
         with self._lock:
@@ -246,7 +257,9 @@ class ChatStore:
             return None
         return _thread_from_row(row)
 
-    def list_threads(self, *, agent_uri: str | None = None, limit: int = 50) -> list[ChatThread]:
+    def list_threads(
+        self, *, agent_uri: str | None = None, limit: int = 50
+    ) -> list[ChatThread]:
         params: tuple[Any, ...]
         query = """
             SELECT
@@ -283,52 +296,52 @@ class ChatStore:
             rows = self._conn.execute(query, params).fetchall()
         return [_thread_from_row(row) for row in rows]
 
-    def messages_for_turn(self, *, thread_id: str, turn_id: str) -> list[ChatMessage]:
+    def messages_for_run(self, *, thread_id: str, run_id: str) -> list[ChatMessage]:
         with self._lock:
             rows = self._conn.execute(
                 """
                 SELECT
-                    message_id, thread_id, turn_id, seq, role, origin, channel, sender, text, created_at, meta_json, parts_json
+                    message_id, thread_id, run_id, seq, role, origin, channel, sender, text, created_at, meta_json, parts_json
                 FROM messages
-                WHERE thread_id = ? AND turn_id = ?
+                WHERE thread_id = ? AND run_id = ?
                 ORDER BY seq ASC
                 """,
-                (thread_id, turn_id),
+                (thread_id, run_id),
             ).fetchall()
         return [_message_from_row(row) for row in rows]
 
-    def get_turn(self, *, thread_id: str, turn_id: str) -> ChatTurn | None:
-        messages = self.messages_for_turn(thread_id=thread_id, turn_id=turn_id)
+    def get_run(self, *, thread_id: str, run_id: str) -> ChatRun | None:
+        messages = self.messages_for_run(thread_id=thread_id, run_id=run_id)
         if not messages:
             return None
-        return ChatTurn(
+        return ChatRun(
             thread_id=thread_id,
-            turn_id=turn_id,
+            run_id=run_id,
             messages=messages,
             started_at=messages[0].created_at,
             finished_at=messages[-1].created_at,
         )
 
-    def recent_turns(self, *, thread_id: str, limit: int = 8) -> list[ChatTurn]:
+    def recent_runs(self, *, thread_id: str, limit: int = 8) -> list[ChatRun]:
         with self._lock:
             rows = self._conn.execute(
                 """
-                SELECT turn_id, MIN(seq) AS first_seq
+                SELECT run_id, MIN(seq) AS first_seq
                 FROM messages
                 WHERE thread_id = ?
-                GROUP BY turn_id
+                GROUP BY run_id
                 ORDER BY first_seq DESC
                 LIMIT ?
                 """,
                 (thread_id, limit),
             ).fetchall()
-        turn_ids = [str(row["turn_id"]) for row in reversed(rows)]
-        turns: list[ChatTurn] = []
-        for turn_id in turn_ids:
-            turn = self.get_turn(thread_id=thread_id, turn_id=turn_id)
-            if turn is not None:
-                turns.append(turn)
-        return turns
+        run_ids = [str(row["run_id"]) for row in reversed(rows)]
+        runs: list[ChatRun] = []
+        for run_id in run_ids:
+            run = self.get_run(thread_id=thread_id, run_id=run_id)
+            if run is not None:
+                runs.append(run)
+        return runs
 
     @staticmethod
     def to_openai_message(message: ChatMessage) -> dict[str, Any]:
@@ -359,7 +372,7 @@ class ChatStore:
                 CREATE TABLE IF NOT EXISTS messages (
                     message_id TEXT NOT NULL,
                     thread_id TEXT NOT NULL,
-                    turn_id TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
                     seq INTEGER NOT NULL,
                     role TEXT NOT NULL,
                     origin TEXT NOT NULL,
@@ -380,7 +393,7 @@ class ChatStore:
                 "CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_seq ON messages(thread_id, seq)"
             )
             self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_chat_messages_turn ON messages(thread_id, turn_id)"
+                "CREATE INDEX IF NOT EXISTS idx_chat_messages_run ON messages(thread_id, run_id)"
             )
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chat_messages_id ON messages(message_id)"
@@ -398,19 +411,27 @@ class ChatStore:
             self._conn.execute(
                 "ALTER TABLE messages ADD COLUMN parts_json TEXT NOT NULL DEFAULT '[]'"
             )
+        if "run_id" not in columns:
+            self._conn.execute(
+                "ALTER TABLE messages ADD COLUMN run_id TEXT NOT NULL DEFAULT ''"
+            )
+        if "turn_id" in columns:
+            self._conn.execute(
+                "UPDATE messages SET run_id = COALESCE(NULLIF(run_id, ''), turn_id)"
+            )
         self._backfill_messages()
 
     def _backfill_messages(self) -> None:
         rows = self._conn.execute(
             """
-            SELECT rowid, message_id, turn_id, role, seq, text, parts_json
+            SELECT rowid, message_id, run_id, role, seq, text, parts_json
             FROM messages
             """
         ).fetchall()
         for row in rows:
             message_id = str(row["message_id"] or "").strip()
             if not message_id:
-                message_id = f'{row["turn_id"]}:{row["role"]}:{row["seq"]}'
+                message_id = f'{row["run_id"]}:{row["role"]}:{row["seq"]}'
             parts_json = str(row["parts_json"] or "").strip()
             if not parts_json or parts_json == "[]":
                 parts_json = json.dumps(
@@ -457,7 +478,7 @@ def _message_from_row(row: sqlite3.Row) -> ChatMessage:
     return ChatMessage(
         id=str(row["message_id"]),
         thread_id=str(row["thread_id"]),
-        turn_id=str(row["turn_id"]),
+        run_id=str(row["run_id"]),
         seq=int(row["seq"]),
         role=str(row["role"]),
         origin=str(row["origin"]),

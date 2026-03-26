@@ -16,7 +16,7 @@ from toolang.agent.prepared import PreparedAgent
 from toolang.agent.registry import get_running_agent
 from toolang.bus.events import utc_now
 from toolang.caps import load_prepared_caps
-from toolang.concepts.execution import RuntimeLoop
+from toolang.concepts.execution import MessageOrigin, RunStatus, RuntimeLoop
 from toolang.concepts.layout import AgentHome
 from toolang.concepts.persisted import ChannelsConfig, PromptTrace
 from toolang.concepts.sandbox import SandboxSpec
@@ -28,13 +28,13 @@ from ..api_models import (
     AgentProfile,
     AgentRuntimeResponse,
     ChatRequest,
+    ThreadListResponse,
+    ThreadResponse,
     ChoreItem,
     ChorePatchRequest,
     ChorePutRequest,
     ChoreListResponse,
     ChatResponse,
-    ChatThreadListResponse,
-    ChatThreadResponse,
     EventListResponse,
     PromptTraceItem,
     RuntimeDiagnosticsResponse,
@@ -73,10 +73,10 @@ from .presenters import (
     event_item,
     fallback_agent_snapshot,
     message_item,
-    run_item,
+    runtime_run_item,
     sse,
+    step_item,
     thread_item,
-    turn_item,
 )
 
 SSE_POLL_INTERVAL_SEC = 0.5
@@ -202,6 +202,7 @@ def create_agent_app(
         return AgentRuntimeResponse(
             status="online",
             checked_at=utc_now(),
+            activation_id=runtime_host.activation_id,
             endpoint=runtime_host.endpoint,
             execution_host=SandboxSpec.parse(runtime_host.sandbox).execution_host,
             working_directory=str(prepared.ref.home),
@@ -277,66 +278,107 @@ def create_agent_app(
         room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
         return WillResponse(item=patch_will_item(room, request, agent=prepared.ref))
 
-    @app.get("/api/v1/chats", response_model=ChatThreadListResponse)
-    def list_chats(limit: int = Query(50, ge=1, le=500)) -> ChatThreadListResponse:
-        return ChatThreadListResponse(
-            items=[
-                thread_item(item)
-                for item in runtime_host.chats.list_threads(
-                    agent_uri=prepared.ref.uri, limit=limit
-                )
-            ]
+    def _list_threads(*, kind: str | None, limit: int) -> ThreadListResponse:
+        threads = runtime_host.execution.list_threads(
+            agent_uri=prepared.ref.uri,
+            limit=limit,
         )
+        if kind is not None:
+            threads = [item for item in threads if item.thread_group == kind]
+        items = []
+        for thread in threads:
+            chat_thread = runtime_host.chats.get_thread(thread_id=thread.thread_id)
+            items.append(
+                thread_item(
+                    thread,
+                    preview=chat_thread.preview if chat_thread is not None else None,
+                    channel=chat_thread.channel if chat_thread is not None else None,
+                )
+            )
+        return ThreadListResponse(items=items)
 
-    @app.get("/api/v1/chats/{thread_id}", response_model=ChatThreadResponse)
-    def get_chat(
-        thread_id: str, limit: int = Query(50, ge=1, le=500)
-    ) -> ChatThreadResponse:
-        thread = runtime_host.chats.get_thread(thread_id=thread_id)
+    def _get_thread_response(thread_id: str, *, limit: int) -> ThreadResponse:
+        thread = runtime_host.execution.get_thread(thread_id=thread_id)
         if thread is None or thread.agent_uri != prepared.ref.uri:
             raise HTTPException(status_code=404, detail="thread not found")
-        turns = runtime_host.chats.recent_turns(thread_id=thread_id, limit=limit)
-        return ChatThreadResponse(
-            thread=thread_item(thread),
+        chat_thread = runtime_host.chats.get_thread(thread_id=thread_id)
+        chat_runs = runtime_host.chats.recent_runs(thread_id=thread_id, limit=limit)
+        return ThreadResponse(
+            thread=thread_item(
+                thread,
+                preview=chat_thread.preview if chat_thread is not None else None,
+                channel=chat_thread.channel if chat_thread is not None else None,
+            ),
+            runs=[
+                runtime_run_item(item)
+                for item in runtime_host.execution.list_runs(
+                    thread_id=thread_id,
+                    limit=limit,
+                )
+            ],
             messages=[
                 message_item(message)
-                for turn in turns
-                for message in turn.messages
+                for chat_run in chat_runs
+                for message in chat_run.messages
             ],
         )
 
+    @app.get("/api/v1/threads", response_model=ThreadListResponse)
+    def list_threads(
+        kind: str | None = Query(None),
+        limit: int = Query(50, ge=1, le=500),
+    ) -> ThreadListResponse:
+        return _list_threads(kind=kind, limit=limit)
+
+    @app.get("/api/v1/chats", response_model=ThreadListResponse)
+    def list_chats(limit: int = Query(50, ge=1, le=500)) -> ThreadListResponse:
+        return _list_threads(kind="chat", limit=limit)
+
+    @app.get("/api/v1/threads/{thread_id}", response_model=ThreadResponse)
+    @app.get("/api/v1/chats/{thread_id}", response_model=ThreadResponse)
+    def get_thread(
+        thread_id: str, limit: int = Query(50, ge=1, le=500)
+    ) -> ThreadResponse:
+        return _get_thread_response(thread_id, limit=limit)
+
     @app.get("/api/v1/runs", response_model=RunListResponse)
-    def list_runs(limit: int = Query(50, ge=1, le=500)) -> RunListResponse:
-        runs = runtime_host.bus.list_runs(agent_uri=prepared.ref.uri, limit=limit)
-        return RunListResponse(items=[run_item(item) for item in runs])
+    def list_runs(
+        origin: MessageOrigin | None = Query(None),
+        thread_id: str | None = Query(None),
+        status: RunStatus | None = Query(None),
+        limit: int = Query(50, ge=1, le=500),
+    ) -> RunListResponse:
+        runs = runtime_host.execution.list_runs(
+            origin=origin,
+            thread_id=thread_id,
+            status=status,
+            limit=limit,
+        )
+        return RunListResponse(items=[runtime_run_item(item) for item in runs])
 
     @app.get("/api/v1/runs/{run_id}", response_model=RunDetailResponse)
     def get_run(run_id: str) -> RunDetailResponse:
-        run = runtime_host.bus.get_run(run_id)
-        if run is None or run.agent_uri != prepared.ref.uri:
+        run = runtime_host.execution.get_run(run_id=run_id)
+        if run is None:
             raise HTTPException(status_code=404, detail="run not found")
-        children = [
-            item
-            for item in runtime_host.bus.list_runs(
-                agent_uri=prepared.ref.uri, limit=500
-            )
-            if item.parent_run_id == run_id
-        ]
-        events = runtime_host.bus.list_events(
-            agent_uri=prepared.ref.uri, run_id=run_id, limit=500
-        )
-        turn = None
+        messages = []
         if run.thread_id:
-            loaded = runtime_host.chats.get_turn(
-                thread_id=run.thread_id, turn_id=run_id
+            chat_run = runtime_host.chats.get_run(
+                thread_id=run.thread_id,
+                run_id=run_id,
             )
-            if loaded is not None:
-                turn = turn_item(loaded)
+            if chat_run is not None:
+                messages = [message_item(item) for item in chat_run.messages]
+        events = runtime_host.bus.list_events(
+            agent_uri=prepared.ref.uri,
+            run_id=run_id,
+            limit=500,
+        )
         return RunDetailResponse(
-            run=run_item(run),
-            children=[run_item(item) for item in children],
+            run=runtime_run_item(run),
+            steps=[step_item(item) for item in runtime_host.execution.list_steps(run_id=run_id)],
             events=[event_item(item) for item in events],
-            turn=turn,
+            messages=messages,
         )
 
     @app.get("/api/v1/runs/{run_id}/prompt", response_model=PromptTraceItem)
@@ -426,7 +468,7 @@ def create_agent_app(
         item = message_item(assistant)
         return ChatResponse(
             thread_id=assistant.thread_id,
-            turn_id=assistant.turn_id,
+            run_id=assistant.run_id,
             message=item,
             assistant=item,
         )
@@ -436,11 +478,11 @@ def create_agent_app(
         def stream() -> Iterator[str]:
             event_queue: Queue[object] = Queue()
             try:
-                turn_id, future = runtime_host.submit_chat_stream(
+                run_id, future = runtime_host.submit_chat_stream(
                     request,
                     event_queue.put,
                 )
-                encoder = AIMessageChunkEncoder(message_id=turn_id)
+                encoder = AIMessageChunkEncoder(message_id=run_id)
                 for chunk in encoder.start():
                     yield data_sse(chunk_to_dict(chunk))
                 while True:

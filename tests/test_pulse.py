@@ -51,10 +51,10 @@ def test_collect_pulse_submissions_detects_task_chore_and_will(tmp_path: Path) -
         "---\nstatus: todo\nrequester: owner\n---\nLook at the latest changes.\n",
         encoding="utf-8",
     )
-    ChoreFile(title="Refresh tasks", body="Refresh local tasks.", interval_sec=3600).save(
+    ChoreFile(title="Refresh tasks", body="Refresh local tasks.", rrule="FREQ=HOURLY;INTERVAL=1").save(
         room.chores_dir / "refresh.md"
     )
-    WillFile(title="Reflect", body="Think about the next step.", interval_sec=3600).save(room.will_path)
+    WillFile(title="Reflect", body="Think about the next step.", rrule="FREQ=HOURLY;INTERVAL=1").save(room.will_path)
 
     state, submissions = collect_pulse_submissions(room, agent, PulseState())
     task = TaskFile.load(room.tasks_dir / "review.md", persist_id=True)
@@ -89,10 +89,10 @@ def test_create_agent_app_processes_pulse_work_files(tmp_path: Path, monkeypatch
         "---\nstatus: todo\nrequester: owner\n---\nLook at the latest changes.\n",
         encoding="utf-8",
     )
-    ChoreFile(title="Refresh tasks", body="Refresh local tasks.", interval_sec=3600).save(
+    ChoreFile(title="Refresh tasks", body="Refresh local tasks.", rrule="FREQ=HOURLY;INTERVAL=1").save(
         room.chores_dir / "refresh.md"
     )
-    WillFile(title="Reflect", body="Think about the next step.", interval_sec=3600).save(room.will_path)
+    WillFile(title="Reflect", body="Think about the next step.", rrule="FREQ=HOURLY;INTERVAL=1").save(room.will_path)
 
     builds: list[Any] = []
 
@@ -117,16 +117,16 @@ def test_create_agent_app_processes_pulse_work_files(tmp_path: Path, monkeypatch
         execution = ExecutionStore(agent_execution_db_path(home, "alice"))
         try:
             _wait_for(
-                lambda: _turn_origins(execution, agent.uri) >= {"task", "chore", "will"},
+                lambda: _run_origins(execution, agent.uri) >= {"task", "chore", "will"},
                 timeout_sec=5.0,
             )
-            runs = execution.list_runs(agent_uri=agent.uri)
-            turns = execution.list_turns(run_id=runs[0].run_id)
+            activations = execution.list_activations(agent_uri=agent.uri)
+            runs = execution.list_runs(activation_id=activations[0].activation_id)
         finally:
             execution.close()
 
-    assert {turn.origin for turn in turns} >= {"task", "chore", "will"}
-    assert {turn.sender for turn in turns if turn.origin in {"task", "chore", "will"}} == {"self"}
+    assert {run.origin for run in runs} >= {"task", "chore", "will"}
+    assert {run.sender for run in runs if run.origin in {"task", "chore", "will"}} == {"self"}
     assert pulse_state_path(home, "alice").exists()
     pulse_state = PulseState.load(pulse_state_path(home, "alice"))
     task = TaskFile.load(room.tasks_dir / "review.md", persist_id=True)
@@ -175,7 +175,7 @@ def test_create_agent_app_materializes_task_mirrors_from_chore_output(
     ChoreFile(
         title="Sync assigned tasks",
         body="Refresh mirrored tasks from Linear.",
-        interval_sec=3600,
+        rrule="FREQ=HOURLY;INTERVAL=1",
     ).save(room.chores_dir / "sync.md")
 
     builds: list[Any] = []
@@ -219,7 +219,7 @@ def test_create_agent_app_materializes_task_mirrors_from_chore_output(
                 timeout_sec=5.0,
             )
             _wait_for(
-                lambda: _turn_origins(execution, agent.uri) >= {"chore", "task"},
+                lambda: _run_origins(execution, agent.uri) >= {"chore", "task"},
                 timeout_sec=5.0,
             )
         finally:
@@ -263,12 +263,12 @@ def test_create_agent_app_materializes_task_mirrors_from_chore_output(
     assert "Task write available: no." in task_build.developer_message
 
 
-def _turn_origins(execution: ExecutionStore, agent_uri: str) -> set[str]:
-    runs = execution.list_runs(agent_uri=agent_uri)
-    if not runs:
+def _run_origins(execution: ExecutionStore, agent_uri: str) -> set[str]:
+    activations = execution.list_activations(agent_uri=agent_uri)
+    if not activations:
         return set()
-    turns = execution.list_turns(run_id=runs[0].run_id)
-    return {turn.origin for turn in turns}
+    runs = execution.list_runs(activation_id=activations[0].activation_id)
+    return {run.origin for run in runs}
 
 
 def _wait_for(predicate, *, timeout_sec: float) -> None:

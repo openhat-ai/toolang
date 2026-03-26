@@ -12,6 +12,10 @@ Generated implementation reference does not live here. It belongs under
 
 ## Design Map
 
+- [model.md](./model.md)
+  - top-level lifecycle and resource model
+  - incarnation, activation, run, thread, and step
+  - authored definitions, capability visibility, and runtime boundaries
 - [layout.md](./layout.md)
   - canonical agent identity
   - Toolang root, agent home, and agent room layout
@@ -24,7 +28,7 @@ Generated implementation reference does not live here. It belongs under
 - [execution.md](./execution.md)
   - message model
   - runtime loops and execution strategies
-  - run, thread, turn, and step
+  - activation, run, thread, and step mechanics
   - scheduling, truth layers, and projection guidance
 - [collaboration.md](./collaboration.md)
   - inbox and scheduler model for long-lived runtimes
@@ -83,19 +87,21 @@ Generated implementation reference does not live here. It belongs under
 - `runtime loop`
   - a long-lived trigger source such as `server` or `poll`
 - `execution strategy`
-  - the strategy used to complete one turn, such as `direct` or `react`
+  - the strategy used to complete one run, such as `direct` or `react`
+- `incarnation`
+  - the interval from agent creation to agent removal
+- `activation`
+  - the interval from agent start to agent stop
 - `run`
-  - one continuous active interval of one agent process
+  - one complete handling attempt inside a thread
 - `thread`
   - a durable execution context
-- `turn`
-  - one complete handling attempt inside a thread
 - `step`
-  - an internal part of one turn
-- `turn message`
-  - one ordered message emitted inside a turn
+  - an internal part of one run
+- `message`
+  - one ordered message emitted or persisted for a run, especially in chat views
 - `message part`
-  - one ordered content/tool/source/file unit inside a turn message
+  - one ordered content/tool/source/file unit inside a message
 
 
 ## Top-Level Surfaces
@@ -123,6 +129,7 @@ Hidden helper commands exist for local path workflows:
 
 ## Design Rules
 
+- Top-level lifecycle and resource vocabulary lives in [model.md](./model.md).
 - Layout and identity rules live in [layout.md](./layout.md).
 - Capability semantics and sync rules live in
   [capabilities.md](./capabilities.md).

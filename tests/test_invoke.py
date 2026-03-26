@@ -61,9 +61,9 @@ def test_invoke_prepared_agent_records_run_events(tmp_path: Path, monkeypatch) -
     events = store.list_events(agent_uri=agent.uri)
     store.close()
     execution = ExecutionStore(execution_db_path(home, "alice"))
-    execution_runs = execution.list_runs(agent_uri=agent.uri)
-    turns = execution.list_turns(run_id=execution_runs[0].run_id)
-    steps = execution.list_steps(turn_id=result.run_id)
+    activations = execution.list_activations(agent_uri=agent.uri)
+    runs = execution.list_runs(activation_id=activations[0].activation_id)
+    steps = execution.list_steps(run_id=result.run_id)
     execution.close()
     trace = PromptTrace.load(agent_run_prompt_path(home, "alice", result.run_id))
 
@@ -72,12 +72,12 @@ def test_invoke_prepared_agent_records_run_events(tmp_path: Path, monkeypatch) -
     assert [run.status for run in bus_runs] == ["finished"]
     assert bus_runs[0].summary == "alice:summarize"
     assert [event.event_type for event in events] == ["run_started", "run_finished"]
-    assert len(execution_runs) == 1
-    assert execution_runs[0].run_kind == "invoke"
-    assert execution_runs[0].status == "finished"
-    assert [turn.turn_id for turn in turns] == [result.run_id]
-    assert turns[0].thread_id == f"invoke:{result.run_id}"
-    assert turns[0].status == "finished"
+    assert len(activations) == 1
+    assert activations[0].activation_kind == "invoke"
+    assert activations[0].status == "finished"
+    assert [run.run_id for run in runs] == [result.run_id]
+    assert runs[0].thread_id == f"invoke:{result.run_id}"
+    assert runs[0].status == "finished"
     assert [step.step_kind for step in steps] == ["prompt_build", "model_call"]
     assert trace.sandbox == "host"
     assert trace.cap_scopes == ["agent", "shared", "global"]
@@ -119,7 +119,7 @@ def test_invoke_prepared_agent_records_tool_calls(tmp_path: Path, monkeypatch) -
     )
 
     execution = ExecutionStore(execution_db_path(home, "alice"))
-    steps = execution.list_steps(turn_id=result.run_id)
+    steps = execution.list_steps(run_id=result.run_id)
     execution.close()
     trace = PromptTrace.load(agent_run_prompt_path(home, "alice", result.run_id))
 
