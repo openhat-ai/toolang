@@ -273,6 +273,12 @@ class AIMessageChunkEncoder:
         self._message_id = message_id
         self._text_started = False
 
+    @property
+    def has_text(self) -> bool:
+        """Whether this stream has already emitted text chunks."""
+
+        return self._text_started
+
     def start(self) -> list[AIMessageChunk]:
         return [StartChunk()]
 
