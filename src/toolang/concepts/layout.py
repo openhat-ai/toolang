@@ -36,6 +36,10 @@ class ToolangRoot:
         return self.path / "agents.db"
 
     @property
+    def config_path(self) -> Path:
+        return self.path / "config.toml"
+
+    @property
     def bus_dir(self) -> Path:
         return self.path / "bus"
 

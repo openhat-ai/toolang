@@ -26,19 +26,26 @@ from toolang.concepts.execution import RuntimeLoop
 from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.errors import ToolangError
 from toolang.concepts.identity import AgentRef
-from toolang.concepts.persisted import ChannelsConfig
+from toolang.concepts.persisted import ChannelsConfig, ToolangConfig
 from toolang.concepts.persisted._toml import load_toml
 from toolang.concepts.persisted.run_state import RunState
 from toolang.concepts.sandbox import HOST_SANDBOX, SandboxSpec, SandboxState
 from toolang.sandbox import sandbox_alive
 
-DEFAULT_AGENT_LINK_BASE = "https://too.run"
+DEFAULT_UI_BASE_URL = "https://too.run"
 _ALL_RUNTIME_LOOPS = frozenset(cast(tuple[RuntimeLoop, ...], get_args(RuntimeLoop)))
 
 
 def _toolang_root() -> Path:
     root = ToolangRoot.resolve(os.environ.get("TOOLANG_ROOT", "~/.toolang"))
     return root.ensure_layout().path
+
+
+def _toolang_config() -> ToolangConfig:
+    path = ToolangRoot.resolve(_toolang_root()).config_path
+    if not path.exists():
+        return ToolangConfig.empty()
+    return ToolangConfig.load(path)
 
 
 def _resolve_cli_agent(raw: str, *, db_path: Path | None = None) -> AgentRef:
@@ -153,11 +160,23 @@ def _guest_resolver():
 
 
 def _cors_allow_origins() -> list[str] | None:
-    raw = os.environ.get("TOOLANG_CORS_ORIGINS", "").strip()
+    raw = os.environ.get("TOOLANG_CORS_ALLOWED_ORIGINS", "").strip()
     if not raw:
-        return None
+        raw = os.environ.get("TOOLANG_CORS_ORIGINS", "").strip()
+    if not raw:
+        configured = _toolang_config().web.cors_allowed_origins
+        return list(configured) or None
     items = [item.strip() for item in raw.split(",") if item.strip()]
     return items or None
+
+
+def _ui_base_url() -> str:
+    base = os.environ.get("TOOLANG_UI_BASE_URL", "").strip()
+    if not base:
+        base = os.environ.get("TOOLANG_WEBUI_BASE_URL", "").strip()
+    if not base:
+        base = (_toolang_config().web.ui_base_url or "").strip()
+    return base or DEFAULT_UI_BASE_URL
 
 
 def _resolve_runtime_loops(
@@ -198,7 +217,7 @@ def _load_runtime_channels(agent_home: Path) -> tuple[ChannelsConfig, tuple[str,
 
 
 def _agent_link_for_port(port: int) -> str:
-    return f"{DEFAULT_AGENT_LINK_BASE.rstrip('/')}/{port}"
+    return f"{_ui_base_url().rstrip('/')}/{port}"
 
 
 def _agent_link_from_endpoint(endpoint: str | None) -> str | None:

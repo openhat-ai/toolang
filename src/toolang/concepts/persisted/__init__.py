@@ -2,7 +2,7 @@
 
 from .run_state import RunState
 from .channels_config import ChannelBinding, ChannelsConfig
-from .config import ModelEntry, ModelsSection, ToolangConfig
+from .config import ModelEntry, ModelsSection, ToolangConfig, WebConfig
 from .hooks_config import HookBinding, HooksConfig
 from .program import ProgramDecl, ProgramParam, ProgramThunk, ProgramUse, SyncedProgram
 from .prompt_trace import PromptTrace
@@ -41,6 +41,7 @@ __all__ = [
     "TaskFile",
     "ToolBinding",
     "ToolsConfig",
+    "WebConfig",
     "find_local_task",
     "task_id_from_thread_id",
     "ToolangConfig",

@@ -30,9 +30,11 @@ from toolang.cli.support import (
 )
 from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.concepts.persisted import ChannelBinding, ChannelsConfig
+from toolang.concepts.persisted.config import ToolangConfig, WebConfig
 from toolang.errors import ToolangError
 from toolang.concepts.persisted.run_state import RunState
 from toolang.concepts.caps import CapKind
+from toolang.concepts.sandbox import SandboxState
 
 
 def agent_run_path(agent_home: Path, agent_name: str) -> Path:
@@ -49,6 +51,10 @@ def global_caps_dir(root: Path, kind: CapKind) -> Path:
 
 def global_source_path(root: Path) -> Path:
     return ToolangRoot.resolve(root).global_source_path
+
+
+def config_path(root: Path) -> Path:
+    return ToolangRoot.resolve(root).config_path
 
 
 def shared_caps_dir(agent_home: Path, kind: CapKind) -> Path:
@@ -421,6 +427,39 @@ def test_cli_list_marks_active_agent_running(tmp_path: Path, monkeypatch) -> Non
     assert "https://too.run/8778" in result.output
 
 
+def test_cli_list_uses_ui_base_url_from_root_config(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    ToolangConfig(web=WebConfig(ui_base_url="https://agents.example.test")).save(config_path(root))
+
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    db_path = agents_db_path(root)
+    _remember_agent(agent, db_path=db_path)
+    upsert_running_agent(
+        db_path,
+        RunningAgentRecord(
+            agent_uri=agent.uri,
+            pid=os.getpid(),
+            status="running",
+            endpoint="http://127.0.0.1:8778",
+            started_at=datetime(2026, 3, 19, 9, 0, 0, tzinfo=timezone.utc),
+            heartbeat_at=datetime(2026, 3, 19, 9, 1, 0, tzinfo=timezone.utc),
+        ),
+    )
+
+    result = runner.invoke(app, ["list"])
+
+    assert result.exit_code == 0
+    assert "https://agents.example.test/8778" in result.output
+
+
 def test_cli_run_rejects_docker_sandbox(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "toolang-root"
     monkeypatch.setenv("TOOLANG_ROOT", str(root))
@@ -459,6 +498,40 @@ def test_cli_run_passes_runtime_loops_and_channels(tmp_path: Path, monkeypatch) 
     channels_config = cast(ChannelsConfig, calls["channels_config"])
     assert tuple(channels_config.channels) == ("telegram",)
     assert channels_config.channels["telegram"].plugin == "telegram"
+
+
+def test_cli_run_uses_cors_origins_from_root_config(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    ToolangConfig(
+        web=WebConfig(
+            cors_allowed_origins=[
+                "http://localhost:3000",
+                "https://ui.example.test",
+            ]
+        )
+    ).save(config_path(root))
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+
+    calls: dict[str, object] = {}
+
+    def fake_run_agent(*args, **kwargs) -> None:
+        calls.update(kwargs)
+
+    monkeypatch.setattr("toolang.cli.run.run_agent", fake_run_agent)
+
+    result = runner.invoke(app, ["run", "alice"])
+
+    assert result.exit_code == 0
+    assert calls["cors_allow_origins"] == [
+        "http://localhost:3000",
+        "https://ui.example.test",
+    ]
 
 
 def test_cli_start_docker_stages_sandbox_launch(tmp_path: Path, monkeypatch) -> None:
@@ -542,6 +615,49 @@ def test_cli_start_docker_stages_sandbox_launch(tmp_path: Path, monkeypatch) -> 
     assert "--loop pulse" in exec_text
     assert "--shared" in exec_text
     assert "--global" in exec_text
+
+
+def test_cli_start_uses_ui_base_url_from_root_config(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    source_path = home / "alice.too"
+    source_path.write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    ToolangConfig(web=WebConfig(ui_base_url="https://agents.example.test")).save(config_path(root))
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    monkeypatch.setattr(
+        "toolang.cli.run.start_sandbox",
+        lambda **kwargs: type(
+            "Started",
+            (),
+            {
+                "state": SandboxState.for_spec(
+                    kwargs["spec"],
+                    agent_name="alice",
+                    agent_id=agent.id[:12],
+                    pid=None,
+                )
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        "toolang.cli.run._start_host_agent",
+        lambda **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "toolang.cli.run._wait_for_running_agent_process",
+        lambda **kwargs: None,
+    )
+
+    result = runner.invoke(app, ["start", "alice", "--port", "8779"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == f"started {agent.id[:12]} https://agents.example.test/8779"
 
 
 def test_cli_stop_host_agent_terminates_process(tmp_path: Path, monkeypatch) -> None:

@@ -91,6 +91,7 @@ Additional rules:
 ```text
 {TOOLANG_ROOT}/
   agents.db
+  config.toml               # optional
   agents.too                # optional
   sync/
     skills/
@@ -114,6 +115,8 @@ Notes:
 
 - `agents.db`
   - known-agent registry and running-agent registry
+- `config.toml`
+  - optional root-level defaults such as Web UI base URL and allowed CORS origins
 - `agents.too`
   - optional global shared source
 - `sync/`

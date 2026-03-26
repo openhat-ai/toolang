@@ -1,4 +1,4 @@
-"""Persistent authored configuration for shared caps and model aliases."""
+"""Persistent Toolang root configuration."""
 
 from __future__ import annotations
 
@@ -50,14 +50,32 @@ class ModelsSection(BaseModel):
         return data
 
 
+class WebConfig(BaseModel):
+    """Global web-facing defaults stored in the Toolang root config."""
+
+    ui_base_url: str | None = None
+    cors_allowed_origins: list[str] = Field(default_factory=list)
+
+    def to_toml(self) -> dict[str, Any]:
+        """Render this web section to TOML-compatible data."""
+
+        data: dict[str, Any] = {}
+        if self.ui_base_url is not None:
+            data["ui_base_url"] = self.ui_base_url
+        if self.cors_allowed_origins:
+            data["cors_allowed_origins"] = list(self.cors_allowed_origins)
+        return data
+
+
 class ToolangConfig(BaseModel):
-    """Shared config document for locally managed caps and model aliases."""
+    """Shared root config document for Toolang-managed defaults and aliases."""
 
     skills: dict[str, CapEntry] = Field(default_factory=dict)
     services: dict[str, CapEntry] = Field(default_factory=dict)
     prompts: dict[str, CapEntry] = Field(default_factory=dict)
     psyches: dict[str, CapEntry] = Field(default_factory=dict)
     models: ModelsSection = Field(default_factory=ModelsSection)
+    web: WebConfig = Field(default_factory=WebConfig)
 
     @classmethod
     def empty(cls) -> "ToolangConfig":
@@ -76,6 +94,7 @@ class ToolangConfig(BaseModel):
             prompts=data.get("prompts", {}) or {},
             psyches=data.get("psyches", {}) or {},
             models=ModelsSection.from_toml(data.get("models", {}) or {}),
+            web=WebConfig.model_validate(data.get("web", {}) or {}),
         )
 
     def save(self, path: Path) -> None:
@@ -97,4 +116,7 @@ class ToolangConfig(BaseModel):
         models = self.models.to_toml()
         if models:
             data["models"] = models
+        web = self.web.to_toml()
+        if web:
+            data["web"] = web
         return data
