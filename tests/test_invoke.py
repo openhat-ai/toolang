@@ -130,6 +130,21 @@ def test_invoke_prepared_agent_records_tool_calls(tmp_path: Path, monkeypatch) -
         "shell",
         "web_search",
     ]
+    assert trace.runtime_context["available_services"] == [
+        {
+            "name": "github",
+            "transport": "http",
+            "target": "https://mcp.github.com/mcp",
+            "description": "GitHub MCP server",
+        }
+    ]
+    assert "Service usage protocol:" in trace.developer_message
+    assert "Use the `service_use` tool whenever you need to access an MCP service." in (
+        trace.developer_message
+    )
+    assert "- github: transport=http; target=https://mcp.github.com/mcp; description=GitHub MCP server" in (
+        trace.developer_message
+    )
     assert trace.tool_calls == [
         {
             "family": "shell",

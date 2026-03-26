@@ -150,6 +150,23 @@ def test_create_tool_runtime_enables_service_use_when_services_are_visible(
     assert runtime.enabled_families() == ["filesystem", "service_use", "shell", "web_search"]
 
 
+def test_create_tool_runtime_enables_service_use_without_visible_services(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "alice"
+    home.mkdir()
+
+    runtime = create_tool_runtime(
+        _agent_ref(home),
+        sandbox="host",
+        tools_config=ToolsConfig(),
+        working_directory=home,
+        visible_services=[],
+    )
+
+    assert runtime.enabled_families() == ["filesystem", "service_use", "shell", "web_search"]
+
+
 def test_service_use_tool_calls_http_service_via_mcat(monkeypatch, tmp_path: Path) -> None:
     home = tmp_path / "alice"
     home.mkdir()

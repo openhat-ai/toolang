@@ -95,8 +95,6 @@ def create_tool_runtime(
     providers: dict[ToolFamily, ToolProvider] = {}
     for family, default_provider in _DEFAULT_PROVIDER_BY_FAMILY.items():
         binding = config.tools.get(family)
-        if family == "service_use" and binding is None and not visible_services:
-            continue
         binding = binding or ToolBinding(provider=default_provider)
         provider_config: dict[str, object] = dict(binding.config)
         if family == "service_use":

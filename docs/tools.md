@@ -35,6 +35,9 @@ Planned but not yet implemented:
 
 Each family is one stable capability with one default provider.
 
+Unless explicitly reconfigured in `tools.toml`, built-in tool families load by
+default.
+
 
 ## 3. Default Behavior
 
@@ -69,6 +72,8 @@ Each family is one stable capability with one default provider.
 - one tool named `service_use`
 - default provider uses the external `mcat` CLI
 - exposes visible `service` caps as callable MCP services
+- loads even when no visible services exist, so the runtime capability surface
+  stays stable
 - supports:
   - `tool_list`
   - `tool_call`
@@ -112,6 +117,9 @@ port = 6110
 ```
 
 If `tools.toml` is absent, built-in defaults are used.
+
+Prompt builds should describe the current visible services and instruct the
+model to use `service_use` when it needs MCP-backed capabilities.
 
 
 ## 5. Providers
