@@ -353,6 +353,9 @@ def create_agent_app(
         from_event_id: int = Query(0, ge=0),
         limit: int = Query(100, ge=1, le=2000),
     ) -> EventListResponse:
+        snapshot = runtime_host.bus.get_agent(prepared.ref.uri)
+        if snapshot is not None and snapshot.created_event_id is not None:
+            from_event_id = max(from_event_id, snapshot.created_event_id - 1)
         events = runtime_host.bus.list_events(
             agent_uri=prepared.ref.uri,
             from_event_id=from_event_id,

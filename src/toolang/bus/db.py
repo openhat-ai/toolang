@@ -13,9 +13,11 @@ from pydantic import BaseModel
 from toolang.bus.events import (
     EVENT_TYPES,
     RUN_TYPES,
+    AgentChanged,
+    AgentCreated,
+    AgentRemoved,
     AgentStarted,
     AgentStopped,
-    AgentUpdated,
     BusEvent,
     RunFailed,
     RunFinished,
@@ -49,6 +51,7 @@ class AgentSnapshot(BaseModel):
     agent_home: str | None = None
     source_file: str | None = None
     detail: str | None = None
+    created_event_id: int | None = None
     created_at: str
     updated_at: str
 
@@ -111,7 +114,7 @@ class BusStore:
             if not isinstance(lastrowid, int):
                 raise RuntimeError("sqlite did not return an integer lastrowid")
             event_id = lastrowid
-            self._apply_projection(event)
+            self._apply_projection(event, event_id)
             self._conn.commit()
         return StoredEvent(
             event_id=event_id,
@@ -129,7 +132,7 @@ class BusStore:
                 """
                 SELECT
                     agent_uri, agent_id, name, kind, status, endpoint, sandbox,
-                    agent_home, source_file, detail, created_at, updated_at
+                    agent_home, source_file, detail, created_event_id, created_at, updated_at
                 FROM agents
                 WHERE agent_uri = ?
                 """,
@@ -145,7 +148,7 @@ class BusStore:
                 """
                 SELECT
                     agent_uri, agent_id, name, kind, status, endpoint, sandbox,
-                    agent_home, source_file, detail, created_at, updated_at
+                    agent_home, source_file, detail, created_event_id, created_at, updated_at
                 FROM agents
                 WHERE agent_id = ?
                 """,
@@ -161,7 +164,7 @@ class BusStore:
                 """
                 SELECT
                     agent_uri, agent_id, name, kind, status, endpoint, sandbox,
-                    agent_home, source_file, detail, created_at, updated_at
+                    agent_home, source_file, detail, created_event_id, created_at, updated_at
                 FROM agents
                 ORDER BY updated_at DESC, agent_id ASC
                 LIMIT ?
@@ -302,6 +305,7 @@ class BusStore:
                     agent_home TEXT,
                     source_file TEXT,
                     detail TEXT,
+                    created_event_id INTEGER,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -341,32 +345,35 @@ class BusStore:
             }
             if "sandbox" not in columns:
                 self._conn.execute("ALTER TABLE agents ADD COLUMN sandbox TEXT")
+            if "created_event_id" not in columns:
+                self._conn.execute("ALTER TABLE agents ADD COLUMN created_event_id INTEGER")
             self._conn.commit()
 
-    def _apply_projection(self, event: BusEvent) -> None:
+    def _apply_projection(self, event: BusEvent, event_id: int) -> None:
+        if isinstance(event, AgentCreated):
+            self._apply_agent_created(event, event_id)
+            return
+        if isinstance(event, AgentRemoved):
+            self._apply_agent_removed(event)
+            return
         if isinstance(event, AgentStarted):
             self._apply_agent_started(event)
             return
         if isinstance(event, AgentStopped):
             self._apply_agent_stopped(event)
             return
-        if isinstance(event, AgentUpdated):
-            self._apply_agent_updated(event)
+        if isinstance(event, AgentChanged):
+            self._apply_agent_changed(event)
             return
         self._apply_run_event(event)
 
-    def _apply_agent_started(self, event: AgentStarted) -> None:
-        row = self._conn.execute(
-            "SELECT created_at FROM agents WHERE agent_uri = ?",
-            (event.agent_uri,),
-        ).fetchone()
-        created_at = str(row["created_at"]) if row is not None else event.at
+    def _apply_agent_created(self, event: AgentCreated, event_id: int) -> None:
         self._conn.execute(
             """
             INSERT INTO agents(
                 agent_uri, agent_id, name, kind, status, endpoint, sandbox,
-                agent_home, source_file, detail, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                agent_home, source_file, detail, created_event_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(agent_uri) DO UPDATE SET
                 agent_id = excluded.agent_id,
                 name = excluded.name,
@@ -377,6 +384,108 @@ class BusStore:
                 agent_home = excluded.agent_home,
                 source_file = excluded.source_file,
                 detail = excluded.detail,
+                created_event_id = excluded.created_event_id,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at
+            """,
+            (
+                event.agent_uri,
+                event.agent_id,
+                event.name,
+                event.kind,
+                "dormant",
+                None,
+                None,
+                event.agent_home,
+                event.source_file,
+                event.detail,
+                event_id,
+                event.at,
+                event.at,
+            ),
+        )
+
+    def _apply_agent_removed(self, event: AgentRemoved) -> None:
+        row = self._conn.execute(
+            """
+            SELECT kind, created_event_id, created_at
+            FROM agents
+            WHERE agent_uri = ?
+            """,
+            (event.agent_uri,),
+        ).fetchone()
+        kind = str(row["kind"]) if row is not None and row["kind"] else event.kind
+        created_event_id = (
+            int(row["created_event_id"])
+            if row is not None and row["created_event_id"] is not None
+            else None
+        )
+        created_at = str(row["created_at"]) if row is not None else event.at
+        self._conn.execute(
+            """
+            INSERT INTO agents(
+                agent_uri, agent_id, name, kind, status, endpoint, sandbox,
+                agent_home, source_file, detail, created_event_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(agent_uri) DO UPDATE SET
+                agent_id = excluded.agent_id,
+                name = excluded.name,
+                kind = excluded.kind,
+                status = excluded.status,
+                endpoint = excluded.endpoint,
+                sandbox = excluded.sandbox,
+                agent_home = COALESCE(excluded.agent_home, agents.agent_home),
+                source_file = COALESCE(excluded.source_file, agents.source_file),
+                detail = excluded.detail,
+                created_event_id = COALESCE(excluded.created_event_id, agents.created_event_id),
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at
+            """,
+            (
+                event.agent_uri,
+                event.agent_id,
+                event.name,
+                kind,
+                "removed",
+                None,
+                None,
+                event.agent_home,
+                event.source_file,
+                event.detail,
+                created_event_id,
+                created_at,
+                event.at,
+            ),
+        )
+
+    def _apply_agent_started(self, event: AgentStarted) -> None:
+        row = self._conn.execute(
+            "SELECT created_event_id, created_at FROM agents WHERE agent_uri = ?",
+            (event.agent_uri,),
+        ).fetchone()
+        created_event_id = (
+            int(row["created_event_id"])
+            if row is not None and row["created_event_id"] is not None
+            else None
+        )
+        created_at = str(row["created_at"]) if row is not None else event.at
+        self._conn.execute(
+            """
+            INSERT INTO agents(
+                agent_uri, agent_id, name, kind, status, endpoint, sandbox,
+                agent_home, source_file, detail, created_event_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(agent_uri) DO UPDATE SET
+                agent_id = excluded.agent_id,
+                name = excluded.name,
+                kind = excluded.kind,
+                status = excluded.status,
+                endpoint = excluded.endpoint,
+                sandbox = excluded.sandbox,
+                agent_home = excluded.agent_home,
+                source_file = excluded.source_file,
+                detail = excluded.detail,
+                created_event_id = COALESCE(excluded.created_event_id, agents.created_event_id),
                 updated_at = excluded.updated_at
             """,
             (
@@ -390,6 +499,7 @@ class BusStore:
                 event.agent_home,
                 event.source_file,
                 None,
+                created_event_id,
                 created_at,
                 event.at,
             ),
@@ -397,16 +507,21 @@ class BusStore:
 
     def _apply_agent_stopped(self, event: AgentStopped) -> None:
         row = self._conn.execute(
-            "SELECT created_at FROM agents WHERE agent_uri = ?",
+            "SELECT created_event_id, created_at FROM agents WHERE agent_uri = ?",
             (event.agent_uri,),
         ).fetchone()
+        created_event_id = (
+            int(row["created_event_id"])
+            if row is not None and row["created_event_id"] is not None
+            else None
+        )
         created_at = str(row["created_at"]) if row is not None else event.at
         self._conn.execute(
             """
             INSERT INTO agents(
                 agent_uri, agent_id, name, kind, status, endpoint, sandbox,
-                agent_home, source_file, detail, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                agent_home, source_file, detail, created_event_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(agent_uri) DO UPDATE SET
                 agent_id = excluded.agent_id,
                 name = excluded.name,
@@ -416,6 +531,7 @@ class BusStore:
                 agent_home = COALESCE(excluded.agent_home, agents.agent_home),
                 source_file = COALESCE(excluded.source_file, agents.source_file),
                 detail = excluded.detail,
+                created_event_id = COALESCE(excluded.created_event_id, agents.created_event_id),
                 updated_at = excluded.updated_at
             """,
             (
@@ -429,27 +545,37 @@ class BusStore:
                 event.agent_home,
                 event.source_file,
                 event.detail,
+                created_event_id,
                 created_at,
                 event.at,
             ),
         )
 
-    def _apply_agent_updated(self, event: AgentUpdated) -> None:
+    def _apply_agent_changed(self, event: AgentChanged) -> None:
         row = self._conn.execute(
-            "SELECT kind, status, endpoint, sandbox, created_at FROM agents WHERE agent_uri = ?",
+            """
+            SELECT kind, status, endpoint, sandbox, created_event_id, created_at
+            FROM agents
+            WHERE agent_uri = ?
+            """,
             (event.agent_uri,),
         ).fetchone()
         kind = str(row["kind"]) if row is not None else ""
         status = str(row["status"]) if row is not None else "updated"
         endpoint = row["endpoint"] if row is not None else None
         sandbox = row["sandbox"] if row is not None else None
+        created_event_id = (
+            int(row["created_event_id"])
+            if row is not None and row["created_event_id"] is not None
+            else None
+        )
         created_at = str(row["created_at"]) if row is not None else event.at
         self._conn.execute(
             """
             INSERT INTO agents(
                 agent_uri, agent_id, name, kind, status, endpoint, sandbox,
-                agent_home, source_file, detail, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                agent_home, source_file, detail, created_event_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(agent_uri) DO UPDATE SET
                 agent_id = excluded.agent_id,
                 name = excluded.name,
@@ -458,6 +584,7 @@ class BusStore:
                 agent_home = COALESCE(excluded.agent_home, agents.agent_home),
                 source_file = COALESCE(excluded.source_file, agents.source_file),
                 detail = excluded.detail,
+                created_event_id = COALESCE(excluded.created_event_id, agents.created_event_id),
                 updated_at = excluded.updated_at
             """,
             (
@@ -470,7 +597,8 @@ class BusStore:
                 sandbox,
                 event.agent_home,
                 event.source_file,
-                f"{event.update_kind}: {event.detail}",
+                event.detail,
+                created_event_id,
                 created_at,
                 event.at,
             ),
@@ -536,6 +664,11 @@ def _agent_from_row(row: sqlite3.Row) -> AgentSnapshot:
         agent_home=row["agent_home"],
         source_file=row["source_file"],
         detail=row["detail"],
+        created_event_id=(
+            int(row["created_event_id"])
+            if row["created_event_id"] is not None
+            else None
+        ),
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
     )

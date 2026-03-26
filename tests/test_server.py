@@ -15,6 +15,7 @@ from toolang.agent.prepared import prepare_agent
 from toolang.agent.resolve import resolve_agent_ref
 from toolang.agent.registry import get_running_agent
 from toolang.bus.db import BusStore
+from toolang.bus.events import AgentCreated, AgentRemoved
 from toolang.channels import ChannelState, DeliveryResult, PluginHealth, PollResult
 from toolang.concepts.channel import InboundDelivery, OutboundMessage, ReplyTarget
 from toolang.concepts.layout import AgentHome, ToolangRoot
@@ -606,6 +607,83 @@ def test_chat_turn_and_run_detail_include_ordered_assistant_parts(
                 "text": "done",
                 "state": "done",
             }
+        ]
+
+
+def test_agent_events_only_return_current_incarnation(tmp_path: Path, monkeypatch) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    prepared = prepare_agent(agent)
+    events_path = bus_events_db_path(root)
+    store = BusStore(events_path)
+    store.append(
+        AgentCreated(
+            at="2026-03-20T10:00:00Z",
+            agent_uri=agent.uri,
+            agent_id=agent.id[:12],
+            name=agent.name,
+            kind=agent.kind,
+            detail="agent created",
+            agent_home=str(agent.home),
+            source_file=agent.source.name,
+        )
+    )
+    store.append(
+        AgentRemoved(
+            at="2026-03-20T10:05:00Z",
+            agent_uri=agent.uri,
+            agent_id=agent.id[:12],
+            name=agent.name,
+            kind=agent.kind,
+            detail="agent removed",
+            agent_home=str(agent.home),
+            source_file=agent.source.name,
+        )
+    )
+    store.append(
+        AgentCreated(
+            at="2026-03-20T10:10:00Z",
+            agent_uri=agent.uri,
+            agent_id=agent.id[:12],
+            name=agent.name,
+            kind=agent.kind,
+            detail="agent created",
+            agent_home=str(agent.home),
+            source_file=agent.source.name,
+        )
+    )
+    store.close()
+
+    monkeypatch.setattr(
+        "toolang.runtime.invoke.execute_prompt_build",
+        lambda build: ModelExecutionResult(output_text="done"),
+    )
+    monkeypatch.setattr(
+        "toolang.runtime.invoke.execute_prompt_build_stream",
+        lambda build, *, on_event: ModelExecutionResult(output_text="done"),
+    )
+
+    app = create_agent_app(
+        prepared,
+        agents_db_path=agents_db_path(root),
+        bus_db_path=events_path,
+        host="127.0.0.1",
+        port=8765,
+        sandbox="host",
+    )
+
+    with TestClient(app) as client:
+        events = client.get("/api/v1/events")
+        assert events.status_code == 200
+        assert [item["event_type"] for item in events.json()["items"]] == [
+            "agent_created",
+            "agent_started",
         ]
 
 

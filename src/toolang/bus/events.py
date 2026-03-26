@@ -1,17 +1,32 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import time
+from dataclasses import dataclass
 from typing import Any, Literal
 
 RunOrigin = Literal["invoke", "chat", "task", "chore", "will"]
 RunType = Literal["turn", "model", "tool", "agent", "system"]
+AgentChangeType = Literal[
+    "caps_updated",
+    "code_updated",
+    "config_updated",
+    "task_updated",
+    "chore_updated",
+    "will_updated",
+]
 
 RUN_TYPES: set[str] = {"turn", "model", "tool", "agent", "system"}
 EVENT_TYPES: set[str] = {
+    "agent_created",
+    "agent_removed",
     "agent_started",
     "agent_stopped",
-    "agent_updated",
+    "caps_updated",
+    "code_updated",
+    "config_updated",
+    "task_updated",
+    "chore_updated",
+    "will_updated",
     "run_started",
     "run_finished",
     "run_failed",
@@ -40,6 +55,38 @@ class AgentStarted:
 
 
 @dataclass(frozen=True, slots=True)
+class AgentCreated:
+    at: str
+    agent_uri: str
+    agent_id: str
+    name: str
+    kind: str
+    detail: str
+    agent_home: str | None = None
+    source_file: str | None = None
+
+    @property
+    def event_type(self) -> str:
+        return "agent_created"
+
+
+@dataclass(frozen=True, slots=True)
+class AgentRemoved:
+    at: str
+    agent_uri: str
+    agent_id: str
+    name: str
+    kind: str
+    detail: str
+    agent_home: str | None = None
+    source_file: str | None = None
+
+    @property
+    def event_type(self) -> str:
+        return "agent_removed"
+
+
+@dataclass(frozen=True, slots=True)
 class AgentStopped:
     at: str
     agent_uri: str
@@ -57,19 +104,19 @@ class AgentStopped:
 
 
 @dataclass(frozen=True, slots=True)
-class AgentUpdated:
+class AgentChanged:
     at: str
     agent_uri: str
     agent_id: str
     name: str
-    update_kind: str
+    change_type: AgentChangeType
     detail: str
     agent_home: str | None = None
     source_file: str | None = None
 
     @property
     def event_type(self) -> str:
-        return "agent_updated"
+        return self.change_type
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,12 +173,50 @@ class RunFailed:
         return "run_failed"
 
 
-AgentEvent = AgentStarted | AgentStopped | AgentUpdated
+AgentEvent = AgentCreated | AgentRemoved | AgentStarted | AgentStopped | AgentChanged
 RunEvent = RunStarted | RunFinished | RunFailed
 BusEvent = AgentEvent | RunEvent
 
 
 def serialize_event(event: BusEvent) -> dict[str, Any]:
+    if isinstance(event, AgentCreated):
+        payload: dict[str, Any] = {
+            "name": event.name,
+            "kind": event.kind,
+            "detail": event.detail,
+        }
+        if event.agent_home is not None:
+            payload["agent_home"] = event.agent_home
+        if event.source_file is not None:
+            payload["source_file"] = event.source_file
+        return _record(
+            event_type=event.event_type,
+            at=event.at,
+            agent_uri=event.agent_uri,
+            agent_id=event.agent_id,
+            run_id=None,
+            payload=payload,
+        )
+
+    if isinstance(event, AgentRemoved):
+        payload = {
+            "name": event.name,
+            "kind": event.kind,
+            "detail": event.detail,
+        }
+        if event.agent_home is not None:
+            payload["agent_home"] = event.agent_home
+        if event.source_file is not None:
+            payload["source_file"] = event.source_file
+        return _record(
+            event_type=event.event_type,
+            at=event.at,
+            agent_uri=event.agent_uri,
+            agent_id=event.agent_id,
+            run_id=None,
+            payload=payload,
+        )
+
     if isinstance(event, AgentStarted):
         payload: dict[str, Any] = {
             "name": event.name,
@@ -167,10 +252,9 @@ def serialize_event(event: BusEvent) -> dict[str, Any]:
             payload=payload,
         )
 
-    if isinstance(event, AgentUpdated):
+    if isinstance(event, AgentChanged):
         payload = {
             "name": event.name,
-            "update_kind": event.update_kind,
             "detail": event.detail,
         }
         if event.agent_home is not None:

@@ -12,7 +12,7 @@ from toolang.runtime.invoke import invoke_prepared_agent
 from toolang.concepts.sandbox import HOST_SANDBOX
 
 from .support import (
-    _append_agent_updated,
+    _append_agent_changed,
     _remember_agent,
     _resolve_cli_agent,
     _resolve_runtime_cap_scopes,
@@ -79,10 +79,10 @@ def sync_command(
     agent_ref = _resolve_cli_agent(agent, db_path=db_path)
     sync_agent(agent_ref)
     _remember_agent(agent_ref, db_path=db_path)
-    _append_agent_updated(
+    _append_agent_changed(
         toolang_root,
         agent_ref,
-        update_kind="sync",
+        change_type="caps_updated",
         detail="sync completed",
     )
     typer.echo("synced")
