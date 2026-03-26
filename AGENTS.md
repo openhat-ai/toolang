@@ -37,6 +37,9 @@
 - Put behavior on the concept or persisted model when it is part of that
   concept's meaning. Do not duplicate the same mapping, overlay, sorting, or
   serialization logic across multiple modules.
+- Scheduled work definitions should use RRULE-based scheduling in persisted
+  models and APIs. Do not introduce new `interval_sec`-style schedule fields
+  for chores or will.
 - Persisted Pydantic models should own their `load()` / `save()` methods.
   Do not add serializer wrapper modules unless they add real meaning.
 - Let the package that owns a source format own its parsing and source-editing

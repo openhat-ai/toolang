@@ -437,17 +437,14 @@ class RuntimeHost:
         origin: RunSubmissionKind,
         thread_id: str,
         text: str,
-        thunk_name: str | None,
-        model: str | None,
     ) -> InvokeResult:
         current = self.current_prepared()
-        selected_thunk = _select_named_or_origin_thunk(current, thunk_name, origin)
+        selected_thunk = _select_named_or_origin_thunk(current, None, origin)
         return invoke_prepared_agent(
             current,
             selected_thunk,
             bus_db_path=self.bus_db_path,
             user_input=text,
-            model=model,
             origin=origin,
             thread_id=thread_id,
             sender="self",
@@ -695,8 +692,6 @@ class RuntimeHost:
                 origin=submission.kind,
                 thread_id=submission.thread_id,
                 text=submission.text,
-                thunk_name=submission.thunk,
-                model=submission.model,
             ),
         )
         future.add_done_callback(

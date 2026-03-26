@@ -1030,14 +1030,12 @@ def test_create_agent_app_lists_local_work_documents(tmp_path: Path) -> None:
     ChoreFile(
         title="Sync backlog",
         body="Sync backlog from the project tool.",
-        interval_sec=1800,
-        thunk="chore",
+        rrule="FREQ=MINUTELY;INTERVAL=30",
     ).save(room.chores_dir / "sync.md")
     WillFile(
         title="Reflect",
         body="Think about the next milestone.",
-        interval_sec=3600,
-        thunk="will",
+        rrule="FREQ=HOURLY;INTERVAL=1",
     ).save(room.will_path)
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
@@ -1080,24 +1078,15 @@ def test_create_agent_app_lists_local_work_documents(tmp_path: Path) -> None:
         {
             "id": "sync",
             "title": "Sync backlog",
-            "thread_id": "chore:sync",
-            "interval_sec": 1800,
-            "thunk": "chore",
-            "model": None,
-            "path": str(room.chores_dir / "sync.md"),
-            "updated_at": chores.json()["items"][0]["updated_at"],
+            "rrule": "FREQ=MINUTELY;INTERVAL=30",
             "paused": False,
         }
     ]
     assert will.status_code == 200
     assert will.json()["item"] == {
+        "id": "will",
         "title": "Reflect",
-        "thread_id": f"will:{agent.id}",
-        "interval_sec": 3600,
-        "thunk": "will",
-        "model": None,
-        "path": str(room.will_path),
-        "updated_at": will.json()["item"]["updated_at"],
+        "rrule": "FREQ=HOURLY;INTERVAL=1",
         "paused": False,
     }
 
@@ -1197,85 +1186,70 @@ def test_create_agent_app_puts_and_patches_local_chores_and_will(
             json={
                 "title": "Sync maintenance",
                 "body": "Refresh the maintenance plan.",
-                "interval_sec": 1800,
-                "thunk": "chore",
-                "model": "gpt-5.3",
+                "rrule": "FREQ=MINUTELY;INTERVAL=30",
             },
         )
         assert created_chore.status_code == 200
         assert created_chore.json()["id"] == "maintenance/sync"
-        assert created_chore.json()["thread_id"] == "chore:maintenance/sync"
-        assert created_chore.json()["path"] == str(
-            room.chores_dir / "maintenance" / "sync.md"
-        )
+        assert created_chore.json()["rrule"] == "FREQ=MINUTELY;INTERVAL=30"
 
         patched_chore = client.patch(
             "/api/v1/chores/maintenance/sync",
             json={
-                "interval_sec": 900,
+                "rrule": "FREQ=MINUTELY;INTERVAL=15",
                 "body_append": "Also refresh labels.",
                 "paused": True,
-                "thread_id": "chore:maintenance/custom",
             },
         )
         assert patched_chore.status_code == 200
-        assert patched_chore.json()["interval_sec"] == 900
+        assert patched_chore.json()["rrule"] == "FREQ=MINUTELY;INTERVAL=15"
         assert patched_chore.json()["paused"] is True
-        assert patched_chore.json()["thread_id"] == "chore:maintenance/custom"
 
         created_will = client.put(
             "/api/v1/will",
             json={
                 "title": "Stay aligned",
                 "body": "Review the current milestone and choose the next move.",
-                "interval_sec": 3600,
-                "thunk": "will",
+                "rrule": "FREQ=HOURLY;INTERVAL=1",
             },
         )
         assert created_will.status_code == 200
-        assert created_will.json()["item"]["path"] == str(room.will_path)
-        assert created_will.json()["item"]["thread_id"] == f"will:{agent.id}"
+        assert created_will.json()["item"]["id"] == "will"
+        assert created_will.json()["item"]["rrule"] == "FREQ=HOURLY;INTERVAL=1"
 
         patched_will = client.patch(
             "/api/v1/will",
             json={
-                "interval_sec": 7200,
+                "rrule": "FREQ=HOURLY;INTERVAL=2",
                 "body_append": "Prefer quieter work in the afternoon.",
                 "paused": True,
-                "thread_id": "will:custom",
-                "model": "gpt-5.3",
             },
         )
         assert patched_will.status_code == 200
-        assert patched_will.json()["item"]["interval_sec"] == 7200
+        assert patched_will.json()["item"]["rrule"] == "FREQ=HOURLY;INTERVAL=2"
         assert patched_will.json()["item"]["paused"] is True
-        assert patched_will.json()["item"]["thread_id"] == "will:custom"
-        assert patched_will.json()["item"]["model"] == "gpt-5.3"
 
         chores = client.get("/api/v1/chores")
         assert chores.status_code == 200
         assert chores.json()["items"][0]["id"] == "maintenance/sync"
-        assert chores.json()["items"][0]["interval_sec"] == 900
+        assert chores.json()["items"][0]["rrule"] == "FREQ=MINUTELY;INTERVAL=15"
         assert chores.json()["items"][0]["paused"] is True
 
         will = client.get("/api/v1/will")
         assert will.status_code == 200
-        assert will.json()["item"]["interval_sec"] == 7200
+        assert will.json()["item"]["rrule"] == "FREQ=HOURLY;INTERVAL=2"
         assert will.json()["item"]["paused"] is True
 
     saved_chore = ChoreFile.load(room.chores_dir / "maintenance" / "sync.md")
     assert saved_chore.title == "Sync maintenance"
-    assert saved_chore.interval_sec == 900
-    assert saved_chore.thread_id == "chore:maintenance/custom"
+    assert saved_chore.rrule == "FREQ=MINUTELY;INTERVAL=15"
     assert saved_chore.paused is True
     assert "Also refresh labels." in saved_chore.body
 
     saved_will = WillFile.load(room.will_path)
     assert saved_will.title == "Stay aligned"
-    assert saved_will.interval_sec == 7200
-    assert saved_will.thread_id == "will:custom"
+    assert saved_will.rrule == "FREQ=HOURLY;INTERVAL=2"
     assert saved_will.paused is True
-    assert saved_will.model == "gpt-5.3"
     assert "Prefer quieter work in the afternoon." in saved_will.body
 
 

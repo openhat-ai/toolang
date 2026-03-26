@@ -51,10 +51,10 @@ def test_collect_pulse_submissions_detects_task_chore_and_will(tmp_path: Path) -
         "---\nstatus: todo\nrequester: owner\n---\nLook at the latest changes.\n",
         encoding="utf-8",
     )
-    ChoreFile(title="Refresh tasks", body="Refresh local tasks.", interval_sec=3600).save(
+    ChoreFile(title="Refresh tasks", body="Refresh local tasks.", rrule="FREQ=HOURLY;INTERVAL=1").save(
         room.chores_dir / "refresh.md"
     )
-    WillFile(title="Reflect", body="Think about the next step.", interval_sec=3600).save(room.will_path)
+    WillFile(title="Reflect", body="Think about the next step.", rrule="FREQ=HOURLY;INTERVAL=1").save(room.will_path)
 
     state, submissions = collect_pulse_submissions(room, agent, PulseState())
     task = TaskFile.load(room.tasks_dir / "review.md", persist_id=True)
@@ -89,10 +89,10 @@ def test_create_agent_app_processes_pulse_work_files(tmp_path: Path, monkeypatch
         "---\nstatus: todo\nrequester: owner\n---\nLook at the latest changes.\n",
         encoding="utf-8",
     )
-    ChoreFile(title="Refresh tasks", body="Refresh local tasks.", interval_sec=3600).save(
+    ChoreFile(title="Refresh tasks", body="Refresh local tasks.", rrule="FREQ=HOURLY;INTERVAL=1").save(
         room.chores_dir / "refresh.md"
     )
-    WillFile(title="Reflect", body="Think about the next step.", interval_sec=3600).save(room.will_path)
+    WillFile(title="Reflect", body="Think about the next step.", rrule="FREQ=HOURLY;INTERVAL=1").save(room.will_path)
 
     builds: list[Any] = []
 
@@ -175,7 +175,7 @@ def test_create_agent_app_materializes_task_mirrors_from_chore_output(
     ChoreFile(
         title="Sync assigned tasks",
         body="Refresh mirrored tasks from Linear.",
-        interval_sec=3600,
+        rrule="FREQ=HOURLY;INTERVAL=1",
     ).save(room.chores_dir / "sync.md")
 
     builds: list[Any] = []

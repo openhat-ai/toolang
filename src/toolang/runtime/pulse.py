@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 from toolang.concepts.identity import AgentRef
@@ -15,7 +15,7 @@ from toolang.concepts.persisted import (
     TaskFile,
     WillFile,
 )
-from toolang.concepts.persisted.work import task_terminal
+from toolang.concepts.persisted.work import next_scheduled_at, task_terminal
 from toolang.runtime.requests import RunSubmissionKind
 
 
@@ -27,8 +27,6 @@ class PulseSubmission:
     key: str
     thread_id: str
     text: str
-    thunk: str | None = None
-    model: str | None = None
 
 
 def collect_pulse_submissions(
@@ -161,23 +159,34 @@ def _next_scheduled_state(
     text = document.render_input(fallback_title=title_fallback)
     if not text.strip():
         return next_state.model_copy(
-            update={"last_enqueued_at": None, "next_due_at": now + timedelta(seconds=document.interval_sec)}
+            update={
+                "last_enqueued_at": None,
+                "next_due_at": next_scheduled_at(
+                    document.rrule,
+                    anchor=due_at,
+                    not_before=now,
+                    inclusive=False,
+                ),
+            }
         )
 
     submissions.append(
         PulseSubmission(
             kind=kind,
             key=key,
-            thread_id=document.effective_thread_id(default_thread_id),
+            thread_id=default_thread_id,
             text=text,
-            thunk=document.thunk,
-            model=document.model,
         )
     )
     return next_state.model_copy(
         update={
             "last_enqueued_at": now,
-            "next_due_at": now + timedelta(seconds=document.interval_sec),
+            "next_due_at": next_scheduled_at(
+                document.rrule,
+                anchor=due_at,
+                not_before=now,
+                inclusive=False,
+            ),
         }
     )
 

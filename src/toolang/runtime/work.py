@@ -170,10 +170,7 @@ def put_chore_item(
     ChoreFile(
         title=request.title,
         body=request.body,
-        thread_id=request.thread_id,
-        interval_sec=request.interval_sec,
-        thunk=request.thunk,
-        model=request.model,
+        rrule=request.rrule,
         paused=request.paused,
     ).save(path)
     return _chore_item(room, path, ChoreFile.load(path))
@@ -194,16 +191,7 @@ def patch_chore_item(
             "body": _patched_body(
                 current.body, body=request.body, body_append=request.body_append
             ),
-            "thread_id": request.thread_id
-            if request.thread_id is not None
-            else current.thread_id,
-            "interval_sec": (
-                request.interval_sec
-                if request.interval_sec is not None
-                else current.interval_sec
-            ),
-            "thunk": request.thunk if request.thunk is not None else current.thunk,
-            "model": request.model if request.model is not None else current.model,
+            "rrule": request.rrule if request.rrule is not None else current.rrule,
             "paused": request.paused if request.paused is not None else current.paused,
         }
     )
@@ -229,10 +217,7 @@ def put_will_item(
     WillFile(
         title=request.title,
         body=request.body,
-        thread_id=request.thread_id,
-        interval_sec=request.interval_sec,
-        thunk=request.thunk,
-        model=request.model,
+        rrule=request.rrule,
         paused=request.paused,
     ).save(path)
     return _will_item(room, path, WillFile.load(path), agent=agent)
@@ -253,16 +238,7 @@ def patch_will_item(
             "body": _patched_body(
                 current.body, body=request.body, body_append=request.body_append
             ),
-            "thread_id": request.thread_id
-            if request.thread_id is not None
-            else current.thread_id,
-            "interval_sec": (
-                request.interval_sec
-                if request.interval_sec is not None
-                else current.interval_sec
-            ),
-            "thunk": request.thunk if request.thunk is not None else current.thunk,
-            "model": request.model if request.model is not None else current.model,
+            "rrule": request.rrule if request.rrule is not None else current.rrule,
             "paused": request.paused if request.paused is not None else current.paused,
         }
     )
@@ -348,12 +324,7 @@ def _chore_item(room: AgentRoom, path: Path, document: ChoreFile) -> ChoreItem:
     return ChoreItem(
         id=key,
         title=document.title,
-        thread_id=document.effective_thread_id(f"chore:{key}"),
-        interval_sec=document.interval_sec,
-        thunk=document.thunk,
-        model=document.model,
-        path=str(path),
-        updated_at=_updated_at(path),
+        rrule=document.rrule,
         paused=document.paused,
     )
 
@@ -366,13 +337,9 @@ def _will_item(
     agent: AgentRef,
 ) -> WillItem:
     return WillItem(
+        id="will",
         title=document.title,
-        thread_id=document.effective_thread_id(f"will:{agent.id}"),
-        interval_sec=document.interval_sec,
-        thunk=document.thunk,
-        model=document.model,
-        path=str(path),
-        updated_at=_updated_at(path),
+        rrule=document.rrule,
         paused=document.paused,
     )
 

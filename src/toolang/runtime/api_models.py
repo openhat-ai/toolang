@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from pydantic import BaseModel, Field
+from toolang.concepts.persisted.work import DEFAULT_SCHEDULE_RRULE
 from toolang.concepts.persisted.prompt_trace import PromptTrace as PersistedPromptTrace
 from toolang.concepts.persisted.work import TaskStatus
 
@@ -152,12 +153,7 @@ class ChoreItem(BaseModel):
 
     id: str
     title: str | None = None
-    thread_id: str
-    interval_sec: int
-    thunk: str | None = None
-    model: str | None = None
-    path: str
-    updated_at: str | None = None
+    rrule: str
     paused: bool | None = None
 
 
@@ -203,10 +199,7 @@ class ChorePutRequest(BaseModel):
 
     title: str | None = None
     body: str = ""
-    thread_id: str | None = None
-    interval_sec: int = Field(default=300, ge=1)
-    thunk: str | None = None
-    model: str | None = None
+    rrule: str = DEFAULT_SCHEDULE_RRULE
     paused: bool = False
 
 
@@ -216,23 +209,16 @@ class ChorePatchRequest(BaseModel):
     title: str | None = None
     body: str | None = None
     body_append: str | None = None
-    thread_id: str | None = None
-    interval_sec: int | None = Field(default=None, ge=1)
-    thunk: str | None = None
-    model: str | None = None
+    rrule: str | None = None
     paused: bool | None = None
 
 
 class WillItem(BaseModel):
     """The local will document shown by the runtime API."""
 
+    id: str
     title: str | None = None
-    thread_id: str
-    interval_sec: int
-    thunk: str | None = None
-    model: str | None = None
-    path: str
-    updated_at: str | None = None
+    rrule: str
     paused: bool | None = None
 
 
@@ -241,10 +227,7 @@ class WillPutRequest(BaseModel):
 
     title: str | None = None
     body: str = ""
-    thread_id: str | None = None
-    interval_sec: int = Field(default=300, ge=1)
-    thunk: str | None = None
-    model: str | None = None
+    rrule: str = DEFAULT_SCHEDULE_RRULE
     paused: bool = False
 
 
@@ -254,10 +237,7 @@ class WillPatchRequest(BaseModel):
     title: str | None = None
     body: str | None = None
     body_append: str | None = None
-    thread_id: str | None = None
-    interval_sec: int | None = Field(default=None, ge=1)
-    thunk: str | None = None
-    model: str | None = None
+    rrule: str | None = None
     paused: bool | None = None
 
 
