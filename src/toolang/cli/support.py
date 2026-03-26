@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
@@ -25,8 +26,9 @@ from toolang.caps import CapScopeSelection
 from toolang.concepts.execution import RuntimeLoop
 from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.errors import ToolangError
-from toolang.concepts.identity import AgentRef
+from toolang.concepts.identity import AgentRef, agent_kind
 from toolang.concepts.persisted import ChannelsConfig, ToolangConfig
+from toolang.concepts.persisted import AgentOriginState
 from toolang.concepts.persisted._toml import load_toml
 from toolang.concepts.persisted.run_state import RunState
 from toolang.concepts.sandbox import HOST_SANDBOX, SandboxSpec, SandboxState
@@ -55,14 +57,27 @@ def _resolve_cli_agent(raw: str, *, db_path: Path | None = None) -> AgentRef:
 
     toolang_root = _toolang_root()
     registry_path = db_path or ToolangRoot.resolve(toolang_root).agents_db_path
-    guest_resolver = _guest_resolver()
+
+    if text.startswith("guest:"):
+        return _resolve_nonresident_selector(
+            text,
+            expected_kind="visiting",
+            db_path=registry_path,
+            toolang_root=toolang_root,
+        )
+    if text.startswith("roaming:"):
+        return _resolve_nonresident_selector(
+            text,
+            expected_kind="roaming",
+            db_path=registry_path,
+            toolang_root=toolang_root,
+        )
 
     if not _looks_like_explicit_source_selector(text):
         resolved_from_registry = _resolve_known_agent(
             text,
             db_path=registry_path,
             toolang_root=toolang_root,
-            guest_resolver=guest_resolver,
         )
         if resolved_from_registry is not None:
             return resolved_from_registry
@@ -71,7 +86,6 @@ def _resolve_cli_agent(raw: str, *, db_path: Path | None = None) -> AgentRef:
         text,
         cwd=Path.cwd(),
         toolang_root=toolang_root,
-        guest_resolver=guest_resolver,
     )
 
 
@@ -102,7 +116,6 @@ def _resolve_resident_target(raw: str) -> AgentRef:
         raw,
         cwd=Path.cwd(),
         toolang_root=toolang_root,
-        guest_resolver=_guest_resolver(),
     )
     if agent_ref.kind != "resident":
         raise ToolangError(
@@ -144,19 +157,6 @@ def _append_agent_updated(
         )
     )
     bus.close()
-
-
-def _guest_resolver():
-    guest_base_url = os.environ.get("TOOLANG_GUEST_BASE_URL", "").strip()
-    guest_resolver = None
-    if guest_base_url:
-        base = guest_base_url.rstrip("/")
-
-        def resolve_guest_name(name: str) -> str:
-            return f"{base}/{name.lstrip('/')}"
-
-        guest_resolver = resolve_guest_name
-    return guest_resolver
 
 
 def _cors_allow_origins() -> list[str] | None:
@@ -263,7 +263,6 @@ def _resolve_known_agent(
     *,
     db_path: Path,
     toolang_root: Path,
-    guest_resolver,
 ) -> AgentRef | None:
     if _looks_like_agent_id(raw):
         by_id = _select_known_agent(find_known_agents_by_id_prefix(db_path, raw), raw, "agent id")
@@ -272,7 +271,6 @@ def _resolve_known_agent(
                 by_id.agent_uri,
                 cwd=Path.cwd(),
                 toolang_root=toolang_root,
-                guest_resolver=guest_resolver,
             )
 
     by_name = _select_known_agent(find_known_agents_by_name(db_path, raw), raw, "agent name")
@@ -281,7 +279,6 @@ def _resolve_known_agent(
             by_name.agent_uri,
             cwd=Path.cwd(),
             toolang_root=toolang_root,
-            guest_resolver=guest_resolver,
         )
 
     if not _looks_like_agent_id(raw):
@@ -291,7 +288,6 @@ def _resolve_known_agent(
                 by_id.agent_uri,
                 cwd=Path.cwd(),
                 toolang_root=toolang_root,
-                guest_resolver=guest_resolver,
             )
     return None
 
@@ -316,6 +312,91 @@ def _remember_agent(agent: AgentRef, *, db_path: Path) -> None:
             agent,
             updated_at=datetime.now(timezone.utc),
         ),
+    )
+    if agent.kind != "resident":
+        AgentOriginState.from_agent(agent).save(
+            AgentHome.resolve(agent.home).room(agent.name).origin_path
+        )
+
+
+def _resolve_nonresident_selector(
+    raw: str,
+    *,
+    expected_kind: Literal["roaming", "visiting"],
+    db_path: Path,
+    toolang_root: Path,
+) -> AgentRef:
+    name = raw.split(":", 1)[1].strip()
+    if not name:
+        raise ToolangError(f"{expected_kind.title()} agent selector may not be empty.")
+
+    resolved = _resolve_known_nonresident_by_name(
+        name,
+        expected_kind=expected_kind,
+        db_path=db_path,
+        toolang_root=toolang_root,
+    )
+    if resolved is not None:
+        return replace(resolved, selector=raw)
+
+    if expected_kind == "visiting":
+        resolved_from_origin = _resolve_visiting_origin_selector(name, toolang_root=toolang_root)
+        if resolved_from_origin is not None:
+            return replace(resolved_from_origin, selector=raw)
+        raise ToolangError(
+            f"Unknown guest agent {raw!r}. Use the full visiting URL first."
+        )
+
+    raise ToolangError(
+        f"Unknown roaming agent {raw!r}. Use the full local path or file:// URI first."
+    )
+
+
+def _resolve_known_nonresident_by_name(
+    name: str,
+    *,
+    expected_kind: Literal["roaming", "visiting"],
+    db_path: Path,
+    toolang_root: Path,
+) -> AgentRef | None:
+    records = [
+        record
+        for record in find_known_agents_by_name(db_path, name)
+        if agent_kind(record.agent_uri) == expected_kind
+    ]
+    selected = _select_known_agent(records, name, f"{expected_kind} agent name")
+    if selected is None:
+        return None
+    return resolve_agent_ref(
+        selected.agent_uri,
+        cwd=Path.cwd(),
+        toolang_root=toolang_root,
+    )
+
+
+def _resolve_visiting_origin_selector(
+    name: str, *, toolang_root: Path
+) -> AgentRef | None:
+    guests_root = ToolangRoot.resolve(toolang_root).path / "guests"
+    if not guests_root.exists():
+        return None
+
+    matches: list[AgentOriginState] = []
+    for path in guests_root.glob("*/.toolang/agents/*/agent.origin.json"):
+        origin = AgentOriginState.load(path)
+        if origin.kind == "visiting" and origin.name == name:
+            matches.append(origin)
+
+    if not matches:
+        return None
+    if len(matches) > 1:
+        candidates = ", ".join(sorted(origin.uri for origin in matches))
+        raise ToolangError(f"Ambiguous visiting agent name {name!r}: {candidates}")
+
+    return resolve_agent_ref(
+        matches[0].uri,
+        cwd=Path.cwd(),
+        toolang_root=toolang_root,
     )
 
 
@@ -406,7 +487,9 @@ end
 def _looks_like_explicit_source_selector(text: str) -> bool:
     return (
         "://" in text
+        or text.startswith("agent:")
         or text.startswith("guest:")
+        or text.startswith("roaming:")
         or text.startswith(("./", "../", "/", "~"))
         or text.endswith(".too")
         or "/" in text

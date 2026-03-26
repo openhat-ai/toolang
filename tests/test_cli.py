@@ -29,7 +29,7 @@ from toolang.cli.support import (
     _resolve_cli_agent,
 )
 from toolang.concepts.layout import AgentHome, ToolangRoot
-from toolang.concepts.persisted import ChannelBinding, ChannelsConfig
+from toolang.concepts.persisted import AgentOriginState, ChannelBinding, ChannelsConfig
 from toolang.concepts.persisted.config import ToolangConfig, WebConfig
 from toolang.errors import ToolangError
 from toolang.concepts.persisted.run_state import RunState
@@ -39,6 +39,10 @@ from toolang.concepts.sandbox import SandboxState
 
 def agent_run_path(agent_home: Path, agent_name: str) -> Path:
     return AgentHome.resolve(agent_home).room(agent_name).run_path
+
+
+def agent_origin_path(agent_home: Path, agent_name: str) -> Path:
+    return AgentHome.resolve(agent_home).room(agent_name).origin_path
 
 
 def agents_db_path(root: Path) -> Path:
@@ -498,6 +502,71 @@ def test_cli_run_passes_runtime_loops_and_channels(tmp_path: Path, monkeypatch) 
     channels_config = cast(ChannelsConfig, calls["channels_config"])
     assert tuple(channels_config.channels) == ("telegram",)
     assert channels_config.channels["telegram"].plugin == "telegram"
+
+
+def test_resolve_cli_agent_supports_guest_selector_from_registry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "toolang-root"
+    visiting = resolve_agent_ref(
+        "https://abe.fun/alice",
+        cwd=tmp_path,
+        toolang_root=root,
+    )
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+    _remember_agent(visiting, db_path=agents_db_path(root))
+    preserved = AgentOriginState.load(agent_origin_path(visiting.home, visiting.name))
+
+    resolved = _resolve_cli_agent("guest:alice", db_path=agents_db_path(root))
+
+    assert preserved.uri == "https://abe.fun/alice"
+    assert resolved.kind == "visiting"
+    assert resolved.selector == "guest:alice"
+    assert resolved.uri == "https://abe.fun/alice"
+
+
+def test_resolve_cli_agent_supports_guest_selector_from_preserved_origin(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "toolang-root"
+    home = ToolangRoot.resolve(root).visiting_home("alice-guest")
+    AgentOriginState(
+        kind="visiting",
+        name="alice",
+        uri="https://abe.fun/alice",
+    ).save(home.room("alice").origin_path)
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+
+    resolved = _resolve_cli_agent("guest:alice", db_path=agents_db_path(root))
+
+    assert resolved.kind == "visiting"
+    assert resolved.selector == "guest:alice"
+    assert resolved.uri == "https://abe.fun/alice"
+    assert resolved.home == ToolangRoot.resolve(root).visiting_home(f"alice-{resolved.id[:12]}").path
+
+
+def test_resolve_cli_agent_supports_roaming_selector_from_registry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "toolang-root"
+    roaming_path = tmp_path / "project" / "charlie.too"
+    roaming_path.parent.mkdir(parents=True)
+    roaming_path.write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    roaming = resolve_agent_ref(str(roaming_path), cwd=tmp_path, toolang_root=root)
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+    _remember_agent(roaming, db_path=agents_db_path(root))
+    preserved = AgentOriginState.load(agent_origin_path(roaming.home, roaming.name))
+
+    resolved = _resolve_cli_agent("roaming:charlie", db_path=agents_db_path(root))
+
+    assert preserved.uri == roaming_path.resolve().as_uri()
+    assert resolved.kind == "roaming"
+    assert resolved.selector == "roaming:charlie"
+    assert resolved.uri == roaming_path.resolve().as_uri()
+    assert resolved.home == roaming_path.parent.resolve()
 
 
 def test_cli_run_uses_cors_origins_from_root_config(tmp_path: Path, monkeypatch) -> None:

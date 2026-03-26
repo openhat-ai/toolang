@@ -95,7 +95,9 @@
 - Canonical resident agent URI: `agent://<home>/<agent>.too`
 - Canonical roaming agent URI: `file:///absolute/path/to/<agent>.too`
 - Canonical visiting agent URI: `https://<host>/<path>`
-- `guest:<name>` is a shorthand, not a canonical URI.
+- `alice` and `agent:alice` are resident selectors, not canonical URIs.
+- `guest:<name>` and `roaming:<name>` are CLI selectors for already known
+  non-resident agents, not canonical URIs.
 - Canonical identity must not depend on the absolute `TOOLANG_ROOT` path.
 
 
