@@ -227,3 +227,25 @@ Command intent:
   - print the target local cap path without creating directories
 - `local delete`
   - remove a local editable cap
+
+
+## 10. Runtime API Projection
+
+The runtime API exposes the effective visible capability set for the current
+activation through:
+
+- `GET /api/v1/caps`
+
+Current response categories are:
+
+- `psyches`
+- `skills`
+- `services`
+- `counts`
+
+Rules:
+
+- the API uses `service` and `services`, not `server` and `servers`
+- the payload is a runtime visibility view, not a full authored capability
+  inventory
+- counts should use the same names as the visible capability arrays

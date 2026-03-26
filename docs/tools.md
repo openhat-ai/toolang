@@ -8,13 +8,13 @@ model.
 
 Tools are base runtime capabilities.
 
-They are not caps, and they are not implemented as a separate agent framework.
+They are not a separate agent framework.
 
-Tools live inside one turn execution:
+Tools live inside one run execution:
 
 - the model decides whether to call a tool
 - Toolang executes the tool locally
-- the tool result is fed back into the same turn
+- the tool result is fed back into the same run
 - execution truth records the call as a `tool_call` step
 
 
@@ -76,11 +76,7 @@ Built-in tool families load by default.
 - service connection details come from service-cap front matter
 - `description` is the trigger text loaded into the available-services prompt
   section
-- service body may be loaded on demand and is usually empty
 - static service env vars come from `${AGENT_HOME}/.env`
-- service front matter declares concrete env var names directly
-- OAuth tokens are not stored in `.env`
-- `service_use:mcat` stores OAuth token/state under the agent room
 - supports:
   - `auth_start`
   - `auth_continue`
@@ -91,17 +87,6 @@ Built-in tool families load by default.
   - `resource_read`
   - `prompt_list`
   - `prompt_get`
-- HTTP services use:
-  - `transport`
-  - `target`
-- stdio services use:
-  - `transport`
-  - `command`
-  - `args`
-  - `port`
-- both may declare:
-  - `description`
-  - `env`
 
 
 ## 4. Loading
@@ -115,7 +100,8 @@ For service capabilities, the prompt should also declare:
 - trigger descriptions from service front matter
 - concrete required env vars
 - the rule that those env vars are read from `${AGENT_HOME}/.env`
-- the rule that `env` entries are already final env-var names and are not rewritten
+- the rule that `env` entries are already final env-var names and are not
+  rewritten
 
 Example service front matter:
 
@@ -123,35 +109,17 @@ Example service front matter:
 ---
 transport: http
 target: https://mcp.github.com/mcp
-description: GitHub MCP server
+description: GitHub MCP service
 env:
   - GITHUB_TOKEN
 ---
 ```
-
-That service requires:
-
-- `GITHUB_TOKEN`
 
 If a service requires OAuth, authenticate it with:
 
 ```bash
 toolang service auth <agent> <service>
 ```
-
-Agents should use the same provider through `service_use`:
-
-- call `service_use` with `action = "auth_start"` to get an authorization URL
-- return that URL to the user
-- after the user confirms approval, call `service_use` with `action = "auth_continue"`
-- `auth_start` should normally be non-blocking; use `wait = true` only for direct operator flows
-
-The default `mcat` provider stores OAuth files under:
-
-- `${AGENT_ROOM}/service_use/mcat/{SERVICE}/token.json`
-- `${AGENT_ROOM}/service_use/mcat/{SERVICE}/auth.json`
-- `${AGENT_ROOM}/service_use/mcat/{SERVICE}/session.json`
-- `${AGENT_ROOM}/service_use/mcat/{SERVICE}/proxy.json`
 
 
 ## 5. Providers
@@ -181,7 +149,7 @@ Examples:
 
 ## 6. Runtime Contract
 
-The runtime resolves one local tool set per turn.
+The runtime resolves one local tool set per run.
 
 Each provider supplies:
 
