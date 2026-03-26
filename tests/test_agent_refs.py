@@ -15,6 +15,17 @@ def test_resolve_resident_shorthand(tmp_path: Path) -> None:
     assert resolved.source == root / "agents" / "alice" / "bob.too"
 
 
+def test_resolve_agent_prefixed_resident_shorthand(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    resolved = resolve_agent_ref("agent:alice", cwd=tmp_path, toolang_root=root)
+
+    assert resolved.kind == "resident"
+    assert resolved.selector == "agent:alice"
+    assert resolved.uri == "agent://alice/alice.too"
+    assert resolved.home == root / "agents" / "alice"
+    assert resolved.source == root / "agents" / "alice" / "alice.too"
+
+
 def test_resolve_resident_path_normalizes_to_agent_uri(tmp_path: Path) -> None:
     root = tmp_path / "root"
     source = root / "agents" / "alice" / "alice.too"
@@ -52,20 +63,6 @@ def test_resolve_visiting_uri_builds_guest_home(tmp_path: Path) -> None:
     assert resolved.uri == "https://a.com/alice.too"
     assert resolved.home == root / "guests" / f"alice-{resolved.id[:12]}"
     assert resolved.source == resolved.home / "alice.too"
-
-
-def test_resolve_guest_shorthand_uses_explicit_resolver(tmp_path: Path) -> None:
-    root = tmp_path / "root"
-
-    resolved = resolve_agent_ref(
-        "guest:alice",
-        cwd=tmp_path,
-        toolang_root=root,
-        guest_resolver=lambda name: f"https://abe.fun/{name}",
-    )
-
-    assert resolved.kind == "visiting"
-    assert resolved.uri == "https://abe.fun/alice"
 
 
 def test_resolve_hosted_shorthand_as_https(tmp_path: Path) -> None:

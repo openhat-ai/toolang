@@ -169,6 +169,10 @@ class AgentRoom:
         return self.path / "agent.run"
 
     @property
+    def origin_path(self) -> Path:
+        return self.path / "agent.origin.json"
+
+    @property
     def log_path(self) -> Path:
         return self.path / "agent.log"
 

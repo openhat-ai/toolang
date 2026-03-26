@@ -6,8 +6,8 @@ home placement, and local source paths.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path, PurePosixPath
-from typing import Callable
 from urllib.parse import SplitResult, urlsplit
 
 from toolang.concepts.layout import ToolangRoot
@@ -19,31 +19,25 @@ from toolang.concepts.identity import (
     agent_id,
 )
 
-GuestResolver = Callable[[str], str]
-
 
 def resolve_agent_ref(
     selector: AgentSelector,
     *,
     cwd: Path,
     toolang_root: Path,
-    guest_resolver: GuestResolver | None = None,
 ) -> AgentRef:
     """Resolve one agent selector into a canonical local runtime reference."""
     text = selector.strip()
     if not text:
         raise ToolangError("Agent reference may not be empty.")
 
-    if text.startswith("guest:"):
-        if guest_resolver is None:
-            raise ToolangError(
-                "Guest shorthand requires an explicit guest resolver at the call site."
-            )
-        return resolve_agent_ref(
-            guest_resolver(text.removeprefix("guest:")),
-            cwd=cwd,
-            toolang_root=toolang_root,
-            guest_resolver=guest_resolver,
+    if text.startswith("agent:"):
+        resident = text.removeprefix("agent:")
+        if not resident.strip():
+            raise ToolangError("Resident agent selector may not be empty.")
+        return replace(
+            _resolve_resident_shorthand(resident, toolang_root=toolang_root),
+            selector=text,
         )
 
     if "://" in text:

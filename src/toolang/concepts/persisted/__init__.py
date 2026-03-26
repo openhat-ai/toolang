@@ -1,5 +1,6 @@
 """Persisted file-shape concepts."""
 
+from .agent_origin import AgentOriginState
 from .run_state import RunState
 from .channels_config import ChannelBinding, ChannelsConfig
 from .config import ModelEntry, ModelsSection, ToolangConfig, WebConfig
@@ -15,6 +16,7 @@ from .work import ChoreFile, TaskFile, WillFile, find_local_task, task_id_from_t
 
 __all__ = [
     "RunState",
+    "AgentOriginState",
     "ChannelBinding",
     "ChannelsConfig",
     "HookBinding",

@@ -56,10 +56,14 @@ Examples:
 
 - `alice`
   - `agent://alice/alice.too`
+- `agent:alice`
+  - `agent://alice/alice.too`
 - `alice/bob`
   - `agent://alice/bob.too`
 - `guest:alice`
-  - resolved to a real `https://...` URI
+  - resolved to one known visiting agent named `alice`
+- `roaming:charlie`
+  - resolved to one known roaming agent named `charlie`
 - `./bob.too`
   - normalized to an absolute `file://...` URI
 - `abe.fun/alice`
@@ -68,7 +72,7 @@ Examples:
 Resolution order for source-facing selectors:
 
 1. canonical URI input
-2. `guest:...`
+2. `agent:...`
 3. local path
 4. `<name>`
 5. `<home>/<agent>`
@@ -76,6 +80,8 @@ Resolution order for source-facing selectors:
 
 Additional rules:
 
+- `guest:<name>` and `roaming:<name>` are CLI selectors for already known
+  non-resident agents, not source-facing selectors that synthesize a URI
 - relative local paths are allowed as input but not as canonical URI
 - canonical `file://` URIs always use absolute normalized paths
 - explicit source resolution yields both:
@@ -199,6 +205,7 @@ Layout:
 
 ```text
 ${AGENT_ROOM}/
+  agent.origin.json
   agent.run
   agent.log
   execution.db

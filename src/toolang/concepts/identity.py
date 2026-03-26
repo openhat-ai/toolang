@@ -32,6 +32,18 @@ def agent_id(agent_uri: AgentUri) -> str:
     return sha256(agent_uri.encode("utf-8")).hexdigest()
 
 
+def agent_kind(agent_uri: AgentUri) -> AgentKind:
+    """Return the agent kind implied by one canonical agent URI."""
+
+    if agent_uri.startswith("agent://"):
+        return "resident"
+    if agent_uri.startswith("file://"):
+        return "roaming"
+    if agent_uri.startswith(("http://", "https://")):
+        return "visiting"
+    raise ValueError(f"Unsupported agent URI: {agent_uri}")
+
+
 def agent_home_name(
     agent_uri: AgentUri,
     *,
