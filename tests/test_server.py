@@ -561,6 +561,55 @@ def test_chat_turn_and_run_detail_include_tool_calls(tmp_path: Path, monkeypatch
         ]
 
 
+def test_runtime_endpoints_and_chat_fallback_to_started_snapshot_when_source_is_missing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    source_path = home / "alice.too"
+    source_path.write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    prepared = prepare_agent(agent)
+
+    monkeypatch.setattr(
+        "toolang.runtime.invoke.execute_prompt_build",
+        lambda build: ModelExecutionResult(output_text="done"),
+    )
+    monkeypatch.setattr(
+        "toolang.runtime.invoke.execute_prompt_build_stream",
+        lambda build, *, on_event: ModelExecutionResult(output_text="done"),
+    )
+
+    app = create_agent_app(
+        prepared,
+        agents_db_path=agents_db_path(root),
+        bus_db_path=bus_events_db_path(root),
+        host="127.0.0.1",
+        port=8765,
+        sandbox="host",
+    )
+
+    with TestClient(app) as client:
+        source_path.unlink()
+
+        runtime = client.get("/api/v1/runtime")
+        caps = client.get("/api/v1/caps")
+        chat = client.post(
+            "/api/v1/chat",
+            json={"thread": "owner", "message": "hello"},
+        )
+
+    assert runtime.status_code == 200
+    assert caps.status_code == 200
+    assert chat.status_code == 200
+    assert chat.json()["assistant"]["parts"][0]["text"] == "done"
+
+
 def test_create_agent_app_reports_docker_sandbox_state(
     tmp_path: Path,
     monkeypatch,

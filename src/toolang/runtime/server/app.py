@@ -12,7 +12,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from toolang.agent.prepared import PreparedAgent, prepare_agent
+from toolang.agent.prepared import PreparedAgent
 from toolang.agent.registry import get_running_agent
 from toolang.bus.events import utc_now
 from toolang.caps import load_prepared_caps
@@ -203,7 +203,7 @@ def create_agent_app(
     @app.get("/api/v1/runtime", response_model=AgentRuntimeResponse)
     def runtime_info() -> AgentRuntimeResponse:
         current_run = get_running_agent(agents_db_path, prepared.ref.uri)
-        current = prepare_agent(prepared.ref, cap_scopes=prepared.cap_scopes)
+        current = runtime_host.current_prepared()
         return AgentRuntimeResponse(
             status="online",
             checked_at=utc_now(),
@@ -233,7 +233,7 @@ def create_agent_app(
 
     @app.get("/api/v1/caps", response_model=AgentCapsResponse)
     def list_caps() -> AgentCapsResponse:
-        current = prepare_agent(prepared.ref, cap_scopes=prepared.cap_scopes)
+        current = runtime_host.current_prepared()
         caps = load_prepared_caps(current)
         return caps_response(prepared.ref.name, caps)
 

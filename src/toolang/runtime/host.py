@@ -98,6 +98,18 @@ class RuntimeHost:
         self._threads: list[threading.Thread] = []
         self._started = False
 
+    def current_prepared(self) -> PreparedAgent:
+        """Return the latest prepared snapshot, refreshing from source when possible."""
+
+        try:
+            current = prepare_agent(
+                self.prepared.ref, cap_scopes=self.prepared.cap_scopes
+            )
+        except FileNotFoundError:
+            return self.prepared
+        self.prepared = current
+        return current
+
     @property
     def bus(self) -> BusStore:
         if self._bus is None:
@@ -433,7 +445,7 @@ class RuntimeHost:
         thunk_name: str | None,
         model: str | None,
     ) -> InvokeResult:
-        current = prepare_agent(self.prepared.ref, cap_scopes=self.prepared.cap_scopes)
+        current = self.current_prepared()
         selected_thunk = _select_named_or_origin_thunk(current, thunk_name, origin)
         return invoke_prepared_agent(
             current,
@@ -457,7 +469,7 @@ class RuntimeHost:
         run_id: str | None = None,
         stream_event: ModelExecutionEventHandler | None = None,
     ) -> ChatResult:
-        current = prepare_agent(self.prepared.ref, cap_scopes=self.prepared.cap_scopes)
+        current = self.current_prepared()
         selected_thunk = _select_chat_thunk(current, request.thunk)
         return chat_prepared_agent(
             current,
@@ -474,7 +486,7 @@ class RuntimeHost:
         )
 
     def _run_invoke_turn(self, *, request: RunRequest) -> InvokeResult:
-        current = prepare_agent(self.prepared.ref, cap_scopes=self.prepared.cap_scopes)
+        current = self.current_prepared()
         selected_thunk = current.program.get_thunk(request.thunk)
         return invoke_prepared_agent(
             current,
@@ -494,7 +506,7 @@ class RuntimeHost:
         delivery: InboundDelivery,
         message: Message,
     ) -> ChatResult:
-        current = prepare_agent(self.prepared.ref, cap_scopes=self.prepared.cap_scopes)
+        current = self.current_prepared()
         thunk_name = _optional_text(delivery.meta.get("thunk"))
         selected_thunk = _select_chat_thunk(current, thunk_name)
         result = chat_prepared_agent(
@@ -523,7 +535,7 @@ class RuntimeHost:
         binding_name: str,
         delivery: InboundDelivery,
     ) -> InvokeResult:
-        current = prepare_agent(self.prepared.ref, cap_scopes=self.prepared.cap_scopes)
+        current = self.current_prepared()
         thunk_name = _optional_text(delivery.meta.get("thunk"))
         selected_thunk = _select_named_or_origin_thunk(
             current, thunk_name, delivery.origin
