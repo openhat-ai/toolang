@@ -82,6 +82,8 @@ Built-in tool families load by default.
 - OAuth tokens are not stored in `.env`
 - `service_use:mcat` stores OAuth token/state under the agent room
 - supports:
+  - `auth_start`
+  - `auth_continue`
   - `tool_list`
   - `tool_call`
   - `resource_list`
@@ -136,6 +138,13 @@ If a service requires OAuth, authenticate it with:
 ```bash
 toolang service auth <agent> <service>
 ```
+
+Agents should use the same provider through `service_use`:
+
+- call `service_use` with `action = "auth_start"` to get an authorization URL
+- return that URL to the user
+- after the user confirms approval, call `service_use` with `action = "auth_continue"`
+- `auth_start` should normally be non-blocking; use `wait = true` only for direct operator flows
 
 The default `mcat` provider stores OAuth files under:
 

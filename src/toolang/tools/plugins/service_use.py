@@ -97,6 +97,8 @@ class ServiceUseTool(ToolProvider):
                     "action": {
                         "type": "string",
                         "enum": [
+                            "auth_start",
+                            "auth_continue",
                             "tool_list",
                             "tool_call",
                             "resource_list",
@@ -111,6 +113,7 @@ class ServiceUseTool(ToolProvider):
                     "resource_uri": {"type": "string"},
                     "cursor": {"type": "string"},
                     "input": {"type": "object"},
+                    "wait": {"type": "boolean"},
                 },
                 "required": ["service", "action"],
                 "additionalProperties": False,
@@ -122,6 +125,31 @@ class ServiceUseTool(ToolProvider):
         action = _required_text(arguments, "action")
         resolved = self._resolve_service(service_name)
         service_env = _load_service_env(context, resolved)
+        if action == "auth_start":
+            result = _start_service_auth(
+                runner=self._runner,
+                context=context,
+                service=resolved,
+                wait=_bool_input(arguments.get("wait"), default=False),
+            )
+            return {
+                "service": resolved.name,
+                "transport": resolved.transport,
+                "action": action,
+                "result": result,
+            }
+        if action == "auth_continue":
+            result = _continue_service_auth(
+                runner=self._runner,
+                context=context,
+                service=resolved,
+            )
+            return {
+                "service": resolved.name,
+                "transport": resolved.transport,
+                "action": action,
+                "result": result,
+            }
         session_path = self._ensure_session(
             resolved,
             context=context,
@@ -196,10 +224,10 @@ class ServiceUseTool(ToolProvider):
                     service_env=service_env,
                 )
             except ToolangError as exc:
-                if not token_path.exists() and "401" in str(exc):
+                if "401" in str(exc):
                     raise ToolangError(
-                        "service authorization required; run "
-                        f"`toolang service auth {context.agent.name} {service.name}` first."
+                        "service authorization required; call "
+                        f"`service_use` with action=`auth_start` for service {service.name!r}."
                     ) from exc
                 raise
             return session_path
@@ -314,42 +342,61 @@ def start_service_auth(
         }
     )
     resolved = provider._resolve_service(service_name)
-    if resolved.transport != "http":
-        raise ToolangError("toolang service auth only supports HTTP services.")
-
     context = ToolContext(
         agent=agent,
         working_directory=agent.home,
         sandbox="host",
     )
-    room = AgentHome.resolve(agent.home).room(agent.name)
-    token_path = room.service_use_token_path("mcat", service_name)
-    auth_state_path = room.service_use_auth_state_path("mcat", service_name)
-    session_path = room.service_use_session_path("mcat", service_name)
-    service_env = _load_service_env(context, resolved)
-    auth_state_path.parent.mkdir(parents=True, exist_ok=True)
-    result = _run_mcat_json(
-        provider._runner,
-        [
-            "auth",
-            "start",
-            resolved.endpoint or "",
-            "-k",
-            _token_key_ref(token_path),
-            "--state",
-            str(auth_state_path),
-            *(["--wait"] if wait else []),
-        ],
-        cwd=agent.home,
-        service_env=service_env,
+    result = _start_service_auth(
+        runner=provider._runner,
+        context=context,
+        service=resolved,
+        wait=wait,
     )
-    if session_path.exists():
-        session_path.unlink()
+    if resolved.transport != "http":
+        raise ToolangError("toolang service auth only supports HTTP services.")
     return {
         "service": service_name,
         "transport": resolved.transport,
-        "token_path": str(token_path),
-        "state_path": str(auth_state_path),
+        "token_path": str(_token_path(context, service_name)),
+        "state_path": str(_auth_state_path(context, service_name)),
+        "result": result,
+    }
+
+
+def continue_service_auth(
+    agent: AgentRef,
+    *,
+    service_name: str,
+    visible_services: list[dict[str, Any]],
+    runner: str | list[str] | None = None,
+) -> dict[str, Any]:
+    """Continue service OAuth using mcat and persist token state in the agent room."""
+
+    provider = ServiceUseTool(
+        {
+            "runner": runner,
+            "visible_services": visible_services,
+        }
+    )
+    resolved = provider._resolve_service(service_name)
+    context = ToolContext(
+        agent=agent,
+        working_directory=agent.home,
+        sandbox="host",
+    )
+    result = _continue_service_auth(
+        runner=provider._runner,
+        context=context,
+        service=resolved,
+    )
+    if resolved.transport != "http":
+        raise ToolangError("toolang service auth only supports HTTP services.")
+    return {
+        "service": service_name,
+        "transport": resolved.transport,
+        "token_path": str(_token_path(context, service_name)),
+        "state_path": str(_auth_state_path(context, service_name)),
         "result": result,
     }
 
@@ -462,8 +509,92 @@ def _service_state_dir(context: ToolContext, service_name: str) -> Path:
     return room.service_use_binding_dir("mcat", service_name)
 
 
+def _token_path(context: ToolContext, service_name: str) -> Path:
+    room = AgentHome.resolve(context.agent.home).room(context.agent.name)
+    return room.service_use_token_path("mcat", service_name)
+
+
+def _auth_state_path(context: ToolContext, service_name: str) -> Path:
+    room = AgentHome.resolve(context.agent.home).room(context.agent.name)
+    return room.service_use_auth_state_path("mcat", service_name)
+
+
+def _session_path(context: ToolContext, service_name: str) -> Path:
+    room = AgentHome.resolve(context.agent.home).room(context.agent.name)
+    return room.service_use_session_path("mcat", service_name)
+
+
 def _token_key_ref(token_path: Path) -> str:
     return f"json://{token_path}"
+
+
+def _start_service_auth(
+    *,
+    runner: list[str],
+    context: ToolContext,
+    service: _ResolvedService,
+    wait: bool,
+) -> dict[str, Any]:
+    if service.transport != "http":
+        raise ToolangError("service authorization is only supported for HTTP services.")
+    token_path = _token_path(context, service.name)
+    auth_state_path = _auth_state_path(context, service.name)
+    session_path = _session_path(context, service.name)
+    service_env = _load_service_env(context, service)
+    auth_state_path.parent.mkdir(parents=True, exist_ok=True)
+    result = _run_mcat_json(
+        runner,
+        [
+            "auth",
+            "start",
+            service.endpoint or "",
+            "-k",
+            _token_key_ref(token_path),
+            "--state",
+            str(auth_state_path),
+            *(["--wait"] if wait else []),
+        ],
+        cwd=context.agent.home,
+        service_env=service_env,
+    )
+    if session_path.exists():
+        session_path.unlink()
+    return result
+
+
+def _continue_service_auth(
+    *,
+    runner: list[str],
+    context: ToolContext,
+    service: _ResolvedService,
+) -> dict[str, Any]:
+    if service.transport != "http":
+        raise ToolangError("service authorization is only supported for HTTP services.")
+    auth_state_path = _auth_state_path(context, service.name)
+    if not auth_state_path.exists():
+        raise ToolangError(
+            "service authorization has not been started; call "
+            f"`service_use` with action=`auth_start` for service {service.name!r} first."
+        )
+    token_path = _token_path(context, service.name)
+    session_path = _session_path(context, service.name)
+    service_env = _load_service_env(context, service)
+    result = _run_mcat_json(
+        runner,
+        [
+            "auth",
+            "continue",
+            "--state",
+            str(auth_state_path),
+            "-k",
+            _token_key_ref(token_path),
+        ],
+        cwd=context.agent.home,
+        service_env=service_env,
+    )
+    if session_path.exists():
+        session_path.unlink()
+    return result
 
 
 def _transport_from_visible(service: _VisibleService) -> ServiceTransport | None:
@@ -558,6 +689,14 @@ def _normalized_port(value: object) -> int | None:
     if port <= 0 or port > 65535:
         raise ToolangError("service_use stdio port must be in range 1..65535")
     return port
+
+
+def _bool_input(value: object, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    raise ToolangError("service_use 'wait' must be a boolean")
 
 
 def _json_input(value: object, *, name: str) -> dict[str, Any]:

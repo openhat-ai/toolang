@@ -490,6 +490,9 @@ def _service_prompt(runtime_context: dict[str, Any]) -> str | None:
         "- Required service env vars are declared directly in service front matter.",
         "- Those env vars live in the agent-home .env file.",
         "- OAuth tokens are managed by the service_use provider, not by .env.",
+        "- If a service needs OAuth, call `service_use` with action=`auth_start` and return the authorization URL to the user.",
+        "- After the user confirms authorization is complete, call `service_use` with action=`auth_continue`.",
+        "- If `auth_start` returns `status=complete`, retry the original service action immediately.",
     ]
     if not services:
         lines.append("- No services are currently visible to this agent.")

@@ -152,6 +152,12 @@ def test_invoke_prepared_agent_records_tool_calls(tmp_path: Path, monkeypatch) -
     assert "OAuth tokens are managed by the service_use provider, not by .env." in (
         trace.developer_message
     )
+    assert "If a service needs OAuth, call `service_use` with action=`auth_start` and return the authorization URL to the user." in (
+        trace.developer_message
+    )
+    assert "After the user confirms authorization is complete, call `service_use` with action=`auth_continue`." in (
+        trace.developer_message
+    )
     assert "- github: transport=http; target=https://mcp.github.com/mcp; description=GitHub MCP server; env=GITHUB_TOKEN" in (
         trace.developer_message
     )
