@@ -10,8 +10,6 @@ from toolang.concepts.identity import AgentRef
 from toolang.concepts.layout import AgentRoom
 from toolang.concepts.persisted import (
     ChoreFile,
-    PulseItemState,
-    PulseState,
     TaskMirrorBatch,
     TaskMirrorEntry,
     TaskMirrorSpec,
@@ -37,10 +35,9 @@ from .api_models import (
 def list_task_items(room: AgentRoom) -> list[TaskItem]:
     """Return local task documents under one agent room."""
 
-    pulse_state = _load_pulse_state(room)
     mirror_state = _load_task_mirror_state(room)
     return [
-        _task_item(room, path, document, pulse_state, mirror_state)
+        _task_item(room, path, document, mirror_state)
         for path, document in _load_markdown_documents(
             room.tasks_dir,
             lambda value: TaskFile.load(value, persist_id=True),
@@ -65,7 +62,6 @@ def put_task_item(
         room,
         path,
         TaskFile.load(path, persist_id=True),
-        _load_pulse_state(room),
         _load_task_mirror_state(room),
     )
 
@@ -97,7 +93,6 @@ def patch_task_item(
         room,
         path,
         TaskFile.load(path, persist_id=True),
-        _load_pulse_state(room),
         _load_task_mirror_state(room),
     )
 
@@ -181,7 +176,7 @@ def put_chore_item(
         model=request.model,
         paused=request.paused,
     ).save(path)
-    return _chore_item(room, path, ChoreFile.load(path), _load_pulse_state(room))
+    return _chore_item(room, path, ChoreFile.load(path))
 
 
 def patch_chore_item(
@@ -213,15 +208,14 @@ def patch_chore_item(
         }
     )
     ChoreFile.model_validate(updated.model_dump(mode="python")).save(path)
-    return _chore_item(room, path, ChoreFile.load(path), _load_pulse_state(room))
+    return _chore_item(room, path, ChoreFile.load(path))
 
 
 def list_chore_items(room: AgentRoom) -> list[ChoreItem]:
     """Return local chore documents under one agent room."""
 
-    pulse_state = _load_pulse_state(room)
     return [
-        _chore_item(room, path, document, pulse_state)
+        _chore_item(room, path, document)
         for path, document in _load_markdown_documents(room.chores_dir, ChoreFile.load)
     ]
 
@@ -241,9 +235,7 @@ def put_will_item(
         model=request.model,
         paused=request.paused,
     ).save(path)
-    return _will_item(
-        room, path, WillFile.load(path), _load_pulse_state(room), agent=agent
-    )
+    return _will_item(room, path, WillFile.load(path), agent=agent)
 
 
 def patch_will_item(
@@ -275,9 +267,7 @@ def patch_will_item(
         }
     )
     WillFile.model_validate(updated.model_dump(mode="python")).save(path)
-    return _will_item(
-        room, path, WillFile.load(path), _load_pulse_state(room), agent=agent
-    )
+    return _will_item(room, path, WillFile.load(path), agent=agent)
 
 
 def load_will_item(room: AgentRoom, *, agent: AgentRef) -> WillItem | None:
@@ -286,9 +276,7 @@ def load_will_item(room: AgentRoom, *, agent: AgentRef) -> WillItem | None:
     path = room.will_path
     if not path.exists():
         return None
-    return _will_item(
-        room, path, WillFile.load(path), _load_pulse_state(room), agent=agent
-    )
+    return _will_item(room, path, WillFile.load(path), agent=agent)
 
 
 def _load_markdown_documents(root: Path, loader):
@@ -312,25 +300,11 @@ def _updated_at(path: Path) -> str:
     return modified.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _load_pulse_state(room: AgentRoom) -> PulseState:
-    path = room.pulse_state_path
-    if not path.exists():
-        return PulseState()
-    return PulseState.load(path)
-
-
 def _load_task_mirror_state(room: AgentRoom) -> TaskMirrorState:
     path = room.task_mirrors_path
     if not path.exists():
         return TaskMirrorState()
     return TaskMirrorState.load(path)
-
-
-def _iso(value: datetime | None) -> str | None:
-    if value is None:
-        return None
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
 
 def _patched_body(
     current_body: str, *, body: str | None, body_append: str | None
@@ -349,11 +323,9 @@ def _task_item(
     room: AgentRoom,
     path: Path,
     document: TaskFile,
-    pulse_state: PulseState,
     mirror_state: TaskMirrorState,
 ) -> TaskItem:
     task_id = document.task_id()
-    state = pulse_state.tasks.get(task_id, PulseItemState())
     mirror = mirror_state.find_by_local_task_id(task_id)
     return TaskItem(
         id=task_id,
@@ -366,21 +338,13 @@ def _task_item(
         remote_ref=mirror.remote_ref if mirror is not None else None,
         thread_id=document.thread_id(),
         path=str(path),
-        last_enqueued_at=_iso(state.last_enqueued_at),
-        last_started_at=_iso(state.last_started_at),
-        last_finished_at=_iso(state.last_finished_at),
-        last_status=state.last_status,
-        last_run_id=state.last_run_id,
         updated_at=_updated_at(path),
         paused=document.paused,
     )
 
 
-def _chore_item(
-    room: AgentRoom, path: Path, document: ChoreFile, pulse_state: PulseState
-) -> ChoreItem:
+def _chore_item(room: AgentRoom, path: Path, document: ChoreFile) -> ChoreItem:
     key = _work_key(room.chores_dir, path)
-    state = pulse_state.chores.get(key, PulseItemState())
     return ChoreItem(
         id=key,
         title=document.title,
@@ -389,12 +353,6 @@ def _chore_item(
         thunk=document.thunk,
         model=document.model,
         path=str(path),
-        last_enqueued_at=_iso(state.last_enqueued_at),
-        last_started_at=_iso(state.last_started_at),
-        last_finished_at=_iso(state.last_finished_at),
-        last_status=state.last_status,
-        last_run_id=state.last_run_id,
-        next_due_at=_iso(state.next_due_at),
         updated_at=_updated_at(path),
         paused=document.paused,
     )
@@ -404,11 +362,9 @@ def _will_item(
     room: AgentRoom,
     path: Path,
     document: WillFile,
-    pulse_state: PulseState,
     *,
     agent: AgentRef,
 ) -> WillItem:
-    state = pulse_state.will
     return WillItem(
         title=document.title,
         thread_id=document.effective_thread_id(f"will:{agent.id}"),
@@ -416,12 +372,6 @@ def _will_item(
         thunk=document.thunk,
         model=document.model,
         path=str(path),
-        last_enqueued_at=_iso(state.last_enqueued_at),
-        last_started_at=_iso(state.last_started_at),
-        last_finished_at=_iso(state.last_finished_at),
-        last_status=state.last_status,
-        last_run_id=state.last_run_id,
-        next_due_at=_iso(state.next_due_at),
         updated_at=_updated_at(path),
         paused=document.paused,
     )

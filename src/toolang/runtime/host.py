@@ -42,7 +42,7 @@ from .invoke import (
 from .messages import chat_message
 from .model_exec import ModelExecutionEventHandler
 from .pulse import PulseSubmission, collect_pulse_submissions
-from .requests import TurnRequest, TurnRequestKind
+from .requests import RunSubmission, RunSubmissionKind
 from .scheduler import RuntimeScheduler
 from .work import materialize_task_mirror_output
 from .server.state import (
@@ -85,7 +85,7 @@ class RuntimeHost:
         self.channels_config = channels_config or ChannelsConfig()
         self.endpoint = f"http://{self.public_host}:{self.port}"
         self.scheduler = RuntimeScheduler()
-        self.run_id = uuid.uuid4().hex
+        self.activation_id = uuid.uuid4().hex
         self._bus: BusStore | None = None
         self._chats: ChatStore | None = None
         self._execution: ExecutionStore | None = None
@@ -129,7 +129,7 @@ class RuntimeHost:
         return self._execution
 
     def start(self) -> None:
-        """Start the runtime host and persist one started run."""
+        """Start the runtime host and persist one started activation."""
 
         if self._started:
             return
@@ -142,10 +142,10 @@ class RuntimeHost:
             name: create_channel_plugin(binding.plugin, config=binding.config)
             for name, binding in self.channels_config.channels.items()
         }
-        self.execution.begin_run(
+        self.execution.begin_activation(
             agent=self.prepared.ref,
-            run_id=self.run_id,
-            run_kind="runtime",
+            activation_id=self.activation_id,
+            activation_kind="runtime",
             sandbox=self.sandbox,
             cap_scopes=self.prepared.cap_scopes.labels(),
             runtime_loops=self.runtime_loops,
@@ -182,7 +182,7 @@ class RuntimeHost:
             )
 
     def stop(self) -> None:
-        """Stop the runtime host and persist one stopped run."""
+        """Stop the runtime host and persist one stopped activation."""
 
         if not self._started:
             return
@@ -194,8 +194,8 @@ class RuntimeHost:
         self._threads.clear()
         self.scheduler.close()
         try:
-            self.execution.finish_run(
-                run_id=self.run_id,
+            self.execution.finish_activation(
+                activation_id=self.activation_id,
                 status="stopped",
             )
             if has_running_state(self.prepared, agents_db_path=self.agents_db_path):
@@ -353,12 +353,12 @@ class RuntimeHost:
         }
 
     def submit_chat(self, request: ChatRequest) -> ChatResult:
-        """Submit one API chat turn through the runtime scheduler."""
+        """Submit one API chat run through the runtime scheduler."""
 
-        turn_request, incoming = _build_api_chat_request(request)
+        submission, incoming = _build_api_chat_request(request)
         return self.scheduler.submit(
-            turn_request,
-            lambda: self._run_chat_turn(request=request, message=incoming),
+            submission,
+            lambda: self._run_chat(request=request, message=incoming),
         )
 
     def submit_chat_stream(
@@ -366,28 +366,28 @@ class RuntimeHost:
         request: ChatRequest,
         on_event: ModelExecutionEventHandler,
     ) -> tuple[str, Future[ChatResult]]:
-        """Submit one API chat turn and stream text and tool-call events."""
+        """Submit one API chat run and stream text and tool-call events."""
 
-        turn_id = uuid.uuid4().hex
-        turn_request, incoming = _build_api_chat_request(request)
+        run_id = uuid.uuid4().hex
+        submission, incoming = _build_api_chat_request(request)
         future = self.scheduler.submit_async(
-            turn_request,
-            lambda: self._run_chat_turn(
+            submission,
+            lambda: self._run_chat(
                 request=request,
                 message=incoming,
-                run_id=turn_id,
+                run_id=run_id,
                 stream_event=on_event,
             ),
         )
-        return turn_id, future
+        return run_id, future
 
     def submit_run(self, request: RunRequest) -> InvokeResult:
-        """Submit one API run turn through the runtime scheduler."""
+        """Submit one API run through the runtime scheduler."""
 
-        turn_request = TurnRequest(kind="invoke", thread_id=None)
+        submission = RunSubmission(kind="invoke", thread_id=None)
         return self.scheduler.submit(
-            turn_request,
-            lambda: self._run_invoke_turn(request=request),
+            submission,
+            lambda: self._run_invoke(request=request),
         )
 
     def submit_inbound(
@@ -405,11 +405,11 @@ class RuntimeHost:
                 text=bound_delivery.text,
                 meta=dict(bound_delivery.meta),
             )
-            turn_request = TurnRequest(
+            submission = RunSubmission(
                 kind="chat", thread_id=bound_delivery.thread_id, message=message
             )
             return self.scheduler.submit(
-                turn_request,
+                submission,
                 lambda: self._run_inbound_chat(
                     binding_name=binding_name,
                     delivery=bound_delivery,
@@ -417,12 +417,12 @@ class RuntimeHost:
                 ),
             )
         if bound_delivery.origin in {"invoke", "task", "chore", "will"}:
-            turn_request = TurnRequest(
+            submission = RunSubmission(
                 kind=bound_delivery.origin, thread_id=bound_delivery.thread_id
             )
             return self.scheduler.submit(
-                turn_request,
-                lambda: self._run_inbound_turn(
+                submission,
+                lambda: self._run_inbound_run(
                     binding_name=binding_name,
                     delivery=bound_delivery,
                 ),
@@ -431,10 +431,10 @@ class RuntimeHost:
             f"Inbound channel delivery origin is not supported yet: {bound_delivery.origin}"
         )
 
-    def _run_self_turn(
+    def _run_self_run(
         self,
         *,
-        origin: TurnRequestKind,
+        origin: RunSubmissionKind,
         thread_id: str,
         text: str,
         thunk_name: str | None,
@@ -453,10 +453,10 @@ class RuntimeHost:
             sender="self",
             sandbox=self.sandbox,
             execution_store=self.execution,
-            process_run_id=self.run_id,
+            activation_id=self.activation_id,
         )
 
-    def _run_chat_turn(
+    def _run_chat(
         self,
         *,
         request: ChatRequest,
@@ -475,12 +475,12 @@ class RuntimeHost:
             model=request.model,
             sandbox=self.sandbox,
             execution_store=self.execution,
-            process_run_id=self.run_id,
+            activation_id=self.activation_id,
             run_id=run_id,
             stream_event=stream_event,
         )
 
-    def _run_invoke_turn(self, *, request: RunRequest) -> InvokeResult:
+    def _run_invoke(self, *, request: RunRequest) -> InvokeResult:
         current = self.current_prepared()
         selected_thunk = current.program.get_thunk(request.thunk)
         return invoke_prepared_agent(
@@ -491,7 +491,7 @@ class RuntimeHost:
             model=request.model,
             sandbox=self.sandbox,
             execution_store=self.execution,
-            process_run_id=self.run_id,
+            activation_id=self.activation_id,
         )
 
     def _run_inbound_chat(
@@ -513,18 +513,18 @@ class RuntimeHost:
             model=_optional_text(delivery.meta.get("model")),
             sandbox=self.sandbox,
             execution_store=self.execution,
-            process_run_id=self.run_id,
+            activation_id=self.activation_id,
         )
         if delivery.reply_target is not None:
             self._deliver_reply(
                 binding_name=binding_name,
                 target=delivery.reply_target,
-                turn_id=result.run_id,
+                run_id=result.run_id,
                 text=result.output,
             )
         return result
 
-    def _run_inbound_turn(
+    def _run_inbound_run(
         self,
         *,
         binding_name: str,
@@ -546,14 +546,14 @@ class RuntimeHost:
             sender=delivery.sender,
             sandbox=self.sandbox,
             execution_store=self.execution,
-            process_run_id=self.run_id,
+            activation_id=self.activation_id,
             input_meta=dict(delivery.meta),
         )
         if delivery.reply_target is not None:
             self._deliver_reply(
                 binding_name=binding_name,
                 target=delivery.reply_target,
-                turn_id=result.run_id,
+                run_id=result.run_id,
                 text=result.output,
             )
         return result
@@ -563,7 +563,7 @@ class RuntimeHost:
         *,
         binding_name: str,
         target: ReplyTarget,
-        turn_id: str,
+        run_id: str,
         text: str,
     ) -> None:
         plugin = self._channel_plugins.get(binding_name)
@@ -573,7 +573,7 @@ class RuntimeHost:
             result = plugin.deliver(target, OutboundMessage(text=text))
         except Exception as exc:
             self.execution.append_step(
-                turn_id=turn_id,
+                run_id=run_id,
                 step_kind="delivery",
                 status="failed",
                 input_json={
@@ -586,7 +586,7 @@ class RuntimeHost:
             )
             return
         self.execution.append_step(
-            turn_id=turn_id,
+            run_id=run_id,
             step_kind="delivery",
             status="finished" if result.ok else "failed",
             input_json={
@@ -690,8 +690,8 @@ class RuntimeHost:
             last_run_id=None,
         )
         future = self.scheduler.submit_async(
-            TurnRequest(kind=submission.kind, thread_id=submission.thread_id),
-            lambda: self._run_self_turn(
+            RunSubmission(kind=submission.kind, thread_id=submission.thread_id),
+            lambda: self._run_self_run(
                 origin=submission.kind,
                 thread_id=submission.thread_id,
                 text=submission.text,
@@ -746,7 +746,7 @@ class RuntimeHost:
         finally:
             self._clear_pulse_pending(pending_key)
 
-    def _update_pulse_item(self, kind: TurnRequestKind, key: str, **changes) -> None:
+    def _update_pulse_item(self, kind: RunSubmissionKind, key: str, **changes) -> None:
         room = self._require_room()
         state_path = room.pulse_state_path
         state = self._load_pulse_state(state_path)
@@ -782,7 +782,7 @@ def _select_chat_thunk(prepared: PreparedAgent, thunk_name: str | None) -> Thunk
     return _select_named_or_origin_thunk(prepared, thunk_name, "chat")
 
 
-def _build_api_chat_request(request: ChatRequest) -> tuple[TurnRequest, Message]:
+def _build_api_chat_request(request: ChatRequest) -> tuple[RunSubmission, Message]:
     thread_id = request.thread.strip()
     if not thread_id:
         raise ToolangError("Chat thread may not be empty.")
@@ -795,7 +795,7 @@ def _build_api_chat_request(request: ChatRequest) -> tuple[TurnRequest, Message]
         thread_id=thread_id,
         text=text,
     )
-    return TurnRequest(kind="chat", thread_id=thread_id, message=incoming), incoming
+    return RunSubmission(kind="chat", thread_id=thread_id, message=incoming), incoming
 
 
 def _select_named_or_origin_thunk(

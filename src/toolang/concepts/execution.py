@@ -9,10 +9,10 @@ MessageOrigin = Literal["invoke", "chat", "task", "chore", "will"]
 MessageSender = Literal["owner", "peer", "guest", "self", "service"]
 RuntimeLoop = Literal["server", "poll", "hook", "pulse"]
 ExecutionStrategy = Literal["direct", "react"]
-RunKind = Literal["runtime", "invoke"]
-RunStatus = Literal["running", "finished", "failed", "stopped"]
+ActivationKind = Literal["runtime", "invoke"]
+ActivationStatus = Literal["running", "finished", "failed", "stopped"]
 ThreadGroup = Literal["invoke", "chat", "task", "chore", "will"]
-TurnStatus = Literal["running", "finished", "failed"]
+RunStatus = Literal["running", "finished", "failed"]
 StepKind = Literal["prompt_build", "model_call", "tool_call", "delivery"]
 StepStatus = Literal["finished", "failed"]
 
@@ -30,15 +30,15 @@ class Message:
 
 
 @dataclass(frozen=True, slots=True)
-class RunRecord:
-    """One persisted run record in the execution truth layer."""
+class ActivationRecord:
+    """One persisted activation record in the execution truth layer."""
 
-    run_id: str
+    activation_id: str
     agent_uri: str
     agent_id: str
     agent_name: str
-    run_kind: RunKind
-    status: RunStatus
+    activation_kind: ActivationKind
+    status: ActivationStatus
     started_at: str
     finished_at: str | None
     runtime_loops: tuple[RuntimeLoop, ...]
@@ -61,17 +61,17 @@ class ThreadRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class TurnRecord:
-    """One persisted turn within a thread and run."""
+class RunRecord:
+    """One persisted run within a thread and activation."""
 
-    turn_id: str
     run_id: str
+    activation_id: str
     thread_id: str
     origin: MessageOrigin
     channel: str | None
     sender: MessageSender
     execution_strategy: ExecutionStrategy
-    status: TurnStatus
+    status: RunStatus
     input_text: str | None
     output_text: str | None
     error: str | None
@@ -82,10 +82,10 @@ class TurnRecord:
 
 @dataclass(frozen=True, slots=True)
 class StepRecord:
-    """One persisted step within a turn."""
+    """One persisted step within a run."""
 
     step_id: int
-    turn_id: str
+    run_id: str
     seq: int
     step_kind: StepKind
     status: StepStatus

@@ -319,19 +319,17 @@ def _agent_item(snapshot: AgentSnapshot) -> BusAgentItem:
 def _run_item(item: RunSnapshot) -> RunItem:
     return RunItem(
         id=item.run_id,
+        origin=item.origin,
+        thread_id=item.thread_id,
         summary=item.summary,
         status=item.status,
         type=item.run_type,
         agent_id=item.agent_id,
         parent_run_id=item.parent_run_id,
         error=item.error,
-        thread_id=item.thread_id,
-        origin_kind=_origin_kind(item.origin),
-        origin_actor=_origin_actor(item.origin),
-        origin_subject=item.thread_id,
-        display_title=item.summary,
-        display_subtitle=_run_display_subtitle(item),
         created_at=item.created_at,
+        started_at=item.created_at,
+        finished_at=None if item.status == "running" else item.updated_at,
         updated_at=item.updated_at,
     )
 
@@ -345,24 +343,6 @@ def _event_item(item: StoredEvent) -> EventItem:
         run_id=item.run_id,
         payload=dict(item.payload),
     )
-
-
-def _run_display_subtitle(item: RunSnapshot) -> str | None:
-    if item.thread_id:
-        return f"{item.origin} · {item.thread_id}"
-    return item.origin
-
-
-def _origin_kind(origin: str) -> str:
-    if origin in {"invoke", "chat"}:
-        return "direct"
-    return origin
-
-
-def _origin_actor(origin: str) -> str:
-    if origin in {"invoke", "chat"}:
-        return "owner"
-    return "self"
 
 
 def _sse(event: str, data: dict[str, object], event_id: int | None = None) -> str:

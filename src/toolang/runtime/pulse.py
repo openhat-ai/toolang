@@ -16,14 +16,14 @@ from toolang.concepts.persisted import (
     WillFile,
 )
 from toolang.concepts.persisted.work import task_terminal
-from toolang.runtime.requests import TurnRequestKind
+from toolang.runtime.requests import RunSubmissionKind
 
 
 @dataclass(frozen=True, slots=True)
 class PulseSubmission:
     """One work item ready to enter the runtime scheduler."""
 
-    kind: TurnRequestKind
+    kind: RunSubmissionKind
     key: str
     thread_id: str
     text: str
@@ -127,7 +127,7 @@ def _next_task_state(
 
 def _next_scheduled_state(
     *,
-    kind: TurnRequestKind,
+    kind: RunSubmissionKind,
     key: str,
     default_thread_id: str,
     title_fallback: str,

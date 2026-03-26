@@ -7,11 +7,11 @@ from concurrent.futures import Future, ThreadPoolExecutor
 import threading
 from typing import TypeVar, cast
 
-from .requests import TurnRequest, TurnRequestKind
+from .requests import RunSubmission, RunSubmissionKind
 
 T = TypeVar("T")
 
-DEFAULT_GROUP_LIMITS: dict[TurnRequestKind, int] = {
+DEFAULT_GROUP_LIMITS: dict[RunSubmissionKind, int] = {
     "invoke": 1,
     "chat": 4,
     "task": 2,
@@ -22,13 +22,13 @@ DEFAULT_MAX_WORKERS = max(DEFAULT_GROUP_LIMITS.values())
 
 
 class RuntimeScheduler:
-    """Run turn handlers under thread and group constraints."""
+    """Run handlers under thread and group constraints."""
 
     def __init__(
         self,
         *,
         max_workers: int = DEFAULT_MAX_WORKERS,
-        group_limits: dict[TurnRequestKind, int] | None = None,
+        group_limits: dict[RunSubmissionKind, int] | None = None,
     ) -> None:
         self._max_workers = max_workers
         self._group_limits = dict(group_limits or DEFAULT_GROUP_LIMITS)
@@ -45,12 +45,14 @@ class RuntimeScheduler:
             thread_name_prefix="toolang-runtime",
         )
 
-    def submit(self, request: TurnRequest, handler: Callable[[], T]) -> T:
+    def submit(self, request: RunSubmission, handler: Callable[[], T]) -> T:
         """Submit one handler and wait for completion."""
 
         return self.submit_async(request, handler).result()
 
-    def submit_async(self, request: TurnRequest, handler: Callable[[], T]) -> Future[T]:
+    def submit_async(
+        self, request: RunSubmission, handler: Callable[[], T]
+    ) -> Future[T]:
         """Submit one handler for asynchronous execution."""
 
         return cast(
@@ -85,7 +87,7 @@ class RuntimeScheduler:
             "thread_groups": thread_groups,
         }
 
-    def _run_locked(self, request: TurnRequest, handler: Callable[[], T]) -> T:
+    def _run_locked(self, request: RunSubmission, handler: Callable[[], T]) -> T:
         semaphore = self._group_semaphores[request.kind]
         with semaphore:
             self._mark_group_started(request.kind)
@@ -106,11 +108,11 @@ class RuntimeScheduler:
                 self._locks[thread_id] = lock
             return lock
 
-    def _mark_group_started(self, kind: TurnRequestKind) -> None:
+    def _mark_group_started(self, kind: RunSubmissionKind) -> None:
         with self._group_in_flight_lock:
             self._group_in_flight[kind] += 1
 
-    def _mark_group_finished(self, kind: TurnRequestKind) -> None:
+    def _mark_group_finished(self, kind: RunSubmissionKind) -> None:
         with self._group_in_flight_lock:
             current = self._group_in_flight[kind]
             self._group_in_flight[kind] = max(current - 1, 0)

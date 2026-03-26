@@ -3,6 +3,8 @@
 This document defines Toolang runtime execution semantics.
 
 Identity and filesystem paths live in [layout.md](./layout.md).
+Top-level lifecycle and runtime-resource vocabulary lives in
+[model.md](./model.md).
 Control surfaces live in [api.md](./api.md).
 Canonical turn-message and stream semantics live in [chat.md](./chat.md).
 

@@ -25,7 +25,7 @@ class RunResponse(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    """Request body for one chat turn submission."""
+    """Request body for one chat run submission."""
 
     thread: str
     message: str
@@ -38,7 +38,7 @@ class AgentChatMessage(BaseModel):
 
     id: str
     thread_id: str
-    turn_id: str
+    run_id: str
     seq: int
     role: str
     parts: list[dict[str, Any]]
@@ -47,10 +47,10 @@ class AgentChatMessage(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    """Response body for one completed chat turn."""
+    """Response body for one completed chat run."""
 
     thread_id: str
-    turn_id: str
+    run_id: str
     message: AgentChatMessage
     assistant: AgentChatMessage
 
@@ -122,6 +122,7 @@ class AgentRuntimeResponse(BaseModel):
 
     status: str
     checked_at: str
+    activation_id: str | None = None
     endpoint: str | None = None
     execution_host: str
     working_directory: str
@@ -156,12 +157,6 @@ class ChoreItem(BaseModel):
     thunk: str | None = None
     model: str | None = None
     path: str
-    last_enqueued_at: str | None = None
-    last_started_at: str | None = None
-    last_finished_at: str | None = None
-    last_status: str | None = None
-    last_run_id: str | None = None
-    next_due_at: str | None = None
     updated_at: str | None = None
     paused: bool | None = None
 
@@ -179,11 +174,6 @@ class TaskItem(BaseModel):
     remote_ref: str | None = None
     thread_id: str
     path: str
-    last_enqueued_at: str | None = None
-    last_started_at: str | None = None
-    last_finished_at: str | None = None
-    last_status: str | None = None
-    last_run_id: str | None = None
     updated_at: str | None = None
     paused: bool | None = None
 
@@ -242,12 +232,6 @@ class WillItem(BaseModel):
     thunk: str | None = None
     model: str | None = None
     path: str
-    last_enqueued_at: str | None = None
-    last_started_at: str | None = None
-    last_finished_at: str | None = None
-    last_status: str | None = None
-    last_run_id: str | None = None
-    next_due_at: str | None = None
     updated_at: str | None = None
     paused: bool | None = None
 
@@ -284,15 +268,14 @@ class AgentCapsResponse(BaseModel):
     psyches: list[CapItem] = Field(default_factory=list)
     skills: list[CapItem] = Field(default_factory=list)
     servers: list[CapItem] = Field(default_factory=list)
-    chores: list[ChoreItem] = Field(default_factory=list)
     counts: dict[str, int] = Field(default_factory=dict)
 
 
-class ChatThreadItem(BaseModel):
-    """One chat thread listed by the runtime API."""
+class ThreadItem(BaseModel):
+    """One thread listed by the runtime API."""
 
     id: str
-    agent: str
+    kind: str
     title: str | None = None
     preview: str | None = None
     channel: str | None = None
@@ -300,10 +283,10 @@ class ChatThreadItem(BaseModel):
     updated_at: str
 
 
-class ChatThreadListResponse(BaseModel):
-    """Collection response for chat thread listings."""
+class ThreadListResponse(BaseModel):
+    """Collection response for thread listings."""
 
-    items: list[ChatThreadItem]
+    items: list[ThreadItem]
 
 
 class TaskListResponse(BaseModel):
@@ -328,20 +311,11 @@ class PromptTraceItem(PersistedPromptTrace):
     """Prompt trace payload returned by the runtime API."""
 
 
-class ChatTurnItem(BaseModel):
-    """One stored turn within a chat thread."""
+class ThreadResponse(BaseModel):
+    """Detailed thread response with related runs and ordered messages."""
 
-    thread_id: str
-    turn_id: str
-    messages: list[AgentChatMessage]
-    started_at: str | None = None
-    finished_at: str | None = None
-
-
-class ChatThreadResponse(BaseModel):
-    """Detailed chat thread response with ordered transcript messages."""
-
-    thread: ChatThreadItem
+    thread: ThreadItem
+    runs: list["RunItem"] = Field(default_factory=list)
     messages: list[AgentChatMessage]
 
 
@@ -421,23 +395,42 @@ class RuntimeDiagnosticsResponse(BaseModel):
 
 
 class RunItem(BaseModel):
-    """One run summary entry returned by the runtime or bus API."""
+    """One run entry returned by the runtime or bus API."""
 
     id: str
+    origin: str
+    thread_id: str | None = None
+    activation_id: str | None = None
+    channel: str | None = None
+    sender: str | None = None
+    execution_strategy: str | None = None
+    input_text: str | None = None
+    output_text: str | None = None
     summary: str | None = None
     status: str
-    type: str
-    agent_id: str
+    type: str | None = None
+    agent_id: str | None = None
     parent_run_id: str | None = None
     error: str | None = None
-    thread_id: str | None = None
-    origin_kind: str | None = None
-    origin_actor: str | None = None
-    origin_subject: str | None = None
-    display_title: str | None = None
-    display_subtitle: str | None = None
     created_at: str
-    updated_at: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    updated_at: str | None = None
+
+
+class RunStepItem(BaseModel):
+    """One step recorded for a run."""
+
+    id: int
+    run_id: str
+    seq: int
+    kind: str
+    status: str
+    input: dict[str, Any]
+    output: dict[str, Any]
+    error: str | None = None
+    started_at: str
+    finished_at: str | None = None
 
 
 class RunListResponse(BaseModel):
@@ -447,12 +440,12 @@ class RunListResponse(BaseModel):
 
 
 class RunDetailResponse(BaseModel):
-    """Detailed run response with children, events, and optional turn state."""
+    """Detailed run response with steps, events, and optional messages."""
 
     run: RunItem
-    children: list[RunItem]
+    steps: list[RunStepItem]
     events: list[EventItem]
-    turn: ChatTurnItem | None = None
+    messages: list[AgentChatMessage] = Field(default_factory=list)
 
 
 class BusAgentItem(BaseModel):
@@ -476,3 +469,6 @@ class AgentListResponse(BaseModel):
     """Collection response for bus agent listings."""
 
     items: list[BusAgentItem]
+
+
+ThreadResponse.model_rebuild()

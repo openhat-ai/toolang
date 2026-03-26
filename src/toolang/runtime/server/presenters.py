@@ -5,18 +5,19 @@ import json
 from toolang.agent.prepared import PreparedAgent
 from toolang.bus.db import AgentSnapshot, RunSnapshot, StoredEvent
 from toolang.concepts.caps import ServiceFrontmatter
+from toolang.concepts.execution import RunRecord, StepRecord, ThreadRecord
 from toolang.concepts.messages import part_to_dict
 from toolang.caps.view import CapView, SkillCapView
 from toolang.runtime.api_models import (
     AgentCapsResponse,
     AgentChatMessage,
     CapItem,
-    ChatThreadItem,
-    ChatTurnItem,
     EventItem,
     RunItem,
+    RunStepItem,
+    ThreadItem,
 )
-from toolang.runtime.chats import ChatMessage, ChatThread, ChatTurn
+from toolang.runtime.chats import ChatMessage
 
 SHORT_AGENT_ID_LENGTH = 12
 
@@ -50,12 +51,10 @@ def caps_response(agent_name: str, caps) -> AgentCapsResponse:
         psyches=[psyche_item(item) for item in caps.psyches],
         skills=[skill_item(item) for item in caps.skills],
         servers=[service_item(item) for item in caps.services],
-        chores=[],
         counts={
             "psyches": len(caps.psyches),
             "skills": len(caps.skills),
             "servers": len(caps.services),
-            "chores": 0,
         },
     )
 
@@ -65,7 +64,11 @@ def skill_item(item: SkillCapView) -> CapItem:
 
 
 def service_item(item: CapView) -> CapItem:
-    source = item.front_matter.target if isinstance(item.front_matter, ServiceFrontmatter) else None
+    source = (
+        item.front_matter.target
+        if isinstance(item.front_matter, ServiceFrontmatter)
+        else None
+    )
     return CapItem(name=item.name, source=string_or_none(source), effective=item.path)
 
 
@@ -84,63 +87,73 @@ def event_item(item: StoredEvent) -> EventItem:
     )
 
 
-def run_item(item: RunSnapshot) -> RunItem:
+def bus_run_item(item: RunSnapshot) -> RunItem:
     return RunItem(
         id=item.run_id,
+        origin=item.origin,
+        thread_id=item.thread_id,
         summary=item.summary,
         status=item.status,
         type=item.run_type,
         agent_id=item.agent_id,
         parent_run_id=item.parent_run_id,
         error=item.error,
-        thread_id=item.thread_id,
-        origin_kind=origin_kind(item.origin),
-        origin_actor=origin_actor(item.origin),
-        origin_subject=item.thread_id,
-        display_title=item.summary,
-        display_subtitle=run_display_subtitle(item),
         created_at=item.created_at,
+        started_at=item.created_at,
+        finished_at=None if item.status == "running" else item.updated_at,
         updated_at=item.updated_at,
     )
 
 
-def run_display_subtitle(item: RunSnapshot) -> str | None:
-    if item.thread_id:
-        return f"{item.origin} · {item.thread_id}"
-    return item.origin
-
-
-def origin_kind(origin: str) -> str:
-    if origin in {"invoke", "chat"}:
-        return "direct"
-    return origin
-
-
-def origin_actor(origin: str) -> str:
-    if origin in {"invoke", "chat"}:
-        return "owner"
-    return "self"
-
-
-def thread_item(thread: ChatThread) -> ChatThreadItem:
-    return ChatThreadItem(
-        id=thread.id,
-        agent=thread.agent_name,
-        title=thread.title,
-        preview=thread.preview,
-        channel=thread.channel,
-        created_at=thread.created_at,
-        updated_at=thread.updated_at,
+def runtime_run_item(item: RunRecord) -> RunItem:
+    return RunItem(
+        id=item.run_id,
+        origin=item.origin,
+        thread_id=item.thread_id,
+        activation_id=item.activation_id,
+        channel=item.channel,
+        sender=item.sender,
+        execution_strategy=item.execution_strategy,
+        input_text=item.input_text,
+        output_text=item.output_text,
+        status=item.status,
+        error=item.error,
+        created_at=item.created_at,
+        started_at=item.started_at,
+        finished_at=item.finished_at,
+        updated_at=item.finished_at or item.started_at,
     )
 
 
-def turn_item(turn: ChatTurn) -> ChatTurnItem:
-    return ChatTurnItem(
-        thread_id=turn.thread_id,
-        turn_id=turn.turn_id,
-        messages=[message_item(message) for message in turn.messages],
-        started_at=turn.started_at,
-        finished_at=turn.finished_at,
+def step_item(item: StepRecord) -> RunStepItem:
+    return RunStepItem(
+        id=item.step_id,
+        run_id=item.run_id,
+        seq=item.seq,
+        kind=item.step_kind,
+        status=item.status,
+        input=dict(item.input_json),
+        output=dict(item.output_json),
+        error=item.error,
+        started_at=item.started_at,
+        finished_at=item.finished_at,
+    )
+
+
+def thread_item(
+    thread: ThreadRecord,
+    *,
+    preview: str | None = None,
+    channel: str | None = None,
+) -> ThreadItem:
+    return ThreadItem(
+        id=thread.thread_id,
+        kind=thread.thread_group,
+        title=thread.title,
+        preview=preview,
+        channel=channel,
+        created_at=thread.created_at,
+        updated_at=thread.updated_at,
     )
 
 
@@ -148,7 +161,7 @@ def message_item(message: ChatMessage) -> AgentChatMessage:
     return AgentChatMessage(
         id=message.id,
         thread_id=message.thread_id,
-        turn_id=message.turn_id,
+        run_id=message.run_id,
         seq=message.seq,
         role=message.role,
         parts=[part_to_dict(item) for item in message.parts],

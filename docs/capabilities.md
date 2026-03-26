@@ -3,6 +3,8 @@
 This document defines capability forms, scopes, refs, and sync materialization.
 
 Exact filesystem paths live in [layout.md](./layout.md).
+Top-level lifecycle and runtime-resource vocabulary lives in
+[model.md](./model.md).
 
 
 ## 1. Capability Kinds

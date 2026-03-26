@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 RunOrigin = Literal["invoke", "chat", "task", "chore", "will"]
-RunType = Literal["turn", "model", "tool", "agent", "system"]
+RunType = Literal["run", "model", "tool", "agent", "system"]
 AgentChangeType = Literal[
     "caps_updated",
     "code_updated",
@@ -15,7 +15,7 @@ AgentChangeType = Literal[
     "will_updated",
 ]
 
-RUN_TYPES: set[str] = {"turn", "model", "tool", "agent", "system"}
+RUN_TYPES: set[str] = {"run", "model", "tool", "agent", "system"}
 EVENT_TYPES: set[str] = {
     "agent_created",
     "agent_removed",

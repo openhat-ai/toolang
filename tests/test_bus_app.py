@@ -34,7 +34,7 @@ def test_create_bus_app_serves_agents_runs_events_and_proxy_chat(tmp_path: Path,
             agent_uri=agent_uri,
             agent_id=agent_id,
             run_id="run-1",
-            run_type="turn",
+            run_type="run",
             origin="chat",
             summary="alice:chat",
             thunk_name="chat",
@@ -47,7 +47,7 @@ def test_create_bus_app_serves_agents_runs_events_and_proxy_chat(tmp_path: Path,
             agent_uri=agent_uri,
             agent_id=agent_id,
             run_id="run-1",
-            run_type="turn",
+            run_type="run",
             origin="chat",
             summary="alice:chat",
             thunk_name="chat",
@@ -69,11 +69,11 @@ def test_create_bus_app_serves_agents_runs_events_and_proxy_chat(tmp_path: Path,
                 200,
                 json={
                     "thread_id": "owner",
-                    "turn_id": "run-1",
+                    "run_id": "run-1",
                     "message": {
                         "id": 2,
                         "thread_id": "owner",
-                        "turn_id": "run-1",
+                        "run_id": "run-1",
                         "seq": 2,
                         "role": "assistant",
                         "parts": [{"type": "text", "text": "hello"}],
@@ -83,7 +83,7 @@ def test_create_bus_app_serves_agents_runs_events_and_proxy_chat(tmp_path: Path,
                     "assistant": {
                         "id": 2,
                         "thread_id": "owner",
-                        "turn_id": "run-1",
+                        "run_id": "run-1",
                         "seq": 2,
                         "role": "assistant",
                         "parts": [{"type": "text", "text": "hello"}],
@@ -139,7 +139,7 @@ def test_create_bus_app_serves_agents_runs_events_and_proxy_chat(tmp_path: Path,
         runs = client.get("/api/v1/runs")
         assert runs.status_code == 200
         assert runs.json()["items"][0]["id"] == "run-1"
-        assert runs.json()["items"][0]["origin_kind"] == "direct"
+        assert runs.json()["items"][0]["origin"] == "chat"
 
         events = client.get(f"/api/v1/agents/{agent_id}/events")
         assert events.status_code == 200

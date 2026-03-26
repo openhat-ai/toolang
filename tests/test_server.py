@@ -204,7 +204,6 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
             "psyches": 1,
             "skills": 0,
             "servers": 1,
-            "chores": 0,
         }
 
         active = get_running_agent(db_path, agent.uri)
@@ -223,7 +222,7 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
         first_chat_body = first_chat.json()
         assert first_chat_body["thread_id"] == "owner"
         assert first_chat_body["message"]["parts"][0]["text"] == "chat:1:hello:gpt-5"
-        first_run_id = first_chat_body["turn_id"]
+        first_run_id = first_chat_body["run_id"]
         first_trace = PromptTrace.load(
             agent_run_prompt_path(home, "alice", first_run_id)
         )
@@ -257,14 +256,15 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
         assert "chat:5:stream me:gpt-5" in stream_text
         assert "data: [DONE]" in stream_text
 
-        threads = client.get("/api/v1/chats")
+        threads = client.get("/api/v1/threads")
         assert threads.status_code == 200
         assert threads.json()["items"][0]["id"] == "owner"
         assert threads.json()["items"][0]["title"] == "hello"
         assert threads.json()["items"][0]["preview"] == "chat:5:stream me:gpt-5"
         assert threads.json()["items"][0]["channel"] == "api"
+        assert threads.json()["items"][0]["kind"] == "chat"
 
-        thread = client.get("/api/v1/chats/owner")
+        thread = client.get("/api/v1/threads/owner")
         assert thread.status_code == 200
         assert len(thread.json()["messages"]) == 6
         latest_messages = thread.json()["messages"][-2:]
@@ -274,22 +274,23 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
         ]
         assert latest_messages[0]["parts"] == [
             {
-                "id": f'{latest_messages[0]["turn_id"]}:user:text:1',
+                "id": f'{latest_messages[0]["run_id"]}:user:text:1',
                 "type": "text",
                 "text": "stream me",
                 "state": "done",
             }
         ]
+        assert thread.json()["runs"][0]["origin"] == "chat"
 
         runs = client.get("/api/v1/runs")
         assert runs.status_code == 200
         assert len(runs.json()["items"]) == 3
-        assert runs.json()["items"][0]["origin_kind"] == "direct"
+        assert runs.json()["items"][0]["origin"] == "chat"
 
         detail = client.get(f"/api/v1/runs/{first_run_id}")
         assert detail.status_code == 200
         assert detail.json()["run"]["id"] == first_run_id
-        assert [item["role"] for item in detail.json()["turn"]["messages"]] == [
+        assert [item["role"] for item in detail.json()["messages"]] == [
             "user",
             "assistant",
         ]
@@ -326,13 +327,13 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
         ]
 
         execution = ExecutionStore(execution_db_path)
-        runs = execution.list_runs(agent_uri=agent.uri)
-        turns = execution.list_turns(run_id=runs[0].run_id)
+        activations = execution.list_activations(agent_uri=agent.uri)
+        runs = execution.list_runs(activation_id=activations[0].activation_id)
         execution.close()
-        assert len(runs) == 1
-        assert runs[0].run_kind == "runtime"
-        assert runs[0].status == "running"
-        assert {turn.turn_id for turn in turns} >= {
+        assert len(activations) == 1
+        assert activations[0].activation_kind == "runtime"
+        assert activations[0].status == "running"
+        assert {run.run_id for run in runs} >= {
             first_run_id,
             run_response.json()["run_id"],
         }
@@ -340,9 +341,9 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
     assert get_running_agent(db_path, agent.uri) is None
     assert RunState.load(run_path).status == "stopped"
     execution = ExecutionStore(execution_db_path)
-    runs = execution.list_runs(agent_uri=agent.uri)
+    activations = execution.list_activations(agent_uri=agent.uri)
     execution.close()
-    assert runs[0].status == "stopped"
+    assert activations[0].status == "stopped"
     store = BusStore(events_path)
     events = store.list_events(agent_uri=agent.uri)
     store.close()
@@ -551,15 +552,15 @@ def test_chat_turn_and_run_detail_include_ordered_assistant_parts(
             json={"thread": "owner", "message": "tool me"},
         )
         assert response.status_code == 200
-        turn_id = response.json()["turn_id"]
+        run_id = response.json()["run_id"]
 
-        thread = client.get("/api/v1/chats/owner")
+        thread = client.get("/api/v1/threads/owner")
         assert thread.status_code == 200
         assert thread.json()["messages"][1]["parts"] == [
             {
-                "id": f"{turn_id}:assistant:tool:1",
+                "id": f"{run_id}:assistant:tool:1",
                 "type": "tool",
-                "tool_call_id": f"{turn_id}:assistant:tool:1",
+                "tool_call_id": f"{run_id}:assistant:tool:1",
                 "tool_name": "shell",
                 "tool_family": "shell",
                 "state": "output-available",
@@ -574,20 +575,20 @@ def test_chat_turn_and_run_detail_include_ordered_assistant_parts(
                 },
             },
             {
-                "id": f"{turn_id}:assistant:text:2",
+                "id": f"{run_id}:assistant:text:2",
                 "type": "text",
                 "text": "done",
                 "state": "done",
             }
         ]
 
-        detail = client.get(f"/api/v1/runs/{turn_id}")
+        detail = client.get(f"/api/v1/runs/{run_id}")
         assert detail.status_code == 200
-        assert detail.json()["turn"]["messages"][1]["parts"] == [
+        assert detail.json()["messages"][1]["parts"] == [
             {
-                "id": f"{turn_id}:assistant:tool:1",
+                "id": f"{run_id}:assistant:tool:1",
                 "type": "tool",
-                "tool_call_id": f"{turn_id}:assistant:tool:1",
+                "tool_call_id": f"{run_id}:assistant:tool:1",
                 "tool_name": "shell",
                 "tool_family": "shell",
                 "state": "output-available",
@@ -602,7 +603,7 @@ def test_chat_turn_and_run_detail_include_ordered_assistant_parts(
                 },
             },
             {
-                "id": f"{turn_id}:assistant:text:2",
+                "id": f"{run_id}:assistant:text:2",
                 "type": "text",
                 "text": "done",
                 "state": "done",
@@ -874,15 +875,15 @@ def test_create_agent_app_polls_channel_bindings_and_delivers_replies(
         )
 
         execution = ExecutionStore(execution_db_path)
+        activations = execution.list_activations(agent_uri=agent.uri)
         runs = execution.list_runs(agent_uri=agent.uri)
-        turns = execution.list_turns(run_id=runs[0].run_id)
-        steps = execution.list_steps(turn_id=turns[0].turn_id)
+        steps = execution.list_steps(run_id=runs[0].run_id)
         execution.close()
 
-        assert runs[0].runtime_loops == ("server", "poll")
-        assert turns[0].thread_id == "telegram:123"
-        assert turns[0].origin == "chat"
-        assert turns[0].status == "finished"
+        assert activations[0].runtime_loops == ("server", "poll")
+        assert runs[0].thread_id == "telegram:123"
+        assert runs[0].origin == "chat"
+        assert runs[0].status == "finished"
         assert any(step.step_kind == "delivery" for step in steps)
         assert fake_plugin.deliveries[0][0].channel == "telegram"
         assert fake_plugin.deliveries[0][1].text == "polled:hello from poll:gpt-5"
@@ -973,22 +974,21 @@ def test_create_agent_app_polls_task_deliveries(tmp_path: Path, monkeypatch) -> 
         execution = ExecutionStore(execution_db_path)
         try:
             _wait_for(
-                lambda: _turn_origins(execution, agent.uri) >= {"task"},
-                label="task poll turn",
+                lambda: _run_origins(execution, agent.uri) >= {"task"},
+                label="task poll run",
                 timeout_sec=5.0,
             )
             runs = execution.list_runs(agent_uri=agent.uri)
-            turns = execution.list_turns(run_id=runs[0].run_id)
         finally:
             execution.close()
 
-    task_turns = [turn for turn in turns if turn.origin == "task"]
+    task_runs = [run for run in runs if run.origin == "task"]
     task_build = next(build for build in builds if build.runtime_context["origin"] == "task")
-    assert len(task_turns) == 1
-    assert task_turns[0].thread_id == "task:linear/42"
-    assert task_turns[0].sender == "service"
+    assert len(task_runs) == 1
+    assert task_runs[0].thread_id == "task:linear/42"
+    assert task_runs[0].sender == "service"
     assert (
-        task_turns[0].output_text
+        task_runs[0].output_text
         == "tasked:task:Investigate the regression and report back.:gpt-5"
     )
     assert task_build.runtime_context["task"] == {
@@ -1071,11 +1071,6 @@ def test_create_agent_app_lists_local_work_documents(tmp_path: Path) -> None:
             "remote_ref": None,
             "thread_id": f"task:local:{saved_task.id}",
             "path": str(room.tasks_dir / "roadmap.md"),
-            "last_enqueued_at": None,
-            "last_started_at": None,
-            "last_finished_at": None,
-            "last_status": None,
-            "last_run_id": None,
             "updated_at": tasks.json()["items"][0]["updated_at"],
             "paused": False,
         }
@@ -1090,12 +1085,6 @@ def test_create_agent_app_lists_local_work_documents(tmp_path: Path) -> None:
             "thunk": "chore",
             "model": None,
             "path": str(room.chores_dir / "sync.md"),
-            "last_enqueued_at": None,
-            "last_started_at": None,
-            "last_finished_at": None,
-            "last_status": None,
-            "last_run_id": None,
-            "next_due_at": None,
             "updated_at": chores.json()["items"][0]["updated_at"],
             "paused": False,
         }
@@ -1108,12 +1097,6 @@ def test_create_agent_app_lists_local_work_documents(tmp_path: Path) -> None:
         "thunk": "will",
         "model": None,
         "path": str(room.will_path),
-        "last_enqueued_at": None,
-        "last_started_at": None,
-        "last_finished_at": None,
-        "last_status": None,
-        "last_run_id": None,
-        "next_due_at": None,
         "updated_at": will.json()["item"]["updated_at"],
         "paused": False,
     }
@@ -1545,9 +1528,8 @@ def _wait_for(predicate, *, label: str, timeout_sec: float = 3.0) -> None:
     raise AssertionError(f"Timed out waiting for {label}")
 
 
-def _turn_origins(execution: ExecutionStore, agent_uri: str) -> set[str]:
+def _run_origins(execution: ExecutionStore, agent_uri: str) -> set[str]:
     runs = execution.list_runs(agent_uri=agent_uri)
     if not runs:
         return set()
-    turns = execution.list_turns(run_id=runs[0].run_id)
-    return {turn.origin for turn in turns}
+    return {run.origin for run in runs}

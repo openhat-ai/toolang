@@ -442,7 +442,7 @@ def _task_prompt(runtime_context: dict[str, Any]) -> str | None:
     local_path = _task_text(services.get("path")) or _task_text(task.get("path"))
     lines = [
         "Task execution protocol:",
-        "- You are handling one task-driven turn.",
+        "- You are handling one task-driven run.",
         "- Understand the current task before acting.",
         "- Keep the task itself as the durable record of progress and outcome.",
         f"- Task provider: {provider}.",
