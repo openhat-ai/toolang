@@ -42,6 +42,10 @@ Generated implementation reference does not live here. It belongs under
   - CLI surface
   - registry state
   - agent API and bus API
+- [chat.md](./chat.md)
+  - canonical turn-message model
+  - AI SDK stream mapping
+  - ordered message-part persistence
 - [plugins.md](./plugins.md)
   - plugin families
   - loading model
@@ -88,6 +92,10 @@ Generated implementation reference does not live here. It belongs under
   - one complete handling attempt inside a thread
 - `step`
   - an internal part of one turn
+- `turn message`
+  - one ordered message emitted inside a turn
+- `message part`
+  - one ordered content/tool/source/file unit inside a turn message
 
 
 ## Top-Level Surfaces

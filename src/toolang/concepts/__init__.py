@@ -30,6 +30,16 @@ from .execution import (
 )
 from .identity import AgentKind, AgentRef, AgentSelector, AgentUri
 from .layout import AgentHome, AgentRoom, ToolangRoot
+from .messages import (
+    FilePart,
+    MessagePart,
+    ReasoningPart,
+    SourceDocumentPart,
+    SourceUrlPart,
+    TextPart,
+    ToolPart,
+    TurnMessage,
+)
 from .sandbox import (
     HOST_SANDBOX,
     SandboxRuntimeInfo,
@@ -61,6 +71,7 @@ __all__ = [
     "ExecutionStrategy",
     "HOST_SANDBOX",
     "Message",
+    "MessagePart",
     "MessageOrigin",
     "MessageSender",
     "PromptFrontmatter",
@@ -72,6 +83,13 @@ __all__ = [
     "SandboxState",
     "SkillFrontmatter",
     "ReplyTarget",
+    "TurnMessage",
+    "TextPart",
+    "ReasoningPart",
+    "ToolPart",
+    "SourceUrlPart",
+    "SourceDocumentPart",
+    "FilePart",
     "ToolangRoot",
     "ToolCallResult",
     "ToolDefinition",
