@@ -8,6 +8,7 @@ import uuid
 from toolang.agent.prepared import PreparedAgent
 from toolang.bus.db import BusStore
 from toolang.bus.events import RunFailed, RunFinished, RunOrigin, RunStarted, utc_now
+from toolang.caps import load_prepared_caps
 from toolang.concepts.execution import MessageSender, RunKind, thread_group_for_origin
 from toolang.concepts.layout import AgentHome
 from toolang.concepts.messages import TextPart, TurnMessage
@@ -263,11 +264,13 @@ def _tracked_turn(
         if home.tools_config_path.exists()
         else ToolsConfig()
     )
+    visible_caps = load_prepared_caps(prepared)
     tool_runtime = create_tool_runtime(
         prepared.ref,
         sandbox=sandbox,
         tools_config=tools_config,
         working_directory=prepared.ref.home,
+        visible_services=[item.service_catalog_item() for item in visible_caps.services],
     )
     prompt_trace: PromptTrace | None = None
     try:

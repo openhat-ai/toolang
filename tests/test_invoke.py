@@ -124,7 +124,12 @@ def test_invoke_prepared_agent_records_tool_calls(tmp_path: Path, monkeypatch) -
     trace = PromptTrace.load(agent_run_prompt_path(home, "alice", result.run_id))
 
     assert [step.step_kind for step in steps] == ["prompt_build", "tool_call", "model_call"]
-    assert trace.runtime_context["tools"] == ["filesystem", "shell", "web_search"]
+    assert trace.runtime_context["tools"] == [
+        "filesystem",
+        "service_use",
+        "shell",
+        "web_search",
+    ]
     assert trace.tool_calls == [
         {
             "family": "shell",

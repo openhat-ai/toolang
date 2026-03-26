@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from toolang.concepts.identity import AgentRef
+from toolang.concepts.persisted import ToolsConfig
 from toolang.concepts.tools import ToolCallResult, ToolDefinition
 from toolang.runtime.build import PromptBuild
 from toolang.runtime.model_exec import (
@@ -19,9 +20,10 @@ from toolang.runtime.model_exec import (
     execute_prompt_build,
     execute_prompt_build_stream,
 )
-from toolang.tools import ToolRuntime
+from toolang.tools import ToolRuntime, create_tool_runtime
 from toolang.tools.contracts import ToolContext
 from toolang.tools.plugins.filesystem import create_filesystem_tool
+from toolang.tools.plugins.service_use import create_service_use_tool
 from toolang.tools.plugins.shell import create_shell_tool
 from toolang.tools.plugins.web_search import create_web_search_tool
 
@@ -122,6 +124,133 @@ def test_web_search_tool_filters_domains(monkeypatch) -> None:
             "snippet": "example body",
         }
     ]
+
+
+def test_create_tool_runtime_enables_service_use_when_services_are_visible(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "alice"
+    home.mkdir()
+
+    runtime = create_tool_runtime(
+        _agent_ref(home),
+        sandbox="host",
+        tools_config=ToolsConfig(),
+        working_directory=home,
+        visible_services=[
+            {
+                "name": "github",
+                "transport": "http",
+                "target": "https://mcp.github.com/mcp",
+                "description": "GitHub MCP server",
+            }
+        ],
+    )
+
+    assert runtime.enabled_families() == ["filesystem", "service_use", "shell", "web_search"]
+
+
+def test_service_use_tool_calls_http_service_via_mcat(monkeypatch, tmp_path: Path) -> None:
+    home = tmp_path / "alice"
+    home.mkdir()
+    provider = create_service_use_tool(
+        {
+            "visible_services": [
+                {
+                    "name": "github",
+                    "transport": "http",
+                    "target": "https://mcp.github.com/mcp",
+                    "description": "GitHub MCP server",
+                }
+            ],
+            "services": {
+                "github": {
+                    "key_ref": "env://GITHUB_TOKEN",
+                }
+            },
+        }
+    )
+    calls: list[list[str]] = []
+
+    def fake_init_session(*, runner, endpoint, session_path, key_ref, cwd):
+        calls.append(["init", endpoint, key_ref or ""])
+        session_path.write_text(json.dumps({"endpoint": endpoint}), encoding="utf-8")
+
+    def fake_run_mcat_json(runner, args, *, cwd):
+        calls.append(args)
+        return {"tools": [{"name": "list_issues"}]}
+
+    monkeypatch.setattr("toolang.tools.plugins.service_use._init_session", fake_init_session)
+    monkeypatch.setattr("toolang.tools.plugins.service_use._run_mcat_json", fake_run_mcat_json)
+
+    result = provider.invoke(
+        {"service": "github", "action": "tool_list"},
+        _tool_context(home),
+    )
+
+    assert result["service"] == "github"
+    assert result["transport"] == "http"
+    assert result["result"] == {"tools": [{"name": "list_issues"}]}
+    assert calls[0] == ["init", "https://mcp.github.com/mcp", "env://GITHUB_TOKEN"]
+    assert calls[1][0:2] == ["tool", "list"]
+
+
+def test_service_use_tool_calls_stdio_service_via_mcat_proxy(monkeypatch, tmp_path: Path) -> None:
+    home = tmp_path / "alice"
+    home.mkdir()
+    provider = create_service_use_tool(
+        {
+            "runner": ["mcat"],
+            "visible_services": [
+                {
+                    "name": "localdocs",
+                    "description": "Local docs MCP server",
+                }
+            ],
+            "services": {
+                "localdocs": {
+                    "transport": "stdio",
+                    "command": ["uvx", "localdocs-mcp"],
+                    "port": 6110,
+                }
+            },
+        }
+    )
+    calls: list[list[str]] = []
+
+    def fake_run_mcat_json(runner, args, *, cwd):
+        calls.append(args)
+        if args[:2] == ["proxy", "up"]:
+            return {"endpoint": "http://127.0.0.1:6110/mcp"}
+        if args[0] == "init":
+            session_path = Path(args[args.index("-o") + 1])
+            session_path.write_text(
+                json.dumps({"endpoint": "http://127.0.0.1:6110/mcp"}),
+                encoding="utf-8",
+            )
+            return {}
+        if args[:2] == ["tool", "call"]:
+            return {"content": [{"type": "text", "text": "done"}]}
+        raise AssertionError(args)
+
+    monkeypatch.setattr("toolang.tools.plugins.service_use._run_mcat_json", fake_run_mcat_json)
+
+    result = provider.invoke(
+        {
+            "service": "localdocs",
+            "action": "tool_call",
+            "tool_name": "search_docs",
+            "input": {"query": "toolang"},
+        },
+        _tool_context(home),
+    )
+
+    assert result["service"] == "localdocs"
+    assert result["transport"] == "stdio"
+    assert result["result"] == {"content": [{"type": "text", "text": "done"}]}
+    assert calls[0][0:3] == ["proxy", "up", "6110"]
+    assert calls[1][0] == "init"
+    assert calls[2][0:3] == ["tool", "call", "search_docs"]
 
 
 def test_execute_prompt_build_runs_local_tool_loop(monkeypatch, tmp_path: Path) -> None:

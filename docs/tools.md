@@ -24,12 +24,12 @@ Current built-in tool families:
 
 - `filesystem`
 - `shell`
+- `service_use`
 - `web_search`
 
 Planned but not yet implemented:
 
 - `memory_search`
-- `service_use`
 - `browser_use`
 - `computer_use`
 
@@ -64,6 +64,22 @@ Each family is one stable capability with one default provider.
 - default provider uses local DuckDuckGo search
 - returns concise structured search results
 
+### `service_use`
+
+- one tool named `service_use`
+- default provider uses the external `mcat` CLI
+- exposes visible `service` caps as callable MCP services
+- supports:
+  - `tool_list`
+  - `tool_call`
+  - `resource_list`
+  - `resource_list_template`
+  - `resource_read`
+  - `prompt_list`
+  - `prompt_get`
+- HTTP services may come directly from service-cap front matter
+- stdio services may be configured locally in `tools.toml`
+
 
 ## 4. Loading
 
@@ -82,6 +98,17 @@ provider = "default"
 
 [tools.web_search]
 provider = "default"
+
+[tools.service_use]
+provider = "mcat"
+
+[tools.service_use.config.services.github]
+key_ref = "env://GITHUB_TOKEN"
+
+[tools.service_use.config.services.localdocs]
+transport = "stdio"
+command = ["uvx", "localdocs-mcp"]
+port = 6110
 ```
 
 If `tools.toml` is absent, built-in defaults are used.
@@ -108,6 +135,7 @@ Examples:
 
 - `filesystem:default`
 - `shell:default`
+- `service_use:mcat`
 - `web_search:default`
 
 
@@ -138,6 +166,7 @@ Current runtime security signals expose:
 
 - `tools.filesystem`
 - `tools.shell`
+- `tools.service_use`
 - `tools.web_search`
 - and future tool-family flags
 

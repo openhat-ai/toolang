@@ -13,6 +13,7 @@ from pathlib import Path
 from toolang.agent.prepared import PreparedAgent, prepare_agent
 from toolang.bus.db import BusStore
 from toolang.channels import ChannelPlugin, ChannelState, create_channel_plugin
+from toolang.caps import load_prepared_caps
 from toolang.concepts.channel import InboundDelivery, OutboundMessage, ReplyTarget
 from toolang.concepts.execution import Message, RuntimeLoop
 from toolang.concepts.layout import AgentHome, ToolangRoot
@@ -319,11 +320,13 @@ class RuntimeHost:
             if home.tools_config_path.exists()
             else ToolsConfig()
         )
+        visible_caps = load_prepared_caps(current)
         tool_runtime = create_tool_runtime(
             current.ref,
             sandbox=self.sandbox,
             tools_config=tools_config,
             working_directory=current.ref.home,
+            visible_services=[item.service_catalog_item() for item in visible_caps.services],
         )
         enabled_families = set(tool_runtime.enabled_families())
         pulse_enabled = "pulse" in self.runtime_loops

@@ -211,6 +211,11 @@ ${AGENT_ROOM}/
   execution.db
   pulse.json
   task_mirrors.json
+  service_use/
+    mcat/
+      {SERVICE}/
+        session.json
+        proxy.json
   runs/
     {RUN_ID}/
       prompt.json
@@ -244,6 +249,8 @@ Notes:
     and will scans
 - `task_mirrors.json`
   - remote-task mirror bindings keyed by provider and remote ref
+- `service_use/`
+  - provider-owned MCP session and proxy state
 - `runs/{RUN_ID}/prompt.json`
   - prompt-build diagnostics for one turn
 - `poll/`

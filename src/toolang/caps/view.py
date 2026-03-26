@@ -6,11 +6,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
-from toolang.concepts.caps import (
-    CapFrontmatter,
-    CapKind,
-    CapSidecar,
-)
+from toolang.concepts.caps import CapFrontmatter, CapKind, CapSidecar, ServiceFrontmatter
 from toolang.concepts.identity import AgentRef
 from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.program import Program
@@ -38,6 +34,21 @@ class CapView(BaseModel):
     path: str
     params: list[dict[str, Any]] = Field(default_factory=list)
     front_matter: CapFrontmatter | None = None
+
+    def service_catalog_item(self) -> dict[str, Any]:
+        """Render one service-view item as a tool-runtime catalog entry."""
+
+        if self.kind != "service":
+            raise ValueError("service catalog entries can only be built from service caps")
+        front_matter = (
+            self.front_matter if isinstance(self.front_matter, ServiceFrontmatter) else None
+        )
+        return {
+            "name": self.name,
+            "transport": front_matter.transport if front_matter is not None else None,
+            "target": front_matter.target if front_matter is not None else None,
+            "description": front_matter.description if front_matter is not None else None,
+        }
 
 
 class SkillCapView(BaseModel):
