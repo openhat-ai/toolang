@@ -298,7 +298,11 @@ def create_agent_app(
         turns = runtime_host.chats.recent_turns(thread_id=thread_id, limit=limit)
         return ChatThreadResponse(
             thread=thread_item(thread),
-            turns=[turn_item(item) for item in turns],
+            messages=[
+                message_item(message)
+                for turn in turns
+                for message in turn.messages
+            ],
         )
 
     @app.get("/api/v1/runs", response_model=RunListResponse)

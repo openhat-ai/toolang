@@ -186,6 +186,15 @@ Responsibility summary:
     - uses AI SDK-compatible camelCase fields such as `toolCallId`,
       `toolName`, and `inputTextDelta`
     - `finish`
+- `/api/v1/chats`
+  - thread summaries with stable server-provided `title`, `preview`, and
+    `channel`
+- `/api/v1/chats/{thread_id}`
+  - one canonical ordered transcript:
+    - `thread`
+    - `messages[]`
+  - each message contains ordered `parts[]`, so assistant text and tool parts
+    do not need client-side reordering
 - `/api/v1/runs*`
   - current and historical runs for this agent
 - `/api/v1/events*`

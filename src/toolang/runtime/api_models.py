@@ -339,10 +339,10 @@ class ChatTurnItem(BaseModel):
 
 
 class ChatThreadResponse(BaseModel):
-    """Detailed chat thread response with stored turns."""
+    """Detailed chat thread response with ordered transcript messages."""
 
     thread: ChatThreadItem
-    turns: list[ChatTurnItem]
+    messages: list[AgentChatMessage]
 
 
 class EventItem(BaseModel):

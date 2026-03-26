@@ -265,15 +265,15 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
 
         thread = client.get("/api/v1/chats/owner")
         assert thread.status_code == 200
-        assert len(thread.json()["turns"]) == 3
-        latest_turn = thread.json()["turns"][-1]
-        assert [item["role"] for item in latest_turn["messages"]] == [
+        assert len(thread.json()["messages"]) == 6
+        latest_messages = thread.json()["messages"][-2:]
+        assert [item["role"] for item in latest_messages] == [
             "user",
             "assistant",
         ]
-        assert latest_turn["messages"][0]["parts"] == [
+        assert latest_messages[0]["parts"] == [
             {
-                "id": f'{latest_turn["turn_id"]}:user:text:1',
+                "id": f'{latest_messages[0]["turn_id"]}:user:text:1',
                 "type": "text",
                 "text": "stream me",
                 "state": "done",
@@ -554,7 +554,7 @@ def test_chat_turn_and_run_detail_include_ordered_assistant_parts(
 
         thread = client.get("/api/v1/chats/owner")
         assert thread.status_code == 200
-        assert thread.json()["turns"][0]["messages"][1]["parts"] == [
+        assert thread.json()["messages"][1]["parts"] == [
             {
                 "id": f"{turn_id}:assistant:tool:1",
                 "type": "tool",
