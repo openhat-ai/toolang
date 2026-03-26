@@ -6,7 +6,7 @@ Identity and filesystem paths live in [layout.md](./layout.md).
 Top-level lifecycle and runtime-resource vocabulary lives in
 [model.md](./model.md).
 Control surfaces live in [api.md](./api.md).
-Canonical turn-message and stream semantics live in [chat.md](./chat.md).
+Chat and message semantics live in [chat.md](./chat.md).
 
 
 ## 1. Two Orthogonal Axes
@@ -17,19 +17,19 @@ Toolang uses two independent concepts:
   - a long-lived trigger source
   - examples: `server`, `poll`, `hook`, `pulse`
 - `execution strategy`
-  - the strategy used to complete one turn
-  - examples: `direct`, `react`, `plan_execute`
+  - the strategy used to complete one run
+  - examples: `direct`, `react`
 
 Rules:
 
-- runtime loops decide when a turn starts
-- execution strategies decide how that turn completes
+- runtime loops decide when a run submission enters the scheduler
+- execution strategies decide how an admitted run completes
 - these concepts must not be merged
 
 
-## 2. Message Model
+## 2. Runtime Input Model
 
-Toolang uses one `Message` shape as the semantic input for one turn.
+Toolang uses one normalized runtime input message.
 
 Minimal fields:
 
@@ -48,7 +48,7 @@ Minimal fields:
 - `chore`
 - `will`
 
-`channel` is only for chat transport.
+`channel` is only for transport-facing chat ingress.
 
 Common values:
 
@@ -67,20 +67,92 @@ Common values:
 
 Rules:
 
-- `origin == chat` requires a non-null `channel`
-- `origin in {invoke, task, chore, will}` requires `channel = null`
-- `task`, `chore`, and `will` use `sender = self`
-- hook deliveries commonly use `sender = service`
-- `run` and `start` are process surfaces, not message origins
+- `origin == chat` usually carries a non-null `channel`
+- `origin in {invoke, task, chore, will}` usually carries `channel = null`
+- `task`, `chore`, and `will` commonly use `sender = self`
+- hook or provider deliveries commonly use `sender = service`
+- runtime input messages are not themselves runs; they become run submissions
 
 
-## 3. Runtime Loops
+## 3. Run Submissions
+
+Runtime loops do not execute work directly.
+
+They normalize input into `run submissions` and place those submissions into the
+runtime scheduler.
+
+A run submission carries:
+
+- `kind`
+  - one of the runtime origins
+- `thread_id`
+  - the target durable context
+- `message`
+  - the normalized runtime input, when the source has one
+
+Rules:
+
+- chat, task, chore, invoke, and will all become run submissions
+- the scheduler admits run submissions and creates durable run records
+- the queue should be modeled around run submissions, not around activations
+
+
+## 4. Activation, Thread, Run, And Step
+
+`activation`
+
+- one online interval from `started` to `stopped`
+- created by `toolang run`, `toolang start`, or one-shot `toolang invoke`
+
+`thread`
+
+- one durable execution context
+- examples:
+  - `telegram:12345678`
+  - `api:thread-abc`
+  - `task:local:<task_id>`
+  - `chore:<chore_id>`
+  - `will:<agent_id>`
+
+`run`
+
+- one concrete handling attempt inside one thread
+- belongs to exactly one activation and exactly one thread
+- carries:
+  - `origin`
+  - `sender`
+  - `channel`
+  - `execution_strategy`
+  - `status`
+  - timestamps
+  - input, output, and error state
+
+`step`
+
+- one internal part of one run
+- examples:
+  - prompt build
+  - model call
+  - tool call
+  - delivery
+
+Rules:
+
+- one activation may contain many runs
+- one thread may contain many runs across many activations
+- one run may have many steps
+- steps do not replace runs as the durable scheduling unit
+- current persisted step records capture completed step outcomes and timestamps
+  rather than a separate long-lived `running` step state
+
+
+## 5. Runtime Loops
 
 Toolang defines four runtime loops:
 
 - `server`
   - accepts local API requests
-  - usually emits `chat` or `invoke`
+  - usually emits `chat` or direct `run` submissions
 - `poll`
   - polls external channels
   - usually emits `chat` or `task`
@@ -89,331 +161,178 @@ Toolang defines four runtime loops:
   - accepts hook deliveries
   - usually emits `invoke`
 - `pulse`
-  - emits internal `task`, `chore`, and `will`
+  - scans local tasks, chores, and will definitions
+  - emits `task`, `chore`, and `will`
 
 Rules:
 
-- runtime loops create turn requests
-- runtime loops do not execute turns directly
-- `toolang invoke` starts no runtime loops
-- `toolang run` starts only `server`
-- `toolang start` starts a selected runtime-loop set
-- the current runtime host serializes turns by `thread_id` even when multiple
-  poll bindings are active
+- runtime loops create run submissions
+- runtime loops do not execute runs directly
+- `toolang invoke` starts no long-lived runtime loop
+- `toolang run` starts the `server` loop and may add others with `--loop`
+- `toolang start` starts the selected runtime-loop set in the background
 
 
-## 4. Execution Strategies
+## 6. Execution Strategies
 
-Execution strategy is a turn-local concern.
+Execution strategy is a run-local concern.
 
 Examples:
 
 - `direct`
   - one prompt build and one model completion
 - `react`
-  - repeated think/act/observe steps within one turn
-- `plan_execute`
-  - explicit planning followed by one or more execution steps
+  - repeated think/act/observe steps within one run
 
 Rules:
 
-- one turn uses one execution strategy
+- one run uses one execution strategy
 - one strategy may produce many internal steps
 - strategy selection is independent from runtime-loop selection
 
 
-## 5. Core Execution Objects
+## 7. Scheduler Policy
 
-Toolang execution is organized around:
+The current useful scheduler policy is:
 
-- `run`
-- `thread_group`
-- `thread`
-- `turn`
-- `step`
+- serialize by `thread_id`
+- allow different threads to run concurrently
+- apply group-level budgets by origin-derived thread group
 
-The local execution truth layer should live in `${AGENT_ROOM}/execution.db`.
-The existing `${AGENT_ROOM}/agent.run` file remains a current-running summary,
-not the historical execution truth.
+Built-in groups:
 
-
-## 6. Runs
-
-A run is one continuous active interval of agent execution.
-
-Examples:
-
-- one foreground `toolang run`
-- one background `toolang start`
-- one one-shot `toolang invoke`
-
-Suggested fields:
-
-- `run_id`
-- `run_kind`
-  - `runtime`
-  - `invoke`
-- `agent_uri`
-- `started_at`
-- `finished_at`
-- `status`
-- `runtime_loops`
-- `sandbox`
-- `cap_scopes`
-- `sync_fingerprint`
-- `plugin_snapshot`
-
-Rules:
-
-- each run has a clear start and end
-- the same agent may have many runs over time
-- old runs remain queryable after later restarts
-- one thread may span multiple runs
-- every turn belongs to exactly one run
-
-
-## 7. Thread Groups
-
-A thread group is a scheduling category.
-
-Suggested built-in groups:
-
+- `invoke`
 - `chat`
 - `task`
 - `chore`
 - `will`
-
-Recommended policy fields:
-
-- `priority`
-- `max_running_turns`
-- `max_queued_turns`
-- `overflow_policy`
-  - `reject`
-  - `drop_oldest`
-  - `replace_pending`
-- `coalesce`
 
 Default intent:
 
 - `chat`
   - highest priority
 - `task`
-  - moderate concurrency
+  - medium priority
 - `chore`
-  - one running turn and one pending turn
+  - low priority
 - `will`
-  - lowest priority and aggressive coalescing
-
-
-## 8. Threads, Turns, And Steps
-
-`thread`
-
-- a durable execution context
-- examples:
-  - `telegram:12345678`
-  - `api:thread-abc`
-  - `task:<task_ref>`
-  - `chore:<chore_key>`
-  - `will:<agent_id>`
-
-`turn`
-
-- one complete handling attempt inside a thread
-- belongs to one `thread` and one `run`
-- carries:
-  - `origin`
-  - `sender`
-  - `channel`
-  - `execution_strategy`
-  - `status`
-  - timestamps
-  - input/output/error state
-
-`step`
-
-- an internal part of one turn
-- examples:
-  - prompt build
-  - model call
-  - tool call
-  - memory recall
-  - outbound delivery
+  - lowest priority
 
 Rules:
 
-- `task_ref` is treated as `thread_id`
-- `chore` and `will` also map directly to `thread_id`
-- at most one turn may run at a time for the same `thread_id`
-- steps do not replace turns as the durable scheduling unit
+- at most one running run may exist at a time for the same `thread_id`
+- different threads may still run concurrently when scheduler budget allows it
+- thread grouping influences concurrency policy, but the durable unit remains
+  the run
 
 
-## 9. Process Model
+## 8. Threads As The Durable Bridge
 
-Toolang uses two execution modes:
+Thread identity is the durable bridge between definitions and runtime history.
 
-- one-shot invoke process
-- long-lived runtime process
-
-### 9.1 One-Shot Invoke
-
-`toolang invoke` is always an independent process.
-
-Rules:
-
-- it prepares one agent
-- executes one turn
-- writes local execution state
-- emits shared bus projection events
-- exits
-
-Reason:
-
-- invoke is commonly used by scripts, editors, CI, and Makefiles
-- process isolation keeps one-shot execution simple
-
-### 9.2 Long-Lived Runtime Process
-
-`toolang run` and `toolang start` run one long-lived runtime process per
-agent.
-
-That process hosts:
-
-- the selected runtime loops
-- one shared turn scheduler
-- one shared worker pool
-
-Rules:
-
-- runtime loops enqueue turn requests
-- the scheduler enforces thread and thread-group constraints
-- workers execute admitted turns
-
-
-## 10. Scheduling
-
-The scheduler should enforce:
-
-1. `thread` serialization
-2. `thread_group` budget limits
-
-Rules:
-
-- only one running turn per `thread_id`
-- different threads may run concurrently when budgets allow
-- higher-priority groups should win admission when capacity is limited
-
-Recommended origin handling:
+Built-in mapping:
 
 - `chat`
-  - thread-scoped serialization
-  - interactive priority
+  - caller-selected or transport-selected thread
 - `task`
-  - task-ref-scoped serialization
-  - moderate concurrency across different task refs
+  - stable derived thread from local task identity
 - `chore`
-  - key-scoped serialization
-  - repeated triggers should coalesce
+  - stable derived thread `chore:<chore_id>`
 - `will`
-  - one low-priority agent-local thread
-  - repeated triggers should coalesce
+  - stable derived thread `will:<agent_id>`
 - `invoke`
-  - one-shot process
-  - not part of the long-lived in-process scheduler
-
-
-## 11. Truth Layer And Projections
-
-Execution should use three layers:
-
-- agent-local execution truth
-- shared bus projection
-- outbound side effects
+  - often an ephemeral thread
 
 Rules:
 
-- local execution state is written first
-- shared bus projection is written second
-- external delivery happens last
-
-Recommended local truth-layer stores:
-
-- `runs`
-- `run_events`
-- `threads`
-- `turns`
-- `turn_events`
-- `steps`
-
-Requirements:
-
-- append-first
-- durable across agent restarts
-- enough raw facts to compute later projections
-- not dependent on `bus/events.db`
-
-Statistics and summaries should be projection outputs, not truth inputs.
-
-The truth layer should preserve enough raw data to derive:
-
-- wall time
-- active time
-- model time
-- tool time
-- memory time
-- success rates
-- token usage
-- cache savings
+- thread history may outlive the activation that produced a run
+- definition endpoints may stay definition-only even when runtime history is
+  later queried through the same thread
+- chat thread summaries keep a stable `title` and a rolling `preview`
 
 
-## 12. Turn Lifecycle
+## 9. Chat Projection
 
-Recommended write order:
+Chat is a projection over threads, runs, and ordered messages.
 
-1. ingress
-  - resolve or create `thread`
-  - resolve the active `run`
-  - create queued `turn`
-2. admission
-  - scheduler marks the turn runnable
-3. start
-  - mark the turn `running`
-  - append `run_started`
-4. progress
-  - write step records and prompt traces
-5. finish or fail
-  - update local turn state first
-  - append `run_finished` or `run_failed`
-  - perform outbound replies or callbacks last
+Rules:
+
+- one inbound chat send creates one run
+- the runtime persists ordered chat messages separately from run records
+- `/api/v1/threads/{thread_id}` returns thread metadata, related runs, and
+  ordered messages together
+- `/api/v1/chats*` is an alias over the same thread model
+
+Chat message ordering and SSE semantics are defined in [chat.md](./chat.md).
 
 
-## 13. Loop-Owned Sources
+## 10. Pulse And Scheduled Definitions
 
-Recommended source files:
+`pulse` is the local scheduler loop for definitions owned by the agent room.
 
-- `channels.toml`
-  - external chat-channel configuration
-- `hooks.toml`
-  - hook declarations
-- `tasks/`
-  - local markdown task documents
-- `chores/`
-  - local markdown chore documents
-- `will.md`
-  - durable agent-local intent document
+Task behavior:
 
-Recommended runtime state in the agent room:
+- local task documents are scanned under `${AGENT_ROOM}/tasks/`
+- non-paused tasks with non-terminal task status may enqueue task runs when the
+  definition changes
 
-- `poll/`
-- `hooks/`
-- `pulse.json`
-  - persisted scheduling state plus latest run feedback for task, chore, and
-    will scans
+Scheduled definition behavior:
 
-Current pulse-loop behavior:
+- chores live under `${AGENT_ROOM}/chores/*.md`
+- will lives at `${AGENT_ROOM}/will.md`
+- both are scheduled by `rrule`
 
-- `task` turns are enqueued when a local task document changes and the task is
-  still active for the current agent
-- `chore` turns are enqueued when a local chore document becomes due
-- `will` turns are enqueued from `will.md` on its configured interval
+Rules:
+
+- chore and will definitions use RRULE-driven scheduling
+- new or updated scheduled definitions are enqueued once immediately
+- future due times are computed from the stored `rrule`
+- pulse state is a projection used for local scheduling, not the canonical run
+  history
+
+
+## 11. Truth Layers And Projections
+
+Toolang keeps multiple durable layers with different meanings.
+
+Primary local truth:
+
+- `${AGENT_ROOM}/execution.db`
+  - activation, thread, run, and step records
+- `${AGENT_ROOM}/chats/chats.db`
+  - ordered chat messages attached to runs in threads
+
+Derived or diagnostic state:
+
+- `${AGENT_ROOM}/runs/{RUN_ID}/prompt.json`
+  - prompt-build diagnostics for one run
+- `${AGENT_ROOM}/pulse.json`
+  - local scan state and scheduling projection
+- `${TOOLANG_ROOT}/bus/events.db`
+  - shared cross-agent event projection
+
+Rules:
+
+- `execution.db` is the runtime execution truth
+- chat history is durable presentation data linked to runs and threads
+- bus events and pulse state are projections
+- prompt traces are diagnostics, not the canonical source of run status
+
+
+## 12. Current Status Guidance
+
+The intended stable public runtime model is:
+
+- lifecycle
+  - `incarnation`
+  - `activation`
+- execution
+  - `thread`
+  - `run`
+  - `step`
+- chat view
+  - ordered messages attached to runs in threads
+
+Definition objects such as tasks, chores, and will remain separate from runtime
+history. Their execution status should be queried through runs rather than
+embedded back into definition `status` fields.

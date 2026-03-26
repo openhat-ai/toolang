@@ -177,9 +177,9 @@ Plugins may provide data and effects, but Toolang runtime stays in control.
 Responsibility split:
 
 - runtime loop receives or generates input
-- runtime converts that input into `Message` and turn requests
+- runtime converts that input into `Message` and run submissions
 - scheduler admits work
-- execution strategy completes the turn
+- execution strategy completes the run
 - runtime persists local state
 - runtime appends bus events
 - plugins perform only their domain-specific operations
@@ -254,6 +254,6 @@ The current first-party channel plugins include:
 Plugins decode or deliver channel traffic, but runtime still owns:
 
 - `Message` creation
-- thread and turn persistence
+- thread and run persistence
 - run lifecycle
 - bus projection writes

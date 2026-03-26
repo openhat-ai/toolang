@@ -24,7 +24,8 @@ Design semantics live in:
 
 Reason:
 
-- Python keeps iteration fast and covers CLI, HTTP, SQLite, and model APIs well
+- Python keeps iteration fast and covers CLI, HTTP, SQLite, scheduling, and
+  model APIs well
 - the package should stay broadly installable while local development can use a
   newer pinned interpreter
 
@@ -46,6 +47,8 @@ Reason:
   - `httpx`
 - local storage
   - SQLite
+- recurrence parsing
+  - `python-dateutil`
 
 
 ## 3. Package Boundaries
@@ -57,11 +60,12 @@ Current internal packages:
 - `toolang.agent`
   - agent resolution, managed local-agent operations, preparation, and registry
 - `toolang.runtime`
-  - prompt build, invoke, chat, and server runtime
+  - activation lifecycle, run execution, chat state, prompt build, scheduling,
+    and server runtime
 - `toolang.caps`
   - cap refs, sync orchestration, materialization, and runtime cap views
 - `toolang.concepts`
-  - shared identity, execution, layout, sandbox, cap, and persisted-state
+  - shared identity, execution, layout, sandbox, capability, and persisted
     constructs
 - `toolang.tools`
   - built-in runtime tool families, provider loading, and local tool execution
@@ -73,12 +77,13 @@ Current internal packages:
   - CLI surfaces and command registration
 - `toolang.web`
   - small shared FastAPI app helpers
+
 Reason:
 
 - shared constructs should live in one explicit internal package instead of
-  being redefined across runtime, sync, and caps modules
-- caps logic should stay grouped under one package, even while it still spans
-  authoring, materialization, and runtime view concerns
+  being redefined across runtime, sync, and capability modules
+- capability logic should stay grouped under one package, even while it still
+  spans authoring, materialization, and runtime view concerns
 - the runtime package should stay focused on execution and state
 
 
@@ -90,19 +95,20 @@ Current or expected uses:
 
 - chat transcripts
   - `${AGENT_ROOM}/chats/chats.db`
+- execution truth
+  - `${AGENT_ROOM}/execution.db`
+  - activation, thread, run, and step records
 - known-agent and running-agent registry
   - `${TOOLANG_ROOT}/agents.db`
 - shared bus projection
   - `${TOOLANG_ROOT}/bus/events.db`
-- future execution truth layer
-  - run, thread, turn, and step records
 
 Other durable formats:
 
 - Markdown
-  - skill, service, prompt, and psyche source artifacts
+  - task, chore, will, skill, service, prompt, and psyche source artifacts
 - JSON
-  - sync state, prompt traces, API output, runtime metadata
+  - sync state, prompt traces, API output, runtime metadata, and task mirrors
 - TOML
   - authored runtime and plugin configuration when needed
 

@@ -44,7 +44,7 @@ The memory plugin must not:
 
 - mutate runtime scheduling
 - rewrite prompt text directly
-- decide turn admission
+- decide run admission
 - append bus events by itself
 
 
@@ -65,7 +65,7 @@ Rules:
 
 ## 4. Recall
 
-Recall happens before the final prompt is built.
+Recall happens before the final prompt is built for one run.
 
 Suggested request shape:
 
@@ -75,7 +75,7 @@ class MemoryRecallRequest:
     agent_uri: str
     agent_id: str
     thread_id: str
-    turn_id: str
+    run_id: str
     origin: str
     sender: str
     query_text: str | None
@@ -99,7 +99,7 @@ class MemoryRecallResult:
 
 ## 5. Remember
 
-Remember happens after a turn completes and local state is saved.
+Remember happens after a run completes and local state is saved.
 
 Suggested write shape:
 
@@ -109,7 +109,7 @@ class MemoryWriteBatch:
     agent_uri: str
     agent_id: str
     thread_id: str
-    turn_id: str
+    run_id: str
     origin: str
     entries: list[MemoryEntry]
     meta: dict[str, Any]
@@ -127,8 +127,8 @@ class MemoryWriteResult:
 
 Rules:
 
-- memory writes happen after local turn state is durable
-- memory writes should not be required for turn success
+- memory writes happen after local run state is durable
+- memory writes should not be required for run success
 - write failures should be recorded and may be retried later
 
 
@@ -138,14 +138,13 @@ Memory is an augmentation layer, not the execution truth.
 
 Rules:
 
-- recall failure may degrade a turn, but should not crash the runtime by
-  default
-- write failure should not retroactively fail a completed turn
+- recall failure may degrade a run, but should not crash the runtime by default
+- write failure should not retroactively fail a completed run
 - failures should be visible in diagnostics and traces
 
 Recommended order:
 
-1. write local turn state
+1. write local run state
 2. write prompt trace
 3. perform memory write
 4. append shared bus projection events
