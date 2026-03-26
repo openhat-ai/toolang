@@ -36,7 +36,7 @@ class ChatRequest(BaseModel):
 class AgentChatMessage(BaseModel):
     """Stored chat message returned by the runtime API."""
 
-    id: int
+    id: str
     thread_id: str
     turn_id: str
     seq: int
@@ -294,6 +294,8 @@ class ChatThreadItem(BaseModel):
     id: str
     agent: str
     title: str | None = None
+    preview: str | None = None
+    channel: str | None = None
     created_at: str
     updated_at: str
 
@@ -332,7 +334,6 @@ class ChatTurnItem(BaseModel):
     thread_id: str
     turn_id: str
     messages: list[AgentChatMessage]
-    tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     started_at: str | None = None
     finished_at: str | None = None
 

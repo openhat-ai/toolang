@@ -5,7 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from toolang.concepts.messages import MessageRole, TextPart, ToolPart, TurnMessage
+from toolang.concepts.messages import (
+    MessageRole,
+    TextPart,
+    ToolPart,
+    TurnMessage,
+)
+from toolang.concepts.tools import ToolCallResult
 from toolang.runtime.model_exec import (
     TextDeltaEvent,
     ToolInputAvailableEvent,
@@ -238,6 +244,59 @@ class TurnMessageBuilder:
             provider_metadata=dict(provider_metadata or current.provider_metadata),
         )
 
+    def apply_model_event(self, event: object) -> None:
+        """Apply one runtime model event to this message builder."""
+
+        if isinstance(event, TextDeltaEvent):
+            self.append_text_delta(event.delta)
+            return
+        if isinstance(event, ToolInputStartEvent):
+            self.tool_input_start(event.tool_call_id)
+            return
+        if isinstance(event, ToolInputDeltaEvent):
+            self.tool_input_delta(event.tool_call_id, event.delta)
+            return
+        if isinstance(event, ToolInputAvailableEvent):
+            self.tool_input_available(
+                tool_call_id=event.tool_call_id,
+                tool_name=event.name,
+                tool_family=event.family,
+                input=event.arguments,
+                provider_metadata={
+                    "toolang": {
+                        "toolFamily": event.family,
+                    }
+                },
+            )
+            return
+        if isinstance(event, ToolOutputAvailableEvent):
+            if event.result.error is None:
+                self.tool_output_available(
+                    tool_call_id=event.tool_call_id,
+                    tool_name=event.result.name,
+                    tool_family=event.result.family,
+                    output=event.result.output,
+                    provider_metadata={
+                        "toolang": {
+                            "toolFamily": event.result.family,
+                            "toolName": event.result.name,
+                        }
+                    },
+                )
+                return
+            self.tool_output_error(
+                tool_call_id=event.tool_call_id,
+                tool_name=event.result.name,
+                tool_family=event.result.family,
+                error_text=event.result.error,
+                provider_metadata={
+                    "toolang": {
+                        "toolFamily": event.result.family,
+                        "toolName": event.result.name,
+                    }
+                },
+            )
+
     def build(self) -> TurnMessage:
         """Return the final assembled turn message."""
 
@@ -413,3 +472,65 @@ def chunk_to_dict(chunk: AIMessageChunk) -> dict[str, Any]:
         "type": chunk.type,
         "errorText": chunk.error_text,
     }
+
+
+def build_assistant_turn_message(
+    *,
+    message_id: str,
+    output_text: str,
+    tool_calls: list[ToolCallResult],
+    created_at: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    provider_metadata: dict[str, Any] | None = None,
+) -> TurnMessage:
+    """Build one final assistant turn message from completed turn output."""
+
+    builder = TurnMessageBuilder(
+        message_id=message_id,
+        created_at=created_at,
+        metadata=metadata,
+        provider_metadata=provider_metadata,
+    )
+    for index, item in enumerate(tool_calls, start=1):
+        tool_call_id = f"{message_id}:tool:{index}"
+        builder.tool_input_start(tool_call_id)
+        builder.tool_input_available(
+            tool_call_id=tool_call_id,
+            tool_name=item.name,
+            tool_family=item.family,
+            input=item.arguments,
+            provider_metadata={
+                "toolang": {
+                    "toolFamily": item.family,
+                }
+            },
+        )
+        if item.error is None:
+            builder.tool_output_available(
+                tool_call_id=tool_call_id,
+                tool_name=item.name,
+                tool_family=item.family,
+                output=item.output,
+                provider_metadata={
+                    "toolang": {
+                        "toolFamily": item.family,
+                        "toolName": item.name,
+                    }
+                },
+            )
+        else:
+            builder.tool_output_error(
+                tool_call_id=tool_call_id,
+                tool_name=item.name,
+                tool_family=item.family,
+                error_text=item.error,
+                provider_metadata={
+                    "toolang": {
+                        "toolFamily": item.family,
+                        "toolName": item.name,
+                    }
+                },
+            )
+    if output_text:
+        builder.append_text_delta(output_text)
+    return builder.build()

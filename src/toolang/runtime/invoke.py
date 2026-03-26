@@ -10,8 +10,10 @@ from toolang.bus.db import BusStore
 from toolang.bus.events import RunFailed, RunFinished, RunOrigin, RunStarted, utc_now
 from toolang.concepts.execution import MessageSender, RunKind, thread_group_for_origin
 from toolang.concepts.layout import AgentHome
+from toolang.concepts.messages import TextPart, TurnMessage
 from toolang.concepts.persisted import ToolsConfig
 from toolang.concepts.persisted.prompt_trace import PromptTrace
+from toolang.concepts.tools import ToolCallResult
 from toolang.program.ast import Thunk
 from toolang.tools import ToolRuntime, create_tool_runtime
 
@@ -21,6 +23,7 @@ from .build import (
     build_invoke_prompt,
     build_prompt_error_trace_data,
 )
+from .chat_protocol import TurnMessageBuilder, build_assistant_turn_message
 from .chats import ChatMessage, ChatStore
 from .execution_store import ExecutionStore
 from .messages import Message
@@ -114,6 +117,8 @@ def chat_prepared_agent(
     stream_event: ModelExecutionEventHandler | None = None,
 ) -> ChatResult:
     turn_run_id = run_id or uuid.uuid4().hex
+    user_message_id = f"{turn_run_id}:user"
+    assistant_message_id = f"{turn_run_id}:assistant"
 
     chat_store.append_message(
         agent_uri=prepared.ref.uri,
@@ -126,9 +131,30 @@ def chat_prepared_agent(
         channel=message.channel,
         sender=message.sender,
         text=message.text,
+        message=TurnMessage(
+            id=user_message_id,
+            role="user",
+            parts=(TextPart(id=f"{user_message_id}:text:1", text=message.text),),
+            created_at=utc_now(),
+            metadata=dict(message.meta),
+        ),
         meta=dict(message.meta),
     )
     history_messages = chat_store.recent_openai_messages(thread_id=message.thread_id, limit=20)
+
+    assistant_builder = (
+        TurnMessageBuilder(
+            message_id=assistant_message_id,
+        )
+        if stream_event is not None
+        else None
+    )
+
+    def _stream_and_build(event) -> None:
+        if assistant_builder is not None:
+            assistant_builder.apply_model_event(event)
+        if stream_event is not None:
+            stream_event(event)
 
     tracked = _tracked_turn(
         prepared=prepared,
@@ -156,7 +182,16 @@ def chat_prepared_agent(
             sandbox=sandbox,
             tool_runtime=tool_runtime,
         ),
-        stream_event=stream_event,
+        stream_event=_stream_and_build if stream_event is not None else None,
+    )
+    assistant_turn_message = (
+        assistant_builder.build()
+        if assistant_builder is not None
+        else build_assistant_turn_message(
+            message_id=assistant_message_id,
+            output_text=tracked.output,
+            tool_calls=tracked.tool_calls,
+        )
     )
     assistant_message = chat_store.append_message(
         agent_uri=prepared.ref.uri,
@@ -169,6 +204,7 @@ def chat_prepared_agent(
         channel=message.channel,
         sender="self",
         text=tracked.output,
+        message=assistant_turn_message,
         meta={},
     )
     return ChatResult(
@@ -182,6 +218,7 @@ def chat_prepared_agent(
 class _TrackedTurnResult:
     run_id: str
     output: str
+    tool_calls: list[ToolCallResult]
 
 
 def _tracked_turn(
@@ -374,7 +411,11 @@ def _tracked_turn(
                 thread_id=thread_id,
             )
         )
-        return _TrackedTurnResult(run_id=resolved_run_id, output=output)
+        return _TrackedTurnResult(
+            run_id=resolved_run_id,
+            output=output,
+            tool_calls=tool_calls,
+        )
     except Exception as exc:
         if execution is not None:
             step_kind = "prompt_build" if prompt_trace is None else "model_call"
