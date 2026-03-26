@@ -123,8 +123,8 @@ class AgentHome:
         return self.path / "hooks.toml"
 
     @property
-    def tools_config_path(self) -> Path:
-        return self.path / "tools.toml"
+    def env_path(self) -> Path:
+        return self.path / ".env"
 
     @property
     def synced_caps_root(self) -> Path:
@@ -223,6 +223,16 @@ class AgentRoom:
     @property
     def pulse_state_path(self) -> Path:
         return self.path / "pulse.json"
+
+    @property
+    def service_use_dir(self) -> Path:
+        return self.path / "service_use"
+
+    def service_use_provider_dir(self, provider: str) -> Path:
+        return self.service_use_dir / provider
+
+    def service_use_binding_dir(self, provider: str, service_name: str) -> Path:
+        return self.service_use_provider_dir(provider) / service_name
 
     def poll_state_path(self, binding_name: str) -> Path:
         return self.poll_dir / f"{binding_name}.json"

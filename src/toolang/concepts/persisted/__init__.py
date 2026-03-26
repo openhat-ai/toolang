@@ -11,7 +11,6 @@ from .poll_state import PollState
 from .pulse_state import PulseItemState, PulseState
 from .sync_state import InputFingerprint, LockEntry, LockedAgentRefs, SyncState
 from .task_mirrors import TaskMirrorBatch, TaskMirrorEntry, TaskMirrorSpec, TaskMirrorState
-from .tools_config import ToolBinding, ToolsConfig
 from .work import ChoreFile, TaskFile, WillFile, find_local_task, task_id_from_thread_id
 
 __all__ = [
@@ -41,8 +40,6 @@ __all__ = [
     "TaskMirrorSpec",
     "TaskMirrorState",
     "TaskFile",
-    "ToolBinding",
-    "ToolsConfig",
     "WebConfig",
     "find_local_task",
     "task_id_from_thread_id",

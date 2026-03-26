@@ -260,6 +260,7 @@ def _build_runtime_context(
         "origin": origin,
         "thread_id": thread_id,
         "visible_caps": visible_caps.model_dump(mode="python"),
+        "available_services": [item.service_catalog_item() for item in visible_caps.services],
         "program": _program_context(prepared.program, thunk, prepared.ref.source),
         "tools": tool_runtime.enabled_families() if tool_runtime is not None else [],
     }
@@ -330,6 +331,9 @@ def _build_developer_message(
     ]
     if message is not None:
         developer_sections.append(context_prompt(message))
+    service_prompt = _service_prompt(runtime_context)
+    if service_prompt is not None:
+        developer_sections.append(service_prompt)
     task_prompt = _task_prompt(runtime_context)
     if task_prompt is not None:
         developer_sections.append(task_prompt)
@@ -468,6 +472,51 @@ def _task_prompt(runtime_context: dict[str, Any]) -> str | None:
         lines.append("- If task write is unavailable, you may proceed, but you must clearly state that the task could not be updated.")
     else:
         lines.append("- Update the task at important milestones and before finishing.")
+    return "\n".join(lines)
+
+
+def _service_prompt(runtime_context: dict[str, Any]) -> str | None:
+    tools = runtime_context.get("tools")
+    services = runtime_context.get("available_services")
+    if not isinstance(tools, list) or "service_use" not in tools:
+        return None
+    if not isinstance(services, list):
+        services = []
+
+    lines = [
+        "Service usage protocol:",
+        "- Use the `service_use` tool whenever you need to access an MCP service.",
+        "- Service descriptions are trigger hints for when to use each service.",
+        "- Required service env vars are declared directly in service front matter.",
+        "- Those env vars live in the agent-home .env file.",
+    ]
+    if not services:
+        lines.append("- No services are currently visible to this agent.")
+        return "\n".join(lines)
+
+    lines.append("- Visible services:")
+    for item in services:
+        if not isinstance(item, dict):
+            continue
+        name = _task_text(item.get("name")) or "<unknown>"
+        transport = _task_text(item.get("transport")) or "unspecified"
+        target = _task_text(item.get("target"))
+        description = _task_text(item.get("description"))
+        env_vars = item.get("env_vars")
+        detail_parts = [f"transport={transport}"]
+        if target is not None:
+            detail_parts.append(f"target={target}")
+        if description is not None:
+            detail_parts.append(f"description={description}")
+        if isinstance(env_vars, list) and env_vars:
+            detail_parts.append(f"env={', '.join(str(env_name) for env_name in env_vars)}")
+        lines.append(f"- {name}: {'; '.join(detail_parts)}")
+    lines.extend(
+        [
+            "- To use a service, emit a `service_use` tool call with the target service name and action.",
+            "- Prefer `tool_list`, `resource_list`, or `prompt_list` when you need to discover capabilities before calling them.",
+        ]
+    )
     return "\n".join(lines)
 
 

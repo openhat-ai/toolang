@@ -24,16 +24,18 @@ Current built-in tool families:
 
 - `filesystem`
 - `shell`
+- `service_use`
 - `web_search`
 
 Planned but not yet implemented:
 
 - `memory_search`
-- `service_use`
 - `browser_use`
 - `computer_use`
 
 Each family is one stable capability with one default provider.
+
+Built-in tool families load by default.
 
 
 ## 3. Default Behavior
@@ -64,27 +66,69 @@ Each family is one stable capability with one default provider.
 - default provider uses local DuckDuckGo search
 - returns concise structured search results
 
+### `service_use`
+
+- one tool named `service_use`
+- default provider uses the external `mcat` CLI
+- exposes visible `service` caps as callable MCP services
+- loads even when no visible services exist, so the runtime capability surface
+  stays stable
+- service connection details come from service-cap front matter
+- `description` is the trigger text loaded into the available-services prompt
+  section
+- service body may be loaded on demand and is usually empty
+- required service secrets come from `${AGENT_HOME}/.env`
+- service front matter declares concrete env var names directly
+- supports:
+  - `tool_list`
+  - `tool_call`
+  - `resource_list`
+  - `resource_list_template`
+  - `resource_read`
+  - `prompt_list`
+  - `prompt_get`
+- HTTP services use:
+  - `transport`
+  - `target`
+- stdio services use:
+  - `transport`
+  - `command`
+  - `args`
+  - `port`
+- both may declare:
+  - `description`
+  - `env`
+  - `auth_env`
+
 
 ## 4. Loading
 
-Per-agent tool configuration lives at:
+Prompt builds should describe the current visible services and instruct the
+model to use `service_use` when it needs MCP-backed capabilities.
 
-- `${AGENT_HOME}/tools.toml`
+For service capabilities, the prompt should also declare:
 
-Minimal shape:
+- visible service names
+- trigger descriptions from service front matter
+- concrete required env vars
+- the rule that those env vars are read from `${AGENT_HOME}/.env`
 
-```toml
-[tools.filesystem]
-provider = "default"
+Example service front matter:
 
-[tools.shell]
-provider = "default"
-
-[tools.web_search]
-provider = "default"
+```md
+---
+transport: http
+target: https://mcp.github.com/mcp
+description: GitHub MCP server
+env:
+  - GITHUB_TOKEN
+auth_env: GITHUB_TOKEN
+---
 ```
 
-If `tools.toml` is absent, built-in defaults are used.
+That service requires:
+
+- `GITHUB_TOKEN`
 
 
 ## 5. Providers
@@ -108,6 +152,7 @@ Examples:
 
 - `filesystem:default`
 - `shell:default`
+- `service_use:mcat`
 - `web_search:default`
 
 
@@ -138,6 +183,7 @@ Current runtime security signals expose:
 
 - `tools.filesystem`
 - `tools.shell`
+- `tools.service_use`
 - `tools.web_search`
 - and future tool-family flags
 

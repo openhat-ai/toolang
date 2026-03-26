@@ -124,7 +124,35 @@ def test_invoke_prepared_agent_records_tool_calls(tmp_path: Path, monkeypatch) -
     trace = PromptTrace.load(agent_run_prompt_path(home, "alice", result.run_id))
 
     assert [step.step_kind for step in steps] == ["prompt_build", "tool_call", "model_call"]
-    assert trace.runtime_context["tools"] == ["filesystem", "shell", "web_search"]
+    assert trace.runtime_context["tools"] == [
+        "filesystem",
+        "service_use",
+        "shell",
+        "web_search",
+    ]
+    assert trace.runtime_context["available_services"] == [
+        {
+            "name": "github",
+            "transport": "http",
+            "target": "https://mcp.github.com/mcp",
+            "description": "GitHub MCP server",
+            "command": None,
+            "args": [],
+            "port": None,
+            "env_vars": ["GITHUB_TOKEN"],
+            "auth_env_var": "GITHUB_TOKEN",
+        }
+    ]
+    assert "Service usage protocol:" in trace.developer_message
+    assert "Use the `service_use` tool whenever you need to access an MCP service." in (
+        trace.developer_message
+    )
+    assert "Required service env vars are declared directly in service front matter." in (
+        trace.developer_message
+    )
+    assert "- github: transport=http; target=https://mcp.github.com/mcp; description=GitHub MCP server; env=GITHUB_TOKEN" in (
+        trace.developer_message
+    )
     assert trace.tool_calls == [
         {
             "family": "shell",

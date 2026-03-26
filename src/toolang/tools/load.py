@@ -5,25 +5,28 @@ from __future__ import annotations
 from dataclasses import dataclass
 from importlib.metadata import entry_points
 from pathlib import Path
+from typing import Any
 
 from toolang.concepts.identity import AgentRef
-from toolang.concepts.persisted import ToolBinding, ToolsConfig
 from toolang.concepts.tools import ToolDefinition, ToolFamily
 from toolang.errors import ToolangError
 
 from .contracts import ToolContext, ToolProvider, ToolProviderFactory
 from .plugins.filesystem import create_filesystem_tool
+from .plugins.service_use import create_service_use_tool
 from .plugins.shell import create_shell_tool
 from .plugins.web_search import create_web_search_tool
 
 _DEFAULT_PROVIDER_BY_FAMILY: dict[ToolFamily, str] = {
     "filesystem": "default",
     "shell": "default",
+    "service_use": "mcat",
     "web_search": "default",
 }
 _BUILTIN_TOOL_FACTORIES: dict[tuple[ToolFamily, str], ToolProviderFactory] = {
     ("filesystem", "default"): create_filesystem_tool,
     ("shell", "default"): create_shell_tool,
+    ("service_use", "mcat"): create_service_use_tool,
     ("web_search", "default"): create_web_search_tool,
 }
 
@@ -76,12 +79,11 @@ def create_tool_runtime(
     agent: AgentRef,
     *,
     sandbox: str,
-    tools_config: ToolsConfig | None = None,
     working_directory: Path | None = None,
+    visible_services: list[dict[str, Any]] | None = None,
 ) -> ToolRuntime:
     """Resolve one local tool runtime for the current agent turn."""
 
-    config = tools_config or ToolsConfig()
     context = ToolContext(
         agent=agent,
         working_directory=Path(working_directory or agent.home).expanduser().resolve(),
@@ -89,10 +91,12 @@ def create_tool_runtime(
     )
     providers: dict[ToolFamily, ToolProvider] = {}
     for family, default_provider in _DEFAULT_PROVIDER_BY_FAMILY.items():
-        binding = config.tools.get(family, ToolBinding(provider=default_provider))
+        provider_config: dict[str, object] = {}
+        if family == "service_use":
+            provider_config["visible_services"] = list(visible_services or [])
         providers[family] = create_tool_provider(
             family,
-            provider=binding.provider,
-            config=binding.config,
+            provider=default_provider,
+            config=provider_config,
         )
     return ToolRuntime(context=context, providers=providers)

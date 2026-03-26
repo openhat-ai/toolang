@@ -158,7 +158,6 @@ ${AGENT_HOME}/
   agents.too                         # optional
   channels.toml                      # optional
   hooks.toml                         # optional
-  tools.toml                         # optional
   .env                               # optional
   .toolang/                          # machine-managed, created lazily
     agents/{AGENT}/
@@ -184,8 +183,10 @@ Notes:
   - optional channel bindings for runtime loops
 - `hooks.toml`
   - optional hook bindings for runtime loops
-- `tools.toml`
-  - optional tool-family provider bindings for runtime execution
+- `.env`
+  - optional agent-home env file
+  - service capabilities read required env vars from here using the concrete
+    env var names declared in service front matter
 - `.toolang/sync/`
   - shared synced caps plus per-agent sync state
 - `.toolang/{skills,services,prompts,psyches}/`
@@ -211,6 +212,11 @@ ${AGENT_ROOM}/
   execution.db
   pulse.json
   task_mirrors.json
+  service_use/
+    mcat/
+      {SERVICE}/
+        session.json
+        proxy.json
   runs/
     {RUN_ID}/
       prompt.json
@@ -244,6 +250,8 @@ Notes:
     and will scans
 - `task_mirrors.json`
   - remote-task mirror bindings keyed by provider and remote ref
+- `service_use/`
+  - provider-owned MCP session and proxy state
 - `runs/{RUN_ID}/prompt.json`
   - prompt-build diagnostics for one turn
 - `poll/`
