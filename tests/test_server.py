@@ -259,13 +259,25 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
         threads = client.get("/api/v1/chats")
         assert threads.status_code == 200
         assert threads.json()["items"][0]["id"] == "owner"
+        assert threads.json()["items"][0]["title"] == "hello"
+        assert threads.json()["items"][0]["preview"] == "chat:5:stream me:gpt-5"
+        assert threads.json()["items"][0]["channel"] == "api"
 
         thread = client.get("/api/v1/chats/owner")
         assert thread.status_code == 200
         assert len(thread.json()["turns"]) == 3
-        assert [item["role"] for item in thread.json()["turns"][0]["messages"]] == [
+        latest_turn = thread.json()["turns"][-1]
+        assert [item["role"] for item in latest_turn["messages"]] == [
             "user",
             "assistant",
+        ]
+        assert latest_turn["messages"][0]["parts"] == [
+            {
+                "id": f'{latest_turn["turn_id"]}:user:text:1',
+                "type": "text",
+                "text": "stream me",
+                "state": "done",
+            }
         ]
 
         runs = client.get("/api/v1/runs")
@@ -494,7 +506,9 @@ def test_chat_stream_allows_tool_only_turns(tmp_path: Path, monkeypatch) -> None
     assert "data: [DONE]" in stream_text
 
 
-def test_chat_turn_and_run_detail_include_tool_calls(tmp_path: Path, monkeypatch) -> None:
+def test_chat_turn_and_run_detail_include_ordered_assistant_parts(
+    tmp_path: Path, monkeypatch
+) -> None:
     root = resolve_toolang_root(tmp_path / "toolang-root")
     home = root / "agents" / "alice"
     home.mkdir(parents=True)
@@ -540,25 +554,57 @@ def test_chat_turn_and_run_detail_include_tool_calls(tmp_path: Path, monkeypatch
 
         thread = client.get("/api/v1/chats/owner")
         assert thread.status_code == 200
-        assert thread.json()["turns"][0]["tool_calls"] == [
+        assert thread.json()["turns"][0]["messages"][1]["parts"] == [
             {
-                "family": "shell",
-                "name": "shell",
-                "arguments": {"command": "pwd"},
+                "id": f"{turn_id}:assistant:tool:1",
+                "type": "tool",
+                "tool_call_id": f"{turn_id}:assistant:tool:1",
+                "tool_name": "shell",
+                "tool_family": "shell",
+                "state": "output-available",
+                "input": {"command": "pwd"},
                 "output": {"ok": True, "stdout": "/tmp/alice"},
-                "error": None,
+                "error_text": None,
+                "provider_metadata": {
+                    "toolang": {
+                        "toolFamily": "shell",
+                        "toolName": "shell",
+                    }
+                },
+            },
+            {
+                "id": f"{turn_id}:assistant:text:2",
+                "type": "text",
+                "text": "done",
+                "state": "done",
             }
         ]
 
         detail = client.get(f"/api/v1/runs/{turn_id}")
         assert detail.status_code == 200
-        assert detail.json()["turn"]["tool_calls"] == [
+        assert detail.json()["turn"]["messages"][1]["parts"] == [
             {
-                "family": "shell",
-                "name": "shell",
-                "arguments": {"command": "pwd"},
+                "id": f"{turn_id}:assistant:tool:1",
+                "type": "tool",
+                "tool_call_id": f"{turn_id}:assistant:tool:1",
+                "tool_name": "shell",
+                "tool_family": "shell",
+                "state": "output-available",
+                "input": {"command": "pwd"},
                 "output": {"ok": True, "stdout": "/tmp/alice"},
-                "error": None,
+                "error_text": None,
+                "provider_metadata": {
+                    "toolang": {
+                        "toolFamily": "shell",
+                        "toolName": "shell",
+                    }
+                },
+            },
+            {
+                "id": f"{turn_id}:assistant:text:2",
+                "type": "text",
+                "text": "done",
+                "state": "done",
             }
         ]
 

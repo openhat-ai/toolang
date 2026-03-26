@@ -5,6 +5,7 @@ import json
 from toolang.agent.prepared import PreparedAgent
 from toolang.bus.db import AgentSnapshot, RunSnapshot, StoredEvent
 from toolang.concepts.caps import ServiceFrontmatter
+from toolang.concepts.messages import part_to_dict
 from toolang.caps.view import CapView, SkillCapView
 from toolang.runtime.api_models import (
     AgentCapsResponse,
@@ -126,21 +127,18 @@ def thread_item(thread: ChatThread) -> ChatThreadItem:
         id=thread.id,
         agent=thread.agent_name,
         title=thread.title,
+        preview=thread.preview,
+        channel=thread.channel,
         created_at=thread.created_at,
         updated_at=thread.updated_at,
     )
 
 
-def turn_item(
-    turn: ChatTurn,
-    *,
-    tool_calls: list[dict[str, object]] | None = None,
-) -> ChatTurnItem:
+def turn_item(turn: ChatTurn) -> ChatTurnItem:
     return ChatTurnItem(
         thread_id=turn.thread_id,
         turn_id=turn.turn_id,
         messages=[message_item(message) for message in turn.messages],
-        tool_calls=tool_calls or [],
         started_at=turn.started_at,
         finished_at=turn.finished_at,
     )
@@ -153,7 +151,7 @@ def message_item(message: ChatMessage) -> AgentChatMessage:
         turn_id=message.turn_id,
         seq=message.seq,
         role=message.role,
-        parts=[{"type": "text", "text": message.text}],
+        parts=[part_to_dict(item) for item in message.parts],
         created_at=message.created_at,
         meta=dict(message.meta),
     )
