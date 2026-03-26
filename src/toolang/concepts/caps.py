@@ -48,7 +48,6 @@ class ServiceFrontmatter(_FrontmatterBase):
     args: list[str] = Field(default_factory=list)
     port: int | None = None
     env: list[str] = Field(default_factory=list)
-    auth_env: str | None = None
 
     @model_validator(mode="after")
     def validate_service_envs(self) -> "ServiceFrontmatter":
@@ -60,21 +59,12 @@ class ServiceFrontmatter(_FrontmatterBase):
             if item not in deduped:
                 deduped.append(item)
         self.env = deduped
-        if self.auth_env is not None:
-            self.auth_env = _normalize_service_env_var(self.auth_env)
-            if self.auth_env not in self.env:
-                raise ValueError("auth_env must also be declared in env.")
         return self
 
     def required_env_vars(self) -> list[str]:
         """Return concrete env-var names required by this service."""
 
         return list(self.env)
-
-    def auth_env_var(self) -> str | None:
-        """Return the concrete env-var name used for HTTP auth, if declared."""
-
-        return self.auth_env
 
 
 class PromptFrontmatter(_FrontmatterBase):

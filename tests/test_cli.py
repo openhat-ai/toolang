@@ -206,6 +206,7 @@ def test_cli_commands_show_help_when_called_without_required_arguments() -> None
         ["skill", "local", "delete"],
         ["service"],
         ["service", "add"],
+        ["service", "auth"],
         ["service", "remove"],
         ["service", "local"],
         ["service", "local", "new"],
@@ -600,6 +601,73 @@ def test_cli_run_uses_cors_origins_from_root_config(tmp_path: Path, monkeypatch)
         "http://localhost:3000",
         "https://ui.example.test",
     ]
+
+
+def test_cli_service_auth_starts_oauth_for_visible_service(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+
+    resolved = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    calls: dict[str, object] = {}
+
+    class FakePrepared:
+        pass
+
+    class FakeServiceView:
+        def service_catalog_item(self) -> dict[str, object]:
+            return {
+                "name": "github",
+                "transport": "http",
+                "target": "https://mcp.github.com/mcp",
+                "description": "GitHub MCP server",
+                "env_vars": ["GITHUB_TOKEN"],
+            }
+
+    class FakeVisibleCaps:
+        services = [FakeServiceView()]
+
+    def fake_prepare_agent(agent) -> FakePrepared:
+        assert agent == resolved
+        return FakePrepared()
+
+    def fake_load_prepared_caps(prepared) -> FakeVisibleCaps:
+        assert isinstance(prepared, FakePrepared)
+        return FakeVisibleCaps()
+
+    def fake_start_service_auth(
+        agent, *, service_name: str, visible_services: list[dict[str, object]], wait: bool
+    ) -> dict[str, object]:
+        calls["agent"] = agent
+        calls["service_name"] = service_name
+        calls["visible_services"] = visible_services
+        calls["wait"] = wait
+        return {"ok": True}
+
+    monkeypatch.setattr("toolang.cli.caps._resolve_cli_agent", lambda *args, **kwargs: resolved)
+    monkeypatch.setattr("toolang.cli.caps.prepare_agent", fake_prepare_agent)
+    monkeypatch.setattr("toolang.cli.caps.load_prepared_caps", fake_load_prepared_caps)
+    monkeypatch.setattr("toolang.cli.caps.start_service_auth", fake_start_service_auth)
+
+    result = runner.invoke(app, ["service", "auth", "alice", "github"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == '{\n  "ok": true\n}'
+    assert calls == {
+        "agent": resolved,
+        "service_name": "github",
+        "visible_services": [
+            {
+                "name": "github",
+                "transport": "http",
+                "target": "https://mcp.github.com/mcp",
+                "description": "GitHub MCP server",
+                "env_vars": ["GITHUB_TOKEN"],
+            }
+        ],
+        "wait": True,
+    }
 
 
 def test_cli_start_docker_stages_sandbox_launch(tmp_path: Path, monkeypatch) -> None:

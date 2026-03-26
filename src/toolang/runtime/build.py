@@ -489,6 +489,7 @@ def _service_prompt(runtime_context: dict[str, Any]) -> str | None:
         "- Service descriptions are trigger hints for when to use each service.",
         "- Required service env vars are declared directly in service front matter.",
         "- Those env vars live in the agent-home .env file.",
+        "- OAuth tokens are managed by the service_use provider, not by .env.",
     ]
     if not services:
         lines.append("- No services are currently visible to this agent.")
