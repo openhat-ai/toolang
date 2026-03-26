@@ -215,6 +215,8 @@ ${AGENT_ROOM}/
   service_use/
     mcat/
       {SERVICE}/
+        auth.json
+        token.json
         session.json
         proxy.json
   runs/

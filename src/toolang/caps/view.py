@@ -54,9 +54,6 @@ class CapView(BaseModel):
             "env_vars": (
                 front_matter.required_env_vars() if front_matter is not None else []
             ),
-            "auth_env_var": (
-                front_matter.auth_env_var() if front_matter is not None else None
-            ),
         }
 
 

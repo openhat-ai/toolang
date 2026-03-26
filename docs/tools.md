@@ -77,9 +77,13 @@ Built-in tool families load by default.
 - `description` is the trigger text loaded into the available-services prompt
   section
 - service body may be loaded on demand and is usually empty
-- required service secrets come from `${AGENT_HOME}/.env`
+- static service env vars come from `${AGENT_HOME}/.env`
 - service front matter declares concrete env var names directly
+- OAuth tokens are not stored in `.env`
+- `service_use:mcat` stores OAuth token/state under the agent room
 - supports:
+  - `auth_start`
+  - `auth_continue`
   - `tool_list`
   - `tool_call`
   - `resource_list`
@@ -98,7 +102,6 @@ Built-in tool families load by default.
 - both may declare:
   - `description`
   - `env`
-  - `auth_env`
 
 
 ## 4. Loading
@@ -112,6 +115,7 @@ For service capabilities, the prompt should also declare:
 - trigger descriptions from service front matter
 - concrete required env vars
 - the rule that those env vars are read from `${AGENT_HOME}/.env`
+- the rule that `env` entries are already final env-var names and are not rewritten
 
 Example service front matter:
 
@@ -122,13 +126,32 @@ target: https://mcp.github.com/mcp
 description: GitHub MCP server
 env:
   - GITHUB_TOKEN
-auth_env: GITHUB_TOKEN
 ---
 ```
 
 That service requires:
 
 - `GITHUB_TOKEN`
+
+If a service requires OAuth, authenticate it with:
+
+```bash
+toolang service auth <agent> <service>
+```
+
+Agents should use the same provider through `service_use`:
+
+- call `service_use` with `action = "auth_start"` to get an authorization URL
+- return that URL to the user
+- after the user confirms approval, call `service_use` with `action = "auth_continue"`
+- `auth_start` should normally be non-blocking; use `wait = true` only for direct operator flows
+
+The default `mcat` provider stores OAuth files under:
+
+- `${AGENT_ROOM}/service_use/mcat/{SERVICE}/token.json`
+- `${AGENT_ROOM}/service_use/mcat/{SERVICE}/auth.json`
+- `${AGENT_ROOM}/service_use/mcat/{SERVICE}/session.json`
+- `${AGENT_ROOM}/service_use/mcat/{SERVICE}/proxy.json`
 
 
 ## 5. Providers

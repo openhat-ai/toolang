@@ -22,7 +22,7 @@ from toolang.runtime.model_exec import (
 from toolang.tools import ToolRuntime, create_tool_runtime
 from toolang.tools.contracts import ToolContext
 from toolang.tools.plugins.filesystem import create_filesystem_tool
-from toolang.tools.plugins.service_use import create_service_use_tool
+from toolang.tools.plugins.service_use import create_service_use_tool, start_service_auth
 from toolang.tools.plugins.shell import create_shell_tool
 from toolang.tools.plugins.web_search import create_web_search_tool
 
@@ -142,7 +142,6 @@ def test_create_tool_runtime_enables_service_use_when_services_are_visible(
                 "target": "https://mcp.github.com/mcp",
                 "description": "GitHub MCP server",
                 "env_vars": ["GITHUB_TOKEN"],
-                "auth_env_var": "GITHUB_TOKEN",
             }
         ],
     )
@@ -182,7 +181,6 @@ def test_service_use_tool_calls_http_service_via_mcat(monkeypatch, tmp_path: Pat
                     "target": "https://mcp.github.com/mcp",
                     "description": "GitHub MCP server",
                     "env_vars": ["GITHUB_TOKEN"],
-                    "auth_env_var": "GITHUB_TOKEN",
                 }
             ],
         }
@@ -210,11 +208,7 @@ def test_service_use_tool_calls_http_service_via_mcat(monkeypatch, tmp_path: Pat
     assert result["service"] == "github"
     assert result["transport"] == "http"
     assert result["result"] == {"tools": [{"name": "list_issues"}]}
-    assert calls[0] == [
-        "init",
-        "https://mcp.github.com/mcp",
-        "env://GITHUB_TOKEN",
-    ]
+    assert calls[0] == ["init", "https://mcp.github.com/mcp", ""]
     assert calls[1][0:2] == ["tool", "list"]
 
 
@@ -284,7 +278,6 @@ def test_service_use_tool_requires_declared_env_vars(monkeypatch, tmp_path: Path
                     "transport": "http",
                     "target": "https://mcp.github.com/mcp",
                     "env_vars": ["GITHUB_TOKEN"],
-                    "auth_env_var": "GITHUB_TOKEN",
                 }
             ]
         }
@@ -296,6 +289,201 @@ def test_service_use_tool_requires_declared_env_vars(monkeypatch, tmp_path: Path
 
     with pytest.raises(Exception, match="GITHUB_TOKEN"):
         provider.invoke({"service": "github", "action": "tool_list"}, _tool_context(home))
+
+
+def test_service_auth_starts_oauth_and_clears_cached_session(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "alice"
+    home.mkdir(parents=True)
+    (home / ".env").write_text("GITHUB_TOKEN=github-token\n", encoding="utf-8")
+    session_path = home / ".toolang" / "agents" / "alice" / "service_use" / "mcat" / "github" / "session.json"
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+    session_path.write_text("{}", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def fake_run_mcat_json(runner, args, *, cwd, service_env):
+        calls.append(args)
+        assert cwd == home
+        assert service_env == {"GITHUB_TOKEN": "github-token"}
+        return {"authorize_url": "https://example.test/oauth"}
+
+    monkeypatch.setattr("toolang.tools.plugins.service_use._run_mcat_json", fake_run_mcat_json)
+
+    result = start_service_auth(
+        _agent_ref(home),
+        service_name="github",
+        visible_services=[
+            {
+                "name": "github",
+                "transport": "http",
+                "target": "https://mcp.github.com/mcp",
+                "description": "GitHub MCP server",
+                "env_vars": ["GITHUB_TOKEN"],
+            }
+        ],
+        wait=True,
+    )
+
+    token_path = (
+        home / ".toolang" / "agents" / "alice" / "service_use" / "mcat" / "github" / "token.json"
+    )
+    auth_state_path = (
+        home / ".toolang" / "agents" / "alice" / "service_use" / "mcat" / "github" / "auth.json"
+    )
+    assert calls == [
+        [
+            "auth",
+            "start",
+            "https://mcp.github.com/mcp",
+            "-k",
+            f"json://{token_path}",
+            "--state",
+            str(auth_state_path),
+            "--wait",
+        ]
+    ]
+    assert not session_path.exists()
+    assert result == {
+        "service": "github",
+        "transport": "http",
+        "token_path": str(token_path),
+        "state_path": str(auth_state_path),
+        "result": {"authorize_url": "https://example.test/oauth"},
+    }
+
+
+def test_service_use_tool_auth_start_returns_pending_result(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "alice"
+    home.mkdir(parents=True)
+    (home / ".env").write_text("GITHUB_TOKEN=github-token\n", encoding="utf-8")
+    session_path = home / ".toolang" / "agents" / "alice" / "service_use" / "mcat" / "github" / "session.json"
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+    session_path.write_text("{}", encoding="utf-8")
+    provider = create_service_use_tool(
+        {
+            "visible_services": [
+                {
+                    "name": "github",
+                    "transport": "http",
+                    "target": "https://mcp.github.com/mcp",
+                    "description": "GitHub MCP server",
+                    "env_vars": ["GITHUB_TOKEN"],
+                }
+            ]
+        }
+    )
+    token_path = (
+        home / ".toolang" / "agents" / "alice" / "service_use" / "mcat" / "github" / "token.json"
+    )
+    auth_state_path = (
+        home / ".toolang" / "agents" / "alice" / "service_use" / "mcat" / "github" / "auth.json"
+    )
+
+    def fake_run_mcat_json(runner, args, *, cwd, service_env):
+        assert cwd == home
+        assert service_env == {"GITHUB_TOKEN": "github-token"}
+        assert args == [
+            "auth",
+            "start",
+            "https://mcp.github.com/mcp",
+            "-k",
+            f"json://{token_path}",
+            "--state",
+            str(auth_state_path),
+        ]
+        return {
+            "status": "pending",
+            "state_file": str(auth_state_path),
+            "action": {"url": "https://example.test/oauth"},
+        }
+
+    monkeypatch.setattr("toolang.tools.plugins.service_use._run_mcat_json", fake_run_mcat_json)
+
+    result = provider.invoke(
+        {"service": "github", "action": "auth_start"},
+        _tool_context(home),
+    )
+
+    assert result == {
+        "service": "github",
+        "transport": "http",
+        "action": "auth_start",
+        "result": {
+            "status": "pending",
+            "state_file": str(auth_state_path),
+            "action": {"url": "https://example.test/oauth"},
+        },
+    }
+    assert not session_path.exists()
+
+
+def test_service_use_tool_auth_continue_completes_pending_result(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "alice"
+    home.mkdir(parents=True)
+    (home / ".env").write_text("GITHUB_TOKEN=github-token\n", encoding="utf-8")
+    session_path = home / ".toolang" / "agents" / "alice" / "service_use" / "mcat" / "github" / "session.json"
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+    session_path.write_text("{}", encoding="utf-8")
+    auth_state_path = (
+        home / ".toolang" / "agents" / "alice" / "service_use" / "mcat" / "github" / "auth.json"
+    )
+    auth_state_path.parent.mkdir(parents=True, exist_ok=True)
+    auth_state_path.write_text("{}", encoding="utf-8")
+    token_path = (
+        home / ".toolang" / "agents" / "alice" / "service_use" / "mcat" / "github" / "token.json"
+    )
+    provider = create_service_use_tool(
+        {
+            "visible_services": [
+                {
+                    "name": "github",
+                    "transport": "http",
+                    "target": "https://mcp.github.com/mcp",
+                    "description": "GitHub MCP server",
+                    "env_vars": ["GITHUB_TOKEN"],
+                }
+            ]
+        }
+    )
+
+    def fake_run_mcat_json(runner, args, *, cwd, service_env):
+        assert cwd == home
+        assert service_env == {"GITHUB_TOKEN": "github-token"}
+        assert args == [
+            "auth",
+            "continue",
+            "--state",
+            str(auth_state_path),
+            "-k",
+            f"json://{token_path}",
+        ]
+        return {"status": "complete", "stored": f"json://{token_path}"}
+
+    monkeypatch.setattr("toolang.tools.plugins.service_use._run_mcat_json", fake_run_mcat_json)
+
+    result = provider.invoke(
+        {"service": "github", "action": "auth_continue"},
+        _tool_context(home),
+    )
+
+    assert result == {
+        "service": "github",
+        "transport": "http",
+        "action": "auth_continue",
+        "result": {
+            "status": "complete",
+            "stored": f"json://{token_path}",
+        },
+    }
+    assert not session_path.exists()
 
 
 def test_execute_prompt_build_runs_local_tool_loop(monkeypatch, tmp_path: Path) -> None:
