@@ -197,13 +197,13 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
         caps = client.get("/api/v1/caps")
         assert caps.status_code == 200
         assert caps.json()["agent"] == "alice"
-        assert [item["name"] for item in caps.json()["servers"]] == ["github"]
+        assert [item["name"] for item in caps.json()["services"]] == ["github"]
         assert [item["name"] for item in caps.json()["skills"]] == []
         assert [item["name"] for item in caps.json()["psyches"]] == ["reviewer"]
         assert caps.json()["counts"] == {
             "psyches": 1,
             "skills": 0,
-            "servers": 1,
+            "services": 1,
         }
 
         active = get_running_agent(db_path, agent.uri)

@@ -50,11 +50,11 @@ def caps_response(agent_name: str, caps) -> AgentCapsResponse:
         agent=agent_name,
         psyches=[psyche_item(item) for item in caps.psyches],
         skills=[skill_item(item) for item in caps.skills],
-        servers=[service_item(item) for item in caps.services],
+        services=[service_item(item) for item in caps.services],
         counts={
             "psyches": len(caps.psyches),
             "skills": len(caps.skills),
-            "servers": len(caps.services),
+            "services": len(caps.services),
         },
     )
 
