@@ -1,4 +1,4 @@
-"""Persisted origin metadata for non-resident agents."""
+"""Persisted origin metadata for visiting agents."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from toolang.concepts.identity import AgentKind, AgentRef
 
 
 class AgentOriginState(BaseModel):
-    """Persisted origin metadata for one visiting or roaming agent."""
+    """Persisted origin metadata for one visiting agent."""
 
     version: int = 1
     kind: AgentKind
@@ -19,8 +19,10 @@ class AgentOriginState(BaseModel):
 
     @classmethod
     def from_agent(cls, agent: AgentRef) -> "AgentOriginState":
-        """Build one origin record from a resolved non-resident agent."""
+        """Build one origin record from a resolved visiting agent."""
 
+        if agent.kind != "visiting":
+            raise ValueError("AgentOriginState only applies to visiting agents.")
         return cls(kind=agent.kind, name=agent.name, uri=agent.uri)
 
     @classmethod

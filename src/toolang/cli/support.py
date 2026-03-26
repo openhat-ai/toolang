@@ -313,7 +313,7 @@ def _remember_agent(agent: AgentRef, *, db_path: Path) -> None:
             updated_at=datetime.now(timezone.utc),
         ),
     )
-    if agent.kind != "resident":
+    if agent.kind == "visiting":
         AgentOriginState.from_agent(agent).save(
             AgentHome.resolve(agent.home).room(agent.name).origin_path
         )

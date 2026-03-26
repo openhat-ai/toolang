@@ -558,11 +558,10 @@ def test_resolve_cli_agent_supports_roaming_selector_from_registry(
     roaming = resolve_agent_ref(str(roaming_path), cwd=tmp_path, toolang_root=root)
     monkeypatch.setenv("TOOLANG_ROOT", str(root))
     _remember_agent(roaming, db_path=agents_db_path(root))
-    preserved = AgentOriginState.load(agent_origin_path(roaming.home, roaming.name))
 
     resolved = _resolve_cli_agent("roaming:charlie", db_path=agents_db_path(root))
 
-    assert preserved.uri == roaming_path.resolve().as_uri()
+    assert not agent_origin_path(roaming.home, roaming.name).exists()
     assert resolved.kind == "roaming"
     assert resolved.selector == "roaming:charlie"
     assert resolved.uri == roaming_path.resolve().as_uri()
