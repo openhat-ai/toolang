@@ -239,6 +239,7 @@ activation through:
 Current response categories are:
 
 - `psyches`
+- `prompts`
 - `skills`
 - `services`
 - `counts`
