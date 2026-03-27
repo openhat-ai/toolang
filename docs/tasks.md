@@ -114,6 +114,8 @@ The runtime derives:
 Rules:
 
 - `TaskItem.status` is task definition status, not run status
+- `thread_id` remains on task responses because the local task owns one stable
+  derived thread identity
 - task execution history should be queried through `/api/v1/runs?origin=task`
 - current or latest activity should not be inferred from the task definition
   status alone
@@ -172,6 +174,8 @@ Chores map to stable derived thread identities:
 Rules:
 
 - chore definitions do not expose runtime status
+- chore runtime still derives a stable thread identity, but the definition API
+  does not need to surface that thread id
 - chore execution history should be queried through `/api/v1/runs?origin=chore`
 - chore scheduling is RRULE-driven
 - new or updated chores are enqueued once immediately, then follow `rrule`
@@ -218,6 +222,8 @@ Will maps to one stable derived thread:
 Rules:
 
 - will scheduling is RRULE-driven
+- will runtime still derives a stable thread identity, but the definition API
+  does not need to surface that thread id
 - will execution history should be queried through `/api/v1/runs?origin=will`
 - create or update may trigger one immediate run before later scheduled runs
 

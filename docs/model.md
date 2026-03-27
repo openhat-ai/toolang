@@ -32,7 +32,7 @@ model.
 `agent`
 
 - one canonical identity
-- identified by canonical `agent_uri`
+- identified by canonical agent URI
 
 `incarnation`
 
@@ -265,6 +265,10 @@ Preferred lifecycle terminology:
 
 Guidance:
 
+- use spaced forms for concept names in prose, such as `agent uri` and
+  `agent id`
+- use underscore forms for concrete field names, such as `agent_uri` and
+  `agent_id`
 - use `run_id` only for one concrete run
 - do not use `run` for an activation interval
 - do not expose `turn` as the main public runtime noun
