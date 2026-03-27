@@ -85,7 +85,7 @@ class ToolSecurityInfo(BaseModel):
     shell: bool
     browser_use: bool
     computer_use: bool
-    services_use: bool
+    service_use: bool
     web_search: bool
     mem_search: bool
     file_search: bool

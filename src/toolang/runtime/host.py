@@ -333,7 +333,7 @@ class RuntimeHost:
                 "shell": "shell" in enabled_families,
                 "browser_use": "browser_use" in enabled_families,
                 "computer_use": "computer_use" in enabled_families,
-                "services_use": "service_use" in enabled_families,
+                "service_use": "service_use" in enabled_families,
                 "web_search": "web_search" in enabled_families,
                 "mem_search": "memory_search" in enabled_families,
                 "file_search": False,
