@@ -172,7 +172,14 @@ Responsibility summary:
 - `/api/v1/runtime`
   - current runtime environment and trust context
 - `/api/v1/caps`
-  - synced capability metadata visible to the running agent
+  - effective capability metadata visible to the running agent
+  - uses `services`, not `servers`
+  - current response lists:
+    - `psyches`
+    - `prompts`
+    - `skills`
+    - `services`
+    - `counts`
 - `/api/v1/tasks`
   - local durable task documents under the agent room, plus latest pulse
     scheduler feedback when available
