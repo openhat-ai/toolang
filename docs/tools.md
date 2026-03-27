@@ -176,7 +176,7 @@ Current runtime security signals expose:
 - `tools.shell`
 - `tools.browser_use`
 - `tools.computer_use`
-- `tools.services_use`
+- `tools.service_use`
 - `tools.web_search`
 - `tools.mem_search`
 - `tools.file_search`
