@@ -49,10 +49,12 @@ def caps_response(agent_name: str, caps) -> AgentCapsResponse:
     return AgentCapsResponse(
         agent=agent_name,
         psyches=[psyche_item(item) for item in caps.psyches],
+        prompts=[prompt_item(item) for item in caps.prompts],
         skills=[skill_item(item) for item in caps.skills],
         services=[service_item(item) for item in caps.services],
         counts={
             "psyches": len(caps.psyches),
+            "prompts": len(caps.prompts),
             "skills": len(caps.skills),
             "services": len(caps.services),
         },
@@ -70,6 +72,10 @@ def service_item(item: CapView) -> CapItem:
         else None
     )
     return CapItem(name=item.name, source=string_or_none(source), effective=item.path)
+
+
+def prompt_item(item: CapView) -> CapItem:
+    return CapItem(name=item.name, source=item.path, effective=item.path)
 
 
 def psyche_item(item: CapView) -> CapItem:

@@ -246,6 +246,7 @@ class AgentCapsResponse(BaseModel):
 
     agent: str
     psyches: list[CapItem] = Field(default_factory=list)
+    prompts: list[CapItem] = Field(default_factory=list)
     skills: list[CapItem] = Field(default_factory=list)
     services: list[CapItem] = Field(default_factory=list)
     counts: dict[str, int] = Field(default_factory=dict)

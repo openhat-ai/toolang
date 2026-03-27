@@ -195,6 +195,7 @@ Core endpoints:
   - uses `services`, not `servers`
   - current response lists:
     - `psyches`
+    - `prompts`
     - `skills`
     - `services`
     - `counts`
@@ -203,7 +204,6 @@ Core endpoints:
 
 Definition endpoints return authored state only. They do not expose pulse
 runtime feedback such as latest run timestamps or latest run status.
-
 - `/api/v1/tasks`
   - local durable task documents under the agent room
   - `TaskItem.status` is task definition status, not run status
