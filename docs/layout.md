@@ -20,15 +20,15 @@ This document defines Toolang filesystem layout and canonical agent identity.
 - `visiting agent`
   - an agent discovered from a remote URL and materialized under
     `${TOOLANG_ROOT}/guests/`
-- `agent_ref`
+- `agent ref`
   - the raw source-facing selector used to locate an agent
 - `agent selector`
-  - a CLI selector that may be a source-facing `agent_ref`, an `agent_id`, or
-    an `agent_name`
-- `agent_uri`
+  - a CLI selector that may be a source-facing agent ref, an agent id, or an
+    agent name
+- `agent uri`
   - the canonical identity string used for stable hashing
-- `agent_id`
-  - a short stable hash derived from `agent_uri`
+- `agent id`
+  - a short stable hash derived from `agent uri`
 
 
 ## 2. Canonical Agent URIs
@@ -44,9 +44,9 @@ Canonical URI forms:
 
 Rules:
 
-- `agent_id = hash(agent_uri)`
+- `agent id = hash(agent uri)`
 - canonical identity stays separate from local placement
-- `agent_uri` must not depend on the absolute `TOOLANG_ROOT` path
+- canonical agent URI must not depend on the absolute `TOOLANG_ROOT` path
 - `guest://...` is not a canonical URI
 
 
@@ -85,11 +85,11 @@ Additional rules:
 - relative local paths are allowed as input but not as canonical URI
 - canonical `file://` URIs always use absolute normalized paths
 - explicit source resolution yields both:
-  - `agent_uri`
-  - `agent_home`
+  - agent URI
+  - agent home
 - non-source selectors may also resolve through `agents.db` by:
-  - unique `agent_id` prefix
-  - exact `agent_name`
+  - unique agent-id prefix
+  - exact agent name
 
 
 ## 4. Toolang Root

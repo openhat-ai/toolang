@@ -77,10 +77,10 @@ Generated implementation reference does not live here. It belongs under
   - the local directory that hosts one or more `.too` files
 - `agent room`
   - the private machine-managed area for one agent
-- `agent_uri`
+- `agent uri`
   - the canonical identity string
-- `agent_id`
-  - a short stable hash derived from `agent_uri`
+- `agent id`
+  - a short stable hash derived from `agent uri`
 - `incarnation`
   - the interval from agent creation to agent removal
 - `activation`
