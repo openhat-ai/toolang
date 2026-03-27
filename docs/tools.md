@@ -174,8 +174,11 @@ Current runtime security signals expose:
 
 - `tools.filesystem`
 - `tools.shell`
-- `tools.service_use`
+- `tools.browser_use`
+- `tools.computer_use`
+- `tools.services_use`
 - `tools.web_search`
-- and future tool-family flags
+- `tools.mem_search`
+- `tools.file_search`
 
 Prompt traces may also include recorded tool calls for one run.
