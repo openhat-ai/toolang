@@ -246,16 +246,16 @@ Notes:
 - `agent.log`
   - managed runtime log
 - `execution.db`
-  - local execution truth layer for runs, threads, turns, and steps
+  - local execution truth layer for activations, threads, runs, and steps
 - `pulse.json`
-  - persisted scheduling state and latest run feedback for local task, chore,
-    and will scans
+  - persisted RRULE scheduling state and latest local scan feedback for task,
+    chore, and will definitions
 - `task_mirrors.json`
   - remote-task mirror bindings keyed by provider and remote ref
 - `service_use/`
   - provider-owned MCP session and proxy state
 - `runs/{RUN_ID}/prompt.json`
-  - prompt-build diagnostics for one turn
+  - prompt-build diagnostics for one run
 - `poll/`
   - runtime-owned poll loop state
 - `hooks/`
@@ -263,7 +263,7 @@ Notes:
 - `sync/`
   - agent-scoped synced caps
 - `chats/chats.db`
-  - durable chat threads and messages
+  - durable chat threads and ordered messages
 - `tasks/`, `chores/`, and `will.md`
   - agent-local work state
 

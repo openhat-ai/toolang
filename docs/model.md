@@ -12,12 +12,6 @@ Exact API surfaces live in [api.md](./api.md).
 
 This document is the source of truth for cross-document terminology.
 
-During the current transition, some detailed documents may still use older
-terms:
-
-- `run` where this document says `activation`
-- `turn` where this document says `run`
-
 
 ## 1. System Layers
 
@@ -37,7 +31,7 @@ model.
 
 `agent`
 
-- one canonical agent identity
+- one canonical identity
 - identified by canonical `agent_uri`
 
 `incarnation`
@@ -75,8 +69,10 @@ Important built-in definitions include:
   - one durable work definition owned by the agent
 - chore
   - one durable recurring definition owned by the agent
+  - trigger policy is defined by `rrule`
 - will
   - one durable agent-local long-horizon definition
+  - trigger policy is defined by `rrule`
 
 Rules:
 
@@ -121,8 +117,10 @@ Rules:
   set
 - runs inherit the effective caps of their activation
 - steps may use tools or prompts made available by those caps
-- `/api/v1/caps` should describe the effective caps visible to the current
-  activation, not the full authored history of every cap source
+- `/api/v1/caps` describes the effective caps visible to the current
+  activation, not the authored history of every cap source
+- the public capability API uses `service` and `services`, not `server` and
+  `servers`
 
 Capabilities influence prompt building, tool availability, and behavior, but
 they are not themselves runs, threads, or steps.
@@ -170,19 +168,18 @@ Built-in sources map to runtime objects like this:
 - `task`
   - one durable definition that usually owns one stable thread identity
 - `chore`
-  - one durable recurring definition that usually owns one stable thread
+  - one durable recurring definition that uses one stable derived thread
     identity
 - `will`
-  - one durable agent-local definition that usually owns one stable agent-local
-    thread identity
+  - one durable agent-local definition that uses one stable derived thread
+    identity
 - `invoke`
   - one direct run, often with an ephemeral thread
 
 Rules:
 
-- tasks, chores, and will should expose definition data through definition
-  endpoints
-- latest or historical runtime activity for those definitions should be queried
+- tasks, chores, and will expose definition data through definition endpoints
+- latest or historical runtime activity for those definitions is queried
   through runs
 - thread identity is the durable bridge between definition state and runtime
   history
@@ -198,8 +195,8 @@ Rules:
 - chat history lives in threads
 - one chat send or reply creates one run
 - ordered chat messages are presentation data attached to runs in chat threads
-- the scheduler and truth model should still be centered on run, not on chat as
-  a separate runtime primitive
+- the scheduler and truth model stay centered on run, not on chat as a
+  separate runtime primitive
 
 
 ## 8. Projections And Derived State
@@ -217,8 +214,8 @@ Examples:
 Rules:
 
 - projections may summarize lifecycle or latest activity
-- projections must not replace the primary meaning of definitions, caps,
-  threads, runs, or steps
+- projections must not replace the primary meaning of definitions,
+  capabilities, threads, runs, or steps
 - latest task activity is runtime state derived from runs or pulse state, not a
   substitute for task definition status
 
@@ -238,7 +235,7 @@ Definition endpoints:
 Capability endpoints:
 
 - return effective capability visibility and materialization views
-- do not mix cap metadata with run history
+- do not mix capability metadata with run history
 
 Runtime endpoints:
 

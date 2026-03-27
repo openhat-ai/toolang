@@ -1,6 +1,12 @@
 # Toolang Chat Model
 
-This document defines the canonical chat/message model for Toolang.
+This document defines the canonical chat and message model for Toolang.
+
+Chat is not a separate runtime hierarchy. It is a projection over:
+
+- threads
+- runs
+- ordered messages
 
 The goal is to keep one provider-independent message shape across:
 
@@ -10,33 +16,38 @@ The goal is to keep one provider-independent message shape across:
 - future multimodal and tool-rich UIs
 
 
-## 1. Canonical Message Model
+## 1. Chat Sits On Top Of Threads And Runs
 
-Toolang should use one canonical message shape in code and storage:
-
-- `TurnMessage`
-- `MessagePart`
-
-The direct ownership chain is:
+Ownership chain:
 
 - `thread`
-  - groups turns under one durable subject
-- `turn`
-  - one handling attempt inside a thread
-- `turn message`
-  - one ordered message emitted inside a turn
+  - groups related chat runs under one durable subject
+- `run`
+  - one chat handling attempt inside that thread
+- `message`
+  - one ordered chat message attached to that run
 - `message part`
-  - one ordered content/tool/source/file unit inside a message
+  - one ordered content, tool, source, or file unit inside that message
 
-Recommended structure:
+Rules:
 
-- `TurnMessage`
-  - `id`
-  - `role`
-  - `parts[]`
-  - `created_at`
-  - `metadata`
-  - `provider_metadata`
+- one chat send or reply creates one run
+- `run_id` is the public link between runtime execution and chat history
+- `turn_id` is not part of the public chat API
+
+
+## 2. Canonical Stored Message Shape
+
+The runtime API returns stored chat messages in this shape:
+
+- `id`
+- `thread_id`
+- `run_id`
+- `seq`
+- `role`
+- `parts[]`
+- `created_at`
+- `meta`
 
 Supported core parts:
 
@@ -50,80 +61,14 @@ Supported core parts:
 Rules:
 
 - `parts[]` order is canonical
-- tool invocations are stored as message parts, not in a side-channel array
-- assistant messages may be tool-only and may contain no text part
-- future multimodal content should extend `MessagePart`, not create a second
-  message model
+- assistant messages may be text-only, tool-only, or mixed
+- future multimodal support should extend message parts rather than create a
+  second message model
 
 
-## 2. Stream Versus History
+## 3. Ordered Tool Parts
 
-Toolang should treat streaming and history as two views of the same message:
-
-- stream
-  - the incremental construction of a message
-- history
-  - the final assembled `TurnMessage`
-
-History should not persist text deltas or partial tool-input deltas.
-It should persist the completed assembled message instead.
-
-This requires one dedicated assembly layer:
-
-- consume provider-independent runtime events
-- emit wire-protocol chunks
-- assemble the final `TurnMessage`
-
-The mapping must not be reimplemented in multiple endpoints.
-
-
-## 3. AI SDK Mapping
-
-Toolang should align its wire protocol with the AI SDK UI Message Stream
-protocol because:
-
-- the current Web UI is AI SDK-oriented
-- the protocol has already converged around cross-provider chat and tool usage
-- it keeps stream semantics and stored message semantics close to each other
-
-This alignment belongs in one explicit mapping layer.
-
-Toolang should not expose AI SDK names as its internal canonical model.
-
-Recommended split:
-
-- internal canonical model
-  - `TurnMessage`
-  - `MessagePart`
-- wire mapping
-  - AI SDK-compatible chunks
-  - AI SDK-compatible message JSON
-
-Current target chunk families include:
-
-- `start`
-- `text-start`
-- `text-delta`
-- `text-end`
-- `tool-input-start`
-- `tool-input-delta`
-- `tool-input-available`
-- `tool-output-available`
-- `tool-output-error`
-- `finish`
-- `error`
-
-Rules:
-
-- wire protocol uses AI SDK-compatible camelCase fields such as
-  `toolCallId`, `toolName`, `inputTextDelta`, `errorText`
-- internal dataclasses remain normal Python snake_case structures
-- the snake_case to camelCase mapping belongs only in the protocol layer
-
-
-## 4. Ordered Tool Parts
-
-Tool usage must be part of the assistant message itself.
+Tool usage must remain part of the assistant message itself.
 
 Do not return:
 
@@ -151,44 +96,102 @@ Each tool part should preserve:
 - `error_text`
 
 
-## 5. Future Multimodal Support
+## 4. Stream Versus History
 
-Multimodal support should extend `MessagePart`.
+Toolang treats streaming and stored history as two views of the same message:
 
-Do not add a second message protocol for images, files, or other media.
+- stream
+  - the incremental construction of a message
+- history
+  - the final assembled persisted message
 
-Expected future growth:
+History should not persist text deltas or partial tool-input deltas.
+It should persist the completed ordered message instead.
 
-- image and audio inputs
-  - represented as `file` parts with media metadata, or new specialized parts
-- reasoning
-  - represented as ordered `reasoning` parts
-- citations and retrieved sources
-  - represented as `source-url` or `source-document` parts
-- generated files
-  - represented as `file` parts
+This requires one dedicated assembly layer:
 
-This keeps:
+- consume provider-independent runtime events
+- emit wire-protocol chunks
+- assemble the final persisted message
 
-- model-provider adaptation
-- stream adaptation
-- persistence
-- UI rendering
-
-all centered on one concept system.
+The mapping must not be reimplemented in multiple endpoints.
 
 
-## 6. Current Status
+## 5. AI SDK Mapping
 
-The current chat runtime now follows this shape:
+Toolang aligns its wire protocol with the AI SDK UI Message Stream protocol
+because:
 
-1. `TurnMessage` and `MessagePart` are the canonical internal message model.
-2. `/api/v1/chat/stream` emits AI SDK-compatible SSE chunks through one
-   dedicated protocol layer.
-3. Assistant tool usage is persisted as ordered message parts, not as a
-   separate `tool_calls[]` side channel.
-4. `/api/v1/chats/{thread_id}` returns a transcript-shaped `messages[]` list
-   built from persisted canonical message parts.
+- the current Web UI is AI SDK-oriented
+- the protocol has already converged around cross-provider chat and tool usage
+- it keeps stream semantics and stored message semantics close to each other
 
-Remaining follow-up work should extend this same model rather than introduce a
-parallel chat representation.
+Current target chunk families include:
+
+- `start`
+- `text-start`
+- `text-delta`
+- `text-end`
+- `tool-input-start`
+- `tool-input-delta`
+- `tool-input-available`
+- `tool-output-available`
+- `tool-output-error`
+- `finish`
+- `error`
+
+Rules:
+
+- wire protocol uses AI SDK-compatible camelCase fields such as
+  `toolCallId`, `toolName`, `inputTextDelta`, and `errorText`
+- stored Toolang message objects remain normal snake_case payloads
+- the snake_case-to-camelCase mapping belongs only in the streaming protocol
+  layer
+
+
+## 6. Thread Views
+
+Thread list responses provide:
+
+- `id`
+- `kind`
+- `title`
+- `preview`
+- `channel`
+- `created_at`
+- `updated_at`
+
+Thread detail responses provide:
+
+- `thread`
+- `runs[]`
+- `messages[]`
+
+Rules:
+
+- `title` is a stable thread title
+- `preview` is the rolling latest-summary field
+- `/api/v1/threads*` is the canonical surface
+- `/api/v1/chats*` is a compatibility alias over the same thread data
+
+
+## 7. Current API Guidance
+
+`POST /api/v1/chat` returns:
+
+- `thread_id`
+- `run_id`
+- `message`
+- `assistant`
+
+`POST /api/v1/chat/stream` returns SSE chunks for the same run and final
+message.
+
+`GET /api/v1/threads/{thread_id}` returns:
+
+- thread metadata
+- related runs
+- ordered messages
+
+The canonical public link between chat history and runtime execution is
+`run_id`.

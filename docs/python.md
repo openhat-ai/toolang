@@ -37,9 +37,10 @@ Examples:
 - `toolang.agent`
   - agent identity, resolution, preparation, and registry
 - `toolang.runtime`
-  - turn execution, prompt build, chat state, and serving
+  - activation lifecycle, run execution, prompt build, chat state, and serving
 - `toolang.caps`
   - cap sync, overlay, and scope-aware runtime views
+
 Rules:
 
 - one module should own one main responsibility
@@ -54,13 +55,14 @@ Rules:
 
 Design terms in documentation and code must match.
 
-When Toolang defines a stable concept, the code should use the same word:
+When Toolang defines a stable concept, new code should use the same word:
 
+- `incarnation`
+- `activation`
 - `runtime loop`
 - `execution strategy`
-- `run`
 - `thread`
-- `turn`
+- `run`
 - `step`
 - `agent_uri`
 - `agent_id`
@@ -69,9 +71,11 @@ When Toolang defines a stable concept, the code should use the same word:
 
 Rules:
 
-- do not use one term in docs and another in code for the same concept
+- do not use one term in docs and another in new code for the same concept
 - prefer direct names over implementation slang
 - prefer stable domain names over temporary migration names
+- when older internal names remain, do not expand their usage; migrate toward
+  the canonical vocabulary in new code and new public surfaces
 
 
 ## 4. Types Before Comments
@@ -90,10 +94,10 @@ Example direction:
 
 ```python
 @dataclass
-class Turn:
-    turn_id: str
-    thread_id: str
+class RunRecord:
     run_id: str
+    activation_id: str
+    thread_id: str
     origin: Origin
     strategy: ExecutionStrategy
 ```
@@ -134,8 +138,9 @@ Example package docstring:
 ```python
 """Runtime execution package.
 
-This package contains turn execution, long-lived server surfaces, and chat
-state. It does not define agent identity, path layout, or source syncing.
+This package contains activation lifecycle, run execution, long-lived server
+surfaces, and chat state. It does not define agent identity, path layout, or
+source syncing.
 """
 ```
 
@@ -257,8 +262,8 @@ For this repository:
 - package docstrings should describe boundaries
 - module docstrings should describe local responsibility
 - comments should explain invariants such as:
-  - `thread` may outlive an `run`
-  - a `turn` always belongs to exactly one `run`
+  - a `thread` may outlive an activation
+  - a `run` always belongs to exactly one activation and one thread
   - `runtime loop` and `execution strategy` are orthogonal
   - shared bus state is a projection, not execution truth
 
