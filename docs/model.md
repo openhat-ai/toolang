@@ -5,7 +5,7 @@ runtime objects used across Toolang.
 
 Exact filesystem paths live in [layout.md](./layout.md).
 Exact cap resolution and sync behavior live in
-[capabilities.md](./capabilities.md).
+[caps.md](./caps.md).
 Exact runtime scheduling and message-flow mechanics live in
 [execution.md](./execution.md).
 Exact API surfaces live in [api.md](./api.md).
