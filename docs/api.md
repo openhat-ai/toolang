@@ -27,7 +27,7 @@ Top-level command groups:
   - `invoke`
   - `run`
   - `start`
-- capability management
+- caps management
   - `skill`
   - `service`
   - `prompt`
@@ -191,7 +191,7 @@ Core endpoints:
 - `/api/v1/runtime/diagnostics`
   - current scheduler, channel, and runtime diagnostics snapshot
 - `/api/v1/caps`
-  - effective capability metadata visible to the current activation
+  - effective caps metadata visible to the current activation
   - uses `services`, not `servers`
   - current response lists:
     - `psyches`
@@ -410,7 +410,7 @@ Responsibilities:
 ## 7. API Boundary Rules
 
 - lifecycle endpoints describe current agent, incarnation, or activation state
-- capability endpoints describe effective visible caps
+- caps endpoints describe effective visible caps
 - definition endpoints describe authored task, chore, and will state
 - runtime execution endpoints describe threads, runs, steps, messages, and
   events

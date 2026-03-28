@@ -65,7 +65,7 @@ Current internal packages:
 - `toolang.caps`
   - cap refs, sync orchestration, materialization, and runtime cap views
 - `toolang.concepts`
-  - shared identity, execution, layout, sandbox, capability, and persisted
+  - shared identity, execution, layout, sandbox, caps, and persisted
     constructs
 - `toolang.tools`
   - built-in runtime tool families, provider loading, and local tool execution
@@ -81,8 +81,8 @@ Current internal packages:
 Reason:
 
 - shared constructs should live in one explicit internal package instead of
-  being redefined across runtime, sync, and capability modules
-- capability logic should stay grouped under one package, even while it still
+  being redefined across runtime, sync, and caps modules
+- caps logic should stay grouped under one package, even while it still
   spans authoring, materialization, and runtime view concerns
 - the runtime package should stay focused on execution and state
 

@@ -6,7 +6,7 @@ model.
 
 ## 1. Scope
 
-Tools are base runtime capabilities.
+Tools are base runtime caps.
 
 They are not a separate agent framework.
 
@@ -33,7 +33,7 @@ Planned but not yet implemented:
 - `browser_use`
 - `computer_use`
 
-Each family is one stable capability with one default provider.
+Each family is one stable cap with one default provider.
 
 Built-in tool families load by default.
 
@@ -71,7 +71,7 @@ Built-in tool families load by default.
 - one tool named `service_use`
 - default provider uses the external `mcat` CLI
 - exposes visible `service` caps as callable MCP services
-- loads even when no visible services exist, so the runtime capability surface
+- loads even when no visible services exist, so the runtime caps surface
   stays stable
 - service connection details come from service-cap front matter
 - `description` is the trigger text loaded into the available-services prompt
@@ -92,9 +92,9 @@ Built-in tool families load by default.
 ## 4. Loading
 
 Prompt builds should describe the current visible services and instruct the
-model to use `service_use` when it needs MCP-backed capabilities.
+model to use `service_use` when it needs MCP-backed caps.
 
-For service capabilities, the prompt should also declare:
+For service caps, the prompt should also declare:
 
 - visible service names
 - trigger descriptions from service front matter

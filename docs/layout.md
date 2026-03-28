@@ -124,7 +124,7 @@ Notes:
 - `config.toml`
   - optional root-level defaults such as Web UI base URL and allowed CORS origins
 - `agents.too`
-  - optional global shared source
+  - optional global source
 - `sync/`
   - global synced caps
 - `{skills,services,prompts,psyches}/`
@@ -178,19 +178,19 @@ Notes:
 - `{AGENT}.too`
   - runnable source for one agent
 - `agents.too`
-  - optional shared source for all agents in that home
+  - optional home-scoped source for all agents in that home
 - `channels.toml`
   - optional channel bindings for runtime loops
 - `hooks.toml`
   - optional hook bindings for runtime loops
 - `.env`
   - optional agent-home env file
-  - service capabilities read required env vars from here using the concrete
+  - service caps read required env vars from here using the concrete
     env var names declared in service front matter
 - `.toolang/sync/`
-  - shared synced caps plus per-agent sync state
+  - home-scoped synced caps plus per-agent sync state
 - `.toolang/{skills,services,prompts,psyches}/`
-  - shared local caps
+  - home-scoped local caps
 - `.toolang/` is created by runtime-managed commands, not by `new` or `clone`
 
 
@@ -268,14 +268,14 @@ Notes:
   - agent-local work state
 
 
-## 7. Scope Roots
+## 7. Cap Scope Roots
 
-Capability scopes map to these roots:
+Cap scopes map to these roots:
 
 - `agent`
   - source: `${AGENT_HOME}/{AGENT}.too`
   - sync: `${AGENT_HOME}/.toolang/agents/{AGENT}/sync/`
-- `shared`
+- `home`
   - source: `${AGENT_HOME}/agents.too`
   - local: `${AGENT_HOME}/.toolang/{skills,services,prompts,psyches}/`
   - sync: `${AGENT_HOME}/.toolang/sync/`
@@ -284,7 +284,12 @@ Capability scopes map to these roots:
   - local: `${TOOLANG_ROOT}/{skills,services,prompts,psyches}/`
   - sync: `${TOOLANG_ROOT}/sync/`
 
-Scope semantics and runtime precedence are defined in
+Legacy note:
+
+- some current implementation surfaces still spell the `home` scope as
+  `shared`
+
+Scope semantics, visibility, and precedence are defined in
 [capabilities.md](./capabilities.md).
 
 
