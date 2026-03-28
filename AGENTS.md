@@ -58,7 +58,7 @@
 - `docs/index.md` is the entry point for the design docs in `docs/`.
 - `docs/layout.md` is the source of truth for Toolang root, agent home, agent
   room, and canonical agent URI layout.
-- `docs/capabilities.md` defines caps, cap scopes, cap sources, cap locators,
+- `docs/caps.md` defines caps, cap scopes, cap sources, cap locators,
   and sync semantics.
 - `docs/execution.md` defines runtime execution semantics.
 - `docs/api.md` defines CLI, registry, agent API, and bus API surfaces.

@@ -290,7 +290,7 @@ Legacy note:
   `shared`
 
 Scope semantics, visibility, and precedence are defined in
-[capabilities.md](./capabilities.md).
+[caps.md](./caps.md).
 
 
 ## 8. Sandbox Paths

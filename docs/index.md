@@ -24,7 +24,7 @@ Generated implementation reference does not live here. It belongs under
   - Toolang root, agent home, and agent room layout
   - path rules for execution state, prompt traces, sync state, and sandbox
     staging
-- [capabilities.md](./capabilities.md)
+- [caps.md](./caps.md)
   - cap definitions, cap kinds, cap scopes, cap sources, and cap locators
   - sync materialization rules and effective cap-set derivation
   - authoring guidance for CLI/WebUI and `/api/v1/caps` runtime projection
@@ -119,7 +119,7 @@ Generated implementation reference does not live here. It belongs under
 - Cross-document terminology lives in [model.md](./model.md).
 - Filesystem and identity rules live in [layout.md](./layout.md).
 - Caps visibility and sync rules live in
-  [capabilities.md](./capabilities.md).
+  [caps.md](./caps.md).
 - Runtime truth is local-first. Shared bus state is a projection.
 - Definition endpoints expose authored state only. Runtime history belongs to
   runs and threads.

@@ -6,7 +6,7 @@ Design semantics live in:
 
 - [index.md](./index.md)
 - [layout.md](./layout.md)
-- [capabilities.md](./capabilities.md)
+- [caps.md](./caps.md)
 - [execution.md](./execution.md)
 - [api.md](./api.md)
 - [tools.md](./tools.md)
