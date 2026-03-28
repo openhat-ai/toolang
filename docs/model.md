@@ -97,28 +97,41 @@ Current capability kinds:
 - `prompt`
 - `psyche`
 
-Current authored forms:
+One authored capability input is a `cap definition`.
 
-- `ref`
-- `inline`
-- `local`
+A cap definition carries:
 
-Current scopes:
+- `kind`
+- `name`
+- `scope`
+- `source`
+- `locator`
+
+Current canonical scopes:
 
 - `agent`
-- `shared`
+- `home`
 - `global`
+
+Current canonical sources:
+
+- `inline`
+- `local`
+- `remote`
 
 Rules:
 
+- `scope` controls both visibility and same-name precedence
+- `source` identifies where the authoritative definition comes from
+- `locator` identifies the authoritative definition regardless of source
 - capability identity and sync state are separate from runtime execution state
-- sync resolves authored capability inputs into materialized local state
+- sync resolves authored capability inputs into local runtime-ready artifacts
 - an activation starts from one prepared agent plus one effective visible cap
   set
 - runs inherit the effective caps of their activation
 - steps may use tools or prompts made available by those caps
 - `/api/v1/caps` describes the effective caps visible to the current
-  activation, not the authored history of every cap source
+  activation, not the authored history of every cap definition
 - the public capability API uses `service` and `services`, not `server` and
   `servers`
 

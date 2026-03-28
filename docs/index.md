@@ -25,9 +25,9 @@ Generated implementation reference does not live here. It belongs under
   - path rules for execution state, prompt traces, sync state, and sandbox
     staging
 - [capabilities.md](./capabilities.md)
-  - capability kinds, forms, scopes, and refs
-  - sync materialization rules
-  - runtime visibility and `/api/v1/caps` projection
+  - capability definitions, kinds, scopes, sources, and locators
+  - sync materialization rules and effective cap-set derivation
+  - authoring guidance for CLI/WebUI and `/api/v1/caps` runtime projection
 - [execution.md](./execution.md)
   - runtime loops and execution strategies
   - activation, thread, run, and step mechanics
@@ -99,6 +99,17 @@ Generated implementation reference does not live here. It belongs under
   - one ordered chat message attached to a run in a thread
 - `message part`
   - one ordered content, tool, source, or file unit inside a message
+- `cap definition`
+  - one authored capability input
+- `cap scope`
+  - the visibility and precedence boundary for a capability definition
+- `cap source`
+  - where the authoritative capability definition comes from
+- `cap locator`
+  - the canonical pointer to the authoritative capability definition
+- `effective cap set`
+  - the capability set visible to one activation after scope precedence is
+    applied
 - `skill`, `service`, `prompt`, `psyche`
   - the four current capability kinds
 
