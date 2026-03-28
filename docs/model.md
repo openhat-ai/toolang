@@ -1,10 +1,10 @@
 # Toolang Core Model
 
-This document defines the top-level lifecycle, capability, definition, and
+This document defines the top-level lifecycle, caps, definition, and
 runtime objects used across Toolang.
 
 Exact filesystem paths live in [layout.md](./layout.md).
-Exact capability resolution and sync behavior live in
+Exact cap resolution and sync behavior live in
 [capabilities.md](./capabilities.md).
 Exact runtime scheduling and message-flow mechanics live in
 [execution.md](./execution.md).
@@ -19,7 +19,7 @@ Toolang uses five top-level layers:
 
 - identity and lifecycle
 - authored definitions
-- capabilities
+- caps
 - runtime execution
 - projections and diagnostics
 
@@ -85,19 +85,19 @@ Rules:
 runs inside threads.
 
 
-## 4. Capabilities
+## 4. Caps
 
-Capabilities are runtime inputs that shape what an activation and its runs can
-see and do.
+Caps are composable agent primitives that shape what an activation and its runs
+can see and do.
 
-Current capability kinds:
+Current cap kinds:
 
 - `skill`
 - `service`
 - `prompt`
 - `psyche`
 
-One authored capability input is a `cap definition`.
+One authored cap input is a `cap definition`.
 
 A cap definition carries:
 
@@ -124,18 +124,18 @@ Rules:
 - `scope` controls both visibility and same-name precedence
 - `source` identifies where the authoritative definition comes from
 - `locator` identifies the authoritative definition regardless of source
-- capability identity and sync state are separate from runtime execution state
-- sync resolves authored capability inputs into local runtime-ready artifacts
+- cap identity and sync state are separate from runtime execution state
+- sync resolves authored cap inputs into local runtime-ready artifacts
 - an activation starts from one prepared agent plus one effective visible cap
   set
 - runs inherit the effective caps of their activation
 - steps may use tools or prompts made available by those caps
 - `/api/v1/caps` describes the effective caps visible to the current
   activation, not the authored history of every cap definition
-- the public capability API uses `service` and `services`, not `server` and
+- the public caps API uses `service` and `services`, not `server` and
   `servers`
 
-Capabilities influence prompt building, tool availability, and behavior, but
+Caps influence prompt building, tool availability, and behavior, but
 they are not themselves runs, threads, or steps.
 
 
@@ -227,8 +227,8 @@ Examples:
 Rules:
 
 - projections may summarize lifecycle or latest activity
-- projections must not replace the primary meaning of definitions,
-  capabilities, threads, runs, or steps
+- projections must not replace the primary meaning of definitions, caps,
+  threads, runs, or steps
 - latest task activity is runtime state derived from runs or pulse state, not a
   substitute for task definition status
 
@@ -245,10 +245,10 @@ Definition endpoints:
   - chores
   - will
 
-Capability endpoints:
+Caps endpoints:
 
-- return effective capability visibility and materialization views
-- do not mix capability metadata with run history
+- return effective cap visibility and materialization views
+- do not mix cap metadata with run history
 
 Runtime endpoints:
 

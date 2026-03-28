@@ -1,8 +1,8 @@
 # Toolang Design Index
 
 Toolang is a local-first agent runtime built around authored `.too` source
-files, synced capabilities, durable local state, and explicit long-lived
-runtime processes.
+files, synced caps, durable local state, and explicit long-lived runtime
+processes.
 
 This directory holds the design documents for the runtime. Each document owns
 one topic so the same rule does not need to be redefined in many places.
@@ -15,9 +15,9 @@ Generated implementation reference does not live here. It belongs under
 
 - [model.md](./model.md)
   - canonical top-level terminology
-  - agent, incarnation, activation, definition, capability, thread, run, and
+  - agent, incarnation, activation, definition, caps, thread, run, and
     step
-  - API boundary rules between definitions, capabilities, lifecycle, and
+  - API boundary rules between definitions, caps, lifecycle, and
     runtime execution
 - [layout.md](./layout.md)
   - canonical agent identity
@@ -25,7 +25,7 @@ Generated implementation reference does not live here. It belongs under
   - path rules for execution state, prompt traces, sync state, and sandbox
     staging
 - [capabilities.md](./capabilities.md)
-  - capability definitions, kinds, scopes, sources, and locators
+  - cap definitions, cap kinds, cap scopes, cap sources, and cap locators
   - sync materialization rules and effective cap-set derivation
   - authoring guidance for CLI/WebUI and `/api/v1/caps` runtime projection
 - [execution.md](./execution.md)
@@ -46,7 +46,7 @@ Generated implementation reference does not live here. It belongs under
   - local task files and remote mirror guidance
 - [tools.md](./tools.md)
   - built-in runtime tool families
-  - tool loading and service capability integration
+  - tool loading and service cap integration
   - tool-call recording as run steps
 - [api.md](./api.md)
   - CLI surface
@@ -100,25 +100,25 @@ Generated implementation reference does not live here. It belongs under
 - `message part`
   - one ordered content, tool, source, or file unit inside a message
 - `cap definition`
-  - one authored capability input
+  - one authored cap input
 - `cap scope`
-  - the visibility and precedence boundary for a capability definition
+  - the visibility and precedence boundary for a cap definition
 - `cap source`
-  - where the authoritative capability definition comes from
+  - where the authoritative cap definition comes from
 - `cap locator`
-  - the canonical pointer to the authoritative capability definition
+  - the canonical pointer to the authoritative cap definition
 - `effective cap set`
-  - the capability set visible to one activation after scope precedence is
+  - the cap set visible to one activation after scope precedence is
     applied
 - `skill`, `service`, `prompt`, `psyche`
-  - the four current capability kinds
+  - the four current cap kinds
 
 
 ## Design Rules
 
 - Cross-document terminology lives in [model.md](./model.md).
 - Filesystem and identity rules live in [layout.md](./layout.md).
-- Capability visibility and sync rules live in
+- Caps visibility and sync rules live in
   [capabilities.md](./capabilities.md).
 - Runtime truth is local-first. Shared bus state is a projection.
 - Definition endpoints expose authored state only. Runtime history belongs to

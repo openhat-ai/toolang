@@ -185,7 +185,7 @@ Notes:
   - optional hook bindings for runtime loops
 - `.env`
   - optional agent-home env file
-  - service capabilities read required env vars from here using the concrete
+  - service caps read required env vars from here using the concrete
     env var names declared in service front matter
 - `.toolang/sync/`
   - home-scoped synced caps plus per-agent sync state
@@ -268,9 +268,9 @@ Notes:
   - agent-local work state
 
 
-## 7. Capability Scope Roots
+## 7. Cap Scope Roots
 
-Capability scopes map to these roots:
+Cap scopes map to these roots:
 
 - `agent`
   - source: `${AGENT_HOME}/{AGENT}.too`

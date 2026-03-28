@@ -122,7 +122,7 @@ Rules:
 
 ### 2.4 Task Services
 
-Toolang should treat task-system integration as a service capability, not as a
+Toolang should treat task-system integration as a service cap, not as a
 new runtime abstraction family.
 
 The agent should rely on configured services for task operations such as:

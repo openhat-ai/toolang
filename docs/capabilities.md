@@ -1,6 +1,6 @@
-# Toolang Capability Model
+# Toolang Caps Model
 
-This document defines capability kinds, scopes, sources, locators,
+This document defines caps, cap kinds, cap scopes, cap sources, cap locators,
 materialization, and effective runtime views.
 
 Exact filesystem paths live in [layout.md](./layout.md).
@@ -10,31 +10,33 @@ Top-level lifecycle and runtime-resource vocabulary lives in
 
 ## 1. Core Principle
 
-Toolang should keep authored capability definitions separate from runtime
-capability visibility.
+In Toolang design docs, `caps` means composable agent primitives.
+
+Toolang should keep authored cap definitions separate from runtime cap
+visibility.
 
 Authoring answers:
 
-- what capability was declared?
+- what cap was declared?
 - where is it visible?
 - where is its source of truth?
 
 Runtime answers:
 
-- which capabilities are visible to this activation?
+- which caps are visible to this activation?
 - which same-name definition wins after precedence is applied?
 
 Rules:
 
-- CLI and WebUI should manage authored capability definitions directly
-- runtime APIs should project the effective visible capability set
+- CLI and WebUI should manage authored cap definitions directly
+- runtime APIs should project the effective visible cap set
 - authored state and effective runtime state must not be collapsed into one
   mixed object
 
 
-## 2. Capability Definition
+## 2. Cap Definition
 
-A `cap definition` is one authored capability input.
+A `cap definition` is one authored cap input.
 
 Each definition carries:
 
@@ -53,15 +55,15 @@ Recommended management model:
 
 Reason:
 
-- same-name capabilities may coexist across scopes
+- same-name caps may coexist across scopes
 - authored definitions may also differ by source and locator
 - destructive actions should identify one exact definition rather than a loose
   `(kind, name)` pair
 
 
-## 3. Capability Kinds
+## 3. Cap Kinds
 
-Toolang currently manages four capability kinds:
+Toolang currently manages four cap kinds:
 
 - `psyche`
 - `skill`
@@ -80,7 +82,7 @@ Kinds do not imply:
 - remote or local storage
 
 
-## 4. Capability Scopes
+## 4. Cap Scopes
 
 `scope` answers two questions at once:
 
@@ -122,7 +124,7 @@ Legacy note:
 - new design vocabulary should use `home`
 
 
-## 5. Capability Sources
+## 5. Cap Sources
 
 `source` answers one question:
 
@@ -161,7 +163,7 @@ They are better expressed as:
 - plus the appropriate `scope`
 
 
-## 6. Capability Locator
+## 6. Cap Locator
 
 `locator` is the canonical pointer to the authoritative definition.
 
@@ -192,7 +194,7 @@ Rules:
 
 ## 7. Materialization And Sync
 
-Toolang sync turns authored capability definitions into local runtime-ready
+Toolang sync turns authored cap definitions into local runtime-ready
 artifacts.
 
 Source-specific behavior:
@@ -250,7 +252,7 @@ Rules:
 - steps may use prompts, skills, services, or psyches that came from that
   effective set
 - `/api/v1/caps` should expose the effective runtime view, not the full
-  authored capability inventory
+  authored cap inventory
 
 
 ## 9. Authoring Model For CLI And WebUI
@@ -309,7 +311,7 @@ Current GitHub probe rules:
   - repos: `agent-skills`, `skills`
   - paths: `skills/<name>/SKILL.md`, `<name>/SKILL.md`
 
-Canonical layout for newly published GitHub capabilities:
+Canonical layout for newly published GitHub caps:
 
 - `service`
   - repo: `agent-services`
@@ -327,7 +329,7 @@ Canonical layout for newly published GitHub capabilities:
 
 ## 11. Runtime API Projection
 
-The runtime API exposes the effective visible capability set for the current
+The runtime API exposes the effective visible cap set for the current
 activation through:
 
 - `GET /api/v1/caps`
@@ -343,6 +345,5 @@ Current response categories are:
 Rules:
 
 - the API uses `service` and `services`, not `server` and `servers`
-- the payload is a runtime visibility view, not a full authored capability
-  inventory
-- counts should use the same names as the visible capability arrays
+- the payload is a runtime visibility view, not a full authored cap inventory
+- counts should use the same names as the visible cap arrays
