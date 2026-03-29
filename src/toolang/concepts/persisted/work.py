@@ -15,6 +15,9 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 TaskStatus = Literal["todo", "doing", "done", "cancelled"]
 DEFAULT_SCHEDULE_RRULE = "FREQ=MINUTELY;INTERVAL=5"
+LEGACY_TASK_STATUS_ALIASES = {
+    "in_progress": "doing",
+}
 
 
 class _MarkdownDocument(BaseModel):
@@ -57,6 +60,11 @@ class TaskFile(_MarkdownDocument):
     id: str | None = None
     requester: str = "owner"
     status: TaskStatus = "todo"
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _normalize_status(cls, value: object) -> object:
+        return normalize_task_status_input(value)
 
     @classmethod
     def load(cls, path: Path, *, persist_id: bool = False) -> "TaskFile":
@@ -162,6 +170,15 @@ def task_terminal(status: TaskStatus) -> bool:
     """Return whether one task status is terminal."""
 
     return status in {"done", "cancelled"}
+
+
+def normalize_task_status_input(value: object) -> object:
+    """Normalize one incoming task status, preserving unknown values."""
+
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    return LEGACY_TASK_STATUS_ALIASES.get(text, text)
 
 
 def work_content_hash(*, metadata: dict[str, Any], body: str) -> str:

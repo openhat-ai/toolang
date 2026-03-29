@@ -75,6 +75,34 @@ def test_collect_pulse_submissions_detects_task_chore_and_will(tmp_path: Path) -
     assert next_submissions == []
 
 
+def test_collect_pulse_submissions_accepts_legacy_in_progress_task_status(
+    tmp_path: Path,
+) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    source_path = home / "alice.too"
+    source_path.write_text(SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    room = AgentHome.resolve(home).room("alice")
+    (room.tasks_dir / "review.md").parent.mkdir(parents=True, exist_ok=True)
+    (room.tasks_dir / "review.md").write_text(
+        "---\nstatus: in_progress\nrequester: owner\n---\nLook at the latest changes.\n",
+        encoding="utf-8",
+    )
+
+    state, submissions = collect_pulse_submissions(room, agent, PulseState())
+    task = TaskFile.load(room.tasks_dir / "review.md", persist_id=True)
+    task_id = task.task_id()
+
+    assert task.status == "doing"
+    assert state.tasks[task_id].content_hash is not None
+    assert [(item.kind, item.thread_id) for item in submissions] == [
+        ("task", f"task:local:{task_id}"),
+    ]
+
+
 def test_create_agent_app_processes_pulse_work_files(tmp_path: Path, monkeypatch) -> None:
     root = resolve_toolang_root(tmp_path / "toolang-root")
     home = root / "agents" / "alice"

@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
-from toolang.concepts.persisted.work import DEFAULT_SCHEDULE_RRULE
+from pydantic import BaseModel, Field, field_validator
 from toolang.concepts.persisted.prompt_trace import PromptTrace as PersistedPromptTrace
-from toolang.concepts.persisted.work import TaskStatus
+from toolang.concepts.persisted.work import (
+    DEFAULT_SCHEDULE_RRULE,
+    TaskStatus,
+    normalize_task_status_input,
+)
 
 
 class RunRequest(BaseModel):
@@ -249,6 +252,11 @@ class TaskPutRequest(BaseModel):
     requester: str | None = None
     paused: bool = False
 
+    @field_validator("status", mode="before")
+    @classmethod
+    def _normalize_status(cls, value: object) -> object:
+        return normalize_task_status_input(value)
+
 
 class TaskPatchRequest(BaseModel):
     """Partial task document update written through the runtime API."""
@@ -258,6 +266,11 @@ class TaskPatchRequest(BaseModel):
     status: TaskStatus | None = None
     requester: str | None = None
     paused: bool | None = None
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _normalize_status(cls, value: object) -> object:
+        return normalize_task_status_input(value)
 
 
 class ChorePutRequest(BaseModel):

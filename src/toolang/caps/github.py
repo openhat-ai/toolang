@@ -9,7 +9,7 @@ from pathlib import Path
 
 import httpx
 
-from toolang.errors import ToolangError
+from toolang.errors import ExternalDependencyUnavailableError, ToolangError
 from toolang.concepts.caps import CapKind, CapRef
 
 CAP_REPO_CANDIDATES: dict[CapKind, tuple[tuple[str, str, str | None], ...]] = {
@@ -93,18 +93,26 @@ def _parse_cap_ref(ref: str) -> tuple[str, str]:
 
 
 def _repo_default_branch(client: httpx.Client, repo: str) -> str | None:
-    response = client.get(f"https://api.github.com/repos/{repo}")
-    if response.status_code == 404:
+    response = _github_get(
+        client,
+        f"https://api.github.com/repos/{repo}",
+        repo=repo,
+        allow_404=True,
+    )
+    if response is None:
         return None
-    response.raise_for_status()
     payload = response.json()
     branch = payload.get("default_branch")
     return branch if isinstance(branch, str) and branch else None
 
 
 def _repo_branch_rev(client: httpx.Client, repo: str, branch: str) -> str:
-    response = client.get(f"https://api.github.com/repos/{repo}/branches/{branch}")
-    response.raise_for_status()
+    response = _github_get(
+        client,
+        f"https://api.github.com/repos/{repo}/branches/{branch}",
+        repo=repo,
+    )
+    assert response is not None
     payload = response.json()
     commit = payload.get("commit") or {}
     sha = commit.get("sha")
@@ -114,15 +122,79 @@ def _repo_branch_rev(client: httpx.Client, repo: str, branch: str) -> str:
 
 
 def _github_file_exists(client: httpx.Client, repo: str, rev: str, path: str) -> bool:
-    response = client.get(f"https://raw.githubusercontent.com/{repo}/{rev}/{path}")
-    return response.status_code == 200
+    response = _github_get(
+        client,
+        f"https://raw.githubusercontent.com/{repo}/{rev}/{path}",
+        repo=repo,
+        allow_404=True,
+    )
+    return response is not None
 
 
 def _download_repo_archive(repo: str, rev: str) -> bytes:
     with httpx.Client(follow_redirects=True, headers={"User-Agent": "toolang-sync"}, timeout=30.0) as client:
-        response = client.get(f"https://github.com/{repo}/archive/{rev}.tar.gz")
-        response.raise_for_status()
+        response = _github_get(
+            client,
+            f"https://github.com/{repo}/archive/{rev}.tar.gz",
+            repo=repo,
+        )
+        assert response is not None
         return response.content
+
+
+def _github_get(
+    client: httpx.Client,
+    url: str,
+    *,
+    repo: str,
+    allow_404: bool = False,
+) -> httpx.Response | None:
+    try:
+        response = client.get(url)
+    except httpx.RequestError as exc:
+        raise ExternalDependencyUnavailableError(
+            f"GitHub is temporarily unavailable while resolving {repo}: {exc}"
+        ) from exc
+    if allow_404 and response.status_code == 404:
+        return None
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        if _is_transient_github_failure(response):
+            raise ExternalDependencyUnavailableError(
+                _transient_github_failure_message(repo, response)
+            ) from exc
+        raise
+    return response
+
+
+def _is_transient_github_failure(response: httpx.Response) -> bool:
+    if response.status_code in {429, 502, 503, 504}:
+        return True
+    if response.status_code != 403:
+        return False
+    if response.headers.get("x-ratelimit-remaining") == "0":
+        return True
+    message = _github_error_message(response)
+    return "rate limit" in message.lower()
+
+
+def _transient_github_failure_message(repo: str, response: httpx.Response) -> str:
+    message = _github_error_message(response)
+    suffix = f": {message}" if message else ""
+    return (
+        f"GitHub is temporarily unavailable while resolving {repo} "
+        f"(HTTP {response.status_code}){suffix}"
+    )
+
+
+def _github_error_message(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        return response.text.strip()
+    message = payload.get("message")
+    return str(message).strip() if isinstance(message, str) else ""
 
 
 def _extract_repo_archive(archive: bytes, root: Path) -> None:

@@ -32,6 +32,7 @@ from toolang.concepts.persisted import (
 from toolang.concepts.persisted.run_state import RunState
 from toolang.concepts.persisted.prompt_trace import PromptTrace
 from toolang.concepts.tools import ToolCallResult
+from toolang.errors import ExternalDependencyUnavailableError
 from toolang.runtime.execution_store import ExecutionStore
 from toolang.runtime.model_exec import (
     ModelExecutionResult,
@@ -944,6 +945,62 @@ thunk review:
         caps_after_delete = client.get("/api/v1/caps")
         assert caps_after_delete.status_code == 200
         assert caps_after_delete.json()["psyches"] == []
+
+
+def test_create_agent_app_keeps_runtime_endpoints_available_when_remote_sync_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    prepared = prepare_agent(agent)
+
+    monkeypatch.setattr(
+        "toolang.runtime.invoke.execute_prompt_build",
+        lambda build: "ok",
+    )
+    monkeypatch.setattr(
+        "toolang.runtime.invoke.execute_prompt_build_stream",
+        lambda build, *, on_event: ModelExecutionResult(output_text="ok"),
+    )
+
+    app = create_agent_app(
+        prepared,
+        agents_db_path=agents_db_path(root),
+        bus_db_path=bus_events_db_path(root),
+        host="127.0.0.1",
+        port=8765,
+        sandbox="host",
+    )
+
+    (home / "agents.too").write_text("use skill by3gus/repo-search\n", encoding="utf-8")
+
+    def fail_resolve(kind: str, ref: str):
+        raise ExternalDependencyUnavailableError(
+            f"GitHub is temporarily unavailable while resolving {ref}"
+        )
+
+    monkeypatch.setattr("toolang.caps.github.resolve_github_cap_ref", fail_resolve)
+
+    with TestClient(app) as client:
+        runtime = client.get("/api/v1/runtime")
+        assert runtime.status_code == 200
+        assert runtime.json()["status"] == "online"
+
+        caps = client.get("/api/v1/caps")
+        assert caps.status_code == 200
+        assert caps.json()["counts"] == {
+            "psyches": 1,
+            "prompts": 1,
+            "skills": 0,
+            "services": 1,
+        }
 
 
 def test_create_agent_app_reports_docker_sandbox_state(

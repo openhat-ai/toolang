@@ -19,7 +19,7 @@ from toolang.concepts.persisted.sync_state import (
     LockedAgentRefs,
     SyncState,
 )
-from toolang.errors import ToolangError
+from toolang.errors import ExternalDependencyUnavailableError, ToolangError
 from toolang.program import Program, parse
 
 from .cleanup import (
@@ -117,9 +117,15 @@ def sync_agent(agent: AgentRef) -> SyncedProgram:
 def ensure_agent_synced(agent: AgentRef) -> SyncedProgram:
     """Return synced program state, refreshing it first when inputs changed."""
 
+    state_path = AgentHome.resolve(agent.home).sync_state_path(agent.name)
     if _is_sync_fresh(agent):
-        return SyncState.load(AgentHome.resolve(agent.home).sync_state_path(agent.name)).program
-    return sync_agent(agent)
+        return SyncState.load(state_path).program
+    try:
+        return sync_agent(agent)
+    except ExternalDependencyUnavailableError:
+        if state_path.exists():
+            return SyncState.load(state_path).program
+        raise
 
 
 def load_scope_refs(path: Path, *, scope_label: str) -> LockedAgentRefs:

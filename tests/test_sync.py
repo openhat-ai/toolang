@@ -9,6 +9,7 @@ from toolang.caps import ensure_agent_synced, sync_agent
 from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.concepts.persisted.program import SyncedProgram
 from toolang.concepts.persisted.sync_state import SyncState
+from toolang.errors import ExternalDependencyUnavailableError
 from toolang.program import parse
 from toolang.concepts.caps import (
     CapDocument,
@@ -275,6 +276,35 @@ thunk review:
     after = agent_sync_path(home, "alice").read_text(encoding="utf-8")
 
     assert after != before
+
+
+def test_ensure_agent_synced_reuses_previous_state_when_remote_sync_is_unavailable(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    before = sync_agent(agent)
+    state_path = agent_sync_path(home, "alice")
+    state_before = state_path.read_text(encoding="utf-8")
+
+    shared_source_path(home).write_text("use skill by3gus/repo-search\n", encoding="utf-8")
+
+    def fail_resolve(kind: str, ref: str):
+        raise ExternalDependencyUnavailableError(
+            f"GitHub is temporarily unavailable while resolving {ref}"
+        )
+
+    monkeypatch.setattr("toolang.caps.github.resolve_github_cap_ref", fail_resolve)
+
+    after = ensure_agent_synced(agent)
+
+    assert after == before
+    assert state_path.read_text(encoding="utf-8") == state_before
 
 
 def test_sync_agent_reads_shared_and_global_skill_sources_without_collapsing_names(

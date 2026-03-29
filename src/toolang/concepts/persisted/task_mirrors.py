@@ -5,9 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from .work import TaskStatus
+from .work import TaskStatus, normalize_task_status_input
 
 
 class TaskMirrorSpec(BaseModel):
@@ -19,6 +19,11 @@ class TaskMirrorSpec(BaseModel):
     body: str = ""
     status: TaskStatus = "todo"
     remote_updated_at: datetime | None = None
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _normalize_status(cls, value: object) -> object:
+        return normalize_task_status_input(value)
 
 
 class TaskMirrorBatch(BaseModel):
