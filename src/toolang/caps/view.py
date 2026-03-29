@@ -30,10 +30,16 @@ class CapView(BaseModel):
 
     kind: Literal["service", "prompt", "psyche"]
     name: str
+    scope: Literal["agent", "shared", "global"]
     language: str | None = None
     path: str
     params: list[dict[str, Any]] = Field(default_factory=list)
     front_matter: CapFrontmatter | None = None
+    content: str = ""
+    ref: str | None = None
+    repo: str | None = None
+    source_path: str | None = None
+    rev: str | None = None
 
     def service_catalog_item(self) -> dict[str, Any]:
         """Render one service-view item as a tool-runtime catalog entry."""
@@ -62,10 +68,12 @@ class SkillCapView(BaseModel):
 
     kind: Literal["skill"] = "skill"
     name: str
+    scope: Literal["agent", "shared", "global"]
     path: str
     entry_path: str
     files: list[str] = Field(default_factory=list)
     front_matter: CapFrontmatter | None = None
+    content: str = ""
     ref: str | None = None
     repo: str | None = None
     source_path: str
@@ -112,28 +120,33 @@ def load_prepared_caps(prepared: PreparedAgent) -> CapsView:
 
 
 def _load_skill_views(ref: AgentRef, *, cap_scopes: CapScopeSelection) -> list[SkillCapView]:
-    items = _overlay_layers(*_skill_scope_layers(ref, cap_scopes=cap_scopes))
+    items: dict[str, SkillCapView] = {}
+    for scope, layer in _skill_scope_layers(ref, cap_scopes=cap_scopes):
+        for name, meta in layer.items():
+            items[name] = SkillCapView(
+                scope=scope,
+                name=meta.name,
+                path=meta.path,
+                entry_path=meta.entry_path or "",
+                files=list(meta.asset_files),
+                front_matter=meta.front_matter,
+                content=meta.raw_text,
+                ref=meta.ref,
+                repo=meta.repo,
+                source_path=meta.source_path or "",
+                rev=meta.rev,
+            )
     return [items[name] for name in sorted(items)]
 
 
-def _load_skills(root) -> dict[str, SkillCapView]:
+def _load_skills(root) -> dict[str, CapSidecar]:
     skill_dir = root / "skills"
-    items: dict[str, SkillCapView] = {}
+    items: dict[str, CapSidecar] = {}
     if not skill_dir.exists():
         return items
     for meta_path in sorted(skill_dir.glob("*.meta.json")):
         meta = CapSidecar.model_validate_json(meta_path.read_text(encoding="utf-8"))
-        items[meta.name] = SkillCapView(
-            name=meta.name,
-            path=meta.path,
-            entry_path=meta.entry_path or "",
-            files=list(meta.asset_files),
-            front_matter=meta.front_matter,
-            ref=meta.ref,
-            repo=meta.repo,
-            source_path=meta.source_path or "",
-            rev=meta.rev,
-        )
+        items[meta.name] = meta
     return items
 
 
@@ -143,18 +156,24 @@ def _load_cap_views(
     *,
     cap_scopes: CapScopeSelection,
 ) -> list[CapView]:
-    items = _overlay_layers(*_cap_scope_layers(ref, kind, cap_scopes=cap_scopes))
-    return [
-        CapView(
-            kind=kind,
-            name=meta.name,
-            language=meta.language,
-            path=meta.path,
-            params=[param.model_dump(mode="python") for param in meta.params],
-            front_matter=meta.front_matter,
-        )
-        for _, meta in sorted(items.items())
-    ]
+    items: dict[str, CapView] = {}
+    for scope, layer in _cap_scope_layers(ref, kind, cap_scopes=cap_scopes):
+        for name, meta in layer.items():
+            items[name] = CapView(
+                kind=kind,
+                name=meta.name,
+                scope=scope,
+                language=meta.language,
+                path=meta.path,
+                params=[param.model_dump(mode="python") for param in meta.params],
+                front_matter=meta.front_matter,
+                content=meta.raw_text,
+                ref=meta.ref,
+                repo=meta.repo,
+                source_path=meta.source_path,
+                rev=meta.rev,
+            )
+    return [items[name] for name in sorted(items)]
 
 
 def _load_cap_declarations(
@@ -163,7 +182,9 @@ def _load_cap_declarations(
     *,
     cap_scopes: CapScopeSelection,
 ) -> list[DeclBlock]:
-    items = _overlay_layers(*_cap_scope_layers(ref, kind, cap_scopes=cap_scopes))
+    items: dict[str, CapSidecar] = {}
+    for _, layer in _cap_scope_layers(ref, kind, cap_scopes=cap_scopes):
+        items.update(layer)
     return [
         DeclBlock(
             kind=kind,
@@ -192,24 +213,21 @@ def _load_cap_meta(root, kind: CapKind) -> dict[str, CapSidecar]:
     return items
 
 
-def _overlay_layers(*layers: dict[str, Any]) -> dict[str, Any]:
-    merged: dict[str, Any] = {}
-    for layer in layers:
-        merged.update(layer)
-    return merged
-
-
 def _skill_scope_layers(
     ref: AgentRef,
     *,
     cap_scopes: CapScopeSelection,
-) -> list[dict[str, SkillCapView]]:
-    layers: list[dict[str, SkillCapView]] = []
+) -> list[tuple[Literal["agent", "shared", "global"], dict[str, CapSidecar]]]:
+    layers: list[tuple[Literal["agent", "shared", "global"], dict[str, CapSidecar]]] = []
     if cap_scopes.include_global:
-        layers.append(_load_skills(ToolangRoot.resolve(ref.root).global_synced_caps_root))
+        layers.append(
+            ("global", _load_skills(ToolangRoot.resolve(ref.root).global_synced_caps_root))
+        )
     if cap_scopes.include_shared:
-        layers.append(_load_skills(AgentHome.resolve(ref.home).synced_caps_root))
-    layers.append(_load_skills(AgentHome.resolve(ref.home).room(ref.name).synced_caps_root))
+        layers.append(("shared", _load_skills(AgentHome.resolve(ref.home).synced_caps_root)))
+    layers.append(
+        ("agent", _load_skills(AgentHome.resolve(ref.home).room(ref.name).synced_caps_root))
+    )
     return layers
 
 
@@ -218,11 +236,26 @@ def _cap_scope_layers(
     kind: CapKind,
     *,
     cap_scopes: CapScopeSelection,
-) -> list[dict[str, CapSidecar]]:
-    layers: list[dict[str, CapSidecar]] = []
+) -> list[tuple[Literal["agent", "shared", "global"], dict[str, CapSidecar]]]:
+    layers: list[tuple[Literal["agent", "shared", "global"], dict[str, CapSidecar]]] = []
     if cap_scopes.include_global:
-        layers.append(_load_cap_meta(ToolangRoot.resolve(ref.root).global_synced_caps_root, kind))
+        layers.append(
+            (
+                "global",
+                _load_cap_meta(ToolangRoot.resolve(ref.root).global_synced_caps_root, kind),
+            )
+        )
     if cap_scopes.include_shared:
-        layers.append(_load_cap_meta(AgentHome.resolve(ref.home).synced_caps_root, kind))
-    layers.append(_load_cap_meta(AgentHome.resolve(ref.home).room(ref.name).synced_caps_root, kind))
+        layers.append(
+            (
+                "shared",
+                _load_cap_meta(AgentHome.resolve(ref.home).synced_caps_root, kind),
+            )
+        )
+    layers.append(
+        (
+            "agent",
+            _load_cap_meta(AgentHome.resolve(ref.home).room(ref.name).synced_caps_root, kind),
+        )
+    )
     return layers

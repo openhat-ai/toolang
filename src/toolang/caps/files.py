@@ -80,7 +80,7 @@ def sync_declared_cap_materialization(
         path=str(raw_path.relative_to(root)),
         params=list(params or []),
         front_matter=parsed.front_matter,
-        content=parsed.content,
+        content=parsed.body,
         raw_text=raw_text,
         ref=ref,
         repo=repo,
@@ -154,7 +154,7 @@ def sync_local_skill_materialization(
         path=str(skill_dir.relative_to(root)) + "/",
         language="md",
         front_matter=parsed.front_matter,
-        content=parsed.content,
+        content=parsed.body,
         raw_text=skill_text,
         entry_path=str((skill_dir / "SKILL.md").relative_to(root)),
         asset_files=sorted(files),
@@ -189,6 +189,27 @@ def create_local_cap(target: Path, kind: CapKind, name: str) -> None:
 
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(_default_cap_body(kind, name), encoding="utf-8")
+
+
+def write_local_cap(
+    target: Path,
+    kind: CapKind,
+    *,
+    content: str,
+) -> None:
+    """Create or replace one local authored capability from raw source text."""
+
+    if kind == "skill":
+        if target.exists() and not target.is_dir():
+            raise ToolangError(f"Local skill path is not a directory: {target}")
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "SKILL.md").write_text(content, encoding="utf-8")
+        return
+
+    if target.exists() and target.is_dir():
+        raise ToolangError(f"Local {kind} path is not a file: {target}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
 
 
 def install_local_cap(target: Path, kind: CapKind, source_path: Path) -> None:

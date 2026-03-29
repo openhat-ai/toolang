@@ -11,13 +11,19 @@ from toolang.caps.view import CapView, SkillCapView
 from toolang.runtime.api_models import (
     AgentCapsResponse,
     AgentChatMessage,
+    CapDetailItem,
+    CapDetailResponse,
+    CapMutationItem,
+    CapMutationResponse,
     CapItem,
+    CapListResponse,
     EventItem,
     RunItem,
     RunStepItem,
     ThreadItem,
 )
 from toolang.runtime.chats import ChatMessage
+from toolang.runtime.cap_defs import CapMutationResult
 
 SHORT_AGENT_ID_LENGTH = 12
 
@@ -45,13 +51,13 @@ def fallback_agent_snapshot(
     )
 
 
-def caps_response(agent_name: str, caps) -> AgentCapsResponse:
+def caps_response(prepared: PreparedAgent, caps) -> AgentCapsResponse:
     return AgentCapsResponse(
-        agent=agent_name,
-        psyches=[psyche_item(item) for item in caps.psyches],
-        prompts=[prompt_item(item) for item in caps.prompts],
-        skills=[skill_item(item) for item in caps.skills],
-        services=[service_item(item) for item in caps.services],
+        agent=prepared.ref.name,
+        psyches=[psyche_item(item, agent_kind=prepared.ref.kind) for item in caps.psyches],
+        prompts=[prompt_item(item, agent_kind=prepared.ref.kind) for item in caps.prompts],
+        skills=[skill_item(item, agent_kind=prepared.ref.kind) for item in caps.skills],
+        services=[service_item(item, agent_kind=prepared.ref.kind) for item in caps.services],
         counts={
             "psyches": len(caps.psyches),
             "prompts": len(caps.prompts),
@@ -61,25 +67,147 @@ def caps_response(agent_name: str, caps) -> AgentCapsResponse:
     )
 
 
-def skill_item(item: SkillCapView) -> CapItem:
-    return CapItem(name=item.name, source=item.ref, effective=item.path)
+def cap_mutation_response(result: CapMutationResult) -> CapMutationResponse:
+    return CapMutationResponse(
+        item=CapMutationItem(
+            kind=result.kind,
+            name=result.name,
+            scope=result.scope,
+            source=result.source,
+            locator=result.locator,
+            path=result.path,
+            ref=result.ref,
+        )
+    )
 
 
-def service_item(item: CapView) -> CapItem:
+def cap_list_response(items: list[CapItem]) -> CapListResponse:
+    return CapListResponse(items=items)
+
+
+def cap_detail_response(item: CapDetailItem) -> CapDetailResponse:
+    return CapDetailResponse(item=item)
+
+
+def skill_item(item: SkillCapView, *, agent_kind: str) -> CapItem:
+    return _cap_list_item(
+        kind=item.kind,
+        name=item.name,
+        scope=item.scope,
+        agent_kind=agent_kind,
+        source=item.ref or item.source_path or item.path,
+        effective=item.path,
+        path=item.source_path,
+        ref=item.ref,
+        description=_front_matter_description(item.front_matter),
+    )
+
+
+def skill_detail_item(item: SkillCapView, *, agent_kind: str) -> CapDetailItem:
+    return CapDetailItem(
+        **skill_item(item, agent_kind=agent_kind).model_dump(mode="python"),
+        content=item.content,
+        entry_path=item.entry_path,
+        files=list(item.files),
+    )
+
+
+def service_item(item: CapView, *, agent_kind: str) -> CapItem:
     source = (
         item.front_matter.target
         if isinstance(item.front_matter, ServiceFrontmatter)
-        else None
+        else item.ref or item.source_path or item.path
     )
-    return CapItem(name=item.name, source=string_or_none(source), effective=item.path)
+    return _cap_list_item(
+        kind=item.kind,
+        name=item.name,
+        scope=item.scope,
+        agent_kind=agent_kind,
+        source=source,
+        effective=item.path,
+        path=item.source_path if item.ref is None else None,
+        ref=item.ref,
+        description=_front_matter_description(item.front_matter),
+        params=list(item.params),
+    )
 
 
-def prompt_item(item: CapView) -> CapItem:
-    return CapItem(name=item.name, source=item.path, effective=item.path)
+def service_detail_item(item: CapView, *, agent_kind: str) -> CapDetailItem:
+    return CapDetailItem(
+        **service_item(item, agent_kind=agent_kind).model_dump(mode="python"),
+        content=item.content,
+    )
 
 
-def psyche_item(item: CapView) -> CapItem:
-    return CapItem(name=item.name, source=item.path, effective=item.path)
+def prompt_item(item: CapView, *, agent_kind: str) -> CapItem:
+    return _cap_list_item(
+        kind=item.kind,
+        name=item.name,
+        scope=item.scope,
+        agent_kind=agent_kind,
+        source=item.ref or item.source_path or item.path,
+        effective=item.path,
+        path=item.source_path if item.ref is None else None,
+        ref=item.ref,
+        description=_front_matter_description(item.front_matter),
+        params=list(item.params),
+    )
+
+
+def prompt_detail_item(item: CapView, *, agent_kind: str) -> CapDetailItem:
+    return CapDetailItem(
+        **prompt_item(item, agent_kind=agent_kind).model_dump(mode="python"),
+        content=item.content,
+    )
+
+
+def psyche_item(item: CapView, *, agent_kind: str) -> CapItem:
+    return _cap_list_item(
+        kind=item.kind,
+        name=item.name,
+        scope=item.scope,
+        agent_kind=agent_kind,
+        source=item.ref or item.source_path or item.path,
+        effective=item.path,
+        path=item.source_path if item.ref is None else None,
+        ref=item.ref,
+        description=_front_matter_description(item.front_matter),
+        params=list(item.params),
+    )
+
+
+def psyche_detail_item(item: CapView, *, agent_kind: str) -> CapDetailItem:
+    return CapDetailItem(
+        **psyche_item(item, agent_kind=agent_kind).model_dump(mode="python"),
+        content=item.content,
+    )
+
+
+def _cap_list_item(
+    *,
+    kind: str,
+    name: str,
+    scope: str,
+    agent_kind: str,
+    source: str | None,
+    effective: str,
+    path: str | None,
+    ref: str | None,
+    description: str | None,
+    params: list[dict[str, object]] | None = None,
+) -> CapItem:
+    return CapItem(
+        kind=kind,
+        name=name,
+        scope=scope,
+        editable=_cap_editable(agent_kind=agent_kind, ref=ref, source_path=path),
+        source=string_or_none(source),
+        effective=effective,
+        path=string_or_none(path),
+        ref=ref,
+        description=description,
+        params=list(params or []),
+    )
 
 
 def event_item(item: StoredEvent) -> EventItem:
@@ -181,6 +309,14 @@ def string_or_none(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _cap_editable(*, agent_kind: str, ref: str | None, source_path: str | None) -> bool:
+    return agent_kind != "visiting" and bool(ref or source_path)
+
+
+def _front_matter_description(front_matter: object) -> str | None:
+    return string_or_none(getattr(front_matter, "description", None))
 
 
 def sse(event: str, data: dict[str, object], event_id: int | None = None) -> str:

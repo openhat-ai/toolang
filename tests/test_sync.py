@@ -10,7 +10,14 @@ from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.concepts.persisted.program import SyncedProgram
 from toolang.concepts.persisted.sync_state import SyncState
 from toolang.program import parse
-from toolang.concepts.caps import CapKind, CapRef, CapSidecar, ServiceFrontmatter
+from toolang.concepts.caps import (
+    CapDocument,
+    CapKind,
+    CapMarkdownSchema,
+    CapRef,
+    CapSidecar,
+    ServiceFrontmatter,
+)
 
 
 def resolve_toolang_root(root: Path) -> Path:
@@ -54,6 +61,39 @@ REMOTE_SKILL_FIXTURE = Path(__file__).parent / "fixtures" / "remote-skill" / "pd
 REMOTE_SERVICE_FIXTURE = Path(__file__).parent / "fixtures" / "remote-service" / "github.md"
 REMOTE_PROMPT_FIXTURE = Path(__file__).parent / "fixtures" / "remote-prompt" / "rewrite.md"
 REMOTE_PSYCHE_FIXTURE = Path(__file__).parent / "fixtures" / "remote-psyche" / "reviewer.md"
+
+
+def test_cap_document_preserves_raw_markdown_and_composes_schema() -> None:
+    raw_text = REMOTE_SERVICE_FIXTURE.read_text(encoding="utf-8")
+
+    parsed = CapDocument.parse("service", "md", raw_text)
+
+    assert parsed.raw_text == raw_text
+    assert parsed.body == (
+        "Use this service when the agent needs to inspect repositories and pull requests."
+    )
+    assert isinstance(parsed.front_matter, ServiceFrontmatter)
+    assert parsed.front_matter.target == "https://mcp.github.com/mcp"
+
+    schema = CapMarkdownSchema.for_kind(
+        "service",
+        front_matter=ServiceFrontmatter(
+            transport="http",
+            target="https://mcp.github.com/mcp",
+            description="GitHub MCP server",
+            env=["GITHUB_TOKEN"],
+        ),
+        body=(
+            "Use this service when the agent needs to inspect repositories and pull requests."
+        ),
+    )
+    composed = CapDocument.compose_markdown(
+        "service",
+        body=schema.body,
+        front_matter=schema.front_matter,
+    )
+
+    assert CapDocument.parse("service", "md", composed.raw_text).markdown_schema() == schema
 
 
 def test_synced_program_round_trip(tmp_path) -> None:

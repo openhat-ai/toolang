@@ -69,6 +69,8 @@ def bus_events_db_path(root: Path) -> Path:
 
 
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"
+REMOTE_SERVICE_FIXTURE = Path(__file__).parent / "fixtures" / "remote-service" / "github.md"
+REMOTE_PSYCHE_FIXTURE = Path(__file__).parent / "fixtures" / "remote-psyche" / "reviewer.md"
 
 
 def test_create_agent_app_serves_webui_compatible_endpoints(
@@ -153,10 +155,10 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
                 "will_path_exists": False,
             },
             "self_modification": {
-                "can_add_caps": False,
-                "can_edit_will": False,
+                "can_add_caps": True,
+                "can_edit_will": True,
                 "can_write_source": False,
-                "can_persist_changes": False,
+                "can_persist_changes": True,
             },
         }
 
@@ -207,6 +209,34 @@ def test_create_agent_app_serves_webui_compatible_endpoints(
             "skills": 0,
             "services": 1,
         }
+
+        psyches = client.get("/api/v1/psyches")
+        assert psyches.status_code == 200
+        assert [item["name"] for item in psyches.json()["items"]] == ["reviewer"]
+
+        prompt_detail = client.get("/api/v1/prompts/summarize")
+        assert prompt_detail.status_code == 200
+        assert prompt_detail.json()["item"]["kind"] == "prompt"
+        assert prompt_detail.json()["item"]["name"] == "summarize"
+        assert prompt_detail.json()["item"]["scope"] == "agent"
+        assert prompt_detail.json()["item"]["content"] == (
+            "Summarize the request in a {{style}} style.\n"
+            "Audience: {{audience}}\n\n"
+            "{{input}}"
+        )
+        assert prompt_detail.json()["item"]["params"] == [
+            {"name": "style", "optional": False},
+            {"name": "audience", "optional": True},
+        ]
+
+        service_detail = client.get("/api/v1/services/github")
+        assert service_detail.status_code == 200
+        assert service_detail.json()["item"]["kind"] == "service"
+        assert service_detail.json()["item"]["scope"] == "agent"
+        assert (
+            service_detail.json()["item"]["content"]
+            == REMOTE_SERVICE_FIXTURE.read_text(encoding="utf-8").rstrip("\n")
+        )
 
         active = get_running_agent(db_path, agent.uri)
         assert active is not None
@@ -737,6 +767,183 @@ def test_runtime_endpoints_and_chat_fallback_to_started_snapshot_when_source_is_
     assert caps.status_code == 200
     assert chat.status_code == 200
     assert chat.json()["assistant"]["parts"][0]["text"] == "done"
+
+
+def test_create_agent_app_mutates_authored_caps_through_runtime_api(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        """
+thunk review:
+    Review the issue.
+""".strip(),
+        encoding="utf-8",
+    )
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    prepared = prepare_agent(agent)
+
+    def fake_resolve(kind: str, ref: str):
+        assert kind == "psyche"
+        assert ref == "by3gus/reviewer"
+        from toolang.concepts.caps import CapRef
+
+        return CapRef(
+            kind="psyche",
+            name="reviewer",
+            ref=ref,
+            repo="by3gus/agent-psyches",
+            path="psyches/reviewer.md",
+            rev="rev-by3gus",
+        )
+
+    def fake_fetch(resolved):
+        import shutil
+
+        fetched_file = tmp_path / "fetched" / resolved.repo.replace("/", "__") / REMOTE_PSYCHE_FIXTURE.name
+        fetched_file.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REMOTE_PSYCHE_FIXTURE, fetched_file)
+        return fetched_file, [REMOTE_PSYCHE_FIXTURE.name]
+
+    monkeypatch.setattr("toolang.caps.github.resolve_github_cap_ref", fake_resolve)
+    monkeypatch.setattr("toolang.caps.github.fetch_github_artifact", fake_fetch)
+    monkeypatch.setattr(
+        "toolang.runtime.invoke.execute_prompt_build",
+        lambda build: ModelExecutionResult(output_text="done"),
+    )
+    monkeypatch.setattr(
+        "toolang.runtime.invoke.execute_prompt_build_stream",
+        lambda build, *, on_event: ModelExecutionResult(output_text="done"),
+    )
+
+    app = create_agent_app(
+        prepared,
+        agents_db_path=agents_db_path(root),
+        bus_db_path=bus_events_db_path(root),
+        host="127.0.0.1",
+        port=8765,
+        sandbox="host",
+    )
+
+    local_path = home / ".toolang" / "psyches" / "reviewer-local.md"
+    shared_source = home / "agents.too"
+    local_psyche = (
+        "---\n"
+        "description: Shared reviewer guidance\n"
+        "---\n\n"
+        "Prefer direct and concrete language.\n"
+    )
+
+    with TestClient(app) as client:
+        runtime = client.get("/api/v1/runtime")
+        assert runtime.status_code == 200
+        assert runtime.json()["security"]["self_modification"] == {
+            "can_add_caps": True,
+            "can_edit_will": True,
+            "can_write_source": False,
+            "can_persist_changes": True,
+        }
+
+        put_local = client.put(
+            "/api/v1/psyches/reviewer-local",
+            json={
+                "scope": "shared",
+                "content": local_psyche,
+            },
+        )
+        assert put_local.status_code == 200
+        assert put_local.json()["item"] == {
+            "kind": "psyche",
+            "name": "reviewer-local",
+            "scope": "shared",
+            "source": "local",
+            "locator": str(local_path),
+            "path": str(local_path),
+            "ref": None,
+        }
+        assert local_path.exists()
+        assert local_path.read_text(encoding="utf-8") == local_psyche
+
+        put_remote = client.put(
+            "/api/v1/psyches/reviewer",
+            json={
+                "scope": "shared",
+                "ref": "by3gus/reviewer",
+            },
+        )
+        assert put_remote.status_code == 200
+        assert put_remote.json()["item"] == {
+            "kind": "psyche",
+            "name": "reviewer",
+            "scope": "shared",
+            "source": "remote",
+            "locator": "by3gus/reviewer",
+            "path": str(shared_source),
+            "ref": "by3gus/reviewer",
+        }
+        assert shared_source.read_text(encoding="utf-8") == "use psyche by3gus/reviewer\n"
+
+        caps = client.get("/api/v1/caps")
+        assert caps.status_code == 200
+        assert sorted(item["name"] for item in caps.json()["psyches"]) == [
+            "reviewer",
+            "reviewer-local",
+        ]
+        by_name = {item["name"]: item for item in caps.json()["psyches"]}
+        assert by_name["reviewer"]["scope"] == "shared"
+        assert by_name["reviewer"]["editable"] is True
+        assert by_name["reviewer"]["ref"] == "by3gus/reviewer"
+        assert by_name["reviewer-local"]["scope"] == "shared"
+        assert by_name["reviewer-local"]["editable"] is True
+        assert by_name["reviewer-local"]["path"] == "psyches/reviewer-local.md"
+        assert by_name["reviewer-local"]["description"] == "Shared reviewer guidance"
+        assert caps.json()["counts"]["psyches"] == 2
+
+        psyche_list = client.get("/api/v1/psyches")
+        assert psyche_list.status_code == 200
+        assert sorted(item["name"] for item in psyche_list.json()["items"]) == [
+            "reviewer",
+            "reviewer-local",
+        ]
+
+        remote_psyche_detail = client.get("/api/v1/psyches/reviewer")
+        assert remote_psyche_detail.status_code == 200
+        assert remote_psyche_detail.json()["item"]["ref"] == "by3gus/reviewer"
+        assert remote_psyche_detail.json()["item"]["scope"] == "shared"
+        assert (
+            remote_psyche_detail.json()["item"]["content"]
+            == REMOTE_PSYCHE_FIXTURE.read_text(encoding="utf-8")
+        )
+
+        local_psyche_detail = client.get("/api/v1/psyches/reviewer-local")
+        assert local_psyche_detail.status_code == 200
+        assert local_psyche_detail.json()["item"]["scope"] == "shared"
+        assert local_psyche_detail.json()["item"]["ref"] is None
+        assert local_psyche_detail.json()["item"]["content"] == local_psyche
+
+        delete_remote = client.delete(
+            "/api/v1/psyches/reviewer",
+            params={"scope": "shared", "source": "remote"},
+        )
+        assert delete_remote.status_code == 200
+        assert delete_remote.json() == {"ok": True}
+        assert not shared_source.exists()
+
+        delete_local = client.delete(
+            "/api/v1/psyches/reviewer-local",
+            params={"scope": "shared", "source": "local"},
+        )
+        assert delete_local.status_code == 200
+        assert delete_local.json() == {"ok": True}
+        assert not local_path.exists()
+
+        caps_after_delete = client.get("/api/v1/caps")
+        assert caps_after_delete.status_code == 200
+        assert caps_after_delete.json()["psyches"] == []
 
 
 def test_create_agent_app_reports_docker_sandbox_state(
@@ -1379,10 +1586,10 @@ def test_create_agent_app_exposes_prompt_trace_and_runtime_diagnostics(
             "will_path_exists": False,
         },
         "self_modification": {
-            "can_add_caps": False,
-            "can_edit_will": False,
+            "can_add_caps": True,
+            "can_edit_will": True,
             "can_write_source": False,
-            "can_persist_changes": False,
+            "can_persist_changes": True,
         },
     }
     assert {item["kind"] for item in body["scheduler"]["thread_groups"]} == {
