@@ -14,8 +14,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from toolang.agent.prepared import PreparedAgent
 from toolang.agent.registry import get_running_agent
-from toolang.bus.events import utc_now
+from toolang.bus.events import AgentChanged, utc_now
 from toolang.caps import load_prepared_caps
+from toolang.concepts.caps import CapKind
 from toolang.concepts.execution import MessageOrigin, RunStatus, RuntimeLoop
 from toolang.concepts.layout import AgentHome
 from toolang.concepts.persisted import ChannelsConfig, PromptTrace
@@ -25,6 +26,11 @@ from toolang.web import add_cors
 
 from ..api_models import (
     AgentCapsResponse,
+    CapDetailResponse,
+    CapDeleteResponse,
+    CapListResponse,
+    CapMutationResponse,
+    CapPutRequest,
     AgentProfile,
     AgentRuntimeResponse,
     ChatRequest,
@@ -52,6 +58,7 @@ from ..api_models import (
     WillResponse,
 )
 from ..build import infer_model
+from ..cap_defs import delete_cap_definition, put_cap_definition
 from ..chat_protocol import AIMessageChunkEncoder, chunk_to_dict
 from ..host import RuntimeHost
 from ..model_exec import TextDeltaEvent
@@ -68,12 +75,23 @@ from ..work import (
 )
 from .presenters import (
     SHORT_AGENT_ID_LENGTH,
+    cap_detail_response,
+    cap_list_response,
     caps_response,
+    cap_mutation_response,
     data_sse,
     event_item,
     fallback_agent_snapshot,
     message_item,
+    prompt_detail_item,
+    prompt_item,
+    psyche_detail_item,
+    psyche_item,
     runtime_run_item,
+    service_detail_item,
+    service_item,
+    skill_detail_item,
+    skill_item,
     sse,
     step_item,
     thread_item,
@@ -231,7 +249,140 @@ def create_agent_app(
     def list_caps() -> AgentCapsResponse:
         current = runtime_host.current_prepared()
         caps = load_prepared_caps(current)
-        return caps_response(prepared.ref.name, caps)
+        return caps_response(current, caps)
+
+    @app.get("/api/v1/psyches", response_model=CapListResponse)
+    def list_psyches() -> CapListResponse:
+        return _list_cap_collection("psyche")
+
+    @app.get("/api/v1/prompts", response_model=CapListResponse)
+    def list_prompts() -> CapListResponse:
+        return _list_cap_collection("prompt")
+
+    @app.get("/api/v1/services", response_model=CapListResponse)
+    def list_services() -> CapListResponse:
+        return _list_cap_collection("service")
+
+    @app.get("/api/v1/skills", response_model=CapListResponse)
+    def list_skills() -> CapListResponse:
+        return _list_cap_collection("skill")
+
+    @app.get("/api/v1/psyches/{cap_name:path}", response_model=CapDetailResponse)
+    def get_psyche(cap_name: str) -> CapDetailResponse:
+        return _get_cap_detail("psyche", cap_name)
+
+    @app.get("/api/v1/prompts/{cap_name:path}", response_model=CapDetailResponse)
+    def get_prompt(cap_name: str) -> CapDetailResponse:
+        return _get_cap_detail("prompt", cap_name)
+
+    @app.get("/api/v1/services/{cap_name:path}", response_model=CapDetailResponse)
+    def get_service(cap_name: str) -> CapDetailResponse:
+        return _get_cap_detail("service", cap_name)
+
+    @app.get("/api/v1/skills/{cap_name:path}", response_model=CapDetailResponse)
+    def get_skill(cap_name: str) -> CapDetailResponse:
+        return _get_cap_detail("skill", cap_name)
+
+    @app.put("/api/v1/caps/{cap_kind}/{cap_name:path}", response_model=CapMutationResponse)
+    def put_cap(
+        cap_kind: str,
+        cap_name: str,
+        request: CapPutRequest,
+    ) -> CapMutationResponse:
+        return _put_cap(_cap_kind(cap_kind), cap_name, request)
+
+    @app.put("/api/v1/psyches/{cap_name:path}", response_model=CapMutationResponse)
+    def put_psyche(cap_name: str, request: CapPutRequest) -> CapMutationResponse:
+        return _put_cap("psyche", cap_name, request)
+
+    @app.put("/api/v1/prompts/{cap_name:path}", response_model=CapMutationResponse)
+    def put_prompt(cap_name: str, request: CapPutRequest) -> CapMutationResponse:
+        return _put_cap("prompt", cap_name, request)
+
+    @app.put("/api/v1/services/{cap_name:path}", response_model=CapMutationResponse)
+    def put_service(cap_name: str, request: CapPutRequest) -> CapMutationResponse:
+        return _put_cap("service", cap_name, request)
+
+    @app.put("/api/v1/skills/{cap_name:path}", response_model=CapMutationResponse)
+    def put_skill(cap_name: str, request: CapPutRequest) -> CapMutationResponse:
+        return _put_cap("skill", cap_name, request)
+
+    @app.delete("/api/v1/caps/{cap_kind}/{cap_name:path}", response_model=CapDeleteResponse)
+    def delete_cap(
+        cap_kind: str,
+        cap_name: str,
+        scope: str = Query(...),
+        source: str | None = Query(None),
+    ) -> CapDeleteResponse:
+        return _delete_cap(_cap_kind(cap_kind), cap_name, scope=scope, source=source)
+
+    @app.delete("/api/v1/psyches/{cap_name:path}", response_model=CapDeleteResponse)
+    def delete_psyche(
+        cap_name: str,
+        scope: str = Query(...),
+        source: str | None = Query(None),
+    ) -> CapDeleteResponse:
+        return _delete_cap("psyche", cap_name, scope=scope, source=source)
+
+    @app.delete("/api/v1/prompts/{cap_name:path}", response_model=CapDeleteResponse)
+    def delete_prompt(
+        cap_name: str,
+        scope: str = Query(...),
+        source: str | None = Query(None),
+    ) -> CapDeleteResponse:
+        return _delete_cap("prompt", cap_name, scope=scope, source=source)
+
+    @app.delete("/api/v1/services/{cap_name:path}", response_model=CapDeleteResponse)
+    def delete_service(
+        cap_name: str,
+        scope: str = Query(...),
+        source: str | None = Query(None),
+    ) -> CapDeleteResponse:
+        return _delete_cap("service", cap_name, scope=scope, source=source)
+
+    @app.delete("/api/v1/skills/{cap_name:path}", response_model=CapDeleteResponse)
+    def delete_skill(
+        cap_name: str,
+        scope: str = Query(...),
+        source: str | None = Query(None),
+    ) -> CapDeleteResponse:
+        return _delete_cap("skill", cap_name, scope=scope, source=source)
+
+    def _put_cap(
+        kind: CapKind,
+        cap_name: str,
+        request: CapPutRequest,
+    ) -> CapMutationResponse:
+        current = runtime_host.current_prepared()
+        result = put_cap_definition(
+            current.ref,
+            kind=kind,
+            name=cap_name,
+            scope=request.scope,
+            source=request.source,
+            ref=request.ref,
+            content=request.content,
+        )
+        _append_caps_updated(current, detail=result.detail)
+        return cap_mutation_response(result)
+
+    def _delete_cap(
+        kind: CapKind,
+        cap_name: str,
+        *,
+        scope: str,
+        source: str | None,
+    ) -> CapDeleteResponse:
+        current = runtime_host.current_prepared()
+        result = delete_cap_definition(
+            current.ref,
+            kind=kind,
+            name=cap_name,
+            scope=scope,
+            source=source,
+        )
+        _append_caps_updated(current, detail=result.detail)
+        return CapDeleteResponse()
 
     @app.get("/api/v1/tasks", response_model=TaskListResponse)
     def list_tasks() -> TaskListResponse:
@@ -322,6 +473,86 @@ def create_agent_app(
                 for message in chat_run.messages
             ],
         )
+
+    def _list_cap_collection(kind: CapKind) -> CapListResponse:
+        current = runtime_host.current_prepared()
+        caps = load_prepared_caps(current)
+        return cap_list_response(_cap_items_for_kind(current, caps, kind))
+
+    def _get_cap_detail(kind: CapKind, cap_name: str) -> CapDetailResponse:
+        current = runtime_host.current_prepared()
+        caps = load_prepared_caps(current)
+        item = _cap_detail_for_kind(current, caps, kind, cap_name)
+        if item is None:
+            raise HTTPException(status_code=404, detail="cap not found")
+        return cap_detail_response(item)
+
+    def _append_caps_updated(current: PreparedAgent, *, detail: str) -> None:
+        runtime_host.bus.append(
+            AgentChanged(
+                at=utc_now(),
+                agent_uri=current.ref.uri,
+                agent_id=current.ref.id[:SHORT_AGENT_ID_LENGTH],
+                name=current.ref.name,
+                change_type="caps_updated",
+                detail=detail,
+                agent_home=str(current.ref.home),
+                source_file=current.ref.source.name,
+            )
+        )
+
+    def _cap_items_for_kind(
+        current: PreparedAgent,
+        caps,
+        kind: CapKind,
+    ) -> list:
+        if kind == "skill":
+            return [skill_item(item, agent_kind=current.ref.kind) for item in caps.skills]
+        if kind == "service":
+            return [service_item(item, agent_kind=current.ref.kind) for item in caps.services]
+        if kind == "prompt":
+            return [prompt_item(item, agent_kind=current.ref.kind) for item in caps.prompts]
+        return [psyche_item(item, agent_kind=current.ref.kind) for item in caps.psyches]
+
+    def _cap_detail_for_kind(
+        current: PreparedAgent,
+        caps,
+        kind: CapKind,
+        cap_name: str,
+    ):
+        if kind == "skill":
+            for item in caps.skills:
+                if item.name == cap_name:
+                    return skill_detail_item(item, agent_kind=current.ref.kind)
+            return None
+        if kind == "service":
+            for item in caps.services:
+                if item.name == cap_name:
+                    return service_detail_item(item, agent_kind=current.ref.kind)
+            return None
+        if kind == "prompt":
+            for item in caps.prompts:
+                if item.name == cap_name:
+                    return prompt_detail_item(item, agent_kind=current.ref.kind)
+            return None
+        for item in caps.psyches:
+            if item.name == cap_name:
+                return psyche_detail_item(item, agent_kind=current.ref.kind)
+        return None
+
+    def _cap_kind(segment: str) -> CapKind:
+        normalized = segment.strip().lower()
+        if normalized == "services":
+            return "service"
+        if normalized == "prompts":
+            return "prompt"
+        if normalized == "skills":
+            return "skill"
+        if normalized == "psyches":
+            return "psyche"
+        if normalized in {"service", "prompt", "skill", "psyche"}:
+            return normalized  # type: ignore[return-value]
+        raise HTTPException(status_code=404, detail="cap kind not found")
 
     @app.get("/api/v1/threads", response_model=ThreadListResponse)
     def list_threads(

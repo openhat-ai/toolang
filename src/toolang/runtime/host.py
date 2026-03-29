@@ -322,6 +322,7 @@ class RuntimeHost:
         )
         enabled_families = set(tool_runtime.enabled_families())
         pulse_enabled = "pulse" in self.runtime_loops
+        caps_mutable = current.ref.kind != "visiting"
         return {
             "sandbox": _sandbox_security_snapshot(
                 spec=spec,
@@ -345,10 +346,10 @@ class RuntimeHost:
                 "will_path_exists": room.will_path.exists(),
             },
             "self_modification": {
-                "can_add_caps": False,
-                "can_edit_will": False,
+                "can_add_caps": caps_mutable,
+                "can_edit_will": True,
                 "can_write_source": False,
-                "can_persist_changes": False,
+                "can_persist_changes": True,
             },
         }
 

@@ -229,7 +229,48 @@ Current materialized roots remain scope-specific:
   - `${AGENT_HOME}/.toolang/agents/{AGENT}/sync/`
 
 
-## 8. Effective Cap Set
+## 8. Markdown Cap Documents
+
+Markdown-backed caps should treat raw authored text as the source of truth.
+
+Conceptual model:
+
+- `raw_text`
+  - the exact authored Markdown document as loaded from a program block, local
+    file, or fetched remote source
+- parsed Markdown schema
+  - `front_matter`
+  - `body`
+
+Rules:
+
+- parsing must not rewrite or normalize `raw_text`
+- hash and change detection for fetched or synced Markdown should derive from
+  `raw_text`
+- structured editing may parse Markdown into typed schema and synthesize a new
+  document intentionally
+- synthesis is not a license to rewrite unrelated remote content during sync
+  or read-only projection
+
+Current typed front-matter schema by kind:
+
+- `service`
+  - `transport`
+  - `target`
+  - `description`
+  - `command`
+  - `args`
+  - `port`
+  - `env`
+- `prompt`
+  - `description`
+- `psyche`
+  - `description`
+- `skill`
+  - `description`
+
+
+## 9. Effective Cap Set
 
 The `effective cap set` is the runtime-visible result after Toolang combines:
 
@@ -255,7 +296,7 @@ Rules:
   authored cap inventory
 
 
-## 9. Authoring Model For CLI And WebUI
+## 10. Authoring Model For CLI And WebUI
 
 CLI and WebUI should organize authoring around `cap definition`, not around the
 effective runtime projection.
@@ -288,7 +329,7 @@ Path guidance:
   authoring flow
 
 
-## 10. Remote Locator Resolution
+## 11. Remote Locator Resolution
 
 The first supported remote registry family is GitHub.
 
@@ -327,7 +368,7 @@ Canonical layout for newly published GitHub caps:
   - path: `skills/<name>/SKILL.md`
 
 
-## 11. Runtime API Projection
+## 12. Runtime API Projection
 
 The runtime API exposes the effective visible cap set for the current
 activation through:
@@ -342,8 +383,56 @@ Current response categories are:
 - `services`
 - `counts`
 
+Current per-kind effective routes are:
+
+- `GET /api/v1/psyches`
+- `GET /api/v1/psyches/{name}`
+- `GET /api/v1/prompts`
+- `GET /api/v1/prompts/{name}`
+- `GET /api/v1/services`
+- `GET /api/v1/services/{name}`
+- `GET /api/v1/skills`
+- `GET /api/v1/skills/{name}`
+
 Rules:
 
 - the API uses `service` and `services`, not `server` and `servers`
 - the payload is a runtime visibility view, not a full authored cap inventory
 - counts should use the same names as the visible cap arrays
+- per-kind detail routes describe one effective visible item, not every authored
+  definition that may contribute candidates
+- detail `content` should return the full raw authored document for that
+  effective item
+- Markdown detail payloads should not split `frontmatter` into a separate API
+  field
+
+
+## 13. Runtime Authoring Endpoints
+
+The runtime API may also expose authored-definition mutations without turning
+`GET /api/v1/caps` into an authored inventory endpoint.
+
+Current authored cap mutation shape:
+
+- `PUT /api/v1/caps/{kind}/{name}`
+- `PUT /api/v1/{psyches|prompts|services|skills}/{name}`
+  - requires explicit `scope`
+  - accepts either:
+    - local authored content via `content`
+      - for Markdown caps, `content` carries the full raw document, including
+        any front matter
+    - remote authored attachment via `ref`
+- `DELETE /api/v1/caps/{kind}/{name}`
+- `DELETE /api/v1/{psyches|prompts|services|skills}/{name}`
+  - requires explicit `scope`
+  - should use explicit `source` when a local definition and a remote ref
+    could both match the same `(kind, name, scope)`
+
+Rules:
+
+- authored mutations target one explicit cap definition
+- effective runtime projection remains a separate read model
+- UI flows should still distinguish:
+  - authored local definitions
+  - authored remote refs
+  - runtime-effective visibility

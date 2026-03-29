@@ -154,6 +154,24 @@ Core endpoints:
 - `GET /api/v1/runtime/diagnostics`
 - `GET /api/v1/diagnostics`
 - `GET /api/v1/caps`
+- `GET /api/v1/psyches`
+- `GET /api/v1/psyches/{name}`
+- `GET /api/v1/prompts`
+- `GET /api/v1/prompts/{name}`
+- `GET /api/v1/services`
+- `GET /api/v1/services/{name}`
+- `GET /api/v1/skills`
+- `GET /api/v1/skills/{name}`
+- `PUT /api/v1/caps/{kind}/{name}`
+- `DELETE /api/v1/caps/{kind}/{name}`
+- `PUT /api/v1/psyches/{name}`
+- `DELETE /api/v1/psyches/{name}`
+- `PUT /api/v1/prompts/{name}`
+- `DELETE /api/v1/prompts/{name}`
+- `PUT /api/v1/services/{name}`
+- `DELETE /api/v1/services/{name}`
+- `PUT /api/v1/skills/{name}`
+- `DELETE /api/v1/skills/{name}`
 - `GET /api/v1/tasks`
 - `PUT /api/v1/tasks/{task_name:path}`
 - `PATCH /api/v1/tasks/{task_name:path}`
@@ -199,11 +217,38 @@ Core endpoints:
     - `skills`
     - `services`
     - `counts`
+  - current item metadata may include:
+    - `kind`
+    - `scope`
+    - `editable`
+    - `path`
+    - `ref`
+    - `description`
+- `/api/v1/{psyches|prompts|services|skills}`
+  - per-kind effective capability collection view
+- `/api/v1/{psyches|prompts|services|skills}/{name}`
+  - one effective capability detail view
+  - current detail payload may include:
+    - `content`
+      - full raw authored content for the effective item
+      - Markdown caps keep original front matter and formatting inside this
+        field
+    - `entry_path`
+    - `files`
 
 ### 5.2 Definition Endpoints
 
 Definition endpoints return authored state only. They do not expose pulse
 runtime feedback such as latest run timestamps or latest run status.
+- `/api/v1/caps/{kind}/{name}`
+  - create, replace, or delete one authored cap definition
+  - create-or-replace accepts explicit `scope` plus either:
+    - local authored content via `content`
+      - for Markdown caps, `content` is the full raw document, including any
+        front matter
+    - a remote authored definition via `ref`
+  - delete accepts explicit `scope` and may require explicit `source` when
+    more than one authored definition matches
 - `/api/v1/tasks`
   - local durable task documents under the agent room
   - `TaskItem.status` is task definition status, not run status

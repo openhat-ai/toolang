@@ -143,9 +143,75 @@ class AgentRuntimeResponse(BaseModel):
 class CapItem(BaseModel):
     """One capability entry shown by the runtime API."""
 
+    kind: str | None = None
     name: str
+    scope: str | None = None
+    editable: bool | None = None
     source: str | None = None
     effective: str | None = None
+    path: str | None = None
+    ref: str | None = None
+    description: str | None = None
+    params: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class CapListResponse(BaseModel):
+    """Collection response for one capability kind."""
+
+    items: list[CapItem] = Field(default_factory=list)
+
+
+class CapDetailItem(CapItem):
+    """Detailed capability item returned by per-kind detail endpoints."""
+
+    # For Markdown-backed caps this carries the full raw document, including
+    # front matter, so callers can preserve authored content exactly.
+    content: str = ""
+    entry_path: str | None = None
+    files: list[str] = Field(default_factory=list)
+
+
+class CapDetailResponse(BaseModel):
+    """Detailed response for one effective capability item."""
+
+    item: CapDetailItem
+
+
+class CapPutRequest(BaseModel):
+    """Create or replace one authored cap definition."""
+
+    scope: str
+    source: str | None = None
+    ref: str | None = None
+    # For Markdown-backed caps this carries the full raw document, including
+    # front matter.
+    content: str | None = None
+    create_parents: bool = False
+
+
+class CapMutationItem(BaseModel):
+    """One authored cap definition changed through the runtime API."""
+
+    kind: str
+    name: str
+    scope: str
+    source: str
+    locator: str
+    path: str | None = None
+    ref: str | None = None
+
+
+class CapMutationResponse(BaseModel):
+    """Response body for one authored cap mutation."""
+
+    ok: bool = True
+    item: CapMutationItem
+
+
+class CapDeleteResponse(BaseModel):
+    """Response body for one authored cap deletion."""
+
+    ok: bool = True
 
 
 class ChoreItem(BaseModel):

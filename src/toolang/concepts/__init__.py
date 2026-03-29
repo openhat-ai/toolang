@@ -5,10 +5,12 @@ sync, caps, and storage code. It owns reusable concepts, not orchestration.
 """
 
 from .caps import (
+    CapDocument,
     CapFrontmatter,
     CapContent,
     CapEntry,
     CapKind,
+    CapMarkdownSchema,
     CapParam,
     CapRef,
     CapSidecar,
@@ -55,10 +57,12 @@ __all__ = [
     "AgentUri",
     "AgentHome",
     "AgentRoom",
+    "CapDocument",
     "CapFrontmatter",
     "CapContent",
     "CapEntry",
     "CapKind",
+    "CapMarkdownSchema",
     "CapParam",
     "CapRef",
     "CapSidecar",
