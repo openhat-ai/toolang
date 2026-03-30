@@ -285,26 +285,80 @@ def test_ensure_agent_synced_reuses_previous_state_when_remote_sync_is_unavailab
     root = resolve_toolang_root(tmp_path / "toolang-root")
     home = root / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "alice.too").write_text(SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    (home / "alice.too").write_text(
+        """
+thunk review:
+    Review the change set.
+""".strip(),
+        encoding="utf-8",
+    )
+    shared_source_path(home).write_text("use skill by3gus/pdf-processing\n", encoding="utf-8")
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
-    before = sync_agent(agent)
-    state_path = agent_sync_path(home, "alice")
-    state_before = state_path.read_text(encoding="utf-8")
+    shared_psyche = shared_caps_dir(home, "psyche") / "reviewer-local.md"
+    shared_psyche.parent.mkdir(parents=True, exist_ok=True)
 
-    shared_source_path(home).write_text("use skill by3gus/repo-search\n", encoding="utf-8")
+    def fake_resolve(kind: str, ref: str) -> CapRef:
+        owner, _, name = ref.partition("/")
+        assert kind == "skill"
+        return CapRef(
+            kind="skill",
+            name=name,
+            ref=ref,
+            repo=f"{owner}/agent-skills",
+            path=f"skills/{name}",
+            rev=f"rev-{name}",
+        )
+
+    def fake_fetch(resolved: CapRef):
+        fetched_root = tmp_path / "fetched" / resolved.repo.replace("/", "__") / resolved.name
+        fetched_root.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(REMOTE_SKILL_FIXTURE, fetched_root)
+        files = sorted(
+            str(path.relative_to(fetched_root))
+            for path in fetched_root.rglob("*")
+            if path.is_file()
+        )
+        return fetched_root, files
+
+    monkeypatch.setattr("toolang.caps.github.resolve_github_cap_ref", fake_resolve)
+    monkeypatch.setattr("toolang.caps.github.fetch_github_artifact", fake_fetch)
+
+    sync_agent(agent)
+    state_path = agent_sync_path(home, "alice")
+
+    shared_source_path(home).write_text(
+        "use skill by3gus/pdf-processing\nuse skill by3gus/repo-search\n",
+        encoding="utf-8",
+    )
+    shared_psyche.write_text("Prefer direct and concrete language.\n", encoding="utf-8")
 
     def fail_resolve(kind: str, ref: str):
+        assert ref == "by3gus/repo-search"
         raise ExternalDependencyUnavailableError(
             f"GitHub is temporarily unavailable while resolving {ref}"
         )
 
     monkeypatch.setattr("toolang.caps.github.resolve_github_cap_ref", fail_resolve)
 
-    after = ensure_agent_synced(agent)
+    ensure_agent_synced(agent)
 
-    assert after == before
-    assert state_path.read_text(encoding="utf-8") == state_before
+    state = SyncState.load(state_path)
+    synced_skill_meta = CapSidecar.model_validate_json(
+        (synced_caps_root(home) / "skills" / "pdf-processing.meta.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    synced_psyche_meta = CapSidecar.model_validate_json(
+        (synced_caps_root(home) / "psyches" / "reviewer-local.meta.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert set(state.shared_refs.skills) == {"pdf-processing"}
+    assert "repo-search" not in state.shared_refs.skills
+    assert synced_skill_meta.ref == "by3gus/pdf-processing"
+    assert synced_psyche_meta.source_path == "psyches/reviewer-local.md"
 
 
 def test_sync_agent_reads_shared_and_global_skill_sources_without_collapsing_names(

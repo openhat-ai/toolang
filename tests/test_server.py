@@ -72,6 +72,7 @@ def bus_events_db_path(root: Path) -> Path:
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "source_only.too"
 REMOTE_SERVICE_FIXTURE = Path(__file__).parent / "fixtures" / "remote-service" / "github.md"
 REMOTE_PSYCHE_FIXTURE = Path(__file__).parent / "fixtures" / "remote-psyche" / "reviewer.md"
+REMOTE_SKILL_FIXTURE = Path(__file__).parent / "fixtures" / "remote-skill" / "pdf-processing"
 
 
 def test_create_agent_app_serves_webui_compatible_endpoints(
@@ -957,8 +958,40 @@ def test_create_agent_app_keeps_runtime_endpoints_available_when_remote_sync_fai
     (home / "alice.too").write_text(
         SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
     )
+    (home / "agents.too").write_text("use skill by3gus/pdf-processing\n", encoding="utf-8")
 
     agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+
+    def fake_resolve(kind: str, ref: str):
+        from toolang.concepts.caps import CapRef
+
+        owner, _, name = ref.partition("/")
+        assert kind == "skill"
+        return CapRef(
+            kind="skill",
+            name=name,
+            ref=ref,
+            repo=f"{owner}/agent-skills",
+            path=f"skills/{name}",
+            rev=f"rev-{name}",
+        )
+
+    def fake_fetch(resolved):
+        import shutil
+
+        fetched_root = tmp_path / "fetched" / resolved.repo.replace("/", "__") / resolved.name
+        fetched_root.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(REMOTE_SKILL_FIXTURE, fetched_root)
+        files = sorted(
+            str(path.relative_to(fetched_root))
+            for path in fetched_root.rglob("*")
+            if path.is_file()
+        )
+        return fetched_root, files
+
+    monkeypatch.setattr("toolang.caps.github.resolve_github_cap_ref", fake_resolve)
+    monkeypatch.setattr("toolang.caps.github.fetch_github_artifact", fake_fetch)
+
     prepared = prepare_agent(agent)
 
     monkeypatch.setattr(
@@ -979,9 +1012,16 @@ def test_create_agent_app_keeps_runtime_endpoints_available_when_remote_sync_fai
         sandbox="host",
     )
 
-    (home / "agents.too").write_text("use skill by3gus/repo-search\n", encoding="utf-8")
+    (home / "agents.too").write_text(
+        "use skill by3gus/pdf-processing\nuse skill by3gus/repo-search\n",
+        encoding="utf-8",
+    )
+    shared_psyche = home / ".toolang" / "psyches" / "reviewer-local.md"
+    shared_psyche.parent.mkdir(parents=True, exist_ok=True)
+    shared_psyche.write_text("Prefer direct and concrete language.\n", encoding="utf-8")
 
     def fail_resolve(kind: str, ref: str):
+        assert ref == "by3gus/repo-search"
         raise ExternalDependencyUnavailableError(
             f"GitHub is temporarily unavailable while resolving {ref}"
         )
@@ -996,11 +1036,16 @@ def test_create_agent_app_keeps_runtime_endpoints_available_when_remote_sync_fai
         caps = client.get("/api/v1/caps")
         assert caps.status_code == 200
         assert caps.json()["counts"] == {
-            "psyches": 1,
+            "psyches": 2,
             "prompts": 1,
-            "skills": 0,
+            "skills": 1,
             "services": 1,
         }
+        assert sorted(item["name"] for item in caps.json()["skills"]) == ["pdf-processing"]
+        assert sorted(item["name"] for item in caps.json()["psyches"]) == [
+            "reviewer",
+            "reviewer-local",
+        ]
 
 
 def test_create_agent_app_reports_docker_sandbox_state(

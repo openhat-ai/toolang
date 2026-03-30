@@ -9,6 +9,7 @@ from typing import Literal
 from toolang.concepts.caps import CapContent, CapKind, CapRef, CapSidecar
 from toolang.concepts.layout import AgentHome
 from toolang.concepts.persisted.sync_state import LockEntry, LockedAgentRefs, SyncState
+from toolang.errors import ExternalDependencyUnavailableError
 from toolang.program import Program
 
 from .files import (
@@ -38,6 +39,7 @@ def sync_scope_caps(
     entries: LockedAgentRefs,
     *,
     scope_source_root: Path,
+    skip_unavailable: bool = False,
 ) -> None:
     """Materialize one shared scope of synced capabilities."""
 
@@ -45,6 +47,7 @@ def sync_scope_caps(
         sync_root,
         entries.skills,
         scope_source_root=scope_source_root,
+        skip_unavailable=skip_unavailable,
     )
     for kind in DECLARED_CAP_KINDS:
         _sync_scope_declared_caps(
@@ -52,6 +55,7 @@ def sync_scope_caps(
             kind,
             entries.entries(kind),
             scope_source_root=scope_source_root,
+            skip_unavailable=skip_unavailable,
         )
 
 
@@ -59,6 +63,8 @@ def sync_agent_caps(
     agent_home: Path,
     programs: dict[str, Program],
     refs_by_agent: dict[str, LockedAgentRefs],
+    *,
+    skip_unavailable: bool = False,
 ) -> None:
     """Materialize per-agent synced caps for one agent home."""
 
@@ -68,6 +74,7 @@ def sync_agent_caps(
             sync_root,
             refs_by_agent[agent_name].skills,
             scope_source_root=agent_home,
+            skip_unavailable=skip_unavailable,
         )
         declared_caps = program.declared_caps()
         for kind in DECLARED_CAP_KINDS:
@@ -77,6 +84,7 @@ def sync_agent_caps(
                 refs_by_agent[agent_name].entries(kind),
                 _declared_caps_for_kind(declared_caps, kind),
                 scope_source_root=agent_home,
+                skip_unavailable=skip_unavailable,
             )
 
 
@@ -126,6 +134,7 @@ def _sync_scope_skills(
     entries: dict[str, LockEntry],
     *,
     scope_source_root: Path,
+    skip_unavailable: bool = False,
 ) -> None:
     expected_names: set[str] = set()
     for name, entry in entries.items():
@@ -139,8 +148,16 @@ def _sync_scope_skills(
                 source_path=entry.path,
             )
         else:
+            if _existing_skill_materialization_matches(sync_root, name, entry):
+                expected_names.add(name)
+                continue
             resolved = _resolved_skill_ref(name, entry)
-            source_dir, files = github.fetch_github_artifact(resolved)
+            try:
+                source_dir, files = github.fetch_github_artifact(resolved)
+            except ExternalDependencyUnavailableError:
+                if skip_unavailable:
+                    continue
+                raise
             try:
                 sync_skill_materialization(sync_root, name, source_dir, resolved, files)
             finally:
@@ -205,18 +222,45 @@ def _resolved_skill_ref(name: str, entry: LockEntry) -> CapRef:
     )
 
 
+def _existing_skill_materialization_matches(
+    sync_root: Path,
+    name: str,
+    entry: LockEntry,
+) -> bool:
+    skill_dir = skill_cap_dir(sync_root, name)
+    meta_path = skill_cap_meta_path(sync_root, name)
+    if not skill_dir.exists() or not meta_path.exists():
+        return False
+    meta = CapSidecar.model_validate_json(meta_path.read_text(encoding="utf-8"))
+    if (
+        meta.ref != entry.ref
+        or meta.repo != entry.repo
+        or meta.source_path != entry.path
+        or meta.rev != entry.rev
+    ):
+        return False
+    actual_files = sorted(
+        str(path.relative_to(skill_dir))
+        for path in skill_dir.rglob("*")
+        if path.is_file()
+    )
+    return actual_files == meta.asset_files
+
+
 def _sync_scope_declared_caps(
     sync_root: Path,
     kind: CapKind,
     entries: dict[str, LockEntry],
     *,
     scope_source_root: Path,
+    skip_unavailable: bool = False,
 ) -> None:
     expected_names = _sync_locked_declared_caps(
         sync_root,
         kind,
         entries,
         scope_source_root=scope_source_root,
+        skip_unavailable=skip_unavailable,
     )
     remove_stale_declared_cap_materializations(sync_root, kind, expected_names)
 
@@ -228,12 +272,14 @@ def _sync_agent_declared_caps(
     declared_caps: list[CapContent],
     *,
     scope_source_root: Path,
+    skip_unavailable: bool = False,
 ) -> None:
     expected_names = _sync_locked_declared_caps(
         sync_root,
         kind,
         entries,
         scope_source_root=scope_source_root,
+        skip_unavailable=skip_unavailable,
     )
     for cap in declared_caps:
         sync_declared_cap_materialization(
@@ -325,17 +371,19 @@ def _sync_locked_declared_caps(
     entries: dict[str, LockEntry],
     *,
     scope_source_root: Path,
+    skip_unavailable: bool = False,
 ) -> set[str]:
     expected_names: set[str] = set()
     for name, entry in entries.items():
-        _sync_locked_declared_cap(
+        if _sync_locked_declared_cap(
             sync_root,
             kind,
             name,
             entry,
             scope_source_root=scope_source_root,
-        )
-        expected_names.add(name)
+            skip_unavailable=skip_unavailable,
+        ):
+            expected_names.add(name)
     return expected_names
 
 
@@ -346,7 +394,8 @@ def _sync_locked_declared_cap(
     entry: LockEntry,
     *,
     scope_source_root: Path,
-) -> None:
+    skip_unavailable: bool = False,
+) -> bool:
     if entry.ref is None:
         sync_file_cap_materialization(
             sync_root,
@@ -355,9 +404,16 @@ def _sync_locked_declared_cap(
             scope_source_root / entry.path,
             source_path=entry.path,
         )
-        return
+        return True
+    if _existing_declared_materialization_matches(sync_root, kind, name, entry):
+        return True
     resolved = _resolved_declared_ref(kind, name, entry)
-    source_path, _ = github.fetch_github_artifact(resolved)
+    try:
+        source_path, _ = github.fetch_github_artifact(resolved)
+    except ExternalDependencyUnavailableError:
+        if skip_unavailable:
+            return False
+        raise
     try:
         sync_file_cap_materialization(
             sync_root,
@@ -371,6 +427,7 @@ def _sync_locked_declared_cap(
         )
     finally:
         shutil.rmtree(source_path.parent.parent, ignore_errors=True)
+    return True
 
 
 def _resolved_declared_ref(
@@ -395,3 +452,19 @@ def _declared_meta_matches_entry(meta: CapSidecar, entry: LockEntry) -> bool:
         and meta.source_path == entry.path
         and meta.rev == entry.rev
     )
+
+
+def _existing_declared_materialization_matches(
+    sync_root: Path,
+    kind: CapKind,
+    name: str,
+    entry: LockEntry,
+) -> bool:
+    meta_path = declared_cap_meta_path(sync_root, kind, name)
+    if not meta_path.exists():
+        return False
+    meta = CapSidecar.model_validate_json(meta_path.read_text(encoding="utf-8"))
+    if not _declared_meta_matches_entry(meta, entry):
+        return False
+    raw_path = sync_root / meta.path
+    return raw_path.exists() and raw_path.read_text(encoding="utf-8") == meta.raw_text

@@ -42,6 +42,16 @@ ALL_CAP_KINDS = get_args(CapKind)
 def sync_agent(agent: AgentRef) -> SyncedProgram:
     """Parse, resolve, materialize, and persist synced state for one agent."""
 
+    return _sync_agent(agent)
+
+
+def _sync_agent(
+    agent: AgentRef,
+    *,
+    skip_unavailable: bool = False,
+) -> SyncedProgram:
+    """Parse, resolve, materialize, and persist synced state for one agent."""
+
     _existing_source_path(agent)
 
     root = ToolangRoot.resolve(agent.root)
@@ -51,19 +61,36 @@ def sync_agent(agent: AgentRef) -> SyncedProgram:
     if agent.name not in programs:
         raise ToolangError(f"Agent source not found in agent home: {agent.name}.too")
 
+    cached_states = _load_existing_agent_states(agent.home, programs)
+    cached_global_refs = _cached_shared_scope_entries(cached_states, "global_refs")
+    cached_shared_refs = _cached_shared_scope_entries(cached_states, "shared_refs")
+
     for agent_name in programs:
         home.ensure_layout(agent_name=agent_name)
 
     global_ref_entries = load_scope_refs(
         root.global_source_path,
         scope_label="global agents.too",
+        cached_refs=cached_global_refs,
+        skip_unavailable=skip_unavailable,
     )
     shared_ref_entries = load_scope_refs(
         home.shared_source_path,
         scope_label="shared agents.too",
+        cached_refs=cached_shared_refs,
+        skip_unavailable=skip_unavailable,
     )
     agent_ref_entries = {
-        agent_name: resolve_cap_uses(program.uses, scope_label=f"{agent_name}.too")
+        agent_name: resolve_cap_uses(
+            program.uses,
+            scope_label=f"{agent_name}.too",
+            cached_refs=(
+                cached_states[agent_name].agent_refs
+                if agent_name in cached_states
+                else None
+            ),
+            skip_unavailable=skip_unavailable,
+        )
         for agent_name, program in sorted(programs.items())
     }
 
@@ -85,13 +112,20 @@ def sync_agent(agent: AgentRef) -> SyncedProgram:
         root.global_synced_caps_root,
         global_effective_entries,
         scope_source_root=agent.root,
+        skip_unavailable=skip_unavailable,
     )
     sync_scope_caps(
         home.synced_caps_root,
         shared_effective_entries,
         scope_source_root=agent.home / ".toolang",
+        skip_unavailable=skip_unavailable,
     )
-    sync_agent_caps(agent.home, programs, agent_ref_entries)
+    sync_agent_caps(
+        agent.home,
+        programs,
+        agent_ref_entries,
+        skip_unavailable=skip_unavailable,
+    )
 
     inputs = _current_inputs(
         source_paths=source_paths,
@@ -124,18 +158,29 @@ def ensure_agent_synced(agent: AgentRef) -> SyncedProgram:
         return sync_agent(agent)
     except ExternalDependencyUnavailableError:
         if state_path.exists():
-            return SyncState.load(state_path).program
+            return _sync_agent(agent, skip_unavailable=True)
         raise
 
 
-def load_scope_refs(path: Path, *, scope_label: str) -> LockedAgentRefs:
+def load_scope_refs(
+    path: Path,
+    *,
+    scope_label: str,
+    cached_refs: LockedAgentRefs | None = None,
+    skip_unavailable: bool = False,
+) -> LockedAgentRefs:
     if not path.exists():
         return LockedAgentRefs()
 
     program = parse(path.read_text(encoding="utf-8"))
     if program.declarations or program.thunks:
         raise ToolangError(f"{scope_label} may only contain 'use ...' statements.")
-    return resolve_cap_uses(program.uses, scope_label=scope_label)
+    return resolve_cap_uses(
+        program.uses,
+        scope_label=scope_label,
+        cached_refs=cached_refs,
+        skip_unavailable=skip_unavailable,
+    )
 
 
 def _existing_source_path(agent: AgentRef) -> Path:
@@ -251,6 +296,20 @@ def _load_agent_states(agent_home: Path, agent_names: list[str]) -> dict[str, Sy
     return states
 
 
+def _load_existing_agent_states(
+    agent_home: Path,
+    programs: dict[str, Program],
+) -> dict[str, SyncState]:
+    states: dict[str, SyncState] = {}
+    home = AgentHome.resolve(agent_home)
+    for agent_name in sorted(programs):
+        state_path = home.sync_state_path(agent_name)
+        if not state_path.exists():
+            continue
+        states[agent_name] = SyncState.load(state_path)
+    return states
+
+
 def _sync_agent_states(
     *,
     agent: AgentRef,
@@ -293,6 +352,21 @@ def _shared_scope_entries(
                 f"Shared scoped cap state drift detected for {attr}: {agent_name}"
             )
     return expected or LockedAgentRefs()
+
+
+def _cached_shared_scope_entries(
+    states: dict[str, SyncState],
+    attr: str,
+) -> LockedAgentRefs:
+    cached: LockedAgentRefs | None = None
+    for agent_name in sorted(states):
+        current = getattr(states[agent_name], attr)
+        if cached is None:
+            cached = current
+            continue
+        if cached != current:
+            return LockedAgentRefs()
+    return cached or LockedAgentRefs()
 
 
 def _fingerprint(path: Path) -> InputFingerprint:
