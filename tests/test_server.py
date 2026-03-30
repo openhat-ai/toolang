@@ -948,6 +948,121 @@ thunk review:
         assert caps_after_delete.json()["psyches"] == []
 
 
+def test_create_agent_app_aborts_remote_cap_add_when_validation_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    source_path = home / "alice.too"
+    source_text = SOURCE_FIXTURE.read_text(encoding="utf-8")
+    source_path.write_text(source_text, encoding="utf-8")
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    prepared = prepare_agent(agent)
+
+    monkeypatch.setattr(
+        "toolang.runtime.invoke.execute_prompt_build",
+        lambda build: ModelExecutionResult(output_text="done"),
+    )
+    monkeypatch.setattr(
+        "toolang.runtime.invoke.execute_prompt_build_stream",
+        lambda build, *, on_event: ModelExecutionResult(output_text="done"),
+    )
+
+    def fail_validate(kind: str, ref: str) -> None:
+        assert kind == "psyche"
+        assert ref == "by3gus/reviewer"
+        raise ExternalDependencyUnavailableError(
+            "GitHub is temporarily unavailable while resolving by3gus/reviewer"
+        )
+
+    monkeypatch.setattr("toolang.runtime.cap_defs.validate_github_cap_ref", fail_validate)
+
+    app = create_agent_app(
+        prepared,
+        agents_db_path=agents_db_path(root),
+        bus_db_path=bus_events_db_path(root),
+        host="127.0.0.1",
+        port=8765,
+        sandbox="host",
+    )
+
+    shared_source = home / "agents.too"
+
+    with TestClient(app) as client:
+        put_remote = client.put(
+            "/api/v1/psyches/reviewer",
+            json={
+                "scope": "shared",
+                "ref": "by3gus/reviewer",
+            },
+        )
+        assert put_remote.status_code == 503
+        assert put_remote.json() == {
+            "detail": "GitHub is temporarily unavailable while resolving by3gus/reviewer"
+        }
+        assert not shared_source.exists()
+        assert source_path.read_text(encoding="utf-8") == source_text
+
+        caps = client.get("/api/v1/caps")
+        assert caps.status_code == 200
+        assert caps.json()["counts"]["psyches"] == 1
+        assert [item["name"] for item in caps.json()["psyches"]] == ["reviewer"]
+
+
+def test_create_agent_app_rejects_remote_cap_name_mismatch(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    prepared = prepare_agent(agent)
+
+    monkeypatch.setattr(
+        "toolang.runtime.invoke.execute_prompt_build",
+        lambda build: ModelExecutionResult(output_text="done"),
+    )
+    monkeypatch.setattr(
+        "toolang.runtime.invoke.execute_prompt_build_stream",
+        lambda build, *, on_event: ModelExecutionResult(output_text="done"),
+    )
+
+    app = create_agent_app(
+        prepared,
+        agents_db_path=agents_db_path(root),
+        bus_db_path=bus_events_db_path(root),
+        host="127.0.0.1",
+        port=8765,
+        sandbox="host",
+    )
+
+    with TestClient(app) as client:
+        put_remote = client.put(
+            "/api/v1/psyches/not-reviewer",
+            json={
+                "scope": "shared",
+                "ref": "by3gus/reviewer",
+            },
+        )
+        assert put_remote.status_code == 400
+        assert put_remote.json() == {
+            "detail": (
+                "Remote psyche ref 'by3gus/reviewer' does not match requested "
+                "name 'not-reviewer'."
+            )
+        }
+        assert not (home / "agents.too").exists()
+
+
 def test_create_agent_app_keeps_runtime_endpoints_available_when_remote_sync_fails(
     tmp_path: Path,
     monkeypatch,

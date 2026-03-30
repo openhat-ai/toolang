@@ -31,7 +31,7 @@ from toolang.cli.support import (
 from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.concepts.persisted import AgentOriginState, ChannelBinding, ChannelsConfig
 from toolang.concepts.persisted.config import ToolangConfig, WebConfig
-from toolang.errors import ToolangError
+from toolang.errors import ExternalDependencyUnavailableError, ToolangError
 from toolang.concepts.persisted.run_state import RunState
 from toolang.concepts.caps import CapKind
 from toolang.concepts.sandbox import SandboxState
@@ -1085,6 +1085,7 @@ thunk review:
 
     monkeypatch.setenv("TOOLANG_ROOT", str(root))
     monkeypatch.chdir(home)
+    monkeypatch.setattr("toolang.cli.caps.validate_github_cap_ref", lambda kind, ref: None)
 
     result = runner.invoke(app, ["skill", "add", "by3gus/pdf-processing"])
 
@@ -1107,6 +1108,7 @@ thunk review:
 
     monkeypatch.setenv("TOOLANG_ROOT", str(root))
     monkeypatch.chdir(home)
+    monkeypatch.setattr("toolang.cli.caps.validate_github_cap_ref", lambda kind, ref: None)
 
     result = runner.invoke(app, ["skill", "add", "by3gus/pdf-processing", "--scope", "shared"])
 
@@ -1118,6 +1120,7 @@ thunk review:
 def test_skill_add_writes_global_source(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "toolang-root"
     monkeypatch.setenv("TOOLANG_ROOT", str(root))
+    monkeypatch.setattr("toolang.cli.caps.validate_github_cap_ref", lambda kind, ref: None)
 
     result = runner.invoke(app, ["skill", "add", "by3gus/pdf-processing", "--scope", "global"])
 
@@ -1280,6 +1283,7 @@ thunk review:
 
     monkeypatch.setenv("TOOLANG_ROOT", str(root))
     monkeypatch.chdir(home)
+    monkeypatch.setattr("toolang.cli.caps.validate_github_cap_ref", lambda kind, ref: None)
 
     result = runner.invoke(app, [typed_kind, "add", ref, "--scope", scope])
 
@@ -1292,6 +1296,39 @@ thunk review:
         target = global_source_path(root)
     assert result.stdout.strip() == str(target.resolve())
     assert target.read_text(encoding="utf-8").startswith(expected_name)
+
+
+def test_text_cap_add_aborts_when_remote_ref_validation_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = tmp_path / "toolang-root"
+    home = root / "agents" / "team"
+    home.mkdir(parents=True)
+    source_path = home / "alice.too"
+    source_text = (
+        "thunk review:\n"
+        "    Review the change set.\n"
+    )
+    source_path.write_text(source_text, encoding="utf-8")
+
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+    monkeypatch.chdir(home)
+
+    def fail_validate(kind: CapKind, ref: str) -> None:
+        assert kind == "psyche"
+        assert ref == "by3gus/reviewer"
+        raise ExternalDependencyUnavailableError(
+            "GitHub is temporarily unavailable while resolving by3gus/reviewer"
+        )
+
+    monkeypatch.setattr("toolang.cli.caps.validate_github_cap_ref", fail_validate)
+
+    result = runner.invoke(app, ["psyche", "add", "by3gus/reviewer"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, ExternalDependencyUnavailableError)
+    assert source_path.read_text(encoding="utf-8") == source_text
 
 
 @pytest.mark.parametrize(

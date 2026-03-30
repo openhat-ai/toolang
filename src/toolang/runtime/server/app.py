@@ -21,7 +21,7 @@ from toolang.concepts.execution import MessageOrigin, RunStatus, RuntimeLoop
 from toolang.concepts.layout import AgentHome
 from toolang.concepts.persisted import ChannelsConfig, PromptTrace
 from toolang.concepts.sandbox import SandboxSpec
-from toolang.errors import ToolangError
+from toolang.errors import ExternalDependencyUnavailableError, ToolangError
 from toolang.web import add_cors
 
 from ..api_models import (
@@ -176,6 +176,13 @@ def create_agent_app(
         response = await call_next(request)
         runtime_host.touch()
         return response
+
+    @app.exception_handler(ExternalDependencyUnavailableError)
+    async def handle_dependency_unavailable(
+        _: Request,
+        exc: ExternalDependencyUnavailableError,
+    ) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
 
     @app.exception_handler(ToolangError)
     async def handle_toolang_error(_: Request, exc: ToolangError) -> JSONResponse:

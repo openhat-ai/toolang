@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import tarfile
 import tempfile
 from io import BytesIO
@@ -57,6 +58,17 @@ def resolve_github_cap_ref(kind: CapKind, ref: str) -> CapRef:
                     rev=rev,
                 )
     raise ToolangError(f"{kind.title()} ref could not be resolved from GitHub: {ref}")
+
+
+def validate_github_cap_ref(kind: CapKind, ref: str) -> CapRef:
+    """Resolve and fetch one GitHub-backed cap ref to verify availability."""
+
+    resolved = resolve_github_cap_ref(kind, ref)
+    source_path, _ = fetch_github_artifact(resolved)
+    shutil.rmtree(source_path.parent.parent, ignore_errors=True)
+    return resolved
+
+
 def fetch_github_artifact(resolved: CapRef) -> tuple[Path, list[str]]:
     archive = _download_repo_archive(resolved.repo, resolved.rev)
     temp_root = Path(tempfile.mkdtemp(prefix="toolang-cap-tree-"))
@@ -85,6 +97,8 @@ def fetch_github_artifact(resolved: CapRef) -> tuple[Path, list[str]]:
     materialized_path.write_bytes(source_path.read_bytes())
     files.append(materialized_path.name)
     return materialized_path, files
+
+
 def _parse_cap_ref(ref: str) -> tuple[str, str]:
     owner, sep, name = ref.partition("/")
     if not owner or not sep or not name:

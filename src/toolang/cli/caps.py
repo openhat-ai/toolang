@@ -9,9 +9,11 @@ from typing import Annotated, Literal
 import typer
 
 from toolang.agent.prepared import prepare_agent
-from toolang.concepts.layout import AgentHome, ToolangRoot
-from toolang.errors import ToolangError
-from toolang.caps.github import fetch_github_artifact, resolve_github_cap_ref
+from toolang.caps.github import (
+    fetch_github_artifact,
+    resolve_github_cap_ref,
+    validate_github_cap_ref,
+)
 from toolang.caps import load_prepared_caps
 from toolang.caps.files import (
     create_local_cap,
@@ -20,7 +22,9 @@ from toolang.caps.files import (
     local_cap_path,
     prune_empty_local_kind_dir,
 )
+from toolang.concepts.layout import AgentHome, ToolangRoot
 from toolang.concepts.caps import CapKind
+from toolang.errors import ToolangError
 from toolang.program import Program
 from toolang.tools.plugins.service_use import start_service_auth
 
@@ -174,8 +178,11 @@ def _cap_add(
 ) -> None:
     target = _resolve_cap_scope_target(scope=scope, agent=agent)
     program = Program.load(target.source_path)
-    changed = program.add_cap_ref(kind, ref)
-    program.save(target.source_path)
+    ref_text = ref.strip()
+    changed = program.add_cap_ref(kind, ref_text)
+    if changed:
+        validate_github_cap_ref(kind, ref_text)
+        program.save(target.source_path)
     typer.echo(str(target.source_path))
     if not changed:
         typer.echo("unchanged", err=True)

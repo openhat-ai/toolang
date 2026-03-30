@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
 
+from toolang.caps.github import validate_github_cap_ref
 from toolang.caps.files import (
     delete_local_cap,
     local_cap_path,
@@ -59,20 +60,27 @@ def put_cap_definition(
         program = Program.load(target)
         if ref is None or not ref.strip():
             raise ToolangError("Remote cap definitions require a non-empty 'ref'.")
-        changed = program.add_cap_ref(kind, ref.strip())
-        program.save(target)
+        ref_text = ref.strip()
+        if _cap_name_from_ref(ref_text) != name:
+            raise ToolangError(
+                f"Remote {kind} ref {ref_text!r} does not match requested name {name!r}."
+            )
+        changed = program.add_cap_ref(kind, ref_text)
+        if changed:
+            validate_github_cap_ref(kind, ref_text)
+            program.save(target)
         return CapMutationResult(
             kind=kind,
             name=name,
             scope=normalized_scope,
             source="remote",
-            locator=ref.strip(),
+            locator=ref_text,
             path=str(target),
-            ref=ref.strip(),
+            ref=ref_text,
             detail=(
-                f"{kind.title()} {name!r} was already attached from {ref.strip()!r}."
+                f"{kind.title()} {name!r} was already attached from {ref_text!r}."
                 if not changed
-                else f"Attached remote {kind} {name!r} from {ref.strip()!r}."
+                else f"Attached remote {kind} {name!r} from {ref_text!r}."
             ),
         )
 
