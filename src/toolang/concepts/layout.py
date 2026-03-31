@@ -177,14 +177,6 @@ class AgentRoom:
         return self.path / "agent.log"
 
     @property
-    def chats_dir(self) -> Path:
-        return self.path / "chats"
-
-    @property
-    def chats_db_path(self) -> Path:
-        return self.chats_dir / "chats.db"
-
-    @property
     def execution_db_path(self) -> Path:
         return self.path / "execution.db"
 

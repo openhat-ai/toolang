@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from .messages import MessagePart, MessageRole
+
 MessageOrigin = Literal["invoke", "chat", "task", "chore", "will"]
 MessageSender = Literal["owner", "peer", "guest", "self", "service"]
 RuntimeLoop = Literal["server", "poll", "hook", "pulse"]
@@ -94,6 +96,24 @@ class StepRecord:
     error: str | None
     started_at: str
     finished_at: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class RunMessageRecord:
+    """One persisted transcript message within a thread and run."""
+
+    id: str
+    thread_id: str
+    run_id: str
+    seq: int
+    role: MessageRole
+    origin: MessageOrigin
+    channel: str | None
+    sender: MessageSender
+    text: str
+    created_at: str
+    meta: dict[str, Any] = field(default_factory=dict)
+    parts: tuple[MessagePart, ...] = ()
 
 
 def thread_group_for_origin(origin: MessageOrigin) -> ThreadGroup:

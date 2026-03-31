@@ -26,6 +26,7 @@ from toolang.web import add_cors
 
 from ..api_models import (
     AgentCapsResponse,
+    AgentChatMessage,
     CapDetailResponse,
     CapDeleteResponse,
     CapListResponse,
@@ -142,6 +143,7 @@ def create_agent_app(
     runtime_loops: tuple[RuntimeLoop, ...] = ("server",),
     channels_config: ChannelsConfig | None = None,
 ) -> FastAPI:
+    room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
     runtime_host = RuntimeHost(
         prepared,
         agents_db_path=agents_db_path,
@@ -167,6 +169,12 @@ def create_agent_app(
         lifespan=lifespan,
     )
     add_cors(app, allow_origins=cors_allow_origins)
+
+    def _run_messages(run) -> list[AgentChatMessage]:
+        return [message_item(item) for item in runtime_host.execution.messages_for_run(run_id=run.run_id)]
+
+    def _thread_preview_and_channel(thread_id: str) -> tuple[str | None, str | None]:
+        return runtime_host.execution.thread_preview(thread_id=thread_id)
 
     @app.middleware("http")
     async def update_heartbeat(
@@ -445,12 +453,12 @@ def create_agent_app(
             threads = [item for item in threads if item.thread_group == kind]
         items = []
         for thread in threads:
-            chat_thread = runtime_host.chats.get_thread(thread_id=thread.thread_id)
+            preview, channel = _thread_preview_and_channel(thread.thread_id)
             items.append(
                 thread_item(
                     thread,
-                    preview=chat_thread.preview if chat_thread is not None else None,
-                    channel=chat_thread.channel if chat_thread is not None else None,
+                    preview=preview,
+                    channel=channel,
                 )
             )
         return ThreadListResponse(items=items)
@@ -459,26 +467,19 @@ def create_agent_app(
         thread = runtime_host.execution.get_thread(thread_id=thread_id)
         if thread is None or thread.agent_uri != prepared.ref.uri:
             raise HTTPException(status_code=404, detail="thread not found")
-        chat_thread = runtime_host.chats.get_thread(thread_id=thread_id)
-        chat_runs = runtime_host.chats.recent_runs(thread_id=thread_id, limit=limit)
+        preview, channel = _thread_preview_and_channel(thread_id)
+        runs = runtime_host.execution.list_runs(
+            thread_id=thread_id,
+            limit=limit,
+        )
         return ThreadResponse(
             thread=thread_item(
                 thread,
-                preview=chat_thread.preview if chat_thread is not None else None,
-                channel=chat_thread.channel if chat_thread is not None else None,
+                preview=preview,
+                channel=channel,
             ),
-            runs=[
-                runtime_run_item(item)
-                for item in runtime_host.execution.list_runs(
-                    thread_id=thread_id,
-                    limit=limit,
-                )
-            ],
-            messages=[
-                message_item(message)
-                for chat_run in chat_runs
-                for message in chat_run.messages
-            ],
+            runs=[runtime_run_item(item) for item in runs],
+            messages=[item for run in reversed(runs) for item in _run_messages(run)],
         )
 
     def _list_cap_collection(kind: CapKind) -> CapListResponse:
@@ -572,8 +573,8 @@ def create_agent_app(
     def list_chats(limit: int = Query(50, ge=1, le=500)) -> ThreadListResponse:
         return _list_threads(kind="chat", limit=limit)
 
-    @app.get("/api/v1/threads/{thread_id}", response_model=ThreadResponse)
-    @app.get("/api/v1/chats/{thread_id}", response_model=ThreadResponse)
+    @app.get("/api/v1/threads/{thread_id:path}", response_model=ThreadResponse)
+    @app.get("/api/v1/chats/{thread_id:path}", response_model=ThreadResponse)
     def get_thread(
         thread_id: str, limit: int = Query(50, ge=1, le=500)
     ) -> ThreadResponse:
@@ -599,14 +600,6 @@ def create_agent_app(
         run = runtime_host.execution.get_run(run_id=run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="run not found")
-        messages = []
-        if run.thread_id:
-            chat_run = runtime_host.chats.get_run(
-                thread_id=run.thread_id,
-                run_id=run_id,
-            )
-            if chat_run is not None:
-                messages = [message_item(item) for item in chat_run.messages]
         events = runtime_host.bus.list_events(
             agent_uri=prepared.ref.uri,
             run_id=run_id,
@@ -616,12 +609,11 @@ def create_agent_app(
             run=runtime_run_item(run),
             steps=[step_item(item) for item in runtime_host.execution.list_steps(run_id=run_id)],
             events=[event_item(item) for item in events],
-            messages=messages,
+            messages=_run_messages(run),
         )
 
     @app.get("/api/v1/runs/{run_id}/prompt", response_model=PromptTraceItem)
     def get_run_prompt(run_id: str) -> PromptTraceItem:
-        room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
         trace_path = room.prompt_trace_path(run_id)
         if not trace_path.exists():
             raise HTTPException(status_code=404, detail="prompt trace not found")

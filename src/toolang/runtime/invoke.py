@@ -12,6 +12,7 @@ from toolang.caps import load_prepared_caps
 from toolang.concepts.execution import (
     ActivationKind,
     MessageSender,
+    RunMessageRecord,
     thread_group_for_origin,
 )
 from toolang.concepts.layout import AgentHome
@@ -28,7 +29,6 @@ from .build import (
     build_prompt_error_trace_data,
 )
 from .chat_protocol import TurnMessageBuilder, build_assistant_turn_message
-from .chats import ChatMessage, ChatStore
 from .execution_store import ExecutionStore
 from .messages import Message
 from .model_exec import (
@@ -48,7 +48,7 @@ class InvokeResult:
 class ChatResult:
     run_id: str
     output: str
-    assistant: ChatMessage
+    assistant: RunMessageRecord
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +57,74 @@ class RuntimeExecutionContext:
 
     store: ExecutionStore
     activation_id: str
+
+
+def _transcript_store(
+    prepared: PreparedAgent,
+    execution_store: ExecutionStore | None,
+) -> tuple[ExecutionStore, bool]:
+    if execution_store is not None:
+        return execution_store, False
+    room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
+    return ExecutionStore(room.execution_db_path), True
+
+
+def _append_user_transcript(
+    execution: ExecutionStore,
+    *,
+    thread_id: str,
+    run_id: str,
+    origin: RunOrigin,
+    channel: str | None,
+    sender: MessageSender,
+    text: str,
+    meta: dict[str, object] | None,
+    at: str,
+) -> RunMessageRecord:
+    user_message_id = f"{run_id}:user"
+    return execution.append_message(
+        thread_id=thread_id,
+        run_id=run_id,
+        role="user",
+        origin=origin,
+        channel=channel,
+        sender=sender,
+        text=text,
+        message=TurnMessage(
+            id=user_message_id,
+            role="user",
+            parts=(TextPart(id=f"{user_message_id}:text:1", text=text),),
+            created_at=at,
+            metadata=dict(meta or {}),
+        ),
+        meta=dict(meta or {}),
+        at=at,
+    )
+
+
+def _append_assistant_transcript(
+    execution: ExecutionStore,
+    *,
+    thread_id: str,
+    run_id: str,
+    origin: RunOrigin,
+    channel: str | None,
+    text: str,
+    message: TurnMessage,
+    at: str,
+) -> RunMessageRecord:
+    return execution.append_message(
+        thread_id=thread_id,
+        run_id=run_id,
+        role="assistant",
+        origin=origin,
+        channel=channel,
+        sender="self",
+        text=text,
+        message=message,
+        meta=dict(message.metadata),
+        at=at,
+    )
 
 
 def invoke_prepared_agent(
@@ -74,35 +142,90 @@ def invoke_prepared_agent(
     activation_id: str | None = None,
     input_meta: dict[str, object] | None = None,
 ) -> InvokeResult:
-    output = _tracked_run(
-        prepared=prepared,
-        thunk=thunk,
-        bus_db_path=bus_db_path,
-        origin=origin,
-        thread_id=thread_id,
-        sender=sender,
-        model=model,
-        sandbox=sandbox,
-        raw_input=user_input,
-        activation_kind="invoke" if execution_store is None else None,
-        execution_context=(
-            RuntimeExecutionContext(store=execution_store, activation_id=activation_id)
-            if execution_store is not None and activation_id is not None
-            else None
-        ),
-        build_prompt=lambda tool_runtime: build_invoke_prompt(
-            prepared,
-            thunk,
-            user_input=user_input,
-            model=model,
+    if execution_store is not None and activation_id is None:
+        raise RuntimeError("invoke_prepared_agent requires activation_id with execution_store")
+    resolved_run_id = uuid.uuid4().hex
+    effective_thread_id = thread_id or f"{origin}:{resolved_run_id}"
+    user_created_at = utc_now()
+    transcript_store, owns_transcript_store = _transcript_store(prepared, execution_store)
+    try:
+        output = _tracked_run(
+            prepared=prepared,
+            thunk=thunk,
+            bus_db_path=bus_db_path,
             origin=origin,
-            thread_id=thread_id,
+            thread_id=effective_thread_id,
+            sender=sender,
+            model=model,
+            run_id=resolved_run_id,
             sandbox=sandbox,
+            raw_input=user_input,
+            activation_kind="invoke" if execution_store is None else None,
+            execution_context=(
+                RuntimeExecutionContext(store=execution_store, activation_id=activation_id)
+                if execution_store is not None and activation_id is not None
+                else None
+            ),
+            build_prompt=lambda tool_runtime: build_invoke_prompt(
+                prepared,
+                thunk,
+                user_input=user_input,
+                model=model,
+                origin=origin,
+                thread_id=effective_thread_id,
+                sandbox=sandbox,
+                input_meta=input_meta,
+                tool_runtime=tool_runtime,
+            ),
             input_meta=input_meta,
-            tool_runtime=tool_runtime,
-        ),
-        input_meta=input_meta,
-    )
+        )
+    except Exception:
+        if user_input is not None and transcript_store.get_run(run_id=resolved_run_id) is not None:
+            _append_user_transcript(
+                transcript_store,
+                thread_id=effective_thread_id,
+                run_id=resolved_run_id,
+                origin=origin,
+                channel=None,
+                sender=sender,
+                text=user_input,
+                meta=input_meta,
+                at=user_created_at,
+            )
+        if owns_transcript_store:
+            transcript_store.close()
+        raise
+
+    if user_input is not None:
+        _append_user_transcript(
+            transcript_store,
+            thread_id=effective_thread_id,
+            run_id=resolved_run_id,
+            origin=origin,
+            channel=None,
+            sender=sender,
+            text=user_input,
+            meta=input_meta,
+            at=user_created_at,
+        )
+    if output.output or output.tool_calls:
+        _append_assistant_transcript(
+            transcript_store,
+            thread_id=effective_thread_id,
+            run_id=resolved_run_id,
+            origin=origin,
+            channel=None,
+            text=output.output,
+            message=build_assistant_turn_message(
+                message_id=f"{resolved_run_id}:assistant",
+                output_text=output.output,
+                tool_calls=output.tool_calls,
+                created_at=utc_now(),
+            ),
+            at=utc_now(),
+        )
+    if owns_transcript_store:
+        transcript_store.close()
     return InvokeResult(run_id=output.run_id, output=output.output)
 
 
@@ -111,7 +234,6 @@ def chat_prepared_agent(
     thunk: Thunk,
     *,
     bus_db_path: Path,
-    chat_store: ChatStore,
     message: Message,
     model: str | None = None,
     sandbox: str = "host",
@@ -120,31 +242,18 @@ def chat_prepared_agent(
     run_id: str | None = None,
     stream_event: ModelExecutionEventHandler | None = None,
 ) -> ChatResult:
+    if execution_store is None or activation_id is None:
+        raise RuntimeError("chat_prepared_agent requires execution context")
     resolved_run_id = run_id or uuid.uuid4().hex
-    user_message_id = f"{resolved_run_id}:user"
     assistant_message_id = f"{resolved_run_id}:assistant"
-
-    chat_store.append_message(
-        agent_uri=prepared.ref.uri,
-        agent_id=prepared.ref.id[:12],
-        agent_name=prepared.ref.name,
-        thread_id=message.thread_id,
-        run_id=resolved_run_id,
-        role="user",
-        origin=message.origin,
-        channel=message.channel,
-        sender=message.sender,
-        text=message.text,
-        message=TurnMessage(
-            id=user_message_id,
-            role="user",
-            parts=(TextPart(id=f"{user_message_id}:text:1", text=message.text),),
-            created_at=utc_now(),
-            metadata=dict(message.meta),
-        ),
-        meta=dict(message.meta),
-    )
-    history_messages = chat_store.recent_openai_messages(thread_id=message.thread_id, limit=20)
+    user_created_at = utc_now()
+    history_messages = [
+        *execution_store.recent_openai_messages(thread_id=message.thread_id, limit=19),
+        {
+            "role": "user",
+            "content": message.text,
+        },
+    ]
 
     assistant_builder = (
         TurnMessageBuilder(
@@ -160,33 +269,59 @@ def chat_prepared_agent(
         if stream_event is not None:
             stream_event(event)
 
-    tracked = _tracked_run(
-        prepared=prepared,
-        thunk=thunk,
-        bus_db_path=bus_db_path,
-        origin="chat",
-        thread_id=message.thread_id,
-        sender=message.sender,
-        model=model,
-        run_id=resolved_run_id,
-        sandbox=sandbox,
-        raw_input=message.text,
-        message=message,
-        execution_context=(
-            RuntimeExecutionContext(store=execution_store, activation_id=activation_id)
-            if execution_store is not None and activation_id is not None
-            else None
-        ),
-        build_prompt=lambda tool_runtime: build_chat_prompt(
-            prepared,
-            thunk,
-            history_messages=history_messages,
-            message=message,
+    try:
+        tracked = _tracked_run(
+            prepared=prepared,
+            thunk=thunk,
+            bus_db_path=bus_db_path,
+            origin="chat",
+            thread_id=message.thread_id,
+            sender=message.sender,
             model=model,
+            run_id=resolved_run_id,
             sandbox=sandbox,
-            tool_runtime=tool_runtime,
-        ),
-        stream_event=_stream_and_build if stream_event is not None else None,
+            raw_input=message.text,
+            message=message,
+            execution_context=RuntimeExecutionContext(
+                store=execution_store,
+                activation_id=activation_id,
+            ),
+            build_prompt=lambda tool_runtime: build_chat_prompt(
+                prepared,
+                thunk,
+                history_messages=history_messages,
+                message=message,
+                model=model,
+                sandbox=sandbox,
+                tool_runtime=tool_runtime,
+            ),
+            stream_event=_stream_and_build if stream_event is not None else None,
+        )
+    except Exception:
+        if execution_store.get_run(run_id=resolved_run_id) is not None:
+            _append_user_transcript(
+                execution_store,
+                thread_id=message.thread_id,
+                run_id=resolved_run_id,
+                origin=message.origin,
+                channel=message.channel,
+                sender=message.sender,
+                text=message.text,
+                meta=message.meta,
+                at=user_created_at,
+            )
+        raise
+
+    _append_user_transcript(
+        execution_store,
+        thread_id=message.thread_id,
+        run_id=resolved_run_id,
+        origin=message.origin,
+        channel=message.channel,
+        sender=message.sender,
+        text=message.text,
+        meta=message.meta,
+        at=user_created_at,
     )
     assistant_turn_message = (
         assistant_builder.build()
@@ -195,21 +330,18 @@ def chat_prepared_agent(
             message_id=assistant_message_id,
             output_text=tracked.output,
             tool_calls=tracked.tool_calls,
+            created_at=utc_now(),
         )
     )
-    assistant_message = chat_store.append_message(
-        agent_uri=prepared.ref.uri,
-        agent_id=prepared.ref.id[:12],
-        agent_name=prepared.ref.name,
+    assistant_message = _append_assistant_transcript(
+        execution_store,
         thread_id=message.thread_id,
         run_id=tracked.run_id,
-        role="assistant",
         origin=message.origin,
         channel=message.channel,
-        sender="self",
         text=tracked.output,
         message=assistant_turn_message,
-        meta={},
+        at=utc_now(),
     )
     return ChatResult(
         run_id=tracked.run_id,
@@ -311,7 +443,7 @@ def _tracked_run(
                 origin=origin,
                 summary=summary,
                 thunk_name=thunk.name,
-                thread_id=thread_id,
+                thread_id=effective_thread_id,
             )
         )
 
@@ -337,7 +469,7 @@ def _tracked_run(
             run_id=resolved_run_id,
             thunk=thunk,
             origin=origin,
-            thread_id=thread_id,
+            thread_id=effective_thread_id,
             sandbox=sandbox,
             build=prompt_build,
         )
@@ -411,7 +543,7 @@ def _tracked_run(
                 origin=origin,
                 summary=summary,
                 thunk_name=thunk.name,
-                thread_id=thread_id,
+                thread_id=effective_thread_id,
             )
         )
         return _TrackedRunResult(
@@ -446,7 +578,7 @@ def _tracked_run(
                 run_id=resolved_run_id,
                 thunk=thunk,
                 origin=origin,
-                thread_id=thread_id,
+                thread_id=effective_thread_id,
                 sandbox=sandbox,
                 build=None,
                 model=model,
@@ -475,7 +607,7 @@ def _tracked_run(
                 origin=origin,
                 error=str(exc),
                 thunk_name=thunk.name,
-                thread_id=thread_id,
+                thread_id=effective_thread_id,
             )
         )
         raise

@@ -31,7 +31,6 @@ from toolang.program.ast import Thunk
 from toolang.tools import create_tool_runtime
 
 from .api_models import ChatRequest, RunRequest
-from .chats import ChatStore
 from .execution_store import ExecutionStore
 from .invoke import (
     ChatResult,
@@ -87,7 +86,6 @@ class RuntimeHost:
         self.scheduler = RuntimeScheduler()
         self.activation_id = uuid.uuid4().hex
         self._bus: BusStore | None = None
-        self._chats: ChatStore | None = None
         self._execution: ExecutionStore | None = None
         self._room = None
         self._channel_plugins: dict[str, ChannelPlugin] = {}
@@ -117,12 +115,6 @@ class RuntimeHost:
         return self._bus
 
     @property
-    def chats(self) -> ChatStore:
-        if self._chats is None:
-            raise ToolangError("Runtime host has not been started.")
-        return self._chats
-
-    @property
     def execution(self) -> ExecutionStore:
         if self._execution is None:
             raise ToolangError("Runtime host has not been started.")
@@ -136,7 +128,6 @@ class RuntimeHost:
         room = AgentHome.resolve(self.prepared.ref.home).room(self.prepared.ref.name)
         self._room = room
         self._bus = BusStore(self.bus_db_path)
-        self._chats = ChatStore(room.chats_db_path)
         self._execution = ExecutionStore(room.execution_db_path)
         self._channel_plugins = {
             name: create_channel_plugin(binding.plugin, config=binding.config)
@@ -207,11 +198,9 @@ class RuntimeHost:
                     sandbox=self.sandbox,
                 )
         finally:
-            self.chats.close()
             self.bus.close()
             self.execution.close()
             self._bus = None
-            self._chats = None
             self._execution = None
             self._channel_plugins = {}
             self._pulse_pending = set()
@@ -468,7 +457,6 @@ class RuntimeHost:
             current,
             selected_thunk,
             bus_db_path=self.bus_db_path,
-            chat_store=self.chats,
             message=message,
             model=request.model,
             sandbox=self.sandbox,
@@ -506,7 +494,6 @@ class RuntimeHost:
             current,
             selected_thunk,
             bus_db_path=self.bus_db_path,
-            chat_store=self.chats,
             message=message,
             model=_optional_text(delivery.meta.get("model")),
             sandbox=self.sandbox,

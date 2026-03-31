@@ -121,6 +121,8 @@
 - Keep file-shape logic in dedicated modules.
 - Keep path/layout logic in dedicated modules.
 - Keep runtime execution logic separate from file parsing and path resolution.
+- `execution.db` owns runtime transcript messages as well as activation,
+  thread, run, and step truth. Do not add a separate durable chat-store layer.
 - Synced state should be reusable without reparsing unchanged source files.
 
 

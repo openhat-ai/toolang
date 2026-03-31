@@ -5,7 +5,7 @@ import json
 from toolang.agent.prepared import PreparedAgent
 from toolang.bus.db import AgentSnapshot, RunSnapshot, StoredEvent
 from toolang.concepts.caps import ServiceFrontmatter
-from toolang.concepts.execution import RunRecord, StepRecord, ThreadRecord
+from toolang.concepts.execution import RunMessageRecord, RunRecord, StepRecord, ThreadRecord
 from toolang.concepts.messages import part_to_dict
 from toolang.caps.view import CapView, SkillCapView
 from toolang.runtime.api_models import (
@@ -22,7 +22,6 @@ from toolang.runtime.api_models import (
     RunStepItem,
     ThreadItem,
 )
-from toolang.runtime.chats import ChatMessage
 from toolang.runtime.cap_defs import CapMutationResult
 
 SHORT_AGENT_ID_LENGTH = 12
@@ -291,7 +290,7 @@ def thread_item(
     )
 
 
-def message_item(message: ChatMessage) -> AgentChatMessage:
+def message_item(message: RunMessageRecord) -> AgentChatMessage:
     return AgentChatMessage(
         id=message.id,
         thread_id=message.thread_id,

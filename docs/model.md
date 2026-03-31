@@ -207,7 +207,8 @@ Rules:
 
 - chat history lives in threads
 - one chat send or reply creates one run
-- ordered chat messages are presentation data attached to runs in chat threads
+- ordered chat messages are canonical transcript data attached to runs in chat
+  threads
 - the scheduler and truth model stay centered on run, not on chat as a
   separate runtime primitive
 

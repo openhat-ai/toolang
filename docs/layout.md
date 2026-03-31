@@ -229,8 +229,6 @@ ${AGENT_ROOM}/
     services/
     prompts/
     psyches/
-  chats/
-    chats.db
   sandbox/
   tasks/
     *.md
@@ -246,7 +244,8 @@ Notes:
 - `agent.log`
   - managed runtime log
 - `execution.db`
-  - local execution truth layer for activations, threads, runs, and steps
+  - local execution truth layer for activations, threads, runs, steps, and
+    transcript messages
 - `pulse.json`
   - persisted RRULE scheduling state and latest local scan feedback for task,
     chore, and will definitions
@@ -262,8 +261,6 @@ Notes:
   - runtime-owned hook loop state
 - `sync/`
   - agent-scoped synced caps
-- `chats/chats.db`
-  - durable chat threads and ordered messages
 - `tasks/`, `chores/`, and `will.md`
   - agent-local work state
 

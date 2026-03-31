@@ -93,11 +93,9 @@ SQLite is the primary local storage layer.
 
 Current or expected uses:
 
-- chat transcripts
-  - `${AGENT_ROOM}/chats/chats.db`
 - execution truth
   - `${AGENT_ROOM}/execution.db`
-  - activation, thread, run, and step records
+  - activation, thread, run, step, and transcript-message records
 - known-agent and running-agent registry
   - `${TOOLANG_ROOT}/agents.db`
 - shared bus projection

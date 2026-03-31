@@ -1,4 +1,4 @@
-"""Execution truth-layer storage for activations, threads, runs, and steps."""
+"""Execution truth-layer storage for activations, threads, runs, steps, and messages."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from toolang.concepts.execution import (
     ExecutionStrategy,
     MessageOrigin,
     MessageSender,
+    RunMessageRecord,
     RunRecord,
     RunStatus,
     RuntimeLoop,
@@ -26,6 +27,7 @@ from toolang.concepts.execution import (
     ThreadRecord,
 )
 from toolang.concepts.identity import AgentRef
+from toolang.concepts.messages import MessageRole, TextPart, TurnMessage, part_from_dict, part_to_dict
 
 
 def utc_now() -> str:
@@ -35,7 +37,7 @@ def utc_now() -> str:
 
 
 class ExecutionStore:
-    """SQLite-backed truth layer for activations, threads, runs, and steps."""
+    """SQLite-backed truth layer for activations, threads, runs, steps, and transcript messages."""
 
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
@@ -231,6 +233,197 @@ class ExecutionStore:
         with self._lock:
             rows = self._conn.execute(query, params).fetchall()
         return [_thread_from_row(row) for row in rows]
+
+    def append_message(
+        self,
+        *,
+        thread_id: str,
+        run_id: str,
+        role: MessageRole,
+        origin: MessageOrigin,
+        channel: str | None,
+        sender: MessageSender,
+        text: str,
+        message: TurnMessage | None = None,
+        meta: dict[str, Any] | None = None,
+        at: str | None = None,
+    ) -> RunMessageRecord:
+        """Append one transcript message to an existing thread."""
+
+        if role not in {"user", "assistant"}:
+            raise ValueError(f"unsupported role: {role}")
+        now = at or utc_now()
+        effective_message = message or TurnMessage(
+            id=f"{run_id}:{role}",
+            role=role,
+            parts=(TextPart(id=f"{run_id}:{role}:text:1", text=text),),
+            created_at=now,
+            metadata=dict(meta or {}),
+        )
+        preview = effective_message.preview_text() or text
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COALESCE(MAX(seq), 0) AS seq FROM messages WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchone()
+            next_seq = int(row["seq"]) + 1 if row is not None else 1
+            cursor = self._conn.execute(
+                """
+                INSERT INTO messages(
+                    message_id,
+                    thread_id,
+                    run_id,
+                    seq,
+                    role,
+                    origin,
+                    channel,
+                    sender,
+                    text,
+                    created_at,
+                    meta_json,
+                    parts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    effective_message.id,
+                    thread_id,
+                    run_id,
+                    next_seq,
+                    role,
+                    origin,
+                    channel,
+                    sender,
+                    preview,
+                    now,
+                    _dump_json(meta or {}),
+                    _dump_json([part_to_dict(item) for item in effective_message.parts]),
+                ),
+            )
+            self._conn.execute(
+                "UPDATE threads SET updated_at = ? WHERE thread_id = ?",
+                (now, thread_id),
+            )
+            inserted = self._conn.execute(
+                """
+                SELECT
+                    message_id,
+                    thread_id,
+                    run_id,
+                    seq,
+                    role,
+                    origin,
+                    channel,
+                    sender,
+                    text,
+                    created_at,
+                    meta_json,
+                    parts_json
+                FROM messages
+                WHERE rowid = ?
+                """,
+                (cursor.lastrowid,),
+            ).fetchone()
+            self._conn.commit()
+        if inserted is None:
+            raise RuntimeError("message insert returned no row")
+        return _message_from_row(inserted)
+
+    def recent_messages(
+        self,
+        *,
+        thread_id: str,
+        limit: int = 20,
+    ) -> list[RunMessageRecord]:
+        """Return recent transcript messages for one thread."""
+
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT
+                    message_id,
+                    thread_id,
+                    run_id,
+                    seq,
+                    role,
+                    origin,
+                    channel,
+                    sender,
+                    text,
+                    created_at,
+                    meta_json,
+                    parts_json
+                FROM messages
+                WHERE thread_id = ?
+                ORDER BY seq DESC
+                LIMIT ?
+                """,
+                (thread_id, limit),
+            ).fetchall()
+        return [_message_from_row(row) for row in reversed(rows)]
+
+    def recent_openai_messages(
+        self,
+        *,
+        thread_id: str,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Return provider-ready chat history for one thread."""
+
+        return [
+            {
+                "role": message.role,
+                "content": message.text,
+            }
+            for message in self.recent_messages(thread_id=thread_id, limit=limit)
+        ]
+
+    def messages_for_run(self, *, run_id: str) -> list[RunMessageRecord]:
+        """Return transcript messages for one run."""
+
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT
+                    message_id,
+                    thread_id,
+                    run_id,
+                    seq,
+                    role,
+                    origin,
+                    channel,
+                    sender,
+                    text,
+                    created_at,
+                    meta_json,
+                    parts_json
+                FROM messages
+                WHERE run_id = ?
+                ORDER BY seq ASC
+                """,
+                (run_id,),
+            ).fetchall()
+        return [_message_from_row(row) for row in rows]
+
+    def thread_preview(self, *, thread_id: str) -> tuple[str | None, str | None]:
+        """Return the latest preview text and channel for one thread."""
+
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT text, channel
+                FROM messages
+                WHERE thread_id = ?
+                ORDER BY seq DESC
+                LIMIT 1
+                """,
+                (thread_id,),
+            ).fetchone()
+        if row is None:
+            return None, None
+        return (
+            str(row["text"]) if row["text"] is not None else None,
+            str(row["channel"]) if row["channel"] is not None else None,
+        )
 
     def start_run(
         self,
@@ -550,6 +743,26 @@ class ExecutionStore:
             )
             self._conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS messages (
+                    message_id TEXT NOT NULL,
+                    thread_id TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
+                    seq INTEGER NOT NULL,
+                    role TEXT NOT NULL,
+                    origin TEXT NOT NULL,
+                    channel TEXT,
+                    sender TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    meta_json TEXT NOT NULL DEFAULT '{}',
+                    parts_json TEXT NOT NULL DEFAULT '[]',
+                    FOREIGN KEY(thread_id) REFERENCES threads(thread_id),
+                    FOREIGN KEY(run_id) REFERENCES runs(run_id)
+                )
+                """
+            )
+            self._conn.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_execution_activations_agent_started
                 ON activations(agent_uri, started_at)
                 """
@@ -576,6 +789,24 @@ class ExecutionStore:
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_execution_steps_run_seq
                 ON steps(run_id, seq)
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_execution_messages_thread_seq
+                ON messages(thread_id, seq)
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_execution_messages_run_seq
+                ON messages(run_id, seq)
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_execution_messages_id
+                ON messages(message_id)
                 """
             )
             self._conn.commit()
@@ -659,4 +890,24 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
         error=str(row["error"]) if row["error"] is not None else None,
         started_at=str(row["started_at"]),
         finished_at=str(row["finished_at"]) if row["finished_at"] is not None else None,
+    )
+
+
+def _message_from_row(row: sqlite3.Row) -> RunMessageRecord:
+    return RunMessageRecord(
+        id=str(row["message_id"]),
+        thread_id=str(row["thread_id"]),
+        run_id=str(row["run_id"]),
+        seq=int(row["seq"]),
+        role=row["role"],
+        origin=row["origin"],
+        channel=str(row["channel"]) if row["channel"] is not None else None,
+        sender=row["sender"],
+        text=str(row["text"]),
+        created_at=str(row["created_at"]),
+        meta=dict(_load_json(str(row["meta_json"]))),
+        parts=tuple(
+            part_from_dict(item)
+            for item in _load_json(str(row["parts_json"]))
+        ),
     )

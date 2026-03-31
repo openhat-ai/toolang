@@ -64,6 +64,7 @@ def test_invoke_prepared_agent_records_run_events(tmp_path: Path, monkeypatch) -
     activations = execution.list_activations(agent_uri=agent.uri)
     runs = execution.list_runs(activation_id=activations[0].activation_id)
     steps = execution.list_steps(run_id=result.run_id)
+    messages = execution.messages_for_run(run_id=result.run_id)
     execution.close()
     trace = PromptTrace.load(agent_run_prompt_path(home, "alice", result.run_id))
 
@@ -79,6 +80,9 @@ def test_invoke_prepared_agent_records_run_events(tmp_path: Path, monkeypatch) -
     assert runs[0].thread_id == f"invoke:{result.run_id}"
     assert runs[0].status == "finished"
     assert [step.step_kind for step in steps] == ["prompt_build", "model_call"]
+    assert [message.role for message in messages] == ["user", "assistant"]
+    assert messages[0].text == "hello"
+    assert messages[1].text == "ran:summarize:hello:gpt-5.3"
     assert trace.sandbox == "host"
     assert trace.cap_scopes == ["agent", "shared", "global"]
     assert trace.runtime_context["program"]["thunk"]["name"] == "summarize"
@@ -120,6 +124,7 @@ def test_invoke_prepared_agent_records_tool_calls(tmp_path: Path, monkeypatch) -
 
     execution = ExecutionStore(execution_db_path(home, "alice"))
     steps = execution.list_steps(run_id=result.run_id)
+    messages = execution.messages_for_run(run_id=result.run_id)
     execution.close()
     trace = PromptTrace.load(agent_run_prompt_path(home, "alice", result.run_id))
 
@@ -170,3 +175,5 @@ def test_invoke_prepared_agent_records_tool_calls(tmp_path: Path, monkeypatch) -
             "error": None,
         }
     ]
+    assert messages[1].parts[0].type == "tool"
+    assert messages[1].parts[1].type == "text"
