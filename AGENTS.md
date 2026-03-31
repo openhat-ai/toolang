@@ -8,6 +8,8 @@
 - When creating PRs with `gh`, avoid inline shell-quoted multiline bodies.
   Use `--body-file` or a single-quoted heredoc so Markdown formatting is not
   corrupted by shell interpolation.
+- Open ready-for-review PRs by default. Use draft PRs only when the user
+  explicitly asks for a draft.
 - Before each commit, run:
   - `uv run ty check --python-version 3.13 src tests`
   - `uv run ruff check`
