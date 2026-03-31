@@ -258,7 +258,8 @@ Chat is a projection over threads, runs, and ordered messages.
 Rules:
 
 - one inbound chat send creates one run
-- the runtime persists ordered chat messages separately from run records
+- the runtime persists ordered chat messages in `execution.db` alongside run
+  records
 - `/api/v1/threads/{thread_id}` returns thread metadata, related runs, and
   ordered messages together
 - `/api/v1/chats*` is an alias over the same thread model
@@ -298,9 +299,7 @@ Toolang keeps multiple durable layers with different meanings.
 Primary local truth:
 
 - `${AGENT_ROOM}/execution.db`
-  - activation, thread, run, and step records
-- `${AGENT_ROOM}/chats/chats.db`
-  - ordered chat messages attached to runs in threads
+  - activation, thread, run, step, and transcript-message records
 
 Derived or diagnostic state:
 
@@ -313,8 +312,7 @@ Derived or diagnostic state:
 
 Rules:
 
-- `execution.db` is the runtime execution truth
-- chat history is durable presentation data linked to runs and threads
+- `execution.db` is the runtime execution and transcript truth
 - bus events and pulse state are projections
 - prompt traces are diagnostics, not the canonical source of run status
 

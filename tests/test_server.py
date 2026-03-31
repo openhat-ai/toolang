@@ -1396,7 +1396,7 @@ def test_create_agent_app_polls_task_deliveries(tmp_path: Path, monkeypatch) -> 
         ),
     )
 
-    with TestClient(app):
+    with TestClient(app) as client:
         execution = ExecutionStore(execution_db_path)
         try:
             _wait_for(
@@ -1407,6 +1407,28 @@ def test_create_agent_app_polls_task_deliveries(tmp_path: Path, monkeypatch) -> 
             runs = execution.list_runs(agent_uri=agent.uri)
         finally:
             execution.close()
+
+        task_run = next(run for run in runs if run.origin == "task")
+        thread = client.get("/api/v1/threads/task:linear/42")
+        assert thread.status_code == 200
+        assert [item["role"] for item in thread.json()["messages"]] == [
+            "user",
+            "assistant",
+        ]
+        detail = client.get(f"/api/v1/runs/{task_run.run_id}")
+        assert detail.status_code == 200
+        assert [item["role"] for item in detail.json()["messages"]] == [
+            "user",
+            "assistant",
+        ]
+        assert detail.json()["messages"][1]["parts"] == [
+            {
+                "id": f"{task_run.run_id}:assistant:text:1",
+                "type": "text",
+                "text": "tasked:task:Investigate the regression and report back.:gpt-5",
+                "state": "done",
+            }
+        ]
 
     task_runs = [run for run in runs if run.origin == "task"]
     task_build = next(build for build in builds if build.runtime_context["origin"] == "task")
@@ -1437,6 +1459,127 @@ def test_create_agent_app_polls_task_deliveries(tmp_path: Path, monkeypatch) -> 
     assert "Task execution protocol:" in task_build.developer_message
     assert "Task provider: linear." in task_build.developer_message
     assert "Task read available: no." in task_build.developer_message
+
+
+def test_thread_and_run_detail_read_non_chat_messages_from_execution_store(
+    tmp_path: Path,
+) -> None:
+    root = resolve_toolang_root(tmp_path / "toolang-root")
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "alice.too").write_text(
+        SOURCE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    agent = resolve_agent_ref("alice", cwd=tmp_path, toolang_root=root)
+    prepared = prepare_agent(agent)
+    execution_db_path = agent_execution_db_path(home, "alice")
+    run_id = "historicalchore001"
+    thread_id = "chore:maintenance-sync"
+    activation_id = "activation-historical"
+    started_at = "2026-03-20T10:00:00Z"
+    finished_at = "2026-03-20T10:01:00Z"
+
+    execution = ExecutionStore(execution_db_path)
+    try:
+        execution.begin_activation(
+            agent=agent,
+            activation_id=activation_id,
+            activation_kind="runtime",
+            sandbox="host",
+            cap_scopes=(),
+            started_at=started_at,
+        )
+        execution.ensure_thread(
+            agent=agent,
+            thread_id=thread_id,
+            thread_group="chore",
+            title="Sync maintenance",
+            at=started_at,
+        )
+        execution.start_run(
+            run_id=run_id,
+            activation_id=activation_id,
+            thread_id=thread_id,
+            origin="chore",
+            channel=None,
+            sender="self",
+            execution_strategy="direct",
+            input_text="# Sync maintenance\n\nRefresh local mirrors.",
+            at=started_at,
+        )
+        execution.finish_run(
+            run_id=run_id,
+            output_text="Historical sync completed.",
+            finished_at=finished_at,
+        )
+        execution.append_message(
+            thread_id=thread_id,
+            run_id=run_id,
+            role="user",
+            origin="chore",
+            channel=None,
+            sender="self",
+            text="# Sync maintenance\n\nRefresh local mirrors.",
+            at=started_at,
+        )
+        execution.append_message(
+            thread_id=thread_id,
+            run_id=run_id,
+            role="assistant",
+            origin="chore",
+            channel=None,
+            sender="self",
+            text="Historical sync completed.",
+            at=finished_at,
+        )
+    finally:
+        execution.close()
+
+    app = create_agent_app(
+        prepared,
+        agents_db_path=agents_db_path(root),
+        bus_db_path=bus_events_db_path(root),
+        host="127.0.0.1",
+        port=8768,
+        sandbox="host",
+    )
+
+    with TestClient(app) as client:
+        threads = client.get("/api/v1/threads", params={"kind": "chore"})
+        assert threads.status_code == 200
+        assert threads.json()["items"][0]["id"] == thread_id
+        assert threads.json()["items"][0]["preview"] == "Historical sync completed."
+
+        thread = client.get(f"/api/v1/threads/{thread_id}")
+        assert thread.status_code == 200
+        assert [item["role"] for item in thread.json()["messages"]] == [
+            "user",
+            "assistant",
+        ]
+
+        detail = client.get(f"/api/v1/runs/{run_id}")
+        assert detail.status_code == 200
+        assert [item["role"] for item in detail.json()["messages"]] == [
+            "user",
+            "assistant",
+        ]
+        assert detail.json()["messages"][0]["parts"] == [
+            {
+                "id": f"{run_id}:user:text:1",
+                "type": "text",
+                "text": "# Sync maintenance\n\nRefresh local mirrors.",
+                "state": "done",
+            }
+        ]
+        assert detail.json()["messages"][1]["parts"] == [
+            {
+                "id": f"{run_id}:assistant:text:1",
+                "type": "text",
+                "text": "Historical sync completed.",
+                "state": "done",
+            }
+        ]
 
 
 def test_create_agent_app_lists_local_work_documents(tmp_path: Path) -> None:
