@@ -189,3 +189,16 @@ Reason:
 - the runtime surface is still evolving
 - fewer moving parts make it easier to stabilize the language and execution
   model first
+
+
+## 9. Refactor Order
+
+Refactor in this order:
+
+1. introduce `runtime.process` as the process-level runtime owner
+2. split runtime execution into `prepare`, `watcher`, `control`, `inspect`,
+   `runner`, and `assembly`
+3. move plugin loading behind `toolang.plugins` and keep family contracts in
+   `memory`, `tools`, `channels`, and `sandbox`
+4. migrate code in small compatible slices until the old module names can be
+   removed
