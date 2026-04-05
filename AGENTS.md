@@ -3,6 +3,9 @@
 ## Repository Rules
 
 - Use semantic commit messages.
+- Use semantic commit messages for PR titles as well.
+- Do not add `[codex]` or similar automation prefixes to PR titles unless the
+  user explicitly requests them.
 - Write all code and documentation in English.
 - Keep changes PR-sized and composable.
 - When creating PRs with `gh`, avoid inline shell-quoted multiline bodies.
