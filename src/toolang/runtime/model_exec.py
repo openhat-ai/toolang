@@ -1,4 +1,4 @@
-"""Model execution helpers for prepared prompt builds."""
+"""Model execution helpers for assembled prompt bundles."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from toolang.concepts.tools import ToolCallResult, ToolDefinition, ToolFamily
 from toolang.errors import ToolangError
 from toolang.tools import ToolRuntime
 
-from .build import PromptBuild
+from .assembly import PromptBundle
 
 MAX_TOOL_ROUNDS = 8
 
@@ -90,11 +90,11 @@ ModelExecutionStreamEvent = (
 ModelExecutionEventHandler = Callable[[ModelExecutionStreamEvent], None]
 
 
-def execute_prompt_build(build: PromptBuild) -> ModelExecutionResult:
-    """Execute one prepared prompt build and return model output and tool calls."""
+def execute_prompt_bundle(bundle: PromptBundle) -> ModelExecutionResult:
+    """Execute one assembled prompt bundle and return model output and tool calls."""
 
     openai_client = _create_openai_client()
-    tool_runtime = build.tool_runtime
+    tool_runtime = bundle.tool_runtime
     tool_definitions = (
         tool_runtime.definitions()
         if tool_runtime is not None and tool_runtime.providers
@@ -102,8 +102,8 @@ def execute_prompt_build(build: PromptBuild) -> ModelExecutionResult:
     )
     response = _create_response(
         openai_client,
-        model=build.model,
-        messages=build.messages,
+        model=bundle.model,
+        messages=bundle.messages,
         tools=tool_definitions,
     )
     if not tool_definitions:
@@ -111,21 +111,21 @@ def execute_prompt_build(build: PromptBuild) -> ModelExecutionResult:
     return _continue_with_tools(
         openai_client,
         response=response,
-        model=build.model,
+        model=bundle.model,
         tool_runtime=tool_runtime,
         tool_definitions=tool_definitions,
     )
 
 
-def execute_prompt_build_stream(
-    build: PromptBuild,
+def execute_prompt_bundle_stream(
+    bundle: PromptBundle,
     *,
     on_event: ModelExecutionEventHandler,
 ) -> ModelExecutionResult:
-    """Execute one prepared prompt build and emit streamed text and tool events."""
+    """Execute one assembled prompt bundle and emit streamed text and tool events."""
 
     openai_client = _create_openai_client()
-    tool_runtime = build.tool_runtime
+    tool_runtime = bundle.tool_runtime
     tool_definitions = (
         tool_runtime.definitions()
         if tool_runtime is not None and tool_runtime.providers
@@ -133,8 +133,8 @@ def execute_prompt_build_stream(
     )
     return _continue_with_stream(
         openai_client,
-        model=build.model,
-        messages=build.messages,
+        model=bundle.model,
+        messages=bundle.messages,
         tool_runtime=tool_runtime,
         tool_definitions=tool_definitions,
         on_event=on_event,

@@ -8,8 +8,8 @@ import typer
 from toolang.agent.prepared import prepare_agent
 from toolang.caps import sync_agent
 from toolang.concepts.layout import ToolangRoot
-from toolang.runtime.invoke import invoke_prepared_agent
 from toolang.concepts.sandbox import HOST_SANDBOX
+from toolang.runtime.runner import Runner
 
 from .support import (
     _append_agent_changed,
@@ -60,13 +60,14 @@ def invoke_command(
     if selected_thunk.input_name and user_input is None and not sys.stdin.isatty():
         user_input = sys.stdin.read()
 
-    result = invoke_prepared_agent(
+    result = Runner(
         prepared,
-        selected_thunk,
         bus_db_path=bus_db_path,
+        sandbox=HOST_SANDBOX,
+    ).invoke(
+        selected_thunk,
         user_input=user_input,
         model=model,
-        sandbox=HOST_SANDBOX,
     )
     typer.echo(result.output)
 

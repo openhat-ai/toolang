@@ -13,7 +13,7 @@ from toolang.agent.registry import delete_running_agent, get_running_agent
 from toolang.concepts.execution import RuntimeLoop
 from toolang.errors import ToolangError
 from toolang.concepts.layout import AgentHome, ToolangRoot
-from toolang.runtime.server import run_agent
+from toolang.runtime.server.app import run_agent
 from toolang.concepts.identity import AgentRef
 from toolang.concepts.persisted import ChannelsConfig
 from toolang.concepts.sandbox import HOST_SANDBOX, SandboxSpec, SandboxState

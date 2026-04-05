@@ -1,3 +1,5 @@
+"""Prompt assembly for one bound run."""
+
 from __future__ import annotations
 
 import json
@@ -29,7 +31,9 @@ DEFAULT_MODEL = "gpt-5"
 
 
 @dataclass(frozen=True, slots=True)
-class PromptBuild:
+class PromptBundle:
+    """One fully assembled prompt bundle ready for model execution."""
+
     model: str
     raw_input: str | None
     expanded_input: str | None
@@ -42,6 +46,8 @@ class PromptBuild:
 
 
 def infer_model(thunk: Thunk, override: str | None = None) -> str:
+    """Return the selected model for one thunk."""
+
     if override:
         return override
     for directive in thunk.directives:
@@ -58,10 +64,11 @@ def infer_model(thunk: Thunk, override: str | None = None) -> str:
 
 
 def expand_prompt_input(program: Program, raw_input: str) -> str:
+    """Expand one prompt-template call in user input."""
+
     lines = raw_input.splitlines()
     if not lines:
         return raw_input
-
     first_line = lines[0].strip()
     match = PROMPT_CALL_RE.match(first_line)
     if not match:
@@ -81,7 +88,6 @@ def expand_prompt_input(program: Program, raw_input: str) -> str:
     if body_lines and not body_lines[0].strip():
         body_lines = body_lines[1:]
     bindings = {"input": "\n".join(body_lines).strip("\n")}
-
     for param in prompt_decl.params:
         if param.name in args:
             bindings[param.name] = args[param.name]
@@ -91,11 +97,13 @@ def expand_prompt_input(program: Program, raw_input: str) -> str:
             raise ToolangError(
                 f"Missing required prompt argument {param.name!r} for /{prompt_name}."
             )
+    return TEMPLATE_VAR_RE.sub(
+        lambda item: _render_template_var(item, bindings),
+        prompt_decl.body,
+    )
 
-    return TEMPLATE_VAR_RE.sub(lambda item: _render_template_var(item, bindings), prompt_decl.body)
 
-
-def build_invoke_prompt(
+def assemble_invoke_prompt(
     prepared,
     thunk: Thunk,
     *,
@@ -106,7 +114,9 @@ def build_invoke_prompt(
     sandbox: str,
     input_meta: dict[str, Any] | None = None,
     tool_runtime: ToolRuntime | None = None,
-) -> PromptBuild:
+) -> PromptBundle:
+    """Assemble one invoke prompt bundle."""
+
     if thunk.input_name and user_input is None:
         raise ToolangError(
             f"Thunk {thunk.name or '<default>'} requires user input. Pass --input or pipe stdin."
@@ -116,7 +126,9 @@ def build_invoke_prompt(
             f"Thunk {thunk.name or '<default>'} does not accept user input."
         )
 
-    expanded_user_input = expand_prompt_input(prepared.program, user_input) if user_input else ""
+    expanded_user_input = (
+        expand_prompt_input(prepared.program, user_input) if user_input else ""
+    )
     source_text = prepared.source_text
     runtime_context = _build_runtime_context(
         prepared,
@@ -139,7 +151,7 @@ def build_invoke_prompt(
         if thunk.input_name
         else "Execute the selected thunk with no external user message."
     )
-    return PromptBuild(
+    return PromptBundle(
         model=infer_model(thunk, override=model),
         raw_input=user_input,
         expanded_input=expanded_user_input if thunk.input_name else None,
@@ -155,7 +167,7 @@ def build_invoke_prompt(
     )
 
 
-def build_chat_prompt(
+def assemble_chat_prompt(
     prepared,
     thunk: Thunk,
     *,
@@ -164,7 +176,9 @@ def build_chat_prompt(
     model: str | None,
     sandbox: str,
     tool_runtime: ToolRuntime | None = None,
-) -> PromptBuild:
+) -> PromptBundle:
+    """Assemble one chat prompt bundle."""
+
     source_text = prepared.source_text
     runtime_context = _build_runtime_context(
         prepared,
@@ -183,23 +197,20 @@ def build_chat_prompt(
         source_text=source_text,
         message=message,
     )
-    return PromptBuild(
+    return PromptBundle(
         model=infer_model(thunk, override=model),
         raw_input=message.text,
         expanded_input=None,
         message_context=_message_context(message),
         runtime_context=runtime_context,
         developer_message=developer_message,
-        messages=[
-            {"role": "developer", "content": developer_message},
-            *history_messages,
-        ],
+        messages=[{"role": "developer", "content": developer_message}, *history_messages],
         source_text=source_text,
         tool_runtime=tool_runtime,
     )
 
 
-def build_prompt_error_trace_data(
+def assemble_prompt_error_trace_data(
     prepared,
     thunk: Thunk,
     *,
@@ -212,6 +223,8 @@ def build_prompt_error_trace_data(
     input_meta: dict[str, Any] | None = None,
     tool_runtime: ToolRuntime | None = None,
 ) -> dict[str, Any]:
+    """Assemble prompt-trace payload when prompt assembly fails early."""
+
     runtime_context = _build_runtime_context(
         prepared,
         thunk,
@@ -222,7 +235,6 @@ def build_prompt_error_trace_data(
         input_meta=input_meta if message is None else message.meta,
         tool_runtime=tool_runtime,
     )
-    source_text = prepared.source_text
     return {
         "model": infer_model(thunk, override=model),
         "raw_input": raw_input,
@@ -231,7 +243,7 @@ def build_prompt_error_trace_data(
         "runtime_context": runtime_context,
         "developer_message": "",
         "messages": [],
-        "source_text": source_text,
+        "source_text": prepared.source_text,
     }
 
 
@@ -260,7 +272,9 @@ def _build_runtime_context(
         "origin": origin,
         "thread_id": thread_id,
         "visible_caps": visible_caps.model_dump(mode="python"),
-        "available_services": [item.service_catalog_item() for item in visible_caps.services],
+        "available_services": [
+            item.service_catalog_item() for item in visible_caps.services
+        ],
         "program": _program_context(prepared.program, thunk, prepared.ref.source),
         "tools": tool_runtime.enabled_families() if tool_runtime is not None else [],
     }
@@ -300,7 +314,10 @@ def _program_context(program: Program, thunk: Thunk, program_path: Path) -> dict
     ]
     return {
         "program_path": str(program_path),
-        "uses": [{"kind": item.kind, "reference": item.reference} for item in program.uses],
+        "uses": [
+            {"kind": item.kind, "reference": item.reference}
+            for item in program.uses
+        ],
         "cap_declarations": cap_declarations,
         "structs": structs,
         "stashes": stashes,
@@ -356,7 +373,9 @@ def _build_developer_message(
         )
         if output_decl.language == "json":
             developer_sections.append("Return valid JSON only.")
-    return "\n\n".join(section for section in developer_sections if section.strip())
+    return "\n\n".join(
+        section for section in developer_sections if section.strip()
+    )
 
 
 def _task_context(
@@ -370,7 +389,6 @@ def _task_context(
 ) -> dict[str, Any] | None:
     if origin != "task" or thread_id is None:
         return None
-
     local_task_id = task_id_from_thread_id(thread_id)
     if local_task_id is not None:
         room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
@@ -384,7 +402,10 @@ def _task_context(
             )
             mirror = mirror_state.find_by_local_task_id(local_task_id)
             provider = "local" if mirror is None else mirror.provider
-            service_available = _task_service_available(visible_caps.services, provider)
+            service_available = _task_service_available(
+                visible_caps.services,
+                provider,
+            )
             return {
                 "task": {
                     "provider": provider,
@@ -434,7 +455,6 @@ def _task_prompt(runtime_context: dict[str, Any]) -> str | None:
     services = runtime_context.get("task_services")
     if not isinstance(task, dict) or not isinstance(services, dict):
         return None
-
     provider = _task_text(task.get("provider")) or "unknown"
     can_read = bool(services.get("read"))
     can_write = bool(services.get("write"))
@@ -467,9 +487,13 @@ def _task_prompt(runtime_context: dict[str, Any]) -> str | None:
             ]
         )
     if not can_read and local_path is None:
-        lines.append("- If task read is unavailable, do not continue execution. Explain the missing configuration.")
+        lines.append(
+            "- If task read is unavailable, do not continue execution. Explain the missing configuration."
+        )
     elif not can_write:
-        lines.append("- If task write is unavailable, you may proceed, but you must clearly state that the task could not be updated.")
+        lines.append(
+            "- If task write is unavailable, you may proceed, but you must clearly state that the task could not be updated."
+        )
     else:
         lines.append("- Update the task at important milestones and before finishing.")
     return "\n".join(lines)
@@ -497,7 +521,6 @@ def _service_prompt(runtime_context: dict[str, Any]) -> str | None:
     if not services:
         lines.append("- No services are currently visible to this agent.")
         return "\n".join(lines)
-
     lines.append("- Visible services:")
     for item in services:
         if not isinstance(item, dict):
@@ -513,7 +536,9 @@ def _service_prompt(runtime_context: dict[str, Any]) -> str | None:
         if description is not None:
             detail_parts.append(f"description={description}")
         if isinstance(env_vars, list) and env_vars:
-            detail_parts.append(f"env={', '.join(str(env_name) for env_name in env_vars)}")
+            detail_parts.append(
+                f"env={', '.join(str(env_name) for env_name in env_vars)}"
+            )
         lines.append(f"- {name}: {'; '.join(detail_parts)}")
     lines.extend(
         [
@@ -552,9 +577,7 @@ def _task_text(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
-    if not text:
-        return None
-    return text
+    return text or None
 
 
 def _message_context(message: Message) -> dict[str, Any]:
@@ -563,34 +586,33 @@ def _message_context(message: Message) -> dict[str, Any]:
         "channel": message.channel,
         "sender": message.sender,
         "thread_id": message.thread_id,
-        "text": message.text,
-        "meta": dict(message.meta),
     }
 
 
-def _parse_prompt_args(raw_args: str, *, known: set[str], prompt_name: str) -> dict[str, str]:
-    if not raw_args.strip():
-        return {}
-    try:
-        tokens = shlex.split(raw_args)
-    except ValueError as exc:
-        raise ToolangError(f"Invalid prompt argument syntax: {exc}") from exc
-
+def _parse_prompt_args(
+    text: str,
+    *,
+    known: set[str],
+    prompt_name: str,
+) -> dict[str, str]:
     args: dict[str, str] = {}
-    for token in tokens:
+    if not text.strip():
+        return args
+    for token in shlex.split(text):
         if "=" not in token:
-            raise ToolangError(f"Prompt argument must use key=value syntax: {token!r}")
+            raise ToolangError(
+                f"Invalid prompt argument {token!r} for /{prompt_name}; expected name=value."
+            )
         name, value = token.split("=", 1)
-        if name not in known:
-            raise ToolangError(f"Unknown prompt argument {name!r} for /{prompt_name}.")
-        if name in args:
-            raise ToolangError(f"Duplicate prompt argument {name!r} for /{prompt_name}.")
-        args[name] = value
+        key = name.strip()
+        if not key or key not in known:
+            raise ToolangError(
+                f"Unknown prompt argument {key!r} for /{prompt_name}."
+            )
+        args[key] = value
     return args
 
 
 def _render_template_var(match: Match[str], bindings: dict[str, str]) -> str:
     name = match.group(1)
-    if name not in bindings:
-        raise ToolangError(f"Unknown template variable {name!r}.")
-    return bindings[name]
+    return bindings.get(name, "")

@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from toolang.agent.prepared import PreparedAgent
 from toolang.agent.registry import get_running_agent
-from toolang.bus.events import AgentChanged, utc_now
+from toolang.bus.events import utc_now
 from toolang.caps import load_prepared_caps
 from toolang.concepts.caps import CapKind
 from toolang.concepts.execution import MessageOrigin, RunStatus, RuntimeLoop
@@ -58,22 +58,22 @@ from ..api_models import (
     WillPutRequest,
     WillResponse,
 )
-from ..build import infer_model
-from ..cap_defs import delete_cap_definition, put_cap_definition
+from ..assembly import infer_model
 from ..chat_protocol import AIMessageChunkEncoder, chunk_to_dict
-from ..host import RuntimeHost
-from ..model_exec import TextDeltaEvent
-from ..work import (
-    list_chore_items,
-    list_task_items,
-    load_will_item,
+from ..control import (
+    delete_cap as control_delete_cap,
     patch_chore_item,
     patch_task_item,
     patch_will_item,
+    put_cap as control_put_cap,
     put_chore_item,
     put_task_item,
     put_will_item,
 )
+from ..inspect import runtime_diagnostics_snapshot, runtime_security_snapshot
+from ..model_exec import TextDeltaEvent
+from ..process import RuntimeProcess
+from ..work import list_chore_items, list_task_items, load_will_item
 from .presenters import (
     SHORT_AGENT_ID_LENGTH,
     cap_detail_response,
@@ -144,7 +144,7 @@ def create_agent_app(
     channels_config: ChannelsConfig | None = None,
 ) -> FastAPI:
     room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
-    runtime_host = RuntimeHost(
+    runtime_process = RuntimeProcess(
         prepared,
         agents_db_path=agents_db_path,
         bus_db_path=bus_db_path,
@@ -158,11 +158,11 @@ def create_agent_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        runtime_host.start()
+        runtime_process.start()
         try:
             yield
         finally:
-            runtime_host.stop()
+            runtime_process.stop()
 
     app = FastAPI(
         title=f"Toolang Agent API: {prepared.ref.name}",
@@ -171,10 +171,10 @@ def create_agent_app(
     add_cors(app, allow_origins=cors_allow_origins)
 
     def _run_messages(run) -> list[AgentChatMessage]:
-        return [message_item(item) for item in runtime_host.execution.messages_for_run(run_id=run.run_id)]
+        return [message_item(item) for item in runtime_process.execution.messages_for_run(run_id=run.run_id)]
 
     def _thread_preview_and_channel(thread_id: str) -> tuple[str | None, str | None]:
-        return runtime_host.execution.thread_preview(thread_id=thread_id)
+        return runtime_process.execution.thread_preview(thread_id=thread_id)
 
     @app.middleware("http")
     async def update_heartbeat(
@@ -182,7 +182,7 @@ def create_agent_app(
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
         response = await call_next(request)
-        runtime_host.touch()
+        runtime_process.touch()
         return response
 
     @app.exception_handler(ExternalDependencyUnavailableError)
@@ -208,19 +208,19 @@ def create_agent_app(
             "agent_uri": prepared.ref.uri,
             "agent_id": prepared.ref.id[:SHORT_AGENT_ID_LENGTH],
             "agent_name": prepared.ref.name,
-            "endpoint": runtime_host.endpoint,
+            "endpoint": runtime_process.endpoint,
         }
 
     @app.get("/api/v1/agent")
     @app.get("/agent", response_model_exclude_none=True)
     def agent_info():
-        snapshot = runtime_host.bus.get_agent(prepared.ref.uri)
+        snapshot = runtime_process.bus.get_agent(prepared.ref.uri)
         if snapshot is not None:
             return snapshot
         return fallback_agent_snapshot(
             prepared,
-            endpoint=runtime_host.endpoint,
-            sandbox=runtime_host.sandbox,
+            endpoint=runtime_process.endpoint,
+            sandbox=runtime_process.sandbox,
             now=utc_now(),
         )
 
@@ -231,15 +231,15 @@ def create_agent_app(
     @app.get("/api/v1/runtime", response_model=AgentRuntimeResponse)
     def runtime_info() -> AgentRuntimeResponse:
         current_run = get_running_agent(agents_db_path, prepared.ref.uri)
-        current = runtime_host.current_prepared()
+        current = runtime_process.current_prepared()
         return AgentRuntimeResponse(
             status="online",
             checked_at=utc_now(),
-            activation_id=runtime_host.activation_id,
-            endpoint=runtime_host.endpoint,
-            execution_host=SandboxSpec.parse(runtime_host.sandbox).execution_host,
+            activation_id=runtime_process.activation_id,
+            endpoint=runtime_process.endpoint,
+            execution_host=SandboxSpec.parse(runtime_process.sandbox).execution_host,
             working_directory=str(prepared.ref.home),
-            sandbox=runtime_host.sandbox,
+            sandbox=runtime_process.sandbox,
             network="enabled",
             approvals="n/a",
             filesystem_scope="agent-home",
@@ -256,13 +256,18 @@ def create_agent_app(
             ),
             model=_default_model(current),
             security=RuntimeSecurityResponse.model_validate(
-                runtime_host.security_snapshot(prepared=current)
+                runtime_security_snapshot(
+                    prepared=current,
+                    room=room,
+                    sandbox=runtime_process.sandbox,
+                    runtime_loops=runtime_process.runtime_loops,
+                )
             ),
         )
 
     @app.get("/api/v1/caps", response_model=AgentCapsResponse)
     def list_caps() -> AgentCapsResponse:
-        current = runtime_host.current_prepared()
+        current = runtime_process.current_prepared()
         caps = load_prepared_caps(current)
         return caps_response(current, caps)
 
@@ -368,8 +373,9 @@ def create_agent_app(
         cap_name: str,
         request: CapPutRequest,
     ) -> CapMutationResponse:
-        current = runtime_host.current_prepared()
-        result = put_cap_definition(
+        current = runtime_process.current_prepared()
+        result = control_put_cap(
+            runtime_process.bus,
             current.ref,
             kind=kind,
             name=cap_name,
@@ -378,7 +384,6 @@ def create_agent_app(
             ref=request.ref,
             content=request.content,
         )
-        _append_caps_updated(current, detail=result.detail)
         return cap_mutation_response(result)
 
     def _delete_cap(
@@ -388,64 +393,55 @@ def create_agent_app(
         scope: str,
         source: str | None,
     ) -> CapDeleteResponse:
-        current = runtime_host.current_prepared()
-        result = delete_cap_definition(
+        current = runtime_process.current_prepared()
+        control_delete_cap(
+            runtime_process.bus,
             current.ref,
             kind=kind,
             name=cap_name,
             scope=scope,
             source=source,
         )
-        _append_caps_updated(current, detail=result.detail)
         return CapDeleteResponse()
 
     @app.get("/api/v1/tasks", response_model=TaskListResponse)
     def list_tasks() -> TaskListResponse:
-        room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
         return TaskListResponse(items=list_task_items(room))
 
     @app.put("/api/v1/tasks/{task_name:path}", response_model=TaskItem)
     def put_task(task_name: str, request: TaskPutRequest) -> TaskItem:
-        room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
         return put_task_item(room, task_name, request)
 
     @app.patch("/api/v1/tasks/{task_name:path}", response_model=TaskItem)
     def patch_task(task_name: str, request: TaskPatchRequest) -> TaskItem:
-        room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
         return patch_task_item(room, task_name, request)
 
     @app.get("/api/v1/chores", response_model=ChoreListResponse)
     def list_chores() -> ChoreListResponse:
-        room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
         return ChoreListResponse(items=list_chore_items(room))
 
     @app.put("/api/v1/chores/{chore_id:path}", response_model=ChoreItem)
     def put_chore(chore_id: str, request: ChorePutRequest) -> ChoreItem:
-        room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
         return put_chore_item(room, chore_id, request)
 
     @app.patch("/api/v1/chores/{chore_id:path}", response_model=ChoreItem)
     def patch_chore(chore_id: str, request: ChorePatchRequest) -> ChoreItem:
-        room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
         return patch_chore_item(room, chore_id, request)
 
     @app.get("/api/v1/will", response_model=WillResponse)
     def get_will() -> WillResponse:
-        room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
         return WillResponse(item=load_will_item(room, agent=prepared.ref))
 
     @app.put("/api/v1/will", response_model=WillResponse)
     def put_will(request: WillPutRequest) -> WillResponse:
-        room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
         return WillResponse(item=put_will_item(room, request, agent=prepared.ref))
 
     @app.patch("/api/v1/will", response_model=WillResponse)
     def patch_will(request: WillPatchRequest) -> WillResponse:
-        room = AgentHome.resolve(prepared.ref.home).room(prepared.ref.name)
         return WillResponse(item=patch_will_item(room, request, agent=prepared.ref))
 
     def _list_threads(*, kind: str | None, limit: int) -> ThreadListResponse:
-        threads = runtime_host.execution.list_threads(
+        threads = runtime_process.execution.list_threads(
             agent_uri=prepared.ref.uri,
             limit=limit,
         )
@@ -464,11 +460,11 @@ def create_agent_app(
         return ThreadListResponse(items=items)
 
     def _get_thread_response(thread_id: str, *, limit: int) -> ThreadResponse:
-        thread = runtime_host.execution.get_thread(thread_id=thread_id)
+        thread = runtime_process.execution.get_thread(thread_id=thread_id)
         if thread is None or thread.agent_uri != prepared.ref.uri:
             raise HTTPException(status_code=404, detail="thread not found")
         preview, channel = _thread_preview_and_channel(thread_id)
-        runs = runtime_host.execution.list_runs(
+        runs = runtime_process.execution.list_runs(
             thread_id=thread_id,
             limit=limit,
         )
@@ -483,31 +479,17 @@ def create_agent_app(
         )
 
     def _list_cap_collection(kind: CapKind) -> CapListResponse:
-        current = runtime_host.current_prepared()
+        current = runtime_process.current_prepared()
         caps = load_prepared_caps(current)
         return cap_list_response(_cap_items_for_kind(current, caps, kind))
 
     def _get_cap_detail(kind: CapKind, cap_name: str) -> CapDetailResponse:
-        current = runtime_host.current_prepared()
+        current = runtime_process.current_prepared()
         caps = load_prepared_caps(current)
         item = _cap_detail_for_kind(current, caps, kind, cap_name)
         if item is None:
             raise HTTPException(status_code=404, detail="cap not found")
         return cap_detail_response(item)
-
-    def _append_caps_updated(current: PreparedAgent, *, detail: str) -> None:
-        runtime_host.bus.append(
-            AgentChanged(
-                at=utc_now(),
-                agent_uri=current.ref.uri,
-                agent_id=current.ref.id[:SHORT_AGENT_ID_LENGTH],
-                name=current.ref.name,
-                change_type="caps_updated",
-                detail=detail,
-                agent_home=str(current.ref.home),
-                source_file=current.ref.source.name,
-            )
-        )
 
     def _cap_items_for_kind(
         current: PreparedAgent,
@@ -587,7 +569,7 @@ def create_agent_app(
         status: RunStatus | None = Query(None),
         limit: int = Query(50, ge=1, le=500),
     ) -> RunListResponse:
-        runs = runtime_host.execution.list_runs(
+        runs = runtime_process.execution.list_runs(
             origin=origin,
             thread_id=thread_id,
             status=status,
@@ -597,17 +579,17 @@ def create_agent_app(
 
     @app.get("/api/v1/runs/{run_id}", response_model=RunDetailResponse)
     def get_run(run_id: str) -> RunDetailResponse:
-        run = runtime_host.execution.get_run(run_id=run_id)
+        run = runtime_process.execution.get_run(run_id=run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="run not found")
-        events = runtime_host.bus.list_events(
+        events = runtime_process.bus.list_events(
             agent_uri=prepared.ref.uri,
             run_id=run_id,
             limit=500,
         )
         return RunDetailResponse(
             run=runtime_run_item(run),
-            steps=[step_item(item) for item in runtime_host.execution.list_steps(run_id=run_id)],
+            steps=[step_item(item) for item in runtime_process.execution.list_steps(run_id=run_id)],
             events=[event_item(item) for item in events],
             messages=_run_messages(run),
         )
@@ -625,10 +607,10 @@ def create_agent_app(
         from_event_id: int = Query(0, ge=0),
         limit: int = Query(100, ge=1, le=2000),
     ) -> EventListResponse:
-        snapshot = runtime_host.bus.get_agent(prepared.ref.uri)
+        snapshot = runtime_process.bus.get_agent(prepared.ref.uri)
         if snapshot is not None and snapshot.created_event_id is not None:
             from_event_id = max(from_event_id, snapshot.created_event_id - 1)
-        events = runtime_host.bus.list_events(
+        events = runtime_process.bus.list_events(
             agent_uri=prepared.ref.uri,
             from_event_id=from_event_id,
             limit=limit,
@@ -639,7 +621,7 @@ def create_agent_app(
     async def stream_events(request: Request) -> StreamingResponse:
         async def stream() -> AsyncIterator[str]:
             min_event_id = await asyncio.to_thread(
-                runtime_host.bus.max_event_id,
+                runtime_process.bus.max_event_id,
                 agent_uri=prepared.ref.uri,
             )
             last_emitted = min_event_id
@@ -655,7 +637,7 @@ def create_agent_app(
                 if await request.is_disconnected():
                     break
                 rows = await asyncio.to_thread(
-                    runtime_host.bus.list_events,
+                    runtime_process.bus.list_events,
                     agent_uri=prepared.ref.uri,
                     from_event_id=last_emitted,
                     limit=200,
@@ -689,12 +671,21 @@ def create_agent_app(
     @app.get("/api/v1/runtime/diagnostics", response_model=RuntimeDiagnosticsResponse)
     def runtime_diagnostics() -> RuntimeDiagnosticsResponse:
         return RuntimeDiagnosticsResponse.model_validate(
-            runtime_host.diagnostics_snapshot()
+            runtime_diagnostics_snapshot(
+                prepared=runtime_process.current_prepared(refresh=False),
+                room=room,
+                sandbox=runtime_process.sandbox,
+                runtime_loops=runtime_process.runtime_loops,
+                channels_config=runtime_process.channels_config,
+                channel_plugins=runtime_process.channel_plugins,
+                scheduler_snapshot=runtime_process.scheduler.snapshot(),
+                pulse_pending=runtime_process.pulse_pending_keys(),
+            )
         )
 
     @app.post("/api/v1/chat", response_model=ChatResponse)
     def chat(request: ChatRequest) -> ChatResponse:
-        assistant = runtime_host.submit_chat(request).assistant
+        assistant = runtime_process.submit_chat(request).assistant
         item = message_item(assistant)
         return ChatResponse(
             thread_id=assistant.thread_id,
@@ -708,7 +699,7 @@ def create_agent_app(
         def stream() -> Iterator[str]:
             event_queue: Queue[object] = Queue()
             try:
-                run_id, future = runtime_host.submit_chat_stream(
+                run_id, future = runtime_process.submit_chat_stream(
                     request,
                     event_queue.put,
                 )
@@ -758,7 +749,7 @@ def create_agent_app(
     @app.post("/runs", response_model=RunResponse)
     def run_thunk(request: RunRequest) -> RunResponse:
         try:
-            result = runtime_host.submit_run(request)
+            result = runtime_process.submit_run(request)
         except ToolangError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return RunResponse(run_id=result.run_id, output=result.output)
