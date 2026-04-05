@@ -53,41 +53,75 @@ Reason:
 
 ## 3. Package Boundaries
 
-Current internal packages:
+Stable package map:
 
+- `toolang.concepts`
+  - shared concepts and persisted models
 - `toolang.program`
-  - parsing and syntax analysis
+  - `.too` parsing and authored source semantics
 - `toolang.agent`
   - agent resolution, managed local-agent operations, preparation, and registry
-- `toolang.runtime`
-  - activation lifecycle, run execution, chat state, prompt build, scheduling,
-    and server runtime
 - `toolang.caps`
-  - cap refs, sync orchestration, materialization, and runtime cap views
-- `toolang.concepts`
-  - shared identity, execution, layout, sandbox, caps, and persisted
-    constructs
+  - cap refs, sync, materialization, and prepared/live cap views
+- `toolang.runtime`
+  - durable, prepared, and live runtime behavior
+- `toolang.memory`
+  - memory family contract and first-party memory plugins
+- `toolang.channels`
+  - inbound and outbound channel bindings
 - `toolang.tools`
-  - built-in runtime tool families, provider loading, and local tool execution
-- `toolang.bus`
-  - shared bus projection and bus API
+  - built-in tool families, provider loading, and tool runtime
 - `toolang.sandbox`
-  - sandbox runtime helpers
+  - sandbox lifecycle and execution environment helpers
+- `toolang.plugins`
+  - plugin loading and plugin capability wiring
+- `toolang.bus`
+  - shared event projection and bus API
 - `toolang.cli`
-  - CLI surfaces and command registration
-- `toolang.web`
-  - small shared FastAPI app helpers
+  - CLI orchestration and environment resolution
 
-Reason:
+Rules:
 
-- shared constructs should live in one explicit internal package instead of
-  being redefined across runtime, sync, and caps modules
-- caps logic should stay grouped under one package, even while it still
-  spans authoring, materialization, and runtime view concerns
-- the runtime package should stay focused on execution and state
+- shared concepts live in `toolang.concepts`
+- authored source semantics stay with the package that owns the source format
+- runtime state and execution stay in `toolang.runtime`
+- `memory`, `tools`, `channels`, and `sandbox` are plugin families
+- `toolang.plugins` owns generic plugin discovery and loading
+- family-specific contracts stay with their family packages
+- plugin, channel, tool, sandbox, and caps concerns stay separate from runtime
 
 
-## 4. Storage Choices
+## 4. Runtime Modules
+
+Recommended runtime modules:
+
+- `runtime/process.py`
+  - `RuntimeProcess`
+  - the process-level owning object
+- `runtime/state.py`
+  - live runtime state
+- `runtime/prepare.py`
+  - snapshot build and dirty checks
+- `runtime/watcher.py`
+  - durable-definition watching and live refresh
+- `runtime/control.py`
+  - durable and operational writes
+- `runtime/inspect.py`
+  - read-only runtime inspection
+- `runtime/runner.py`
+  - one admitted run
+- `runtime/assembly.py`
+  - prompt assembly
+
+Rules:
+
+- use `process`, not `host`, for the process-level runtime object
+- use `runner` for one run execution pipeline
+- use `assembly` for prompt assembly
+- do not use sandbox `host/guest` terms for runtime module names
+
+
+## 5. Storage Choices
 
 SQLite is the primary local storage layer.
 
@@ -111,7 +145,7 @@ Other durable formats:
   - authored runtime and plugin configuration when needed
 
 
-## 5. Parser And Sync Direction
+## 6. Parser And Sync Direction
 
 Implementation rules:
 
@@ -122,7 +156,7 @@ Implementation rules:
 - synced state under `.toolang/sync/` is the execution boundary, not raw source
 
 
-## 6. Repository Boundaries
+## 7. Repository Boundaries
 
 This repository owns:
 
@@ -139,7 +173,7 @@ Sibling repositories own:
 - the docs site
 
 
-## 7. Simplicity Rules
+## 8. Simplicity Rules
 
 The v1 implementation should stay intentionally small:
 

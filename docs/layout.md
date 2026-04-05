@@ -1,56 +1,46 @@
 # Toolang Layout
 
-This document defines Toolang filesystem layout and canonical agent identity.
+This document defines canonical agent identity and filesystem layout.
+Cap semantics live in [caps.md](./caps.md).
 
 
-## 1. Core Terms
+## 1. Terms
 
 - `toolang root`
-  - the local Toolang system directory
+  - local Toolang system directory
   - default: `~/.toolang`
   - override: `TOOLANG_ROOT`
 - `agent home`
-  - the local directory that hosts an agent
+  - local directory that hosts one or more agent source files
 - `agent room`
-  - the private machine-managed area for one agent
+  - private machine-managed runtime state for one agent
 - `resident agent`
-  - an agent whose home lives under `${TOOLANG_ROOT}/agents/`
-- `roaming agent`
-  - an agent whose home stays at an external local path
+  - agent home under `${TOOLANG_ROOT}/agents/`
 - `visiting agent`
-  - an agent discovered from a remote URL and materialized under
-    `${TOOLANG_ROOT}/guests/`
-- `agent ref`
-  - the raw source-facing selector used to locate an agent
-- `agent selector`
-  - a CLI selector that may be a source-facing agent ref, an agent id, or an
-    agent name
-- `agent uri`
-  - the canonical identity string used for stable hashing
-- `agent id`
-  - a short stable hash derived from `agent uri`
+  - agent home under `${TOOLANG_ROOT}/guests/`
+  - source identity is remote
+- `roaming agent`
+  - agent home at an external local path
 
 
-## 2. Canonical Agent URIs
+## 2. Canonical Agent URI
 
 Canonical URI forms:
 
-- `agent://<home_name>/<agent_name>.too`
-  - resident agent
-- `file:///absolute/path/to/<agent_name>.too`
-  - roaming agent
-- `https://<host>/<path>`
-  - visiting agent
+- resident
+  - `agent://<home>/<agent>.too`
+- roaming
+  - `file:///absolute/path/to/<agent>.too`
+- visiting
+  - `https://<host>/<path>`
 
 Rules:
 
 - `agent id = hash(agent uri)`
-- canonical identity stays separate from local placement
-- canonical agent URI must not depend on the absolute `TOOLANG_ROOT` path
-- `guest://...` is not a canonical URI
+- canonical identity is independent of `${TOOLANG_ROOT}`
 
 
-## 3. Shorthands And Resolution
+## 3. Source-Facing Agent Selectors
 
 Examples:
 
@@ -60,50 +50,51 @@ Examples:
   - `agent://alice/alice.too`
 - `alice/bob`
   - `agent://alice/bob.too`
-- `guest:alice`
-  - resolved to one known visiting agent named `alice`
-- `roaming:charlie`
-  - resolved to one known roaming agent named `charlie`
 - `./bob.too`
-  - normalized to an absolute `file://...` URI
-- `abe.fun/alice`
-  - may normalize to `https://abe.fun/alice`
+  - absolute `file://...`
+- `<host>/<name>`
+  - visiting `https://...`
+- `guest:<name>`
+  - one known visiting agent from registry
+- `roaming:<name>`
+  - one known roaming agent from registry
 
-Resolution order for source-facing selectors:
+Resolution order:
 
-1. canonical URI input
-2. `agent:...`
+1. canonical URI
+2. `agent:<name>`
 3. local path
 4. `<name>`
 5. `<home>/<agent>`
-6. hosted shorthand such as `<host>/<name>`
-
-Additional rules:
-
-- `guest:<name>` and `roaming:<name>` are CLI selectors for already known
-  non-resident agents, not source-facing selectors that synthesize a URI
-- relative local paths are allowed as input but not as canonical URI
-- canonical `file://` URIs always use absolute normalized paths
-- explicit source resolution yields both:
-  - agent URI
-  - agent home
-- non-source selectors may also resolve through `agents.db` by:
-  - unique agent-id prefix
-  - exact agent name
+6. hosted shorthand
 
 
 ## 4. Toolang Root
 
 ```text
-{TOOLANG_ROOT}/
+${TOOLANG_ROOT}/
   agents.db
-  config.toml               # optional
-  agents.too                # optional
+  config.toml
+  agents.too
   sync/
-    skills/
-    services/
-    prompts/
-    psyches/
+    defs/
+      skills/
+        inline/
+        remote/
+      services/
+        inline/
+        remote/
+      prompts/
+        inline/
+        remote/
+      psyches/
+        inline/
+        remote/
+    index/
+      skills/
+      services/
+      prompts/
+      psyches/
   skills/
   services/
   prompts/
@@ -117,31 +108,29 @@ Additional rules:
     bus.log
 ```
 
-Notes:
+Key paths:
 
 - `agents.db`
-  - known-agent registry and running-agent registry
-- `config.toml`
-  - optional root-level defaults such as Web UI base URL and allowed CORS origins
+  - agent registry
 - `agents.too`
-  - optional global source
-- `sync/`
-  - global synced caps
+  - global cap source file
 - `{skills,services,prompts,psyches}/`
   - global local caps
+- `sync/`
+  - global materialized inline and remote caps
 - `agents/{HOME}/`
   - resident agent homes
 - `guests/{HOME}/`
   - visiting agent homes
 - `sandbox/{AGENT_KEY}/`
-  - staged sandbox files for started agents
-- `bus/events.db`
-  - shared durable event projection
+  - staged sandbox files
+- `bus/`
+  - shared event state
 
 
 ## 5. Agent Home
 
-Kinds of agent home:
+Kinds:
 
 - resident
   - `${TOOLANG_ROOT}/agents/{HOME}/`
@@ -155,52 +144,59 @@ Layout:
 ```text
 ${AGENT_HOME}/
   {AGENT}.too
-  agents.too                         # optional
-  channels.toml                      # optional
-  hooks.toml                         # optional
-  .env                               # optional
-  .toolang/                          # machine-managed, created lazily
+  agents.too
+  channels.toml
+  hooks.toml
+  .env
+  .toolang/
     agents/{AGENT}/
     sync/
+      defs/
+        skills/
+          inline/
+          remote/
+        services/
+          inline/
+          remote/
+        prompts/
+          inline/
+          remote/
+        psyches/
+          inline/
+          remote/
+      index/
+        skills/
+        services/
+        prompts/
+        psyches/
       {AGENT}.state.json
-      skills/
-      services/
-      prompts/
-      psyches/
     skills/
     services/
     prompts/
     psyches/
 ```
 
-Notes:
+Key paths:
 
 - `{AGENT}.too`
-  - runnable source for one agent
+  - agent source file
 - `agents.too`
-  - optional home-scoped source for all agents in that home
-- `channels.toml`
-  - optional channel bindings for runtime loops
-- `hooks.toml`
-  - optional hook bindings for runtime loops
+  - home-scoped cap source file
 - `.env`
-  - optional agent-home env file
-  - service caps read required env vars from here using the concrete
-    env var names declared in service front matter
-- `.toolang/sync/`
-  - home-scoped synced caps plus per-agent sync state
+  - service env vars for the home
 - `.toolang/{skills,services,prompts,psyches}/`
   - home-scoped local caps
-- `.toolang/` is created by runtime-managed commands, not by `new` or `clone`
+- `.toolang/sync/`
+  - home-scoped materialized inline and remote caps
+- `.toolang/`
+  - machine-managed state
 
 
 ## 6. Agent Room
 
 Path:
 
-```text
-${AGENT_HOME}/.toolang/agents/{AGENT}/
-```
+- `${AGENT_HOME}/.toolang/agents/{AGENT}/`
 
 Layout:
 
@@ -212,23 +208,39 @@ ${AGENT_ROOM}/
   execution.db
   pulse.json
   task_mirrors.json
+  callbacks/
+    {CALLBACK_ID}.json
   service_use/
     mcat/
       {SERVICE}/
-        auth.json
+        connection.json
+        callback.json
         token.json
         session.json
-        proxy.json
   runs/
     {RUN_ID}/
       prompt.json
   poll/
   hooks/
   sync/
-    skills/
-    services/
-    prompts/
-    psyches/
+    defs/
+      skills/
+        inline/
+        remote/
+      services/
+        inline/
+        remote/
+      prompts/
+        inline/
+        remote/
+      psyches/
+        inline/
+        remote/
+    index/
+      skills/
+      services/
+      prompts/
+      psyches/
   sandbox/
   tasks/
     *.md
@@ -237,62 +249,55 @@ ${AGENT_ROOM}/
   will.md
 ```
 
-Notes:
+Key paths:
 
-- `agent.run`
-  - current running state for one started agent
-- `agent.log`
-  - managed runtime log
 - `execution.db`
-  - local execution truth layer for activations, threads, runs, steps, and
-    transcript messages
-- `pulse.json`
-  - persisted RRULE scheduling state and latest local scan feedback for task,
-    chore, and will definitions
-- `task_mirrors.json`
-  - remote-task mirror bindings keyed by provider and remote ref
+  - runtime truth for activations, threads, runs, steps, and transcript
+- `callbacks/`
+  - external callback state
 - `service_use/`
-  - provider-owned MCP session and proxy state
+  - provider-owned service state
 - `runs/{RUN_ID}/prompt.json`
-  - prompt-build diagnostics for one run
-- `poll/`
-  - runtime-owned poll loop state
-- `hooks/`
-  - runtime-owned hook loop state
+  - prompt trace for one run
 - `sync/`
-  - agent-scoped synced caps
-- `tasks/`, `chores/`, and `will.md`
+  - agent-scoped materialized inline and remote caps
+- `sandbox/`
+  - runtime sandbox mount point
+- `tasks/`, `chores/`, `will.md`
   - agent-local work state
 
 
-## 7. Cap Scope Roots
+## 7. Cap Roots
 
-Cap scopes map to these roots:
+Scope roots:
 
-- `agent`
-  - source: `${AGENT_HOME}/{AGENT}.too`
-  - sync: `${AGENT_HOME}/.toolang/agents/{AGENT}/sync/`
-- `home`
-  - source: `${AGENT_HOME}/agents.too`
-  - local: `${AGENT_HOME}/.toolang/{skills,services,prompts,psyches}/`
-  - sync: `${AGENT_HOME}/.toolang/sync/`
 - `global`
   - source: `${TOOLANG_ROOT}/agents.too`
   - local: `${TOOLANG_ROOT}/{skills,services,prompts,psyches}/`
   - sync: `${TOOLANG_ROOT}/sync/`
+- `home`
+  - source: `${AGENT_HOME}/agents.too`
+  - local: `${AGENT_HOME}/.toolang/{skills,services,prompts,psyches}/`
+  - sync: `${AGENT_HOME}/.toolang/sync/`
+- `agent`
+  - source: `${AGENT_HOME}/{AGENT}.too`
+  - sync: `${AGENT_HOME}/.toolang/agents/{AGENT}/sync/`
 
-Legacy note:
+Sync layout:
 
-- some current implementation surfaces still spell the `home` scope as
-  `shared`
+- `${SCOPE_SYNC_ROOT}/defs/{kind}/{source}/{definition_key}/`
+- `${SCOPE_SYNC_ROOT}/index/{kind}/{name}.json`
 
-Scope semantics, visibility, and precedence are defined in
-[caps.md](./caps.md).
+Rules:
+
+- local caps stay in local roots
+- inline and remote caps materialize under `sync/defs/`
+- `definition_key` is derived from the canonical locator
 
 
-## 8. Sandbox Paths
+## 8. Sandbox
 
-Supported sandbox specs:
+Supported specs:
 
 - `host`
 - `docker:<image>`
@@ -300,9 +305,9 @@ Supported sandbox specs:
 Rules:
 
 - `none` normalizes to `host`
-- `toolang run` uses `host` only
+- `toolang run` uses `host`
 - `toolang start` may use `host` or `docker:<image>`
 - `${TOOLANG_ROOT}/sandbox/{AGENT_KEY}/`
-  - staged docker start files such as `args.json` and `exec.sh`
+  - staged start files
 - `${AGENT_ROOM}/sandbox/`
-  - runtime mount point for staged sandbox files
+  - runtime sandbox mount point

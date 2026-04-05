@@ -2,10 +2,11 @@
 
 This document defines the plugin boundary for Toolang runtime integrations.
 
-Toolang currently treats these areas as pluggable:
+Toolang currently treats these areas as plugin families:
 
 - `memory`
-- `channel`
+- `tools`
+- `channels`
 - `sandbox`
 
 
@@ -58,7 +59,13 @@ Memory plugins provide:
 
 Detailed memory behavior lives in [memory.md](./memory.md).
 
-### 3.2 Channel
+### 3.2 Tools
+
+Tool plugins provide callable tool definitions and local invocation.
+
+Detailed tool behavior lives in [tools.md](./tools.md).
+
+### 3.3 Channels
 
 Channel plugins handle message ingress and egress.
 
@@ -84,7 +91,7 @@ class ChannelPlugin(Protocol):
 - zero or more `InboundDelivery` values
 - the next plugin-owned poll cursor and metadata snapshot
 
-### 3.3 Sandbox
+### 3.4 Sandbox
 
 Sandbox plugins provide execution environments.
 
@@ -115,6 +122,7 @@ Recommended discovery mechanism:
 
 - Python package entry points
   - `toolang.memory`
+  - `toolang.tool`
   - `toolang.channel`
   - `toolang.sandbox`
 
@@ -158,6 +166,14 @@ plugin = "telegram"
 token_env = "TELEGRAM_BOT_TOKEN"
 chat_id = "12345678"
 owner_chat_id = "87654321"
+```
+
+```toml
+[tools.web_search]
+plugin = "default"
+
+[tools.web_search.config]
+timeout_sec = 15
 ```
 
 ```toml
@@ -212,6 +228,7 @@ Toolang should treat plugins as replaceable instances, not architectural modes.
 This means:
 
 - memory behavior changes by changing the memory plugin or plugin config
+- tool behavior changes by changing the tool plugin or plugin config
 - channel behavior changes by changing the channel plugin or plugin config
 - sandbox behavior changes by changing the sandbox plugin or plugin config
 
@@ -226,7 +243,12 @@ Reasonable first-party plugins:
 - memory
   - `sqlite`
   - `remote-http`
-- channel
+- tools
+  - `filesystem:default`
+  - `shell:default`
+  - `service_use:mcat`
+  - `web_search:default`
+- channels
   - `telegram`
   - `webhook`
 - sandbox
@@ -257,3 +279,16 @@ Plugins decode or deliver channel traffic, but runtime still owns:
 - thread and run persistence
 - run lifecycle
 - bus projection writes
+
+
+## 11. Package Boundary
+
+Rules:
+
+- `toolang.plugins` owns generic plugin discovery and loading
+- `toolang.memory` owns the memory family contract
+- `toolang.tools` owns the tool family contract
+- `toolang.channels` owns the channel family contract
+- `toolang.sandbox` owns the sandbox family contract
+- first-party default implementations should use the same plugin contracts as
+  external plugin packages

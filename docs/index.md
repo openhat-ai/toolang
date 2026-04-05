@@ -29,9 +29,9 @@ Generated implementation reference does not live here. It belongs under
   - sync materialization rules and effective cap-set derivation
   - authoring guidance for CLI/WebUI and `/api/v1/caps` runtime projection
 - [execution.md](./execution.md)
-  - runtime loops and execution strategies
-  - activation, thread, run, and step mechanics
-  - scheduler, pulse, truth layers, and projections
+  - durable, prepared, and live runtime state
+  - runtime process, jobs, runs, and prompt assembly
+  - prepare, inspect, control, and live refresh
 - [chat.md](./chat.md)
   - chat as a projection over threads, runs, and ordered messages
   - AI SDK-compatible stream mapping
@@ -45,15 +45,18 @@ Generated implementation reference does not live here. It belongs under
   - RRULE-driven scheduled work
   - local task files and remote mirror guidance
 - [tools.md](./tools.md)
-  - built-in runtime tool families
+  - tool plugin family
   - tool loading and service cap integration
   - tool-call recording as run steps
+- [service-auth.md](./service-auth.md)
+  - runtime-managed OAuth callback relay for `service_use`
+  - mcat 2.0 connection-file and callback-handoff integration
 - [api.md](./api.md)
   - CLI surface
   - registry state
   - per-agent HTTP API and shared bus API
 - [plugins.md](./plugins.md)
-  - plugin families
+  - `memory`, `tools`, `channels`, and `sandbox` plugin families
   - plugin loading model
   - runtime/plugin responsibility boundary
 - [memory.md](./memory.md)

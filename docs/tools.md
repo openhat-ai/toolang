@@ -1,12 +1,13 @@
 # Toolang Tools
 
-This document defines the built-in runtime tool families and their loading
-model.
+This document defines the tool plugin family and its loading model.
 
 
 ## 1. Scope
 
 Tools are base runtime caps.
+
+Tools are a plugin family.
 
 They are not a separate agent framework.
 
@@ -20,7 +21,7 @@ Tools live inside one run execution:
 
 ## 2. Tool Families
 
-Current built-in tool families:
+Current first-party tool families:
 
 - `filesystem`
 - `shell`
@@ -35,7 +36,7 @@ Planned but not yet implemented:
 
 Each family is one stable cap with one default provider.
 
-Built-in tool families load by default.
+Toolang may ship first-party default providers for these families.
 
 
 ## 3. Default Behavior
@@ -77,9 +78,10 @@ Built-in tool families load by default.
 - `description` is the trigger text loaded into the available-services prompt
   section
 - static service env vars come from `${AGENT_HOME}/.env`
+- pending OAuth results may include runtime callback metadata when the agent
+  has a public API endpoint
 - supports:
-  - `auth_start`
-  - `auth_continue`
+  - `auth`
   - `tool_list`
   - `tool_call`
   - `resource_list`
@@ -94,6 +96,14 @@ Built-in tool families load by default.
 Prompt builds should describe the current visible services and instruct the
 model to use `service_use` when it needs MCP-backed caps.
 
+Tool providers are loaded through the tool plugin family.
+
+Rules:
+
+- first-party default providers may be enabled by default
+- external tool plugins may be installed as plugin packages
+- config selects which providers are active
+
 For service caps, the prompt should also declare:
 
 - visible service names
@@ -102,6 +112,10 @@ For service caps, the prompt should also declare:
 - the rule that those env vars are read from `${AGENT_HOME}/.env`
 - the rule that `env` entries are already final env-var names and are not
   rewritten
+- the OAuth sequencing rule that callback handling must be armed before the
+  user opens an authorization URL
+- the rule that Toolang only relays opaque callback metadata returned by the
+  provider and does not parse provider-specific callback payloads or auth state
 
 Example service front matter:
 
@@ -118,8 +132,27 @@ env:
 If a service requires OAuth, authenticate it with:
 
 ```bash
-toolang service auth <agent> <service>
+toolang service auth <agent> <service> [--complete]
 ```
+
+For runtime-driven OAuth, use this sequence:
+
+- call `service_use` with `action=auth` first
+- if the result is pending, send the authorization URL to the user
+- immediately after sending the URL, call `service_use` again with
+  `action=auth` and `complete=true`
+- do not wait for a follow-up user message before issuing the blocking
+  `complete=true` call
+- the `complete=true` `auth` call is the explicit blocking wait for callback
+  delivery and token exchange
+- if that blocking call returns `status=complete`, retry the original service
+  action
+- if runtime callback relay is unavailable, `service_use` now fails fast instead
+  of returning a local loopback callback URL; use `toolang service auth ...
+  --complete` outside the agent in that case
+
+See [service-auth.md](./service-auth.md) for the Toolang-side callback
+relay contract and the integrated `mcat` 2.0 flow.
 
 
 ## 5. Providers
@@ -129,7 +162,7 @@ Toolang resolves tools by:
 - `family`
 - `provider`
 
-Built-in providers ship with Toolang.
+First-party default providers may ship with Toolang.
 
 Third-party providers may register entry points under:
 
@@ -163,6 +196,10 @@ The runtime owns:
 - execution-step recording
 - prompt-trace recording
 - diagnostics and security signals
+
+`toolang.plugins` owns generic plugin discovery and loading.
+
+`toolang.tools` owns the tool family contract and first-party tool plugins.
 
 
 ## 7. Security And Diagnostics
