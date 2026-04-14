@@ -5,9 +5,24 @@ build-backend = "hatchling.build"
 [project]
 name = "toolang"
 version = "0.1.0"
-description = "Toolang runtime and CLI"
+description = "A programming language and runtime for agents"
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
+authors = [
+    { name = "Brice Yan" },
+]
+keywords = ["agents", "automation", "cli", "llm"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
 dependencies = [
     "dataclasses-json>=0.6,<1.0",
     "python-dateutil>=2.9,<3",
@@ -29,6 +44,12 @@ dependencies = [
     "uvicorn>=0.35,<1",
     "watchfiles>=1.1,<2",
 ]
+
+[project.urls]
+Homepage = "https://toolang.ai/"
+Documentation = "https://toolang.ai/docs"
+Repository = "https://github.com/openhat-ai/toolang"
+Issues = "https://github.com/openhat-ai/toolang/issues"
 
 [project.scripts]
 toolang = "toolang.cli:main"
