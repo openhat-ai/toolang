@@ -272,7 +272,7 @@ def _create_openai_client() -> Any:
         from openai import OpenAI
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise ToolangError(
-            "The 'openai' package is not installed. Run 'uv add openai' to enable toolang invoke."
+            "The 'openai' package is not installed. Reinstall toolang with its runtime dependencies to enable toolang invoke."
         ) from exc
     return OpenAI()
 

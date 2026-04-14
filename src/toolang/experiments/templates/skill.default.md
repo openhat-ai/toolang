@@ -1,0 +1,16 @@
+---
+description: What this skill is for.
+---
+
+# Skill
+
+Use this skill when the task needs this workflow or domain knowledge.
+
+When to use:
+- ...
+- ...
+
+Workflow:
+1. ...
+2. ...
+3. ...

@@ -17,7 +17,7 @@ Design semantics live in:
 ## 1. Language And Packaging
 
 - implementation language: Python
-- supported package/runtime range: `>=3.10`
+- supported package/runtime range: `>=3.11`
 - default local development version: `3.13`
 - build backend: `hatchling`
 - test runner: `pytest`

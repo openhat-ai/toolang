@@ -36,6 +36,10 @@ Generated implementation reference does not live here. It belongs under
   - chat as a projection over threads, runs, and ordered messages
   - AI SDK-compatible stream mapping
   - message-part ordering and persistence rules
+- [models.md](./models.md)
+  - canonical model refs and selector grammar
+  - model plugin family and zero-config resolution
+  - authored source, profiles, and `run/start --model` override rules
 - [collaboration.md](./collaboration.md)
   - normalized run-submission model
   - chat and task as collaboration primitives
@@ -91,7 +95,7 @@ Generated implementation reference does not live here. It belongs under
 - `runtime loop`
   - a long-lived trigger source such as `server`, `poll`, `hook`, or `pulse`
 - `execution strategy`
-  - the strategy used to complete one run, such as `direct` or `react`
+  - the strategy used to complete one run, such as `basic` or `react`
 - `thread`
   - a durable execution context
 - `run`

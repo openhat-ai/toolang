@@ -4,9 +4,10 @@ This document defines the plugin boundary for Toolang runtime integrations.
 
 Toolang currently treats these areas as plugin families:
 
-- `memory`
-- `tools`
-- `channels`
+- `model`
+- `run_strategy`
+- `tool`
+- `channel`
 - `sandbox`
 
 
@@ -49,23 +50,82 @@ Rules:
 
 ## 3. Plugin Families
 
-### 3.1 Memory
+### 3.1 Model
 
-Memory plugins provide:
+Model plugins provide one model-turn integration.
 
-- `recall`
-- `remember`
-- `health`
+They may support:
 
-Detailed memory behavior lives in [memory.md](./memory.md).
+- one-shot invoke
+- streaming text and tool-call events
+- provider-managed continuation state
+- provider-specific reasoning features
 
-### 3.2 Tools
+Detailed model-selection behavior lives in [models.md](./models.md).
+
+Conceptual interface:
+
+```python
+class ModelPlugin(Protocol):
+    name: str
+    description: str | None
+
+    def capabilities(self) -> ModelCapabilities: ...
+    def resolve_selector(self, selector: str, *, environ: Mapping[str, str]) -> ResolvedModel | None: ...
+    def invoke(self, target: ResolvedModel, request: ModelCall) -> ModelCallResult: ...
+    def stream(
+        self,
+        target: ResolvedModel,
+        request: ModelCall,
+        *,
+        on_event: ModelEventHandler,
+    ) -> ModelCallResult: ...
+```
+
+### 3.2 Run Strategy
+
+Run-strategy plugins provide high-level agent loop behavior.
+
+They consume one bound run context and decide how model calls and tool calls
+should be sequenced.
+
+Conceptual interface:
+
+```python
+class StrategyPlugin(Protocol):
+    name: str
+
+    def run(self, context: RunContext) -> RunResult: ...
+```
+
+`RunContext` provides strategy-facing operations such as:
+
+- `call_model()`
+- `call_tool(...)`
+- `call_tools(...)`
+- `finish()`
+
+Strategy code should treat `experiments.base.types.message.Message` as the
+canonical shared content model. Message parts such as `text`, `tool_call`, and
+`tool_result` belong to `base`, not to execution-only view or storage modules.
+
+### 3.3 Tool
 
 Tool plugins provide callable tool definitions and local invocation.
 
 Detailed tool behavior lives in [tools.md](./tools.md).
 
-### 3.3 Channels
+Conceptual interface:
+
+```python
+class ToolPlugin(Protocol):
+    name: str
+    description: str | None
+
+    def tools(self) -> Mapping[str, Tool]: ...
+```
+
+### 3.4 Channel
 
 Channel plugins handle message ingress and egress.
 
@@ -80,10 +140,10 @@ Conceptual interface:
 
 ```python
 class ChannelPlugin(Protocol):
-    def poll(self, state: ChannelState) -> PollResult: ...
-    def decode_hook(self, request: HookRequest) -> InboundDelivery | None: ...
-    def deliver(self, target: ReplyTarget, message: OutboundMessage) -> DeliveryResult: ...
-    def health(self) -> PluginHealth: ...
+    def poll(self, state: ChannelState, context: ChannelContext) -> PollResult: ...
+    def decode_hook(self, request: HookRequest, context: ChannelContext) -> InboundDelivery | None: ...
+    def deliver(self, target: ReplyTarget, message: OutboundMessage, context: ChannelContext) -> DeliveryResult: ...
+    def health(self, context: ChannelContext) -> PluginHealth: ...
 ```
 
 `PollResult` carries:
@@ -91,7 +151,7 @@ class ChannelPlugin(Protocol):
 - zero or more `InboundDelivery` values
 - the next plugin-owned poll cursor and metadata snapshot
 
-### 3.4 Sandbox
+### 3.5 Sandbox
 
 Sandbox plugins provide execution environments.
 
@@ -106,11 +166,11 @@ Conceptual interface:
 
 ```python
 class SandboxPlugin(Protocol):
-    def run_invoke(self, request: SandboxInvokeRequest) -> SandboxInvokeResult: ...
-    def spawn_runtime(self, request: SandboxRuntimeRequest) -> SandboxHandle: ...
-    def probe(self, handle: SandboxHandle) -> SandboxStatus: ...
-    def stop(self, handle: SandboxHandle) -> None: ...
-    def health(self) -> PluginHealth: ...
+    def resolve_selector(self, raw_selector: str | None, *, configured_selector: SandboxSelector | None = None) -> SandboxSelector: ...
+    def prepare(self, request: SandboxStartRequest) -> SandboxPlan: ...
+    def start(self, plan: SandboxPlan) -> SandboxStartResult: ...
+    def alive(self, state: SandboxState) -> bool: ...
+    def stop(self, state: SandboxState, *, force: bool = False) -> None: ...
 ```
 
 
@@ -121,10 +181,22 @@ Plugins should be selected by explicit config and loaded by name.
 Recommended discovery mechanism:
 
 - Python package entry points
-  - `toolang.memory`
+  - `toolang.model`
+  - `toolang.run_strategy`
   - `toolang.tool`
   - `toolang.channel`
   - `toolang.sandbox`
+
+All plugin entry points currently follow the same factory convention:
+
+```python
+def create_plugin(config: Mapping[str, Any]) -> Plugin: ...
+```
+
+Toolang does not require one shared base factory protocol for these entry
+points. Loaders only rely on the callable shape above. That includes run
+strategies. Strategies that do not currently use config should still accept a
+mapping and ignore it.
 
 Recommended loading flow:
 
@@ -149,14 +221,6 @@ Each plugin family should use:
 - one config object
 
 Examples:
-
-```toml
-[memory]
-plugin = "sqlite"
-
-[memory.config]
-path = ".toolang/agents/alice/memory.db"
-```
 
 ```toml
 [channels.telegram]
@@ -200,6 +264,12 @@ Responsibility split:
 - runtime appends bus events
 - plugins perform only their domain-specific operations
 
+The formal shared plugin boundary currently lives under
+`toolang.experiments.base`.
+Run-strategy plugins should depend on
+`toolang.experiments.base.protocols.strategy` rather than importing concrete
+execution modules.
+
 
 ## 7. Diagnostics
 
@@ -240,6 +310,11 @@ enough.
 
 Reasonable first-party plugins:
 
+- model
+  - `openai`
+  - `anthropic`
+  - `openrouter`
+  - `ollama`
 - memory
   - `sqlite`
   - `remote-http`
@@ -285,6 +360,7 @@ Plugins decode or deliver channel traffic, but runtime still owns:
 
 Rules:
 
+- `toolang.models` owns the model family contract
 - `toolang.plugins` owns generic plugin discovery and loading
 - `toolang.memory` owns the memory family contract
 - `toolang.tools` owns the tool family contract

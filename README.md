@@ -5,7 +5,7 @@ Toolang is a Python package and CLI for parsing and running `.too` agent files.
 ## Python Version Policy
 
 - Default local development version: Python `3.13`
-- Supported package/runtime range: Python `>=3.10`
+- Supported package/runtime range: Python `>=3.11`
 
 The project pins `3.13` for day-to-day development, but the package metadata stays compatible with older supported Python versions.
 
@@ -57,8 +57,8 @@ uv run pytest -q
 Validate compatibility against the oldest supported Python version:
 
 ```bash
-uv python install 3.10
-uv run --python 3.10 pytest
+uv python install 3.11
+uv run --python 3.11 pytest
 uv run --python 3.13 pytest
 ```
 

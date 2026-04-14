@@ -1,0 +1,1 @@
+"""Stable plugin-facing protocols."""
