@@ -14,13 +14,12 @@ from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from toolang.concepts.persisted.config import ToolangConfig, WebConfig
 
-from toolang.experiments import agents
-from toolang.experiments import work
-from toolang.experiments.base.protocols.channel import ChannelPlugin
-from toolang.experiments.base.protocols.sandbox import SandboxPlugin
-from toolang.experiments.base.types.channel import (
+from toolang import agents
+from toolang import work
+from toolang.base.protocols.channel import ChannelPlugin
+from toolang.base.protocols.sandbox import SandboxPlugin
+from toolang.base.types.channel import (
     ChannelState,
     DeliveryResult,
     InboundDelivery,
@@ -28,8 +27,8 @@ from toolang.experiments.base.types.channel import (
     PollResult,
     ReplyTarget,
 )
-from toolang.experiments.base.types.run import RunResult
-from toolang.experiments.base.types.message import (
+from toolang.base.types.run import RunResult
+from toolang.base.types.message import (
     Message,
     TextDelta,
     TextPart,
@@ -37,28 +36,28 @@ from toolang.experiments.base.types.message import (
     ToolCallPart,
     ToolResultPart,
 )
-from toolang.experiments.execution.events import (
+from toolang.execution.events import (
     PartDelta,
     PartEnd,
     PartStart,
     StepEnd,
     StepStart,
 )
-from toolang.experiments.execution.records import (
+from toolang.execution.records import (
     ModelCallStepPayload,
     RunInputRef,
     RuntimeStepPayload,
     StepOutputRef,
     ToolCallStepPayload,
 )
-from toolang.experiments.base.types.sandbox import (
+from toolang.base.types.sandbox import (
     SandboxPlan,
     SandboxSelector,
     SandboxStartRequest,
     SandboxStartResult,
     SandboxState,
 )
-from toolang.experiments.caps import (
+from toolang.caps import (
     add_remote_entry,
     build_scope_lock,
     list_entries,
@@ -67,18 +66,18 @@ from toolang.experiments.caps import (
     remove_entry,
     remove_local_entry,
 )
-from toolang.experiments.config.plugins import ChannelBinding
-from toolang.experiments.execution import execute as run_execute_module
-from toolang.experiments.execution.input import assemble_run_input, bind_run_request
-from toolang.experiments.execution.snapshot import SnapshotTask, SnapshotTaskServices
-from toolang.experiments.execution.runner import QueueRunner, RunRequest
-from toolang.experiments.execution.db import ExecutionStore, execution_db_path
-from toolang.experiments.loops import chat as chat_loop, inspect, poll, prepare, pulse, reload
-from toolang.experiments.state.durable import scan_durable_state
-from toolang.experiments.state.live import load_live_state
-from toolang.experiments.state.prepared import load_prepared_state, write_prepared_lock
-from toolang.experiments import up as up_module
-from toolang.experiments.up import (
+from toolang.config.plugins import ChannelBinding
+from toolang.execution import execute as run_execute_module
+from toolang.execution.input import assemble_run_input, bind_run_request
+from toolang.execution.snapshot import SnapshotTask, SnapshotTaskServices
+from toolang.execution.runner import QueueRunner, RunRequest
+from toolang.execution.db import ExecutionStore, execution_db_path
+from toolang.loops import chat as chat_loop, inspect, poll, prepare, pulse, reload
+from toolang.state.durable import scan_durable_state
+from toolang.state.live import load_live_state
+from toolang.state.prepared import load_prepared_state, write_prepared_lock
+from toolang import up as up_module
+from toolang.up import (
     RUN_LOOPS,
     UptimeConfig,
     UptimeContext,
@@ -153,7 +152,7 @@ def test_queue_runner_drains_requests_in_order(tmp_path: Path, caplog) -> None:
         context.runner.close()
 
         with (
-            caplog.at_level(logging.INFO, logger="toolang.experiments.runner"),
+            caplog.at_level(logging.INFO, logger="toolang.runner"),
             _patched_runner_execution(),
         ):
             results = await context.runner.drain(context)
@@ -161,7 +160,7 @@ def test_queue_runner_drains_requests_in_order(tmp_path: Path, caplog) -> None:
         printed = [
             record.message
             for record in caplog.records
-            if record.name == "toolang.experiments.runner"
+            if record.name == "toolang.runner"
         ]
         assert [result.input_text for result in results] == [
             "say hello",
@@ -1085,7 +1084,7 @@ def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
     _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr("toolang.experiments.up._pick_free_port", lambda host: 43210)
+    monkeypatch.setattr("toolang.up._pick_free_port", lambda host: 43210)
 
     def fake_uvicorn_run(app, *, host: str, port: int, log_config) -> None:
         captured["app"] = app
@@ -1093,7 +1092,7 @@ def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
         captured["port"] = port
         captured["log_config"] = log_config
 
-    monkeypatch.setattr("toolang.experiments.up.uvicorn.run", fake_uvicorn_run)
+    monkeypatch.setattr("toolang.up.uvicorn.run", fake_uvicorn_run)
 
     result = run_experiments_up(
         toolang_root=toolang_root,
@@ -1120,7 +1119,7 @@ def test_up_reuses_previous_agent_port_when_unspecified(tmp_path: Path, monkeypa
     )
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr("toolang.experiments.up._pick_free_port", lambda host: 43210)
+    monkeypatch.setattr("toolang.up._pick_free_port", lambda host: 43210)
 
     def fake_uvicorn_run(app, *, host: str, port: int, log_config) -> None:
         captured["app"] = app
@@ -1128,7 +1127,7 @@ def test_up_reuses_previous_agent_port_when_unspecified(tmp_path: Path, monkeypa
         captured["port"] = port
         captured["log_config"] = log_config
 
-    monkeypatch.setattr("toolang.experiments.up.uvicorn.run", fake_uvicorn_run)
+    monkeypatch.setattr("toolang.up.uvicorn.run", fake_uvicorn_run)
 
     result = run_experiments_up(
         toolang_root=toolang_root,
@@ -1161,7 +1160,7 @@ def test_up_falls_back_when_previous_agent_port_is_unavailable(
             pid=12345,
         )
 
-        monkeypatch.setattr("toolang.experiments.up._pick_free_port", lambda host: 43210)
+        monkeypatch.setattr("toolang.up._pick_free_port", lambda host: 43210)
 
         def fake_uvicorn_run(app, *, host: str, port: int, log_config) -> None:
             captured["app"] = app
@@ -1169,7 +1168,7 @@ def test_up_falls_back_when_previous_agent_port_is_unavailable(
             captured["port"] = port
             captured["log_config"] = log_config
 
-        monkeypatch.setattr("toolang.experiments.up.uvicorn.run", fake_uvicorn_run)
+        monkeypatch.setattr("toolang.up.uvicorn.run", fake_uvicorn_run)
 
         result = run_experiments_up(
             toolang_root=toolang_root,
@@ -1204,15 +1203,15 @@ def test_up_waits_for_stopped_agent_port_to_become_available(tmp_path: Path, mon
         attempts["count"] += 1
         return attempts["count"] >= 3
 
-    monkeypatch.setattr("toolang.experiments.up._port_is_available", fake_port_is_available)
-    monkeypatch.setattr("toolang.experiments.up.time.sleep", lambda _: None)
-    monkeypatch.setattr("toolang.experiments.up._pick_free_port", lambda host: 43210)
+    monkeypatch.setattr("toolang.up._port_is_available", fake_port_is_available)
+    monkeypatch.setattr("toolang.up.time.sleep", lambda _: None)
+    monkeypatch.setattr("toolang.up._pick_free_port", lambda host: 43210)
 
     def fake_uvicorn_run(app, *, host: str, port: int, log_config) -> None:
         captured["host"] = host
         captured["port"] = port
 
-    monkeypatch.setattr("toolang.experiments.up.uvicorn.run", fake_uvicorn_run)
+    monkeypatch.setattr("toolang.up.uvicorn.run", fake_uvicorn_run)
 
     result = run_experiments_up(
         toolang_root=toolang_root,
@@ -1243,7 +1242,7 @@ def test_up_waits_longer_for_stopped_agent_port_to_become_available(
     agents.stop_runtime_state(toolang_root, "alice")
     observed: dict[str, object] = {}
 
-    monkeypatch.setattr("toolang.experiments.up._port_is_available", lambda host, port: False)
+    monkeypatch.setattr("toolang.up._port_is_available", lambda host, port: False)
 
     def fake_wait_for_port_available(host: str, port: int, *, timeout_sec: float) -> bool:
         observed["host"] = host
@@ -1251,8 +1250,8 @@ def test_up_waits_longer_for_stopped_agent_port_to_become_available(
         observed["timeout_sec"] = timeout_sec
         return False
 
-    monkeypatch.setattr("toolang.experiments.up._wait_for_port_available", fake_wait_for_port_available)
-    monkeypatch.setattr("toolang.experiments.up._pick_free_port", lambda host: 43210)
+    monkeypatch.setattr("toolang.up._wait_for_port_available", fake_wait_for_port_available)
+    monkeypatch.setattr("toolang.up._pick_free_port", lambda host: 43210)
 
     resolved = up_module.resolve_runtime_port(
         host="127.0.0.1",
@@ -1272,9 +1271,11 @@ def test_up_waits_longer_for_stopped_agent_port_to_become_available(
 def test_up_uses_cors_origins_from_root_config(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
-    ToolangConfig(
-        web=WebConfig(cors_allowed_origins=["http://localhost:3000", "https://too.run"])
-    ).save(toolang_root / "config.toml")
+    _write_text(
+        toolang_root / "config.toml",
+        '[web]\n'
+        'cors_allowed_origins = ["http://localhost:3000", "https://too.run"]\n',
+    )
     captured: dict[str, object] = {}
 
     def fake_uvicorn_run(app, *, host: str, port: int, log_config) -> None:
@@ -1283,7 +1284,7 @@ def test_up_uses_cors_origins_from_root_config(tmp_path: Path, monkeypatch) -> N
         captured["port"] = port
         captured["log_config"] = log_config
 
-    monkeypatch.setattr("toolang.experiments.up.uvicorn.run", fake_uvicorn_run)
+    monkeypatch.setattr("toolang.up.uvicorn.run", fake_uvicorn_run)
 
     result = run_experiments_up(
         toolang_root=toolang_root,
@@ -1325,7 +1326,7 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
                 sandbox_root=request.sandbox_root,
                 sandbox_home=request.sandbox_home,
                 sandbox_working_directory=request.sandbox_home,
-                run_command=("python", "-m", "toolang.experiments.cli"),
+                run_command=("python", "-m", "toolang.cli"),
                 state=SandboxState(
                     selector=request.selector,
                     runtime_id="sandbox-alice",
@@ -1349,9 +1350,9 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
     def fail_uvicorn_run(*args, **kwargs) -> None:
         raise AssertionError("uvicorn.run should not be called for managed sandboxes")
 
-    monkeypatch.setattr("toolang.experiments.up.create_sandbox_plugin", lambda name, config=None: FakeSandbox())
-    monkeypatch.setattr("toolang.experiments.up._wait_for_sandbox_ready", lambda **kwargs: None)
-    monkeypatch.setattr("toolang.experiments.up.uvicorn.run", fail_uvicorn_run)
+    monkeypatch.setattr("toolang.up.create_sandbox_plugin", lambda name, config=None: FakeSandbox())
+    monkeypatch.setattr("toolang.up._wait_for_sandbox_ready", lambda **kwargs: None)
+    monkeypatch.setattr("toolang.up.uvicorn.run", fail_uvicorn_run)
 
     result = run_experiments_up(
         toolang_root=toolang_root,
@@ -1430,8 +1431,8 @@ def test_up_defaults_docker_target_when_selector_omits_one(tmp_path: Path, monke
         def stop(self, state: SandboxState, *, force: bool = False) -> None:
             del state, force
 
-    monkeypatch.setattr("toolang.experiments.up.create_sandbox_plugin", lambda name, config=None: FakeSandbox())
-    monkeypatch.setattr("toolang.experiments.up._wait_for_sandbox_ready", lambda **kwargs: None)
+    monkeypatch.setattr("toolang.up.create_sandbox_plugin", lambda name, config=None: FakeSandbox())
+    monkeypatch.setattr("toolang.up._wait_for_sandbox_ready", lambda **kwargs: None)
 
     result = run_experiments_up(
         toolang_root=toolang_root,
@@ -1486,9 +1487,9 @@ def test_up_marks_managed_sandbox_failed_when_ready_check_fails(tmp_path: Path, 
         def stop(self, state: SandboxState, *, force: bool = False) -> None:
             del state, force
 
-    monkeypatch.setattr("toolang.experiments.up.create_sandbox_plugin", lambda name, config=None: FakeSandbox())
+    monkeypatch.setattr("toolang.up.create_sandbox_plugin", lambda name, config=None: FakeSandbox())
     monkeypatch.setattr(
-        "toolang.experiments.up._wait_for_sandbox_ready",
+        "toolang.up._wait_for_sandbox_ready",
         lambda **kwargs: (_ for _ in ()).throw(ValueError("sandbox failed")),
     )
 
@@ -1540,7 +1541,7 @@ def test_up_marks_managed_sandbox_failed_when_prepare_fails(tmp_path: Path, monk
         def stop(self, state: SandboxState, *, force: bool = False) -> None:
             del state, force
 
-    monkeypatch.setattr("toolang.experiments.up.create_sandbox_plugin", lambda name, config=None: FakeSandbox())
+    monkeypatch.setattr("toolang.up.create_sandbox_plugin", lambda name, config=None: FakeSandbox())
 
     try:
         run_experiments_up(
@@ -1617,7 +1618,7 @@ def test_list_agent_statuses_surfaces_preparing_and_failed_states(tmp_path: Path
 
 
 def test_resolve_dev_artifact_picks_newest_wheel_recursively(tmp_path: Path) -> None:
-    from toolang.experiments import up as up_module
+    from toolang import up as up_module
 
     dist = tmp_path / "dist"
     dist.mkdir(parents=True, exist_ok=True)
@@ -1648,7 +1649,7 @@ def test_stop_agent_terminates_local_pid_and_marks_state_stopped(tmp_path: Path,
             raise OSError("dead")
         alive["running"] = False
 
-    monkeypatch.setattr("toolang.experiments.agents.os.kill", fake_kill)
+    monkeypatch.setattr("toolang.agents.os.kill", fake_kill)
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -1679,9 +1680,9 @@ def test_stop_agent_waits_for_endpoint_release_before_marking_stopped(
     )
     observed: dict[str, object] = {}
 
-    monkeypatch.setattr("toolang.experiments.agents._pid_alive", lambda pid: pid == 43210)
+    monkeypatch.setattr("toolang.agents._pid_alive", lambda pid: pid == 43210)
     monkeypatch.setattr(
-        "toolang.experiments.agents._stop_pid",
+        "toolang.agents._stop_pid",
         lambda pid, *, force: observed.setdefault("stopped_pid", pid),
     )
 
@@ -1691,7 +1692,7 @@ def test_stop_agent_waits_for_endpoint_release_before_marking_stopped(
         return True
 
     monkeypatch.setattr(
-        "toolang.experiments.agents._wait_for_endpoint_release",
+        "toolang.agents._wait_for_endpoint_release",
         fake_wait_for_endpoint_release,
     )
 
@@ -1762,7 +1763,7 @@ def test_up_reads_web_config_without_validating_experiments_caps(tmp_path: Path,
     def fake_uvicorn_run(app, *, host: str, port: int, log_config) -> None:
         captured["app"] = app
 
-    monkeypatch.setattr("toolang.experiments.up.uvicorn.run", fake_uvicorn_run)
+    monkeypatch.setattr("toolang.up.uvicorn.run", fake_uvicorn_run)
 
     result = run_experiments_up(
         toolang_root=toolang_root,

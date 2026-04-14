@@ -3,10 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, cast
 
-from toolang.experiments.base.protocols.sandbox import SandboxPlugin
-from toolang.experiments.base.types.sandbox import SandboxSelector, SandboxStartRequest
-from toolang.experiments.config.plugins import load_sandbox_binding
-from toolang.experiments.up import create_sandbox_plugin
+from toolang.base.protocols.sandbox import SandboxPlugin
+from toolang.base.types.sandbox import SandboxSelector, SandboxStartRequest
+from toolang.config.plugins import load_sandbox_binding
+from toolang.up import create_sandbox_plugin
 
 
 def test_create_none_sandbox_plugin_prepares_direct_plan(tmp_path: Path) -> None:
@@ -49,9 +49,9 @@ def test_create_docker_sandbox_plugin_prepares_and_starts(monkeypatch, tmp_path:
         calls["run"] = kwargs
         return "container-123"
 
-    monkeypatch.setattr("toolang.experiments.sandboxes.docker.docker_remove_container", fake_remove)
-    monkeypatch.setattr("toolang.experiments.sandboxes.docker.docker_run_detached", fake_run_detached)
-    monkeypatch.setattr("toolang.experiments.sandboxes.docker.docker_container_running", lambda name: name == "toolang-alice")
+    monkeypatch.setattr("toolang.sandboxes.docker.docker_remove_container", fake_remove)
+    monkeypatch.setattr("toolang.sandboxes.docker.docker_run_detached", fake_run_detached)
+    monkeypatch.setattr("toolang.sandboxes.docker.docker_container_running", lambda name: name == "toolang-alice")
 
     root = tmp_path / "root"
     home = root / "agents" / "alice"

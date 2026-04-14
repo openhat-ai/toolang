@@ -2,10 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from toolang.experiments.base.error import ToolangError
-from toolang.experiments.program import parse
-from toolang.experiments.state.durable import scan_durable_state
-from toolang.experiments.state.program import build_prepared_program
+from toolang.base.error import ToolangError
+from toolang.program import parse
+from toolang.state.durable import scan_durable_state
+from toolang.state.program import build_prepared_program
 
 
 def test_program_parse_projects_prompt_params_into_ast() -> None:

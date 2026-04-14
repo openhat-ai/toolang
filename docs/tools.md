@@ -197,9 +197,9 @@ The runtime owns:
 - prompt-trace recording
 - diagnostics and security signals
 
-`toolang.plugins` owns generic plugin discovery and loading.
+`toolang.base` owns the shared tool contract and helper utilities.
 
-`toolang.tools` owns the tool family contract and first-party tool plugins.
+`toolang.tools` owns the built-in tool plugins and tool-family loading.
 
 
 ## 7. Security And Diagnostics

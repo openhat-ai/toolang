@@ -32,27 +32,27 @@ dependencies = [
 
 [project.scripts]
 toolang = "toolang.cli:main"
-too = "toolang.experiments.cli:main"
+too = "toolang.cli:main"
 
 [project.entry-points."toolang.tool"]
-filesystem = "toolang.experiments.tools.filesystem:create_tool"
-service_use = "toolang.experiments.tools.service_use:create_tool"
-shell = "toolang.experiments.tools.shell:create_tool"
-web_search = "toolang.experiments.tools.web_search:create_tool"
+filesystem = "toolang.tools.filesystem:create_tool"
+service_use = "toolang.tools.service_use:create_tool"
+shell = "toolang.tools.shell:create_tool"
+web_search = "toolang.tools.web_search:create_tool"
 
 [project.entry-points."toolang.model"]
-openai = "toolang.experiments.models.openai:create_model"
-ollama = "toolang.experiments.models.ollama:create_model"
+openai = "toolang.models.openai:create_model"
+ollama = "toolang.models.ollama:create_model"
 
 [project.entry-points."toolang.run_strategy"]
-basic = "toolang.experiments.strategies.basic:create_strategy"
+basic = "toolang.strategies.basic:create_strategy"
 
 [project.entry-points."toolang.channel"]
-telegram = "toolang.experiments.channels.telegram:create_channel"
+telegram = "toolang.channels.telegram:create_channel"
 
 [project.entry-points."toolang.sandbox"]
-none = "toolang.experiments.sandboxes.none:create_sandbox"
-docker = "toolang.experiments.sandboxes.docker:create_sandbox"
+none = "toolang.sandboxes.none:create_sandbox"
+docker = "toolang.sandboxes.docker:create_sandbox"
 
 [dependency-groups]
 dev = [

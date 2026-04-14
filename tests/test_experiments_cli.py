@@ -6,13 +6,12 @@ from datetime import datetime, timezone
 from typing import cast
 
 from typer.testing import CliRunner
-from toolang.concepts.persisted.config import ToolangConfig, WebConfig
 
-from toolang.experiments import agents
-from toolang.experiments import caps
-from toolang.experiments import cli
-from toolang.experiments import work
-from toolang.experiments.execution.db import ExecutionStore, execution_db_path
+from toolang import agents
+from toolang import caps
+from toolang import cli
+from toolang import work
+from toolang.execution.db import ExecutionStore, execution_db_path
 
 runner = CliRunner()
 
@@ -298,8 +297,10 @@ def test_cli_list_uses_ui_base_url_from_root_config(tmp_path: Path) -> None:
         started_at="2026-04-07T11:00:00Z",
         pid=os.getpid(),
     )
-    ToolangConfig(web=WebConfig(ui_base_url="https://agents.example.test")).save(
-        toolang_root / "config.toml"
+    (toolang_root / "config.toml").write_text(
+        '[web]\n'
+        'ui_base_url = "https://agents.example.test"\n',
+        encoding="utf-8",
     )
 
     result = runner.invoke(
@@ -815,7 +816,7 @@ def test_cli_start_spawns_background_run_and_reports_status(tmp_path: Path, monk
     assert captured["command"] == [
         cli.sys.executable,
         "-m",
-        "toolang.experiments.cli",
+        "toolang.cli",
         "--root",
         str(toolang_root),
         "run",

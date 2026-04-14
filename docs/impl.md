@@ -55,38 +55,44 @@ Reason:
 
 Stable package map:
 
-- `toolang.concepts`
-  - shared concepts and persisted models
+- `toolang.base`
+  - shared plugin-facing protocols, value types, and helpers
 - `toolang.program`
   - `.too` parsing and authored source semantics
-- `toolang.agent`
-  - agent resolution, managed local-agent operations, preparation, and registry
+- `toolang.agents`
+  - local agent home layout and managed agent operations
 - `toolang.caps`
-  - cap refs, sync, materialization, and prepared/live cap views
-- `toolang.runtime`
-  - durable, prepared, and live runtime behavior
-- `toolang.memory`
-  - memory family contract and first-party memory plugins
+  - authored caps, cap config, and prepared cap views
 - `toolang.channels`
-  - inbound and outbound channel bindings
+  - built-in channel plugins
 - `toolang.tools`
-  - built-in tool families, provider loading, and tool runtime
-- `toolang.sandbox`
-  - sandbox lifecycle and execution environment helpers
-- `toolang.plugins`
-  - plugin loading and plugin capability wiring
-- `toolang.bus`
-  - shared event projection and bus API
+  - built-in tool plugins
+- `toolang.models`
+  - built-in model plugins
+- `toolang.strategies`
+  - built-in run strategies
+- `toolang.sandboxes`
+  - built-in sandbox plugins
+- `toolang.execution`
+  - run binding, traces, durable execution truth, and response projection
+- `toolang.state`
+  - durable, prepared, live, and pulse state
+- `toolang.config`
+  - runtime config loading and resolution
+- `toolang.up`
+  - FastAPI app assembly and agent startup
+- `toolang.work`
+  - task and chore document semantics
 - `toolang.cli`
   - CLI orchestration and environment resolution
 
 Rules:
 
-- shared concepts live in `toolang.concepts`
+- shared plugin-facing contracts live in `toolang.base`
 - authored source semantics stay with the package that owns the source format
-- runtime state and execution stay in `toolang.runtime`
-- `memory`, `tools`, `channels`, and `sandbox` are plugin families
-- `toolang.plugins` owns generic plugin discovery and loading
+- runtime state and execution stay in `toolang.state` and `toolang.execution`
+- `models`, `strategies`, `tools`, `channels`, and `sandboxes` are plugin
+  families
 - family-specific contracts stay with their family packages
 - plugin, channel, tool, sandbox, and caps concerns stay separate from runtime
 
@@ -162,8 +168,7 @@ This repository owns:
 
 - runtime code
 - CLI code
-- sync integration
-- the internal `toolang.caps` package until it is split out if needed
+- authored cap and work management
 - tests for runtime behavior
 
 Sibling repositories own:

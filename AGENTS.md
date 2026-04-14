@@ -76,26 +76,25 @@
   `tree-sitter-toolang` repository. Toolang consumes the Python extension
   package exposed by that repository rather than compiling grammar sources at
   runtime.
+- `toolang.base` owns the shared plugin-facing protocols, value types, and
+  helper utilities used across model, strategy, tool, sandbox, and channel
+  plugins.
 - `toolang.program` owns `.too` parsing, authored source semantics, and source
   editing.
-- `toolang.agent` owns agent selector resolution, managed local-agent
-  operations, prepared runtime inputs, and the local agent registry.
-- `toolang.caps` owns cap refs, sync/materialization, local cap files, and
-  runtime cap views. It should consume normalized program and concept objects
-  rather than reinterpret raw `.too` syntax.
-- `toolang.concepts.layout` owns layout concepts such as the Toolang root,
-  agent home, and agent room. Put durable layout behavior on those concept
-  objects instead of rebuilding paths ad hoc.
-- `toolang.sandbox` owns sandbox lifecycle helpers. Sandbox concepts and
-  persisted sandbox state live in `toolang.concepts.sandbox`.
-- `toolang.tools` owns built-in runtime tool families, provider loading, and
-  local tool execution. Tool-family concepts and persisted tool config live in
-  `toolang.concepts.tools` and `toolang.concepts.persisted`.
-- `toolang.web` owns the small shared web/app helpers used by FastAPI app
-  modules.
-- Stable shared constructs live in `toolang.concepts` so runtime, caps, and
-  storage code can depend on one explicit concept source. Shared concepts may
-  include small operations that eliminate repeated implementation glue.
+- `toolang.agents` owns local agent home layout, runtime-state files, and
+  managed agent process helpers.
+- `toolang.caps` owns cap refs, authored cap files, local cap config, and
+  prepared cap views.
+- `toolang.work` owns task and chore document semantics.
+- `toolang.state` owns durable, prepared, live, and pulse state models.
+- `toolang.execution` owns run binding, execution trace, durable run truth,
+  response projection, and execution storage.
+- `toolang.models`, `toolang.strategies`, `toolang.tools`,
+  `toolang.channels`, and `toolang.sandboxes` own the built-in plugin-family
+  implementations and loaders.
+- `toolang.config` owns runtime config resolution helpers.
+- `toolang.up` owns agent startup and FastAPI app assembly.
+- `toolang.cli` owns CLI orchestration and environment resolution.
 
 
 ## Agent Identity

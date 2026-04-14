@@ -1,0 +1,103 @@
+"""Bundled Toolang templates."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from importlib.resources import files
+import re
+from typing import Literal
+
+import frontmatter
+
+TemplateKind = Literal["agent", "skill", "prompt", "service", "psyche", "task", "chore"]
+_TEMPLATE_FILE_RE = re.compile(
+    r"^(?P<kind>agent|skill|prompt|service|psyche|task|chore)\.(?P<name>[A-Za-z0-9_-]+)\.(?P<ext>md|too)$"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class TemplateSpec:
+    """One bundled template file."""
+
+    kind: TemplateKind
+    name: str
+    path: str
+    description: str | None
+    raw_text: str
+
+    @property
+    def title(self) -> str:
+        return self.name.replace("_", " ").replace("-", " ").title()
+
+
+def list_templates(kind: TemplateKind) -> tuple[TemplateSpec, ...]:
+    """Return bundled templates for one kind."""
+
+    items: list[TemplateSpec] = []
+    for resource in files("toolang.templates").iterdir():
+        if not resource.is_file():
+            continue
+        matched = _TEMPLATE_FILE_RE.fullmatch(resource.name)
+        if matched is None or matched.group("kind") != kind:
+            continue
+        items.append(
+            TemplateSpec(
+                kind=kind,
+                name=matched.group("name"),
+                path=resource.name,
+                description=_template_description(resource.read_text(encoding="utf-8")),
+                raw_text=resource.read_text(encoding="utf-8"),
+            )
+        )
+    items.sort(key=lambda item: (0 if item.name == "default" else 1, item.name))
+    return tuple(items)
+
+
+def load_template(kind: TemplateKind, template_name: str = "default") -> TemplateSpec:
+    """Load one named template."""
+
+    for item in list_templates(kind):
+        if item.name == template_name:
+            return item
+    raise FileNotFoundError(f"template not found: {kind}.{template_name}")
+
+
+def render_template(kind: TemplateKind, template_name: str = "default", **bindings: str) -> str:
+    """Render one named template with simple variable substitution."""
+
+    text = load_template(kind, template_name).raw_text
+    for key, value in bindings.items():
+        text = text.replace(f"{{{{{key}}}}}", value)
+    return text
+
+
+def load_info_avatar() -> str:
+    """Load the bundled info avatar art."""
+
+    return _read_resource_text("info.avatar.txt").rstrip("\n")
+
+
+def load_info_palette() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Load the bundled two-row info palette."""
+
+    rows = [
+        tuple(f"bold #{token}" for token in line.split())
+        for line in _read_resource_text("info.palette.txt").splitlines()
+        if line.strip()
+    ]
+    if len(rows) != 2:
+        raise ValueError("info palette must contain exactly two rows")
+    return rows[0], rows[1]
+
+
+def _template_description(raw_text: str) -> str | None:
+    if not raw_text.lstrip().startswith("---"):
+        return None
+    post = frontmatter.loads(raw_text)
+    value = post.metadata.get("description")
+    text = str(value).strip() if value is not None else ""
+    return text or None
+
+
+def _read_resource_text(name: str) -> str:
+    return files("toolang.templates").joinpath(name).read_text(encoding="utf-8")

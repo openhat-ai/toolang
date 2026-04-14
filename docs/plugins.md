@@ -105,7 +105,7 @@ class StrategyPlugin(Protocol):
 - `call_tools(...)`
 - `finish()`
 
-Strategy code should treat `experiments.base.types.message.Message` as the
+Strategy code should treat `toolang.base.types.message.Message` as the
 canonical shared content model. Message parts such as `text`, `tool_call`, and
 `tool_result` belong to `base`, not to execution-only view or storage modules.
 
@@ -264,10 +264,10 @@ Responsibility split:
 - runtime appends bus events
 - plugins perform only their domain-specific operations
 
-The formal shared plugin boundary currently lives under
-`toolang.experiments.base`.
+The formal shared plugin boundary lives under
+`toolang.base`.
 Run-strategy plugins should depend on
-`toolang.experiments.base.protocols.strategy` rather than importing concrete
+`toolang.base.protocols.strategy` rather than importing concrete
 execution modules.
 
 
@@ -360,11 +360,11 @@ Plugins decode or deliver channel traffic, but runtime still owns:
 
 Rules:
 
-- `toolang.models` owns the model family contract
-- `toolang.plugins` owns generic plugin discovery and loading
-- `toolang.memory` owns the memory family contract
-- `toolang.tools` owns the tool family contract
-- `toolang.channels` owns the channel family contract
-- `toolang.sandbox` owns the sandbox family contract
+- `toolang.base` owns the shared plugin contracts
+- `toolang.models` owns the built-in model plugins
+- `toolang.tools` owns the built-in tool plugins
+- `toolang.channels` owns the built-in channel plugins
+- `toolang.sandboxes` owns the built-in sandbox plugins
+- `toolang.strategies` owns the built-in run strategies
 - first-party default implementations should use the same plugin contracts as
   external plugin packages

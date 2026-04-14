@@ -34,12 +34,12 @@ Module layout should reflect the design map.
 
 Examples:
 
-- `toolang.agent`
-  - agent identity, resolution, preparation, and registry
-- `toolang.runtime`
-  - activation lifecycle, run execution, prompt build, chat state, and serving
+- `toolang.agents`
+  - local agent homes, runtime-state files, and managed agent operations
+- `toolang.execution`
+  - run execution, trace emission, and durable run storage
 - `toolang.caps`
-  - cap sync, overlay, and scope-aware runtime views
+  - authored caps, cap config, and prepared views
 
 Rules:
 
@@ -228,10 +228,10 @@ Examples of acceptable facades:
 
 - `toolang.cli`
   - `app`, `main`
-- `toolang.runtime`
-  - stable runtime entry points only
-- `toolang.agent`
-  - stable agent-resolution and preparation entry points only
+- `toolang.execution`
+  - stable execution entry points only
+- `toolang.base`
+  - stable shared plugin boundary only
 
 Rules:
 

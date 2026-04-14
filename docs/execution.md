@@ -105,7 +105,7 @@ Rules:
   developer-role message, system message, or similar provider-specific field
 - strategy-facing contracts such as `StrategyPlugin`, `RunContext`,
   `ModelBinding`, `RunResult`, and the canonical message/part model live in
-  the formal shared boundary currently rooted at `experiments.base`
+  the formal shared boundary under `toolang.base`
   so plugin authors do not depend on `execution` internals
 - durable execution records, runtime stream events, and API/detail projections
   live in `execution`
