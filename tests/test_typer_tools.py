@@ -6,8 +6,8 @@ import json
 import click
 import typer
 
-from toolang.experiments.base.types.tool import ToolContext
-from toolang.experiments.base.utils.typer_tools import TyperToolConfig, create_typer_tools
+from toolang.base.types.tool import ToolContext
+from toolang.base.utils.typer_tools import TyperToolConfig, create_typer_tools
 
 
 def _build_test_app() -> typer.Typer:

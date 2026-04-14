@@ -6,24 +6,24 @@ from typing import Any, cast
 
 import pytest
 
-from toolang.experiments.base.protocols.model import ModelPlugin
-from toolang.experiments.base.protocols.tool import Tool
-from toolang.experiments.base.types.message import Message, ToolCallPart, ToolResultPart
-from toolang.experiments.base.types.model import ModelBinding, ModelCapabilities, ResolvedModel
-from toolang.experiments.base.types.run import (
+from toolang.base.protocols.model import ModelPlugin
+from toolang.base.protocols.tool import Tool
+from toolang.base.types.message import Message, ToolCallPart, ToolResultPart
+from toolang.base.types.model import ModelBinding, ModelCapabilities, ResolvedModel
+from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
     ToolCall,
 )
-from toolang.experiments.base.types.tool import ToolContext, ToolDefinition
-from toolang.experiments.base.error import ToolangError
-from toolang.experiments.execution.input import RunBinding, RunInput
-from toolang.experiments.execution.snapshot import RunSnapshot, SnapshotAgent, SnapshotProgram, SnapshotRun
-from toolang.experiments.execution.model import resolve_model
-from toolang.experiments.execution.context import RunContext
-from toolang.experiments.models._openai_compat import encode_message, response_payload
-from toolang.experiments.strategies import load_run_strategy
-from toolang.experiments.up import load_default_models, load_model_profiles
+from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.base.error import ToolangError
+from toolang.execution.input import RunBinding, RunInput
+from toolang.execution.snapshot import RunSnapshot, SnapshotAgent, SnapshotProgram, SnapshotRun
+from toolang.execution.model import resolve_model
+from toolang.execution.context import RunContext
+from toolang.models._openai_compat import encode_message, response_payload
+from toolang.strategies import load_run_strategy
+from toolang.up import load_default_models, load_model_profiles
 
 
 class _FakeTool(Tool):

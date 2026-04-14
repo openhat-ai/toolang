@@ -2,18 +2,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from toolang.experiments.base.protocols.channel import ChannelPlugin
-from toolang.experiments.base.types.channel import (
+from toolang.base.protocols.channel import ChannelPlugin
+from toolang.base.types.channel import (
     ChannelContext,
     ChannelState,
     OutboundMessage,
     ReplyTarget,
 )
-from toolang.experiments.config.plugins import (
+from toolang.config.plugins import (
     load_channel_bindings,
     load_tool_plugin_config,
 )
-from toolang.experiments.up import create_channel_plugin
+from toolang.up import create_channel_plugin
 
 
 def _channel_context(home: Path, binding_name: str) -> ChannelContext:
@@ -66,7 +66,7 @@ def test_experiments_telegram_channel_polls_and_delivers(monkeypatch) -> None:
             )
         return FakeResponse({"ok": True, "result": {"message_id": 88}})
 
-    monkeypatch.setattr("toolang.experiments.channels.telegram.httpx.post", fake_post)
+    monkeypatch.setattr("toolang.channels.telegram.httpx.post", fake_post)
     plugin = create_channel_plugin(
         "telegram",
         config={"token": "secret", "owner_chat_id": "123"},
@@ -113,7 +113,7 @@ def test_experiments_telegram_channel_typing_and_edit(monkeypatch) -> None:
         calls.append((url, dict(json)))
         return FakeResponse({"ok": True, "result": {"message_id": 88}})
 
-    monkeypatch.setattr("toolang.experiments.channels.telegram.httpx.post", fake_post)
+    monkeypatch.setattr("toolang.channels.telegram.httpx.post", fake_post)
     plugin = create_channel_plugin(
         "telegram",
         config={"token": "secret", "owner_chat_id": "123"},

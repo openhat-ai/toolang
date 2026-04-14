@@ -40,5 +40,8 @@ Generated output is written to:
 The generated site currently covers:
 
 - `toolang`
-  - including `toolang.concepts`
-  - including `toolang.caps`
+  - including `toolang.base`
+  - including `toolang.execution`
+  - including `toolang.models`
+  - including `toolang.tools`
+  - including other public subpackages under `src/toolang/`

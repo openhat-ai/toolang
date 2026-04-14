@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from toolang.experiments.base.types.tool import ToolContext
-from toolang.experiments.tools.filesystem import create_tool as create_filesystem_tool
-from toolang.experiments.tools.service_use import create_tool as create_service_use_tool
-from toolang.experiments.tools.shell import create_tool as create_shell_tool
-from toolang.experiments.tools.web_search import create_tool as create_web_search_tool
+from toolang.base.types.tool import ToolContext
+from toolang.tools.filesystem import create_tool as create_filesystem_tool
+from toolang.tools.service_use import create_tool as create_service_use_tool
+from toolang.tools.shell import create_tool as create_shell_tool
+from toolang.tools.web_search import create_tool as create_web_search_tool
 
 
 def _tool_context(home: Path, plugin_name: str) -> ToolContext:
@@ -69,7 +69,7 @@ def test_experiments_web_search_tool_filters_domains(monkeypatch, tmp_path: Path
     tool = create_web_search_tool({}).tools()["search"]
 
     monkeypatch.setattr(
-        "toolang.experiments.tools.web_search._search_text",
+        "toolang.tools.web_search._search_text",
         lambda query, *, max_results: [
             {
                 "title": "Example",

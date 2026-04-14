@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from toolang.experiments.up import list_plugin_names, load_plugin_factory, load_tool_plugins
+from toolang.up import list_plugin_names, load_plugin_factory, load_tool_plugins
 
 
 class _FakeEntryPoint:
@@ -13,13 +13,13 @@ class _FakeEntryPoint:
 
 
 def _patch_tool_entry_points(monkeypatch) -> None:
-    from toolang.experiments.base.examples.tools import create_echo_tool
-    from toolang.experiments.base.examples.tools import create_math_add_tool
-    from toolang.experiments.tools.filesystem import create_tool as create_filesystem_tool
-    from toolang.experiments.tools.service_use import create_tool as create_service_use_tool
-    from toolang.experiments.tools.shell import create_tool as create_shell_tool
-    from toolang.experiments.tools.web_search import create_tool as create_web_search_tool
-    from toolang.experiments.base.examples.tools import create_working_tree_tool
+    from toolang.base.examples.tools import create_echo_tool
+    from toolang.base.examples.tools import create_math_add_tool
+    from toolang.tools.filesystem import create_tool as create_filesystem_tool
+    from toolang.tools.service_use import create_tool as create_service_use_tool
+    from toolang.tools.shell import create_tool as create_shell_tool
+    from toolang.tools.web_search import create_tool as create_web_search_tool
+    from toolang.base.examples.tools import create_working_tree_tool
 
     entries = [
         _FakeEntryPoint("echo", create_echo_tool),
@@ -31,7 +31,7 @@ def _patch_tool_entry_points(monkeypatch) -> None:
         _FakeEntryPoint("working_tree", create_working_tree_tool),
     ]
     monkeypatch.setattr(
-        "toolang.experiments.up.entry_points",
+        "toolang.up.entry_points",
         lambda *, group: entries if group == "toolang.tool" else [],
     )
 

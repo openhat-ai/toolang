@@ -1,183 +1,114 @@
-# Toolang Chat Model
+# Chat and Transcript Model
 
-This document defines the canonical chat and message model for Toolang.
+Chat is a projection over threads, runs, and messages.
 
-Chat is not a separate runtime hierarchy. It is a projection over:
-
-- threads
-- runs
-- ordered step output
-
-The goal is to keep one provider-independent message shape across:
-
-- model providers
-- streaming HTTP responses
-- projected thread history
-- future multimodal and tool-rich UIs
+It does not define a separate execution model.
 
 
-## 1. Chat Sits On Top Of Threads And Runs
+## Threads And Runs
 
-Ownership chain:
+Chat uses the same runtime units as the rest of Toolang:
 
-- `thread`
-  - groups related chat runs under one durable subject
-- `run`
-  - one chat handling attempt inside that thread
-- `step`
-  - one durable execution unit inside that run
-- `message`
-  - one caller-facing projection derived from one step output
-- `message part`
-  - one ordered content, tool, source, or file unit inside that message
+| Term | Meaning |
+| --- | --- |
+| `thread` | Durable conversation context |
+| `run` | One handling attempt inside that thread |
+| `step` | One execution unit inside the run |
 
-Rules:
-
-- one chat send or reply creates one run
-- `run_id` is the public link between runtime execution and chat history
-- `turn_id` is not part of the public chat API
+One chat submission creates one run in one thread.
 
 
-## 2. Canonical Projected Message Shape
+## Messages
 
-The runtime API returns projected chat messages in this shape:
+The public message shape is:
 
 - `id`
 - `thread_id`
 - `run_id`
 - `step_index`
 - `role`
-- `parts[]`
+- `parts`
 - `created_at`
 - `meta`
 
-Supported core parts:
+Current roles are:
+
+- `user`
+- `assistant`
+- `tool`
+
+Current part kinds are:
 
 - `text`
 - `tool_call`
 - `tool_result`
 
-Rules:
-
-- `parts[]` order is canonical
-- `user_input` steps project to `role="user"`
-- `model_call` steps project to `role="assistant"`
-- `tool_call` steps project to `role="tool"`
-- future multimodal support should extend message parts rather than create a
-  second message model
+The initial run input projects to the user message. Step output projects to
+assistant or tool messages.
 
 
-## 3. Ordered Tool Parts
+## Thread API
 
-Tool interaction should remain in the same part system as text.
-
-Each tool part should preserve:
-
-- `tool_call_id`
-- `tool_name`
-- `tool_family`
-- `input`
-- `output`
-
-Rules:
-
-- one assistant message may contain `text` and `tool_call` parts
-- one tool step projects to one `role="tool"` message with `tool_result` parts
-- clients should not reconstruct tool ordering from separate `tool_calls[]`
-  side channels
-
-
-## 4. Stream Versus History
-
-Toolang treats streaming and projected history as two views of the same step
-output:
-
-- stream
-  - the incremental construction of a message
-- history
-  - the final assembled projected message
-
-History should not persist text deltas or partial tool-input deltas.
-Durable truth should persist completed step output parts instead.
-
-This requires one dedicated assembly layer:
-
-- consume provider-independent runtime events
-- emit wire-protocol chunks
-- assemble projected messages from durable step output
-
-The mapping must not be reimplemented in multiple endpoints.
-
-
-## 5. AI SDK Mapping
-
-Toolang aligns its wire protocol with the AI SDK UI Message Stream protocol
-because:
-
-- the current Web UI is AI SDK-oriented
-- the protocol has already converged around cross-provider chat and tool usage
-- it keeps stream semantics and stored message semantics close to each other
-
-Current target chunk families include:
-
-- `start`
-- `text-start`
-- `text-delta`
-- `text-end`
-- `tool-input-start`
-- `tool-input-delta`
-- `tool-input-available`
-- `tool-output-available`
-- `finish`
-- `error`
-
-Rules:
-
-- wire protocol uses AI SDK-compatible camelCase fields such as
-  `toolCallId`, `toolName`, and `inputTextDelta`
-- projected Toolang message objects remain normal snake_case payloads
-- the snake_case-to-camelCase mapping belongs only in the streaming protocol
-  layer
-
-
-## 6. Thread Views
-
-Thread list responses provide:
+Thread list responses return:
 
 - `id`
 - `title`
 - `updated_at`
 - `origin`
 
-Thread detail responses provide:
+Thread detail returns:
 
 - `info`
-- `runs[]`
+- `runs`
 
-Rules:
+There is no separate top-level `thread.messages` field.
 
-- `title` is a stable thread title
-- `origin` is the latest run origin visible on the thread
-- `/api/v1/threads*` is the canonical surface
-- `/api/v1/chats*` is a compatibility alias over the same thread data
+To build a full transcript, flatten:
+
+1. each run input
+2. each step message in run order
 
 
-## 7. Current API Guidance
+## Run API
 
-`POST /api/v1/chat` returns:
+Run detail returns:
+
+- `info`
+- `input`
+- `output`
+
+`output.steps` contains the projected step detail for the run. This is the
+source used by trace and chat inspection pages.
+
+
+## Chat API
+
+Buffered chat:
+
+- `POST /api/v1/chat`
+
+returns:
 
 - `thread_id`
 - `run_id`
 - `message`
 - `assistant`
 
-`POST /api/v1/chat/stream` returns SSE chunks for the same run and final
-message.
+Streaming chat:
 
-`GET /api/v1/threads/{thread_id}` returns:
+- `POST /api/v1/chat/stream`
 
-- thread info
-- ordered run details
+returns an SSE stream for the same run.
 
-The canonical public link between chat history and runtime execution is
-`run_id`.
+
+## Streaming Rule
+
+The stream is the primary real-time output surface for a live chat exchange.
+
+Thread and run detail endpoints are inspection surfaces used to:
+
+- reload persisted history
+- inspect past runs
+- recover state after refresh
+
+They are not the primary source for the in-flight assistant reply.

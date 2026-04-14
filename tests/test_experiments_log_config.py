@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import cast
 
-from toolang.experiments.config.log import (
+from toolang.config.log import (
     HttpxLogFilter,
     build_uvicorn_log_config,
 )

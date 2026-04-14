@@ -11,12 +11,18 @@
 {% extends "frame.html.jinja2" %}
 {% set primary_modules = [
     "toolang",
-    "toolang.concepts",
+    "toolang.base",
     "toolang.cli",
-    "toolang.agent",
-    "toolang.runtime",
-    "toolang.sync",
+    "toolang.agents",
     "toolang.caps",
+    "toolang.work",
+    "toolang.execution",
+    "toolang.models",
+    "toolang.strategies",
+    "toolang.tools",
+    "toolang.channels",
+    "toolang.sandboxes",
+    "toolang.up",
 ] %}
 {% block title %}Toolang Reference{% endblock %}
 {% block style %}
@@ -202,43 +208,61 @@
                 {% if "toolang" in all_modules %}
                     <article class="reference-card">
                         <h3><a href="toolang.html"><code>toolang</code></a></h3>
-                        <p>Main package boundary for CLI, agent identity, sync, runtime, layout, and storage helpers.</p>
+                        <p>Top-level package for the current Toolang runtime and built-in package map.</p>
+                    </article>
+                {% endif %}
+                {% if "toolang.base" in all_modules %}
+                    <article class="reference-card">
+                        <h3><a href="toolang/base.html"><code>toolang.base</code></a></h3>
+                        <p>Shared plugin contracts, canonical message and run types, and cross-runtime helpers.</p>
                     </article>
                 {% endif %}
                 {% if "toolang.cli" in all_modules %}
                     <article class="reference-card">
                         <h3><a href="toolang/cli.html"><code>toolang.cli</code></a></h3>
-                        <p>CLI entrypoints and command wiring for agent, runtime, cap, and helper commands.</p>
+                        <p>CLI entry points and command wiring for agent lifecycle, runtime control, caps, and jobs.</p>
                     </article>
                 {% endif %}
-                {% if "toolang.concepts" in all_modules %}
+                {% if "toolang.agents" in all_modules %}
                     <article class="reference-card">
-                        <h3><a href="toolang/concepts.html"><code>toolang.concepts</code></a></h3>
-                        <p>Shared identity, execution, sandbox, capability, and persisted-state constructs reused across the codebase.</p>
-                    </article>
-                {% endif %}
-                {% if "toolang.agent" in all_modules %}
-                    <article class="reference-card">
-                        <h3><a href="toolang/agent.html"><code>toolang.agent</code></a></h3>
-                        <p>Agent identity, home resolution, registry records, and prepared execution inputs.</p>
-                    </article>
-                {% endif %}
-                {% if "toolang.runtime" in all_modules %}
-                    <article class="reference-card">
-                        <h3><a href="toolang/runtime.html"><code>toolang.runtime</code></a></h3>
-                        <p>Turn execution, prompt building, chat state, API models, and running agent server surfaces.</p>
-                    </article>
-                {% endif %}
-                {% if "toolang.sync" in all_modules %}
-                    <article class="reference-card">
-                        <h3><a href="toolang/sync.html"><code>toolang.sync</code></a></h3>
-                        <p>Sync orchestration, remote resolution, and materialization of reusable synced state.</p>
+                        <h3><a href="toolang/agents.html"><code>toolang.agents</code></a></h3>
+                        <p>Local agent paths, runtime-state files, and managed lifecycle helpers.</p>
                     </article>
                 {% endif %}
                 {% if "toolang.caps" in all_modules %}
                     <article class="reference-card">
                         <h3><a href="toolang/caps.html"><code>toolang.caps</code></a></h3>
-                        <p>Capability refs, source operations, front matter parsing, materialization, and runtime overlay logic.</p>
+                        <p>Cap definitions, local cap files, remote cap refs, and effective cap views.</p>
+                    </article>
+                {% endif %}
+                {% if "toolang.work" in all_modules %}
+                    <article class="reference-card">
+                        <h3><a href="toolang/work.html"><code>toolang.work</code></a></h3>
+                        <p>Task and chore document models, scheduling fields, and local work-file helpers.</p>
+                    </article>
+                {% endif %}
+                {% if "toolang.execution" in all_modules %}
+                    <article class="reference-card">
+                        <h3><a href="toolang/execution.html"><code>toolang.execution</code></a></h3>
+                        <p>Run execution, durable records, trace events, response projection, and execution storage.</p>
+                    </article>
+                {% endif %}
+                {% if "toolang.models" in all_modules %}
+                    <article class="reference-card">
+                        <h3><a href="toolang/models.html"><code>toolang.models</code></a></h3>
+                        <p>Built-in model integrations and compatibility helpers for model-call execution.</p>
+                    </article>
+                {% endif %}
+                {% if "toolang.tools" in all_modules %}
+                    <article class="reference-card">
+                        <h3><a href="toolang/tools.html"><code>toolang.tools</code></a></h3>
+                        <p>Built-in tool families and tool plugin implementations.</p>
+                    </article>
+                {% endif %}
+                {% if "toolang.up" in all_modules %}
+                    <article class="reference-card">
+                        <h3><a href="toolang/up.html"><code>toolang.up</code></a></h3>
+                        <p>FastAPI app assembly, loop wiring, plugin loading, and runtime startup.</p>
                     </article>
                 {% endif %}
             </div>
