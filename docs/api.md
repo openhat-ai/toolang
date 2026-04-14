@@ -1,505 +1,143 @@
-# Toolang Control Surfaces
+# Control Surfaces
 
-This document defines the user-facing control surfaces for Toolang:
-
-- the CLI
-- the known-agent registry
-- the per-agent HTTP API
-- the shared bus HTTP API
-
-Canonical lifecycle and runtime-resource vocabulary lives in
-[model.md](./model.md).
-Canonical chat and message semantics live in [chat.md](./chat.md).
+This document defines the public CLI and local agent HTTP API.
 
 
-## 1. CLI Surface
+## CLI
 
-Top-level command groups:
+The CLI entry points are:
 
-- agent lifecycle
-  - `new`
-  - `clone`
-  - `remove`
-  - `list`
-- state materialization
-  - `sync`
-- execution
-  - `invoke`
-  - `run`
-  - `start`
-- caps management
-  - `skill`
-  - `service`
-  - `prompt`
-  - `psyche`
-- shared bus
-  - `bus serve`
+- `toolang`
+- `too`
 
-Hidden helper commands:
+Top-level commands are:
 
-- `home`
-- `source`
-- `room`
-- `init`
-
-Rules:
-
-- all execution commands accept an `agent selector`
-- root-level defaults may be configured in `${TOOLANG_ROOT}/config.toml`
-- `invoke` is a caller-driven foreground run
-- `run` runs the `server` runtime loop in the foreground and may enable extra
-  loops with repeated `--loop` flags
-- `start` launches the selected runtime-loop set in the background
-- current `run` and `start` surfaces always include the `server` loop because
-  the long-lived runtime process is still hosted by the per-agent FastAPI app
-- `start` defaults to `server,poll,pulse`
-- `run` defaults to `server,pulse`
-- grammar inspection belongs in the sibling grammar package, not in the
-  Toolang runtime CLI
-
-
-## 2. Known-Agent Registry
-
-Toolang stores global registry state in:
-
-- `${TOOLANG_ROOT}/agents.db`
-
-Logical tables:
-
-- `agents`
-  - known agents keyed by `agent_uri`
-- `running_agents`
-  - active started agents keyed by `agent_uri`
-
-Known-agent fields include:
-
-- `agent_uri`
-- `agent_id`
-- `agent_name`
-- `agent_home`
-- `source_file`
-- `updated_at`
-
-Running-agent fields include:
-
-- `agent_uri`
-- `pid`
-- `status`
-- `sandbox`
-- `started_at`
-- `heartbeat_at`
-- `endpoint`
-
-Rules:
-
-- `invoke` may add or refresh a known-agent record
-- only `run` and `start` create running-agent records
-- at most one active started process may exist per `agent_uri`
-
-
-## 3. Shared Event Projection
-
-Toolang stores shared bus projection state in:
-
-- `${TOOLANG_ROOT}/bus/events.db`
-
-This database is:
-
-- written directly by local agent processes
-- readable even when no standalone bus server is running
-- a projection, not the only execution truth
-
-Core event families:
-
-- agent lifecycle
-  - `agent_created`
-  - `agent_removed`
-  - `agent_started`
-  - `agent_stopped`
-- local changes
-  - `caps_updated`
-  - `code_updated`
-  - `config_updated`
-  - `task_updated`
-  - `chore_updated`
-  - `will_updated`
-- run lifecycle
-  - `run_started`
-  - `run_finished`
-  - `run_failed`
-
-Rules:
-
-- `run` and `start` publish agent lifecycle events
-- `new`, `clone`, and `remove` publish managed-agent lifecycle events
-- `agent_started` and `agent_stopped` correspond to activation boundaries
-- agent API event feeds are scoped to the current agent incarnation, starting
-  at the latest `agent_created`
-- `invoke`, chat submissions, and server-side run requests publish top-level
-  run events
-- event records use a monotonic `event_id`
-
-
-## 4. Agent API
-
-Each started agent exposes a local HTTP API for direct UI or client use.
-
-Core endpoints:
-
-- `GET /healthz`
-- `GET /api/v1/health`
-- `GET /api/v1/agent`
-- `GET /api/v1/profile`
-- `GET /api/v1/caps`
-- `GET /api/v1/psyches`
-- `GET /api/v1/psyches/{name}`
-- `GET /api/v1/prompts`
-- `GET /api/v1/prompts/{name}`
-- `GET /api/v1/services`
-- `GET /api/v1/services/{name}`
-- `GET /api/v1/skills`
-- `GET /api/v1/skills/{name}`
-- `PUT /api/v1/caps/{kind}/{name}`
-- `DELETE /api/v1/caps/{kind}/{name}`
-- `PUT /api/v1/psyches/{name}`
-- `DELETE /api/v1/psyches/{name}`
-- `PUT /api/v1/prompts/{name}`
-- `DELETE /api/v1/prompts/{name}`
-- `PUT /api/v1/services/{name}`
-- `DELETE /api/v1/services/{name}`
-- `PUT /api/v1/skills/{name}`
-- `DELETE /api/v1/skills/{name}`
-- `GET /api/v1/tasks`
-- `PUT /api/v1/tasks/{task_name:path}`
-- `PATCH /api/v1/tasks/{task_name:path}`
-- `GET /api/v1/chores`
-- `PUT /api/v1/chores/{chore_id:path}`
-- `PATCH /api/v1/chores/{chore_id:path}`
-- `GET /api/v1/will`
-- `PUT /api/v1/will`
-- `PATCH /api/v1/will`
-- `POST /api/v1/chat`
-- `POST /api/v1/chat/stream`
-- `GET /api/v1/threads`
-- `GET /api/v1/threads/{thread_id}`
-- `GET /api/v1/chats`
-- `GET /api/v1/chats/{thread_id}`
-- `GET /api/v1/runs`
-- `GET /api/v1/runs/{run_id}`
-- `GET /api/v1/instructions/{instructions_hash}`
-- `POST /api/v1/runs`
-- `GET /api/v1/events`
-- `GET /api/v1/events/stream`
-
-
-## 5. Agent API Responsibilities
-
-### 5.1 Lifecycle And Runtime
-
-- `/api/v1/agent`
-  - current agent identity and running-state summary
-- `/api/v1/profile`
-  - UI-facing name, handle, profile metadata, and overview metrics
-  - current environment payload includes:
-    - `sandbox`
-      - one rendered sandbox spec such as `none` or `docker:python:3.13-slim`
-    - `home`
-    - `endpoint`
-  - current metrics payload includes:
-    - `threads`
-      - `total`
-      - `chat`
-      - `chore`
-      - `task`
-    - `steps`
-      - `total`
-      - `model_call`
-      - `tool_call`
-      - `runtime`
-    - `tokens`
-      - `input`
-      - `output`
-      - `total`
-- `/api/v1/caps`
-  - effective caps metadata visible to the current activation
-  - uses `services`, not `servers`
-  - current response lists:
-    - `psyches`
-    - `prompts`
-    - `skills`
-    - `services`
-    - `counts`
-  - current item metadata may include:
-    - `kind`
-    - `scope`
-    - `editable`
-    - `path`
-    - `ref`
-    - `description`
-- `/api/v1/{psyches|prompts|services|skills}`
-  - per-kind effective capability collection view
-- `/api/v1/{psyches|prompts|services|skills}/{name}`
-  - one effective capability detail view
-  - current detail payload may include:
-    - `content`
-      - full raw authored content for the effective item
-      - Markdown caps keep original front matter and formatting inside this
-        field
-    - `entry_path`
-    - `files`
-
-### 5.2 Definition Endpoints
-
-Definition endpoints return authored state only. They do not expose pulse
-runtime feedback such as latest run timestamps or latest run status.
-- `/api/v1/caps/{kind}/{name}`
-  - create, replace, or delete one authored cap definition
-  - create-or-replace accepts explicit `scope` plus either:
-    - local authored content via `content`
-      - for Markdown caps, `content` is the full raw document, including any
-        front matter
-    - a remote authored definition via `ref`
-  - delete accepts explicit `scope` and may require explicit `source` when
-    more than one authored definition matches
-- `/api/v1/tasks`
-  - local durable task documents under the agent room
-  - `TaskItem.status` is task definition status, not run status
-- `/api/v1/tasks/{task_name:path}`
-  - create or update one local task document directly through the agent API
-
-Current task response fields include:
-
-- `id`
-- `name`
-- `body`
-- `status`
-- `requester`
-- `mirrored`
-- `provider`
-- `remote_ref`
-- `thread_id`
-- `path`
-- `updated_at`
-- `paused`
-
-- `/api/v1/chores`
-  - local recurring chore definitions
-  - current summary shape:
-    - `id`
-    - `title`
-    - `rrule`
-    - `paused`
-- `/api/v1/chores/{chore_id:path}`
-  - create or update one local chore definition
-  - write requests accept:
-    - `title`
-    - `body`
-    - `rrule`
-    - `paused`
-
-- `/api/v1/will`
-  - the local will definition, if present
-  - current summary shape:
-    - `id`
-    - `title`
-    - `rrule`
-    - `paused`
-- `/api/v1/will`
-  - write requests accept:
-    - `title`
-    - `body`
-    - `rrule`
-    - `paused`
-
-Rules:
-
-- tasks, chores, and will are authored definitions, not runtime history
-- chore and will scheduling is RRULE-driven
-- create or update may trigger immediate local scheduling, but the definition
-  endpoints still return definition data only
-- clients should query `/api/v1/runs` for execution history or current runtime
-  status
-
-### 5.3 Chat And Threads
-
-- `POST /api/v1/chat`
-  - submit one chat message
-  - creates one run in one thread
-  - returns:
-    - `thread_id`
-    - `run_id`
-    - `message`
-    - `assistant`
-- `POST /api/v1/chat/stream`
-  - streamed version of the same operation
-  - emits one AI SDK data stream protocol subset such as:
-    - `start`
-    - `message-metadata`
-    - `start-step`
-    - `text-start`
-    - `text-delta`
-    - `text-end`
-    - `tool-input-start`
-    - `tool-input-delta`
-    - `tool-input-available`
-    - `tool-output-available`
-    - `finish-step`
-    - `finish`
-    - `error`
-    - `[DONE]`
-
-- `GET /api/v1/threads`
-  - list thread summaries
-  - accepts:
-    - `origin`
-    - `limit`
-- `GET /api/v1/threads/{thread_id}`
-  - one detailed thread view:
-    - `info`
-    - `runs[]`
-
-Compatibility aliases:
-
-- `GET /api/v1/chats`
-  - alias for `/api/v1/threads?origin=chat`
-- `GET /api/v1/chats/{thread_id}`
-  - alias for `/api/v1/threads/{thread_id}`
-
-Rules:
-
-- `title` is a stable thread title
-- `origin` is the latest run origin visible on the thread
-- thread detail nests full run details under `runs[]`
-- message objects use `run_id`, not `turn_id`
-- `/api/v1/chats*` is a chat-oriented alias over the thread model, not a
-  separate persistence model
-
-### 5.4 Runs
-
-- `GET /api/v1/runs`
-  - current and historical runs for this agent
-  - accepts:
-    - `origin`
-    - `thread_id`
-    - `status`
-    - `limit`
-- `GET /api/v1/runs/{run_id}`
-  - one run detail payload:
-    - `info`
-    - `input`
-    - `output`
-  - `model_call` step payloads include:
-    - `model_ref`
-    - `input_tokens`
-    - `output_tokens`
-    - `instructions_hash`
-- `GET /api/v1/instructions/{instructions_hash}`
-  - return one persisted instructions blob by content hash
-  - current payload includes:
-    - `hash`
-    - `body`
-- `POST /api/v1/runs`
-  - one direct stateless run invocation
-  - request shape:
-    - `thunk`
-    - `input`
-    - `model`
-  - response shape:
-    - `run_id`
-    - `output`
-
-`GET /api/v1/runs` returns run summaries. Current summary fields include:
-
-- `id`
-- `origin`
-- `thread_id`
-- `input_text`
-- `summary`
-- `status`
-- `type`
-- `error`
-- `created_at`
-- `started_at`
-- `finished_at`
-- `updated_at`
-
-`GET /api/v1/runs/{run_id}` returns one `RunDetail`:
-
+- `new`
+- `clone`
+- `remove`
+- `list`
 - `info`
-  - `id`
-  - `origin`
-  - `thread_id`
-  - `created_at`
-  - `started_at`
-  - `finished_at`
-  - `updated_at`
-- `input`
-  - one durable run-input message with `role`, `parts`, `meta`, and ids
-- `output`
-  - `status`
-  - `error`
-  - `steps`
+- `run`
+- `start`
+- `stop`
+- `task`
+- `chore`
+- `skill`
+- `psyche`
+- `service`
+- `prompt`
 
-Each output step includes:
+Typical usage:
 
-- `record`
-  - one durable `StepRecord`
-  - step records only real execution steps; initial user input is not exposed as
-    synthetic `step 0`
-- `message`
-  - one caller-facing message projection derived from that step when present
-
-Rules:
-
-- `run.status` is the runtime status field for one execution
-- task, chore, and will runtime history is queried through runs, not through
-  definition endpoints
-- `origin` values are the built-in runtime sources:
-  - `invoke`
-  - `chat`
-  - `task`
-  - `chore`
-  - `will`
-
-### 5.5 Events
-
-- `/api/v1/events`
-  - ordered agent-scoped event listing
-- `/api/v1/events/stream`
-  - agent-scoped SSE feed
+```bash
+toolang new alice
+toolang list
+toolang run alice
+toolang start alice
+toolang stop alice
+toolang info alice
+```
 
 
-## 6. Bus API
+## Agent HTTP API
 
-Toolang also exposes a root-level HTTP API over `bus/events.db`.
+Each running agent exposes one local FastAPI server.
 
-Endpoints:
+Core endpoints are grouped as:
+
+- `agent`
+- `chat`
+- `caps`
+- `jobs`
+- `activity`
+- `hook`
+
+
+## Agent Endpoints
 
 - `GET /healthz`
-- `GET /api/v1/agents`
-- `GET /api/v1/agents/{agent_id}`
-- `POST /api/v1/agents/{agent_id}/chat`
-- `POST /api/v1/agents/{agent_id}/chat/stream`
+- `GET /api/v1/profile`
+
+`/api/v1/profile` returns:
+
+- profile metadata
+- environment summary
+- overview metrics:
+
+| Metric Group | Contents |
+| --- | --- |
+| `threads` | Thread totals grouped by chat, chore, and task |
+| `steps` | Step totals grouped by `model_call`, `tool_call`, and `runtime` |
+| `tokens` | Aggregated input, output, and total token usage |
+
+
+## Cap Endpoints
+
+Summary:
+
+- `GET /api/v1/caps`
+
+Collections:
+
+- `GET /api/v1/psyches`
+- `GET /api/v1/skills`
+- `GET /api/v1/services`
+- `GET /api/v1/prompts`
+
+Detail:
+
+- `GET /api/v1/psyches/{name}`
+- `GET /api/v1/skills/{name}`
+- `GET /api/v1/services/{name}`
+- `GET /api/v1/prompts/{name}`
+
+Write:
+
+- `PUT /api/v1/psyches/{name}`
+- `PUT /api/v1/skills/{name}`
+- `PUT /api/v1/services/{name}`
+- `PUT /api/v1/prompts/{name}`
+- `DELETE /api/v1/psyches/{name}`
+- `DELETE /api/v1/skills/{name}`
+- `DELETE /api/v1/services/{name}`
+- `DELETE /api/v1/prompts/{name}`
+
+
+## Chat Endpoints
+
+- `POST /api/v1/chat`
+- `POST /api/v1/chat/stream`
+
+`POST /api/v1/chat` returns one completed user/assistant pair.
+
+`POST /api/v1/chat/stream` returns one SSE stream that follows an AI SDK UI
+message stream subset.
+
+
+## Job Endpoints
+
+- `GET /api/v1/tasks`
+- `GET /api/v1/chores`
+- `GET /api/v1/will`
+
+
+## Activity Endpoints
+
 - `GET /api/v1/runs`
+- `GET /api/v1/runs/{run_id}`
+- `GET /api/v1/instructions/{instructions_hash}`
+- `GET /api/v1/threads`
+- `GET /api/v1/threads/{thread_id}`
 - `GET /api/v1/events`
-- `GET /api/v1/agents/{agent_id}/events`
 - `GET /api/v1/events/stream`
-- `GET /api/v1/agents/{agent_id}/events/stream`
 
-Responsibilities:
-
-- list known and active agents from the shared projection
-- list global or per-agent runs and events
-- proxy chat requests to active agent endpoints
-- provide one local endpoint for multi-agent Web UI integration
+`/api/v1/runs/{run_id}` is the main trace-detail endpoint.
 
 
-## 7. API Boundary Rules
+## Hook Endpoints
 
-- lifecycle endpoints describe current agent, incarnation, or activation state
-- caps endpoints describe effective visible caps
-- definition endpoints describe authored task, chore, and will state
-- runtime execution endpoints describe threads, runs, steps, messages, and
-  events
-- no endpoint should overload one `status` field to mean both definition state
-  and runtime state
+- `POST /hook/runs`
+- `GET|POST|PUT|PATCH|DELETE /hook/{binding_name}`
+
+Hook endpoints queue runs or channel deliveries. They do not execute work
+synchronously.

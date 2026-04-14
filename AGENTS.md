@@ -60,16 +60,19 @@
 
 ## Current Design Boundaries
 
-- `docs/index.md` is the entry point for the design docs in `docs/`.
-- `docs/layout.md` is the source of truth for Toolang root, agent home, agent
-  room, and canonical agent URI layout.
-- `docs/caps.md` defines caps, cap scopes, cap sources, cap locators,
-  and sync semantics.
-- `docs/execution.md` defines runtime execution semantics.
-- `docs/api.md` defines CLI, registry, agent API, and bus API surfaces.
-- `docs/impl.md` defines implementation direction and stack choices.
-- `docs/plugins.md` defines plugin boundaries and loading.
-- `docs/memory.md` defines the memory-plugin contract.
+- `docs/index.md` is the entry point for the public design docs in `docs/`.
+- `docs/concepts.md` defines the shared runtime vocabulary.
+- `docs/layout.md` defines Toolang root, agent home, and agent room layout.
+- `docs/caps.md` defines cap kinds, scopes, sources, and effective-cap rules.
+- `docs/tasks.md` defines task and chore documents and their runtime mapping.
+- `docs/execution.md` defines durable records, trace events, and response
+  events.
+- `docs/chat.md` defines thread, run, and message projections.
+- `docs/models.md` defines model selectors, profiles, and built-in model
+  integrations.
+- `docs/tools.md` defines built-in tool families.
+- `docs/plugins.md` defines shared plugin boundaries and loading.
+- `docs/api.md` defines the CLI and local agent HTTP API.
 - `reference/README.md` is the entry point for generated implementation
   reference derived from code. `reference/` is not a design-doc directory.
 - The Tree-sitter grammar source of truth lives in the sibling

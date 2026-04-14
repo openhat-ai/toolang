@@ -39,12 +39,13 @@ def test_cli_main_normalizes_agent_prefix_shortcut(monkeypatch) -> None:
         captured["standalone_mode"] = standalone_mode
 
     monkeypatch.setattr(cli, "app", cast(object, fake_app))
+    monkeypatch.setattr(cli.sys, "argv", ["toolang"])
 
     result = cli.main(["alice", "stop"])
 
     assert result == 0
     assert captured["args"] == ["stop", "alice"]
-    assert captured["prog_name"] == "too"
+    assert captured["prog_name"] == "toolang"
     assert captured["standalone_mode"] is True
 
 
@@ -60,6 +61,23 @@ def test_cli_main_normalizes_agent_postfix_shortcut(monkeypatch) -> None:
 
     assert result == 0
     assert captured["args"] == ["stop", "alice"]
+
+
+def test_cli_main_uses_actual_cli_name_for_prog_name(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_app(*, args, prog_name: str, standalone_mode: bool) -> None:
+        captured["args"] = args
+        captured["prog_name"] = prog_name
+
+    monkeypatch.setattr(cli, "app", cast(object, fake_app))
+    monkeypatch.setattr(cli.sys, "argv", ["too"])
+
+    result = cli.main(["list"])
+
+    assert result == 0
+    assert captured["args"] == ["list"]
+    assert captured["prog_name"] == "too"
 
 
 def test_cli_main_normalizes_agent_prefix_shortcut_for_info(monkeypatch) -> None:

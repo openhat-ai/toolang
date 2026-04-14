@@ -1507,7 +1507,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         app(
             args=args,
-            prog_name="too",
+            prog_name=_prog_name(sys.argv[0] if sys.argv else ""),
             standalone_mode=True,
         )
     except click.exceptions.Exit as exc:
@@ -1518,6 +1518,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         _CLI_PREFIX_AGENT = previous_prefix_agent
     return 0
+
+
+def _prog_name(argv0: str) -> str:
+    text = Path(argv0).name.strip()
+    return text or "toolang"
 
 
 def _normalize_cli_args(argv: list[str]) -> tuple[list[str], str | None]:
