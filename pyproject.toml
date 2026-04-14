@@ -7,29 +7,55 @@ name = "toolang"
 version = "0.1.0"
 description = "Toolang runtime and CLI"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
+    "dataclasses-json>=0.6,<1.0",
     "python-dateutil>=2.9,<3",
     "duckduckgo-search>=8.1.1",
     "fastapi>=0.116,<1",
+    "fastmcp>=3.0,<4.0",
+    "humanize>=4.12,<5",
     "httpx>=0.28.1",
+    "mcat-cli>=0.2.0",
+    "json5>=0.12,<1.0",
+    "openai>=1.109.1",
     "pydantic>=2.11,<3",
     "python-dotenv>=1.0,<2",
     "python-frontmatter>=1.1.0",
-    "tomli>=2.2.1 ; python_full_version < '3.11'",
     "tomli-w>=1.2.0",
     "tree-sitter>=0.24,<0.26",
-    "tree-sitter-toolang>=0.0.5",
+    "tree-sitter-toolang>=0.0.6",
     "typer>=0.16,<1",
     "uvicorn>=0.35,<1",
+    "watchfiles>=1.1,<2",
 ]
 
 [project.scripts]
 toolang = "toolang.cli:main"
+too = "toolang.experiments.cli:main"
+
+[project.entry-points."toolang.tool"]
+filesystem = "toolang.experiments.tools.filesystem:create_tool"
+service_use = "toolang.experiments.tools.service_use:create_tool"
+shell = "toolang.experiments.tools.shell:create_tool"
+web_search = "toolang.experiments.tools.web_search:create_tool"
+
+[project.entry-points."toolang.model"]
+openai = "toolang.experiments.models.openai:create_model"
+ollama = "toolang.experiments.models.ollama:create_model"
+
+[project.entry-points."toolang.run_strategy"]
+basic = "toolang.experiments.strategies.basic:create_strategy"
+
+[project.entry-points."toolang.channel"]
+telegram = "toolang.experiments.channels.telegram:create_channel"
+
+[project.entry-points."toolang.sandbox"]
+none = "toolang.experiments.sandboxes.none:create_sandbox"
+docker = "toolang.experiments.sandboxes.docker:create_sandbox"
 
 [dependency-groups]
 dev = [
-  "openai>=1.109.1",
   "pdoc>=15,<16",
   "pytest>=8.3.5",
   "ruff>=0.15.6",
@@ -41,7 +67,7 @@ packages = ["src/toolang"]
 
 [tool.ruff]
 exclude = ["archive", "dist", "scratch"]
-target-version = "py310"
+target-version = "py311"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

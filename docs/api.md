@@ -150,9 +150,6 @@ Core endpoints:
 - `GET /api/v1/health`
 - `GET /api/v1/agent`
 - `GET /api/v1/profile`
-- `GET /api/v1/runtime`
-- `GET /api/v1/runtime/diagnostics`
-- `GET /api/v1/diagnostics`
 - `GET /api/v1/caps`
 - `GET /api/v1/psyches`
 - `GET /api/v1/psyches/{name}`
@@ -189,7 +186,7 @@ Core endpoints:
 - `GET /api/v1/chats/{thread_id}`
 - `GET /api/v1/runs`
 - `GET /api/v1/runs/{run_id}`
-- `GET /api/v1/runs/{run_id}/prompt`
+- `GET /api/v1/instructions/{instructions_hash}`
 - `POST /api/v1/runs`
 - `GET /api/v1/events`
 - `GET /api/v1/events/stream`
@@ -202,12 +199,27 @@ Core endpoints:
 - `/api/v1/agent`
   - current agent identity and running-state summary
 - `/api/v1/profile`
-  - UI-facing name, handle, and profile metadata
-- `/api/v1/runtime`
-  - current runtime environment and trust context
-  - includes `activation_id` for the current online activation
-- `/api/v1/runtime/diagnostics`
-  - current scheduler, channel, and runtime diagnostics snapshot
+  - UI-facing name, handle, profile metadata, and overview metrics
+  - current environment payload includes:
+    - `sandbox`
+      - one rendered sandbox spec such as `none` or `docker:python:3.13-slim`
+    - `home`
+    - `endpoint`
+  - current metrics payload includes:
+    - `threads`
+      - `total`
+      - `chat`
+      - `chore`
+      - `task`
+    - `steps`
+      - `total`
+      - `model_call`
+      - `tool_call`
+      - `runtime`
+    - `tokens`
+      - `input`
+      - `output`
+      - `total`
 - `/api/v1/caps`
   - effective caps metadata visible to the current activation
   - uses `services`, not `servers`
@@ -320,7 +332,10 @@ Rules:
     - `assistant`
 - `POST /api/v1/chat/stream`
   - streamed version of the same operation
-  - emits AI SDK-compatible SSE chunks such as:
+  - emits one AI SDK data stream protocol subset such as:
+    - `start`
+    - `message-metadata`
+    - `start-step`
     - `text-start`
     - `text-delta`
     - `text-end`
@@ -328,32 +343,33 @@ Rules:
     - `tool-input-delta`
     - `tool-input-available`
     - `tool-output-available`
-    - `tool-output-error`
+    - `finish-step`
     - `finish`
     - `error`
+    - `[DONE]`
 
 - `GET /api/v1/threads`
   - list thread summaries
   - accepts:
-    - `kind`
+    - `origin`
     - `limit`
 - `GET /api/v1/threads/{thread_id}`
   - one detailed thread view:
-    - `thread`
+    - `info`
     - `runs[]`
-    - `messages[]`
 
 Compatibility aliases:
 
 - `GET /api/v1/chats`
-  - alias for `/api/v1/threads?kind=chat`
+  - alias for `/api/v1/threads?origin=chat`
 - `GET /api/v1/chats/{thread_id}`
   - alias for `/api/v1/threads/{thread_id}`
 
 Rules:
 
 - `title` is a stable thread title
-- `preview` is the rolling latest-summary field
+- `origin` is the latest run origin visible on the thread
+- thread detail nests full run details under `runs[]`
 - message objects use `run_id`, not `turn_id`
 - `/api/v1/chats*` is a chat-oriented alias over the thread model, not a
   separate persistence model
@@ -369,12 +385,19 @@ Rules:
     - `limit`
 - `GET /api/v1/runs/{run_id}`
   - one run detail payload:
-    - `run`
-    - `steps[]`
-    - `events[]`
-    - `messages[]`
-- `GET /api/v1/runs/{run_id}/prompt`
-  - prompt trace for one run
+    - `info`
+    - `input`
+    - `output`
+  - `model_call` step payloads include:
+    - `model_ref`
+    - `input_tokens`
+    - `output_tokens`
+    - `instructions_hash`
+- `GET /api/v1/instructions/{instructions_hash}`
+  - return one persisted instructions blob by content hash
+  - current payload includes:
+    - `hash`
+    - `body`
 - `POST /api/v1/runs`
   - one direct stateless run invocation
   - request shape:
@@ -385,27 +408,46 @@ Rules:
     - `run_id`
     - `output`
 
-Run response fields include:
+`GET /api/v1/runs` returns run summaries. Current summary fields include:
 
 - `id`
 - `origin`
 - `thread_id`
-- `activation_id`
-- `channel`
-- `sender`
-- `execution_strategy`
 - `input_text`
-- `output_text`
 - `summary`
 - `status`
 - `type`
-- `agent_id`
-- `parent_run_id`
 - `error`
 - `created_at`
 - `started_at`
 - `finished_at`
 - `updated_at`
+
+`GET /api/v1/runs/{run_id}` returns one `RunDetail`:
+
+- `info`
+  - `id`
+  - `origin`
+  - `thread_id`
+  - `created_at`
+  - `started_at`
+  - `finished_at`
+  - `updated_at`
+- `input`
+  - one durable run-input message with `role`, `parts`, `meta`, and ids
+- `output`
+  - `status`
+  - `error`
+  - `steps`
+
+Each output step includes:
+
+- `record`
+  - one durable `StepRecord`
+  - step records only real execution steps; initial user input is not exposed as
+    synthetic `step 0`
+- `message`
+  - one caller-facing message projection derived from that step when present
 
 Rules:
 
