@@ -200,6 +200,137 @@ def test_cli_clone_copies_agent_without_prepared(tmp_path: Path) -> None:
     assert not (toolang_root / "agents" / "bob" / ".prepared").exists()
 
 
+def test_agent_selector_parsing_supports_name_shorthand_and_ref() -> None:
+    local = agents.parse_agent_selector("alice")
+    github_short = agents.parse_agent_selector("brice/alice")
+    host_short = agents.parse_agent_selector("toolang.ai/alice")
+    github_ref = agents.parse_agent_selector("github://brice/agents/team/alice.too@main")
+
+    assert local.form == "name"
+    assert local.name == "alice"
+    assert github_short.form == "shorthand"
+    assert github_short.resolved_ref().render() == "github://brice/agents/alice.too"
+    assert host_short.form == "shorthand"
+    assert host_short.resolved_ref().render() == "https://toolang.ai/alice.too"
+    assert github_ref.form == "ref"
+    assert github_ref.resolved_ref().render() == "github://brice/agents/team/alice.too@main"
+
+
+def test_cli_clone_remote_shorthand_defaults_target_name(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+
+    def fake_fetch(ref: agents.AgentRef) -> str:
+        assert ref.render() == "github://brice/agents/alice.too"
+        return "agent source-name\n"
+
+    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
+
+    result = runner.invoke(
+        cli.app,
+        ["clone", "brice/alice"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+    )
+
+    assert result.exit_code in {0, 2}
+    program_path = toolang_root / "agents" / "alice" / "alice.too"
+    assert result.stdout.strip() == str(program_path)
+    assert program_path.read_text(encoding="utf-8") == "agent alice\n"
+
+
+def test_cli_clone_remote_url_supports_explicit_target(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+
+    def fake_fetch(ref: agents.AgentRef) -> str:
+        assert ref.render() == "https://toolang.ai/demo/researcher.too"
+        return "agent demo\n"
+
+    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
+
+    result = runner.invoke(
+        cli.app,
+        ["clone", "https://toolang.ai/demo/researcher.too", "researcher"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+    )
+
+    assert result.exit_code in {0, 2}
+    program_path = toolang_root / "agents" / "researcher" / "researcher.too"
+    assert result.stdout.strip() == str(program_path)
+    assert program_path.read_text(encoding="utf-8") == "agent researcher\n"
+
+
+def test_cli_clone_local_source_requires_target_name(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+
+    result = runner.invoke(
+        cli.app,
+        ["clone", "alice"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+    )
+
+    assert result.exit_code == 1
+    assert "target name is required when cloning one local agent" in result.stderr
+
+
+def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    captured: dict[str, object] = {}
+
+    def fake_fetch(ref: agents.AgentRef) -> str:
+        assert ref.render() == "github://brice/agents/alice.too"
+        return "agent remote-source\n"
+
+    def fake_up(
+        *,
+        toolang_root: Path,
+        agent_name: str,
+        host: str,
+        public_host: str | None,
+        port: int | None,
+        sandbox: str | None,
+        model: str | None,
+        dev: Path | None,
+        sandbox_child: bool,
+        loop_names: tuple[str, ...] | None,
+        environ: dict[str, str],
+    ) -> int:
+        del host, public_host, port, sandbox, model, dev, sandbox_child, loop_names, environ
+        captured["toolang_root"] = toolang_root
+        captured["agent_name"] = agent_name
+        program_path = toolang_root / "agents" / agent_name / f"{agent_name}.too"
+        captured["program_exists"] = program_path.is_file()
+        captured["program_text"] = program_path.read_text(encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
+    monkeypatch.setattr(cli.agent_up, "up", fake_up)
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(toolang_root), "run", "brice/alice"],
+        env={},
+    )
+
+    assert result.exit_code == 0
+    assert captured["agent_name"] == "alice"
+    assert captured["program_exists"] is True
+    assert captured["program_text"] == "agent alice\n"
+    assert Path(cast(Path, captured["toolang_root"])).name.startswith("toolang-run-")
+
+
+def test_cli_start_rejects_remote_selector(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(toolang_root), "start", "brice/alice"],
+        env={},
+    )
+
+    assert result.exit_code == 1
+    assert "start only supports local agent names; clone the remote source first" in result.stderr
+
+
 def test_cli_remove_deletes_stopped_agent(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
@@ -346,7 +477,7 @@ def test_cli_list_reads_web_config_without_validating_experiments_caps(tmp_path:
         'ui_base_url = "http://localhost:3000"\n'
         '\n'
         '[skills]\n'
-        'pdf-processing = { locator = "github://by3gus/agent-skills/skills/pdf-processing" }\n',
+        'pdf-processing = { ref = "github://by3gus/agent-skills/skills/pdf-processing" }\n',
         encoding="utf-8",
     )
 
@@ -1162,7 +1293,7 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
 
     config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(encoding="utf-8")
     assert "[skills]" in config_text
-    assert 'reviewer = { locator = "github://acme/agent-skills/skills/reviewer" }' in config_text
+    assert 'reviewer = { ref = "github://acme/agent-skills/skills/reviewer" }' in config_text
 
     list_remote_result = _invoke_app(
         ["skill", "list"],
@@ -1326,7 +1457,7 @@ def test_cli_cap_add_preserves_unrelated_config_sections(tmp_path: Path) -> None
     assert "https://too.run" in text
     assert "[skills]" in text
     assert (
-        'pdf-processing = { locator = "github://by3gus/agent-skills/skills/pdf-processing" }'
+        'pdf-processing = { ref = "github://by3gus/agent-skills/skills/pdf-processing" }'
         in text
     )
 

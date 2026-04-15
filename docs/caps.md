@@ -36,7 +36,7 @@ Caps may come from:
 | Source | Meaning |
 | --- | --- |
 | `local` | A local file or directory under the root or agent home |
-| `remote` | A remote locator stored in configuration |
+| `remote` | A remote ref stored in configuration |
 | `inline` | An entry authored in the program and materialized for runtime use |
 
 Runtime APIs expose effective caps. They do not expose every authored source

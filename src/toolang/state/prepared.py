@@ -52,7 +52,7 @@ class PreparedEntry:
     kind: EntryKind
     name: str
     shape: EntryShape
-    locator: str
+    ref: str
     path: str
     source: PreparedSource
     meta: dict[str, object]
@@ -62,7 +62,7 @@ class PreparedEntry:
             "kind": self.kind,
             "name": self.name,
             "shape": self.shape,
-            "locator": self.locator,
+            "ref": self.ref,
             "path": self.path,
             "source": self.source.to_data(),
             "meta": dict(self.meta),
@@ -77,7 +77,7 @@ class PreparedEntry:
             kind=cast(EntryKind, str(data["kind"])),
             name=str(data["name"]),
             shape=cast(EntryShape, str(data["shape"])),
-            locator=str(data["locator"]),
+            ref=str(data["ref"]),
             path=str(data["path"]),
             source=PreparedSource.from_data(cast(dict[str, object], data["source"])),
             meta=dict(cast(dict[str, object], data.get("meta", {}))),

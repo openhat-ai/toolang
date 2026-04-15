@@ -15,6 +15,43 @@ Each agent has:
 - one runtime room
 
 
+## Agent Sources
+
+Toolang accepts these agent source terms:
+
+| Term | Meaning |
+| --- | --- |
+| `name` | A local managed agent name |
+| `shorthand` | A short selector that expands by convention |
+| `ref` | A canonical remote agent program reference |
+| `selector` | Any accepted input form: `name`, `shorthand`, or `ref` |
+
+Examples:
+
+| Input | Form |
+| --- | --- |
+| `alice` | `name` |
+| `brice/alice` | `shorthand` |
+| `toolang.ai/alice` | `shorthand` |
+| `github://brice/agents/alice.too` | `ref` |
+| `github://brice/agents/alice.too@main` | `ref` |
+| `https://toolang.ai/alice.too` | `ref` |
+
+Current shorthand expansion rules are:
+
+| Shorthand | Expanded ref |
+| --- | --- |
+| `owner/name` | `github://owner/agents/name.too` |
+| `host/name` | `https://host/name.too` |
+
+GitHub refs may include one revision suffix:
+
+- `github://owner/repo/path/to/agent.too@rev`
+
+Toolang treats `rev` as one git revision token. It does not distinguish branch,
+tag, and commit in selector syntax.
+
+
 ## Caps
 
 Caps are reusable agent primitives that shape behavior and available tools.

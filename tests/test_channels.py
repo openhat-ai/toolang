@@ -33,7 +33,7 @@ def test_create_experiments_telegram_channel_plugin() -> None:
     assert plugin.health(_channel_context(Path("/tmp/alice"), "telegram")).ok is True
 
 
-def test_experiments_telegram_channel_polls_and_delivers(monkeypatch) -> None:
+def test_telegram_channel_polls_and_delivers(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
     class FakeResponse:
@@ -96,7 +96,7 @@ def test_experiments_telegram_channel_polls_and_delivers(monkeypatch) -> None:
     assert calls[1][1]["text"] == "hi back"
 
 
-def test_experiments_telegram_channel_typing_and_edit(monkeypatch) -> None:
+def test_telegram_channel_typing_and_edit(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
     class FakeResponse:
@@ -141,7 +141,7 @@ def test_experiments_telegram_channel_typing_and_edit(monkeypatch) -> None:
     assert calls[2][1]["text"] == "hello world"
 
 
-def test_experiments_plugin_config_loads_root_and_agent_sections(
+def test_plugin_config_loads_root_and_agent_sections(
     tmp_path: Path,
     monkeypatch,
 ) -> None:

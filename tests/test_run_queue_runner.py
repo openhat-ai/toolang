@@ -1755,7 +1755,7 @@ def test_up_reads_web_config_without_validating_experiments_caps(tmp_path: Path,
         'cors_allowed_origins = ["http://localhost:3000", "https://too.run"]\n'
         '\n'
         '[skills]\n'
-        'pdf-processing = { locator = "github://by3gus/agent-skills/skills/pdf-processing" }\n',
+        'pdf-processing = { ref = "github://by3gus/agent-skills/skills/pdf-processing" }\n',
         encoding="utf-8",
     )
     captured: dict[str, object] = {}
@@ -1880,7 +1880,7 @@ def test_prepare_materializes_remote_entries_from_config(tmp_path: Path) -> None
         "alice",
         scope="global",
         kind="prompt",
-        locator="acme/rewrite",
+        ref="acme/rewrite",
     )
     assert config_path == toolang_root / "config.toml"
 
@@ -1891,7 +1891,7 @@ def test_prepare_materializes_remote_entries_from_config(tmp_path: Path) -> None
     assert (toolang_root / ".prepared" / "remote" / "prompts" / "rewrite.md").is_file()
     assert [entry.source.form for entry in prepared.global_lock.entries] == ["remote"]
     assert prepared.global_lock.entries[0].path == ".prepared/remote/prompts/rewrite.md"
-    assert prepared.global_lock.entries[0].locator == "github://acme/agent-prompts/prompts/rewrite.md"
+    assert prepared.global_lock.entries[0].ref == "github://acme/agent-prompts/prompts/rewrite.md"
     assert live.caps == (".prepared/remote/prompts/rewrite.md",)
 
 
@@ -1934,7 +1934,7 @@ def test_caps_list_and_remove_include_remote_entries(tmp_path: Path) -> None:
         "alice",
         scope="agent",
         kind="skill",
-        locator="acme/reviewer",
+        ref="acme/reviewer",
     )
 
     entries = list_entries(toolang_root, "alice", scope="agent", kinds={"skill"})
