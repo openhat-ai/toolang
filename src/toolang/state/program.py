@@ -15,7 +15,7 @@ from ..program import DeclBlock, Program, Thunk, parse
 from .durable import DurableState
 
 DEFAULT_MODEL = "gpt-5"
-DEFAULT_THUNK_PROMPT = "Respond helpfully, clearly, and directly to the user's message."
+DEFAULT_THUNK_BODY = "Respond helpfully, clearly, and directly to the user's message."
 AGENT_HEADER_RE = re.compile(r"^agent\s+[A-Za-z_][\w-]*\s*$")
 PROMPT_CALL_RE = re.compile(r"^/([A-Za-z_][\w-]*)(?:\s+(.*))?$")
 TEMPLATE_VAR_RE = re.compile(r"\{\{\s*([A-Za-z_][\w-]*)\s*\}\}")
@@ -25,19 +25,19 @@ TEMPLATE_VAR_RE = re.compile(r"\{\{\s*([A-Za-z_][\w-]*)\s*\}\}")
 class ProgramThunk:
     """One prepared thunk definition."""
 
-    name: str | None
+    name: str
     input_name: str | None
-    output: str | None
+    returns: str | None
     directives: tuple[str, ...]
-    prompt: str
+    body: str
 
     def to_data(self) -> dict[str, object]:
         return {
             "name": self.name,
             "input_name": self.input_name,
-            "output": self.output,
+            "returns": self.returns,
             "directives": list(self.directives),
-            "prompt": self.prompt,
+            "body": self.body,
         }
 
     @classmethod
@@ -45,13 +45,15 @@ class ProgramThunk:
         raw_directives = data.get("directives", [])
         directives = raw_directives if isinstance(raw_directives, list) else []
         return cls(
-            name=str(data["name"]) if data.get("name") is not None else None,
+            name=_canonical_thunk_name(
+                str(data["name"]) if data.get("name") is not None else None
+            ),
             input_name=(
                 str(data["input_name"]) if data.get("input_name") is not None else None
             ),
-            output=str(data["output"]) if data.get("output") is not None else None,
+            returns=str(data["returns"]) if data.get("returns") is not None else None,
             directives=tuple(str(item) for item in directives),
-            prompt=str(data["prompt"]),
+            body=str(data["body"]),
         )
 
     def model_selector(self) -> str | None:
@@ -158,11 +160,11 @@ class LiveProgram:
                     return thunk
             raise ToolangError(f"Thunk not found: {name}")
         for thunk in self.thunks:
-            if thunk.name is None:
+            if thunk.name == "main":
                 return thunk
-        if self.thunks:
+        if len(self.thunks) == 1:
             return self.thunks[0]
-        raise ToolangError("No thunk found in prepared program.")
+        raise ToolangError("No default thunk found in prepared program.")
 
     def expand_input(self, raw_input: str) -> str:
         if not raw_input:
@@ -234,8 +236,14 @@ def load_live_program(prepared: PreparedProgram) -> LiveProgram:
 
 def _body_text(source_text: str) -> str:
     lines = source_text.splitlines()
+    if lines and lines[0].startswith("#!"):
+        lines = lines[1:]
+        while lines and not lines[0].strip():
+            lines = lines[1:]
     if lines and AGENT_HEADER_RE.match(lines[0].strip()):
         return "\n".join(lines[1:]).lstrip("\n")
+    if source_text.startswith("#!"):
+        return "\n".join(lines).lstrip("\n")
     return source_text
 
 
@@ -255,21 +263,21 @@ def _prepared_thunks(program: Program) -> list[ProgramThunk]:
 
 def _prepared_thunk(thunk: Thunk) -> ProgramThunk:
     return ProgramThunk(
-        name=thunk.name,
+        name=_canonical_thunk_name(thunk.name),
         input_name=thunk.input_name,
-        output=thunk.output,
+        returns=thunk.returns,
         directives=tuple(thunk.directives),
-        prompt=thunk.prompt,
+        body=thunk.body,
     )
 
 
 def _default_thunk() -> ProgramThunk:
     return ProgramThunk(
-        name=None,
-        input_name="user",
-        output=None,
+        name="main",
+        input_name="input",
+        returns=None,
         directives=(),
-        prompt=DEFAULT_THUNK_PROMPT,
+        body=DEFAULT_THUNK_BODY,
     )
 
 
@@ -302,13 +310,17 @@ def _render_template_var(match: Match[str], bindings: dict[str, str]) -> str:
 
 
 def _validate_program(program: Program) -> None:
+    seen_thunk_names: set[str] = set()
     for decl in program.declarations:
         _validate_decl_params(decl)
     for thunk in program.thunks:
-        if thunk.prompt.strip():
+        thunk_name = _canonical_thunk_name(thunk.name)
+        if thunk_name in seen_thunk_names:
+            raise ToolangError(f"Duplicate thunk name {thunk_name!r}.")
+        seen_thunk_names.add(thunk_name)
+        if thunk.body.strip():
             continue
-        thunk_name = thunk.name or "<default>"
-        raise ToolangError(f"Thunk {thunk_name!r} is missing prompt text.")
+        raise ToolangError(f"Thunk {thunk_name!r} is missing body text.")
 
 
 def _validate_decl_params(decl: DeclBlock) -> None:
@@ -329,3 +341,7 @@ def _sha256_text(value: str) -> str:
     import hashlib
 
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _canonical_thunk_name(name: str | None) -> str:
+    return name or "main"

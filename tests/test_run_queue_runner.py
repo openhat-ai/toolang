@@ -1905,7 +1905,7 @@ def test_prepare_builds_program_into_agent_lock(tmp_path: Path) -> None:
     assert prepared.program.agent_name == "alice"
     assert prepared.program.source_path == "agents/alice/alice.too"
     assert len(prepared.program.thunks) == 1
-    assert prepared.program.thunks[0].name is None
+    assert prepared.program.thunks[0].name == "main"
     program_snapshot = cast(dict[str, object], prepared.agent_lock.to_snapshot()["program"])
     assert program_snapshot["agent_name"] == "alice"
 
