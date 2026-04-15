@@ -44,9 +44,9 @@ class DeclBlock:
 class Thunk:
     name: str | None
     input_name: str | None
-    output: str | None
+    returns: str | None
     directives: list[str] = field(default_factory=list)
-    prompt: str = ""
+    body: str = ""
     span: SourceSpan = field(default_factory=lambda: SourceSpan(0))
 
 
@@ -67,8 +67,9 @@ class Program:
 def parse(source: str) -> Program:
     """Parse one Toolang program source string."""
 
-    tree = Parser(_toolang_language()).parse(source.encode("utf-8"))
-    lines = source.splitlines()
+    normalized_source = _source_without_shebang(source)
+    tree = Parser(_toolang_language()).parse(normalized_source.encode("utf-8"))
+    lines = normalized_source.splitlines()
     program = Program(_source_lines=lines)
 
     error_node = _first_error_node(tree.root_node)
@@ -127,18 +128,18 @@ def _thunk_from_node(lines: list[str], node: Node) -> Thunk:
     thunk = Thunk(
         name=_optional_text(header.child_by_field_name("name")),
         input_name=_thunk_input_from_node(header.child_by_field_name("input")),
-        output=_optional_text(header.child_by_field_name("output")),
+        returns=_optional_text(header.child_by_field_name("output")),
         span=SourceSpan(node.start_point.row + 1),
     )
-    prompt_started = False
-    prompt_lines: list[str] = []
+    body_started = False
+    body_lines: list[str] = []
 
     for child in node.named_children:
         if child.type == "thunk_header":
             continue
         if child.type == "blank_line":
-            if prompt_started:
-                prompt_lines.append("")
+            if body_started:
+                body_lines.append("")
             continue
         raw_line = _line_text(lines, child.start_point.row)
         if not raw_line.startswith((" ", "\t")):
@@ -146,13 +147,13 @@ def _thunk_from_node(lines: list[str], node: Node) -> Thunk:
                 f"Thunk body must be indented under line {node.start_point.row + 1}: {raw_line!r}"
             )
         text = _thunk_line_text_from_node(child)
-        if child.type == "directive_line" and not prompt_started:
+        if child.type == "directive_line" and not body_started:
             thunk.directives.append(text)
             continue
-        prompt_started = True
-        prompt_lines.append(text)
+        body_started = True
+        body_lines.append(text)
 
-    thunk.prompt = "\n".join(prompt_lines).strip()
+    thunk.body = "\n".join(body_lines).strip()
     return thunk
 
 
@@ -233,6 +234,15 @@ def _line_text(lines: list[str], row: int) -> str:
     if 0 <= row < len(lines):
         return lines[row]
     return ""
+
+
+def _source_without_shebang(source: str) -> str:
+    if not source.startswith("#!"):
+        return source
+    first_line, separator, rest = source.partition("\n")
+    if not separator:
+        return ""
+    return f"\n{rest}"
 
 
 @lru_cache(maxsize=1)

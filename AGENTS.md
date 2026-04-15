@@ -62,6 +62,8 @@
 
 - `docs/index.md` is the entry point for the public design docs in `docs/`.
 - `docs/concepts.md` defines the shared runtime vocabulary.
+- `docs/program.md` defines `.too` program syntax, including `struct`,
+  `slash`, thunk signatures, thunk directives, and surface rules.
 - `docs/layout.md` defines Toolang root, agent home, and agent room layout.
 - `docs/caps.md` defines cap kinds, scopes, sources, and effective-cap rules.
 - `docs/tasks.md` defines task and chore documents and their runtime mapping.

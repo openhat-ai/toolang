@@ -192,8 +192,8 @@ def _instructions(
         task_prompt or "",
         "Program source:",
         program.source_text.strip() or f"agent {program.prepared.agent_name}",
-        "Thunk instruction:",
-        thunk.prompt,
+        "Thunk body:",
+        thunk.body,
     ]
     return "\n\n".join(section for section in sections if section.strip())
 

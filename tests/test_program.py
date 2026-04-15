@@ -46,7 +46,7 @@ thunk review:
     model = gpt-5
 """.strip()
     )
-    assert program.thunks[0].prompt == ""
+    assert program.thunks[0].body == ""
 
     root = _write_program(
         tmp_path,
@@ -57,8 +57,58 @@ thunk review:
     )
 
     durable = scan_durable_state(root, "alice")
-    with pytest.raises(ToolangError, match="Thunk 'review' is missing prompt text"):
+    with pytest.raises(ToolangError, match="Thunk 'review' is missing body text"):
         build_prepared_program(durable)
+
+
+def test_build_prepared_program_canonicalizes_default_thunk_to_main(tmp_path: Path) -> None:
+    root = _write_program(
+        tmp_path,
+        """
+thunk:
+    Reply directly.
+""".strip(),
+    )
+
+    durable = scan_durable_state(root, "alice")
+    prepared = build_prepared_program(durable)
+
+    assert prepared.thunks[0].name == "main"
+    assert prepared.thunks[0].body == "Reply directly."
+    assert prepared.thunks[0].returns is None
+
+
+def test_build_prepared_program_rejects_duplicate_default_thunk_name(tmp_path: Path) -> None:
+    root = _write_program(
+        tmp_path,
+        """
+thunk:
+    Reply directly.
+
+thunk main:
+    Reply again.
+""".strip(),
+    )
+
+    durable = scan_durable_state(root, "alice")
+    with pytest.raises(ToolangError, match="Duplicate thunk name 'main'"):
+        build_prepared_program(durable)
+
+
+def test_build_prepared_program_strips_shebang_before_agent_header(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    agent_dir = root / "agents" / "alice"
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    (agent_dir / "alice.too").write_text(
+        "#!/usr/bin/env toolang\n\nagent alice\n\nthunk:\n    Reply directly.\n",
+        encoding="utf-8",
+    )
+
+    durable = scan_durable_state(root, "alice")
+    prepared = build_prepared_program(durable)
+
+    assert prepared.body_text == "thunk:\n    Reply directly."
+    assert prepared.thunks[0].name == "main"
 
 
 def _write_program(tmp_path: Path, body_text: str) -> Path:
