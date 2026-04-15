@@ -64,7 +64,7 @@ def create_router() -> APIRouter:
                 context.name,
                 scope=scope,
                 kind=cast(EntryKind, kind),
-                locator=payload.ref,
+                ref=payload.ref,
             )
             _append_cap_update(context, kind=kind, name=name, scope=scope)
             item = _written_item(
@@ -72,7 +72,7 @@ def create_router() -> APIRouter:
                 name=name,
                 scope=scope,
                 source="remote",
-                locator=payload.ref,
+                ref=payload.ref,
                 path=str(_config_path(context.root, context.name, scope)),
             )
             return {"item": item}
@@ -161,9 +161,8 @@ def _cap_detail_item(context, entry: PreparedEntry) -> dict[str, object]:
         "name": entry.name,
         "scope": _entry_scope(context, entry),
         "source": entry.source.form,
-        "locator": entry.locator,
+        "ref": entry.ref if entry.source.form == "remote" else None,
         "path": entry.path,
-        "ref": entry.locator if entry.source.form == "remote" else None,
     }
     return item
 
@@ -174,7 +173,7 @@ def _written_item(
     name: str,
     scope: PreparedScope,
     source: str,
-    locator: str,
+    ref: str,
     path: str,
 ) -> dict[str, object]:
     return {
@@ -182,9 +181,8 @@ def _written_item(
         "name": name,
         "scope": scope,
         "source": source,
-        "locator": locator,
         "path": path,
-        "ref": locator if source == "remote" else None,
+        "ref": ref if source == "remote" else None,
     }
 
 

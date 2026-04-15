@@ -1,7 +1,8 @@
-"""Minimal managed-agent file operations."""
+"""Managed-agent file operations and agent source resolution."""
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 import os
@@ -9,9 +10,13 @@ from pathlib import Path
 import signal
 import socket
 import shutil
+import tempfile
 import time
-from urllib.parse import urlsplit
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlsplit
+from urllib.request import Request, urlopen
 from collections.abc import Sequence
+from typing import Iterator, Literal
 
 from toolang.base.protocols.sandbox import SandboxPlugin
 from toolang.base.types.sandbox import SandboxState
@@ -29,6 +34,65 @@ class AgentStatus:
     api_url: str | None
     webui_url: str | None
     sandbox: str | None
+
+
+AgentSelectorForm = Literal["name", "shorthand", "ref"]
+
+
+@dataclass(frozen=True, slots=True)
+class HttpAgentRef:
+    """One canonical HTTP(S) agent program ref."""
+
+    url: str
+
+    def render(self) -> str:
+        return self.url
+
+    def default_name(self) -> str:
+        path = urlsplit(self.url).path.rstrip("/")
+        if not path:
+            raise ValueError(f"invalid agent ref: {self.url}")
+        return Path(path).stem
+
+
+@dataclass(frozen=True, slots=True)
+class GitHubAgentRef:
+    """One canonical GitHub agent program ref."""
+
+    owner: str
+    repo: str
+    path: str
+    rev: str | None = None
+
+    def render(self) -> str:
+        base = f"github://{self.owner}/{self.repo}/{self.path}"
+        return f"{base}@{self.rev}" if self.rev else base
+
+    def default_name(self) -> str:
+        return Path(self.path).stem
+
+
+AgentRef = HttpAgentRef | GitHubAgentRef
+
+
+@dataclass(frozen=True, slots=True)
+class AgentSelector:
+    """One parsed agent selector."""
+
+    form: AgentSelectorForm
+    text: str
+    name: str | None = None
+    ref: AgentRef | None = None
+
+    def resolved_ref(self) -> AgentRef:
+        if self.ref is None:
+            raise ValueError(f"selector is not a remote ref: {self.text}")
+        return self.ref
+
+    def default_name(self) -> str:
+        if self.name is not None:
+            return self.name
+        return self.resolved_ref().default_name()
 
 
 def agent_home(toolang_root: Path, agent_name: str) -> Path:
@@ -112,9 +176,101 @@ def create_agent(toolang_root: Path, agent_name: str, *, template_name: str = "d
     return program_path
 
 
-def clone_agent(toolang_root: Path, source_name: str, target_name: str) -> Path:
-    """Clone one agent into a new name."""
+def parse_agent_selector(text: str) -> AgentSelector:
+    """Parse one agent selector into a local name or one canonical remote ref."""
 
+    raw = text.strip()
+    if not raw:
+        raise ValueError("agent selector cannot be empty")
+    if "://" in raw:
+        return AgentSelector(form="ref", text=raw, ref=_parse_agent_ref(raw))
+    if raw.count("/") == 1:
+        left, right = raw.split("/", 1)
+        if not left or not right:
+            raise ValueError(f"invalid agent shorthand: {text}")
+        if "." in left:
+            return AgentSelector(
+                form="shorthand",
+                text=raw,
+                ref=HttpAgentRef(url=f"https://{left}/{right}.too"),
+            )
+        return AgentSelector(
+            form="shorthand",
+            text=raw,
+            ref=GitHubAgentRef(owner=left, repo="agents", path=f"{right}.too"),
+        )
+    return AgentSelector(form="name", text=raw, name=raw)
+
+
+def fetch_agent_ref(ref: AgentRef) -> str:
+    """Fetch one remote agent program by canonical ref."""
+
+    if isinstance(ref, HttpAgentRef):
+        return _fetch_http_text(ref.url)
+    return _fetch_github_text(ref)
+
+
+def clone_agent(toolang_root: Path, source_selector: str, target_name: str | None = None) -> Path:
+    """Clone one local or remote agent source into one local managed agent."""
+
+    selector = parse_agent_selector(source_selector)
+    if selector.form == "name":
+        if target_name is None:
+            raise ValueError("target name is required when cloning one local agent")
+        return _clone_local_agent(toolang_root, selector.name or "", target_name)
+    resolved_target = target_name or selector.default_name()
+    source_text = fetch_agent_ref(selector.resolved_ref())
+    return write_agent_program(toolang_root, resolved_target, source_text)
+
+
+def write_agent_program(toolang_root: Path, agent_name: str, source_text: str) -> Path:
+    """Create one local managed agent from one source program."""
+
+    home = agent_home(toolang_root, agent_name)
+    if home.exists():
+        raise FileExistsError(f"agent already exists: {home}")
+    home.mkdir(parents=True, exist_ok=False)
+    program_path = agent_program_path(toolang_root, agent_name)
+    program_path.write_text(_rewrite_program_source(source_text, agent_name), encoding="utf-8")
+    return program_path
+
+
+@contextmanager
+def materialized_run_target(
+    toolang_root: Path,
+    selector_text: str,
+) -> Iterator[tuple[Path, str]]:
+    """Yield one runnable local target for one selector."""
+
+    selector = parse_agent_selector(selector_text)
+    if selector.form == "name":
+        yield toolang_root, selector.name or ""
+        return
+    with tempfile.TemporaryDirectory(prefix="toolang-run-") as temp_dir:
+        temp_root = Path(temp_dir)
+        agent_name = selector.default_name()
+        source_text = fetch_agent_ref(selector.resolved_ref())
+        write_agent_program(temp_root, agent_name, source_text)
+        yield temp_root, agent_name
+
+
+def remove_agent(toolang_root: Path, agent_name: str) -> Path:
+    """Remove one stopped agent and its local sandbox staging."""
+
+    home = agent_home(toolang_root, agent_name)
+    if not home.is_dir():
+        raise FileNotFoundError(f"agent not found: {home}")
+    status = get_agent_status(toolang_root, agent_name, ui_base_url="")
+    if status is not None and status.status in {"running", "preparing", "starting"}:
+        raise ValueError(f"agent is still active: {agent_name}")
+    shutil.rmtree(home)
+    sandbox_stage_dir = _sandbox_stage_dir(toolang_root, agent_name)
+    if sandbox_stage_dir.exists():
+        shutil.rmtree(sandbox_stage_dir)
+    return home
+
+
+def _clone_local_agent(toolang_root: Path, source_name: str, target_name: str) -> Path:
     source_home = agent_home(toolang_root, source_name)
     target_home = agent_home(toolang_root, target_name)
     if not source_home.is_dir():
@@ -135,20 +291,67 @@ def clone_agent(toolang_root: Path, source_name: str, target_name: str) -> Path:
     return target_program
 
 
-def remove_agent(toolang_root: Path, agent_name: str) -> Path:
-    """Remove one stopped agent and its local sandbox staging."""
+def _parse_agent_ref(text: str) -> AgentRef:
+    if text.startswith(("http://", "https://")):
+        ref = HttpAgentRef(url=text)
+        _require_too_path(urlsplit(ref.url).path, text)
+        return ref
+    if text.startswith("github://"):
+        return _parse_github_agent_ref(text)
+    raise ValueError(f"unsupported agent ref: {text}")
 
-    home = agent_home(toolang_root, agent_name)
-    if not home.is_dir():
-        raise FileNotFoundError(f"agent not found: {home}")
-    status = get_agent_status(toolang_root, agent_name, ui_base_url="")
-    if status is not None and status.status in {"running", "preparing", "starting"}:
-        raise ValueError(f"agent is still active: {agent_name}")
-    shutil.rmtree(home)
-    sandbox_stage_dir = _sandbox_stage_dir(toolang_root, agent_name)
-    if sandbox_stage_dir.exists():
-        shutil.rmtree(sandbox_stage_dir)
-    return home
+
+def _parse_github_agent_ref(text: str) -> GitHubAgentRef:
+    parsed = urlsplit(text)
+    owner = parsed.netloc.strip()
+    path_text = parsed.path.strip("/")
+    if not owner or not path_text or "/" not in path_text:
+        raise ValueError(f"invalid GitHub agent ref: {text}")
+    repo, _, repo_path = path_text.partition("/")
+    if not repo or not repo_path:
+        raise ValueError(f"invalid GitHub agent ref: {text}")
+    path = repo_path
+    rev: str | None = None
+    if "@" in repo_path:
+        path, _, rev = repo_path.rpartition("@")
+        if not path or not rev:
+            raise ValueError(f"invalid GitHub agent ref: {text}")
+    _require_too_path(path, text)
+    return GitHubAgentRef(owner=owner, repo=repo, path=path, rev=rev)
+
+
+def _require_too_path(path_text: str, text: str) -> None:
+    if Path(path_text).suffix != ".too":
+        raise ValueError(f"agent ref must point to a .too program: {text}")
+
+
+def _fetch_http_text(url: str) -> str:
+    request = Request(url, headers={"User-Agent": "toolang/0.1"})
+    try:
+        with urlopen(request, timeout=30) as response:
+            return response.read().decode("utf-8")
+    except (HTTPError, URLError) as exc:
+        raise ValueError(f"could not fetch agent program: {url}") from exc
+
+
+def _fetch_github_text(ref: GitHubAgentRef) -> str:
+    path = quote(ref.path.lstrip("/"), safe="/")
+    api_url = f"https://api.github.com/repos/{ref.owner}/{ref.repo}/contents/{path}"
+    if ref.rev is not None:
+        api_url = f"{api_url}?ref={quote(ref.rev, safe='')}"
+    request = Request(
+        api_url,
+        headers={
+            "Accept": "application/vnd.github.raw",
+            "User-Agent": "toolang/0.1",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    try:
+        with urlopen(request, timeout=30) as response:
+            return response.read().decode("utf-8")
+    except (HTTPError, URLError) as exc:
+        raise ValueError(f"could not fetch agent program: {ref.render()}") from exc
 
 
 def load_runtime_state(toolang_root: Path, agent_name: str) -> dict[str, object] | None:

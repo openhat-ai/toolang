@@ -22,7 +22,7 @@ def _tool_context(home: Path, plugin_name: str) -> ToolContext:
     )
 
 
-def test_experiments_filesystem_tool_reads_and_writes_within_agent_home(tmp_path: Path) -> None:
+def test_filesystem_tool_reads_and_writes_within_agent_home(tmp_path: Path) -> None:
     home = tmp_path / "alice"
     home.mkdir()
     plugin = create_filesystem_tool({})
@@ -41,7 +41,7 @@ def test_experiments_filesystem_tool_reads_and_writes_within_agent_home(tmp_path
     assert loaded["text"] == "hello"
 
 
-def test_experiments_filesystem_tool_rejects_paths_outside_agent_home(tmp_path: Path) -> None:
+def test_filesystem_tool_rejects_paths_outside_agent_home(tmp_path: Path) -> None:
     home = tmp_path / "alice"
     home.mkdir()
     tool = create_filesystem_tool({}).tools()["read_text"]
@@ -53,7 +53,7 @@ def test_experiments_filesystem_tool_rejects_paths_outside_agent_home(tmp_path: 
         )
 
 
-def test_experiments_shell_tool_runs_one_command(tmp_path: Path) -> None:
+def test_shell_tool_runs_one_command(tmp_path: Path) -> None:
     home = tmp_path / "alice"
     home.mkdir()
     tool = create_shell_tool({}).tools()["execute"]
@@ -65,7 +65,7 @@ def test_experiments_shell_tool_runs_one_command(tmp_path: Path) -> None:
     assert result["stdout"] == "hi"
 
 
-def test_experiments_web_search_tool_filters_domains(monkeypatch, tmp_path: Path) -> None:
+def test_web_search_tool_filters_domains(monkeypatch, tmp_path: Path) -> None:
     tool = create_web_search_tool({}).tools()["search"]
 
     monkeypatch.setattr(
@@ -99,7 +99,7 @@ def test_experiments_web_search_tool_filters_domains(monkeypatch, tmp_path: Path
     ]
 
 
-def test_experiments_service_use_tool_definition_uses_object_input_schema() -> None:
+def test_service_use_tool_definition_uses_object_input_schema() -> None:
     plugin = create_service_use_tool(
         {
             "visible_services": [
@@ -120,7 +120,7 @@ def test_experiments_service_use_tool_definition_uses_object_input_schema() -> N
     assert "service" in definition.parameters["properties"]
 
 
-def test_experiments_service_use_tool_exposes_leaf_commands_only() -> None:
+def test_service_use_tool_exposes_leaf_commands_only() -> None:
     plugin = create_service_use_tool(
         {
             "visible_services": [
@@ -149,7 +149,7 @@ def test_experiments_service_use_tool_exposes_leaf_commands_only() -> None:
     assert "callback_target" not in plugin.tools()
 
 
-def test_experiments_service_use_tool_calls_http_service_via_mcat(monkeypatch, tmp_path: Path) -> None:
+def test_service_use_tool_calls_http_service_via_mcat(monkeypatch, tmp_path: Path) -> None:
     home = tmp_path / "alice"
     home.mkdir()
     (home / ".env").write_text("GITHUB_TOKEN=github-token\n", encoding="utf-8")
@@ -206,7 +206,7 @@ def test_experiments_service_use_tool_calls_http_service_via_mcat(monkeypatch, t
     assert calls[1][0] == "list_tools"
 
 
-def test_experiments_service_use_tool_serializes_dict_input_for_tool_call(monkeypatch, tmp_path: Path) -> None:
+def test_service_use_tool_serializes_dict_input_for_tool_call(monkeypatch, tmp_path: Path) -> None:
     home = tmp_path / "alice"
     home.mkdir()
     plugin = create_service_use_tool(
@@ -259,7 +259,7 @@ def test_experiments_service_use_tool_serializes_dict_input_for_tool_call(monkey
     assert result["result"]["result"] == {"content": [{"type": "text", "text": "ok"}]}
 
 
-def test_experiments_service_use_tool_init_fails_without_bridge_state(tmp_path: Path) -> None:
+def test_service_use_tool_init_fails_without_bridge_state(tmp_path: Path) -> None:
     home = tmp_path / "alice"
     home.mkdir()
     plugin = create_service_use_tool(
@@ -281,7 +281,7 @@ def test_experiments_service_use_tool_init_fails_without_bridge_state(tmp_path: 
         )
 
 
-def test_experiments_service_use_tool_call_fails_without_init(tmp_path: Path) -> None:
+def test_service_use_tool_call_fails_without_init(tmp_path: Path) -> None:
     home = tmp_path / "alice"
     home.mkdir()
     plugin = create_service_use_tool(
@@ -308,7 +308,7 @@ def test_experiments_service_use_tool_call_fails_without_init(tmp_path: Path) ->
         )
 
 
-def test_experiments_service_use_uses_run_scoped_session_file(monkeypatch, tmp_path: Path) -> None:
+def test_service_use_uses_run_scoped_session_file(monkeypatch, tmp_path: Path) -> None:
     home = tmp_path / "alice"
     home.mkdir()
     plugin = create_service_use_tool(

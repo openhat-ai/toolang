@@ -279,13 +279,14 @@ def new_agent(
 @app.command("clone", help="Clone an agent.", no_args_is_help=True)
 def clone_agent(
     ctx: typer.Context,
-    source: Annotated[str, typer.Argument(help="Existing agent name")],
-    target: Annotated[str, typer.Argument(help="New agent name")],
+    source: Annotated[str, typer.Argument(help="Agent source selector.")],
+    target: Annotated[str | None, typer.Argument(help="New local agent name.")] = None,
 ) -> None:
     program_path = _wrap_user_error(agents.clone_agent, _context_root(ctx), source, target)
+    target_name = program_path.stem
     _append_agent_update(
         _context_root(ctx),
-        target,
+        target_name,
         "created",
         {"path": str(program_path), "source": source},
     )
@@ -388,7 +389,7 @@ def info_agent(
 )
 def run_agent(
     ctx: typer.Context,
-    agent: str | None = typer.Argument(None, help="Agent name", hidden=True),
+    agent: str | None = typer.Argument(None, help="Agent selector", hidden=True),
     sandbox: Annotated[
         str | None,
         typer.Option(help="Sandbox to use: none or <driver>[:target]."),
@@ -419,24 +420,29 @@ def run_agent(
         typer.Option("--sandbox-child", hidden=True),
     ] = False,
 ) -> None:
-    agent_name = _required_runtime_agent(ctx, agent)
+    selector = _required_runtime_agent(ctx, agent)
     normalized_loops = _normalize_loop_option(loops)
-    raise typer.Exit(
-        _wrap_user_error(
-            agent_up.up,
-            toolang_root=_context_root(ctx),
-            agent_name=agent_name,
-            host=host,
-            public_host=public_host,
-            port=port,
-            sandbox=sandbox,
-            model=model,
-            dev=dev,
-            sandbox_child=sandbox_child,
-            loop_names=normalized_loops,
-            environ=_runtime_environ_for_agent(ctx, agent_name),
-        )
-    )
+    root = _context_root(ctx)
+    try:
+        with agents.materialized_run_target(root, selector) as (run_root, agent_name):
+            raise typer.Exit(
+                _wrap_user_error(
+                    agent_up.up,
+                    toolang_root=run_root,
+                    agent_name=agent_name,
+                    host=host,
+                    public_host=public_host,
+                    port=port,
+                    sandbox=sandbox,
+                    model=model,
+                    dev=dev,
+                    sandbox_child=sandbox_child,
+                    loop_names=normalized_loops,
+                    environ=_runtime_environ_for_agent(ctx, agent_name, toolang_root=run_root),
+                )
+            )
+    except (FileExistsError, FileNotFoundError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 @app.command(
@@ -474,7 +480,11 @@ def start_agent(
         typer.Option("--public-host", help="Published host name.", hidden=True),
     ] = None,
 ) -> None:
-    agent_name = _required_runtime_agent(ctx, agent)
+    selector = _required_runtime_agent(ctx, agent)
+    parsed_selector = _wrap_user_error(agents.parse_agent_selector, selector)
+    if parsed_selector.form != "name":
+        raise click.ClickException("start only supports local agent names; clone the remote source first")
+    agent_name = parsed_selector.name or ""
     root = _context_root(ctx)
     normalized_loops = _normalize_loop_option(loops)
     existing = agents.get_agent_status(root, agent_name, ui_base_url=_ui_base_url())
@@ -774,7 +784,7 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
 def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     def add_cap(
         ctx: typer.Context,
-        locator: str = typer.Argument(..., help=f"{title} locator"),
+        ref: str = typer.Argument(..., help=f"{title} ref"),
     ) -> None:
         scope, agent_name = _target_scope(ctx)
         selected_agent = _context_agent(ctx)
@@ -784,14 +794,14 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             agent_name,
             scope=scope,
             kind=cast(EntryKind, kind),
-            locator=locator,
+            ref=ref,
         )
         if selected_agent:
             _append_cap_update(
                 _context_root(ctx),
                 selected_agent,
                 kind=kind,
-                name=caps.remote_entry_name(cast(EntryKind, kind), locator),
+                name=caps.remote_entry_name(cast(EntryKind, kind), ref),
                 scope=scope,
             )
         typer.echo(str(path))
@@ -826,7 +836,7 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 raise click.ClickException(f"{kind} not found: {name}")
             if selected_agent:
                 _append_cap_update(_context_root(ctx), selected_agent, kind=kind, name=name, scope=scope)
-            typer.echo(f"Removed {kind} {name} from {entry.locator}")
+            typer.echo(f"Removed {kind} {name} from {entry.ref}")
             return
 
         deleted_path = _context_root(ctx) / entry.path
@@ -903,17 +913,17 @@ def _entry_scope(entry: PreparedEntry, *, agent_name: str) -> PreparedScope:
 def _entry_ref(entry: PreparedEntry) -> str:
     if entry.source.form == "local":
         return entry.name
-    return _locator_ref(entry.kind, entry.locator)
+    return _remote_ref_shorthand(entry.kind, entry.ref)
 
 
-def _locator_ref(kind: EntryKind, locator: str) -> str:
-    parsed = urlparse(locator)
+def _remote_ref_shorthand(kind: EntryKind, ref: str) -> str:
+    parsed = urlparse(ref)
     if parsed.scheme != "github":
-        return locator
+        return ref
     path = parsed.path.strip("/")
     owner = parsed.netloc.strip()
     if not owner or not path:
-        return locator
+        return ref
     parts = path.split("/")
     if kind == "skill" and len(parts) >= 3 and parts[-2] == "skills":
         return f"{owner}/{parts[-1]}"
@@ -923,12 +933,12 @@ def _locator_ref(kind: EntryKind, locator: str) -> str:
         return f"{owner}/{Path(parts[-1]).stem}"
     if kind == "psyche" and len(parts) >= 3 and parts[-2] == "psyches":
         return f"{owner}/{Path(parts[-1]).stem}"
-    return locator
+    return ref
 
 
 def _entry_location(toolang_root: Path, entry: PreparedEntry, *, agent_name: str) -> str:
     if entry.source.form == "remote":
-        return entry.locator
+        return entry.ref
     location = toolang_root / entry.path
     if entry.shape == "dir":
         location = location.parent
@@ -1092,8 +1102,13 @@ def _ui_base_url() -> str:
     return resolve_ui_base_url(_toolang_root(None), environ=os.environ)
 
 
-def _runtime_environ_for_agent(ctx: typer.Context, agent_name: str) -> dict[str, str]:
-    root = _context_root(ctx)
+def _runtime_environ_for_agent(
+    ctx: typer.Context,
+    agent_name: str,
+    *,
+    toolang_root: Path | None = None,
+) -> dict[str, str]:
+    root = toolang_root or _context_root(ctx)
     return load_runtime_environ(root, agent_name, base_environ=os.environ)
 
 

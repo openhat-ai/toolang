@@ -33,10 +33,55 @@ Typical usage:
 toolang new alice
 toolang list
 toolang run alice
+toolang run brice/alice
+toolang run https://toolang.ai/alice.too
+toolang clone brice/alice
 toolang start alice
 toolang stop alice
 toolang info alice
 ```
+
+
+## Agent Selectors
+
+Runtime commands accept these selector forms:
+
+| Form | Meaning |
+| --- | --- |
+| `name` | A local managed agent such as `alice` |
+| `shorthand` | A convention-based remote selector such as `brice/alice` or `toolang.ai/alice` |
+| `ref` | A canonical remote ref such as `github://brice/agents/alice.too@main` or `https://toolang.ai/alice.too` |
+
+Current shorthand expansion rules are:
+
+| Shorthand | Expanded ref |
+| --- | --- |
+| `owner/name` | `github://owner/agents/name.too` |
+| `host/name` | `https://host/name.too` |
+
+GitHub refs may add one revision suffix:
+
+- `github://owner/repo/path/to/agent.too@rev`
+
+`rev` is one git revision token. Toolang does not distinguish branch, tag, and
+commit in selector syntax.
+
+
+## Runtime Commands
+
+| Command | `name` | `shorthand` | `ref` |
+| --- | --- | --- | --- |
+| `toolang run` | yes | yes | yes |
+| `toolang clone` | yes | yes | yes |
+| `toolang start` | yes | no | no |
+
+Behavior:
+
+| Command | Behavior |
+| --- | --- |
+| `toolang run` | Runs a local agent, or fetches one remote agent program into a temporary local home and runs it in the foreground |
+| `toolang clone` | Clones one local agent, or fetches one remote agent program into a new local managed agent |
+| `toolang start` | Starts one local managed agent only. Remote selectors must be cloned first |
 
 
 ## Agent HTTP API

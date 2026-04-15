@@ -125,8 +125,8 @@ def put_local_entry_text(
 
     _validate_local_kind(scope, kind)
     entry_path = _local_entry_file_path(toolang_root, agent_name, scope=scope, kind=kind, name=name)
-    locator = entry_path.resolve().as_uri() if kind != "skill" else entry_path.parent.resolve().as_uri()
-    _ensure_name_available(toolang_root, agent_name, scope=scope, kind=kind, name=name, locator=locator)
+    ref = entry_path.resolve().as_uri() if kind != "skill" else entry_path.parent.resolve().as_uri()
+    _ensure_name_available(toolang_root, agent_name, scope=scope, kind=kind, name=name, ref=ref)
     entry_path.parent.mkdir(parents=True, exist_ok=True)
     entry_path.write_text(text, encoding="utf-8")
     return entry_path
@@ -179,20 +179,20 @@ def add_remote_entry(
     *,
     scope: PreparedScope,
     kind: EntryKind,
-    locator: str,
+    ref: str,
 ) -> Path:
     """Add one remote entry ref to the authored config file."""
 
     _validate_local_kind(scope, kind)
-    canonical_locator = _canonicalize_remote_locator(kind, locator)
-    name = _remote_name(kind, canonical_locator)
+    canonical_ref = _canonicalize_remote_ref(kind, ref)
+    name = _remote_name(kind, canonical_ref)
     _ensure_name_available(
         toolang_root,
         agent_name,
         scope=scope,
         kind=kind,
         name=name,
-        locator=canonical_locator,
+        ref=canonical_ref,
     )
     config_path = _config_path(toolang_root, agent_name, scope=scope)
     data = _load_config_data(config_path)
@@ -203,7 +203,7 @@ def add_remote_entry(
     else:
         kind_table = {}
         data[key] = kind_table
-    kind_table[name] = {"locator": canonical_locator}
+    kind_table[name] = {"ref": canonical_ref}
     _write_config_data(config_path, data)
     return config_path
 
@@ -228,10 +228,10 @@ def remove_remote_entry(
     )
 
 
-def remote_entry_name(kind: EntryKind, locator: str) -> str:
-    """Return the runtime name derived from one remote locator."""
+def remote_entry_name(kind: EntryKind, ref: str) -> str:
+    """Return the runtime name derived from one remote ref."""
 
-    return _remote_name(kind, _canonicalize_remote_locator(kind, locator))
+    return _remote_name(kind, _canonicalize_remote_ref(kind, ref))
 
 
 def remove_entry(
@@ -273,7 +273,7 @@ def collect_local_entries(
             continue
         if kinds is not None and entry.kind not in kinds:
             continue
-        entries.setdefault(entry.locator, entry)
+        entries.setdefault(entry.ref, entry)
     return tuple(sorted(entries.values(), key=_entry_sort_key))
 
 
@@ -407,7 +407,7 @@ def _skill_entry(
         kind="skill",
         name=name,
         shape="dir",
-        locator=source_path.resolve().as_uri(),
+        ref=source_path.resolve().as_uri(),
         path=str(root_relative_file),
         source=_source_record(
             root_relative_path=root_relative_dir,
@@ -430,7 +430,7 @@ def _file_entry(
         kind=kind,
         name=relative_path.stem,
         shape="file",
-        locator=absolute_path.resolve().as_uri(),
+        ref=absolute_path.resolve().as_uri(),
         path=str(relative_path),
         source=_source_record(
             root_relative_path=relative_path,
@@ -463,11 +463,11 @@ def _ensure_no_conflicts(entries: tuple[PreparedEntry, ...]) -> None:
     for entry in entries:
         key = (entry.kind, entry.name)
         existing = seen.get(key)
-        if existing is not None and existing != entry.locator:
+        if existing is not None and existing != entry.ref:
             raise ValueError(
                 f"conflicting entries in one scope: kind={entry.kind} name={entry.name}"
             )
-        seen[key] = entry.locator
+        seen[key] = entry.ref
 
 
 def _lock_fingerprint(
@@ -480,7 +480,7 @@ def _lock_fingerprint(
             "kind": entry.kind,
             "name": entry.name,
             "shape": entry.shape,
-            "locator": entry.locator,
+            "ref": entry.ref,
             "path": entry.path,
             "source": {
                 "form": entry.source.form,
@@ -578,7 +578,7 @@ def _json_compatible(value: object) -> object:
 
 
 def _entry_sort_key(entry: PreparedEntry) -> tuple[str, str, str]:
-    return (entry.kind, entry.name, entry.locator)
+    return (entry.kind, entry.name, entry.ref)
 
 
 def _validate_local_kind(scope: PreparedScope, kind: EntryKind) -> None:
@@ -595,10 +595,10 @@ def _ensure_name_available(
     scope: PreparedScope,
     kind: EntryKind,
     name: str,
-    locator: str,
+    ref: str,
 ) -> None:
     for entry in list_entries(toolang_root, agent_name, scope=scope, kinds={kind}):
-        if entry.name == name and entry.locator != locator:
+        if entry.name == name and entry.ref != ref:
             raise ValueError(f"conflicting entries in one scope: kind={kind} name={name}")
 
 
@@ -669,13 +669,13 @@ def _collect_remote_entries(
             if kind_table is None:
                 continue
             for name, item in sorted(kind_table.items()):
-                locator = _config_locator(item)
-                entry, entry_files = _remote_entry_from_locator(
+                ref = _config_ref(item)
+                entry, entry_files = _remote_entry_from_ref(
                     toolang_root,
                     agent_name,
                     scope=item_scope,
                     kind=kind,
-                    locator=locator,
+                    ref=ref,
                     name=name,
                     relative_config_path=relative_config_path,
                     config_path=config_path,
@@ -685,26 +685,26 @@ def _collect_remote_entries(
     return tuple(sorted(entries, key=_entry_sort_key)), files
 
 
-def _remote_entry_from_locator(
+def _remote_entry_from_ref(
     toolang_root: Path,
     agent_name: str,
     *,
     scope: PreparedScope,
     kind: EntryKind,
-    locator: str,
+    ref: str,
     name: str,
     relative_config_path: Path,
     config_path: Path,
 ) -> tuple[PreparedEntry, dict[str, bytes]]:
-    canonical_locator = _canonicalize_remote_locator(kind, locator)
+    canonical_ref = _canonicalize_remote_ref(kind, ref)
     relative_entry_path = _relative_remote_entry_path(agent_name, scope=scope, kind=kind, name=name)
-    content = _remote_materialized_content(kind=kind, name=name, locator=canonical_locator)
+    content = _remote_materialized_content(kind=kind, name=name, ref=canonical_ref)
     return (
         PreparedEntry(
             kind=kind,
             name=name,
             shape="dir" if kind == "skill" else "file",
-            locator=canonical_locator,
+            ref=canonical_ref,
             path=str(relative_entry_path),
             source=_source_record(
                 root_relative_path=relative_config_path,
@@ -736,24 +736,24 @@ def _remote_materialized_content(
     *,
     kind: EntryKind,
     name: str,
-    locator: str,
+    ref: str,
 ) -> bytes:
     post = frontmatter.Post(
-        f"Remote {kind} materialized from {locator}\n",
+        f"Remote {kind} materialized from {ref}\n",
         name=name,
-        locator=locator,
+        ref=ref,
         remote=True,
     )
     return frontmatter.dumps(post).encode("utf-8")
 
 
-def _canonicalize_remote_locator(kind: EntryKind, locator: str) -> str:
-    text = locator.strip()
+def _canonicalize_remote_ref(kind: EntryKind, ref: str) -> str:
+    text = ref.strip()
     if "://" in text:
         return text
     parts = text.split("/", 1)
     if len(parts) != 2 or not parts[0] or not parts[1]:
-        raise ValueError(f"invalid remote locator: {locator}")
+        raise ValueError(f"invalid remote ref: {ref}")
     owner, name = parts
     if kind == "skill":
         return f"github://{owner}/agent-skills/skills/{name}"
@@ -766,11 +766,11 @@ def _canonicalize_remote_locator(kind: EntryKind, locator: str) -> str:
     raise ValueError(f"unsupported remote kind: {kind}")
 
 
-def _remote_name(kind: EntryKind, locator: str) -> str:
-    parsed = urlparse(locator)
+def _remote_name(kind: EntryKind, ref: str) -> str:
+    parsed = urlparse(ref)
     path = parsed.path.rstrip("/")
     if not path:
-        raise ValueError(f"invalid remote locator: {locator}")
+        raise ValueError(f"invalid remote ref: {ref}")
     name = Path(path).name
     if kind == "skill":
         return name
@@ -851,11 +851,11 @@ def _config_kind_table_optional(data: dict[str, object], kind: EntryKind) -> dic
     return None
 
 
-def _config_locator(item: object) -> str:
+def _config_ref(item: object) -> str:
     if isinstance(item, dict):
-        locator = cast(dict[str, object], item).get("locator")
-        if isinstance(locator, str) and locator:
-            return locator
+        ref = cast(dict[str, object], item).get("ref")
+        if isinstance(ref, str) and ref:
+            return ref
     raise ValueError(f"invalid remote cap config entry: {item!r}")
 
 
