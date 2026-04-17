@@ -176,6 +176,43 @@ thunk review(_, path: path, focus?) -> ReviewResult:
     assert thunk.directives == ("model = gpt-5",)
 
 
+def test_build_prepared_program_treats_model_directive_as_ordered_csv(tmp_path: Path) -> None:
+    root = _write_program(
+        tmp_path,
+        """
+thunk review():
+  model = gpt-5, o3
+
+  Review the target carefully.
+""".strip(),
+    )
+
+    durable = scan_durable_state(root, "alice")
+    prepared = build_prepared_program(durable)
+    thunk = prepared.thunks[0]
+
+    assert thunk.directives == ("model = gpt-5, o3",)
+    assert thunk.model_selectors() == ("gpt-5", "o3")
+    assert thunk.model_selector() == "gpt-5"
+
+
+def test_build_prepared_program_rejects_multiple_model_directives(tmp_path: Path) -> None:
+    root = _write_program(
+        tmp_path,
+        """
+thunk review():
+  model = gpt-5
+  model = o3
+
+  Review the target carefully.
+""".strip(),
+    )
+
+    durable = scan_durable_state(root, "alice")
+    with pytest.raises(ToolangError, match="at most one model directive"):
+        build_prepared_program(durable)
+
+
 def test_build_prepared_program_rejects_duplicate_default_thunk_name(tmp_path: Path) -> None:
     root = _write_program(
         tmp_path,

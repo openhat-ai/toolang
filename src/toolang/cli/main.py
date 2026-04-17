@@ -17,6 +17,7 @@ from typer.core import TyperCommand
 
 from .. import agents, caps as cap_store, templates, work
 from .. import up as agent_up
+from ..execution.model import DEFAULT_MODEL_SELECTOR
 from ..execution.records import UpdateKind
 from . import caps as caps_cli
 from . import invoke as cli_invoke
@@ -56,6 +57,7 @@ TOP_LEVEL_COMMANDS = frozenset(
         "remove",
         "list",
         "info",
+        "plugin",
         "run",
         "start",
         "stop",
@@ -211,6 +213,7 @@ def info_agent(
         ("Home", str(agents.agent_home(root, agent_name))),
         ("Caps", _info_caps_summary(root, agent_name)),
         ("Jobs", _info_jobs_summary(root, agent_name)),
+        ("Models", _info_models_summary(root, agent_name, runtime_state=runtime_state, running=status.status != "stopped")),
         ("Status", status_value),
     ]
     if status.status == "stopped":
@@ -254,9 +257,12 @@ def run_agent(
         str | None,
         typer.Option(help="Sandbox to use: none or <driver>[:target]."),
     ] = None,
-    model: Annotated[
-        str | None,
-        typer.Option("--model", help="Default model selector for this activation."),
+    models: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--model",
+            help="Allow a model selector for this activation. Repeat to allow multiple; the first becomes default.",
+        ),
     ] = None,
     loops: Annotated[
         list[str] | None,
@@ -294,7 +300,7 @@ def run_agent(
                     public_host=public_host,
                     port=port,
                     sandbox=sandbox,
-                    model=model,
+                    models=models,
                     dev=dev,
                     sandbox_child=sandbox_child,
                     loop_names=normalized_loops,
@@ -318,9 +324,12 @@ def start_agent(
         str | None,
         typer.Option(help="Sandbox to use: none or <driver>[:target]."),
     ] = None,
-    model: Annotated[
-        str | None,
-        typer.Option("--model", help="Default model selector for this activation."),
+    models: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--model",
+            help="Allow a model selector for this activation. Repeat to allow multiple; the first becomes default.",
+        ),
     ] = None,
     loops: Annotated[
         list[str] | None,
@@ -361,7 +370,7 @@ def start_agent(
         public_host=public_host,
         port=port,
         sandbox=sandbox,
-        model=model,
+        models=models,
         dev=dev,
         loop_names=normalized_loops,
         environ=environ,
@@ -471,6 +480,51 @@ def _info_jobs_summary(toolang_root: Path, agent_name: str) -> str:
     if task_count:
         parts.append(f"{task_count} {'task' if task_count == 1 else 'tasks'}")
     return ", ".join(parts) if parts else "0"
+
+
+def _info_models_summary(
+    toolang_root: Path,
+    agent_name: str,
+    *,
+    runtime_state: dict[str, object],
+    running: bool,
+) -> str:
+    if running:
+        raw_models = runtime_state.get("models")
+        if isinstance(raw_models, list):
+            runtime_models = tuple(
+                str(item).strip()
+                for item in raw_models
+                if isinstance(item, str) and item.strip()
+            )
+            if runtime_models:
+                return ", ".join(runtime_models)
+    configured = agent_up.load_default_models(toolang_root, agent_name)
+    if configured:
+        return ", ".join(configured)
+    return DEFAULT_MODEL_SELECTOR
+
+
+plugin_app = typer.Typer(
+    help="Inspect installed plugins.",
+    add_completion=False,
+    no_args_is_help=True,
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+)
+
+
+@plugin_app.command("list", help="List installed plugins.")
+def list_plugins() -> None:
+    rows = []
+    rows.extend(("model", name) for name in sorted(agent_up.load_model_plugins()))
+    rows.extend(("tool", name) for name in agent_up.list_plugin_names(group="toolang.tool"))
+    rows.extend(("channel", name) for name in agent_up.list_plugin_names(group="toolang.channel"))
+    rows.extend(("sandbox", name) for name in agent_up.list_plugin_names(group="toolang.sandbox"))
+    if not rows:
+        typer.echo("No plugins found.")
+        return
+    _echo_table(("FAMILY", "NAME"), rows)
 
 def _append_work_update(
     toolang_root: Path,
@@ -696,6 +750,7 @@ def _make_remove_work_command(kind: WorkKind, title: str) -> Callable[..., None]
     return remove_work
 
 caps_cli.register_cap_commands(app)
+app.add_typer(plugin_app, name="plugin", no_args_is_help=True)
 register_work_commands()
 
 

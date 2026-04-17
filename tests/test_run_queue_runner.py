@@ -70,7 +70,7 @@ from toolang.config.plugins import ChannelBinding
 from toolang.execution import execute as run_execute_module
 from toolang.execution.input import assemble_run_input, bind_run_request
 from toolang.execution.snapshot import SnapshotTask, SnapshotTaskServices
-from toolang.execution.runner import QueueRunner, RunRequest
+from toolang.execution.runner import QueueRunner, RunRequest, RunSubmission
 from toolang.execution.db import ExecutionStore, execution_db_path
 from toolang.loops import chat as chat_loop, inspect, poll, prepare, pulse, reload
 from toolang.state.durable import scan_durable_state
@@ -2159,7 +2159,7 @@ def test_assemble_run_input_prefers_thunk_model_over_activation_default(tmp_path
     assert bundle.debug["activation_default_model"] == "qwen/qwen3@ollama"
 
 
-def test_assemble_run_input_omits_model_when_thunk_omits_one(tmp_path: Path) -> None:
+def test_assemble_run_input_uses_activation_default_when_thunk_omits_one(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "alice.too",
@@ -2178,8 +2178,71 @@ def test_assemble_run_input_omits_model_when_thunk_omits_one(tmp_path: Path) -> 
 
     bundle = assemble_run_input(context, bound)
 
-    assert bundle.model is None
+    assert bundle.model == "qwen/qwen3@ollama"
     assert bundle.debug["activation_default_model"] == "qwen/qwen3@ollama"
+
+
+def test_execute_run_rejects_thunk_model_outside_activation_allowlist(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "alice.too",
+        "agent alice\n\nthunk chat:\n  model = openai/gpt-5\n\n  Reply directly.\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("chat",),
+    )
+    context.config.set("models.allowed_selectors", ("qwen/qwen3@ollama",))
+    context.config.set("models.default_selector", "qwen/qwen3@ollama")
+
+    outcome = asyncio.run(
+        run_execute_module.execute_run(
+            context,
+            RunSubmission(
+                request=RunRequest(group="chat", origin="chat", thunk="hello"),
+                live=context.live,
+            ),
+            delay_sec=0.0,
+            sleep=asyncio.sleep,
+        )
+    )
+
+    assert outcome.status == "failed"
+    assert outcome.error is not None
+    assert "not allowed for this activation" in outcome.error
+
+
+def test_execute_run_pre_start_failure_does_not_emit_persist_sink_error(tmp_path: Path, caplog) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "alice.too",
+        "agent alice\n\nthunk chat:\n  Reply directly.\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("chat",),
+    )
+    context.config.set("models.default_selector", "claude")
+
+    with caplog.at_level(logging.ERROR, logger="toolang.runner"):
+        outcome = asyncio.run(
+            run_execute_module.execute_run(
+                context,
+                RunSubmission(
+                    request=RunRequest(group="chat", origin="chat", thunk="hello"),
+                    live=context.live,
+                ),
+                delay_sec=0.0,
+                sleep=asyncio.sleep,
+            )
+        )
+
+    assert outcome.status == "failed"
+    assert outcome.error == "model selector could not be resolved: claude"
+    assert context.store.list_runs() == []
+    assert "persist sink event handling failed" not in caplog.text
 
 
 def test_execution_store_records_runs_steps_and_messages(tmp_path: Path) -> None:

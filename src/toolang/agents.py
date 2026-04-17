@@ -393,6 +393,7 @@ def write_runtime_state(
     pid: int | None,
     sandbox: dict[str, object] | None = None,
     loops: Sequence[str] | None = None,
+    models: Sequence[str] | None = None,
     status: str = "running",
     message: str | None = None,
 ) -> Path:
@@ -410,6 +411,7 @@ def write_runtime_state(
             "pid": pid,
             "sandbox": sandbox,
             "loops": list(loops or ()),
+            "models": list(models or ()),
             "message": message,
         },
     )

@@ -39,6 +39,7 @@ async def execute_run(
     persist = PersistSink(context.store)
     bound: RunBinding | None = None
     run_input: RunInput | None = None
+    started = False
     try:
         bound = bind_run_request(context, request, live=submission.live)
         run_input = assemble_run_input(context, bound)
@@ -54,10 +55,12 @@ async def execute_run(
                 started_at=bound.created_at,
             ),
         )
+        started = True
         model = resolve_model(
             context,
             selector=run_input.model,
             default_selector=_activation_default_model_selector(context),
+            allowed_selectors=_activation_allowed_model_selectors(context),
         )
         strategy = load_run_strategy(bound.run_strategy)
         run_context = RunContext(
@@ -69,7 +72,7 @@ async def execute_run(
         execution = await asyncio.to_thread(strategy.run, run_context)
     except Exception as exc:
         error = str(exc)
-        if bound is not None:
+        if bound is not None and started:
             _emit_event(
                 persist,
                 response,
@@ -81,6 +84,20 @@ async def execute_run(
                     finished_at=_utc_now(),
                 ),
             )
+            return RunOutcome(
+                run_id=bound.run_id,
+                group=bound.group,
+                origin=bound.origin,
+                input_text=bound.input_text,
+                thunk_name=bound.thunk_name,
+                thread_id=bound.thread_id,
+                delay_sec=delay_sec,
+                status="failed",
+                output_text="",
+                error=error,
+                live_fingerprint=bound.live.fingerprint,
+            )
+        if bound is not None:
             return RunOutcome(
                 run_id=bound.run_id,
                 group=bound.group,
@@ -126,6 +143,15 @@ def _activation_default_model_selector(context: UptimeContext) -> str | None:
         return None
     selector = value.strip()
     return selector or None
+
+
+def _activation_allowed_model_selectors(context: UptimeContext) -> tuple[str, ...]:
+    value = context.config.get("models.allowed_selectors")
+    if isinstance(value, tuple):
+        return tuple(item for item in value if isinstance(item, str) and item.strip())
+    if isinstance(value, list):
+        return tuple(item for item in value if isinstance(item, str) and item.strip())
+    return ()
 
 
 def _event_handler(
