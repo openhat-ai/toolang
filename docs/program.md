@@ -12,7 +12,7 @@ Current program-level constructs are:
 | `agent` | Program header declaring the agent name |
 | `use` | One external cap reference |
 | `struct` | One named structured type |
-| `slash` | One reusable slash command definition |
+| `prompt` | One reusable prompt definition |
 | `thunk` | One callable program entrypoint |
 
 
@@ -250,25 +250,88 @@ Rules:
 | names only | directives do not resolve shorthand or refs |
 
 
-## Slash Commands
+## Prompts
 
-A slash command is one reusable input expansion.
+A prompt is one reusable input expansion.
 
 Recommended shape:
 
 ```toolang
-slash review(path, focus?)
-  Review {{path}} carefully.
-  {{focus}}
+prompt review: ```md
+---
+params: path, focus?
+---
+
+Review {{path}} carefully.
+{{focus}}
+```
 ```
 
-Slash commands are invoked as:
+Prompts are invoked as:
 
 ```text
-/review path=src/app.py focus="only errors"
+/review src/app.py "only errors"
 ```
 
-The runtime expands the slash command before normal run-input assembly.
+The runtime expands the prompt before normal run-input assembly. The slash-style
+`/name ...` invocation remains the user-facing call shape.
+
+
+## Service Declarations
+
+`service` declarations use fenced markdown bodies. Service metadata lives in
+frontmatter inside that markdown.
+
+`service` frontmatter uses one closed schema per transport.
+
+| Transport | Required fields | Optional fields |
+| --- | --- | --- |
+| `http` | `transport`, `url` | `headers` |
+| `stdio` | `transport`, `command` | `args`, `env`, `cwd` |
+
+Example HTTP service:
+
+```toolang
+service github: ```md
+---
+transport: http
+url: https://mcp.github.com/mcp
+headers:
+  Authorization: Bearer $GITHUB_TOKEN
+---
+
+Use this service when the agent needs GitHub access.
+```
+```
+
+Example stdio service:
+
+```toolang
+service linear: ```md
+---
+transport: stdio
+command: npx
+args:
+  - -y
+  - mcp-remote
+  - https://mcp.linear.app/sse
+env: LINEAR_API_KEY, API_KEY=NOT_THE_SAME_NAME
+cwd: /work/tools
+---
+
+Use this service when the agent needs Linear access.
+```
+```
+
+`env` uses one compact mapping form:
+
+| Form | Meaning |
+| --- | --- |
+| `FOO` | Forward `FOO` from the host environment |
+| `BAR=FOO` | Set child env `BAR` from host env `FOO` |
+
+`headers` is one string map. Header values may reference host env vars with
+`$NAME`.
 
 
 ## Surface Rules

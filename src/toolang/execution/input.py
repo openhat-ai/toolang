@@ -162,6 +162,8 @@ def _runtime_snapshot(
             thread_id=run.thread_id,
             run_strategy=run.run_strategy,
             live_fingerprint=run.live.fingerprint,
+            invoke_params=_invoke_params(run),
+            invoke_parts=_invoke_parts(run),
         ),
         program=SnapshotProgram(
             source_path=program.source_path,
@@ -292,6 +294,8 @@ def _snapshot_to_data(snapshot: RunSnapshot) -> dict[str, Any]:
             "thread_id": snapshot.run.thread_id,
             "run_strategy": snapshot.run.run_strategy,
             "live_fingerprint": snapshot.run.live_fingerprint,
+            "invoke_params": dict(snapshot.run.invoke_params),
+            "invoke_parts": [dict(item) for item in snapshot.run.invoke_parts],
         },
         "program": {
             "source_path": snapshot.program.source_path,
@@ -321,3 +325,22 @@ def _snapshot_to_data(snapshot: RunSnapshot) -> dict[str, Any]:
             "path": snapshot.task_services.path,
         }
     return payload
+
+
+def _invoke_params(run: RunBinding) -> dict[str, Any]:
+    value = run.metadata.get("invoke_params")
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): item for key, item in value.items()}
+
+
+def _invoke_parts(run: RunBinding) -> tuple[dict[str, Any], ...]:
+    value = run.metadata.get("invoke_parts")
+    if not isinstance(value, list):
+        return ()
+    items: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        items.append({str(key): part for key, part in item.items()})
+    return tuple(items)

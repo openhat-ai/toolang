@@ -1,34 +1,32 @@
 service github: ```md
 ---
 transport: http
-target: https://mcp.github.com/mcp
-description: GitHub MCP server
-env:
-  - GITHUB_TOKEN
+url: https://mcp.github.com/mcp
+headers:
+  Authorization: Bearer $GITHUB_TOKEN
 ---
 
 Use this service when the agent needs to inspect repositories and pull requests.
 ```
 
-prompt summarize(style, audience?): ```md
+prompt summarize: ```md
+---
+params: style, audience?
+---
+
 Summarize the request in a {{style}} style.
 Audience: {{audience}}
-
-{{input}}
 ```
 
 psyche reviewer: ```md
 Prefer concrete findings, direct language, and minimal fluff.
 ```
 
-struct ReviewSummary: ```json
-{
-  "title": "string",
-  "summary": "string"
-}
-```
+struct ReviewSummary:
+  title: string
+  summary: string
 
-thunk summarize(user) => ReviewSummary:
-    model = gpt-5
+thunk summarize(_) -> ReviewSummary:
+  model = gpt-5
 
-    Summarize the request and keep the output compact.
+  Summarize the request and keep the output compact.

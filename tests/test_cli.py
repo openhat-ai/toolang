@@ -9,10 +9,9 @@ from typer.testing import CliRunner
 
 from toolang import agents
 from toolang import caps
-from toolang import cli
+import toolang.cli.main as cli
 from toolang import work
 from toolang.execution.db import ExecutionStore, execution_db_path
-
 runner = CliRunner()
 
 
@@ -61,6 +60,28 @@ def test_cli_main_normalizes_agent_postfix_shortcut(monkeypatch) -> None:
 
     assert result == 0
     assert captured["args"] == ["stop", "alice"]
+
+
+def test_cli_main_intercepts_local_too_program_before_typer(monkeypatch, tmp_path: Path) -> None:
+    program_path = tmp_path / "demo.too"
+    program_path.write_text("thunk:\n  Reply directly.\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def fake_handle(global_args: list[str], body: list[str], *, prog_name: str) -> int:
+        captured["global_args"] = list(global_args)
+        captured["body"] = list(body)
+        captured["prog_name"] = prog_name
+        return 0
+
+    monkeypatch.setattr(cli.cli_invoke, "handle_roaming_invoke", fake_handle)
+    monkeypatch.setattr(cli.sys, "argv", ["toolang"])
+
+    result = cli.main([str(program_path), "--help"])
+
+    assert result == 0
+    assert captured["global_args"] == []
+    assert captured["body"] == [str(program_path), "--help"]
+    assert captured["prog_name"] == "toolang"
 
 
 def test_cli_main_uses_actual_cli_name_for_prog_name(monkeypatch) -> None:
@@ -316,6 +337,381 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
     assert captured["program_exists"] is True
     assert captured["program_text"] == "agent alice\n"
     assert Path(cast(Path, captured["toolang_root"])).name.startswith("toolang-run-")
+
+
+def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    captured: dict[str, object] = {}
+
+    def fake_fetch(ref: agents.AgentRef) -> str:
+        assert ref.render() == "https://toolang.ai/demo/researcher.too"
+        return "agent researcher\n"
+
+    def fake_up(
+        *,
+        toolang_root: Path,
+        agent_name: str,
+        host: str,
+        public_host: str | None,
+        port: int | None,
+        sandbox: str | None,
+        model: str | None,
+        dev: Path | None,
+        sandbox_child: bool,
+        loop_names: tuple[str, ...] | None,
+        environ: dict[str, str],
+    ) -> int:
+        del host, public_host, port, sandbox, model, dev, sandbox_child, loop_names, environ
+        captured["toolang_root"] = toolang_root
+        captured["agent_name"] = agent_name
+        return 0
+
+    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
+    monkeypatch.setattr(cli.agent_up, "up", fake_up)
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(toolang_root), "run", "https://toolang.ai/demo/researcher.too"],
+        env={},
+    )
+
+    assert result.exit_code == 0
+    assert captured["agent_name"] == "researcher"
+    assert Path(cast(Path, captured["toolang_root"])).name.startswith("toolang-run-")
+
+
+def test_cli_roaming_program_help_lists_available_thunks(capsys, tmp_path: Path) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+thunk:
+  Reply directly.
+
+thunk summarize(_, style?):
+  Summarize the current workspace in a concise style.
+""".strip(),
+    )
+
+    original_argv = list(cli.sys.argv)
+    cli.sys.argv = ["toolang"]
+    try:
+        result = cli.main([str(program_path), "--help"])
+    finally:
+        cli.sys.argv = original_argv
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "Usage: toolang" in captured.out
+    assert "THUNK [OPTIONS] [PARAMS] [PARTS]" in captured.out
+    assert "Thunks" in captured.out
+    assert "main" in captured.out
+    assert "summarize" in captured.out
+
+
+def test_cli_roaming_thunk_help_is_dynamic(capsys, tmp_path: Path) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+thunk summarize(_, style?, audience?):
+  Summarize the current workspace in a concise style.
+""".strip(),
+    )
+
+    original_argv = list(cli.sys.argv)
+    cli.sys.argv = ["toolang"]
+    try:
+        result = cli.main([str(program_path), "summarize", "--help"])
+    finally:
+        cli.sys.argv = original_argv
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "Usage: toolang" in captured.out
+    assert "summarize" in captured.out
+    assert "[OPTIONS]" in captured.out
+    assert "[PARAMS]" in captured.out
+    assert "style=TEXT" in captured.out
+    assert "audience=TEXT" in captured.out
+    assert "PARTS" in captured.out
+
+
+def test_cli_roaming_invoke_passes_default_thunk_params_and_parts(tmp_path: Path, monkeypatch, capsys) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+thunk(_, tone?, retries?: number, dry_run?: boolean):
+  Rewrite the input using the provided controls.
+""".strip(),
+    )
+    attachment = tmp_path / "image.png"
+    attachment.write_bytes(b"png")
+    captured: dict[str, object] = {}
+
+    def fake_invoke(
+        *,
+        toolang_root: Path,
+        agent_name: str,
+        thunk_name: str | None,
+        input_text: str | None,
+        model: str | None,
+        metadata: dict[str, object] | None,
+        environ: dict[str, str],
+    ):
+        del environ
+        captured["toolang_root"] = toolang_root
+        captured["agent_name"] = agent_name
+        captured["thunk_name"] = thunk_name
+        captured["input_text"] = input_text
+        captured["model"] = model
+        captured["metadata"] = dict(metadata or {})
+
+        class _Outcome:
+            status = "finished"
+            output_text = "done"
+            error = None
+
+        return _Outcome()
+
+    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+
+    result = cli.main(
+        [
+            str(program_path),
+            "main",
+            "rewrite this",
+            f"@{attachment}",
+            "tone=concise",
+            "retries=3",
+            "dry_run=true",
+            "--model",
+            "gpt-5",
+        ]
+    )
+    output = capsys.readouterr()
+
+    assert result == 0
+    assert output.out.strip() == "done"
+    assert captured["agent_name"] == "demo"
+    assert captured["toolang_root"] == program_path.parent / ".toolang"
+    assert captured["thunk_name"] == "main"
+    assert captured["model"] == "gpt-5"
+    assert "rewrite this" in cast(str, captured["input_text"])
+    assert str(attachment.resolve()) in cast(str, captured["input_text"])
+    assert captured["metadata"] == {
+        "invoke_params": {
+            "tone": "concise",
+            "retries": 3,
+            "dry_run": True,
+        },
+        "invoke_parts": [
+            {"type": "text", "text": "rewrite this"},
+            {"type": "image", "path": str(attachment.resolve())},
+        ],
+    }
+
+
+def test_cli_roaming_invoke_requires_explicit_thunk_name(tmp_path: Path, capsys) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+thunk:
+  Reply directly.
+""".strip(),
+    )
+    result = cli.main([str(program_path)])
+    output = capsys.readouterr()
+
+    assert result == 0
+    assert "THUNK [OPTIONS] [PARAMS] [PARTS]" in output.out
+    assert "Thunks" in output.out
+
+
+def test_cli_roaming_invoke_requires_part_for_message_input(tmp_path: Path, capsys) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+thunk summarize(_):
+  Summarize the current workspace in a concise style.
+""".strip(),
+    )
+
+    result = cli.main([str(program_path), "summarize"])
+    output = capsys.readouterr()
+
+    assert result == 1
+    assert "requires at least one PART" in output.err
+
+
+def test_cli_roaming_invoke_rejects_unknown_thunk_name(tmp_path: Path, capsys) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+thunk:
+  Reply directly.
+""".strip(),
+    )
+
+    result = cli.main([str(program_path), "summarize"])
+    output = capsys.readouterr()
+
+    assert result == 1
+    assert "unknown thunk: summarize" in output.err
+
+
+def test_cli_roaming_invoke_supports_end_of_options_separator(tmp_path: Path, monkeypatch, capsys) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+thunk:
+  Reply directly.
+""".strip(),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_invoke(
+        *,
+        toolang_root: Path,
+        agent_name: str,
+        thunk_name: str | None,
+        input_text: str | None,
+        model: str | None,
+        metadata: dict[str, object] | None,
+        environ: dict[str, str],
+    ):
+        del toolang_root, agent_name, thunk_name, model, environ
+        captured["input_text"] = input_text
+        captured["metadata"] = dict(metadata or {})
+
+        class _Outcome:
+            status = "finished"
+            output_text = "done"
+            error = None
+
+        return _Outcome()
+
+    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+
+    result = cli.main(
+        [
+            str(program_path),
+            "main",
+            "--",
+            "--leading-text",
+            "@@literal-at",
+        ]
+    )
+    output = capsys.readouterr()
+
+    assert result == 0
+    assert output.out.strip() == "done"
+    assert captured["input_text"] == "--leading-text\n\n@literal-at"
+    assert captured["metadata"] == {
+        "invoke_params": {},
+        "invoke_parts": [
+            {"type": "text", "text": "--leading-text"},
+            {"type": "text", "text": "@literal-at"},
+        ],
+    }
+
+
+def test_cli_roaming_invoke_treats_unknown_name_equals_value_as_message_part(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+thunk(_, tone?):
+  Reply directly.
+""".strip(),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_invoke(
+        *,
+        toolang_root: Path,
+        agent_name: str,
+        thunk_name: str | None,
+        input_text: str | None,
+        model: str | None,
+        metadata: dict[str, object] | None,
+        environ: dict[str, str],
+    ):
+        del toolang_root, agent_name, thunk_name, model, environ
+        captured["input_text"] = input_text
+        captured["metadata"] = dict(metadata or {})
+
+        class _Outcome:
+            status = "finished"
+            output_text = "done"
+            error = None
+
+        return _Outcome()
+
+    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+
+    result = cli.main([str(program_path), "main", "style=concise", "tone=direct"])
+    output = capsys.readouterr()
+
+    assert result == 0
+    assert output.out.strip() == "done"
+    assert captured["input_text"] == "style=concise"
+    assert captured["metadata"] == {
+        "invoke_params": {
+            "tone": "direct",
+        },
+        "invoke_parts": [
+            {"type": "text", "text": "style=concise"},
+        ],
+    }
+
+
+def test_cli_roaming_invoke_reads_md_path_as_text_part(tmp_path: Path, monkeypatch, capsys) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+thunk(_):
+  Reply directly.
+""".strip(),
+    )
+    note = tmp_path / "note.md"
+    note.write_text("# Title\n\nBody text.\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def fake_invoke(
+        *,
+        toolang_root: Path,
+        agent_name: str,
+        thunk_name: str | None,
+        input_text: str | None,
+        model: str | None,
+        metadata: dict[str, object] | None,
+        environ: dict[str, str],
+    ):
+        del toolang_root, agent_name, thunk_name, model, environ
+        captured["input_text"] = input_text
+        captured["metadata"] = dict(metadata or {})
+
+        class _Outcome:
+            status = "finished"
+            output_text = "done"
+            error = None
+
+        return _Outcome()
+
+    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+
+    result = cli.main([str(program_path), "main", f"@{note}"])
+    output = capsys.readouterr()
+
+    assert result == 0
+    assert output.out.strip() == "done"
+    assert captured["input_text"] == "# Title\n\nBody text.\n"
+    assert captured["metadata"] == {
+        "invoke_params": {},
+        "invoke_parts": [
+            {"type": "text", "text": "# Title\n\nBody text.\n", "path": str(note.resolve())},
+        ],
+    }
 
 
 def test_cli_start_rejects_remote_selector(tmp_path: Path) -> None:
@@ -965,7 +1361,7 @@ def test_cli_start_spawns_background_run_and_reports_status(tmp_path: Path, monk
     assert captured["command"] == [
         cli.sys.executable,
         "-m",
-        "toolang.cli",
+        "toolang.cli.main",
         "--root",
         str(toolang_root),
         "run",
@@ -1975,3 +2371,9 @@ def test_cli_help_orders_cap_groups() -> None:
     task_index = result.stdout.index("task")
     assert psyche_index < skill_index < service_index < prompt_index
     assert chore_index < task_index
+
+
+def _write_roaming_program(tmp_path: Path, body_text: str, *, name: str = "demo") -> Path:
+    path = tmp_path / f"{name}.too"
+    path.write_text(body_text + "\n", encoding="utf-8")
+    return path

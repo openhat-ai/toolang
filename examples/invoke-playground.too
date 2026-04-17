@@ -1,0 +1,25 @@
+#!/usr/bin/env toolang 
+
+# This file is designed for `toolang invoke` experiments.
+# It keeps the capabilities minimal and focuses on different thunk shapes.
+
+struct Summary:
+  title: string
+  summary: string
+
+struct BulletList:
+  items: string[]
+
+thunk summarize(_) -> Summary:
+  Produce a compact summary with a short title and a short summary paragraph.
+
+thunk bullets(_) -> BulletList:
+  Extract the main points into short bullet items.
+
+thunk rewrite(_, tone?, audience?):
+  Rewrite the input in the requested tone.
+  Adjust depth and wording for the requested audience when it is provided.
+
+thunk slug(title) -> text:
+  Convert the provided title into a concise lowercase slug.
+  Use hyphens between words and return only the slug text.

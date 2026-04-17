@@ -1,0 +1,467 @@
+"""Shared CLI helpers."""
+
+from __future__ import annotations
+
+import os
+from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
+from pathlib import Path
+import subprocess
+import time
+from typing import Annotated, cast
+
+import click
+from rich import box
+from rich.console import Console
+from rich.table import Table
+from rich.text import Text
+import typer
+from typer import rich_utils as typer_rich_utils
+from typer.core import TyperArgument, TyperCommand
+
+from .. import agents, templates
+from ..config.env import load_runtime_environ
+from ..config.web import resolve_ui_base_url
+from ..execution.db import ExecutionStore, execution_db_path
+from ..execution.records import UpdateKind
+from ..templates import TemplateKind
+
+# Typer renders command help text in dim style by default. Keep it at normal
+# weight so usage notes remain easy to read in terminal help output.
+setattr(typer_rich_utils, "STYLE_HELPTEXT", "")
+_TABLE_CONSOLE = Console(highlight=False, width=4096)
+_AGENT_AVATAR = templates.load_info_avatar()
+_PALETTE_STYLES_TOP, _PALETTE_STYLES_BOTTOM = templates.load_info_palette()
+_RAINBOW_STYLES = _PALETTE_STYLES_TOP
+
+
+class _PrefixAgentCommand(TyperCommand):
+    """Render one virtual prefix-agent argument in help output."""
+
+    prefix_agent_metavar = "[AGENT]"
+    argument_metavar = "TEXT"
+    argument_help = "Apply to this agent instead of global scope."
+
+    def _real_params(self, ctx: click.Context) -> list[click.Parameter]:
+        return TyperCommand.get_params(self, ctx)
+
+    def _prefix_agent_argument(self) -> click.Argument:
+        return _HelpOnlyTyperArgument(
+            param_decls=["agent"],
+            metavar=self.argument_metavar,
+            required=False,
+            default=None,
+            expose_value=False,
+            help=self.argument_help,
+        )
+
+    def get_params(self, ctx: click.Context) -> list[click.Parameter]:
+        return [self._prefix_agent_argument(), *self._real_params(ctx)]
+
+    def format_usage(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        command_path = ctx.command_path
+        root_name, _, remainder = command_path.partition(" ")
+        prefix_path = (
+            f"{root_name} {self.prefix_agent_metavar} {remainder}"
+            if remainder
+            else f"{root_name} {self.prefix_agent_metavar}"
+        )
+        pieces = [self.options_metavar] if self.options_metavar else []
+        for param in self._real_params(ctx):
+            pieces.extend(param.get_usage_pieces(ctx))
+        formatter.write_usage(prefix_path, " ".join(pieces))
+
+
+class _OptionalPrefixAgentCommand(_PrefixAgentCommand):
+    prefix_agent_metavar = "[AGENT]"
+
+
+class _RequiredPrefixAgentCommand(_PrefixAgentCommand):
+    prefix_agent_metavar = "AGENT"
+    argument_help = "Agent name."
+
+    def _prefix_agent_argument(self) -> click.Argument:
+        return _HelpOnlyTyperArgument(
+            param_decls=["agent"],
+            metavar=self.argument_metavar,
+            required=True,
+            default=None,
+            expose_value=False,
+            help=self.argument_help,
+        )
+
+
+class _HelpOnlyTyperArgument(TyperArgument):
+    """One help-only argument that never participates in parsing."""
+
+    def make_metavar(self, ctx: click.Context | None = None) -> str:
+        del ctx
+        return self.metavar or "TEXT"
+
+    def add_to_parser(self, parser: object, ctx: click.Context) -> None:
+        del parser, ctx
+
+    def handle_parse_result(
+        self,
+        ctx: click.Context,
+        opts: click.core.cabc.Mapping[str, object],
+        args: list[str],
+    ) -> tuple[None, list[str]]:
+        del ctx, opts
+        return None, args
+
+
+class _RuntimeAgentCommand(TyperCommand):
+    """Render one required agent argument before the command name in help."""
+
+    usage_agent_metavar = "AGENT"
+
+    def _real_params(self, ctx: click.Context) -> list[click.Parameter]:
+        return TyperCommand.get_params(self, ctx)
+
+    def _visible_real_params(self, ctx: click.Context) -> list[click.Parameter]:
+        return [param for param in self._real_params(ctx) if not getattr(param, "hidden", False)]
+
+    def _help_agent_argument(self) -> click.Argument:
+        return _HelpOnlyTyperArgument(
+            param_decls=["agent"],
+            metavar="TEXT",
+            required=True,
+            default=None,
+            expose_value=False,
+            help="Agent name.",
+        )
+
+    def get_params(self, ctx: click.Context) -> list[click.Parameter]:
+        return [self._help_agent_argument(), *self._real_params(ctx)]
+
+    def format_usage(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        command_path = ctx.command_path
+        root_name, _, remainder = command_path.partition(" ")
+        prefix_path = (
+            f"{root_name} {self.usage_agent_metavar} {remainder}"
+            if remainder
+            else f"{root_name} {self.usage_agent_metavar}"
+        )
+        pieces = [self.options_metavar] if self.options_metavar else []
+        for param in self._visible_real_params(ctx):
+            pieces.extend(param.get_usage_pieces(ctx))
+        formatter.write_usage(prefix_path, " ".join(pieces))
+
+
+class _OptionalTemplateArgumentCommand(TyperCommand):
+    """Render one optional template argument as plain TEXT in help."""
+
+    def _real_params(self, ctx: click.Context) -> list[click.Parameter]:
+        return TyperCommand.get_params(self, ctx)
+
+    def _help_template_argument(self) -> click.Argument:
+        return _HelpOnlyTyperArgument(
+            param_decls=["template"],
+            metavar="TEXT",
+            required=False,
+            default="default",
+            expose_value=False,
+            help="Template name.",
+        )
+
+    def get_params(self, ctx: click.Context) -> list[click.Parameter]:
+        return [self._help_template_argument(), *self._real_params(ctx)]
+
+    def format_usage(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        pieces: list[str] = [self.options_metavar] if self.options_metavar else []
+        for param in self._real_params(ctx):
+            pieces.extend(param.get_usage_pieces(ctx))
+        formatter.write_usage(ctx.command_path, " ".join(pieces))
+
+
+class _OptionalPrefixAgentTemplateCommand(_OptionalPrefixAgentCommand):
+    def _help_template_argument(self) -> click.Argument:
+        return _HelpOnlyTyperArgument(
+            param_decls=["template"],
+            metavar="TEXT",
+            required=False,
+            default="default",
+            expose_value=False,
+            help="Template name.",
+        )
+
+    def get_params(self, ctx: click.Context) -> list[click.Parameter]:
+        return [
+            self._prefix_agent_argument(),
+            self._help_template_argument(),
+            *self._real_params(ctx),
+        ]
+
+
+def _append_agent_update(
+    toolang_root: Path,
+    agent_name: str,
+    update_kind: UpdateKind,
+    payload: dict[str, object] | None = None,
+) -> None:
+    store = ExecutionStore(execution_db_path(toolang_root, agent_name))
+    try:
+        store.append_update(kind=update_kind, payload=payload or {})
+    finally:
+        store.close()
+
+
+def _context_root(ctx: typer.Context) -> Path:
+    state = cast(dict[str, Path | str | None], ctx.obj)
+    root = state["toolang_root"]
+    if not isinstance(root, Path):
+        raise TypeError("missing toolang root")
+    return root
+
+
+def _context_agent(ctx: typer.Context) -> str | None:
+    state = cast(dict[str, Path | str | None], ctx.obj)
+    agent = state.get("agent")
+    return agent if isinstance(agent, str) else None
+
+
+def _required_prefix_agent(ctx: typer.Context, *, command_name: str) -> str:
+    agent = _context_agent(ctx)
+    if isinstance(agent, str) and agent:
+        return agent
+    del command_name
+    typer.echo(ctx.get_help())
+    raise typer.Exit()
+
+
+def _required_runtime_agent(ctx: typer.Context, agent: str | None) -> str:
+    if agent:
+        return agent
+    typer.echo(ctx.get_help())
+    raise typer.Exit()
+
+
+def _wrap_user_error(function, *args, **kwargs):
+    try:
+        return function(*args, **kwargs)
+    except (FileExistsError, FileNotFoundError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+def _toolang_root(explicit: Path | None) -> Path:
+    if explicit is not None:
+        return explicit
+    return Path(os.environ.get("TOOLANG_ROOT", str(Path(os.path.expanduser("~/.toolang")))))
+
+
+def _ui_base_url() -> str:
+    return resolve_ui_base_url(_toolang_root(None), environ=os.environ)
+
+
+def _runtime_environ_for_agent(
+    ctx: typer.Context,
+    agent_name: str,
+    *,
+    toolang_root: Path | None = None,
+) -> dict[str, str]:
+    root = toolang_root or _context_root(ctx)
+    return load_runtime_environ(root, agent_name, base_environ=os.environ)
+
+
+def _make_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> Table:
+    table = Table(box=box.SIMPLE_HEAVY, header_style="", show_lines=False)
+    for header in headers:
+        table.add_column(header, no_wrap=True)
+    for row in rows:
+        table.add_row(*row)
+    return table
+
+
+def _echo_block(text: str) -> None:
+    typer.echo()
+    typer.echo(text)
+    typer.echo()
+
+
+def _echo_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> None:
+    typer.echo()
+    _TABLE_CONSOLE.print(_make_table(headers, rows))
+    typer.echo()
+
+
+def _echo_pairs_table(
+    rows: Sequence[tuple[str, str]],
+    *,
+    avatar: str | None = None,
+    title: str | None = None,
+) -> None:
+    table = Table(
+        box=None,
+        header_style="",
+        show_header=False,
+        show_lines=False,
+        pad_edge=False,
+        collapse_padding=True,
+    )
+    table.add_column("FIELD", no_wrap=True, style="bold bright_cyan")
+    table.add_column("VALUE", no_wrap=False, style="white")
+    for key, value in rows:
+        table.add_row(Text(key), _styled_info_value(key, value))
+    typer.echo()
+    if avatar is None:
+        if title is None:
+            _TABLE_CONSOLE.print(table)
+        else:
+            _TABLE_CONSOLE.print(_info_title_block(title))
+            _TABLE_CONSOLE.print(table)
+    else:
+        layout = Table.grid(padding=(0, 4))
+        layout.add_column(no_wrap=True, ratio=0)
+        layout.add_column(no_wrap=False, ratio=1)
+        right = Table.grid(padding=(0, 0))
+        right.add_column(no_wrap=False)
+        avatar_text = _rainbow_avatar_text(avatar)
+        if title is not None:
+            right.add_row(_info_title_block(title))
+            avatar_text = _rainbow_avatar_text("\n" + avatar)
+        right.add_row(table)
+        right.add_row(Text(""))
+        right.add_row(_palette_block())
+        layout.add_row(avatar_text, right)
+        _TABLE_CONSOLE.print(layout)
+    typer.echo()
+
+
+def _styled_info_value(key: str, value: str) -> Text:
+    del key
+    return Text(value)
+
+
+def _rainbow_avatar_text(avatar: str) -> Text:
+    lines = avatar.splitlines()
+    text = Text()
+    for row, line in enumerate(lines):
+        for column, char in enumerate(line):
+            if char == " ":
+                text.append(char)
+                continue
+            style_index = (column + (row * 2)) % len(_RAINBOW_STYLES)
+            text.append(char, style=_RAINBOW_STYLES[style_index])
+        text.append("\n")
+    if text.plain.endswith("\n"):
+        text = text[:-1]
+    return text
+
+
+def _info_title_block(title: str) -> Table:
+    block = Table.grid(padding=(0, 0))
+    block.add_column(no_wrap=False)
+    block.add_row(Text(title, style="bold bright_cyan"))
+    block.add_row(Text("-" * len(title), style="bright_black"))
+    return block
+
+
+def _palette_block() -> Text:
+    palette = Text()
+    for style in _PALETTE_STYLES_TOP:
+        palette.append("██", style=style)
+    palette.append("\n")
+    for style in _PALETTE_STYLES_BOTTOM:
+        palette.append("██", style=style)
+    return palette
+
+
+def _runtime_value(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return "-"
+    return value
+
+
+def _runtime_loops(runtime_state: dict[str, object]) -> str | None:
+    raw = runtime_state.get("loops")
+    if not isinstance(raw, list):
+        return None
+    values = [str(item).strip() for item in raw if str(item).strip()]
+    if not values:
+        return None
+    return ", ".join(values)
+
+
+def _created_time(path: Path) -> str:
+    stat = path.stat()
+    timestamp = getattr(stat, "st_birthtime", None)
+    if timestamp is None:
+        timestamp = stat.st_mtime
+    return datetime.fromtimestamp(timestamp, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_utc_timestamp(value: str) -> datetime | None:
+    try:
+        if value.endswith("Z"):
+            return datetime.fromisoformat(value.removesuffix("Z") + "+00:00")
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _format_runtime_row(status: agents.AgentStatus) -> str:
+    return f"{status.name}\t{status.status}\t{status.api_url or '-'}\t{status.webui_url or '-'}"
+
+
+def _normalize_loop_option(loops: list[str] | None) -> list[str] | None:
+    if loops is None:
+        return None
+    normalized: list[str] = []
+    for item in loops:
+        for value in item.split(","):
+            loop_name = value.strip()
+            if loop_name:
+                normalized.append(loop_name)
+    return normalized
+
+
+def _wait_for_started_status(
+    *,
+    root: Path,
+    agent_name: str,
+    process: subprocess.Popen[bytes],
+    launched_at: float,
+    timeout_sec: float,
+) -> agents.AgentStatus | None:
+    deadline = time.monotonic() + timeout_sec
+    state_path = agents.agent_runtime_state_path(root, agent_name)
+    while time.monotonic() < deadline:
+        if state_path.is_file() and state_path.stat().st_mtime >= launched_at - 0.01:
+            status = agents.get_agent_status(root, agent_name, ui_base_url=_ui_base_url())
+            if status is not None and status.status in {"running", "failed"}:
+                return status
+        if process.poll() is not None:
+            break
+        time.sleep(0.1)
+    if state_path.is_file() and state_path.stat().st_mtime >= launched_at - 0.01:
+        return agents.get_agent_status(root, agent_name, ui_base_url=_ui_base_url())
+    return None
+
+
+def _make_template_list_command(kind: TemplateKind, *, title: str) -> Callable[..., None]:
+    del title
+
+    def list_templates() -> None:
+        specs = templates.list_templates(kind)
+        if not specs:
+            typer.echo(f"No {kind} templates found.")
+            return
+        rows = [(item.name, item.description or "-") for item in specs]
+        _echo_table(("TEMPLATE", "DESCRIPTION"), rows)
+
+    return list_templates
+
+
+def _make_template_show_command(kind: TemplateKind, *, title: str) -> Callable[..., None]:
+    del title
+
+    def show_template(
+        template: Annotated[str, typer.Argument(help="Template name", hidden=True)] = "default",
+    ) -> None:
+        _echo_block(templates.load_template(kind, template).raw_text.rstrip("\n"))
+
+    return show_template

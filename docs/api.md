@@ -32,6 +32,8 @@ Typical usage:
 ```bash
 toolang new alice
 toolang list
+toolang ./examples/invoke-playground.too --help
+toolang ./examples/invoke-playground.too summarize "Summarize this workspace"
 toolang run alice
 toolang run brice/alice
 toolang run https://toolang.ai/alice.too
@@ -65,6 +67,32 @@ GitHub refs may add one revision suffix:
 
 `rev` is one git revision token. Toolang does not distinguish branch, tag, and
 commit in selector syntax.
+
+
+## Invoke Surface
+
+Roaming invoke uses one local `.too` source path directly:
+
+```bash
+toolang path/to/agent.too THUNK [OPTIONS] [PARAMS] [PARTS]
+```
+
+Behavior:
+
+- one local `.too` path enters roaming invoke mode
+- `toolang a.too --help` lists invokable thunks
+- `toolang a.too thunk --help` prints thunk-specific dynamic usage
+- `toolang a.too` shows usage instead of invoking a default thunk
+- bare arguments become message parts
+- `NAME=VALUE` sets one thunk named param when `NAME` matches the thunk signature
+- `PART` rules:
+  - `TEXT` adds one text part; use `@@TEXT` for literal text beginning with `@`
+  - `@PATH` adds one path-based part; `.txt` and `.md` paths become text parts
+  - image extensions such as `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, and `.svg` infer image parts
+  - audio extensions such as `.mp3`, `.wav`, `.m4a`, `.aac`, `.ogg`, and `.flac` infer audio parts
+  - all other path extensions infer generic file parts
+- `--` ends option parsing so later arguments stay message parts
+- `--option` is reserved for Toolang runtime options
 
 
 ## Runtime Commands

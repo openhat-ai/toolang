@@ -25,6 +25,8 @@ class SnapshotRun:
     thread_id: str
     run_strategy: str
     live_fingerprint: str
+    invoke_params: dict[str, Any] = field(default_factory=dict)
+    invoke_parts: tuple[dict[str, Any], ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True, slots=True)
