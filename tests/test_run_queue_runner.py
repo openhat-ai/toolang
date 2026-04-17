@@ -1326,7 +1326,7 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
                 sandbox_root=request.sandbox_root,
                 sandbox_home=request.sandbox_home,
                 sandbox_working_directory=request.sandbox_home,
-                run_command=("python", "-m", "toolang.cli"),
+                run_command=("python", "-m", "toolang.cli.main"),
                 state=SandboxState(
                     selector=request.selector,
                     runtime_id="sandbox-alice",
@@ -2140,7 +2140,7 @@ def test_assemble_run_input_prefers_thunk_model_over_activation_default(tmp_path
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "alice.too",
-        "agent alice\n\nthunk chat:\n    model = openai/gpt-5\n    Reply directly.\n",
+        "agent alice\n\nthunk chat:\n  model = openai/gpt-5\n\n  Reply directly.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -2163,7 +2163,7 @@ def test_assemble_run_input_omits_model_when_thunk_omits_one(tmp_path: Path) -> 
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "alice.too",
-        "agent alice\n\nthunk chat:\n    Reply directly.\n",
+        "agent alice\n\nthunk chat:\n  Reply directly.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,

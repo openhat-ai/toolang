@@ -150,12 +150,27 @@ def clear() -> None:
 # Markdown is the recommended body format.
 # Service metadata lives in front matter inside the Markdown block.
 #
-# Required front matter fields:
-# - `transport`
-# - `target`
+# Service front matter uses one closed schema per transport.
 #
-# Recommended:
-# - `description`
+# Common required field:
+# - `transport`
+#
+# `transport: http`
+# - `url` (required)
+# - `headers` (optional)
+#
+# `transport: stdio`
+# - `command` (required)
+# - `args` (optional)
+# - `env` (optional)
+# - `cwd` (optional)
+#
+# `env` uses a compact mapping form:
+# - `FOO` forwards `FOO` from the host environment
+# - `BAR=FOO` sets child env `BAR` from host env `FOO`
+#
+# `headers` is a string map.
+# Header values may reference host env vars with `$NAME`.
 #
 # The front matter format is a service-level convention, not a separate Toolang
 # top-level syntax form.
@@ -163,8 +178,9 @@ def clear() -> None:
 service github: ```md
 ---
 transport: http
-target: https://mcp.github.com/mcp
-description: GitHub MCP server
+url: https://mcp.github.com/mcp
+headers:
+  Authorization: Bearer $GITHUB_TOKEN
 ---
 
 Use this service when the agent needs to read or modify GitHub resources.
@@ -173,8 +189,13 @@ Use this service when the agent needs to read or modify GitHub resources.
 service linear: ```md
 ---
 transport: stdio
-target: npx -y mcp-remote xxxx
-description: Linear MCP server
+command: npx
+args:
+  - -y
+  - mcp-remote
+  - https://mcp.linear.app/sse
+env: LINEAR_API_KEY, API_KEY=NOT_THE_SAME_NAME
+cwd: /work/tools
 ---
 
 Use this service when the agent needs to read or modify Linear issues.
@@ -188,8 +209,6 @@ Use this service when the agent needs to read or modify Linear issues.
 # `?` marks an optional parameter.
 #
 # Template variables use `{{name}}`.
-# `{{input}}` is an implicit variable bound to the message body that follows the
-# slash-command line.
 #
 # Prompt expansion rules:
 # - only the first line of the user message may trigger a prompt
@@ -198,15 +217,18 @@ Use this service when the agent needs to read or modify Linear issues.
 # - expansion happens before the model call
 #
 # Example user message:
-# `/summarize style=brief audience="team leads"`
+# `/summarize brief "team leads"`
 #
-# Followed by a blank line and the free-form body text that becomes `{{input}}`.
+# Followed by a blank line and optional free-form body text that is appended
+# after prompt expansion.
 
-prompt summarize(style, audience?): ```md
+prompt summarize: ```md
+---
+params: style, audience?
+---
+
 Summarize the user's request in a {{style}} style.
 Target audience: {{audience}}
-
-{{input}}
 ```
 
 prompt reply-in-chinese: ```md

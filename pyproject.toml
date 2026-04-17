@@ -39,7 +39,7 @@ dependencies = [
     "python-frontmatter>=1.1.0",
     "tomli-w>=1.2.0",
     "tree-sitter>=0.24,<0.26",
-    "tree-sitter-toolang>=0.0.6",
+    "tree-sitter-toolang>=0.0.10",
     "typer>=0.16,<1",
     "uvicorn>=0.35,<1",
     "watchfiles>=1.1,<2",
@@ -52,8 +52,8 @@ Repository = "https://github.com/openhat-ai/toolang"
 Issues = "https://github.com/openhat-ai/toolang/issues"
 
 [project.scripts]
-toolang = "toolang.cli:main"
-too = "toolang.cli:main"
+toolang = "toolang.cli.main:main"
+too = "toolang.cli.main:main"
 
 [project.entry-points."toolang.tool"]
 filesystem = "toolang.tools.filesystem:create_tool"

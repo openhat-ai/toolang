@@ -38,7 +38,8 @@ from .execution.model import (
     ModelProfile,
 )
 from .execution.response import build_channel_response_sink
-from .execution.runner import QueueRunner
+from .execution.execute import execute_run
+from .execution.runner import QueueRunner, RunRequest, RunSubmission, RunOutcome
 from .execution.db import ExecutionStore, execution_db_path
 from .loops import chat, control, hook, inspect, poll, prepare, pulse, reload
 from .state.durable import scan_durable_state
@@ -481,6 +482,47 @@ def up(
     )
 
 
+def invoke(
+    *,
+    toolang_root: Path,
+    agent_name: str,
+    thunk_name: str | None = None,
+    input_text: str | None = None,
+    model: str | None = None,
+    metadata: Mapping[str, object] | None = None,
+    environ: Mapping[str, str],
+) -> RunOutcome:
+    """Execute one thunk once without starting the long-lived runtime."""
+
+    context = _load_runtime_context(
+        toolang_root=toolang_root,
+        agent_name=agent_name,
+        enabled_loops=(),
+        environ=environ,
+        model_selector=model.strip() if isinstance(model, str) and model.strip() else None,
+    )
+    try:
+        return asyncio.run(
+            execute_run(
+                context,
+                RunSubmission(
+                    request=RunRequest(
+                        group="invoke",
+                        origin="invoke",
+                        thunk=input_text or "",
+                        thunk_name=thunk_name,
+                        metadata=dict(metadata or {}),
+                    ),
+                    live=context.live,
+                ),
+                delay_sec=0.0,
+                sleep=asyncio.sleep,
+            )
+        )
+    finally:
+        context.store.close()
+
+
 def resolve_startup(
     *,
     toolang_root: Path,
@@ -609,21 +651,19 @@ def _up_local(
         toolang_root,
         environ=environ,
     )
-    tool_plugin_config = load_tool_plugin_config(
-        toolang_root,
-        agent_name,
-        environ=environ,
-    )
-    channel_bindings = load_channel_bindings(
-        toolang_root,
-        agent_name,
-        environ=environ,
-    )
-    durable = scan_durable_state(toolang_root, agent_name)
-    prepared_state = prepare.build_prepared_state(durable)
-    live = load_live_state(prepared_state, enabled_loops=enabled_loops)
-    store = ExecutionStore(execution_db_path(toolang_root, agent_name))
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    context = _load_runtime_context(
+        toolang_root=toolang_root,
+        agent_name=agent_name,
+        enabled_loops=enabled_loops,
+        environ=environ,
+        model_selector=model_selector,
+        host=host,
+        port=port,
+        cors_allowed_origins=cors_allowed_origins or [],
+    )
+    store = context.store
+    live = context.live
     store.append_update(
         kind="started",
         payload={
@@ -631,40 +671,6 @@ def _up_local(
             "live_fingerprint": live.fingerprint,
         },
         created_at=started_at,
-    )
-
-    runner = QueueRunner()
-    config = UptimeConfig(
-        {
-            "server.host": host,
-            "server.port": port,
-            "loops.enabled": tuple(enabled_loops),
-            "loops.pulse.interval_ms": loop_intervals_ms["pulse"],
-            "loops.poll.interval_ms": loop_intervals_ms["poll"],
-            "loops.prepare.interval_ms": loop_intervals_ms["prepare"],
-            "loops.reload.debounce_ms": DEFAULT_RELOAD_DEBOUNCE_MS,
-            "web.cors_allowed_origins": cors_allowed_origins or [],
-            "models.default_selector": model_selector,
-        }
-    )
-    channel_plugins = {
-        name: create_channel_plugin(binding.plugin, config=binding.config)
-        for name, binding in channel_bindings.items()
-    }
-    context = UptimeContext(
-        root=toolang_root,
-        name=agent_name,
-        live=live,
-        tools=load_tool_plugins(config=tool_plugin_config),
-        model_plugins=load_model_plugins(),
-        model_profiles=load_model_profiles(toolang_root, agent_name),
-        default_models=load_default_models(toolang_root, agent_name),
-        model_environ=environ,
-        channel_bindings=channel_bindings,
-        channel_plugins=channel_plugins,
-        runner=runner,
-        store=store,
-        config=config,
     )
     endpoint = f"http://{public_host}:{port}"
 
@@ -694,7 +700,7 @@ def _up_local(
 
             runner_task = None
             if any(loop in RUN_LOOPS for loop in enabled_loops):
-                runner_task = runner.spawn(context)
+                runner_task = context.runner.spawn(context)
             await asyncio.sleep(0)
             logger.info(
                 "runtime ready agent=%s addr=http://%s:%s loops=%s live=%s",
@@ -709,7 +715,7 @@ def _up_local(
             if not sandbox_child:
                 agents.stop_runtime_state(toolang_root, agent_name)
             stop_signal.set()
-            runner.close()
+            context.runner.close()
             for task in bg_tasks:
                 with suppress(asyncio.CancelledError):
                     await task
@@ -732,6 +738,63 @@ def _up_local(
         log_config=build_uvicorn_log_config(),
     )
     return 0
+
+
+def _load_runtime_context(
+    *,
+    toolang_root: Path,
+    agent_name: str,
+    enabled_loops: tuple[LoopName, ...],
+    environ: Mapping[str, str],
+    model_selector: str | None,
+    host: str = "127.0.0.1",
+    port: int = 0,
+    cors_allowed_origins: Sequence[str] = (),
+) -> UptimeContext:
+    tool_plugin_config = load_tool_plugin_config(
+        toolang_root,
+        agent_name,
+        environ=environ,
+    )
+    channel_bindings = load_channel_bindings(
+        toolang_root,
+        agent_name,
+        environ=environ,
+    )
+    durable = scan_durable_state(toolang_root, agent_name)
+    prepared_state = prepare.build_prepared_state(durable)
+    live = load_live_state(prepared_state, enabled_loops=enabled_loops)
+    config = UptimeConfig(
+        {
+            "server.host": host,
+            "server.port": port,
+            "loops.enabled": tuple(enabled_loops),
+            "loops.pulse.interval_ms": DEFAULT_LOOP_INTERVAL_MS["pulse"],
+            "loops.poll.interval_ms": DEFAULT_LOOP_INTERVAL_MS["poll"],
+            "loops.prepare.interval_ms": DEFAULT_LOOP_INTERVAL_MS["prepare"],
+            "loops.reload.debounce_ms": DEFAULT_RELOAD_DEBOUNCE_MS,
+            "web.cors_allowed_origins": list(cors_allowed_origins),
+            "models.default_selector": model_selector,
+        }
+    )
+    return UptimeContext(
+        root=toolang_root,
+        name=agent_name,
+        live=live,
+        tools=load_tool_plugins(config=tool_plugin_config),
+        model_plugins=load_model_plugins(),
+        model_profiles=load_model_profiles(toolang_root, agent_name),
+        default_models=load_default_models(toolang_root, agent_name),
+        model_environ=environ,
+        channel_bindings=channel_bindings,
+        channel_plugins={
+            name: create_channel_plugin(binding.plugin, config=binding.config)
+            for name, binding in channel_bindings.items()
+        },
+        runner=QueueRunner(),
+        store=ExecutionStore(execution_db_path(toolang_root, agent_name)),
+        config=config,
+    )
 
 
 def _up_managed_sandbox(

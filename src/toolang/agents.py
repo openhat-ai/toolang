@@ -235,6 +235,30 @@ def write_agent_program(toolang_root: Path, agent_name: str, source_text: str) -
     return program_path
 
 
+def roaming_root(source_path: Path) -> Path:
+    """Return the fixed local root for one roaming source program."""
+
+    return source_path.resolve().parent / ".toolang"
+
+
+def materialize_roaming_program(source_path: Path) -> tuple[Path, str]:
+    """Materialize one local .too source into its fixed roaming root."""
+
+    resolved_source = source_path.expanduser().resolve()
+    if not resolved_source.is_file():
+        raise FileNotFoundError(f"agent program not found: {resolved_source}")
+    if resolved_source.suffix != ".too":
+        raise ValueError(f"agent program must point to a .too file: {resolved_source}")
+    toolang_root = roaming_root(resolved_source)
+    agent_name = resolved_source.stem
+    home = agent_home(toolang_root, agent_name)
+    home.mkdir(parents=True, exist_ok=True)
+    program_path = agent_program_path(toolang_root, agent_name)
+    source_text = resolved_source.read_text(encoding="utf-8")
+    program_path.write_text(_rewrite_program_source(source_text, agent_name), encoding="utf-8")
+    return toolang_root, agent_name
+
+
 @contextmanager
 def materialized_run_target(
     toolang_root: Path,

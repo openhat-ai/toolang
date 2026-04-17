@@ -10,9 +10,9 @@ from re import Match
 from typing import cast
 
 from ..agents import agent_program_path
-from toolang.base.error import ToolangError
-from ..program import DeclBlock, Program, Thunk, parse
+from ..program import DeclBlock, ParamDecl, Program, Thunk, parse
 from .durable import DurableState
+from toolang.base.error import ToolangError
 
 DEFAULT_MODEL = "gpt-5"
 DEFAULT_THUNK_BODY = "Respond helpfully, clearly, and directly to the user's message."
@@ -26,7 +26,8 @@ class ProgramThunk:
     """One prepared thunk definition."""
 
     name: str
-    input_name: str | None
+    accepts_message: bool
+    params: tuple[ParamDecl, ...]
     returns: str | None
     directives: tuple[str, ...]
     body: str
@@ -34,7 +35,8 @@ class ProgramThunk:
     def to_data(self) -> dict[str, object]:
         return {
             "name": self.name,
-            "input_name": self.input_name,
+            "accepts_message": self.accepts_message,
+            "params": [_param_to_data(item) for item in self.params],
             "returns": self.returns,
             "directives": list(self.directives),
             "body": self.body,
@@ -44,12 +46,17 @@ class ProgramThunk:
     def from_data(cls, data: dict[str, object]) -> "ProgramThunk":
         raw_directives = data.get("directives", [])
         directives = raw_directives if isinstance(raw_directives, list) else []
+        raw_params = data.get("params", [])
+        params = raw_params if isinstance(raw_params, list) else []
         return cls(
             name=_canonical_thunk_name(
                 str(data["name"]) if data.get("name") is not None else None
             ),
-            input_name=(
-                str(data["input_name"]) if data.get("input_name") is not None else None
+            accepts_message=bool(data.get("accepts_message", False)),
+            params=tuple(
+                _param_from_data(cast(dict[str, object], item))
+                for item in params
+                if isinstance(item, dict)
             ),
             returns=str(data["returns"]) if data.get("returns") is not None else None,
             directives=tuple(str(item) for item in directives),
@@ -180,28 +187,27 @@ class LiveProgram:
         prompt_name = match.group(1)
         prompt_decl = self.parsed.get_decl("prompt", prompt_name)
         if prompt_decl is None:
-            raise ToolangError(f"Prompt template not found: {prompt_name}")
+            raise ToolangError(f"Prompt not found: {prompt_name}")
 
-        args = _parse_prompt_args(
+        bindings = _parse_prompt_args(
             match.group(2) or "",
-            known={param.name for param in prompt_decl.params},
+            params=prompt_decl.params,
             prompt_name=prompt_name,
         )
-        body_lines = lines[1:]
-        if body_lines and not body_lines[0].strip():
-            body_lines = body_lines[1:]
-        bindings = {"input": "\n".join(body_lines).strip("\n")}
+        rendered = TEMPLATE_VAR_RE.sub(
+            lambda item: _render_template_var(item, bindings),
+            prompt_decl.body,
+        ).strip()
 
-        for param in prompt_decl.params:
-            if param.name in args:
-                bindings[param.name] = args[param.name]
-            elif param.optional:
-                bindings[param.name] = ""
-            else:
-                raise ToolangError(
-                    f"Missing required prompt argument {param.name!r} for /{prompt_name}."
-                )
-        return TEMPLATE_VAR_RE.sub(lambda item: _render_template_var(item, bindings), prompt_decl.body)
+        extra_lines = lines[1:]
+        if extra_lines and not extra_lines[0].strip():
+            extra_lines = extra_lines[1:]
+        extra_text = "\n".join(extra_lines).strip("\n")
+        if not extra_text:
+            return rendered
+        if not rendered:
+            return extra_text
+        return f"{rendered}\n\n{extra_text}"
 
     def to_snapshot(self) -> dict[str, object]:
         return self.prepared.to_snapshot()
@@ -262,9 +268,11 @@ def _prepared_thunks(program: Program) -> list[ProgramThunk]:
 
 
 def _prepared_thunk(thunk: Thunk) -> ProgramThunk:
+    accepts_message, named_params = _canonical_thunk_params(thunk)
     return ProgramThunk(
         name=_canonical_thunk_name(thunk.name),
-        input_name=thunk.input_name,
+        accepts_message=accepts_message,
+        params=tuple(named_params),
         returns=thunk.returns,
         directives=tuple(thunk.directives),
         body=thunk.body,
@@ -274,32 +282,71 @@ def _prepared_thunk(thunk: Thunk) -> ProgramThunk:
 def _default_thunk() -> ProgramThunk:
     return ProgramThunk(
         name="main",
-        input_name="input",
+        accepts_message=True,
+        params=(),
         returns=None,
         directives=(),
         body=DEFAULT_THUNK_BODY,
     )
 
 
-def _parse_prompt_args(raw_args: str, *, known: set[str], prompt_name: str) -> dict[str, str]:
-    if not raw_args.strip():
-        return {}
-    try:
-        tokens = shlex.split(raw_args)
-    except ValueError as exc:
-        raise ToolangError(f"Invalid prompt argument syntax: {exc}") from exc
+def _canonical_thunk_params(thunk: Thunk) -> tuple[bool, list[ParamDecl]]:
+    if thunk.params_omitted:
+        return True, []
+    if not thunk.params:
+        return False, []
+    if thunk.params[0].message:
+        return True, [item for item in thunk.params[1:]]
+    return False, list(thunk.params)
 
-    args: dict[str, str] = {}
+
+def _parse_prompt_args(
+    raw_args: str,
+    *,
+    params: list[ParamDecl],
+    prompt_name: str,
+) -> dict[str, str]:
+    if not raw_args.strip():
+        tokens: list[str] = []
+    else:
+        try:
+            tokens = shlex.split(raw_args)
+        except ValueError as exc:
+            raise ToolangError(f"Invalid prompt argument syntax: {exc}") from exc
+
+    bindings: dict[str, str] = {}
+    positionals: list[str] = []
+    known = {param.name for param in params}
     for token in tokens:
-        if "=" not in token:
-            raise ToolangError(f"Prompt argument must use key=value syntax: {token!r}")
-        name, value = token.split("=", 1)
-        if name not in known:
-            raise ToolangError(f"Unknown prompt argument {name!r} for /{prompt_name}.")
-        if name in args:
-            raise ToolangError(f"Duplicate prompt argument {name!r} for /{prompt_name}.")
-        args[name] = value
-    return args
+        if "=" in token:
+            candidate, value = token.split("=", 1)
+            if candidate in known:
+                if candidate in bindings:
+                    raise ToolangError(
+                        f"Duplicate prompt argument {candidate!r} for /{prompt_name}."
+                    )
+                bindings[candidate] = value
+                continue
+        positionals.append(token)
+
+    positional_index = 0
+    for param in params:
+        if param.name in bindings:
+            continue
+        if positional_index < len(positionals):
+            bindings[param.name] = positionals[positional_index]
+            positional_index += 1
+            continue
+        if param.optional:
+            bindings[param.name] = ""
+            continue
+        raise ToolangError(
+            f"Missing required prompt argument {param.name!r} for /{prompt_name}."
+        )
+
+    if positional_index < len(positionals):
+        raise ToolangError(f"Too many prompt arguments for /{prompt_name}.")
+    return bindings
 
 
 def _render_template_var(match: Match[str], bindings: dict[str, str]) -> str:
@@ -310,14 +357,28 @@ def _render_template_var(match: Match[str], bindings: dict[str, str]) -> str:
 
 
 def _validate_program(program: Program) -> None:
+    seen_decl_names: set[tuple[str, str]] = set()
+    seen_struct_names: set[str] = set()
     seen_thunk_names: set[str] = set()
+
     for decl in program.declarations:
+        decl_key = (decl.kind, decl.name)
+        if decl_key in seen_decl_names:
+            raise ToolangError(f"Duplicate {decl.kind} name {decl.name!r}.")
+        seen_decl_names.add(decl_key)
         _validate_decl_params(decl)
+
+    for struct in program.structs:
+        if struct.name in seen_struct_names:
+            raise ToolangError(f"Duplicate struct name {struct.name!r}.")
+        seen_struct_names.add(struct.name)
+
     for thunk in program.thunks:
         thunk_name = _canonical_thunk_name(thunk.name)
         if thunk_name in seen_thunk_names:
             raise ToolangError(f"Duplicate thunk name {thunk_name!r}.")
         seen_thunk_names.add(thunk_name)
+        _validate_thunk_params(thunk, thunk_name=thunk_name)
         if thunk.body.strip():
             continue
         raise ToolangError(f"Thunk {thunk_name!r} is missing body text.")
@@ -326,15 +387,39 @@ def _validate_program(program: Program) -> None:
 def _validate_decl_params(decl: DeclBlock) -> None:
     seen: set[str] = set()
     for param in decl.params:
-        if param.name == "input":
-            raise ToolangError(
-                f"Prompt parameter name 'input' is reserved ({decl.kind} {decl.name})."
-            )
         if param.name in seen:
             raise ToolangError(
                 f"Duplicate prompt parameter {param.name!r} in {decl.kind} {decl.name}."
             )
         seen.add(param.name)
+
+
+def _validate_thunk_params(thunk: Thunk, *, thunk_name: str) -> None:
+    seen: set[str] = set()
+    for param in thunk.params:
+        if param.message:
+            continue
+        if param.name in seen:
+            raise ToolangError(f"Duplicate thunk parameter {param.name!r} in {thunk_name!r}.")
+        seen.add(param.name)
+
+
+def _param_to_data(param: ParamDecl) -> dict[str, object]:
+    return {
+        "name": param.name,
+        "optional": param.optional,
+        "type_name": param.type_name,
+        "message": param.message,
+    }
+
+
+def _param_from_data(data: dict[str, object]) -> ParamDecl:
+    return ParamDecl(
+        name=str(data["name"]),
+        optional=bool(data.get("optional", False)),
+        type_name=str(data["type_name"]) if data.get("type_name") is not None else None,
+        message=bool(data.get("message", False)),
+    )
 
 
 def _sha256_text(value: str) -> str:
