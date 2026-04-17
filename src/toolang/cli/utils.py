@@ -115,6 +115,7 @@ class _RuntimeAgentCommand(TyperCommand):
     """Render one required agent argument before the command name in help."""
 
     usage_agent_metavar = "AGENT"
+    argument_help = "Agent name."
 
     def _real_params(self, ctx: click.Context) -> list[click.Parameter]:
         return TyperCommand.get_params(self, ctx)
@@ -129,7 +130,7 @@ class _RuntimeAgentCommand(TyperCommand):
             required=True,
             default=None,
             expose_value=False,
-            help="Agent name.",
+            help=self.argument_help,
         )
 
     def get_params(self, ctx: click.Context) -> list[click.Parameter]:
@@ -147,6 +148,17 @@ class _RuntimeAgentCommand(TyperCommand):
         for param in self._visible_real_params(ctx):
             pieces.extend(param.get_usage_pieces(ctx))
         formatter.write_usage(prefix_path, " ".join(pieces))
+
+
+class _RunAgentCommand(_RuntimeAgentCommand):
+    argument_help = "Agent selector. Supports local names, shorthand refs, and remote URLs."
+
+    def format_usage(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        pieces = [self.options_metavar] if self.options_metavar else []
+        for param in self._visible_real_params(ctx):
+            pieces.extend(param.get_usage_pieces(ctx))
+        pieces.append(self.usage_agent_metavar)
+        formatter.write_usage(ctx.command_path, " ".join(pieces))
 
 
 class _OptionalTemplateArgumentCommand(TyperCommand):

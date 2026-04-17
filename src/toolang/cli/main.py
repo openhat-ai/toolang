@@ -24,6 +24,7 @@ from .utils import (
     _AGENT_AVATAR,
     _OptionalTemplateArgumentCommand,
     _RequiredPrefixAgentCommand,
+    _RunAgentCommand,
     _RuntimeAgentCommand,
     _append_agent_update,
     _context_root,
@@ -182,22 +183,23 @@ def list_agents(ctx: typer.Context) -> None:
     _echo_table(("AGENT", "STATUS", "SANDBOX", "API", "WEBUI"), rows)
 
 
-@app.command("info", help="Show agent info.", no_args_is_help=True)
+@app.command("info", help="Show agent info.", no_args_is_help=True, cls=_RuntimeAgentCommand)
 def info_agent(
     ctx: typer.Context,
-    agent: Annotated[str, typer.Argument(help="Agent name")],
+    agent: str | None = typer.Argument(None, help="Agent name", hidden=True),
 ) -> None:
+    agent_name = _required_runtime_agent(ctx, agent)
     root = _context_root(ctx)
     status = _wrap_user_error(
         agents.get_agent_status,
         root,
-        agent,
+        agent_name,
         ui_base_url=_ui_base_url(),
     )
     if status is None:
-        raise click.ClickException(f"agent not found: {agent}")
-    runtime_state = agents.load_runtime_state(root, agent) or {}
-    created_at = _created_time(agents.agent_home(root, agent))
+        raise click.ClickException(f"agent not found: {agent_name}")
+    runtime_state = agents.load_runtime_state(root, agent_name) or {}
+    created_at = _created_time(agents.agent_home(root, agent_name))
     started_at = _runtime_value(runtime_state.get("started_at"))
     updated_at = _runtime_value(runtime_state.get("updated_at"))
     status_value = status.status
@@ -206,14 +208,14 @@ def info_agent(
         if online is not None:
             status_value = f"{status.status} ({online})"
     rows = [
-        ("Home", str(agents.agent_home(root, agent))),
-        ("Caps", _info_caps_summary(root, agent)),
-        ("Jobs", _info_jobs_summary(root, agent)),
+        ("Home", str(agents.agent_home(root, agent_name))),
+        ("Caps", _info_caps_summary(root, agent_name)),
+        ("Jobs", _info_jobs_summary(root, agent_name)),
         ("Status", status_value),
     ]
     if status.status == "stopped":
         rows.append(("Created", created_at))
-        _echo_pairs_table(rows, avatar=_AGENT_AVATAR, title=agent.upper())
+        _echo_pairs_table(rows, avatar=_AGENT_AVATAR, title=agent_name.upper())
         return
     if status.sandbox:
         rows.append(("Sandbox", status.sandbox))
@@ -236,14 +238,14 @@ def info_agent(
         rows.append(("Updated", updated_at))
     if status.status != "running" and message != "-":
         rows.append(("Message", message))
-    _echo_pairs_table(rows, avatar=_AGENT_AVATAR, title=agent.upper())
+    _echo_pairs_table(rows, avatar=_AGENT_AVATAR, title=agent_name.upper())
 
 
 @app.command(
     "run",
     help="Run an agent in the foreground.",
     no_args_is_help=True,
-    cls=_RuntimeAgentCommand,
+    cls=_RunAgentCommand,
 )
 def run_agent(
     ctx: typer.Context,

@@ -1252,9 +1252,10 @@ def test_cli_run_requires_agent(tmp_path: Path) -> None:
 
     assert result.exit_code in {0, 2}
     assert "Usage:" in result.stdout
-    assert "AGENT run [OPTIONS]" in result.stdout
+    assert "run [OPTIONS] AGENT" in result.stdout
     assert "agent      TEXT" in result.stdout
-    assert "Agent name." in result.stdout
+    assert "Agent selector." in result.stdout
+    assert "remote URLs" in result.stdout
 
 
 def test_cli_run_loads_root_and_agent_env_with_agent_override(tmp_path: Path, monkeypatch) -> None:
@@ -2190,9 +2191,10 @@ def test_cli_run_help_mentions_how_to_select_agent() -> None:
 
     assert result.exit_code == 0
     assert "Usage:" in result.stdout
-    assert "AGENT run [OPTIONS]" in result.stdout
+    assert "run [OPTIONS] AGENT" in result.stdout
     assert "agent      TEXT" in result.stdout
-    assert "Agent name." in result.stdout
+    assert "Agent selector." in result.stdout
+    assert "remote URLs" in result.stdout
 
 
 def test_cli_info_help_mentions_required_agent() -> None:
@@ -2200,7 +2202,7 @@ def test_cli_info_help_mentions_required_agent() -> None:
 
     assert result.exit_code == 0
     assert "Usage:" in result.stdout
-    assert "info [OPTIONS] AGENT" in result.stdout
+    assert "AGENT info [OPTIONS]" in result.stdout
     assert "agent      TEXT" in result.stdout
     assert "Agent name" in result.stdout
 
