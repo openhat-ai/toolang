@@ -85,6 +85,59 @@ def resolve_model(
     )
 
 
+def select_model_selectors(
+    context: SupportsModelResolution,
+    *,
+    thunk_selectors: Sequence[str] = (),
+    activation_selectors: Sequence[str] = (),
+    default_selector: str | None = None,
+) -> tuple[str, ...]:
+    """Return the effective ordered model selectors for one run."""
+
+    resolved_thunk = _resolve_selector_bindings(
+        thunk_selectors,
+        plugins=context.model_plugins,
+        profiles=context.model_profiles,
+        environ=context.model_environ,
+    )
+    resolved_activation = _resolve_selector_bindings(
+        activation_selectors,
+        plugins=context.model_plugins,
+        profiles=context.model_profiles,
+        environ=context.model_environ,
+    )
+
+    if resolved_thunk and resolved_activation:
+        thunk_ids = {_binding_identity(binding) for _, binding in resolved_thunk}
+        selected = tuple(
+            selector
+            for selector, binding in resolved_activation
+            if _binding_identity(binding) in thunk_ids
+        )
+        if selected:
+            return selected
+        raise ToolangError("no compatible model between thunk model directive and activation --model options")
+
+    if resolved_activation:
+        return tuple(selector for selector, _binding in resolved_activation)
+
+    if resolved_thunk:
+        return tuple(selector for selector, _binding in resolved_thunk)
+
+    defaults = ((default_selector,) if default_selector and default_selector.strip() else tuple(context.default_models)) or (
+        DEFAULT_MODEL_SELECTOR,
+    )
+    resolved_defaults = _resolve_selector_bindings(
+        defaults,
+        plugins=context.model_plugins,
+        profiles=context.model_profiles,
+        environ=context.model_environ,
+    )
+    if resolved_defaults:
+        return tuple(selector for selector, _binding in resolved_defaults)
+    raise ToolangError("no default model selector is available for this activation")
+
+
 def _resolve_allowed_bindings(
     selectors: Sequence[str] | None,
     *,
@@ -103,6 +156,34 @@ def _resolve_allowed_bindings(
                 plugins=plugins,
                 profiles=profiles,
                 environ=environ,
+            )
+        )
+    return tuple(bindings)
+
+
+def _resolve_selector_bindings(
+    selectors: Sequence[str] | None,
+    *,
+    plugins: Mapping[str, ModelPlugin],
+    profiles: Mapping[str, ModelProfile],
+    environ: Mapping[str, str],
+) -> tuple[tuple[str, ModelBinding], ...]:
+    bindings: list[tuple[str, ModelBinding]] = []
+    seen: set[str] = set()
+    for raw in selectors or ():
+        selector = raw.strip()
+        if not selector or selector in seen:
+            continue
+        seen.add(selector)
+        bindings.append(
+            (
+                selector,
+                _resolve_one(
+                    selector,
+                    plugins=plugins,
+                    profiles=profiles,
+                    environ=environ,
+                ),
             )
         )
     return tuple(bindings)

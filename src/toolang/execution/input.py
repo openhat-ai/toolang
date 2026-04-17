@@ -22,6 +22,7 @@ from .snapshot import (
     SnapshotTask,
     SnapshotTaskServices,
 )
+from .model import select_model_selectors
 from .records import RunStrategy
 from .db import utc_now
 
@@ -93,7 +94,15 @@ def assemble_run_input(context: UptimeContext, run: RunBinding) -> RunInput:
     input_text = program.expand_input(run.input_text) if run.input_text else ""
     history_messages = context.store.recent_conversation_messages(thread_id=run.thread_id, limit=19)
     tools = context.tools
-    requested_model = _run_requested_model(run, thunk)
+    activation_model_selectors = _run_requested_model_selectors(run)
+    thunk_model_selectors = thunk.model_selectors()
+    effective_model_selectors = select_model_selectors(
+        context,
+        thunk_selectors=thunk_model_selectors,
+        activation_selectors=activation_model_selectors,
+        default_selector=_activation_default_model_selector(context),
+    )
+    requested_model = effective_model_selectors[0]
     snapshot = _runtime_snapshot(context, run, program, thunk, tools)
     instructions = _instructions(snapshot, program, thunk)
     user_message = (
@@ -120,18 +129,25 @@ def assemble_run_input(context: UptimeContext, run: RunBinding) -> RunInput:
             "input_text": input_text,
             "model": requested_model,
             "activation_default_model": _activation_default_model_selector(context),
-            "activation_allowed_models": _activation_allowed_model_selectors(context),
+            "activation_model_selectors": activation_model_selectors,
+            "thunk_model_selectors": thunk_model_selectors,
+            "effective_model_selectors": effective_model_selectors,
             "tool_names": sorted(tools),
         },
     )
 
 
-def _run_requested_model(run: RunBinding, thunk: ProgramThunk) -> str | None:
+def _run_requested_model_selectors(run: RunBinding) -> tuple[str, ...]:
+    raw_models = run.metadata.get("models")
+    if isinstance(raw_models, tuple):
+        return tuple(item for item in raw_models if isinstance(item, str) and item.strip())
+    if isinstance(raw_models, list):
+        return tuple(item for item in raw_models if isinstance(item, str) and item.strip())
     for key in ("model", "model_selector"):
         value = run.metadata.get(key)
         if isinstance(value, str) and value.strip():
-            return value.strip()
-    return thunk.model_selector()
+            return (value.strip(),)
+    return ()
 
 
 def _activation_default_model_selector(context: UptimeContext) -> str | None:

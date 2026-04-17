@@ -64,17 +64,19 @@ class ProgramThunk:
         )
 
     def model_selector(self) -> str | None:
+        selectors = self.model_selectors()
+        return selectors[0] if selectors else None
+
+    def model_selectors(self) -> tuple[str, ...]:
         for directive in self.directives:
             match = re.match(r"^model\s*=\s*(.*)$", directive)
             if not match:
                 continue
             raw = match.group(1).strip()
-            if not raw or raw == "default":
-                return None
-            for candidate in [item.strip() for item in raw.split(",")]:
-                if candidate and candidate != "default":
-                    return candidate
-        return None
+            if not raw:
+                return ()
+            return tuple(candidate for candidate in (item.strip() for item in raw.split(",")) if candidate)
+        return ()
 
     def model(self, *, override: str | None = None) -> str:
         if override:
@@ -379,6 +381,7 @@ def _validate_program(program: Program) -> None:
             raise ToolangError(f"Duplicate thunk name {thunk_name!r}.")
         seen_thunk_names.add(thunk_name)
         _validate_thunk_params(thunk, thunk_name=thunk_name)
+        _validate_thunk_directives(thunk, thunk_name=thunk_name)
         if thunk.body.strip():
             continue
         raise ToolangError(f"Thunk {thunk_name!r} is missing body text.")
@@ -402,6 +405,25 @@ def _validate_thunk_params(thunk: Thunk, *, thunk_name: str) -> None:
         if param.name in seen:
             raise ToolangError(f"Duplicate thunk parameter {param.name!r} in {thunk_name!r}.")
         seen.add(param.name)
+
+
+def _validate_thunk_directives(thunk: Thunk, *, thunk_name: str) -> None:
+    model_directives = [directive for directive in thunk.directives if re.match(r"^model\b", directive)]
+    if len(model_directives) > 1:
+        raise ToolangError(f"Thunk {thunk_name!r} may declare at most one model directive.")
+    if not model_directives:
+        return
+    directive = model_directives[0]
+    match = re.match(r"^model\s*([+\-]?=)\s*(.*)$", directive)
+    if not match:
+        raise ToolangError(f"Thunk {thunk_name!r} has an invalid model directive.")
+    operator = match.group(1)
+    raw_values = match.group(2).strip()
+    if operator != "=":
+        raise ToolangError(f"Thunk {thunk_name!r} must use 'model = ...'.")
+    selectors = [item.strip() for item in raw_values.split(",") if item.strip()]
+    if not selectors:
+        raise ToolangError(f"Thunk {thunk_name!r} must declare at least one model selector.")
 
 
 def _param_to_data(param: ParamDecl) -> dict[str, object]:

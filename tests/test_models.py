@@ -19,7 +19,7 @@ from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.base.error import ToolangError
 from toolang.execution.input import RunBinding, RunInput
 from toolang.execution.snapshot import RunSnapshot, SnapshotAgent, SnapshotProgram, SnapshotRun
-from toolang.execution.model import resolve_model
+from toolang.execution.model import resolve_model, select_model_selectors
 from toolang.execution.context import RunContext
 from toolang.models._openai_compat import encode_message, response_payload
 from toolang.strategies import load_run_strategy
@@ -222,6 +222,30 @@ def test_model_resolution_rejects_thunk_selector_outside_allowed_set() -> None:
             default_selector="gpt-5@openrouter",
             allowed_selectors=("gpt-5@openrouter",),
         )
+
+
+def test_select_model_selectors_preserves_activation_order_for_intersection() -> None:
+    plugin = _FakeModelPlugin(
+        name="openrouter",
+        resolved={
+            "gpt-5": ResolvedModel(ref="openai/gpt-5", plugin="openrouter", model="gpt-5"),
+            "o3": ResolvedModel(ref="openai/o3", plugin="openrouter", model="o3"),
+        },
+    )
+    context = SimpleNamespace(
+        model_plugins={"openrouter": plugin},
+        model_profiles={},
+        default_models=(),
+        model_environ={},
+    )
+
+    selectors = select_model_selectors(
+        context,
+        thunk_selectors=("gpt-5@openrouter", "o3@openrouter"),
+        activation_selectors=("o3@openrouter", "gpt-5@openrouter"),
+    )
+
+    assert selectors == ("o3@openrouter", "gpt-5@openrouter")
 
 
 def test_execute_run_input_reuses_plugin_state_for_followups() -> None:

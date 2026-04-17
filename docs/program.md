@@ -207,7 +207,7 @@ Recommended directives are:
 
 | Directive | Meaning |
 | --- | --- |
-| `model = ...` | Select one effective model |
+| `model = ...` | Declare one ordered model preference list |
 | `psyches = ...` | Select one effective psyche set |
 | `skills = ...` | Select one effective skill set |
 | `services = ...` | Select one effective service set |
@@ -230,11 +230,11 @@ thunk review(input, path?: path) -> ReviewResult
 
 ### Scalar and Set Directives
 
-`model` is scalar. Capability directives are set-valued.
+`model` is one ordered CSV list and uses only `=`. Capability directives are set-valued.
 
 | Form | Meaning |
 | --- | --- |
-| `model = gpt-5` | Set one exact model |
+| `model = gpt-5, o3` | Declare one ordered model preference list |
 | `skills = review, patch` | Use one exact capability set |
 | `skills += review, patch` | Add items to the inherited set |
 | `skills -= review, patch` | Remove items from the inherited set |
@@ -244,9 +244,11 @@ Rules:
 | Rule | Meaning |
 | --- | --- |
 | no directive | inherit activation defaults |
-| `=` | replace with the declared exact set |
-| `+=` | add to the inherited set |
-| `-=` | remove from the inherited set |
+| `=` | replace with the declared ordered list |
+| ordered CSV | preserve declaration order |
+| no `default` keyword | `default` is treated like any other selector text |
+| `+=` | add to the inherited set for capability directives |
+| `-=` | remove from the inherited set for capability directives |
 | names only | directives do not resolve shorthand or refs |
 
 

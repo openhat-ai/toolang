@@ -2159,7 +2159,7 @@ def test_assemble_run_input_prefers_thunk_model_over_activation_default(tmp_path
     assert bundle.debug["activation_default_model"] == "qwen/qwen3@ollama"
 
 
-def test_assemble_run_input_omits_model_when_thunk_omits_one(tmp_path: Path) -> None:
+def test_assemble_run_input_uses_activation_default_when_thunk_omits_one(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "alice.too",
@@ -2178,7 +2178,7 @@ def test_assemble_run_input_omits_model_when_thunk_omits_one(tmp_path: Path) -> 
 
     bundle = assemble_run_input(context, bound)
 
-    assert bundle.model is None
+    assert bundle.model == "qwen/qwen3@ollama"
     assert bundle.debug["activation_default_model"] == "qwen/qwen3@ollama"
 
 
