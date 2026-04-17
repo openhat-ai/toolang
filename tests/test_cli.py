@@ -892,6 +892,11 @@ def test_cli_list_reads_web_config_without_validating_experiments_caps(tmp_path:
 def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
+    (toolang_root / "agents" / "alice" / "config.toml").write_text(
+        '[models]\n'
+        'default = ["o3", "gpt-5"]\n',
+        encoding="utf-8",
+    )
     monkeypatch.setattr(
         cli,
         "_utc_now",
@@ -959,6 +964,8 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
     assert "Jobs" in result.stdout
     assert "1 chore" in result.stdout
     assert "1 task" in result.stdout
+    assert "Models" in result.stdout
+    assert "o3, gpt-5" in result.stdout
     assert "Status" in result.stdout
     assert "running (up a day)" in result.stdout
     assert "Sandbox" in result.stdout
@@ -1056,6 +1063,71 @@ def test_cli_info_for_running_docker_sandbox_shows_container_pid(tmp_path: Path,
     assert "PID" in result.stdout
     assert "abcdef123456:4321" in result.stdout
     assert result.stdout.index("PID") < result.stdout.index("API")
+
+
+def test_cli_info_prefers_runtime_models_for_active_agent(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    (toolang_root / "agents" / "alice" / "config.toml").write_text(
+        '[models]\n'
+        'default = ["o3", "gpt-5"]\n',
+        encoding="utf-8",
+    )
+    agents.write_runtime_state(
+        toolang_root,
+        "alice",
+        endpoint="http://127.0.0.1:8765",
+        started_at="2026-04-07T11:00:00Z",
+        pid=os.getpid(),
+        loops=("chat",),
+        models=("claude", "gpt-5"),
+        status="running",
+    )
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(toolang_root), "info", "alice"],
+        env={},
+    )
+
+    assert result.exit_code == 0
+    assert "Models" in result.stdout
+    assert "claude, gpt-5" in result.stdout
+
+
+def test_cli_plugin_list_shows_installed_plugins(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli.agent_up,
+        "load_model_plugins",
+        lambda: {"openai": object(), "ollama": object()},
+    )
+
+    def fake_list_plugin_names(*, group: str) -> list[str]:
+        names = {
+            "toolang.tool": ["filesystem", "shell"],
+            "toolang.channel": ["telegram"],
+            "toolang.sandbox": ["docker", "none"],
+        }
+        return list(names[group])
+
+    monkeypatch.setattr(cli.agent_up, "list_plugin_names", fake_list_plugin_names)
+
+    result = runner.invoke(cli.app, ["plugin", "list"])
+
+    assert result.exit_code == 0
+    assert "FAMILY" in result.stdout
+    assert "NAME" in result.stdout
+    assert "model" in result.stdout
+    assert "openai" in result.stdout
+    assert "ollama" in result.stdout
+    assert "tool" in result.stdout
+    assert "filesystem" in result.stdout
+    assert "shell" in result.stdout
+    assert "channel" in result.stdout
+    assert "telegram" in result.stdout
+    assert "sandbox" in result.stdout
+    assert "docker" in result.stdout
+    assert "none" in result.stdout
 
 
 def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:

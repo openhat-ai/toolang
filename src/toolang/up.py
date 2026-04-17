@@ -687,6 +687,7 @@ def _up_local(
                     started_at=started_at,
                     pid=os.getpid(),
                     loops=enabled_loops,
+                    models=model_selectors,
                 )
             bg_tasks: list[asyncio.Task[None]] = []
             if "pulse" in enabled_loops:
@@ -839,6 +840,7 @@ def _up_managed_sandbox(
         pid=os.getpid(),
         sandbox=initial_sandbox_state,
         loops=enabled_loops,
+        models=model_selectors,
         status="preparing",
     )
     raw_sandbox_root = sandbox_config.get("sandbox_root")
@@ -885,6 +887,7 @@ def _up_managed_sandbox(
             pid=os.getpid(),
             sandbox=plan.state.to_data() if plan.state is not None else initial_sandbox_state,
             loops=enabled_loops,
+            models=model_selectors,
             status="starting",
         )
         start = plugin.start(plan)
@@ -911,6 +914,7 @@ def _up_managed_sandbox(
             pid=os.getpid(),
             sandbox=failed_sandbox_state,
             loops=enabled_loops,
+            models=model_selectors,
             status="failed",
             message=str(exc),
         )
@@ -923,6 +927,7 @@ def _up_managed_sandbox(
         pid=None,
         sandbox=start.state.to_data(),
         loops=enabled_loops,
+        models=model_selectors,
         status="running",
     )
     logger.info(
