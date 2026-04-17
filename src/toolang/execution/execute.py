@@ -58,6 +58,7 @@ async def execute_run(
             context,
             selector=run_input.model,
             default_selector=_activation_default_model_selector(context),
+            allowed_selectors=_activation_allowed_model_selectors(context),
         )
         strategy = load_run_strategy(bound.run_strategy)
         run_context = RunContext(
@@ -126,6 +127,15 @@ def _activation_default_model_selector(context: UptimeContext) -> str | None:
         return None
     selector = value.strip()
     return selector or None
+
+
+def _activation_allowed_model_selectors(context: UptimeContext) -> tuple[str, ...]:
+    value = context.config.get("models.allowed_selectors")
+    if isinstance(value, tuple):
+        return tuple(item for item in value if isinstance(item, str) and item.strip())
+    if isinstance(value, list):
+        return tuple(item for item in value if isinstance(item, str) and item.strip())
+    return ()
 
 
 def _event_handler(

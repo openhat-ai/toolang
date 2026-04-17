@@ -148,6 +148,82 @@ def test_model_resolution_rejects_ambiguous_selector() -> None:
         resolve_model(context, selector="openai/gpt-5")
 
 
+def test_model_resolution_uses_first_allowed_selector_as_default() -> None:
+    plugin = _FakeModelPlugin(
+        name="openrouter",
+        resolved={
+            "gpt-5": ResolvedModel(ref="openai/gpt-5", plugin="openrouter", model="gpt-5"),
+            "o3": ResolvedModel(ref="openai/o3", plugin="openrouter", model="o3"),
+        },
+    )
+    context = SimpleNamespace(
+        model_plugins={"openrouter": plugin},
+        model_profiles={},
+        default_models=(),
+        model_environ={},
+    )
+
+    resolved = resolve_model(
+        context,
+        selector=None,
+        default_selector="gpt-5@openrouter",
+        allowed_selectors=("gpt-5@openrouter", "o3@openrouter"),
+    )
+
+    assert resolved.target.ref == "openai/gpt-5"
+    assert resolved.target.model == "gpt-5"
+
+
+def test_model_resolution_allows_thunk_selector_within_allowed_set() -> None:
+    plugin = _FakeModelPlugin(
+        name="openrouter",
+        resolved={
+            "gpt-5": ResolvedModel(ref="openai/gpt-5", plugin="openrouter", model="gpt-5"),
+            "o3": ResolvedModel(ref="openai/o3", plugin="openrouter", model="o3"),
+        },
+    )
+    context = SimpleNamespace(
+        model_plugins={"openrouter": plugin},
+        model_profiles={},
+        default_models=(),
+        model_environ={},
+    )
+
+    resolved = resolve_model(
+        context,
+        selector="o3@openrouter",
+        default_selector="gpt-5@openrouter",
+        allowed_selectors=("gpt-5@openrouter", "o3@openrouter"),
+    )
+
+    assert resolved.target.ref == "openai/o3"
+    assert resolved.target.model == "o3"
+
+
+def test_model_resolution_rejects_thunk_selector_outside_allowed_set() -> None:
+    plugin = _FakeModelPlugin(
+        name="openrouter",
+        resolved={
+            "gpt-5": ResolvedModel(ref="openai/gpt-5", plugin="openrouter", model="gpt-5"),
+            "o3": ResolvedModel(ref="openai/o3", plugin="openrouter", model="o3"),
+        },
+    )
+    context = SimpleNamespace(
+        model_plugins={"openrouter": plugin},
+        model_profiles={},
+        default_models=(),
+        model_environ={},
+    )
+
+    with pytest.raises(ToolangError, match="not allowed for this activation"):
+        resolve_model(
+            context,
+            selector="o3@openrouter",
+            default_selector="gpt-5@openrouter",
+            allowed_selectors=("gpt-5@openrouter",),
+        )
+
+
 def test_execute_run_input_reuses_plugin_state_for_followups() -> None:
     plugin = _FakeModelPlugin(
         name="openai",

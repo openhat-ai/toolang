@@ -120,6 +120,7 @@ def assemble_run_input(context: UptimeContext, run: RunBinding) -> RunInput:
             "input_text": input_text,
             "model": requested_model,
             "activation_default_model": _activation_default_model_selector(context),
+            "activation_allowed_models": _activation_allowed_model_selectors(context),
             "tool_names": sorted(tools),
         },
     )
@@ -139,6 +140,15 @@ def _activation_default_model_selector(context: UptimeContext) -> str | None:
         return None
     selector = value.strip()
     return selector or None
+
+
+def _activation_allowed_model_selectors(context: UptimeContext) -> tuple[str, ...]:
+    value = context.config.get("models.allowed_selectors")
+    if isinstance(value, tuple):
+        return tuple(item for item in value if isinstance(item, str) and item.strip())
+    if isinstance(value, list):
+        return tuple(item for item in value if isinstance(item, str) and item.strip())
+    return ()
 
 
 def _runtime_snapshot(

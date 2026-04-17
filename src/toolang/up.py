@@ -355,7 +355,7 @@ class StartupSpec:
     selector: SandboxSelector
     sandbox_config: dict[str, object]
     dev_artifact: Path | None
-    model_selector: str | None
+    model_selectors: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -434,7 +434,7 @@ def up(
     public_host: str | None = None,
     port: int | None = None,
     sandbox: str | None = None,
-    model: str | None = None,
+    models: Sequence[str] | None = None,
     dev: Path | None = None,
     sandbox_child: bool = False,
     loop_names: Sequence[str] | None = None,
@@ -449,7 +449,7 @@ def up(
         public_host=public_host,
         port=port,
         sandbox=sandbox,
-        model=model,
+        models=models,
         dev=dev,
         loop_names=loop_names,
         environ=environ,
@@ -467,7 +467,7 @@ def up(
             enabled_loops=spec.enabled_loops,
             environ=environ,
             dev_artifact=spec.dev_artifact,
-            model_selector=spec.model_selector,
+            model_selectors=spec.model_selectors,
         )
     return _up_local(
         toolang_root=spec.toolang_root,
@@ -478,7 +478,7 @@ def up(
         enabled_loops=spec.enabled_loops,
         environ=environ,
         sandbox_child=sandbox_child,
-        model_selector=spec.model_selector,
+        model_selectors=spec.model_selectors,
     )
 
 
@@ -488,7 +488,7 @@ def invoke(
     agent_name: str,
     thunk_name: str | None = None,
     input_text: str | None = None,
-    model: str | None = None,
+    models: Sequence[str] | None = None,
     metadata: Mapping[str, object] | None = None,
     environ: Mapping[str, str],
 ) -> RunOutcome:
@@ -499,7 +499,7 @@ def invoke(
         agent_name=agent_name,
         enabled_loops=(),
         environ=environ,
-        model_selector=model.strip() if isinstance(model, str) and model.strip() else None,
+        model_selectors=_normalize_model_selectors(models),
     )
     try:
         return asyncio.run(
@@ -531,7 +531,7 @@ def resolve_startup(
     public_host: str | None = None,
     port: int | None = None,
     sandbox: str | None = None,
-    model: str | None = None,
+    models: Sequence[str] | None = None,
     dev: Path | None = None,
     loop_names: Sequence[str] | None = None,
     environ: Mapping[str, str],
@@ -589,7 +589,7 @@ def resolve_startup(
         selector=selector,
         sandbox_config=sandbox_config,
         dev_artifact=dev_artifact,
-        model_selector=model.strip() if isinstance(model, str) and model.strip() else None,
+        model_selectors=_normalize_model_selectors(models),
     )
 
 
@@ -600,7 +600,7 @@ def build_run_argv(
     host: str | None = None,
     public_host: str | None = None,
     sandbox: str | None = None,
-    model: str | None = None,
+    models: Sequence[str] | None = None,
     sandbox_child: bool = False,
 ) -> tuple[str, ...]:
     """Build one explicit CLI argv for `too run`."""
@@ -619,9 +619,9 @@ def build_run_argv(
         "--sandbox",
         sandbox or spec.selector.render(),
     ]
-    effective_model = model or spec.model_selector
-    if effective_model:
-        command.extend(["--model", effective_model])
+    effective_models = _normalize_model_selectors(models) or spec.model_selectors
+    for selector in effective_models:
+        command.extend(["--model", selector])
     if spec.dev_artifact is not None and not sandbox_child:
         command.extend(["--dev", str(spec.dev_artifact)])
     if sandbox_child:
@@ -641,7 +641,7 @@ def _up_local(
     enabled_loops: tuple[LoopName, ...],
     environ: Mapping[str, str],
     sandbox_child: bool,
-    model_selector: str | None,
+    model_selectors: tuple[str, ...],
 ) -> int:
     loop_intervals_ms = dict(DEFAULT_LOOP_INTERVAL_MS)
     for loop_name in BACKGROUND_LOOPS:
@@ -657,7 +657,7 @@ def _up_local(
         agent_name=agent_name,
         enabled_loops=enabled_loops,
         environ=environ,
-        model_selector=model_selector,
+        model_selectors=model_selectors,
         host=host,
         port=port,
         cors_allowed_origins=cors_allowed_origins or [],
@@ -746,7 +746,7 @@ def _load_runtime_context(
     agent_name: str,
     enabled_loops: tuple[LoopName, ...],
     environ: Mapping[str, str],
-    model_selector: str | None,
+    model_selectors: Sequence[str] = (),
     host: str = "127.0.0.1",
     port: int = 0,
     cors_allowed_origins: Sequence[str] = (),
@@ -764,6 +764,8 @@ def _load_runtime_context(
     durable = scan_durable_state(toolang_root, agent_name)
     prepared_state = prepare.build_prepared_state(durable)
     live = load_live_state(prepared_state, enabled_loops=enabled_loops)
+    normalized_model_selectors = _normalize_model_selectors(model_selectors)
+    default_model_selector = normalized_model_selectors[0] if normalized_model_selectors else None
     config = UptimeConfig(
         {
             "server.host": host,
@@ -774,7 +776,8 @@ def _load_runtime_context(
             "loops.prepare.interval_ms": DEFAULT_LOOP_INTERVAL_MS["prepare"],
             "loops.reload.debounce_ms": DEFAULT_RELOAD_DEBOUNCE_MS,
             "web.cors_allowed_origins": list(cors_allowed_origins),
-            "models.default_selector": model_selector,
+            "models.default_selector": default_model_selector,
+            "models.allowed_selectors": normalized_model_selectors,
         }
     )
     return UptimeContext(
@@ -810,7 +813,7 @@ def _up_managed_sandbox(
     enabled_loops: tuple[LoopName, ...],
     environ: Mapping[str, str],
     dev_artifact: Path | None,
-    model_selector: str | None,
+    model_selectors: tuple[str, ...],
 ) -> int:
     endpoint = f"http://{public_host}:{port}"
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -826,7 +829,7 @@ def _up_managed_sandbox(
         selector=selector,
         sandbox_config=dict(sandbox_config),
         dev_artifact=dev_artifact,
-        model_selector=model_selector,
+        model_selectors=model_selectors,
     )
     agents.write_runtime_state(
         toolang_root,
@@ -933,6 +936,20 @@ def _up_managed_sandbox(
         file=sys.stderr,
     )
     return 0
+
+
+def _normalize_model_selectors(models: Sequence[str] | None) -> tuple[str, ...]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for raw in models or ():
+        selector = raw.strip()
+        if not selector:
+            raise ValueError("model selector cannot be empty")
+        if selector in seen:
+            continue
+        seen.add(selector)
+        result.append(selector)
+    return tuple(result)
 
 
 def normalize_loop_names(loop_names: Sequence[str]) -> tuple[LoopName, ...]:

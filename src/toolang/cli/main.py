@@ -254,9 +254,12 @@ def run_agent(
         str | None,
         typer.Option(help="Sandbox to use: none or <driver>[:target]."),
     ] = None,
-    model: Annotated[
-        str | None,
-        typer.Option("--model", help="Default model selector for this activation."),
+    models: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--model",
+            help="Allow a model selector for this activation. Repeat to allow multiple; the first becomes default.",
+        ),
     ] = None,
     loops: Annotated[
         list[str] | None,
@@ -294,7 +297,7 @@ def run_agent(
                     public_host=public_host,
                     port=port,
                     sandbox=sandbox,
-                    model=model,
+                    models=models,
                     dev=dev,
                     sandbox_child=sandbox_child,
                     loop_names=normalized_loops,
@@ -318,9 +321,12 @@ def start_agent(
         str | None,
         typer.Option(help="Sandbox to use: none or <driver>[:target]."),
     ] = None,
-    model: Annotated[
-        str | None,
-        typer.Option("--model", help="Default model selector for this activation."),
+    models: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--model",
+            help="Allow a model selector for this activation. Repeat to allow multiple; the first becomes default.",
+        ),
     ] = None,
     loops: Annotated[
         list[str] | None,
@@ -361,7 +367,7 @@ def start_agent(
         public_host=public_host,
         port=port,
         sandbox=sandbox,
-        model=model,
+        models=models,
         dev=dev,
         loop_names=normalized_loops,
         environ=environ,

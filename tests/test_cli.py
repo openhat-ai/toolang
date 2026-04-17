@@ -309,13 +309,13 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
         public_host: str | None,
         port: int | None,
         sandbox: str | None,
-        model: str | None,
+        models: list[str] | None,
         dev: Path | None,
         sandbox_child: bool,
         loop_names: tuple[str, ...] | None,
         environ: dict[str, str],
     ) -> int:
-        del host, public_host, port, sandbox, model, dev, sandbox_child, loop_names, environ
+        del host, public_host, port, sandbox, models, dev, sandbox_child, loop_names, environ
         captured["toolang_root"] = toolang_root
         captured["agent_name"] = agent_name
         program_path = toolang_root / "agents" / agent_name / f"{agent_name}.too"
@@ -355,13 +355,13 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
         public_host: str | None,
         port: int | None,
         sandbox: str | None,
-        model: str | None,
+        models: list[str] | None,
         dev: Path | None,
         sandbox_child: bool,
         loop_names: tuple[str, ...] | None,
         environ: dict[str, str],
     ) -> int:
-        del host, public_host, port, sandbox, model, dev, sandbox_child, loop_names, environ
+        del host, public_host, port, sandbox, models, dev, sandbox_child, loop_names, environ
         captured["toolang_root"] = toolang_root
         captured["agent_name"] = agent_name
         return 0
@@ -453,7 +453,7 @@ thunk(_, tone?, retries?: number, dry_run?: boolean):
         agent_name: str,
         thunk_name: str | None,
         input_text: str | None,
-        model: str | None,
+        models: tuple[str, ...],
         metadata: dict[str, object] | None,
         environ: dict[str, str],
     ):
@@ -462,7 +462,7 @@ thunk(_, tone?, retries?: number, dry_run?: boolean):
         captured["agent_name"] = agent_name
         captured["thunk_name"] = thunk_name
         captured["input_text"] = input_text
-        captured["model"] = model
+        captured["models"] = models
         captured["metadata"] = dict(metadata or {})
 
         class _Outcome:
@@ -485,6 +485,8 @@ thunk(_, tone?, retries?: number, dry_run?: boolean):
             "dry_run=true",
             "--model",
             "gpt-5",
+            "--model",
+            "o3",
         ]
     )
     output = capsys.readouterr()
@@ -494,7 +496,7 @@ thunk(_, tone?, retries?: number, dry_run?: boolean):
     assert captured["agent_name"] == "demo"
     assert captured["toolang_root"] == program_path.parent / ".toolang"
     assert captured["thunk_name"] == "main"
-    assert captured["model"] == "gpt-5"
+    assert captured["models"] == ("gpt-5", "o3")
     assert "rewrite this" in cast(str, captured["input_text"])
     assert str(attachment.resolve()) in cast(str, captured["input_text"])
     assert captured["metadata"] == {
@@ -574,11 +576,11 @@ thunk:
         agent_name: str,
         thunk_name: str | None,
         input_text: str | None,
-        model: str | None,
+        models: tuple[str, ...],
         metadata: dict[str, object] | None,
         environ: dict[str, str],
     ):
-        del toolang_root, agent_name, thunk_name, model, environ
+        del toolang_root, agent_name, thunk_name, models, environ
         captured["input_text"] = input_text
         captured["metadata"] = dict(metadata or {})
 
@@ -632,11 +634,11 @@ thunk(_, tone?):
         agent_name: str,
         thunk_name: str | None,
         input_text: str | None,
-        model: str | None,
+        models: tuple[str, ...],
         metadata: dict[str, object] | None,
         environ: dict[str, str],
     ):
-        del toolang_root, agent_name, thunk_name, model, environ
+        del toolang_root, agent_name, thunk_name, models, environ
         captured["input_text"] = input_text
         captured["metadata"] = dict(metadata or {})
 
@@ -683,11 +685,11 @@ thunk(_):
         agent_name: str,
         thunk_name: str | None,
         input_text: str | None,
-        model: str | None,
+        models: tuple[str, ...],
         metadata: dict[str, object] | None,
         environ: dict[str, str],
     ):
-        del toolang_root, agent_name, thunk_name, model, environ
+        del toolang_root, agent_name, thunk_name, models, environ
         captured["input_text"] = input_text
         captured["metadata"] = dict(metadata or {})
 
@@ -1068,7 +1070,7 @@ def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
         public_host: str | None = None,
         port: int | None = None,
         sandbox: str | None = None,
-        model: str | None = None,
+        models: list[str] | None = None,
         dev: Path | None = None,
         sandbox_child: bool = False,
         loop_names: list[str] | None = None,
@@ -1080,7 +1082,7 @@ def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
         captured["public_host"] = public_host
         captured["port"] = port
         captured["sandbox"] = sandbox
-        captured["model"] = model
+        captured["models"] = models
         captured["dev"] = dev
         captured["sandbox_child"] = sandbox_child
         captured["loop_names"] = loop_names
@@ -1113,7 +1115,7 @@ def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     assert captured["public_host"] is None
     assert captured["port"] == 9000
     assert captured["sandbox"] is None
-    assert captured["model"] is None
+    assert captured["models"] is None
     assert captured["dev"] is None
     assert captured["sandbox_child"] is False
     assert captured["loop_names"] == ["chat", "inspect"]
@@ -1132,7 +1134,7 @@ def test_cli_run_omits_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
         public_host: str | None = None,
         port: int | None = None,
         sandbox: str | None = None,
-        model: str | None = None,
+        models: list[str] | None = None,
         dev: Path | None = None,
         sandbox_child: bool = False,
         loop_names: list[str] | None = None,
@@ -1144,7 +1146,7 @@ def test_cli_run_omits_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
         captured["public_host"] = public_host
         captured["port"] = port
         captured["sandbox"] = sandbox
-        captured["model"] = model
+        captured["models"] = models
         captured["dev"] = dev
         captured["sandbox_child"] = sandbox_child
         captured["loop_names"] = loop_names
@@ -1166,7 +1168,7 @@ def test_cli_run_omits_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
     assert captured["public_host"] is None
     assert captured["port"] is None
     assert captured["sandbox"] is None
-    assert captured["model"] is None
+    assert captured["models"] is None
     assert captured["dev"] is None
     assert captured["sandbox_child"] is False
     assert captured["loop_names"] == ["chat"]
@@ -1185,13 +1187,13 @@ def test_cli_run_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
         public_host: str | None = None,
         port: int | None = None,
         sandbox: str | None = None,
-        model: str | None = None,
+        models: list[str] | None = None,
         dev: Path | None = None,
         sandbox_child: bool = False,
         loop_names: list[str] | None = None,
         environ: dict[str, str],
     ) -> int:
-        del toolang_root, agent_name, host, public_host, port, sandbox, model, dev, sandbox_child, environ
+        del toolang_root, agent_name, host, public_host, port, sandbox, models, dev, sandbox_child, environ
         captured["loop_names"] = loop_names
         return 0
 
@@ -1207,7 +1209,7 @@ def test_cli_run_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
     assert captured["loop_names"] == ["chat", "inspect", "poll"]
 
 
-def test_cli_run_passes_model_selector_to_agent_up(tmp_path: Path, monkeypatch) -> None:
+def test_cli_run_passes_model_selectors_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     captured: dict[str, object] = {}
 
@@ -1219,26 +1221,26 @@ def test_cli_run_passes_model_selector_to_agent_up(tmp_path: Path, monkeypatch) 
         public_host: str | None = None,
         port: int | None = None,
         sandbox: str | None = None,
-        model: str | None = None,
+        models: list[str] | None = None,
         dev: Path | None = None,
         sandbox_child: bool = False,
         loop_names: list[str] | None = None,
         environ: dict[str, str],
     ) -> int:
         del toolang_root, agent_name, host, public_host, port, sandbox, dev, sandbox_child, loop_names, environ
-        captured["model"] = model
+        captured["models"] = models
         return 0
 
     monkeypatch.setattr(cli.agent_up, "up", fake_up)
 
     result = runner.invoke(
         cli.app,
-        ["run", "alice", "--model", "openai/gpt-5@openai"],
+        ["run", "alice", "--model", "openai/gpt-5@openai", "--model", "o3"],
         env={"TOOLANG_ROOT": str(toolang_root)},
     )
 
     assert result.exit_code == 0
-    assert captured["model"] == "openai/gpt-5@openai"
+    assert captured["models"] == ["openai/gpt-5@openai", "o3"]
 
 
 def test_cli_run_requires_agent(tmp_path: Path) -> None:
@@ -1277,7 +1279,7 @@ def test_cli_run_loads_root_and_agent_env_with_agent_override(tmp_path: Path, mo
         public_host: str | None = None,
         port: int | None = None,
         sandbox: str | None = None,
-        model: str | None = None,
+        models: list[str] | None = None,
         dev: Path | None = None,
         sandbox_child: bool = False,
         loop_names: list[str] | None = None,
@@ -1286,7 +1288,7 @@ def test_cli_run_loads_root_and_agent_env_with_agent_override(tmp_path: Path, mo
         captured["environ"] = environ
         captured["public_host"] = public_host
         captured["sandbox"] = sandbox
-        captured["model"] = model
+        captured["models"] = models
         captured["dev"] = dev
         captured["sandbox_child"] = sandbox_child
         return 0
@@ -1306,7 +1308,7 @@ def test_cli_run_loads_root_and_agent_env_with_agent_override(tmp_path: Path, mo
     assert environ["AGENT_ONLY"] == "1"
     assert captured["public_host"] is None
     assert captured["sandbox"] is None
-    assert captured["model"] is None
+    assert captured["models"] is None
     assert captured["dev"] is None
     assert captured["sandbox_child"] is False
 
@@ -1512,7 +1514,7 @@ def test_cli_start_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None
     assert command[-4:] == ["--loop", "chat", "--loop", "inspect"]
 
 
-def test_cli_start_includes_model_selector_in_background_command(tmp_path: Path, monkeypatch) -> None:
+def test_cli_start_includes_model_selectors_in_background_command(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     captured: dict[str, object] = {}
@@ -1548,14 +1550,25 @@ def test_cli_start_includes_model_selector_in_background_command(tmp_path: Path,
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(toolang_root), "start", "alice", "--model", "gpt-5"],
+        [
+            "--root",
+            str(toolang_root),
+            "start",
+            "alice",
+            "--model",
+            "gpt-5",
+            "--model",
+            "o3",
+        ],
         env={},
     )
 
     assert result.exit_code == 0
     command = cast(list[str], captured["command"])
-    assert "--model" in command
-    assert command[command.index("--model") + 1] == "gpt-5"
+    first_flag = command.index("--model")
+    assert command[first_flag + 1] == "gpt-5"
+    second_flag = command.index("--model", first_flag + 1)
+    assert command[second_flag + 1] == "o3"
 
 
 def test_cli_start_reuses_preferred_runtime_port(tmp_path: Path, monkeypatch) -> None:

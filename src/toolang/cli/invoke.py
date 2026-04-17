@@ -51,7 +51,7 @@ _AUDIO_PART_EXTENSIONS = {
 class RoamingInvokeRequest:
     thunk_name: str | None
     input_text: str | None
-    model: str | None
+    models: tuple[str, ...]
     invoke_params: dict[str, object]
     invoke_parts: list[dict[str, str]]
 
@@ -181,7 +181,7 @@ def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name:
             agent_name=agent_name,
             thunk_name=request.thunk_name,
             input_text=request.input_text,
-            model=request.model,
+            models=request.models,
             metadata={
                 "invoke_params": request.invoke_params,
                 "invoke_parts": request.invoke_parts,
@@ -219,7 +219,7 @@ def _parse_roaming_invoke_request(
     param_index = {param.name: param for param in thunk.params}
     invoke_params: dict[str, object] = {}
     parts: list[str] = []
-    model: str | None = None
+    models: list[str] = []
     index = 0
     while index < len(argv):
         token = argv[index]
@@ -227,13 +227,19 @@ def _parse_roaming_invoke_request(
             parts.extend(argv[index + 1 :])
             break
         if token.startswith("--model="):
-            model = token.partition("=")[2].strip() or None
+            model = token.partition("=")[2].strip()
+            if not model:
+                raise click.ClickException("--model requires a value")
+            models.append(model)
             index += 1
             continue
         if token == "--model":
             if index + 1 >= len(argv):
                 raise click.ClickException("--model requires a value")
-            model = argv[index + 1].strip() or None
+            model = argv[index + 1].strip()
+            if not model:
+                raise click.ClickException("--model requires a value")
+            models.append(model)
             index += 2
             continue
         if token.startswith("--"):
@@ -260,7 +266,7 @@ def _parse_roaming_invoke_request(
     return RoamingInvokeRequest(
         thunk_name=thunk.name,
         input_text=input_text,
-        model=model,
+        models=tuple(models),
         invoke_params=invoke_params,
         invoke_parts=invoke_parts,
     )
@@ -396,7 +402,11 @@ def _make_roaming_thunk_help_command_class(thunk: ProgramThunk) -> type[_Roaming
 
 def _make_roaming_help_command() -> Callable[..., None]:
     def command(
-        model: str | None = typer.Option(None, "--model", help="Override the default model selector."),
+        model: list[str] | None = typer.Option(
+            None,
+            "--model",
+            help="Allow a model selector for this activation. Repeat to allow multiple; the first becomes default.",
+        ),
     ) -> None:
         del model
         return None
