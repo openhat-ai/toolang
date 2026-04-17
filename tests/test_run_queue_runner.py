@@ -2213,6 +2213,38 @@ def test_execute_run_rejects_thunk_model_outside_activation_allowlist(tmp_path: 
     assert "not allowed for this activation" in outcome.error
 
 
+def test_execute_run_pre_start_failure_does_not_emit_persist_sink_error(tmp_path: Path, caplog) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "alice.too",
+        "agent alice\n\nthunk chat:\n  Reply directly.\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("chat",),
+    )
+    context.config.set("models.default_selector", "claude")
+
+    with caplog.at_level(logging.ERROR, logger="toolang.runner"):
+        outcome = asyncio.run(
+            run_execute_module.execute_run(
+                context,
+                RunSubmission(
+                    request=RunRequest(group="chat", origin="chat", thunk="hello"),
+                    live=context.live,
+                ),
+                delay_sec=0.0,
+                sleep=asyncio.sleep,
+            )
+        )
+
+    assert outcome.status == "failed"
+    assert outcome.error == "model selector could not be resolved: claude"
+    assert context.store.list_runs() == []
+    assert "persist sink event handling failed" not in caplog.text
+
+
 def test_execution_store_records_runs_steps_and_messages(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     store = ExecutionStore(execution_db_path(toolang_root, "alice"))

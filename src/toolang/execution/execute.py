@@ -39,6 +39,7 @@ async def execute_run(
     persist = PersistSink(context.store)
     bound: RunBinding | None = None
     run_input: RunInput | None = None
+    started = False
     try:
         bound = bind_run_request(context, request, live=submission.live)
         run_input = assemble_run_input(context, bound)
@@ -54,6 +55,7 @@ async def execute_run(
                 started_at=bound.created_at,
             ),
         )
+        started = True
         model = resolve_model(
             context,
             selector=run_input.model,
@@ -70,7 +72,7 @@ async def execute_run(
         execution = await asyncio.to_thread(strategy.run, run_context)
     except Exception as exc:
         error = str(exc)
-        if bound is not None:
+        if bound is not None and started:
             _emit_event(
                 persist,
                 response,
@@ -82,6 +84,20 @@ async def execute_run(
                     finished_at=_utc_now(),
                 ),
             )
+            return RunOutcome(
+                run_id=bound.run_id,
+                group=bound.group,
+                origin=bound.origin,
+                input_text=bound.input_text,
+                thunk_name=bound.thunk_name,
+                thread_id=bound.thread_id,
+                delay_sec=delay_sec,
+                status="failed",
+                output_text="",
+                error=error,
+                live_fingerprint=bound.live.fingerprint,
+            )
+        if bound is not None:
             return RunOutcome(
                 run_id=bound.run_id,
                 group=bound.group,
