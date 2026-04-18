@@ -1,1 +1,1 @@
-"""Built-in model plugin implementations."""
+"""Built-in model provider implementations."""

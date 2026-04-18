@@ -1,45 +1,43 @@
-"""Shared model protocols."""
+"""Shared model provider protocols."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
-from ..types.model import (
-    ModelCapabilities,
-    ResolvedModel,
-)
+from ..types.model import ModelInfo, ModelTarget
 from ..types.run import ModelCall, ModelCallResult, ModelEventHandler
 
 
 @runtime_checkable
-class ModelPlugin(Protocol):
-    """Minimal model plugin contract."""
+class ModelProvider(Protocol):
+    """Minimal model provider contract."""
 
     name: str
     description: str | None
 
-    def capabilities(self) -> ModelCapabilities:
-        """Return one stable capability snapshot."""
+    def required_env_vars(self) -> tuple[str, ...]:
+        """Return required environment variables for this provider."""
 
-    def resolve_selector(
-        self,
-        selector: str,
-        *,
-        environ: Mapping[str, str],
-    ) -> ResolvedModel | None:
-        """Resolve one selector without named profile config."""
+    def default_base_url(self, *, environ: Mapping[str, str]) -> str | None:
+        """Return the default API base URL for this provider when known."""
+
+    def default_api_key_env(self) -> str | None:
+        """Return the default API key environment variable name when known."""
+
+    def list_models(self, *, environ: Mapping[str, str]) -> tuple[ModelInfo, ...]:
+        """Return model infos exposed by this provider."""
 
     def invoke(
         self,
-        target: ResolvedModel,
+        target: ModelTarget,
         request: ModelCall,
     ) -> ModelCallResult:
         """Execute one non-streaming model turn."""
 
     def stream(
         self,
-        target: ResolvedModel,
+        target: ModelTarget,
         request: ModelCall,
         *,
         on_event: ModelEventHandler,

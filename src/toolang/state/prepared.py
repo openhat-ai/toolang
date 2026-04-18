@@ -73,11 +73,16 @@ class PreparedEntry:
 
     @classmethod
     def from_data(cls, data: dict[str, object]) -> "PreparedEntry":
+        raw_ref = data.get("ref")
+        if not isinstance(raw_ref, str) or not raw_ref:
+            raw_ref = data.get("locator")
+        if not isinstance(raw_ref, str) or not raw_ref:
+            raise KeyError("ref")
         return cls(
             kind=cast(EntryKind, str(data["kind"])),
             name=str(data["name"]),
             shape=cast(EntryShape, str(data["shape"])),
-            ref=str(data["ref"]),
+            ref=raw_ref,
             path=str(data["path"]),
             source=PreparedSource.from_data(cast(dict[str, object], data["source"])),
             meta=dict(cast(dict[str, object], data.get("meta", {}))),

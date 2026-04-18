@@ -1,4 +1,4 @@
-"""Helpers shared by OpenAI-compatible model plugins."""
+"""Helpers shared by Responses-compatible model providers and adapters."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 
 from toolang.base.error import ToolangError
 from toolang.base.types.message import Message, TextDelta, TextPart, ToolCallDelta, ToolCallPart, ToolResultPart
-from toolang.base.types.model import ResolvedModel
+from toolang.base.types.model import ModelTarget
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
@@ -21,7 +21,7 @@ from toolang.base.types.run import (
 from toolang.base.types.tool import ToolDefinition
 
 
-def create_client(target: ResolvedModel) -> Any:
+def create_client(target: ModelTarget) -> Any:
     """Create one OpenAI-compatible client for a resolved model target."""
 
     try:
@@ -41,12 +41,12 @@ def create_client(target: ResolvedModel) -> Any:
 
 
 def invoke_response(
-    target: ResolvedModel,
+    target: ModelTarget,
     request: ModelCall,
     *,
     stateful: bool,
 ) -> ModelCallResult:
-    """Execute one non-streaming OpenAI-compatible response call."""
+    """Execute one non-streaming Responses API call."""
 
     client = create_client(target)
     response = client.responses.create(
@@ -64,13 +64,13 @@ def invoke_response(
 
 
 def stream_response(
-    target: ResolvedModel,
+    target: ModelTarget,
     request: ModelCall,
     *,
     stateful: bool,
     on_event: ModelEventHandler,
 ) -> ModelCallResult:
-    """Execute one streaming OpenAI-compatible response call."""
+    """Execute one streaming Responses API call."""
 
     client = create_client(target)
     with client.responses.stream(
@@ -130,12 +130,12 @@ def stream_response(
 
 
 def response_payload(
-    target: ResolvedModel,
+    target: ModelTarget,
     request: ModelCall,
     *,
     stateful: bool,
 ) -> dict[str, Any]:
-    """Build one OpenAI-compatible responses payload."""
+    """Build one Responses API payload."""
 
     state = dict(request.state or {})
     previous_response_id = state.get("previous_response_id") if stateful else None
@@ -148,7 +148,7 @@ def response_payload(
             instructions=request.instructions,
             messages=messages,
             include_instructions=not bool(previous_response_id),
-            replay_tool_items=bool(previous_response_id),
+            replay_tool_items=not stateful or bool(previous_response_id),
         ),
     }
     if request.tools:
@@ -167,7 +167,7 @@ def parse_response(
     request: ModelCall,
     stateful: bool,
 ) -> ModelCallResult:
-    """Normalize one OpenAI-compatible response object."""
+    """Normalize one Responses API response object."""
 
     tool_calls = tuple(parse_tool_calls(response))
     message = assistant_message(response, tool_calls=tool_calls)
@@ -191,13 +191,22 @@ def response_input(
     include_instructions: bool,
     replay_tool_items: bool,
 ) -> list[dict[str, Any]]:
-    """Build one replayable OpenAI-compatible input list."""
+    """Build one replayable typed Responses API input list."""
 
     results: list[dict[str, Any]] = []
     if include_instructions and instructions.strip():
-        results.append({"role": "developer", "content": instructions})
-    for message in messages:
-        encoded = encode_message(message, replay_tool_items=replay_tool_items)
+        results.append(
+            _message_item(
+                role="developer",
+                parts=[{"type": "input_text", "text": instructions.strip()}],
+            )
+        )
+    for message_index, message in enumerate(messages):
+        encoded = encode_message(
+            message,
+            replay_tool_items=replay_tool_items,
+            message_index=message_index,
+        )
         if encoded is None:
             continue
         if isinstance(encoded, list):
@@ -211,16 +220,29 @@ def encode_message(
     message: Message,
     *,
     replay_tool_items: bool = True,
+    message_index: int | None = None,
 ) -> dict[str, Any] | list[dict[str, Any]] | None:
-    """Encode one run-strategy message into OpenAI-compatible input items."""
+    """Encode one run-strategy message into typed Responses API input items."""
 
     role = message.role.strip()
     if role in {"user", "assistant"}:
-        return _encode_actor_message(message, replay_tool_items=replay_tool_items)
+        return _encode_actor_message(
+            message,
+            replay_tool_items=replay_tool_items,
+            message_index=message_index,
+        )
     if role == "tool":
         if not replay_tool_items:
             return None
-        items = [_encode_tool_result_part(part, message=message) for part in message.parts]
+        items = [
+            _encode_tool_result_part(
+                part,
+                message=message,
+                message_index=message_index,
+                part_index=part_index,
+            )
+            for part_index, part in enumerate(message.parts)
+        ]
         if not items:
             return None
         return items[0] if len(items) == 1 else items
@@ -228,7 +250,7 @@ def encode_message(
 
 
 def tool_payload(definition: ToolDefinition) -> dict[str, Any]:
-    """Return one OpenAI-compatible tool definition payload."""
+    """Return one Responses-compatible tool definition payload."""
 
     return {
         "type": "function",
@@ -364,17 +386,34 @@ def _encode_actor_message(
     message: Message,
     *,
     replay_tool_items: bool,
+    message_index: int | None,
 ) -> dict[str, Any] | list[dict[str, Any]] | None:
     items: list[dict[str, Any]] = []
     text_buffer: list[dict[str, Any]] = []
     text_type = "output_text" if message.role == "assistant" else "input_text"
+    text_item_index = 0
+
+    def _flush_text_buffer() -> None:
+        nonlocal text_buffer
+        nonlocal text_item_index
+        if not text_buffer:
+            return
+        items.append(
+            _message_item(
+                role=message.role,
+                parts=text_buffer,
+                message_index=message_index,
+                item_index=text_item_index,
+            )
+        )
+        text_buffer = []
+        text_item_index += 1
+
     for part in message.parts:
         if isinstance(part, TextPart):
             text_buffer.append({"type": text_type, "text": part.text})
             continue
-        if text_buffer:
-            items.append({"role": message.role, "content": list(text_buffer)})
-            text_buffer = []
+        _flush_text_buffer()
         if isinstance(part, ToolCallPart):
             if not replay_tool_items:
                 continue
@@ -382,11 +421,35 @@ def _encode_actor_message(
             continue
         if isinstance(part, ToolResultPart):
             raise ToolangError("assistant/user messages cannot contain tool result parts")
-    if text_buffer:
-        items.append({"role": message.role, "content": list(text_buffer)})
+    _flush_text_buffer()
     if not items:
         return None
     return items[0] if len(items) == 1 else items
+
+
+def _message_item(
+    *,
+    role: str,
+    parts: list[dict[str, Any]],
+    message_index: int | None = None,
+    item_index: int | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "type": "message",
+        "role": role,
+        "content": list(parts),
+    }
+    if role == "assistant":
+        suffix = "current"
+        if message_index is not None:
+            suffix = str(message_index)
+            if item_index not in {None, 0}:
+                suffix = f"{suffix}_{item_index}"
+        elif item_index not in {None, 0}:
+            suffix = f"{suffix}_{item_index}"
+        payload["id"] = f"msg_{suffix}"
+        payload["status"] = "completed"
+    return payload
 
 
 def _encode_tool_call_part(part: ToolCallPart) -> dict[str, Any]:
@@ -403,6 +466,8 @@ def _encode_tool_result_part(
     part: object,
     *,
     message: Message,
+    message_index: int | None,
+    part_index: int,
 ) -> dict[str, Any]:
     if not isinstance(part, ToolResultPart):
         raise ToolangError("tool messages can only contain tool result parts")
@@ -416,8 +481,10 @@ def _encode_tool_result_part(
     call_id = part.call_id or part.tool_call_id
     if not call_id:
         raise ToolangError("tool follow-up message is missing call_id")
+    suffix = "current" if message_index is None else str(message_index)
     return {
         "type": "function_call_output",
+        "id": part.tool_call_id or f"fc_output_{suffix}_{part_index}",
         "call_id": call_id,
         "output": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
     }

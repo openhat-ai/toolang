@@ -17,6 +17,8 @@ Top-level commands are:
 - `remove`
 - `list`
 - `info`
+- `model`
+- `plugin`
 - `run`
 - `start`
 - `stop`
@@ -41,6 +43,8 @@ toolang clone brice/alice
 toolang start alice
 toolang stop alice
 toolang info alice
+toolang model list
+toolang plugin list
 ```
 
 
@@ -110,6 +114,30 @@ Behavior:
 | `toolang run` | Runs a local agent, or fetches one remote agent program into a temporary local home and runs it in the foreground |
 | `toolang clone` | Clones one local agent, or fetches one remote agent program into a new local managed agent |
 | `toolang start` | Starts one local managed agent only. Remote selectors must be cloned first |
+
+
+## Model Commands
+
+- `toolang model list`
+
+`toolang model list` shows provider-scoped discoverable models, including:
+
+- provider name
+- canonical ref under the `MODEL` column
+- adapter
+- one compact `k=v` feature summary, including tool support and optional metadata such as context window, max output tokens, or price per million tokens
+
+
+## Plugin Commands
+
+- `toolang plugin list`
+
+`toolang plugin list` shows installed plugins by family. Model provider rows also
+include richer discovery details such as:
+
+- readiness based on required environment variables
+- default API base URL when known
+- discovered model count
 
 
 ## Agent HTTP API

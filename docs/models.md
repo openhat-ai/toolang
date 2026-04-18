@@ -1,49 +1,110 @@
 # Model Integrations
 
-This document defines model selection and built-in model integrations.
+This document defines model identity, providers, routes, and execution
+selection.
+
+
+## Core Terms
+
+Toolang separates model identity, discovery, and execution:
+
+| Term | Meaning |
+| --- | --- |
+| `selector` | One operational input string such as `gpt-5`, `openai/gpt-5`, `openai/gpt-5@openai`, or `gateway` |
+| `ref` | One route-neutral canonical identity such as `openai/gpt-5` |
+| `provider` | One execution backend such as `openai` or `ollama` |
+| `adapter` | One provider-internal request and response adapter such as `responses` |
+| `model info` | One provider-scoped model entry used for discovery, selector matching, and capability display |
+| `model route` | One local named route that binds one `ref` to one provider and optional execution overrides |
+| `model target` | One fully resolved execution target used for one runtime call |
 
 
 ## Canonical Model Ref
 
-Toolang identifies models by canonical refs:
+Toolang identifies models by canonical refs such as:
 
 - `openai/gpt-5`
 - `qwen/qwen3`
 
-A canonical ref identifies the model family and name, not a transport route.
+A canonical ref identifies the model family and name, not a provider route.
 
 
 ## Selectors
 
 Operational surfaces may accept:
 
-- a profile name
-- a canonical ref
-- a shorthand selector
+- one route name
+- one canonical ref
+- one shorthand selector
+- one provider-qualified selector
 
 Examples:
 
+- `gateway`
 - `openai/gpt-5`
 - `gpt-5`
 - `qwen/qwen3`
 - `qwen3`
+- `openai/gpt-5@openai`
+- `qwen/qwen3@ollama`
 
 
-## Profiles
+## Model Info
 
-Root config may define named model profiles under `[models]`.
+Each provider exposes zero or more model infos.
 
-A profile selects:
+A model info may include:
 
 - `ref`
-- `plugin`
+- `name`
 - `model`
+- accepted selectors
+- `adapter`
+- tool-calling support
+- streaming support
+- optional context window
+- optional pricing metadata
+
+Toolang uses model infos for:
+
+- `too model list`
+- richer `too plugin list` output
+- route-neutral thunk ref expansion
+- selector matching inside one provider
+
+
+## Model Routes
+
+Root config may define named model routes under `[model_routes]`.
+
+A route binds:
+
+- `ref`
+- `provider`
+- optional `model`
+- optional `adapter`
 - optional `base_url`
+- optional `api_key_env`
 - optional `headers`
 - optional `options`
 
-Profiles let one agent or runtime choose a concrete backend without changing
-the authored program.
+Example:
+
+```toml
+[models]
+default = ["gateway", "openai/gpt-5@openai"]
+
+[model_routes.gateway]
+ref = "openai/gpt-5"
+provider = "openai"
+adapter = "responses"
+base_url = "https://gateway.example.com/v1"
+api_key_env = "GATEWAY_API_KEY"
+headers = { "X-Team" = "infra" }
+```
+
+The `default` list is ordered. The first entry is the default model selector,
+and the full list defines the default allowed set.
 
 
 ## Runtime Model Call
@@ -55,18 +116,19 @@ Toolang uses these shared run-side types:
 | `ModelCall` | `instructions`, `messages`, `tools`, optional `state` |
 | `ModelCallResult` | `message`, `tool_calls`, optional `usage`, optional `state` |
 
-Streaming model plugins emit:
+Streaming providers emit:
 
 - `ModelPartStartEvent`
 - `ModelPartDeltaEvent`
 - `ModelPartEndEvent`
 
 
-## Built-In Model Plugins
+## Built-In Model Providers
 
-Current built-in model plugins are:
+Current built-in model providers are:
 
 - `openai`
+- `openrouter`
 - `ollama`
 
 ### OpenAI
@@ -75,6 +137,22 @@ Built-in OpenAI resolution supports:
 
 - canonical selectors such as `openai/gpt-5`
 - shorthand selectors beginning with `gpt-` or `o`
+- explicit provider-qualified selectors such as `openai/gpt-5@openai`
+
+### OpenRouter
+
+Built-in OpenRouter resolution supports:
+
+- canonical selectors such as `openai/gpt-5`
+- shorthand selectors based on the model slug such as `gpt-5`
+- explicit provider-qualified selectors such as `openai/gpt-5@openrouter`
+
+The OpenRouter provider uses:
+
+- `https://openrouter.ai/api/v1`
+- `OPENROUTER_API_KEY`
+- `GET /api/v1/models` for discovery
+- one stateless responses adapter for execution
 
 ### Ollama
 
@@ -82,20 +160,25 @@ Built-in Ollama resolution supports:
 
 - canonical selectors such as `qwen/qwen3`
 - shorthand selectors such as `qwen3`, `llama3`, `deepseek-r1`
+- explicit provider-qualified selectors such as `qwen/qwen3@ollama`
 
-The Ollama plugin uses the local Ollama HTTP API and defaults to:
+The Ollama provider uses the local Ollama HTTP API and defaults to:
 
 - `http://127.0.0.1:11434/v1`
+- It also discovers installed local models from Ollama's `/api/tags` endpoint.
 
 
 ## Resolution Rule
 
-One run resolves exactly one model binding before strategy execution starts.
+One run resolves exactly one model target before strategy execution starts.
 
-The binding includes:
+Resolution proceeds in this order:
 
-- the resolved target
-- the loaded model plugin
+1. explicit CLI selector
+2. default selector from activation config
+3. default model route or selector from root config
+4. built-in default selector
 
-Model plugins perform one model turn. They do not own the tool loop or run
-termination policy.
+When a thunk declares route-neutral refs through `model = ...` and the
+activation also provides `--model`, Toolang keeps only the intersection and
+preserves activation order.

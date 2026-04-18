@@ -1,66 +1,68 @@
-"""OpenAI model plugin."""
+"""OpenAI model provider."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from toolang.base.protocols.model import ModelPlugin
-from toolang.base.types.model import ModelCapabilities, ResolvedModel
+from toolang.base.error import ToolangError
+from toolang.base.protocols.model import ModelProvider
+from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelEventHandler
-from . import _openai_compat
+from . import responses
 
 
-_SHORTHAND_PREFIXES = ("gpt-", "o")
+_KNOWN_MODELS: tuple[tuple[str, str], ...] = (
+    ("gpt-5", "openai/gpt-5"),
+    ("o3", "openai/o3"),
+)
+_DEFAULT_BASE_URL = "https://api.openai.com/v1"
+_DEFAULT_API_KEY_ENV = "OPENAI_API_KEY"
+_OPENAI_ADAPTER = "responses"
 
 
 @dataclass(frozen=True, slots=True)
-class OpenAIModelPlugin(ModelPlugin):
+class OpenAIModelProvider(ModelProvider):
     """OpenAI-backed model integration."""
 
     name: str = "openai"
     description: str | None = "Use OpenAI-hosted models."
 
-    def capabilities(self) -> ModelCapabilities:
-        return ModelCapabilities(
-            tools=True,
-            streaming=True,
-        )
+    def required_env_vars(self) -> tuple[str, ...]:
+        return (_DEFAULT_API_KEY_ENV,)
 
-    def resolve_selector(
-        self,
-        selector: str,
-        *,
-        environ: Mapping[str, str],
-    ) -> ResolvedModel | None:
-        text = selector.strip()
-        if not text:
-            return None
-        if text.startswith("openai/"):
-            model_name = text.partition("/")[2].strip()
-            if not model_name:
-                return None
-            return ResolvedModel(
-                ref=text,
-                plugin=self.name,
-                model=model_name,
-                api_key=environ.get("OPENAI_API_KEY"),
+    def default_base_url(self, *, environ: Mapping[str, str]) -> str | None:
+        del environ
+        return _DEFAULT_BASE_URL
+
+    def default_api_key_env(self) -> str | None:
+        return _DEFAULT_API_KEY_ENV
+
+    def list_models(self, *, environ: Mapping[str, str]) -> tuple[ModelInfo, ...]:
+        del environ
+        return tuple(
+            ModelInfo(
+                ref=ref,
+                provider=self.name,
+                name=name,
+                model=name,
+                selectors=(name, ref),
+                adapter=_OPENAI_ADAPTER,
+                tools=True,
+                streaming=True,
+                details="Built-in OpenAI route. Also accepts selectors beginning with gpt- or o-.",
             )
-        if text.startswith(_SHORTHAND_PREFIXES):
-            return ResolvedModel(
-                ref=f"openai/{text}",
-                plugin=self.name,
-                model=text,
-                api_key=environ.get("OPENAI_API_KEY"),
-            )
-        return None
+            for name, ref in _KNOWN_MODELS
+        )
 
     def invoke(
         self,
-        target: ResolvedModel,
+        target: ModelTarget,
         request: ModelCall,
     ) -> ModelCallResult:
-        return _openai_compat.invoke_response(
+        if target.adapter != _OPENAI_ADAPTER:
+            raise ToolangError(f"unsupported openai adapter: {target.adapter}")
+        return responses.invoke_response(
             target,
             request,
             stateful=True,
@@ -68,12 +70,14 @@ class OpenAIModelPlugin(ModelPlugin):
 
     def stream(
         self,
-        target: ResolvedModel,
+        target: ModelTarget,
         request: ModelCall,
         *,
         on_event: ModelEventHandler,
     ) -> ModelCallResult:
-        return _openai_compat.stream_response(
+        if target.adapter != _OPENAI_ADAPTER:
+            raise ToolangError(f"unsupported openai adapter: {target.adapter}")
+        return responses.stream_response(
             target,
             request,
             stateful=True,
@@ -81,8 +85,8 @@ class OpenAIModelPlugin(ModelPlugin):
         )
 
 
-def create_model(config: Mapping[str, object]) -> ModelPlugin:
-    """Create the built-in OpenAI model plugin."""
+def create_model(config: Mapping[str, object]) -> ModelProvider:
+    """Create the built-in OpenAI model provider."""
 
     del config
-    return OpenAIModelPlugin()
+    return OpenAIModelProvider()

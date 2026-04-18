@@ -63,6 +63,7 @@ web_search = "toolang.tools.web_search:create_tool"
 
 [project.entry-points."toolang.model"]
 openai = "toolang.models.openai:create_model"
+openrouter = "toolang.models.openrouter:create_model"
 ollama = "toolang.models.ollama:create_model"
 
 [project.entry-points."toolang.run_strategy"]

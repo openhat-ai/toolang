@@ -424,6 +424,12 @@ def _validate_thunk_directives(thunk: Thunk, *, thunk_name: str) -> None:
     selectors = [item.strip() for item in raw_values.split(",") if item.strip()]
     if not selectors:
         raise ToolangError(f"Thunk {thunk_name!r} must declare at least one model selector.")
+    routed = [selector for selector in selectors if "@" in selector]
+    if routed:
+        joined = ", ".join(routed)
+        raise ToolangError(
+            f"Thunk {thunk_name!r} must declare route-neutral model refs, not routed selectors: {joined}"
+        )
 
 
 def _param_to_data(param: ParamDecl) -> dict[str, object]:

@@ -1,14 +1,17 @@
-"""Ollama model plugin."""
+"""Ollama model provider."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from toolang.base.protocols.model import ModelPlugin
-from toolang.base.types.model import ModelCapabilities, ResolvedModel
+import httpx
+
+from toolang.base.error import ToolangError
+from toolang.base.protocols.model import ModelProvider
+from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelEventHandler
-from . import _openai_compat
+from . import responses
 
 _NAMESPACE_BY_PREFIX: tuple[tuple[str, str], ...] = (
     ("qwen", "qwen"),
@@ -20,47 +23,74 @@ _NAMESPACE_BY_PREFIX: tuple[tuple[str, str], ...] = (
 _CANONICAL_NAMESPACES = frozenset(
     {"qwen", "meta", "deepseek", "mistral", "google", "moonshot", "nomic", "allenai"}
 )
+_OLLAMA_ADAPTER = "responses"
 
 
 @dataclass(frozen=True, slots=True)
-class OllamaModelPlugin(ModelPlugin):
+class OllamaModelProvider(ModelProvider):
     """Ollama-backed local model integration."""
 
     name: str = "ollama"
     description: str | None = "Use local Ollama-hosted models."
 
-    def capabilities(self) -> ModelCapabilities:
-        return ModelCapabilities(
-            tools=True,
-            streaming=True,
-        )
+    def required_env_vars(self) -> tuple[str, ...]:
+        return ()
 
-    def resolve_selector(
-        self,
-        selector: str,
-        *,
-        environ: Mapping[str, str],
-    ) -> ResolvedModel | None:
-        text = selector.strip()
-        if not text:
-            return None
-        ref, model_name = _canonical_ollama_ref(text)
-        if ref is None or model_name is None:
-            return None
-        return ResolvedModel(
-            ref=ref,
-            plugin=self.name,
-            model=model_name,
-            base_url=_ollama_base_url(environ),
-            api_key=environ.get("OLLAMA_API_KEY", "ollama"),
-        )
+    def default_base_url(self, *, environ: Mapping[str, str]) -> str | None:
+        return _ollama_base_url(environ)
+
+    def default_api_key_env(self) -> str | None:
+        return None
+
+    def list_models(self, *, environ: Mapping[str, str]) -> tuple[ModelInfo, ...]:
+        try:
+            response = httpx.get(f"{_ollama_host(environ)}/api/tags", timeout=2.0)
+            response.raise_for_status()
+            payload = response.json()
+        except Exception:
+            return ()
+        raw_models = payload.get("models")
+        if not isinstance(raw_models, list):
+            return ()
+        discovered: list[ModelInfo] = []
+        seen: set[str] = set()
+        for item in raw_models:
+            if not isinstance(item, dict):
+                continue
+            raw_name = item.get("model") or item.get("name")
+            if not isinstance(raw_name, str):
+                continue
+            model_name = raw_name.strip()
+            if not model_name or model_name in seen:
+                continue
+            ref, canonical_name = _canonical_ollama_ref(model_name)
+            if ref is None or canonical_name is None:
+                continue
+            seen.add(model_name)
+            tools, streaming = _ollama_capabilities(ref)
+            discovered.append(
+                ModelInfo(
+                    ref=ref,
+                    provider=self.name,
+                    name=canonical_name,
+                    model=canonical_name,
+                    selectors=(canonical_name, ref),
+                    adapter=_OLLAMA_ADAPTER,
+                    tools=tools,
+                    streaming=streaming,
+                    details="Local Ollama model.",
+                )
+            )
+        return tuple(sorted(discovered, key=lambda item: item.name))
 
     def invoke(
         self,
-        target: ResolvedModel,
+        target: ModelTarget,
         request: ModelCall,
     ) -> ModelCallResult:
-        return _openai_compat.invoke_response(
+        if target.adapter != _OLLAMA_ADAPTER:
+            raise ToolangError(f"unsupported ollama adapter: {target.adapter}")
+        return responses.invoke_response(
             target,
             request,
             stateful=False,
@@ -68,12 +98,14 @@ class OllamaModelPlugin(ModelPlugin):
 
     def stream(
         self,
-        target: ResolvedModel,
+        target: ModelTarget,
         request: ModelCall,
         *,
         on_event: ModelEventHandler,
     ) -> ModelCallResult:
-        return _openai_compat.stream_response(
+        if target.adapter != _OLLAMA_ADAPTER:
+            raise ToolangError(f"unsupported ollama adapter: {target.adapter}")
+        return responses.stream_response(
             target,
             request,
             stateful=False,
@@ -96,12 +128,25 @@ def _canonical_ollama_ref(selector: str) -> tuple[str | None, str | None]:
 
 
 def _ollama_base_url(environ: Mapping[str, str]) -> str:
-    host = environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
+    host = _ollama_host(environ)
     return f"{host}/v1"
 
 
-def create_model(config: Mapping[str, object]) -> ModelPlugin:
-    """Create the built-in Ollama model plugin."""
+def _ollama_host(environ: Mapping[str, str]) -> str:
+    return environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
+
+
+def _ollama_capabilities(ref: str) -> tuple[bool, bool]:
+    namespace = ref.partition("/")[0]
+    if namespace == "google":
+        return False, True
+    if namespace == "qwen":
+        return True, True
+    return False, True
+
+
+def create_model(config: Mapping[str, object]) -> ModelProvider:
+    """Create the built-in Ollama model provider."""
 
     del config
-    return OllamaModelPlugin()
+    return OllamaModelProvider()

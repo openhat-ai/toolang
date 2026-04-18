@@ -62,10 +62,12 @@ async def execute_run(
             default_selector=_activation_default_model_selector(context),
             allowed_selectors=_activation_allowed_model_selectors(context),
         )
+        provider = context.model_providers[model.provider]
         strategy = load_run_strategy(bound.run_strategy)
         run_context = RunContext(
             run_input,
             model,
+            provider,
             on_event=_event_handler(persist, response),
             stream=bool(response is not None and response.wants_stream),
         )
