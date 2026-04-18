@@ -6,6 +6,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+import os
 import subprocess
 import sys
 import time
@@ -17,8 +18,17 @@ from typer.core import TyperCommand
 
 from .. import agents, caps as cap_store, templates, work
 from .. import up as agent_up
+from ..base.protocols.model import ModelProvider
+from ..base.types.model import ModelInfo
 from ..execution.model import DEFAULT_MODEL_SELECTOR
 from ..execution.records import UpdateKind
+from ..models.discovery import (
+    default_provider_api_key_env,
+    default_provider_base_url,
+    missing_provider_env_vars,
+    model_infos,
+    required_provider_env_vars,
+)
 from . import caps as caps_cli
 from . import invoke as cli_invoke
 from .utils import (
@@ -57,6 +67,7 @@ TOP_LEVEL_COMMANDS = frozenset(
         "remove",
         "list",
         "info",
+        "model",
         "plugin",
         "run",
         "start",
@@ -403,6 +414,8 @@ def start_agent(
         timeout_sec=30.0,
     )
     if status is None:
+        if process.poll() is not None:
+            raise click.ClickException(f"agent failed during startup: {agent_name} (see {log_path})")
         raise click.ClickException(f"agent start timed out: {agent_name} (see {log_path})")
     if status.status == "failed":
         raise click.ClickException(f"{agent_name}\tfailed\t{status.endpoint or '-'}\t{log_path}")
@@ -514,17 +527,133 @@ plugin_app = typer.Typer(
 )
 
 
+model_app = typer.Typer(
+    help="Inspect discoverable models.",
+    add_completion=False,
+    no_args_is_help=True,
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+)
+
+
+@model_app.command("list", help="List discoverable models.")
+def list_models() -> None:
+    environ = dict(os.environ)
+    rows = _model_rows(environ)
+    if not rows:
+        typer.echo("No discoverable models found.")
+        return
+    _echo_table(("PROVIDER", "MODEL", "ADAPTER", "FEATURES"), rows)
+
+
 @plugin_app.command("list", help="List installed plugins.")
 def list_plugins() -> None:
-    rows = []
-    rows.extend(("model", name) for name in sorted(agent_up.load_model_plugins()))
-    rows.extend(("tool", name) for name in agent_up.list_plugin_names(group="toolang.tool"))
-    rows.extend(("channel", name) for name in agent_up.list_plugin_names(group="toolang.channel"))
-    rows.extend(("sandbox", name) for name in agent_up.list_plugin_names(group="toolang.sandbox"))
+    environ = dict(os.environ)
+    rows = _plugin_rows(environ)
     if not rows:
         typer.echo("No plugins found.")
         return
-    _echo_table(("FAMILY", "NAME"), rows)
+    _echo_table(("FAMILY", "NAME", "STATUS", "DETAILS"), rows)
+
+
+def _model_rows(environ: dict[str, str]) -> list[tuple[str, str, str, str]]:
+    rows: list[tuple[str, str, str, str]] = []
+    for name, provider in sorted(agent_up.load_model_providers().items()):
+        for info in model_infos(provider, environ=environ):
+            rows.append(
+                (
+                    name,
+                    info.ref,
+                    info.adapter,
+                    _model_feature_summary(info),
+                )
+            )
+    return rows
+
+
+def _model_feature_summary(info: ModelInfo) -> str:
+    parts: list[str] = []
+    parts.append(f"tools={'yes' if info.tools else 'no'}")
+    parts.append(f"streaming={'yes' if info.streaming else 'no'}")
+    if info.context_window is not None:
+        parts.append(f"ctx={_format_k(info.context_window)}")
+    if info.max_output_tokens is not None:
+        parts.append(f"max_out={_format_k(info.max_output_tokens)}")
+    if info.input_price is not None or info.output_price is not None:
+        in_price = "-" if info.input_price is None else _format_price_per_million(info.input_price)
+        out_price = "-" if info.output_price is None else _format_price_per_million(info.output_price)
+        parts.append(f"price={in_price}/{out_price}")
+    return ", ".join(parts)
+
+
+def _format_k(value: int) -> str:
+    if value >= 1024:
+        return f"{value / 1024:g}k"
+    return str(value)
+
+
+def _format_price_per_million(value: float) -> str:
+    return f"${value * 1_000_000:g}"
+
+
+def _plugin_rows(environ: dict[str, str]) -> list[tuple[str, str, str, str]]:
+    rows: list[tuple[str, str, str, str]] = []
+    for name, provider in sorted(agent_up.load_model_providers().items()):
+        rows.append(
+            (
+                "model",
+                name,
+                _model_provider_status(provider, environ=environ),
+                _model_provider_details(provider, environ=environ),
+            )
+        )
+    rows.extend(
+        ("tool", name, "installed", "Installed plugin entry point.")
+        for name in agent_up.list_plugin_names(group="toolang.tool")
+    )
+    rows.extend(
+        ("channel", name, "installed", "Installed plugin entry point.")
+        for name in agent_up.list_plugin_names(group="toolang.channel")
+    )
+    rows.extend(
+        ("sandbox", name, "installed", "Installed plugin entry point.")
+        for name in agent_up.list_plugin_names(group="toolang.sandbox")
+    )
+    return rows
+
+
+def _model_provider_status(
+    provider: ModelProvider,
+    *,
+    environ: dict[str, str],
+) -> str:
+    missing = missing_provider_env_vars(provider, environ=environ)
+    return "missing-env" if missing else "ready"
+
+
+def _model_provider_details(
+    provider: ModelProvider,
+    *,
+    environ: dict[str, str],
+) -> str:
+    missing = missing_provider_env_vars(provider, environ=environ)
+    required = required_provider_env_vars(provider)
+    base_url = default_provider_base_url(provider, environ=environ)
+    api_key_env = default_provider_api_key_env(provider)
+    models = model_infos(provider, environ=environ)
+    parts: list[str] = []
+    if base_url is not None:
+        parts.append(f"base URL {base_url}")
+    if required:
+        parts.append(f"env {', '.join(required)}")
+    elif api_key_env is not None:
+        parts.append(f"default auth {api_key_env}")
+    if missing:
+        parts.append(f"missing {', '.join(missing)}")
+    parts.append(f"{len(models)} discovered {'model' if len(models) == 1 else 'models'}")
+    if provider.description:
+        parts.append(provider.description)
+    return "; ".join(parts)
 
 def _append_work_update(
     toolang_root: Path,
@@ -750,6 +879,7 @@ def _make_remove_work_command(kind: WorkKind, title: str) -> Callable[..., None]
     return remove_work
 
 caps_cli.register_cap_commands(app)
+app.add_typer(model_app, name="model", no_args_is_help=True)
 app.add_typer(plugin_app, name="plugin", no_args_is_help=True)
 register_work_commands()
 

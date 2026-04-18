@@ -213,6 +213,22 @@ thunk review():
         build_prepared_program(durable)
 
 
+def test_build_prepared_program_rejects_routed_model_selectors(tmp_path: Path) -> None:
+    root = _write_program(
+        tmp_path,
+        """
+thunk review():
+  model = openai/gpt-5@openrouter
+
+  Review the target carefully.
+""".strip(),
+    )
+
+    durable = scan_durable_state(root, "alice")
+    with pytest.raises(ToolangError, match="route-neutral model refs"):
+        build_prepared_program(durable)
+
+
 def test_build_prepared_program_rejects_duplicate_default_thunk_name(tmp_path: Path) -> None:
     root = _write_program(
         tmp_path,

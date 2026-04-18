@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import Protocol, runtime_checkable
 
 from ..types.message import Message
-from ..types.model import ModelBinding
+from ..types.model import ModelTarget
 from ..types.run import ModelCallResult, RunResult, ToolCall, ToolCallResult
 from ..protocols.tool import Tool
 
@@ -24,8 +24,8 @@ class RunContext(Protocol):
         """Return the current conversation messages."""
 
     @property
-    def model(self) -> ModelBinding:
-        """Return the resolved model binding for this run."""
+    def model(self) -> ModelTarget:
+        """Return the resolved model target for this run."""
 
     @property
     def tools(self) -> Mapping[str, Tool]:

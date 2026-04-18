@@ -3,90 +3,82 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Protocol
 
 from toolang.base.error import ToolangError
-from toolang.base.protocols.model import ModelPlugin
-from toolang.base.types.model import ModelBinding, ResolvedModel
+from toolang.base.protocols.model import ModelProvider
+from toolang.base.types.model import ModelInfo, ModelRoute, ModelTarget
+from toolang.models.discovery import (
+    default_provider_api_key_env,
+    default_provider_base_url,
+    missing_provider_env_vars,
+    model_infos,
+)
 
 DEFAULT_MODEL_SELECTOR = "gpt-5"
 
 
-@dataclass(frozen=True, slots=True)
-class ModelProfile:
-    """One named model profile loaded from config."""
-
-    ref: str
-    plugin: str
-    model: str
-    base_url: str | None = None
-    api_key_env: str | None = None
-    headers: dict[str, str] = field(default_factory=dict)
-    options: dict[str, Any] = field(default_factory=dict)
-
-
-class SupportsModelResolution(Protocol):
+class SupportsModelSelection(Protocol):
     """Minimal context shape needed to resolve one model selector."""
 
-    model_plugins: Mapping[str, ModelPlugin]
-    model_profiles: Mapping[str, ModelProfile]
+    model_providers: Mapping[str, ModelProvider]
+    model_routes: Mapping[str, ModelRoute]
     default_models: tuple[str, ...]
     model_environ: Mapping[str, str]
 
 
 def resolve_model(
-    context: SupportsModelResolution,
+    context: SupportsModelSelection,
     *,
     selector: str | None,
     default_selector: str | None = None,
     allowed_selectors: Sequence[str] | None = None,
-) -> ModelBinding:
+) -> ModelTarget:
     """Resolve one model selector against one uptime context."""
 
-    resolved_allowed = _resolve_allowed_bindings(
+    resolved_allowed = _resolve_allowed_targets(
         allowed_selectors,
-        plugins=context.model_plugins,
-        profiles=context.model_profiles,
+        providers=context.model_providers,
+        routes=context.model_routes,
         environ=context.model_environ,
     )
     if selector is not None and selector.strip():
-        binding = _resolve_one(
+        target = _resolve_one(
             selector.strip(),
-            plugins=context.model_plugins,
-            profiles=context.model_profiles,
+            providers=context.model_providers,
+            routes=context.model_routes,
             environ=context.model_environ,
         )
-        _require_allowed(binding, selector=selector.strip(), allowed=resolved_allowed)
-        return binding
+        _require_allowed(target, selector=selector.strip(), allowed=resolved_allowed)
+        return target
     if default_selector is not None and default_selector.strip():
-        binding = _resolve_one(
+        target = _resolve_one(
             default_selector.strip(),
-            plugins=context.model_plugins,
-            profiles=context.model_profiles,
+            providers=context.model_providers,
+            routes=context.model_routes,
             environ=context.model_environ,
         )
-        _require_allowed(binding, selector=default_selector.strip(), allowed=resolved_allowed)
-        return binding
+        _require_allowed(target, selector=default_selector.strip(), allowed=resolved_allowed)
+        return target
     if resolved_allowed:
         return resolved_allowed[0]
-    for profile_name in context.default_models:
-        return _resolve_profile(
-            profile_name,
-            plugins=context.model_plugins,
-            profiles=context.model_profiles,
+    for route_name in context.default_models:
+        return _resolve_route(
+            route_name,
+            providers=context.model_providers,
+            routes=context.model_routes,
             environ=context.model_environ,
         )
     return _resolve_one(
         DEFAULT_MODEL_SELECTOR,
-        plugins=context.model_plugins,
-        profiles=context.model_profiles,
+        providers=context.model_providers,
+        routes=context.model_routes,
         environ=context.model_environ,
     )
 
 
 def select_model_selectors(
-    context: SupportsModelResolution,
+    context: SupportsModelSelection,
     *,
     thunk_selectors: Sequence[str] = (),
     activation_selectors: Sequence[str] = (),
@@ -94,194 +86,381 @@ def select_model_selectors(
 ) -> tuple[str, ...]:
     """Return the effective ordered model selectors for one run."""
 
-    resolved_thunk = _resolve_selector_bindings(
+    resolved_thunk_refs = _resolve_selector_refs(
         thunk_selectors,
-        plugins=context.model_plugins,
-        profiles=context.model_profiles,
+        providers=context.model_providers,
+        routes=context.model_routes,
         environ=context.model_environ,
     )
-    resolved_activation = _resolve_selector_bindings(
+    resolved_activation = _resolve_selector_targets(
         activation_selectors,
-        plugins=context.model_plugins,
-        profiles=context.model_profiles,
+        providers=context.model_providers,
+        routes=context.model_routes,
+        environ=context.model_environ,
+    )
+    discovered_available = _discover_available_selector_targets(
+        providers=context.model_providers,
+        routes=context.model_routes,
         environ=context.model_environ,
     )
 
-    if resolved_thunk and resolved_activation:
-        thunk_ids = {_binding_identity(binding) for _, binding in resolved_thunk}
-        selected = tuple(
-            selector
-            for selector, binding in resolved_activation
-            if _binding_identity(binding) in thunk_ids
+    if resolved_thunk_refs and resolved_activation:
+        thunk_refs = {ref for _, ref in resolved_thunk_refs}
+        selected = tuple(selector for selector, target in resolved_activation if target.ref in thunk_refs)
+        if selected:
+            return selected
+        raise ToolangError("no compatible model between thunk model refs and activation --model options")
+
+    if resolved_activation:
+        return tuple(selector for selector, _target in resolved_activation)
+
+    if resolved_thunk_refs:
+        selected = _select_discovered_by_ref_order(
+            refs=tuple(ref for _selector, ref in resolved_thunk_refs),
+            candidates=discovered_available,
         )
         if selected:
             return selected
-        raise ToolangError("no compatible model between thunk model directive and activation --model options")
-
-    if resolved_activation:
-        return tuple(selector for selector, _binding in resolved_activation)
-
-    if resolved_thunk:
-        return tuple(selector for selector, _binding in resolved_thunk)
+        resolved_thunk = _resolve_selector_targets(
+            thunk_selectors,
+            providers=context.model_providers,
+            routes=context.model_routes,
+            environ=context.model_environ,
+        )
+        return tuple(selector for selector, _target in resolved_thunk)
 
     defaults = ((default_selector,) if default_selector and default_selector.strip() else tuple(context.default_models)) or (
         DEFAULT_MODEL_SELECTOR,
     )
-    resolved_defaults = _resolve_selector_bindings(
+    resolved_defaults = _resolve_selector_targets(
         defaults,
-        plugins=context.model_plugins,
-        profiles=context.model_profiles,
+        providers=context.model_providers,
+        routes=context.model_routes,
         environ=context.model_environ,
     )
     if resolved_defaults:
-        return tuple(selector for selector, _binding in resolved_defaults)
+        return tuple(selector for selector, _target in resolved_defaults)
     raise ToolangError("no default model selector is available for this activation")
 
 
-def _resolve_allowed_bindings(
+def _resolve_allowed_targets(
     selectors: Sequence[str] | None,
     *,
-    plugins: Mapping[str, ModelPlugin],
-    profiles: Mapping[str, ModelProfile],
+    providers: Mapping[str, ModelProvider],
+    routes: Mapping[str, ModelRoute],
     environ: Mapping[str, str],
-) -> tuple[ModelBinding, ...]:
-    bindings: list[ModelBinding] = []
+) -> tuple[ModelTarget, ...]:
+    targets: list[ModelTarget] = []
     for raw in selectors or ():
         selector = raw.strip()
         if not selector:
             continue
-        bindings.append(
+        targets.append(
             _resolve_one(
                 selector,
-                plugins=plugins,
-                profiles=profiles,
+                providers=providers,
+                routes=routes,
                 environ=environ,
             )
         )
-    return tuple(bindings)
+    return tuple(targets)
 
 
-def _resolve_selector_bindings(
+def _discover_available_selector_targets(
+    *,
+    providers: Mapping[str, ModelProvider],
+    routes: Mapping[str, ModelRoute],
+    environ: Mapping[str, str],
+) -> tuple[tuple[str, ModelTarget], ...]:
+    del routes
+    targets: list[tuple[str, ModelTarget]] = []
+    seen: set[str] = set()
+    for provider in providers.values():
+        if missing_provider_env_vars(provider, environ=environ):
+            continue
+        for info in model_infos(provider, environ=environ):
+            selector = f"{info.ref}@{provider.name}"
+            if selector in seen:
+                continue
+            seen.add(selector)
+            targets.append((selector, _target_from_info(provider, info, environ=environ)))
+    return tuple(targets)
+
+
+def _resolve_selector_targets(
     selectors: Sequence[str] | None,
     *,
-    plugins: Mapping[str, ModelPlugin],
-    profiles: Mapping[str, ModelProfile],
+    providers: Mapping[str, ModelProvider],
+    routes: Mapping[str, ModelRoute],
     environ: Mapping[str, str],
-) -> tuple[tuple[str, ModelBinding], ...]:
-    bindings: list[tuple[str, ModelBinding]] = []
+) -> tuple[tuple[str, ModelTarget], ...]:
+    targets: list[tuple[str, ModelTarget]] = []
     seen: set[str] = set()
     for raw in selectors or ():
         selector = raw.strip()
         if not selector or selector in seen:
             continue
         seen.add(selector)
-        bindings.append(
+        targets.append(
             (
                 selector,
                 _resolve_one(
                     selector,
-                    plugins=plugins,
-                    profiles=profiles,
+                    providers=providers,
+                    routes=routes,
                     environ=environ,
                 ),
             )
         )
-    return tuple(bindings)
+    return tuple(targets)
+
+
+def _resolve_selector_refs(
+    selectors: Sequence[str] | None,
+    *,
+    providers: Mapping[str, ModelProvider],
+    routes: Mapping[str, ModelRoute],
+    environ: Mapping[str, str],
+) -> tuple[tuple[str, str], ...]:
+    refs: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for raw in selectors or ():
+        selector = raw.strip()
+        if not selector or selector in seen:
+            continue
+        seen.add(selector)
+        if selector in routes:
+            refs.append((selector, routes[selector].ref))
+            continue
+        raw_selector, explicit_provider = _split_provider_route(selector)
+        if explicit_provider is not None:
+            target = _resolve_one(
+                selector,
+                providers=providers,
+                routes=routes,
+                environ=environ,
+            )
+            refs.append((selector, target.ref))
+            continue
+        matched_refs = {
+            info.ref
+            for provider in providers.values()
+            for info in _matching_model_infos(provider, raw_selector, environ=environ)
+        }
+        if not matched_refs:
+            raise ToolangError(f"model selector could not be resolved: {selector}")
+        if len(matched_refs) > 1:
+            joined = ", ".join(sorted(matched_refs))
+            raise ToolangError(
+                f"model selector resolves to multiple refs: {selector} (matches {joined})"
+            )
+        refs.append((selector, next(iter(matched_refs))))
+    return tuple(refs)
+
+
+def _select_discovered_by_ref_order(
+    *,
+    refs: Sequence[str],
+    candidates: Sequence[tuple[str, ModelTarget]],
+) -> tuple[str, ...]:
+    selected: list[str] = []
+    seen: set[str] = set()
+    for ref in refs:
+        for selector, target in candidates:
+            if target.ref != ref or selector in seen:
+                continue
+            seen.add(selector)
+            selected.append(selector)
+    return tuple(selected)
 
 
 def _require_allowed(
-    binding: ModelBinding,
+    target: ModelTarget,
     *,
     selector: str,
-    allowed: Sequence[ModelBinding],
+    allowed: Sequence[ModelTarget],
 ) -> None:
     if not allowed:
         return
-    allowed_identities = {_binding_identity(item) for item in allowed}
-    if _binding_identity(binding) in allowed_identities:
+    allowed_identities = {_target_identity(item) for item in allowed}
+    if _target_identity(target) in allowed_identities:
         return
-    allowed_text = ", ".join(item.target.ref for item in allowed)
+    allowed_text = ", ".join(f"{item.ref}@{item.provider}" for item in allowed)
     raise ToolangError(
         f"model selector is not allowed for this activation: {selector} (allowed: {allowed_text})"
     )
 
 
-def _binding_identity(binding: ModelBinding) -> tuple[str, str, str, str | None]:
-    target = binding.target
-    return (target.ref, target.plugin, target.model, target.base_url)
+def _target_identity(target: ModelTarget) -> tuple[str, str, str, str | None]:
+    return (target.ref, target.provider, target.model, target.base_url)
 
 
-def _split_plugin_route(selector: str) -> tuple[str, str | None]:
-    base, sep, plugin_name = selector.partition("@")
+def _split_provider_route(selector: str) -> tuple[str, str | None]:
+    base, sep, provider_name = selector.partition("@")
     if not sep:
         return selector, None
     base = base.strip()
-    plugin_name = plugin_name.strip()
-    if not base or not plugin_name:
+    provider_name = provider_name.strip()
+    if not base or not provider_name:
         raise ToolangError(f"invalid model selector route: {selector}")
-    return base, plugin_name
+    return base, provider_name
 
 
-def _require_plugin(plugins: Mapping[str, ModelPlugin], name: str) -> ModelPlugin:
-    plugin = plugins.get(name)
-    if plugin is None:
-        raise ToolangError(f"unknown model plugin: {name}")
-    return plugin
+def _require_provider(providers: Mapping[str, ModelProvider], name: str) -> ModelProvider:
+    provider = providers.get(name)
+    if provider is None:
+        raise ToolangError(f"unknown model provider: {name}")
+    return provider
 
 
 def _resolve_one(
     selector: str,
     *,
-    plugins: Mapping[str, ModelPlugin],
-    profiles: Mapping[str, ModelProfile],
+    providers: Mapping[str, ModelProvider],
+    routes: Mapping[str, ModelRoute],
     environ: Mapping[str, str],
-) -> ModelBinding:
-    if selector in profiles:
-        return _resolve_profile(selector, plugins=plugins, profiles=profiles, environ=environ)
-    raw_selector, explicit_plugin = _split_plugin_route(selector)
-    if explicit_plugin is not None:
-        plugin = _require_plugin(plugins, explicit_plugin)
-        target = plugin.resolve_selector(raw_selector, environ=environ)
+) -> ModelTarget:
+    if selector in routes:
+        return _resolve_route(selector, providers=providers, routes=routes, environ=environ)
+    raw_selector, explicit_provider = _split_provider_route(selector)
+    if explicit_provider is not None:
+        provider = _require_provider(providers, explicit_provider)
+        target = _resolve_provider_selector(raw_selector, provider=provider, environ=environ)
         if target is None:
-            raise ToolangError(f"model selector is not supported by {explicit_plugin}: {raw_selector}")
-        return ModelBinding(target=target, plugin=plugin)
-    matches: list[ModelBinding] = []
-    for plugin in plugins.values():
-        target = plugin.resolve_selector(raw_selector, environ=environ)
-        if target is None:
-            continue
-        matches.append(ModelBinding(target=target, plugin=plugin))
+            raise ToolangError(f"model selector is not supported by {explicit_provider}: {raw_selector}")
+        return target
+    matches: list[ModelTarget] = []
+    for provider in providers.values():
+        target = _resolve_provider_selector(raw_selector, provider=provider, environ=environ)
+        if target is not None:
+            matches.append(target)
     if not matches:
         raise ToolangError(f"model selector could not be resolved: {selector}")
     if len(matches) > 1:
-        plugin_names = ", ".join(sorted(item.plugin.name for item in matches))
+        provider_names = ", ".join(sorted(item.provider for item in matches))
         raise ToolangError(
-            f"model selector is ambiguous: {selector} (matches {plugin_names}); use <ref>@<plugin> or a named model profile"
+            f"model selector is ambiguous: {selector} (matches {provider_names}); use <ref>@<provider> or a named model route"
         )
     return matches[0]
 
 
-def _resolve_profile(
+def _resolve_provider_selector(
+    selector: str,
+    *,
+    provider: ModelProvider,
+    environ: Mapping[str, str],
+) -> ModelTarget | None:
+    matches = _matching_model_infos(provider, selector, environ=environ)
+    if not matches:
+        return None
+    if len(matches) > 1:
+        refs = ", ".join(sorted({item.ref for item in matches}))
+        raise ToolangError(
+            f"model selector is ambiguous within {provider.name}: {selector} (matches {refs})"
+        )
+    return _target_from_info(provider, matches[0], environ=environ)
+
+
+def _matching_model_infos(
+    provider: ModelProvider,
+    selector: str,
+    *,
+    environ: Mapping[str, str],
+) -> tuple[ModelInfo, ...]:
+    text = selector.strip()
+    if not text:
+        return ()
+    return tuple(
+        info
+        for info in model_infos(provider, environ=environ)
+        if text == info.ref or text in info.selectors
+    )
+
+
+def _resolve_route(
     name: str,
     *,
-    plugins: Mapping[str, ModelPlugin],
-    profiles: Mapping[str, ModelProfile],
+    providers: Mapping[str, ModelProvider],
+    routes: Mapping[str, ModelRoute],
     environ: Mapping[str, str],
-) -> ModelBinding:
-    profile = profiles.get(name)
-    if profile is None:
-        raise ToolangError(f"model profile not found: {name}")
-    plugin = _require_plugin(plugins, profile.plugin)
-    api_key = environ.get(profile.api_key_env) if profile.api_key_env is not None else None
-    return ModelBinding(
-        target=ResolvedModel(
-            ref=profile.ref,
-            plugin=profile.plugin,
-            model=profile.model,
-            base_url=profile.base_url,
-            api_key=api_key,
-            headers=dict(profile.headers),
-            options=dict(profile.options),
-        ),
-        plugin=plugin,
+) -> ModelTarget:
+    route = routes.get(name)
+    if route is None:
+        raise ToolangError(f"model route not found: {name}")
+    provider = _require_provider(providers, route.provider)
+    info = _find_model_info_by_ref(provider, route.ref, environ=environ)
+    if info is not None:
+        return _target_from_info(provider, info, environ=environ, route=route)
+    return _target_from_route(provider, route, environ=environ)
+
+
+def _find_model_info_by_ref(
+    provider: ModelProvider,
+    ref: str,
+    *,
+    environ: Mapping[str, str],
+) -> ModelInfo | None:
+    for info in model_infos(provider, environ=environ):
+        if info.ref == ref:
+            return info
+    return None
+
+
+def _target_from_info(
+    provider: ModelProvider,
+    info: ModelInfo,
+    *,
+    environ: Mapping[str, str],
+    route: ModelRoute | None = None,
+) -> ModelTarget:
+    api_key_env = route.api_key_env if route is not None and route.api_key_env is not None else default_provider_api_key_env(provider)
+    api_key = environ.get(api_key_env) if api_key_env else None
+    return ModelTarget(
+        ref=info.ref,
+        provider=provider.name,
+        name=route.display_name if route is not None and route.display_name is not None else info.name,
+        model=route.model if route is not None and route.model is not None else info.model,
+        adapter=route.adapter if route is not None and route.adapter is not None else info.adapter,
+        base_url=route.base_url if route is not None and route.base_url is not None else default_provider_base_url(provider, environ=environ),
+        api_key=api_key,
+        headers=dict(route.headers) if route is not None else {},
+        options=dict(route.options) if route is not None else {},
+        tools=route.tools if route is not None and route.tools is not None else info.tools,
+        streaming=route.streaming if route is not None and route.streaming is not None else info.streaming,
     )
+
+
+def _target_from_route(
+    provider: ModelProvider,
+    route: ModelRoute,
+    *,
+    environ: Mapping[str, str],
+) -> ModelTarget:
+    adapter = route.adapter
+    if adapter is None:
+        raise ToolangError(
+            f"model route {route.name!r} must declare adapter when ref {route.ref!r} is not exposed by provider {provider.name!r}"
+        )
+    api_key_env = route.api_key_env if route.api_key_env is not None else default_provider_api_key_env(provider)
+    api_key = environ.get(api_key_env) if api_key_env else None
+    model_name = route.model or _model_name_from_ref(route.ref)
+    return ModelTarget(
+        ref=route.ref,
+        provider=provider.name,
+        name=route.display_name or model_name,
+        model=model_name,
+        adapter=adapter,
+        base_url=route.base_url if route.base_url is not None else default_provider_base_url(provider, environ=environ),
+        api_key=api_key,
+        headers=dict(route.headers),
+        options=dict(route.options),
+        tools=True if route.tools is None else route.tools,
+        streaming=True if route.streaming is None else route.streaming,
+    )
+
+
+def _model_name_from_ref(ref: str) -> str:
+    head, sep, tail = ref.partition("/")
+    if sep:
+        return tail.strip() or head.strip()
+    return ref.strip()

@@ -22,11 +22,12 @@ import uvicorn
 
 from . import agents
 from toolang.base.protocols.channel import ChannelPlugin
-from toolang.base.protocols.model import ModelPlugin
+from toolang.base.protocols.model import ModelProvider
 from toolang.base.protocols.sandbox import SandboxPlugin
 from toolang.base.protocols.tool import Tool, ToolPlugin
 from toolang.base.types.channel import ChannelContext, InboundDelivery
 from toolang.base.error import ToolangError
+from toolang.base.types.model import ModelRoute
 from toolang.base.types.sandbox import SandboxSelector, SandboxStartRequest, SandboxState
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.base.utils.channels import bind_delivery
@@ -34,9 +35,6 @@ from toolang.base.utils.tools import join_tool_name
 from .config.log import build_uvicorn_log_config
 from .config.plugins import ChannelBinding, load_channel_bindings, load_sandbox_binding, load_tool_plugin_config
 from .config.web import resolve_cors_allowed_origins
-from .execution.model import (
-    ModelProfile,
-)
 from .execution.response import build_channel_response_sink
 from .execution.execute import execute_run
 from .execution.runner import QueueRunner, RunRequest, RunSubmission, RunOutcome
@@ -125,8 +123,8 @@ class UptimeContext:
         name: str,
         live: LiveState,
         tools: dict[str, Tool],
-        model_plugins: dict[str, ModelPlugin],
-        model_profiles: dict[str, ModelProfile],
+        model_providers: dict[str, ModelProvider],
+        model_routes: dict[str, ModelRoute],
         default_models: tuple[str, ...],
         model_environ: Mapping[str, str],
         channel_bindings: dict[str, ChannelBinding],
@@ -141,8 +139,8 @@ class UptimeContext:
         self.room = agents.agent_room(root, name)
         self.live = live
         self.tools = dict(tools)
-        self.model_plugins = dict(model_plugins)
-        self.model_profiles = dict(model_profiles)
+        self.model_providers = dict(model_providers)
+        self.model_routes = dict(model_routes)
         self.default_models = tuple(default_models)
         self.model_environ = dict(model_environ)
         self.channel_bindings = dict(channel_bindings)
@@ -226,45 +224,45 @@ class UptimeContext:
         )
 
 
-def load_model_plugins() -> dict[str, ModelPlugin]:
-    """Load all installed model plugins for one uptime."""
+def load_model_providers() -> dict[str, ModelProvider]:
+    """Load all installed model providers for one uptime."""
 
     from .models.ollama import create_model as create_ollama_model
     from .models.openai import create_model as create_openai_model
 
-    plugins: dict[str, ModelPlugin] = {
+    providers: dict[str, ModelProvider] = {
         "openai": create_openai_model({}),
         "ollama": create_ollama_model({}),
     }
     for entry_point in entry_points(group="toolang.model"):
         try:
-            factory = cast(Callable[[Mapping[str, Any]], ModelPlugin], entry_point.load())
+            factory = cast(Callable[[Mapping[str, Any]], ModelProvider], entry_point.load())
         except ModuleNotFoundError:
             continue
-        plugin = factory({})
-        if plugin.name in plugins:
+        provider = factory({})
+        if provider.name in providers:
             continue
-        plugins[plugin.name] = plugin
-    return plugins
+        providers[provider.name] = provider
+    return providers
 
 
-def load_model_profiles(toolang_root: Path, agent_name: str) -> dict[str, ModelProfile]:
-    """Load named model profiles for one uptime."""
+def load_model_routes(toolang_root: Path, agent_name: str) -> dict[str, ModelRoute]:
+    """Load named model routes for one uptime."""
 
-    profiles: dict[str, ModelProfile] = {}
+    routes: dict[str, ModelRoute] = {}
     for payload in _model_config_payloads(toolang_root, agent_name):
-        raw_models = payload.get("models")
-        if not isinstance(raw_models, dict):
+        raw_routes = payload.get("model_routes")
+        if not isinstance(raw_routes, dict):
             continue
-        for name, value in raw_models.items():
-            if name == "default" or not isinstance(name, str) or not isinstance(value, dict):
+        for name, value in raw_routes.items():
+            if not isinstance(name, str) or not isinstance(value, dict):
                 continue
-            profiles[name] = _parse_model_profile(name, cast(dict[str, object], value))
-    return profiles
+            routes[name] = _parse_model_route(name, cast(dict[str, object], value))
+    return routes
 
 
 def load_default_models(toolang_root: Path, agent_name: str) -> tuple[str, ...]:
-    """Load default model profile names for one uptime."""
+    """Load default model route or selector names for one uptime."""
 
     defaults: tuple[str, ...] = ()
     for payload in _model_config_payloads(toolang_root, agent_name):
@@ -278,26 +276,37 @@ def load_default_models(toolang_root: Path, agent_name: str) -> tuple[str, ...]:
     return defaults
 
 
-def _parse_model_profile(name: str, payload: dict[str, object]) -> ModelProfile:
-    ref = _required_profile_str(payload, "ref", profile_name=name)
-    plugin = _required_profile_str(payload, "plugin", profile_name=name)
-    model = _required_profile_str(payload, "model", profile_name=name)
-    base_url = _optional_profile_str(payload.get("base_url"))
-    api_key_env = _optional_profile_str(payload.get("api_key_env"))
-    headers = _profile_string_table(payload.get("headers"))
+def _parse_model_route(name: str, payload: dict[str, object]) -> ModelRoute:
+    ref = _required_model_route_str(payload, "ref", route_name=name)
+    provider = _required_model_route_str(payload, "provider", route_name=name)
+    model = _optional_model_route_str(payload.get("model"))
+    display_name = _optional_model_route_str(payload.get("name"))
+    adapter = _optional_model_route_str(payload.get("adapter"))
+    base_url = _optional_model_route_str(payload.get("base_url"))
+    api_key_env = _optional_model_route_str(payload.get("api_key_env"))
+    tools = _optional_model_route_bool(payload.get("tools"))
+    streaming = _optional_model_route_bool(payload.get("streaming"))
+    headers = _model_route_string_table(payload.get("headers"))
     options = (
         dict(cast(dict[str, object], payload.get("options", {})))
         if isinstance(payload.get("options"), dict)
         else {}
     )
-    return ModelProfile(
+    details = _optional_model_route_str(payload.get("details"))
+    return ModelRoute(
+        name=name,
         ref=ref,
-        plugin=plugin,
+        provider=provider,
         model=model,
+        display_name=display_name,
+        adapter=adapter,
         base_url=base_url,
         api_key_env=api_key_env,
+        tools=tools,
+        streaming=streaming,
         headers=headers,
         options=options,
+        details=details,
     )
 
 
@@ -314,27 +323,33 @@ def _load_toml(path: Path) -> dict[str, object]:
     return cast(dict[str, object], tomllib.loads(path.read_text(encoding="utf-8")))
 
 
-def _required_profile_str(payload: dict[str, object], key: str, *, profile_name: str) -> str:
-    value = _optional_profile_str(payload.get(key))
+def _required_model_route_str(payload: dict[str, object], key: str, *, route_name: str) -> str:
+    value = _optional_model_route_str(payload.get(key))
     if value is None:
-        raise ToolangError(f"model profile {profile_name!r} is missing {key}")
+        raise ToolangError(f"model route {route_name!r} is missing {key}")
     return value
 
 
-def _optional_profile_str(value: object) -> str | None:
+def _optional_model_route_str(value: object) -> str | None:
     if not isinstance(value, str):
         return None
     text = value.strip()
     return text or None
 
 
-def _profile_string_table(value: object) -> dict[str, str]:
+def _optional_model_route_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    return None
+
+
+def _model_route_string_table(value: object) -> dict[str, str]:
     if not isinstance(value, dict):
         return {}
     result: dict[str, str] = {}
     for key, item in value.items():
-        text_key = _optional_profile_str(key)
-        text_value = _optional_profile_str(item)
+        text_key = _optional_model_route_str(key)
+        text_value = _optional_model_route_str(item)
         if text_key is None or text_value is None:
             continue
         result[text_key] = text_value
@@ -786,8 +801,8 @@ def _load_runtime_context(
         name=agent_name,
         live=live,
         tools=load_tool_plugins(config=tool_plugin_config),
-        model_plugins=load_model_plugins(),
-        model_profiles=load_model_profiles(toolang_root, agent_name),
+        model_providers=load_model_providers(),
+        model_routes=load_model_routes(toolang_root, agent_name),
         default_models=load_default_models(toolang_root, agent_name),
         model_environ=environ,
         channel_bindings=channel_bindings,
@@ -1133,10 +1148,10 @@ def create_sandbox_plugin(
     return factory(dict(config or {}))
 
 
-def create_model_plugin(
+def create_model_provider(
     name: str,
     *,
     config: Mapping[str, Any] | None = None,
-) -> ModelPlugin:
-    factory = cast(Callable[[Mapping[str, Any]], ModelPlugin], load_plugin_factory(name, group="toolang.model"))
+) -> ModelProvider:
+    factory = cast(Callable[[Mapping[str, Any]], ModelProvider], load_plugin_factory(name, group="toolang.model"))
     return factory(dict(config or {}))

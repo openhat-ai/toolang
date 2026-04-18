@@ -83,8 +83,8 @@ from toolang.up import (
     UptimeContext,
     create_app,
     load_default_models,
-    load_model_plugins,
-    load_model_profiles,
+    load_model_providers,
+    load_model_routes,
     load_tool_plugins,
     up as run_experiments_up,
 )
@@ -2147,7 +2147,7 @@ def test_assemble_run_input_prefers_thunk_model_over_activation_default(tmp_path
         agent_name="alice",
         enabled_loops=("chat",),
     )
-    context.config.set("models.default_selector", "qwen/qwen3@ollama")
+    context.config.set("models.default_selector", "openai/gpt-5@openai")
     bound = bind_run_request(
         context,
         RunRequest(group="chat", origin="chat", thunk="hello"),
@@ -2156,7 +2156,7 @@ def test_assemble_run_input_prefers_thunk_model_over_activation_default(tmp_path
     bundle = assemble_run_input(context, bound)
 
     assert bundle.model == "openai/gpt-5"
-    assert bundle.debug["activation_default_model"] == "qwen/qwen3@ollama"
+    assert bundle.debug["activation_default_model"] == "openai/gpt-5@openai"
 
 
 def test_assemble_run_input_uses_activation_default_when_thunk_omits_one(tmp_path: Path) -> None:
@@ -2170,7 +2170,7 @@ def test_assemble_run_input_uses_activation_default_when_thunk_omits_one(tmp_pat
         agent_name="alice",
         enabled_loops=("chat",),
     )
-    context.config.set("models.default_selector", "qwen/qwen3@ollama")
+    context.config.set("models.default_selector", "openai/gpt-5@openai")
     bound = bind_run_request(
         context,
         RunRequest(group="chat", origin="chat", thunk="hello"),
@@ -2178,8 +2178,8 @@ def test_assemble_run_input_uses_activation_default_when_thunk_omits_one(tmp_pat
 
     bundle = assemble_run_input(context, bound)
 
-    assert bundle.model == "qwen/qwen3@ollama"
-    assert bundle.debug["activation_default_model"] == "qwen/qwen3@ollama"
+    assert bundle.model == "openai/gpt-5@openai"
+    assert bundle.debug["activation_default_model"] == "openai/gpt-5@openai"
 
 
 def test_execute_run_rejects_thunk_model_outside_activation_allowlist(tmp_path: Path) -> None:
@@ -2193,8 +2193,8 @@ def test_execute_run_rejects_thunk_model_outside_activation_allowlist(tmp_path: 
         agent_name="alice",
         enabled_loops=("chat",),
     )
-    context.config.set("models.allowed_selectors", ("qwen/qwen3@ollama",))
-    context.config.set("models.default_selector", "qwen/qwen3@ollama")
+    context.config.set("models.allowed_selectors", ("openai/o3@openai",))
+    context.config.set("models.default_selector", "openai/o3@openai")
 
     outcome = asyncio.run(
         run_execute_module.execute_run(
@@ -2210,7 +2210,7 @@ def test_execute_run_rejects_thunk_model_outside_activation_allowlist(tmp_path: 
 
     assert outcome.status == "failed"
     assert outcome.error is not None
-    assert "not allowed for this activation" in outcome.error
+    assert "no compatible model between thunk model refs and activation --model options" in outcome.error
 
 
 def test_execute_run_pre_start_failure_does_not_emit_persist_sink_error(tmp_path: Path, caplog) -> None:
@@ -2463,8 +2463,8 @@ def _build_context(
         name=agent_name,
         live=live,
         tools=load_tool_plugins(),
-        model_plugins=load_model_plugins(),
-        model_profiles=load_model_profiles(toolang_root, agent_name),
+        model_providers=load_model_providers(),
+        model_routes=load_model_routes(toolang_root, agent_name),
         default_models=load_default_models(toolang_root, agent_name),
         model_environ={},
         channel_bindings=channel_bindings or {},

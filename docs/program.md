@@ -213,7 +213,8 @@ Recommended directives are:
 | `services = ...` | Select one effective service set |
 | `tools = ...` | Select one effective tool set |
 
-Directive values use names, not refs.
+Capability directives use names. `model = ...` uses route-neutral model refs
+or shorthand selectors and must not include `@provider`.
 
 Example:
 
@@ -249,7 +250,8 @@ Rules:
 | no `default` keyword | `default` is treated like any other selector text |
 | `+=` | add to the inherited set for capability directives |
 | `-=` | remove from the inherited set for capability directives |
-| names only | directives do not resolve shorthand or refs |
+| route-neutral only | `model = ...` must not include `@provider` |
+| capability names only | capability directives do not resolve shorthand or refs |
 
 
 ## Prompts

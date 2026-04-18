@@ -277,7 +277,13 @@ def _runtime_environ_for_agent(
 
 
 def _make_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> Table:
-    table = Table(box=box.SIMPLE_HEAVY, header_style="", show_lines=False)
+    table = Table(
+        box=box.HORIZONTALS,
+        header_style="",
+        show_lines=False,
+        pad_edge=False,
+        collapse_padding=True,
+    )
     for header in headers:
         table.add_column(header, no_wrap=True)
     for row in rows:
@@ -292,9 +298,7 @@ def _echo_block(text: str) -> None:
 
 
 def _echo_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> None:
-    typer.echo()
     _TABLE_CONSOLE.print(_make_table(headers, rows))
-    typer.echo()
 
 
 def _echo_pairs_table(

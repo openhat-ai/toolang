@@ -94,7 +94,8 @@ def assemble_run_input(context: UptimeContext, run: RunBinding) -> RunInput:
     input_text = program.expand_input(run.input_text) if run.input_text else ""
     history_messages = context.store.recent_conversation_messages(thread_id=run.thread_id, limit=19)
     tools = context.tools
-    activation_model_selectors = _run_requested_model_selectors(run)
+    requested_model_selectors = _run_requested_model_selectors(run)
+    activation_model_selectors = requested_model_selectors or _activation_allowed_model_selectors(context)
     thunk_model_selectors = thunk.model_selectors()
     effective_model_selectors = select_model_selectors(
         context,
@@ -130,6 +131,7 @@ def assemble_run_input(context: UptimeContext, run: RunBinding) -> RunInput:
             "model": requested_model,
             "activation_default_model": _activation_default_model_selector(context),
             "activation_model_selectors": activation_model_selectors,
+            "requested_model_selectors": requested_model_selectors,
             "thunk_model_selectors": thunk_model_selectors,
             "effective_model_selectors": effective_model_selectors,
             "tool_names": sorted(tools),

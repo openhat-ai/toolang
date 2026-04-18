@@ -30,7 +30,7 @@ Use this directory for:
 | [tasks.md](./tasks.md) | Job model, including task, chore, will, and thread mapping |
 | [execution.md](./execution.md) | Execution model, including durable records, trace events, and response events |
 | [chat.md](./chat.md) | Chat and transcript model, including thread, run, message, and stream behavior |
-| [models.md](./models.md) | Model integrations, including selectors, profiles, and built-in model plugins |
+| [models.md](./models.md) | Model integrations, including selectors, providers, routes, and built-in model providers |
 | [tools.md](./tools.md) | Tool runtime, including built-in tools and service-cap integration |
 | [plugins.md](./plugins.md) | Plugin model, including shared contracts, plugin families, and loading |
 | [api.md](./api.md) | Control surfaces, including the CLI and local agent HTTP API |

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from .. import agents
 from toolang.base.error import ToolangError
+from toolang.base.protocols.model import ModelProvider
 from toolang.base.protocols.tool import Tool
 from toolang.base.types.message import (
     Message,
@@ -21,7 +22,7 @@ from toolang.base.types.message import (
     ToolResultPart,
     message_text,
 )
-from toolang.base.types.model import ModelBinding
+from toolang.base.types.model import ModelTarget
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
@@ -61,13 +62,15 @@ class RunContext:
     def __init__(
         self,
         run_input: RunInput,
-        model: ModelBinding,
+        model: ModelTarget,
+        provider: ModelProvider,
         *,
         on_event: TraceEventHandler | None = None,
         stream: bool = False,
     ) -> None:
         self._input = run_input
         self._model = model
+        self._provider = provider
         self._on_event = on_event
         self._stream = stream
         self._snapshot = run_input.snapshot
@@ -86,10 +89,10 @@ class RunContext:
         self._tool_definitions = tuple(
             tool.definition()
             for tool in sorted(run_input.tools.values(), key=lambda item: item.name)
-        )
+        ) if model.tools else ()
 
     @property
-    def model(self) -> ModelBinding:
+    def model(self) -> ModelTarget:
         return self._model
 
     @property
@@ -132,14 +135,14 @@ class RunContext:
             tools=self._tool_definitions,
             state=self._state,
         )
-        if self._stream and self._on_event is not None:
-            current = self._model.plugin.stream(
-                self._model.target,
+        if self._stream and self._on_event is not None and self._model.streaming:
+            current = self._provider.stream(
+                self._model,
                 request,
                 on_event=self._handle_model_event,
             )
         else:
-            current = self._model.plugin.invoke(self._model.target, request)
+            current = self._provider.invoke(self._model, request)
         return self._apply_model_response(
             current,
             step_index=step_index,
@@ -273,7 +276,7 @@ class RunContext:
                 status="finished",
                 output=output,
                 payload=ModelCallStepPayload(
-                    model_ref=self._model.target.ref,
+                    model_ref=self._model.ref,
                     input_tokens=current.usage.input_tokens if current.usage is not None else 0,
                     output_tokens=current.usage.output_tokens if current.usage is not None else 0,
                 ),

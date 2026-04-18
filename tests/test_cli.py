@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from toolang import agents
 from toolang import caps
+from toolang.base.types.model import ModelInfo
 import toolang.cli.main as cli
 from toolang import work
 from toolang.execution.db import ExecutionStore, execution_db_path
@@ -27,6 +28,39 @@ def _invoke_app(
         return runner.invoke(cli.app, args, env=env)
     finally:
         cli._CLI_PREFIX_AGENT = previous
+
+
+class _FakeModelProvider:
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str | None = None,
+        required_env: tuple[str, ...] = (),
+        base_url: str | None = None,
+        api_key_env: str | None = None,
+        models: tuple[ModelInfo, ...] = (),
+    ) -> None:
+        self.name = name
+        self.description = description
+        self._required_env = required_env
+        self._base_url = base_url
+        self._api_key_env = api_key_env
+        self._models = models
+
+    def required_env_vars(self) -> tuple[str, ...]:
+        return self._required_env
+
+    def default_base_url(self, *, environ) -> str | None:
+        del environ
+        return self._base_url
+
+    def default_api_key_env(self) -> str | None:
+        return self._api_key_env
+
+    def list_models(self, *, environ) -> tuple[ModelInfo, ...]:
+        del environ
+        return self._models
 
 
 def test_cli_main_normalizes_agent_prefix_shortcut(monkeypatch) -> None:
@@ -1098,8 +1132,34 @@ def test_cli_info_prefers_runtime_models_for_active_agent(tmp_path: Path) -> Non
 def test_cli_plugin_list_shows_installed_plugins(monkeypatch) -> None:
     monkeypatch.setattr(
         cli.agent_up,
-        "load_model_plugins",
-        lambda: {"openai": object(), "ollama": object()},
+        "load_model_providers",
+        lambda: {
+            "openai": _FakeModelProvider(
+                name="openai",
+                description="Use OpenAI-hosted models.",
+                required_env=("OPENAI_API_KEY",),
+                base_url="https://api.openai.com/v1",
+                api_key_env="OPENAI_API_KEY",
+                models=(
+                    ModelInfo(
+                        ref="openai/gpt-5",
+                        provider="openai",
+                        name="gpt-5",
+                        model="gpt-5",
+                        selectors=("gpt-5", "openai/gpt-5"),
+                        adapter="responses",
+                        tools=True,
+                        streaming=True,
+                    ),
+                ),
+            ),
+            "ollama": _FakeModelProvider(
+                name="ollama",
+                description="Use local Ollama-hosted models.",
+                base_url="http://127.0.0.1:11434/v1",
+                models=(),
+            ),
+        },
     )
 
     def fake_list_plugin_names(*, group: str) -> list[str]:
@@ -1112,14 +1172,23 @@ def test_cli_plugin_list_shows_installed_plugins(monkeypatch) -> None:
 
     monkeypatch.setattr(cli.agent_up, "list_plugin_names", fake_list_plugin_names)
 
-    result = runner.invoke(cli.app, ["plugin", "list"])
+    result = runner.invoke(
+        cli.app,
+        ["plugin", "list"],
+        env={"OPENAI_API_KEY": "secret"},
+    )
 
     assert result.exit_code == 0
     assert "FAMILY" in result.stdout
     assert "NAME" in result.stdout
+    assert "STATUS" in result.stdout
     assert "model" in result.stdout
     assert "openai" in result.stdout
     assert "ollama" in result.stdout
+    assert "ready" in result.stdout
+    assert "base URL https://api.openai.com/v1" in result.stdout
+    assert "env OPENAI_API_KEY" in result.stdout
+    assert "1 discovered model" in result.stdout
     assert "tool" in result.stdout
     assert "filesystem" in result.stdout
     assert "shell" in result.stdout
@@ -1128,6 +1197,70 @@ def test_cli_plugin_list_shows_installed_plugins(monkeypatch) -> None:
     assert "sandbox" in result.stdout
     assert "docker" in result.stdout
     assert "none" in result.stdout
+
+
+def test_cli_model_list_shows_discovered_models(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli.agent_up,
+        "load_model_providers",
+        lambda: {
+            "openai": _FakeModelProvider(
+                name="openai",
+                required_env=("OPENAI_API_KEY",),
+                base_url="https://api.openai.com/v1",
+                models=(
+                    ModelInfo(
+                        ref="openai/gpt-5",
+                        provider="openai",
+                        name="gpt-5",
+                        model="gpt-5",
+                        selectors=("gpt-5", "openai/gpt-5"),
+                        adapter="responses",
+                        tools=True,
+                        streaming=True,
+                        details="Built-in OpenAI route.",
+                    ),
+                ),
+            ),
+            "openrouter": _FakeModelProvider(
+                name="openrouter",
+                required_env=("OPENROUTER_API_KEY",),
+                base_url="https://openrouter.ai/api/v1",
+                models=(
+                    ModelInfo(
+                        ref="openai/gpt-5",
+                        provider="openrouter",
+                        name="gpt-5",
+                        model="openai/gpt-5",
+                        selectors=("gpt-5", "openai/gpt-5"),
+                        adapter="responses",
+                        tools=True,
+                        streaming=True,
+                        details="Built-in OpenRouter route.",
+                    ),
+                ),
+            ),
+        },
+    )
+
+    result = runner.invoke(
+        cli.app,
+        ["model", "list"],
+        env={"OPENAI_API_KEY": "secret", "OPENROUTER_API_KEY": ""},
+    )
+
+    assert result.exit_code == 0
+    assert "PROVIDER" in result.stdout
+    assert "MODEL" in result.stdout
+    assert "ADAPTER" in result.stdout
+    assert "FEATURES" in result.stdout
+    assert "STATUS" not in result.stdout
+    assert "SELECTOR" not in result.stdout
+    assert "openai" in result.stdout
+    assert "openrouter" in result.stdout
+    assert "tools=yes" in result.stdout
+    assert "streaming=yes" in result.stdout
+    assert "responses" in result.stdout
 
 
 def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
@@ -1702,6 +1835,42 @@ def test_cli_start_reuses_preferred_runtime_port(tmp_path: Path, monkeypatch) ->
         if value == "--loop"
     ]
     assert loop_names == ["chat", "pulse", "control", "inspect", "prepare", "reload"]
+
+
+def test_cli_start_reports_failed_when_process_exits_before_state(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+
+    class FakeProcess:
+        def poll(self) -> int:
+            return 1
+
+    def fake_popen(
+        command,
+        *,
+        stdin,
+        stdout,
+        stderr,
+        env,
+        cwd: str,
+        start_new_session: bool,
+        close_fds: bool,
+    ):
+        del command, stdin, stderr, env, cwd, start_new_session, close_fds
+        stdout.write(b"boom\n")
+        stdout.flush()
+        return FakeProcess()
+
+    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(toolang_root), "start", "alice"],
+        env={},
+    )
+
+    assert result.exit_code == 1
+    assert "agent failed during startup: alice" in result.stderr
 
 
 def test_cli_start_requires_agent(tmp_path: Path) -> None:

@@ -6,24 +6,22 @@ from typing import Any, cast
 
 import pytest
 
-from toolang.base.protocols.model import ModelPlugin
+from toolang.base.protocols.model import ModelProvider
 from toolang.base.protocols.tool import Tool
 from toolang.base.types.message import Message, ToolCallPart, ToolResultPart
-from toolang.base.types.model import ModelBinding, ModelCapabilities, ResolvedModel
-from toolang.base.types.run import (
-    ModelCall,
-    ModelCallResult,
-    ToolCall,
-)
+from toolang.base.types.model import ModelInfo, ModelTarget
+from toolang.base.types.run import ModelCall, ModelCallResult, ToolCall
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.base.error import ToolangError
-from toolang.execution.input import RunBinding, RunInput
-from toolang.execution.snapshot import RunSnapshot, SnapshotAgent, SnapshotProgram, SnapshotRun
-from toolang.execution.model import resolve_model, select_model_selectors
 from toolang.execution.context import RunContext
-from toolang.models._openai_compat import encode_message, response_payload
+from toolang.execution.input import RunBinding, RunInput
+from toolang.execution.model import resolve_model, select_model_selectors
+from toolang.execution.snapshot import RunSnapshot, SnapshotAgent, SnapshotProgram, SnapshotRun
+from toolang.models import ollama as ollama_models
+from toolang.models import openrouter as openrouter_models
+from toolang.models.responses import encode_message, response_payload
 from toolang.strategies import load_run_strategy
-from toolang.up import load_default_models, load_model_profiles
+from toolang.up import load_default_models, load_model_routes
 
 
 class _FakeTool(Tool):
@@ -42,104 +40,149 @@ class _FakeTool(Tool):
         return {"ok": True, "stdout": f"ran:{arguments['command']}"}
 
 
-class _FakeModelPlugin(ModelPlugin):
+class _FakeModelProvider(ModelProvider):
     def __init__(
         self,
         *,
         name: str,
+        models: tuple[ModelInfo, ...] = (),
         responses: list[ModelCallResult] | None = None,
-        resolved: dict[str, ResolvedModel] | None = None,
+        required_env_vars: tuple[str, ...] = (),
+        default_base_url: str | None = None,
+        default_api_key_env: str | None = None,
     ) -> None:
         self.name = name
         self.description = None
+        self._models = tuple(models)
         self._responses = list(responses or [])
-        self._resolved = dict(resolved or {})
+        self._required_env_vars = tuple(required_env_vars)
+        self._default_base_url = default_base_url
+        self._default_api_key_env = default_api_key_env
         self.requests: list[ModelCall] = []
 
-    def capabilities(self) -> ModelCapabilities:
-        return ModelCapabilities()
+    def required_env_vars(self) -> tuple[str, ...]:
+        return self._required_env_vars
 
-    def resolve_selector(self, selector: str, *, environ) -> ResolvedModel | None:
+    def default_base_url(self, *, environ) -> str | None:
         del environ
-        return self._resolved.get(selector)
+        return self._default_base_url
 
-    def invoke(self, target: ResolvedModel, request: ModelCall) -> ModelCallResult:
+    def default_api_key_env(self) -> str | None:
+        return self._default_api_key_env
+
+    def list_models(self, *, environ) -> tuple[ModelInfo, ...]:
+        del environ
+        return self._models
+
+    def invoke(self, target: ModelTarget, request: ModelCall) -> ModelCallResult:
         del target
         self.requests.append(request)
         return self._responses.pop(0)
 
-    def stream(self, target: ResolvedModel, request: ModelCall, *, on_event) -> ModelCallResult:
+    def stream(self, target: ModelTarget, request: ModelCall, *, on_event) -> ModelCallResult:
         del on_event
         return self.invoke(target, request)
 
 
-def test_model_resolution_resolves_named_profile(tmp_path: Path) -> None:
+def test_model_resolution_resolves_named_route(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     (toolang_root / "agents" / "alice").mkdir(parents=True, exist_ok=True)
     (toolang_root / "config.toml").write_text(
         '[models]\n'
         'default = ["fast"]\n'
         '\n'
-        '[models.fast]\n'
+        '[model_routes.fast]\n'
         'ref = "openai/gpt-5"\n'
-        'plugin = "openai"\n'
-        'model = "gpt-5"\n'
-        'api_key_env = "OPENAI_API_KEY"\n',
+        'provider = "openai"\n',
         encoding="utf-8",
     )
-    plugin = _FakeModelPlugin(name="openai")
+    provider = _FakeModelProvider(
+        name="openai",
+        models=(
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openai",
+                name="gpt-5",
+                model="gpt-5",
+                selectors=("gpt-5", "openai/gpt-5"),
+                adapter="responses",
+            ),
+        ),
+        default_api_key_env="OPENAI_API_KEY",
+    )
     context = SimpleNamespace(
-        model_plugins={"openai": plugin},
-        model_profiles=load_model_profiles(toolang_root, "alice"),
+        model_providers={"openai": provider},
+        model_routes=load_model_routes(toolang_root, "alice"),
         default_models=load_default_models(toolang_root, "alice"),
         model_environ={"OPENAI_API_KEY": "secret"},
     )
-    resolved = resolve_model(context, selector="fast")
 
-    assert resolved.target.ref == "openai/gpt-5"
-    assert resolved.target.plugin == "openai"
-    assert resolved.target.model == "gpt-5"
-    assert resolved.target.api_key == "secret"
-    assert resolved.plugin is plugin
+    target = resolve_model(context, selector="fast")
+
+    assert target.ref == "openai/gpt-5"
+    assert target.provider == "openai"
+    assert target.model == "gpt-5"
+    assert target.api_key == "secret"
 
 
-def test_model_resolution_resolves_explicit_plugin_route() -> None:
-    plugin = _FakeModelPlugin(
+def test_model_resolution_resolves_explicit_provider_route() -> None:
+    provider = _FakeModelProvider(
         name="openrouter",
-        resolved={
-            "openai/gpt-5": ResolvedModel(
+        models=(
+            ModelInfo(
                 ref="openai/gpt-5",
-                plugin="openrouter",
+                provider="openrouter",
+                name="gpt-5",
                 model="openai/gpt-5",
-            )
-        },
+                selectors=("gpt-5", "openai/gpt-5"),
+                adapter="responses",
+            ),
+        ),
     )
     context = SimpleNamespace(
-        model_plugins={"openrouter": plugin},
-        model_profiles={},
+        model_providers={"openrouter": provider},
+        model_routes={},
         default_models=(),
         model_environ={},
     )
 
-    resolved = resolve_model(context, selector="openai/gpt-5@openrouter")
+    target = resolve_model(context, selector="openai/gpt-5@openrouter")
 
-    assert resolved.target.plugin == "openrouter"
-    assert resolved.target.model == "openai/gpt-5"
+    assert target.provider == "openrouter"
+    assert target.model == "openai/gpt-5"
 
 
 def test_model_resolution_rejects_ambiguous_selector() -> None:
     context = SimpleNamespace(
-        model_plugins={
-            "openai": _FakeModelPlugin(
+        model_providers={
+            "openai": _FakeModelProvider(
                 name="openai",
-                resolved={"openai/gpt-5": ResolvedModel(ref="openai/gpt-5", plugin="openai", model="gpt-5")},
+                models=(
+                    ModelInfo(
+                        ref="openai/gpt-5",
+                        provider="openai",
+                        name="gpt-5",
+                        model="gpt-5",
+                        selectors=("gpt-5", "openai/gpt-5"),
+                        adapter="responses",
+                    ),
+                ),
             ),
-            "openrouter": _FakeModelPlugin(
+            "openrouter": _FakeModelProvider(
                 name="openrouter",
-                resolved={"openai/gpt-5": ResolvedModel(ref="openai/gpt-5", plugin="openrouter", model="openai/gpt-5")},
+                models=(
+                    ModelInfo(
+                        ref="openai/gpt-5",
+                        provider="openrouter",
+                        name="gpt-5",
+                        model="openai/gpt-5",
+                        selectors=("gpt-5", "openai/gpt-5"),
+                        adapter="responses",
+                    ),
+                ),
             ),
         },
-        model_profiles={},
+        model_routes={},
         default_models=(),
         model_environ={},
     )
@@ -149,68 +192,82 @@ def test_model_resolution_rejects_ambiguous_selector() -> None:
 
 
 def test_model_resolution_uses_first_allowed_selector_as_default() -> None:
-    plugin = _FakeModelPlugin(
+    provider = _FakeModelProvider(
         name="openrouter",
-        resolved={
-            "gpt-5": ResolvedModel(ref="openai/gpt-5", plugin="openrouter", model="gpt-5"),
-            "o3": ResolvedModel(ref="openai/o3", plugin="openrouter", model="o3"),
-        },
+        models=(
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openrouter",
+                name="gpt-5",
+                model="gpt-5",
+                selectors=("gpt-5", "openai/gpt-5"),
+                adapter="responses",
+            ),
+            ModelInfo(
+                ref="openai/o3",
+                provider="openrouter",
+                name="o3",
+                model="o3",
+                selectors=("o3", "openai/o3"),
+                adapter="responses",
+            ),
+        ),
     )
     context = SimpleNamespace(
-        model_plugins={"openrouter": plugin},
-        model_profiles={},
+        model_providers={"openrouter": provider},
+        model_routes={},
         default_models=(),
         model_environ={},
     )
 
-    resolved = resolve_model(
+    target = resolve_model(
         context,
         selector=None,
         default_selector="gpt-5@openrouter",
         allowed_selectors=("gpt-5@openrouter", "o3@openrouter"),
     )
 
-    assert resolved.target.ref == "openai/gpt-5"
-    assert resolved.target.model == "gpt-5"
+    assert target.ref == "openai/gpt-5"
+    assert target.model == "gpt-5"
 
 
-def test_model_resolution_allows_thunk_selector_within_allowed_set() -> None:
-    plugin = _FakeModelPlugin(
+def test_model_resolution_allows_selector_within_allowed_set() -> None:
+    provider = _FakeModelProvider(
         name="openrouter",
-        resolved={
-            "gpt-5": ResolvedModel(ref="openai/gpt-5", plugin="openrouter", model="gpt-5"),
-            "o3": ResolvedModel(ref="openai/o3", plugin="openrouter", model="o3"),
-        },
+        models=(
+            ModelInfo(ref="openai/gpt-5", provider="openrouter", name="gpt-5", model="gpt-5", selectors=("gpt-5",), adapter="responses"),
+            ModelInfo(ref="openai/o3", provider="openrouter", name="o3", model="o3", selectors=("o3",), adapter="responses"),
+        ),
     )
     context = SimpleNamespace(
-        model_plugins={"openrouter": plugin},
-        model_profiles={},
+        model_providers={"openrouter": provider},
+        model_routes={},
         default_models=(),
         model_environ={},
     )
 
-    resolved = resolve_model(
+    target = resolve_model(
         context,
         selector="o3@openrouter",
         default_selector="gpt-5@openrouter",
         allowed_selectors=("gpt-5@openrouter", "o3@openrouter"),
     )
 
-    assert resolved.target.ref == "openai/o3"
-    assert resolved.target.model == "o3"
+    assert target.ref == "openai/o3"
+    assert target.model == "o3"
 
 
-def test_model_resolution_rejects_thunk_selector_outside_allowed_set() -> None:
-    plugin = _FakeModelPlugin(
+def test_model_resolution_rejects_selector_outside_allowed_set() -> None:
+    provider = _FakeModelProvider(
         name="openrouter",
-        resolved={
-            "gpt-5": ResolvedModel(ref="openai/gpt-5", plugin="openrouter", model="gpt-5"),
-            "o3": ResolvedModel(ref="openai/o3", plugin="openrouter", model="o3"),
-        },
+        models=(
+            ModelInfo(ref="openai/gpt-5", provider="openrouter", name="gpt-5", model="gpt-5", selectors=("gpt-5",), adapter="responses"),
+            ModelInfo(ref="openai/o3", provider="openrouter", name="o3", model="o3", selectors=("o3",), adapter="responses"),
+        ),
     )
     context = SimpleNamespace(
-        model_plugins={"openrouter": plugin},
-        model_profiles={},
+        model_providers={"openrouter": provider},
+        model_routes={},
         default_models=(),
         model_environ={},
     )
@@ -225,31 +282,347 @@ def test_model_resolution_rejects_thunk_selector_outside_allowed_set() -> None:
 
 
 def test_select_model_selectors_preserves_activation_order_for_intersection() -> None:
-    plugin = _FakeModelPlugin(
+    provider = _FakeModelProvider(
         name="openrouter",
-        resolved={
-            "gpt-5": ResolvedModel(ref="openai/gpt-5", plugin="openrouter", model="gpt-5"),
-            "o3": ResolvedModel(ref="openai/o3", plugin="openrouter", model="o3"),
-        },
+        models=(
+            ModelInfo(ref="openai/gpt-5", provider="openrouter", name="gpt-5", model="gpt-5", selectors=("gpt-5", "openai/gpt-5"), adapter="responses"),
+            ModelInfo(ref="openai/o3", provider="openrouter", name="o3", model="o3", selectors=("o3", "openai/o3"), adapter="responses"),
+        ),
     )
     context = SimpleNamespace(
-        model_plugins={"openrouter": plugin},
-        model_profiles={},
+        model_providers={"openrouter": provider},
+        model_routes={},
         default_models=(),
         model_environ={},
     )
 
     selectors = select_model_selectors(
         context,
-        thunk_selectors=("gpt-5@openrouter", "o3@openrouter"),
-        activation_selectors=("o3@openrouter", "gpt-5@openrouter"),
+        thunk_selectors=("openai/gpt-5", "openai/o3"),
+        activation_selectors=("openai/o3@openrouter", "openai/gpt-5@openrouter"),
     )
 
-    assert selectors == ("o3@openrouter", "gpt-5@openrouter")
+    assert selectors == ("openai/o3@openrouter", "openai/gpt-5@openrouter")
 
 
-def test_execute_run_input_reuses_plugin_state_for_followups() -> None:
-    plugin = _FakeModelPlugin(
+def test_select_model_selectors_expands_route_neutral_thunk_refs_from_discovery() -> None:
+    openai = _FakeModelProvider(
+        name="openai",
+        models=(
+            ModelInfo(ref="openai/gpt-5", provider="openai", name="gpt-5", model="gpt-5", selectors=("gpt-5", "openai/gpt-5"), adapter="responses"),
+            ModelInfo(ref="openai/o3", provider="openai", name="o3", model="o3", selectors=("o3", "openai/o3"), adapter="responses"),
+        ),
+        required_env_vars=("OPENAI_API_KEY",),
+    )
+    openrouter = _FakeModelProvider(
+        name="openrouter",
+        models=(
+            ModelInfo(ref="openai/gpt-5", provider="openrouter", name="gpt-5", model="openai/gpt-5", selectors=("gpt-5", "openai/gpt-5"), adapter="responses"),
+            ModelInfo(ref="openai/o3", provider="openrouter", name="o3", model="openai/o3", selectors=("o3", "openai/o3"), adapter="responses"),
+        ),
+        required_env_vars=("OPENROUTER_API_KEY",),
+    )
+    context = SimpleNamespace(
+        model_providers={"openai": openai, "openrouter": openrouter},
+        model_routes={},
+        default_models=(),
+        model_environ={"OPENAI_API_KEY": "secret", "OPENROUTER_API_KEY": "secret"},
+    )
+
+    selectors = select_model_selectors(
+        context,
+        thunk_selectors=("openai/o3", "openai/gpt-5"),
+    )
+
+    assert selectors == (
+        "openai/o3@openai",
+        "openai/o3@openrouter",
+        "openai/gpt-5@openai",
+        "openai/gpt-5@openrouter",
+    )
+
+
+def test_select_model_selectors_skips_providers_missing_required_env() -> None:
+    openai = _FakeModelProvider(
+        name="openai",
+        models=(
+            ModelInfo(ref="openai/gpt-5", provider="openai", name="gpt-5", model="gpt-5", selectors=("gpt-5", "openai/gpt-5"), adapter="responses"),
+        ),
+        required_env_vars=("OPENAI_API_KEY",),
+    )
+    openrouter = _FakeModelProvider(
+        name="openrouter",
+        models=(
+            ModelInfo(ref="openai/gpt-5", provider="openrouter", name="gpt-5", model="openai/gpt-5", selectors=("gpt-5", "openai/gpt-5"), adapter="responses"),
+        ),
+        required_env_vars=("OPENROUTER_API_KEY",),
+    )
+    context = SimpleNamespace(
+        model_providers={"openai": openai, "openrouter": openrouter},
+        model_routes={},
+        default_models=(),
+        model_environ={"OPENROUTER_API_KEY": "secret"},
+    )
+
+    selectors = select_model_selectors(
+        context,
+        thunk_selectors=("openai/gpt-5",),
+    )
+
+    assert selectors == ("openai/gpt-5@openrouter",)
+
+
+def test_model_route_can_override_provider_defaults(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    (toolang_root / "agents" / "alice").mkdir(parents=True, exist_ok=True)
+    (toolang_root / "config.toml").write_text(
+        '[model_routes.gateway]\n'
+        'ref = "openai/gpt-5"\n'
+        'provider = "openai"\n'
+        'adapter = "responses"\n'
+        'base_url = "https://gateway.example.com/v1"\n'
+        'api_key_env = "GATEWAY_API_KEY"\n'
+        'headers = { "X-Team" = "infra" }\n',
+        encoding="utf-8",
+    )
+    provider = _FakeModelProvider(
+        name="openai",
+        models=(),
+        default_base_url="https://api.openai.com/v1",
+        default_api_key_env="OPENAI_API_KEY",
+    )
+    context = SimpleNamespace(
+        model_providers={"openai": provider},
+        model_routes=load_model_routes(toolang_root, "alice"),
+        default_models=(),
+        model_environ={"GATEWAY_API_KEY": "secret"},
+    )
+
+    target = resolve_model(context, selector="gateway")
+
+    assert target.ref == "openai/gpt-5"
+    assert target.provider == "openai"
+    assert target.model == "gpt-5"
+    assert target.adapter == "responses"
+    assert target.base_url == "https://gateway.example.com/v1"
+    assert target.api_key == "secret"
+    assert target.headers == {"X-Team": "infra"}
+
+
+def test_ollama_provider_discovers_local_models(monkeypatch) -> None:
+    class _Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "models": [
+                    {"model": "qwen3"},
+                    {"name": "llama3.2"},
+                    {"model": "qwen3"},
+                ]
+            }
+
+    monkeypatch.setattr(ollama_models.httpx, "get", lambda url, timeout: _Response())
+    provider = ollama_models.create_model({})
+
+    models = provider.list_models(environ={})
+
+    assert models == (
+        ModelInfo(
+            ref="meta/llama3.2",
+            provider="ollama",
+            name="llama3.2",
+            model="llama3.2",
+            selectors=("llama3.2", "meta/llama3.2"),
+            adapter="responses",
+            tools=False,
+            streaming=True,
+            details="Local Ollama model.",
+        ),
+        ModelInfo(
+            ref="qwen/qwen3",
+            provider="ollama",
+            name="qwen3",
+            model="qwen3",
+            selectors=("qwen3", "qwen/qwen3"),
+            adapter="responses",
+            tools=True,
+            streaming=True,
+            details="Local Ollama model.",
+        ),
+    )
+
+
+def test_openrouter_provider_discovers_remote_models(monkeypatch) -> None:
+    class _Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "data": [
+                    {
+                        "id": "openai/gpt-5",
+                        "canonical_slug": "openai/gpt-5",
+                        "name": "GPT-5",
+                        "description": "General-purpose flagship model.",
+                        "context_length": 400000,
+                        "top_provider": {"max_completion_tokens": 128000},
+                        "supported_parameters": ["tools", "tool_choice", "temperature"],
+                        "pricing": {"prompt": "0.00000125", "completion": "0.00001"},
+                    },
+                    {
+                        "id": "anthropic/claude-sonnet-4",
+                        "canonical_slug": "anthropic/claude-sonnet-4",
+                        "name": "Claude Sonnet 4",
+                        "supported_parameters": ["temperature"],
+                    },
+                ]
+            }
+
+    monkeypatch.setattr(openrouter_models.httpx, "get", lambda url, headers, timeout: _Response())
+    provider = openrouter_models.create_model({})
+
+    models = provider.list_models(environ={"OPENROUTER_API_KEY": "secret"})
+
+    assert models == (
+        ModelInfo(
+            ref="anthropic/claude-sonnet-4",
+            provider="openrouter",
+            name="claude-sonnet-4",
+            model="anthropic/claude-sonnet-4",
+            selectors=("claude-sonnet-4", "anthropic/claude-sonnet-4"),
+            adapter="responses",
+            tools=False,
+            streaming=True,
+            details="Built-in OpenRouter route.",
+        ),
+        ModelInfo(
+            ref="openai/gpt-5",
+            provider="openrouter",
+            name="gpt-5",
+            model="openai/gpt-5",
+            selectors=("gpt-5", "openai/gpt-5"),
+            adapter="responses",
+            tools=True,
+            streaming=True,
+            context_window=400000,
+            max_output_tokens=128000,
+            input_price=0.00000125,
+            output_price=0.00001,
+            details="General-purpose flagship model.",
+        ),
+    )
+
+
+def test_openrouter_provider_invokes_with_stateless_responses(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_invoke_response(target, request, *, stateful):
+        captured["target"] = target
+        captured["request"] = request
+        captured["stateful"] = stateful
+        return ModelCallResult(message=Message.assistant("done"))
+
+    monkeypatch.setattr(openrouter_models.responses, "invoke_response", fake_invoke_response)
+    provider = openrouter_models.create_model({})
+    target = ModelTarget(
+        ref="openai/gpt-5",
+        provider="openrouter",
+        name="gpt-5",
+        model="openai/gpt-5",
+        adapter="responses",
+    )
+    request = ModelCall(instructions="dev", messages=[Message.user("hello")])
+
+    result = provider.invoke(target, request)
+
+    assert result.message == Message.assistant("done")
+    assert captured["target"] == target
+    assert captured["request"] == request
+    assert captured["stateful"] is False
+
+
+def test_responses_payload_uses_typed_input_items() -> None:
+    payload = response_payload(
+        ModelTarget(
+            ref="openai/gpt-5",
+            provider="openrouter",
+            name="gpt-5",
+            model="openai/gpt-5",
+            adapter="responses",
+        ),
+        ModelCall(
+            instructions="dev",
+            messages=[
+                Message.user("hello"),
+                Message(
+                    role="assistant",
+                    parts=(
+                        ToolCallPart(
+                            tool_call_id="fc_1",
+                            call_id="call_1",
+                            tool_name="shell_execute",
+                            tool_family="shell_execute",
+                            input={"command": "pwd"},
+                        ),
+                    ),
+                ),
+                Message(
+                    role="tool",
+                    parts=(
+                        ToolResultPart(
+                            tool_call_id="fc_1",
+                            call_id="call_1",
+                            tool_name="shell_execute",
+                            tool_family="shell_execute",
+                            output={"ok": True, "stdout": "/tmp"},
+                        ),
+                    ),
+                ),
+                Message.assistant("done"),
+            ],
+        ),
+        stateful=False,
+    )
+
+    assert payload["input"] == [
+        {
+            "type": "message",
+            "role": "developer",
+            "content": [{"type": "input_text", "text": "dev"}],
+        },
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "hello"}],
+        },
+        {
+            "type": "function_call",
+            "id": "fc_1",
+            "call_id": "call_1",
+            "name": "shell_execute",
+            "arguments": '{"command":"pwd"}',
+        },
+        {
+            "type": "function_call_output",
+            "id": "fc_1",
+            "call_id": "call_1",
+            "output": '{"ok":true,"name":"shell_execute","output":{"ok":true,"stdout":"/tmp"}}',
+        },
+        {
+            "type": "message",
+            "role": "assistant",
+            "id": "msg_3",
+            "status": "completed",
+            "content": [{"type": "output_text", "text": "done"}],
+        },
+    ]
+
+
+def test_execute_run_input_reuses_provider_state_for_followups() -> None:
+    provider = _FakeModelProvider(
         name="openai",
         responses=[
             ModelCallResult(
@@ -283,21 +656,21 @@ def test_execute_run_input_reuses_plugin_state_for_followups() -> None:
     result = load_run_strategy("basic").run(
         RunContext(
             run_input,
-            ModelBinding(
-                target=ResolvedModel(
-                    ref="openai/gpt-5",
-                    plugin=plugin.name,
-                    model="gpt-5",
-                ),
-                plugin=plugin,
+            ModelTarget(
+                ref="openai/gpt-5",
+                provider=provider.name,
+                name="gpt-5",
+                model="gpt-5",
+                adapter="responses",
             ),
+            provider,
         )
     )
 
     assert result.output_text == "done"
-    assert plugin.requests[0].state is None
-    assert plugin.requests[1].state == {"previous_response_id": "resp-1", "baseline_count": 2}
-    assert [item.to_data() for item in plugin.requests[1].messages] == [
+    assert provider.requests[0].state is None
+    assert provider.requests[1].state == {"previous_response_id": "resp-1", "baseline_count": 2}
+    assert [item.to_data() for item in provider.requests[1].messages] == [
         {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
         {
             "role": "assistant",
@@ -328,8 +701,8 @@ def test_execute_run_input_reuses_plugin_state_for_followups() -> None:
     ]
 
 
-def test_execute_run_input_appends_plugin_messages_for_stateless_plugins() -> None:
-    plugin = _FakeModelPlugin(
+def test_execute_run_input_appends_provider_messages_for_stateless_providers() -> None:
+    provider = _FakeModelProvider(
         name="ollama",
         responses=[
             ModelCallResult(
@@ -362,21 +735,21 @@ def test_execute_run_input_appends_plugin_messages_for_stateless_plugins() -> No
     result = load_run_strategy("basic").run(
         RunContext(
             run_input,
-            ModelBinding(
-                target=ResolvedModel(
-                    ref="qwen/qwen3",
-                    plugin=plugin.name,
-                    model="qwen3",
-                ),
-                plugin=plugin,
+            ModelTarget(
+                ref="qwen/qwen3",
+                provider=provider.name,
+                name="qwen3",
+                model="qwen3",
+                adapter="responses",
             ),
+            provider,
         )
     )
 
     assert result.output_text == "done"
-    assert plugin.requests[0].state is None
-    assert plugin.requests[1].state is None
-    assert [item.to_data() for item in plugin.requests[1].messages] == [
+    assert provider.requests[0].state is None
+    assert provider.requests[1].state is None
+    assert [item.to_data() for item in provider.requests[1].messages] == [
         {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
         {
             "role": "assistant",
@@ -407,12 +780,38 @@ def test_execute_run_input_appends_plugin_messages_for_stateless_plugins() -> No
     ]
 
 
-def test_openai_compat_preserves_structured_message_content() -> None:
-    encoded = encode_message(
-        Message(role="user", parts=(Message.user("hello").parts[0],))
+def test_run_context_omits_tools_for_model_without_tool_support() -> None:
+    provider = _FakeModelProvider(
+        name="ollama",
+        responses=[ModelCallResult(message=Message.assistant("done"))],
+    )
+    run_input = _run_input()
+
+    result = load_run_strategy("basic").run(
+        RunContext(
+            run_input,
+            ModelTarget(
+                ref="google/gemma4:latest",
+                provider=provider.name,
+                name="gemma4:latest",
+                model="gemma4:latest",
+                adapter="responses",
+                tools=False,
+                streaming=True,
+            ),
+            provider,
+        )
     )
 
+    assert result.output_text == "done"
+    assert provider.requests[0].tools == ()
+
+
+def test_responses_encode_message_preserves_structured_content() -> None:
+    encoded = encode_message(Message(role="user", parts=(Message.user("hello").parts[0],)))
+
     assert encoded == {
+        "type": "message",
         "role": "user",
         "content": [
             {
@@ -423,9 +822,15 @@ def test_openai_compat_preserves_structured_message_content() -> None:
     }
 
 
-def test_openai_compat_skips_historical_tool_items_without_previous_response_id() -> None:
+def test_responses_skip_historical_tool_items_without_previous_response_id() -> None:
     payload = response_payload(
-        ResolvedModel(ref="openai/gpt-5", plugin="openai", model="gpt-5"),
+        ModelTarget(
+            ref="openai/gpt-5",
+            provider="openai",
+            name="gpt-5",
+            model="gpt-5",
+            adapter="responses",
+        ),
         ModelCall(
             instructions="dev",
             messages=[
@@ -462,9 +867,23 @@ def test_openai_compat_skips_historical_tool_items_without_previous_response_id(
 
     assert "previous_response_id" not in payload
     assert payload["input"] == [
-        {"role": "developer", "content": "dev"},
-        {"role": "user", "content": [{"type": "input_text", "text": "hello"}]},
-        {"role": "assistant", "content": [{"type": "output_text", "text": "done"}]},
+        {
+            "type": "message",
+            "role": "developer",
+            "content": [{"type": "input_text", "text": "dev"}],
+        },
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "hello"}],
+        },
+        {
+            "type": "message",
+            "role": "assistant",
+            "id": "msg_3",
+            "status": "completed",
+            "content": [{"type": "output_text", "text": "done"}],
+        },
     ]
 
 
