@@ -1,0 +1,15 @@
+#!/usr/bin/env toolang
+
+# Manual checks for one thunk-level model choice.
+#
+# Success:
+#   toolang examples/invoke.fixed-model.too gpt_only "Rewrite this sentence." --model openai/gpt-5@openrouter
+#
+# Expected failure because the thunk only allows openai/gpt-5:
+#   toolang examples/invoke.fixed-model.too gpt_only "Rewrite this sentence." --model anthropic/claude-sonnet-4.5@openrouter
+
+thunk gpt_only(_):
+  model = openai/gpt-5
+
+  Rewrite the input into one concise paragraph.
+  Preserve the original meaning and improve clarity.

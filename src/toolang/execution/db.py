@@ -554,6 +554,10 @@ class PersistSink:
                     model_ref=payload.model_ref,
                     input_tokens=payload.input_tokens,
                     output_tokens=payload.output_tokens,
+                    provider=payload.provider,
+                    model=payload.model,
+                    adapter=payload.adapter,
+                    base_url=payload.base_url,
                     instructions_hash=instructions_hash,
                 )
             self._store.append_step(

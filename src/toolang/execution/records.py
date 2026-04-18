@@ -98,6 +98,10 @@ class ModelCallStepPayload:
     model_ref: str
     input_tokens: int
     output_tokens: int
+    provider: str = ""
+    model: str = ""
+    adapter: str = ""
+    base_url: str | None = None
     instructions_hash: str | None = None
 
     @classmethod
@@ -106,6 +110,14 @@ class ModelCallStepPayload:
             model_ref=str(payload.get("model_ref", "")),
             input_tokens=int(payload.get("input_tokens", 0)),
             output_tokens=int(payload.get("output_tokens", 0)),
+            provider=str(payload.get("provider", "")),
+            model=str(payload.get("model", "")),
+            adapter=str(payload.get("adapter", "")),
+            base_url=(
+                str(payload.get("base_url"))
+                if payload.get("base_url") is not None
+                else None
+            ),
             instructions_hash=(
                 str(payload.get("instructions_hash"))
                 if payload.get("instructions_hash") is not None

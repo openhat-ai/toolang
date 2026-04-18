@@ -154,8 +154,11 @@ def roaming_source_path(token: str) -> Path | None:
 
 
 def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name: str) -> int:
-    if global_args:
-        typer.echo("toolang error: too <path>.too does not support global CLI options", err=True)
+    if _unsupported_roaming_global_args(global_args):
+        typer.echo(
+            "toolang error: too <path>.too only supports --log as a global CLI option",
+            err=True,
+        )
         return 1
     source_path = roaming_source_path(body[0])
     if source_path is None:
@@ -193,6 +196,19 @@ def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name:
         typer.echo(f"toolang error: {message}", err=True)
         return 1
     return _emit_invoke_outcome(outcome)
+
+
+def _unsupported_roaming_global_args(global_args: list[str]) -> bool:
+    index = 0
+    while index < len(global_args):
+        token = global_args[index]
+        if token == "--log":
+            if index + 1 >= len(global_args):
+                return True
+            index += 2
+            continue
+        return True
+    return False
 
 
 def _load_roaming_live_program(source_path: Path) -> tuple[Path, str, LiveProgram]:

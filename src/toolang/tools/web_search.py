@@ -70,10 +70,10 @@ def create_tool(config: Mapping[str, Any]) -> ToolPlugin:
 
 def _search_text(query: str, *, max_results: int) -> list[dict[str, Any]]:
     try:
-        from duckduckgo_search import DDGS
+        from ddgs import DDGS
     except ImportError as exc:  # pragma: no cover
         raise ToolangError(
-            "The 'duckduckgo-search' package is not installed. Install Toolang dependencies to enable web_search."
+            "The 'ddgs' package is not installed. Install Toolang dependencies to enable web_search."
         ) from exc
     with DDGS() as searcher:
         return list(searcher.text(query, max_results=max_results))

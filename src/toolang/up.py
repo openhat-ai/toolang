@@ -371,6 +371,7 @@ class StartupSpec:
     sandbox_config: dict[str, object]
     dev_artifact: Path | None
     model_selectors: tuple[str, ...]
+    log_spec: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -549,6 +550,7 @@ def resolve_startup(
     models: Sequence[str] | None = None,
     dev: Path | None = None,
     loop_names: Sequence[str] | None = None,
+    log_spec: str | None = None,
     environ: Mapping[str, str],
 ) -> StartupSpec:
     """Resolve one explicit startup request into stable runtime inputs."""
@@ -605,6 +607,7 @@ def resolve_startup(
         sandbox_config=sandbox_config,
         dev_artifact=dev_artifact,
         model_selectors=_normalize_model_selectors(models),
+        log_spec=log_spec.strip() if isinstance(log_spec, str) and log_spec.strip() else None,
     )
 
 
@@ -634,6 +637,8 @@ def build_run_argv(
         "--sandbox",
         sandbox or spec.selector.render(),
     ]
+    if spec.log_spec is not None:
+        command[2:2] = ["--log", spec.log_spec]
     effective_models = _normalize_model_selectors(models) or spec.model_selectors
     for selector in effective_models:
         command.extend(["--model", selector])

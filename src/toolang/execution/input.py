@@ -93,7 +93,7 @@ def assemble_run_input(context: UptimeContext, run: RunBinding) -> RunInput:
     thunk = program.get_thunk(run.thunk_name)
     input_text = program.expand_input(run.input_text) if run.input_text else ""
     history_messages = context.store.recent_conversation_messages(thread_id=run.thread_id, limit=19)
-    tools = context.tools
+    tools = _run_tools(context, run)
     requested_model_selectors = _run_requested_model_selectors(run)
     activation_model_selectors = requested_model_selectors or _activation_allowed_model_selectors(context)
     thunk_model_selectors = thunk.model_selectors()
@@ -137,6 +137,12 @@ def assemble_run_input(context: UptimeContext, run: RunBinding) -> RunInput:
             "tool_names": sorted(tools),
         },
     )
+
+
+def _run_tools(context: UptimeContext, run: RunBinding) -> dict[str, Tool]:
+    if run.origin == "invoke" or run.group == "invoke":
+        return {}
+    return context.tools
 
 
 def _run_requested_model_selectors(run: RunBinding) -> tuple[str, ...]:

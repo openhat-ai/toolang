@@ -242,9 +242,21 @@ def _resolve_selector_refs(
             )
             refs.append((selector, target.ref))
             continue
+        if "/" in raw_selector:
+            exact_refs = {
+                info.ref
+                for provider in providers.values()
+                if not missing_provider_env_vars(provider, environ=environ)
+                for info in model_infos(provider, environ=environ)
+                if info.ref == raw_selector
+            }
+            if exact_refs:
+                refs.append((selector, next(iter(sorted(exact_refs)))))
+                continue
         matched_refs = {
             info.ref
             for provider in providers.values()
+            if not missing_provider_env_vars(provider, environ=environ)
             for info in _matching_model_infos(provider, raw_selector, environ=environ)
         }
         if not matched_refs:
@@ -370,10 +382,17 @@ def _matching_model_infos(
     text = selector.strip()
     if not text:
         return ()
+    exact = tuple(
+        info
+        for info in model_infos(provider, environ=environ)
+        if text == info.ref
+    )
+    if exact:
+        return exact
     return tuple(
         info
         for info in model_infos(provider, environ=environ)
-        if text == info.ref or text in info.selectors
+        if text in info.selectors
     )
 
 
