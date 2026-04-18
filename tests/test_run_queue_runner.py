@@ -2147,6 +2147,7 @@ def test_assemble_run_input_prefers_thunk_model_over_activation_default(tmp_path
         agent_name="alice",
         enabled_loops=("chat",),
     )
+    context.model_environ = {"OPENAI_API_KEY": "secret"}
     context.config.set("models.default_selector", "openai/gpt-5@openai")
     bound = bind_run_request(
         context,
@@ -2155,7 +2156,7 @@ def test_assemble_run_input_prefers_thunk_model_over_activation_default(tmp_path
 
     bundle = assemble_run_input(context, bound)
 
-    assert bundle.model == "openai/gpt-5"
+    assert bundle.model == "openai/gpt-5@openai"
     assert bundle.debug["activation_default_model"] == "openai/gpt-5@openai"
 
 
@@ -2182,6 +2183,48 @@ def test_assemble_run_input_uses_activation_default_when_thunk_omits_one(tmp_pat
     assert bundle.debug["activation_default_model"] == "openai/gpt-5@openai"
 
 
+def test_assemble_run_input_hides_tools_for_invoke_runs(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "alice.too",
+        "agent alice\n\nthunk summarize(_):\n  Reply directly.\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("chat",),
+    )
+    context.config.set("models.default_selector", "openai/gpt-5@openai")
+    invoke_bound = bind_run_request(
+        context,
+        RunRequest(
+            group="invoke",
+            origin="invoke",
+            thunk_name="summarize",
+            thunk="hello",
+        ),
+    )
+    chat_bound = bind_run_request(
+        context,
+        RunRequest(
+            group="chat",
+            origin="chat",
+            thunk_name="summarize",
+            thunk="hello",
+        ),
+    )
+
+    invoke_bundle = assemble_run_input(context, invoke_bound)
+    chat_bundle = assemble_run_input(context, chat_bound)
+
+    assert invoke_bundle.tools == {}
+    assert invoke_bundle.snapshot.tools == ()
+    assert invoke_bundle.debug["tool_names"] == []
+    assert chat_bundle.tools
+    assert chat_bundle.snapshot.tools
+    assert chat_bundle.debug["tool_names"]
+
+
 def test_execute_run_rejects_thunk_model_outside_activation_allowlist(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
@@ -2193,6 +2236,7 @@ def test_execute_run_rejects_thunk_model_outside_activation_allowlist(tmp_path: 
         agent_name="alice",
         enabled_loops=("chat",),
     )
+    context.model_environ = {"OPENAI_API_KEY": "secret"}
     context.config.set("models.allowed_selectors", ("openai/o3@openai",))
     context.config.set("models.default_selector", "openai/o3@openai")
 
@@ -2608,6 +2652,23 @@ def _completed(
         finished_at="2026-01-01T00:00:01Z",
         error=error,
     )
+
+
+def test_model_call_step_payload_round_trips_target_metadata() -> None:
+    payload = ModelCallStepPayload(
+        model_ref="openai/gpt-5",
+        input_tokens=11,
+        output_tokens=7,
+        provider="openrouter",
+        model="openai/gpt-5",
+        adapter="responses",
+        base_url="https://openrouter.ai/api/v1",
+        instructions_hash="abc123",
+    )
+
+    restored = ModelCallStepPayload.from_data(payload.to_data())
+
+    assert restored == payload
 
 
 def _default_step_input(

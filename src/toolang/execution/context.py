@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import logging
 from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Any
@@ -54,6 +55,8 @@ from .snapshot import RunSnapshot
 
 if TYPE_CHECKING:
     from .input import RunInput
+
+_LOGGER = logging.getLogger("toolang.runner")
 
 
 class RunContext:
@@ -134,6 +137,14 @@ class RunContext:
             messages=list(self._messages),
             tools=self._tool_definitions,
             state=self._state,
+        )
+        _LOGGER.info(
+            "model call target ref=%s provider=%s model=%s adapter=%s%s",
+            self._model.ref,
+            self._model.provider,
+            self._model.model,
+            self._model.adapter,
+            f" base_url={self._model.base_url}" if self._model.base_url else "",
         )
         if self._stream and self._on_event is not None and self._model.streaming:
             current = self._provider.stream(
@@ -279,6 +290,10 @@ class RunContext:
                     model_ref=self._model.ref,
                     input_tokens=current.usage.input_tokens if current.usage is not None else 0,
                     output_tokens=current.usage.output_tokens if current.usage is not None else 0,
+                    provider=self._model.provider,
+                    model=self._model.model,
+                    adapter=self._model.adapter,
+                    base_url=self._model.base_url,
                 ),
                 started_at=started_at,
                 finished_at=_utc_now(),

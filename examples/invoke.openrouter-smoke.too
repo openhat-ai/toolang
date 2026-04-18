@@ -1,0 +1,43 @@
+#!/usr/bin/env toolang
+
+# Manual smoke tests for current mainstream OpenRouter text models.
+#
+# GPT-5:
+#   toolang examples/invoke.openrouter-smoke.too gpt "Summarize this repository." --model openai/gpt-5@openrouter
+#
+# Claude Sonnet 4.5:
+#   toolang examples/invoke.openrouter-smoke.too claude "Summarize this repository." --model anthropic/claude-sonnet-4.5@openrouter
+#
+# Gemini 3 Pro Preview:
+#   toolang examples/invoke.openrouter-smoke.too gemini "Summarize this repository." --model google/gemini-3-pro-preview@openrouter
+#
+# Grok 4.20:
+#   toolang examples/invoke.openrouter-smoke.too grok "Summarize this repository." --model x-ai/grok-4.20@openrouter
+#
+# Qwen3 Coder Next:
+#   toolang examples/invoke.openrouter-smoke.too qwen "Summarize this repository." --model qwen/qwen3-coder-next@openrouter
+
+thunk gpt(_):
+  model = openai/gpt-5
+
+  Summarize the input into three short technical bullet points.
+
+thunk claude(_):
+  model = anthropic/claude-sonnet-4.5
+
+  Summarize the input into three short technical bullet points.
+
+thunk gemini(_):
+  model = google/gemini-3.1-pro-preview
+
+  Summarize the input into three short technical bullet points.
+
+thunk grok(_):
+  model = x-ai/grok-4.20
+
+  Summarize the input into three short technical bullet points.
+
+thunk qwen(_):
+  model = qwen/qwen3-coder-next
+
+  Summarize the input into three short technical bullet points.

@@ -20,6 +20,8 @@ from .. import agents, caps as cap_store, templates, work
 from .. import up as agent_up
 from ..base.protocols.model import ModelProvider
 from ..base.types.model import ModelInfo
+from ..config.log import DEFAULT_AGENT_LOG_SPEC, configure_logging
+from ..config.log_spec import PY_LOG_ENV_VAR
 from ..execution.model import DEFAULT_MODEL_SELECTOR
 from ..execution.records import UpdateKind
 from ..models.discovery import (
@@ -115,12 +117,24 @@ def callback(
         Path | None,
         typer.Option("--root", "-r", help="Root directory for all agents."),
     ] = None,
+    log: Annotated[
+        str | None,
+        typer.Option(
+            "--log",
+            help="Set logging directives. Uses PY_LOG when omitted.",
+        ),
+    ] = None,
 ) -> None:
     """Toolang CLI."""
 
+    try:
+        configure_logging(spec=log, environ=os.environ)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
     ctx.obj = {
         "toolang_root": _toolang_root(toolang_root),
         "agent": _CLI_PREFIX_AGENT,
+        "log": log,
     }
 
 
@@ -373,6 +387,9 @@ def start_agent(
 
     environ = _runtime_environ_for_agent(ctx, agent_name)
     environ["TOOLANG_ROOT"] = str(root)
+    explicit_log_spec = cast(str | None, ctx.obj.get("log"))
+    if explicit_log_spec is None and not environ.get(PY_LOG_ENV_VAR, "").strip():
+        environ[PY_LOG_ENV_VAR] = DEFAULT_AGENT_LOG_SPEC
     startup = _wrap_user_error(
         agent_up.resolve_startup,
         toolang_root=root,
@@ -384,6 +401,7 @@ def start_agent(
         models=models,
         dev=dev,
         loop_names=normalized_loops,
+        log_spec=explicit_log_spec,
         environ=environ,
     )
     log_path = agents.agent_runtime_log_path(root, agent_name)
@@ -888,6 +906,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     global _CLI_PREFIX_AGENT
     raw_args = list(argv) if argv is not None else sys.argv[1:]
     global_args, body = _extract_global_args(raw_args)
+    log_spec = _global_log_spec(global_args)
+    try:
+        configure_logging(spec=log_spec, environ=os.environ)
+    except ValueError as exc:
+        typer.echo(f"toolang error: {exc}", err=True)
+        return 1
     if body:
         roaming_source = cli_invoke.roaming_source_path(body[0])
         if roaming_source is not None:
@@ -944,15 +968,37 @@ def _extract_global_args(argv: list[str]) -> tuple[list[str], list[str]]:
 
 
 def _consume_global_arg(token: str, argv: list[str], index: int) -> tuple[list[str], int] | None:
-    option_name = "--root"
-    if token == option_name:
+    if token == "--root":
         if index + 1 >= len(argv):
             return ([token], 1)
         return ([token, argv[index + 1]], 2)
-    prefix = f"{option_name}="
-    if token.startswith(prefix):
-        return ([option_name, token.removeprefix(prefix)], 1)
+    if token.startswith("--root="):
+        return (["--root", token.removeprefix("--root=")], 1)
+    if token == "--log":
+        if index + 1 >= len(argv):
+            return ([token], 1)
+        return ([token, argv[index + 1]], 2)
+    if token.startswith("--log="):
+        return (["--log", token.removeprefix("--log=")], 1)
     return None
+
+
+def _global_log_spec(global_args: list[str]) -> str | None:
+    index = 0
+    value: str | None = None
+    while index < len(global_args):
+        token = global_args[index]
+        if token == "--log":
+            if index + 1 >= len(global_args):
+                return None
+            value = global_args[index + 1]
+            index += 2
+            continue
+        if token == "--root":
+            index += 2
+            continue
+        index += 1
+    return value
 
 
 def _rewrite_agent_shortcuts(body: list[str]) -> tuple[list[str], str | None]:

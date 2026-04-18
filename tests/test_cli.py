@@ -11,6 +11,8 @@ from toolang import agents
 from toolang import caps
 from toolang.base.types.model import ModelInfo
 import toolang.cli.main as cli
+from toolang.config.log import DEFAULT_AGENT_LOG_SPEC
+from toolang.config.log_spec import PY_LOG_ENV_VAR
 from toolang import work
 from toolang.execution.db import ExecutionStore, execution_db_path
 runner = CliRunner()
@@ -114,6 +116,34 @@ def test_cli_main_intercepts_local_too_program_before_typer(monkeypatch, tmp_pat
 
     assert result == 0
     assert captured["global_args"] == []
+    assert captured["body"] == [str(program_path), "--help"]
+    assert captured["prog_name"] == "toolang"
+
+
+def test_cli_main_configures_logging_for_roaming_invoke(monkeypatch, tmp_path: Path) -> None:
+    program_path = tmp_path / "demo.too"
+    program_path.write_text("thunk:\n  Reply directly.\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def fake_configure_logging(*, spec: str | None, environ) -> None:
+        captured["spec"] = spec
+        captured["environ"] = dict(environ)
+
+    def fake_handle(global_args: list[str], body: list[str], *, prog_name: str) -> int:
+        captured["global_args"] = list(global_args)
+        captured["body"] = list(body)
+        captured["prog_name"] = prog_name
+        return 0
+
+    monkeypatch.setattr(cli, "configure_logging", fake_configure_logging)
+    monkeypatch.setattr(cli.cli_invoke, "handle_roaming_invoke", fake_handle)
+    monkeypatch.setattr(cli.sys, "argv", ["toolang"])
+
+    result = cli.main(["--log", "toolang.runner=debug", str(program_path), "--help"])
+
+    assert result == 0
+    assert captured["spec"] == "toolang.runner=debug"
+    assert captured["global_args"] == ["--log", "toolang.runner=debug"]
     assert captured["body"] == [str(program_path), "--help"]
     assert captured["prog_name"] == "toolang"
 
@@ -1586,10 +1616,79 @@ def test_cli_start_spawns_background_run_and_reports_status(tmp_path: Path, monk
         "inspect",
     ]
     assert cast(dict[str, str], captured["env"])["TOOLANG_ROOT"] == str(toolang_root)
+    assert cast(dict[str, str], captured["env"])[PY_LOG_ENV_VAR] == DEFAULT_AGENT_LOG_SPEC
     assert captured["cwd"] == str(Path.cwd())
     assert captured["start_new_session"] is True
     assert captured["close_fds"] is True
     assert agents.agent_runtime_log_path(toolang_root, "alice").read_text(encoding="utf-8") == "launcher\n"
+
+
+def test_cli_start_propagates_explicit_log_spec_to_agent_process(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    captured: dict[str, object] = {}
+
+    class FakeProcess:
+        def poll(self) -> int | None:
+            return None
+
+    def fake_popen(
+        command: list[str],
+        *,
+        stdin,
+        stdout,
+        stderr,
+        env: dict[str, str],
+        cwd: str,
+        start_new_session: bool,
+        close_fds: bool,
+    ) -> FakeProcess:
+        del stdin, stderr
+        captured["command"] = list(command)
+        stdout.write(b"launcher\n")
+        stdout.flush()
+        captured["env"] = dict(env)
+        captured["cwd"] = cwd
+        captured["start_new_session"] = start_new_session
+        captured["close_fds"] = close_fds
+        agents.write_runtime_state(
+            toolang_root,
+            "alice",
+            endpoint="http://127.0.0.1:8765",
+            started_at="2026-04-07T11:00:01Z",
+            pid=os.getpid(),
+        )
+        return FakeProcess()
+
+    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(toolang_root),
+            "--log",
+            "toolang.runner=debug,httpx=off",
+            "start",
+            "alice",
+            "--sandbox",
+            "none",
+        ],
+        env={},
+    )
+
+    assert result.exit_code == 0
+    command = cast(list[str], captured["command"])
+    assert command[0:7] == [
+        cli.sys.executable,
+        "-m",
+        "toolang.cli.main",
+        "--root",
+        str(toolang_root),
+        "--log",
+        "toolang.runner=debug,httpx=off",
+    ]
+    assert PY_LOG_ENV_VAR not in cast(dict[str, str], captured["env"])
 
 
 def test_cli_start_rejects_active_agent(tmp_path: Path) -> None:
@@ -2611,8 +2710,10 @@ def test_cli_help_orders_cap_groups() -> None:
 
     assert result.exit_code == 0
     assert "Run and manage Toolang agents." in result.stdout
-    assert "--root  -r" in result.stdout or "--root        -r" in result.stdout
+    assert "--root" in result.stdout
     assert "Root directory for all agents." in result.stdout
+    assert "--log" in result.stdout
+    assert "Set logging directives. Uses PY_LOG when omitted." in result.stdout
     assert "Create an agent." in result.stdout
     assert "Clone an agent." in result.stdout
     assert "Remove an agent." in result.stdout

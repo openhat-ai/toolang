@@ -59,6 +59,7 @@ class _FakeModelProvider(ModelProvider):
         self._default_base_url = default_base_url
         self._default_api_key_env = default_api_key_env
         self.requests: list[ModelCall] = []
+        self.list_models_calls = 0
 
     def required_env_vars(self) -> tuple[str, ...]:
         return self._required_env_vars
@@ -72,6 +73,7 @@ class _FakeModelProvider(ModelProvider):
 
     def list_models(self, *, environ) -> tuple[ModelInfo, ...]:
         del environ
+        self.list_models_calls += 1
         return self._models
 
     def invoke(self, target: ModelTarget, request: ModelCall) -> ModelCallResult:
@@ -370,6 +372,77 @@ def test_select_model_selectors_skips_providers_missing_required_env() -> None:
     )
 
     assert selectors == ("openai/gpt-5@openrouter",)
+
+
+def test_select_model_selectors_prefers_exact_ref_over_version_aliases() -> None:
+    openrouter = _FakeModelProvider(
+        name="openrouter",
+        models=(
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openrouter",
+                name="gpt-5",
+                model="openai/gpt-5",
+                selectors=("gpt-5", "openai/gpt-5"),
+                adapter="responses",
+            ),
+            ModelInfo(
+                ref="openai/gpt-5-2025-08-07",
+                provider="openrouter",
+                name="gpt-5-2025-08-07",
+                model="openai/gpt-5",
+                selectors=("gpt-5-2025-08-07", "openai/gpt-5-2025-08-07", "openai/gpt-5"),
+                adapter="responses",
+            ),
+        ),
+        required_env_vars=("OPENROUTER_API_KEY",),
+    )
+    context = SimpleNamespace(
+        model_providers={"openrouter": openrouter},
+        model_routes={},
+        default_models=(),
+        model_environ={"OPENROUTER_API_KEY": "secret"},
+    )
+
+    selectors = select_model_selectors(
+        context,
+        thunk_selectors=("openai/gpt-5",),
+    )
+
+    assert selectors == ("openai/gpt-5@openrouter",)
+
+
+def test_model_info_discovery_is_cached_within_one_process() -> None:
+    openrouter = _FakeModelProvider(
+        name="openrouter",
+        models=(
+            ModelInfo(
+                ref="anthropic/claude-4.5-sonnet-20250929",
+                provider="openrouter",
+                name="claude-4.5-sonnet-20250929",
+                model="anthropic/claude-sonnet-4.5",
+                selectors=("anthropic/claude-sonnet-4.5", "anthropic/claude-4.5-sonnet-20250929"),
+                adapter="responses",
+            ),
+        ),
+        required_env_vars=("OPENROUTER_API_KEY",),
+    )
+    context = SimpleNamespace(
+        model_providers={"openrouter": openrouter},
+        model_routes={},
+        default_models=(),
+        model_environ={"OPENROUTER_API_KEY": "secret"},
+    )
+
+    selectors = select_model_selectors(
+        context,
+        thunk_selectors=("anthropic/claude-sonnet-4.5",),
+    )
+    target = resolve_model(context, selector=selectors[0])
+
+    assert selectors == ("anthropic/claude-4.5-sonnet-20250929@openrouter",)
+    assert target.ref == "anthropic/claude-4.5-sonnet-20250929"
+    assert openrouter.list_models_calls == 1
 
 
 def test_model_route_can_override_provider_defaults(tmp_path: Path) -> None:
