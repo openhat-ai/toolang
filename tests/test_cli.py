@@ -148,6 +148,25 @@ def test_cli_main_configures_logging_for_roaming_invoke(monkeypatch, tmp_path: P
     assert captured["prog_name"] == "toolang"
 
 
+def test_cli_main_does_not_preconfigure_logging_for_standard_commands(monkeypatch) -> None:
+    calls: list[tuple[str | None, dict[str, str]]] = []
+
+    def fake_configure_logging(*, spec: str | None, environ) -> None:
+        calls.append((spec, dict(environ)))
+
+    def fake_app(*, args, prog_name: str, standalone_mode: bool) -> None:
+        del args, prog_name, standalone_mode
+
+    monkeypatch.setattr(cli, "configure_logging", fake_configure_logging)
+    monkeypatch.setattr(cli, "app", cast(object, fake_app))
+    monkeypatch.setattr(cli.sys, "argv", ["toolang"])
+
+    result = cli.main(["list"])
+
+    assert result == 0
+    assert calls == []
+
+
 def test_cli_main_uses_actual_cli_name_for_prog_name(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -247,6 +266,26 @@ def test_cli_new_uses_named_template(tmp_path: Path) -> None:
 
     assert result.exit_code in {0, 2}
     assert (toolang_root / "agents" / "alice" / "alice.too").read_text(encoding="utf-8") == "agent alice\n"
+
+
+def test_cli_callback_configures_logging_for_standard_commands(monkeypatch, tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    calls: list[tuple[str | None, dict[str, str]]] = []
+
+    def fake_configure_logging(*, spec: str | None, environ) -> None:
+        calls.append((spec, dict(environ)))
+
+    monkeypatch.setattr(cli, "configure_logging", fake_configure_logging)
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(toolang_root), "--log", "toolang.runner=debug", "list"],
+        env={},
+    )
+
+    assert result.exit_code == 0
+    assert len(calls) == 1
+    assert calls[0][0] == "toolang.runner=debug"
 
 
 def test_cli_new_supports_template_alias(tmp_path: Path) -> None:

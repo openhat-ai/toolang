@@ -906,15 +906,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     global _CLI_PREFIX_AGENT
     raw_args = list(argv) if argv is not None else sys.argv[1:]
     global_args, body = _extract_global_args(raw_args)
-    log_spec = _global_log_spec(global_args)
-    try:
-        configure_logging(spec=log_spec, environ=os.environ)
-    except ValueError as exc:
-        typer.echo(f"toolang error: {exc}", err=True)
-        return 1
     if body:
         roaming_source = cli_invoke.roaming_source_path(body[0])
         if roaming_source is not None:
+            log_spec = _global_log_spec(global_args)
+            try:
+                configure_logging(spec=log_spec, environ=os.environ)
+            except ValueError as exc:
+                typer.echo(f"toolang error: {exc}", err=True)
+                return 1
             return cli_invoke.handle_roaming_invoke(
                 global_args,
                 body,

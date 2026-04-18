@@ -153,6 +153,8 @@ The OpenRouter provider uses:
 - `OPENROUTER_API_KEY`
 - `GET /api/v1/models` for discovery
 - one stateless responses adapter for execution
+- default OpenRouter app attribution headers so requests appear as `Toolang`
+  in OpenRouter analytics and rankings
 
 ### Ollama
 
