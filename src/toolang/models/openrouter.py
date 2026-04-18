@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import cast
 
 import httpx
@@ -17,6 +17,9 @@ from . import responses
 _DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 _DEFAULT_API_KEY_ENV = "OPENROUTER_API_KEY"
 _OPENROUTER_ADAPTER = "responses"
+_APP_REFERER = "https://toolang.ai"
+_APP_TITLE = "Toolang"
+_APP_CATEGORIES = "cli-agent"
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +46,10 @@ class OpenRouterModelProvider(ModelProvider):
         try:
             response = httpx.get(
                 f"{_DEFAULT_BASE_URL}/models",
-                headers={"Authorization": f"Bearer {api_key}"},
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    **_app_attribution_headers(),
+                },
                 timeout=3.0,
             )
             response.raise_for_status()
@@ -74,7 +80,7 @@ class OpenRouterModelProvider(ModelProvider):
         if target.adapter != _OPENROUTER_ADAPTER:
             raise ToolangError(f"unsupported openrouter adapter: {target.adapter}")
         return responses.invoke_response(
-            target,
+            _target_with_app_attribution(target),
             request,
             stateful=False,
         )
@@ -89,7 +95,7 @@ class OpenRouterModelProvider(ModelProvider):
         if target.adapter != _OPENROUTER_ADAPTER:
             raise ToolangError(f"unsupported openrouter adapter: {target.adapter}")
         return responses.stream_response(
-            target,
+            _target_with_app_attribution(target),
             request,
             stateful=False,
             on_event=on_event,
@@ -191,6 +197,32 @@ def _max_output_tokens(top_provider: object) -> int | None:
         return None
     payload = cast(Mapping[str, object], top_provider)
     return _int_or_none(payload.get("max_completion_tokens"))
+
+
+def _target_with_app_attribution(target: ModelTarget) -> ModelTarget:
+    return replace(
+        target,
+        headers=_merge_headers(_app_attribution_headers(), target.headers),
+    )
+
+
+def _app_attribution_headers() -> dict[str, str]:
+    return {
+        "HTTP-Referer": _APP_REFERER,
+        "X-OpenRouter-Title": _APP_TITLE,
+        "X-OpenRouter-Categories": _APP_CATEGORIES,
+    }
+
+
+def _merge_headers(defaults: Mapping[str, str], overrides: Mapping[str, str]) -> dict[str, str]:
+    merged = dict(defaults)
+    default_keys = {key.lower(): key for key in defaults}
+    for key, value in overrides.items():
+        existing = default_keys.get(key.lower())
+        if existing is not None and existing != key:
+            merged.pop(existing, None)
+        merged[key] = value
+    return merged
 
 
 def create_model(config: Mapping[str, object]) -> ModelProvider:

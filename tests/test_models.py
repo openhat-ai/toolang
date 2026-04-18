@@ -528,6 +528,8 @@ def test_ollama_provider_discovers_local_models(monkeypatch) -> None:
 
 
 def test_openrouter_provider_discovers_remote_models(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
     class _Response:
         def raise_for_status(self) -> None:
             return None
@@ -554,10 +556,23 @@ def test_openrouter_provider_discovers_remote_models(monkeypatch) -> None:
                 ]
             }
 
-    monkeypatch.setattr(openrouter_models.httpx, "get", lambda url, headers, timeout: _Response())
+    def fake_get(url, headers, timeout):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["timeout"] = timeout
+        return _Response()
+
+    monkeypatch.setattr(openrouter_models.httpx, "get", fake_get)
     provider = openrouter_models.create_model({})
 
     models = provider.list_models(environ={"OPENROUTER_API_KEY": "secret"})
+
+    assert captured["headers"] == {
+        "Authorization": "Bearer secret",
+        "HTTP-Referer": "https://toolang.ai",
+        "X-OpenRouter-Title": "Toolang",
+        "X-OpenRouter-Categories": "cli-agent",
+    }
 
     assert models == (
         ModelInfo(
@@ -612,9 +627,54 @@ def test_openrouter_provider_invokes_with_stateless_responses(monkeypatch) -> No
     result = provider.invoke(target, request)
 
     assert result.message == Message.assistant("done")
-    assert captured["target"] == target
     assert captured["request"] == request
     assert captured["stateful"] is False
+    assert captured["target"] == ModelTarget(
+        ref="openai/gpt-5",
+        provider="openrouter",
+        name="gpt-5",
+        model="openai/gpt-5",
+        adapter="responses",
+        headers={
+            "HTTP-Referer": "https://toolang.ai",
+            "X-OpenRouter-Title": "Toolang",
+            "X-OpenRouter-Categories": "cli-agent",
+        },
+    )
+
+
+def test_openrouter_provider_preserves_route_header_overrides(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_invoke_response(target, request, *, stateful):
+        captured["target"] = target
+        captured["request"] = request
+        captured["stateful"] = stateful
+        return ModelCallResult(message=Message.assistant("done"))
+
+    monkeypatch.setattr(openrouter_models.responses, "invoke_response", fake_invoke_response)
+    provider = openrouter_models.create_model({})
+    target = ModelTarget(
+        ref="openai/gpt-5",
+        provider="openrouter",
+        name="gpt-5",
+        model="openai/gpt-5",
+        adapter="responses",
+        headers={
+            "http-referer": "https://example.com/toolang-dev",
+            "x-openrouter-title": "Toolang Dev",
+        },
+    )
+
+    provider.invoke(target, ModelCall(instructions="dev", messages=[Message.user("hello")]))
+
+    resolved_target = cast(ModelTarget, captured["target"])
+
+    assert resolved_target.headers == {
+        "http-referer": "https://example.com/toolang-dev",
+        "x-openrouter-title": "Toolang Dev",
+        "X-OpenRouter-Categories": "cli-agent",
+    }
 
 
 def test_responses_payload_uses_typed_input_items() -> None:
