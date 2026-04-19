@@ -27,6 +27,6 @@ struct ReviewSummary:
   summary: string
 
 thunk summarize(_) -> ReviewSummary:
-  model = gpt-5
+  models = gpt-5
 
   Summarize the request and keep the output compact.

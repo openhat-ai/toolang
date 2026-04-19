@@ -14,7 +14,7 @@ struct WorkspaceSummary:
   summary: string
 
 thunk summarize(_) -> WorkspaceSummary:
-  model = gpt-5
+  models = gpt-5
   skills = review
 
   Produce a concise workspace summary.

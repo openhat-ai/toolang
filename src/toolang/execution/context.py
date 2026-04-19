@@ -77,7 +77,7 @@ class RunContext:
         self._on_event = on_event
         self._stream = stream
         self._snapshot = run_input.snapshot
-        self._messages = list(run_input.messages)
+        self._messages = list(run_input.messages())
         self._state: dict[str, Any] | None = None
         self._output_text = ""
         self._round = 0
@@ -91,7 +91,7 @@ class RunContext:
         self._tool_call_sources: dict[str, tuple[int, int]] = {}
         self._tool_definitions = tuple(
             tool.definition()
-            for tool in sorted(run_input.tools.values(), key=lambda item: item.name)
+            for tool in sorted(run_input.tools().values(), key=lambda item: item.name)
         ) if model.tools else ()
 
     @property
@@ -100,7 +100,7 @@ class RunContext:
 
     @property
     def instructions(self) -> str:
-        return self._input.instructions
+        return self._input.instructions()
 
     @property
     def messages(self) -> tuple[Message, ...]:
@@ -112,7 +112,7 @@ class RunContext:
 
     @property
     def tools(self) -> Mapping[str, Tool]:
-        return self._input.tools
+        return self._input.tools()
 
     def call_model(self) -> ModelCallResult:
         """Perform one model call and update run state."""
@@ -129,11 +129,11 @@ class RunContext:
                 kind="model_call",
                 input=step_input,
                 started_at=started_at,
-                instructions=self._input.instructions,
+                instructions=self._input.instructions(),
             )
         )
         request = ModelCall(
-            instructions=self._input.instructions,
+            instructions=self._input.instructions(),
             messages=list(self._messages),
             tools=self._tool_definitions,
             state=self._state,
@@ -190,7 +190,7 @@ class RunContext:
         )
         record = _invoke_tool_call(
             run_id=self._input.run.run_id,
-            tools=self._input.tools,
+            tools=self._input.tools(),
             snapshot=self._snapshot,
             call=call,
         )

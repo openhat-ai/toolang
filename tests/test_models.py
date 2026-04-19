@@ -20,6 +20,7 @@ from toolang.execution.snapshot import RunSnapshot, SnapshotAgent, SnapshotProgr
 from toolang.models import ollama as ollama_models
 from toolang.models import openrouter as openrouter_models
 from toolang.models.responses import encode_message, response_payload
+from toolang.program import MessageBlock, ParamDecl, SourceSpan, Thunk
 from toolang.strategies import load_run_strategy
 from toolang.up import load_default_models, load_model_routes
 
@@ -1022,6 +1023,13 @@ def test_responses_skip_historical_tool_items_without_previous_response_id() -> 
 
 def _run_input() -> RunInput:
     tool = _FakeTool()
+    live = SimpleNamespace(
+        program=SimpleNamespace(
+            source_text="agent alice\n\nthunk:\n  Reply directly.\n",
+            prepared=SimpleNamespace(agent_name="alice"),
+        ),
+        fingerprint="live-1",
+    )
     return RunInput(
         run=RunBinding(
             run_id="run-1",
@@ -1032,13 +1040,22 @@ def _run_input() -> RunInput:
             input_text="hello",
             run_strategy="basic",
             metadata={},
-            live=cast(Any, None),
+            live=cast(Any, live),
             created_at="2026-04-10T00:00:00Z",
         ),
-        model="openai/gpt-5",
-        input=Message.user("hello"),
-        instructions="dev",
-        messages=[Message.user("hello")],
+        thunk=Thunk(
+            name="main",
+            input=ParamDecl(name="_"),
+            messages=(MessageBlock(kind="user", text="Reply directly.", span=SourceSpan(1)),),
+        ),
+        input_text="hello",
+        message=Message.user("hello"),
+        params={},
+        user_template_context={},
+        system_template_context={},
+        history=(),
+        models_base=("openai/gpt-5",),
+        tools_base={tool.name: tool},
         snapshot=RunSnapshot(
             agent=SnapshotAgent(name="alice", root="/tmp/root", home="/tmp/home"),
             run=SnapshotRun(
@@ -1051,6 +1068,5 @@ def _run_input() -> RunInput:
             ),
             program=SnapshotProgram(source_path="", thunk={}),
         ),
-        tools={tool.name: tool},
         debug={},
     )

@@ -523,8 +523,8 @@ def invoke(
                 context,
                 RunSubmission(
                     request=RunRequest(
-                        group="invoke",
-                        origin="invoke",
+                        group="script",
+                        origin="script",
                         thunk=input_text or "",
                         thunk_name=thunk_name,
                         metadata=dict(metadata or {}),

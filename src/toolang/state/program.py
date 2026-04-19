@@ -7,84 +7,16 @@ import json
 import re
 import shlex
 from re import Match
-from typing import cast
 
 from ..agents import agent_program_path
-from ..program import DeclBlock, ParamDecl, Program, Thunk, parse
+from ..program import DeclBlock, MessageBlock, ParamDecl, Program, SourceSpan, Thunk, ThunkOverlay, parse
 from .durable import DurableState
 from toolang.base.error import ToolangError
 
-DEFAULT_MODEL = "gpt-5"
 DEFAULT_THUNK_BODY = "Respond helpfully, clearly, and directly to the user's message."
 AGENT_HEADER_RE = re.compile(r"^agent\s+[A-Za-z_][\w-]*\s*$")
 PROMPT_CALL_RE = re.compile(r"^/([A-Za-z_][\w-]*)(?:\s+(.*))?$")
 TEMPLATE_VAR_RE = re.compile(r"\{\{\s*([A-Za-z_][\w-]*)\s*\}\}")
-
-
-@dataclass(frozen=True, slots=True)
-class ProgramThunk:
-    """One prepared thunk definition."""
-
-    name: str
-    accepts_message: bool
-    params: tuple[ParamDecl, ...]
-    returns: str | None
-    directives: tuple[str, ...]
-    body: str
-
-    def to_data(self) -> dict[str, object]:
-        return {
-            "name": self.name,
-            "accepts_message": self.accepts_message,
-            "params": [_param_to_data(item) for item in self.params],
-            "returns": self.returns,
-            "directives": list(self.directives),
-            "body": self.body,
-        }
-
-    @classmethod
-    def from_data(cls, data: dict[str, object]) -> "ProgramThunk":
-        raw_directives = data.get("directives", [])
-        directives = raw_directives if isinstance(raw_directives, list) else []
-        raw_params = data.get("params", [])
-        params = raw_params if isinstance(raw_params, list) else []
-        return cls(
-            name=_canonical_thunk_name(
-                str(data["name"]) if data.get("name") is not None else None
-            ),
-            accepts_message=bool(data.get("accepts_message", False)),
-            params=tuple(
-                _param_from_data(cast(dict[str, object], item))
-                for item in params
-                if isinstance(item, dict)
-            ),
-            returns=str(data["returns"]) if data.get("returns") is not None else None,
-            directives=tuple(str(item) for item in directives),
-            body=str(data["body"]),
-        )
-
-    def model_selector(self) -> str | None:
-        selectors = self.model_selectors()
-        return selectors[0] if selectors else None
-
-    def model_selectors(self) -> tuple[str, ...]:
-        for directive in self.directives:
-            match = re.match(r"^model\s*=\s*(.*)$", directive)
-            if not match:
-                continue
-            raw = match.group(1).strip()
-            if not raw:
-                return ()
-            return tuple(candidate for candidate in (item.strip() for item in raw.split(",")) if candidate)
-        return ()
-
-    def model(self, *, override: str | None = None) -> str:
-        if override:
-            return override
-        selector = self.model_selector()
-        if selector is not None:
-            return selector
-        return DEFAULT_MODEL
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +27,6 @@ class PreparedProgram:
     source_path: str
     source_text: str
     body_text: str
-    thunks: tuple[ProgramThunk, ...]
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -103,14 +34,14 @@ class PreparedProgram:
             "source_path": self.source_path,
             "source_text": self.source_text,
             "body_text": self.body_text,
-            "thunks": [item.to_data() for item in self.thunks],
         }
 
     def to_snapshot(self) -> dict[str, object]:
+        program = _parse_body_text(self.body_text)
         return {
             "agent_name": self.agent_name,
             "source_path": self.source_path,
-            "thunks": [item.to_data() for item in self.thunks],
+            "thunks": [_thunk_to_data(item) for item in _program_thunks(program)],
         }
 
     def fingerprint(self) -> str:
@@ -124,18 +55,11 @@ class PreparedProgram:
 
     @classmethod
     def from_data(cls, data: dict[str, object]) -> "PreparedProgram":
-        raw_thunks = data.get("thunks", [])
-        thunks = raw_thunks if isinstance(raw_thunks, list) else []
         return cls(
             agent_name=str(data["agent_name"]),
             source_path=str(data["source_path"]),
             source_text=str(data["source_text"]),
             body_text=str(data["body_text"]),
-            thunks=tuple(
-                ProgramThunk.from_data(cast(dict[str, object], item))
-                for item in thunks
-                if isinstance(item, dict)
-            ),
         )
 
 
@@ -159,17 +83,17 @@ class LiveProgram:
         return self.prepared.body_text
 
     @property
-    def thunks(self) -> tuple[ProgramThunk, ...]:
-        return self.prepared.thunks
+    def thunks(self) -> tuple[Thunk, ...]:
+        return _program_thunks(self.parsed)
 
-    def get_thunk(self, name: str | None) -> ProgramThunk:
+    def get_thunk(self, name: str | None) -> Thunk:
         if name is not None:
             for thunk in self.thunks:
-                if thunk.name == name:
+                if _thunk_name(thunk) == name:
                     return thunk
             raise ToolangError(f"Thunk not found: {name}")
         for thunk in self.thunks:
-            if thunk.name == "main":
+            if _thunk_name(thunk) == "main":
                 return thunk
         if len(self.thunks) == 1:
             return self.thunks[0]
@@ -225,14 +149,12 @@ def build_prepared_program(durable: DurableState) -> PreparedProgram:
         else f"agent {durable.agent_name}\n"
     )
     body_text = _body_text(source_text)
-    parsed = _parse_body_text(body_text)
-    thunks = tuple(_prepared_thunks(parsed))
+    _parse_body_text(body_text)
     return PreparedProgram(
         agent_name=durable.agent_name,
         source_path=str(path.relative_to(durable.toolang_root)),
         source_text=source_text,
         body_text=body_text,
-        thunks=thunks,
     )
 
 
@@ -263,43 +185,25 @@ def _parse_body_text(body_text: str) -> Program:
     return program
 
 
-def _prepared_thunks(program: Program) -> list[ProgramThunk]:
-    if not program.thunks:
-        return [_default_thunk()]
-    return [_prepared_thunk(item) for item in program.thunks]
+def _program_thunks(program: Program) -> tuple[Thunk, ...]:
+    if program.thunks:
+        return tuple(program.thunks)
+    return (_default_thunk(),)
 
 
-def _prepared_thunk(thunk: Thunk) -> ProgramThunk:
-    accepts_message, named_params = _canonical_thunk_params(thunk)
-    return ProgramThunk(
-        name=_canonical_thunk_name(thunk.name),
-        accepts_message=accepts_message,
-        params=tuple(named_params),
-        returns=thunk.returns,
-        directives=tuple(thunk.directives),
-        body=thunk.body,
-    )
-
-
-def _default_thunk() -> ProgramThunk:
-    return ProgramThunk(
+def _default_thunk() -> Thunk:
+    return Thunk(
         name="main",
-        accepts_message=True,
-        params=(),
-        returns=None,
-        directives=(),
-        body=DEFAULT_THUNK_BODY,
+        input=ParamDecl(name="_"),
+        messages=(
+            MessageBlock(
+                kind="user",
+                text=DEFAULT_THUNK_BODY,
+                span=_default_span(),
+                explicit=False,
+            ),
+        ),
     )
-
-
-def _canonical_thunk_params(thunk: Thunk) -> tuple[bool, list[ParamDecl]]:
-    if thunk.params_omitted:
-        return True, []
-    if not thunk.params:
-        return False, []
-    if thunk.params[0].message:
-        return True, [item for item in thunk.params[1:]]
-    return False, list(thunk.params)
 
 
 def _parse_prompt_args(
@@ -376,15 +280,13 @@ def _validate_program(program: Program) -> None:
         seen_struct_names.add(struct.name)
 
     for thunk in program.thunks:
-        thunk_name = _canonical_thunk_name(thunk.name)
+        thunk_name = _thunk_name(thunk)
         if thunk_name in seen_thunk_names:
             raise ToolangError(f"Duplicate thunk name {thunk_name!r}.")
         seen_thunk_names.add(thunk_name)
         _validate_thunk_params(thunk, thunk_name=thunk_name)
-        _validate_thunk_directives(thunk, thunk_name=thunk_name)
-        if thunk.body.strip():
-            continue
-        raise ToolangError(f"Thunk {thunk_name!r} is missing body text.")
+        _validate_thunk_overlays(thunk, thunk_name=thunk_name)
+        _validate_thunk_messages(thunk, thunk_name=thunk_name)
 
 
 def _validate_decl_params(decl: DeclBlock) -> None:
@@ -398,37 +300,63 @@ def _validate_decl_params(decl: DeclBlock) -> None:
 
 
 def _validate_thunk_params(thunk: Thunk, *, thunk_name: str) -> None:
+    if thunk.input is not None and thunk.input.name == "runtime":
+        raise ToolangError(f"Thunk {thunk_name!r} must not use reserved parameter name 'runtime'.")
     seen: set[str] = set()
     for param in thunk.params:
-        if param.message:
-            continue
+        if param.name == "runtime":
+            raise ToolangError(f"Thunk {thunk_name!r} must not use reserved parameter name 'runtime'.")
         if param.name in seen:
             raise ToolangError(f"Duplicate thunk parameter {param.name!r} in {thunk_name!r}.")
         seen.add(param.name)
 
 
-def _validate_thunk_directives(thunk: Thunk, *, thunk_name: str) -> None:
-    model_directives = [directive for directive in thunk.directives if re.match(r"^model\b", directive)]
-    if len(model_directives) > 1:
-        raise ToolangError(f"Thunk {thunk_name!r} may declare at most one model directive.")
-    if not model_directives:
+def _validate_thunk_overlays(thunk: Thunk, *, thunk_name: str) -> None:
+    model_overlays = [overlay for overlay in thunk.overlays if overlay.kind == "model"]
+    if len(model_overlays) > 1:
+        raise ToolangError(f"Thunk {thunk_name!r} may declare at most one models directive.")
+    if not model_overlays:
         return
-    directive = model_directives[0]
-    match = re.match(r"^model\s*([+\-]?=)\s*(.*)$", directive)
-    if not match:
-        raise ToolangError(f"Thunk {thunk_name!r} has an invalid model directive.")
-    operator = match.group(1)
-    raw_values = match.group(2).strip()
-    if operator != "=":
-        raise ToolangError(f"Thunk {thunk_name!r} must use 'model = ...'.")
-    selectors = [item.strip() for item in raw_values.split(",") if item.strip()]
-    if not selectors:
+    overlay = model_overlays[0]
+    if overlay.op != "set":
+        raise ToolangError(f"Thunk {thunk_name!r} must use '=' for its models directive.")
+    if not overlay.items:
         raise ToolangError(f"Thunk {thunk_name!r} must declare at least one model selector.")
-    routed = [selector for selector in selectors if "@" in selector]
+    routed = [selector for selector in overlay.items if "@" in selector]
     if routed:
         joined = ", ".join(routed)
         raise ToolangError(
             f"Thunk {thunk_name!r} must declare route-neutral model refs, not routed selectors: {joined}"
+        )
+
+
+def _validate_thunk_messages(thunk: Thunk, *, thunk_name: str) -> None:
+    if not thunk.messages or not any(block.text.strip() for block in thunk.messages):
+        raise ToolangError(f"Thunk {thunk_name!r} is missing body text.")
+    if thunk.is_thread_thunk():
+        if thunk.input is not None:
+            raise ToolangError(f"Thread thunk {thunk_name!r} must not declare an input parameter.")
+        invalid = [block.kind for block in thunk.messages if block.kind != "system"]
+        if invalid:
+            joined = ", ".join(invalid)
+            raise ToolangError(
+                f"Thread thunk {thunk_name!r} may only declare system message blocks, not: {joined}."
+            )
+        if len(thunk.message_blocks("system")) > 1:
+            raise ToolangError(f"Thread thunk {thunk_name!r} may declare at most one system block.")
+        return
+
+    system_count = len(thunk.message_blocks("system"))
+    if system_count > 1:
+        raise ToolangError(f"Thunk {thunk_name!r} may declare at most one system block.")
+    user_count = len(thunk.message_blocks("user"))
+    if user_count != 1:
+        raise ToolangError(f"Thunk {thunk_name!r} must declare exactly one user block.")
+    unsupported = [block.kind for block in thunk.messages if block.kind not in {"system", "user"}]
+    if unsupported:
+        joined = ", ".join(unsupported)
+        raise ToolangError(
+            f"Thunk {thunk_name!r} does not yet support message blocks: {joined}."
         )
 
 
@@ -437,17 +365,7 @@ def _param_to_data(param: ParamDecl) -> dict[str, object]:
         "name": param.name,
         "optional": param.optional,
         "type_name": param.type_name,
-        "message": param.message,
     }
-
-
-def _param_from_data(data: dict[str, object]) -> ParamDecl:
-    return ParamDecl(
-        name=str(data["name"]),
-        optional=bool(data.get("optional", False)),
-        type_name=str(data["type_name"]) if data.get("type_name") is not None else None,
-        message=bool(data.get("message", False)),
-    )
 
 
 def _sha256_text(value: str) -> str:
@@ -456,5 +374,38 @@ def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def _canonical_thunk_name(name: str | None) -> str:
-    return name or "main"
+def _thunk_name(thunk: Thunk) -> str:
+    return thunk.name or "main"
+
+
+def _thunk_to_data(thunk: Thunk) -> dict[str, object]:
+    return {
+        "name": _thunk_name(thunk),
+        "input": _param_to_data(thunk.input) if thunk.input is not None else None,
+        "params": [_param_to_data(item) for item in thunk.params],
+        "output": thunk.output,
+        "overlays": [_overlay_to_data(item) for item in thunk.overlays],
+        "messages": [_message_block_to_data(item) for item in thunk.messages],
+    }
+
+
+def _overlay_to_data(overlay: ThunkOverlay) -> dict[str, object]:
+    return {
+        "kind": overlay.kind,
+        "op": overlay.op,
+        "items": list(overlay.items),
+        "line": overlay.span.line,
+    }
+
+
+def _message_block_to_data(block: MessageBlock) -> dict[str, object]:
+    return {
+        "kind": block.kind,
+        "text": block.text,
+        "line": block.span.line,
+        "explicit": block.explicit,
+    }
+
+
+def _default_span() -> SourceSpan:
+    return SourceSpan(0)

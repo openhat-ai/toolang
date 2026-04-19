@@ -68,8 +68,15 @@ from toolang.caps import (
 )
 from toolang.config.plugins import ChannelBinding
 from toolang.execution import execute as run_execute_module
-from toolang.execution.input import assemble_run_input, bind_run_request
-from toolang.execution.snapshot import SnapshotTask, SnapshotTaskServices
+from toolang.execution.input import RunInput, bind_run_request
+from toolang.execution.snapshot import (
+    RunSnapshot,
+    SnapshotAgent,
+    SnapshotProgram,
+    SnapshotRun,
+    SnapshotTask,
+    SnapshotTaskServices,
+)
 from toolang.execution.runner import QueueRunner, RunRequest, RunSubmission
 from toolang.execution.db import ExecutionStore, execution_db_path
 from toolang.loops import chat as chat_loop, inspect, poll, prepare, pulse, reload
@@ -837,7 +844,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
         return RunResult(output_text="hello world and more from telegram")
 
     with (
-        patch.object(run_execute_module, "assemble_run_input", side_effect=fake_assemble),
+        patch.object(run_execute_module.RunInput, "from_binding", side_effect=fake_assemble),
         patch.object(
             run_execute_module,
             "load_run_strategy",
@@ -969,7 +976,7 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
         return RunResult(output_text="hello world")
 
     with (
-        patch.object(run_execute_module, "assemble_run_input", side_effect=fake_assemble),
+        patch.object(run_execute_module.RunInput, "from_binding", side_effect=fake_assemble),
         patch.object(
             run_execute_module,
             "load_run_strategy",
@@ -1904,8 +1911,10 @@ def test_prepare_builds_program_into_agent_lock(tmp_path: Path) -> None:
 
     assert prepared.program.agent_name == "alice"
     assert prepared.program.source_path == "agents/alice/alice.too"
-    assert len(prepared.program.thunks) == 1
-    assert prepared.program.thunks[0].name == "main"
+    program_snapshot = prepared.program.to_snapshot()
+    thunks = cast(list[dict[str, object]], program_snapshot["thunks"])
+    assert len(thunks) == 1
+    assert thunks[0]["name"] == "main"
     program_snapshot = cast(dict[str, object], prepared.agent_lock.to_snapshot()["program"])
     assert program_snapshot["agent_name"] == "alice"
 
@@ -2112,8 +2121,9 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
         ),
     )
 
-    bundle = assemble_run_input(context, bound)
+    bundle = RunInput.from_binding(context, bound)
 
+    assert bundle.snapshot is not None
     assert bundle.snapshot.task == SnapshotTask(
         provider="local",
         ref=task.thread_id(),
@@ -2131,16 +2141,17 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
         comment=True,
         path=str(toolang_root / "agents" / "alice" / "tasks" / "review.md"),
     )
-    assert "Task execution protocol:" in bundle.instructions
-    assert "Update the task file directly at:" in bundle.instructions
-    assert "Move status from todo to doing when work starts." in bundle.instructions
+    instructions = bundle.instructions()
+    assert "Task execution protocol:" in instructions
+    assert "Update the task file directly at:" in instructions
+    assert "Move status from todo to doing when work starts." in instructions
 
 
 def test_assemble_run_input_prefers_thunk_model_over_activation_default(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "alice.too",
-        "agent alice\n\nthunk chat:\n  model = openai/gpt-5\n\n  Reply directly.\n",
+        "agent alice\n\nthunk chat:\n  models = openai/gpt-5\n\n  Reply directly.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -2154,9 +2165,9 @@ def test_assemble_run_input_prefers_thunk_model_over_activation_default(tmp_path
         RunRequest(group="chat", origin="chat", thunk="hello"),
     )
 
-    bundle = assemble_run_input(context, bound)
+    bundle = RunInput.from_binding(context, bound)
 
-    assert bundle.model == "openai/gpt-5@openai"
+    assert bundle.model_selector(context) == "openai/gpt-5@openai"
     assert bundle.debug["activation_default_model"] == "openai/gpt-5@openai"
 
 
@@ -2177,9 +2188,9 @@ def test_assemble_run_input_uses_activation_default_when_thunk_omits_one(tmp_pat
         RunRequest(group="chat", origin="chat", thunk="hello"),
     )
 
-    bundle = assemble_run_input(context, bound)
+    bundle = RunInput.from_binding(context, bound)
 
-    assert bundle.model == "openai/gpt-5@openai"
+    assert bundle.model_selector(context) == "openai/gpt-5@openai"
     assert bundle.debug["activation_default_model"] == "openai/gpt-5@openai"
 
 
@@ -2198,8 +2209,8 @@ def test_assemble_run_input_hides_tools_for_invoke_runs(tmp_path: Path) -> None:
     invoke_bound = bind_run_request(
         context,
         RunRequest(
-            group="invoke",
-            origin="invoke",
+            group="script",
+            origin="script",
             thunk_name="summarize",
             thunk="hello",
         ),
@@ -2214,22 +2225,90 @@ def test_assemble_run_input_hides_tools_for_invoke_runs(tmp_path: Path) -> None:
         ),
     )
 
-    invoke_bundle = assemble_run_input(context, invoke_bound)
-    chat_bundle = assemble_run_input(context, chat_bound)
+    invoke_bundle = RunInput.from_binding(context, invoke_bound)
+    chat_bundle = RunInput.from_binding(context, chat_bound)
 
-    assert invoke_bundle.tools == {}
+    assert invoke_bundle.tools() == {}
+    assert invoke_bundle.snapshot is not None
     assert invoke_bundle.snapshot.tools == ()
     assert invoke_bundle.debug["tool_names"] == []
-    assert chat_bundle.tools
+    assert chat_bundle.tools()
+    assert chat_bundle.snapshot is not None
     assert chat_bundle.snapshot.tools
     assert chat_bundle.debug["tool_names"]
+
+
+def test_assemble_run_input_uses_thunk_user_message_for_script_runs(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "alice.too",
+        "agent alice\n\nthunk rewrite(_):\n  Rewrite the input for a technical audience.\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("chat",),
+    )
+    bound = bind_run_request(
+        context,
+        RunRequest(
+            group="script",
+            origin="script",
+            thunk_name="rewrite",
+            thunk="hello world",
+        ),
+    )
+
+    bundle = RunInput.from_binding(context, bound)
+
+    assert [item.to_data() for item in bundle.messages()] == [
+        {
+            "role": "user",
+            "parts": [
+                {
+                    "type": "text",
+                    "text": "Rewrite the input for a technical audience.\n\nhello world",
+                }
+            ],
+        }
+    ]
+
+
+def test_assemble_run_input_keeps_thread_messages_out_of_system_instructions(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "alice.too",
+        "agent alice\n\nthunk chat:\n  Reply directly.\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("chat",),
+    )
+    bound = bind_run_request(
+        context,
+        RunRequest(group="chat", origin="chat", thunk="hello"),
+    )
+
+    bundle = RunInput.from_binding(context, bound)
+
+    assert [item.to_data() for item in bundle.messages()] == [
+        {
+            "role": "user",
+            "parts": [{"type": "text", "text": "hello"}],
+        }
+    ]
+    instructions = bundle.instructions()
+    assert "System messages:" in instructions
+    assert "Reply directly." in instructions
+    assert "hello" not in instructions
 
 
 def test_execute_run_rejects_thunk_model_outside_activation_allowlist(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "alice.too",
-        "agent alice\n\nthunk chat:\n  model = openai/gpt-5\n\n  Reply directly.\n",
+        "agent alice\n\nthunk chat:\n  models = openai/gpt-5\n\n  Reply directly.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -2577,20 +2656,38 @@ def _write_text(path: Path, content: str) -> None:
 
 def _fake_run_input(bound):
     input_message = Message.user(bound.input_text or "hello")
-    return type(
-        "RunInputStub",
-        (),
-        {
-            "run": bound,
-            "model": None,
-            "instructions": "",
-            "input": input_message,
-            "messages": [input_message],
-            "snapshot": {},
-            "tools": {},
-            "debug": {},
-        },
-    )()
+
+    class RunInputStub:
+        def __init__(self) -> None:
+            self.run = bound
+            self.message = input_message
+            self.snapshot = RunSnapshot(
+                agent=SnapshotAgent(name="alice", root="/tmp/root", home="/tmp/home"),
+                run=SnapshotRun(
+                    run_id=bound.run_id,
+                    group=bound.group,
+                    origin=bound.origin,
+                    thread_id=bound.thread_id,
+                    run_strategy=bound.run_strategy,
+                    live_fingerprint="",
+                ),
+                program=SnapshotProgram(source_path="", thunk={}),
+            )
+            self.debug = {}
+
+        def instructions(self) -> str:
+            return ""
+
+        def messages(self):
+            return (input_message,)
+
+        def tools(self):
+            return {}
+
+        def model_selector(self, _context):
+            return None
+
+    return RunInputStub()
 
 
 class _FakeStrategy:
@@ -2720,7 +2817,7 @@ def _patched_runner_execution():
         return RunResult(output_text=output_text)
 
     with (
-        patch.object(run_execute_module, "assemble_run_input", side_effect=fake_assemble),
+        patch.object(run_execute_module.RunInput, "from_binding", side_effect=fake_assemble),
         patch.object(
             run_execute_module,
             "load_run_strategy",
@@ -2940,7 +3037,7 @@ def _patched_runner_execution_with_tools(*, output_text: str):
         return RunResult(output_text=output_text)
 
     with (
-        patch.object(run_execute_module, "assemble_run_input", side_effect=fake_assemble),
+        patch.object(run_execute_module.RunInput, "from_binding", side_effect=fake_assemble),
         patch.object(
             run_execute_module,
             "load_run_strategy",
@@ -2961,7 +3058,7 @@ def _patched_runner_failure(message: str):
         raise RuntimeError(message)
 
     with (
-        patch.object(run_execute_module, "assemble_run_input", side_effect=fake_assemble),
+        patch.object(run_execute_module.RunInput, "from_binding", side_effect=fake_assemble),
         patch.object(
             run_execute_module,
             "load_run_strategy",
@@ -3028,7 +3125,7 @@ def _patched_runner_streaming_text(release: threading.Event):
         return RunResult(output_text="streaming hello")
 
     with (
-        patch.object(run_execute_module, "assemble_run_input", side_effect=fake_assemble),
+        patch.object(run_execute_module.RunInput, "from_binding", side_effect=fake_assemble),
         patch.object(
             run_execute_module,
             "load_run_strategy",

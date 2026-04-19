@@ -992,6 +992,15 @@ wheels = [
 ]
 
 [[package]]
+name = "mstache"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6c/3a/a0d22da35675d328ff45c29b35bb0e90b0ea3ff72f7cd7e679e3d383eb6a/mstache-0.3.0.tar.gz", hash = "sha256:1d72368d1cd46a3721f7f7bbe18aa602d19d063ca0d63b164c1ab75c8c410e52", size = 18044, upload-time = "2024-10-12T21:57:00.739Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6d/b0/3742108cf5a2e24edab4e0ac24db9a3858803497e2385270f78a7ed3c525/mstache-0.3.0-py3-none-any.whl", hash = "sha256:17a53df221fe7cab18bf2250db4ed003db5f5e06d84cf41b1c5caeea6da50cf9", size = 14306, upload-time = "2024-10-12T21:56:58.835Z" },
+]
+
+[[package]]
 name = "mypy-extensions"
 version = "1.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1731,6 +1740,7 @@ dependencies = [
     { name = "humanize" },
     { name = "json5" },
     { name = "mcat-cli" },
+    { name = "mstache" },
     { name = "openai" },
     { name = "pydantic" },
     { name = "python-dateutil" },
@@ -1762,6 +1772,7 @@ requires-dist = [
     { name = "humanize", specifier = ">=4.12,<5" },
     { name = "json5", specifier = ">=0.12,<1.0" },
     { name = "mcat-cli", specifier = ">=0.2.0" },
+    { name = "mstache", specifier = ">=0.3,<1" },
     { name = "openai", specifier = ">=1.109.1" },
     { name = "pydantic", specifier = ">=2.11,<3" },
     { name = "python-dateutil", specifier = ">=2.9,<3" },
