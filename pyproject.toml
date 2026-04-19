@@ -32,6 +32,7 @@ dependencies = [
     "humanize>=4.12,<5",
     "httpx>=0.28.1",
     "mcat-cli>=0.2.0",
+    "mstache>=0.3,<1",
     "json5>=0.12,<1.0",
     "openai>=1.109.1",
     "pydantic>=2.11,<3",

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import lru_cache
 import re
-from typing import Any
+from typing import Any, Literal, cast
 
 import frontmatter
 from tree_sitter import Language, Node, Parser
@@ -18,6 +18,9 @@ HTTP_SERVICE_FIELDS = frozenset({"transport", "url", "headers"})
 STDIO_SERVICE_FIELDS = frozenset({"transport", "command", "args", "env", "cwd"})
 PROMPT_FIELDS = frozenset({"params"})
 SIGNATURE_PARAM_RE = re.compile(r"^[A-Za-z_][\w-]*\??$")
+OverlayKind = Literal["model", "tool", "psyche", "skill", "service"]
+OverlayOperator = Literal["set", "add", "remove"]
+MessageBlockKind = Literal["system", "user", "assistant", "tool"]
 
 
 @dataclass(slots=True)
@@ -37,7 +40,6 @@ class ParamDecl:
     name: str
     optional: bool = False
     type_name: str | None = None
-    message: bool = False
 
 
 @dataclass(slots=True)
@@ -65,15 +67,50 @@ class StructDecl:
     span: SourceSpan
 
 
+@dataclass(frozen=True, slots=True)
+class ThunkOverlay:
+    kind: OverlayKind
+    op: OverlayOperator
+    items: tuple[str, ...]
+    span: SourceSpan
+
+
+@dataclass(frozen=True, slots=True)
+class MessageBlock:
+    kind: MessageBlockKind
+    text: str
+    span: SourceSpan
+    explicit: bool = True
+
+
 @dataclass(slots=True)
 class Thunk:
     name: str | None
-    params_omitted: bool
+    input: ParamDecl | None = None
     params: list[ParamDecl] = field(default_factory=list)
-    returns: str | None = None
-    directives: list[str] = field(default_factory=list)
-    body: str = ""
+    output: str | None = None
+    overlays: tuple[ThunkOverlay, ...] = ()
+    messages: tuple[MessageBlock, ...] = ()
     span: SourceSpan = field(default_factory=lambda: SourceSpan(0))
+
+    def thunk_name(self) -> str:
+        return self.name or "main"
+
+    def is_thread_thunk(self) -> bool:
+        return self.thunk_name() in {"chat", "task", "chore"}
+
+    def overlays_for(self, kind: OverlayKind) -> tuple[ThunkOverlay, ...]:
+        return tuple(item for item in self.overlays if item.kind == kind)
+
+    def message_blocks(self, kind: MessageBlockKind) -> tuple[MessageBlock, ...]:
+        return tuple(item for item in self.messages if item.kind == kind)
+
+    def messages_text(self) -> str:
+        return "\n\n".join(
+            block.text
+            for block in self.messages
+            if block.text.strip()
+        ).strip()
 
 
 @dataclass(slots=True)
@@ -193,66 +230,144 @@ def _struct_from_node(node: Node) -> StructDecl:
 
 
 def _thunk_from_node(node: Node) -> Thunk:
-    header = _required_child(node, "header")
+    signature = _required_child(node, "signature")
     body = _required_child(node, "body")
-    params_node = header.child_by_field_name("parameters")
+    params_node = signature.child_by_field_name("params")
+    implicit_input = params_node is None
+    input_param, params = _params_from_node(params_node)
+    overlays: list[ThunkOverlay] = []
+    messages: list[MessageBlock] = []
     thunk = Thunk(
-        name=_optional_text(header.child_by_field_name("name")),
-        params_omitted=params_node is None,
-        params=_params_from_node(params_node),
-        returns=_optional_text(header.child_by_field_name("returns")),
+        name=_optional_text(signature.child_by_field_name("name")),
+        input=input_param,
+        params=params,
+        output=_optional_text(signature.child_by_field_name("output")),
         span=SourceSpan(node.start_point.row + 1),
     )
 
-    body_started = False
-    body_lines: list[str] = []
     for child in body.named_children:
-        if child.type == "directive_line":
-            if body_started:
-                raise ToolangError(
-                    f"Directive line must appear before thunk body text at line {child.start_point.row + 1}."
-                )
-            thunk.directives.append(_directive_from_node(child))
+        if child.type == "overlay_line":
+            overlays.append(_overlay_from_node(child))
             continue
         if child.type == "blank_line":
-            if body_started:
-                body_lines.append("")
             continue
-        if child.type == "body_line":
-            body_started = True
-            body_lines.append(_required_text(child, "text").rstrip())
+        if child.type == "message":
+            messages.append(_message_from_node(child, thunk_name=thunk.thunk_name()))
             continue
         raise ToolangError(
             f"Unsupported thunk content at line {child.start_point.row + 1}: {child.type!r}"
         )
 
-    thunk.body = _dedent_lines(body_lines).strip()
+    thunk.overlays = tuple(overlays)
+    thunk.messages = tuple(messages)
+    if implicit_input and thunk.is_thread_thunk():
+        thunk.input = None
     return thunk
 
 
-def _params_from_node(node: Node | None) -> list[ParamDecl]:
+def _params_from_node(node: Node | None) -> tuple[ParamDecl | None, list[ParamDecl]]:
     if node is None:
-        return []
-    params: list[ParamDecl] = []
-    for parameter in node.children_by_field_name("parameter"):
-        name_node = _required_child(parameter, "name")
-        params.append(
-            ParamDecl(
-                name="_" if name_node.type == "underscore" else _node_text(name_node),
-                optional=parameter.child_by_field_name("optional") is not None,
-                type_name=_optional_text(parameter.child_by_field_name("type")),
-                message=name_node.type == "underscore",
-            )
+        return ParamDecl(name="_"), []
+    input_node = node.child_by_field_name("input")
+    input_param = (
+        ParamDecl(
+            name=_required_text(input_node, "name"),
+            optional=False,
+            type_name=None,
         )
-    return params
+        if input_node is not None
+        else None
+    )
+    params: list[ParamDecl] = []
+    for parameter in node.children_by_field_name("param"):
+        name_node = _required_child(parameter, "name")
+        param = ParamDecl(
+            name=_node_text(name_node),
+            optional=parameter.child_by_field_name("optional") is not None,
+            type_name=_optional_text(parameter.child_by_field_name("type")),
+        )
+        params.append(param)
+    return input_param, params
 
 
-def _directive_from_node(node: Node) -> str:
-    directive = node.named_children[0]
-    subject = _required_text(directive, "subject").strip()
-    operator = _required_text(directive, "operator").strip()
-    values = _required_text(directive, "values").strip()
-    return f"{subject} {operator} {values}"
+def _overlay_from_node(node: Node) -> ThunkOverlay:
+    overlay = _required_child(node, "overlay")
+    subject = _required_text(overlay, "subject").strip()
+    operator = _required_text(overlay, "operator").strip()
+    raw_values = _optional_text(overlay.child_by_field_name("values")) or ""
+    kind = _overlay_kind(subject, line_number=node.start_point.row + 1)
+    items = tuple(
+        item
+        for item in (part.strip() for part in raw_values.split(","))
+        if item
+    )
+    return ThunkOverlay(
+        kind=kind,
+        op=_overlay_operator(operator, line_number=node.start_point.row + 1),
+        items=items,
+        span=SourceSpan(node.start_point.row + 1),
+    )
+
+
+def _overlay_kind(subject: str, *, line_number: int) -> OverlayKind:
+    normalized = subject.strip()
+    if normalized == "models":
+        return "model"
+    if normalized in {"tool", "tools"}:
+        return "tool"
+    if normalized in {"psyche", "psyches"}:
+        return "psyche"
+    if normalized in {"skill", "skills"}:
+        return "skill"
+    if normalized in {"service", "services"}:
+        return "service"
+    raise ToolangError(f"Unsupported thunk directive {subject!r} at line {line_number}.")
+
+
+def _overlay_operator(operator: str, *, line_number: int) -> OverlayOperator:
+    normalized = operator.strip()
+    if normalized == "=":
+        return "set"
+    if normalized == "+=":
+        return "add"
+    if normalized == "-=":
+        return "remove"
+    raise ToolangError(f"Unsupported thunk directive operator {operator!r} at line {line_number}.")
+
+
+def _message_from_node(node: Node, *, thunk_name: str) -> MessageBlock:
+    kind_node = node.child_by_field_name("kind")
+    if kind_node is None:
+        lines: list[tuple[int, str]] = []
+        for child in node.named_children:
+            if child.type == "message_line":
+                lines.append((child.start_point.row + 1, _required_text(child, "text").rstrip()))
+                continue
+            if child.type == "blank_line":
+                lines.append((child.start_point.row + 1, ""))
+        implicit_kind: MessageBlockKind = "system" if thunk_name in {"chat", "task", "chore"} else "user"
+        return MessageBlock(
+            kind=implicit_kind,
+            text="\n".join(text for _, text in lines).strip(),
+            span=SourceSpan(node.start_point.row + 1),
+            explicit=False,
+        )
+
+    continuation: list[tuple[int, str]] = []
+    for child in node.named_children:
+        if child.type == "message_continuation_line":
+            continuation.append((child.start_point.row + 1, _required_text(child, "text").rstrip()))
+            continue
+        if child.type == "blank_line":
+            continuation.append((child.start_point.row + 1, ""))
+    return MessageBlock(
+        kind=cast(MessageBlockKind, _node_text(kind_node).strip()),
+        text=_message_block_text(
+            inline_text=_optional_text(node.child_by_field_name("inline")) or "",
+            continuation=continuation,
+        ),
+        span=SourceSpan(node.start_point.row + 1),
+    )
 
 
 def _fence_body_from_node(node: Node) -> str:
@@ -416,16 +531,31 @@ def _is_string_list(value: object) -> bool:
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
 
 
-def _dedent_lines(lines: list[str]) -> str:
-    non_blank = [line for line in lines if line.strip()]
+def _dedent_line_items(lines: list[tuple[int, str]]) -> list[tuple[int, str]]:
+    non_blank = [text for _, text in lines if text.strip()]
     if not non_blank:
-        return "\n".join(lines)
+        return list(lines)
     indent = min(len(line) - len(line.lstrip(" \t")) for line in non_blank)
-    normalized = [
-        line[indent:].rstrip() if line.strip() else ""
-        for line in lines
+    return [
+        (line_number, text[indent:].rstrip() if text.strip() else "")
+        for line_number, text in lines
     ]
-    return "\n".join(normalized)
+
+
+def _message_block_text(
+    *,
+    inline_text: str,
+    continuation: list[tuple[int, str]],
+) -> str:
+    if continuation:
+        normalized = [text for _, text in _dedent_line_items(continuation)]
+        block_text = "\n".join(normalized).strip()
+        if inline_text and block_text:
+            return f"{inline_text}\n{block_text}".strip()
+        if inline_text:
+            return inline_text.strip()
+        return block_text
+    return inline_text.strip()
 
 
 def _first_error_node(node: Node) -> Node | None:

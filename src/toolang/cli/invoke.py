@@ -21,9 +21,9 @@ from .. import up as agent_up
 from ..base.error import ToolangError
 from ..config.env import load_runtime_environ
 from ..execution.runner import RunOutcome
-from ..program import ParamDecl
+from ..program import ParamDecl, Thunk
 from ..state.durable import scan_durable_state
-from ..state.program import LiveProgram, ProgramThunk, build_prepared_program, load_live_program
+from ..state.program import LiveProgram, build_prepared_program, load_live_program
 
 MarkupMode = Literal["markdown", "rich"]
 HELP_FLAGS = {"--help", "-h"}
@@ -110,7 +110,7 @@ class _RoamingThunkHelpCommand(TyperCommand):
     usage_tail = "[OPTIONS]"
     show_params = False
     show_parts = False
-    help_thunk: ProgramThunk | None = None
+    help_thunk: Thunk | None = None
 
     def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         if not HAS_RICH or self.rich_markup_mode is None:
@@ -176,7 +176,7 @@ def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name:
             return 0
         thunk, remainder = _select_roaming_thunk(program, remaining)
         if any(token in HELP_FLAGS for token in remainder):
-            _show_roaming_help(source_label, program, thunk_name=thunk.name, prog_name=prog_name)
+            _show_roaming_help(source_label, program, thunk_name=_thunk_name(thunk), prog_name=prog_name)
             return 0
         request = _parse_roaming_invoke_request(thunk, remainder)
         outcome = agent_up.invoke(
@@ -221,18 +221,19 @@ def _load_roaming_live_program(source_path: Path) -> tuple[Path, str, LiveProgra
 def _select_roaming_thunk(
     program: LiveProgram,
     argv: list[str],
-) -> tuple[ProgramThunk, list[str]]:
+) -> tuple[Thunk, list[str]]:
     for thunk in program.thunks:
-        if thunk.name == argv[0]:
+        if _thunk_name(thunk) == argv[0]:
             return thunk, argv[1:]
     raise click.ClickException(f"unknown thunk: {argv[0]}")
 
 
 def _parse_roaming_invoke_request(
-    thunk: ProgramThunk,
+    thunk: Thunk,
     argv: list[str],
 ) -> RoamingInvokeRequest:
-    param_index = {param.name: param for param in thunk.params}
+    thunk_params = tuple(thunk.params)
+    param_index = {param.name: param for param in thunk_params}
     invoke_params: dict[str, object] = {}
     parts: list[str] = []
     models: list[str] = []
@@ -270,17 +271,19 @@ def _parse_roaming_invoke_request(
             continue
         parts.append(token)
         index += 1
-    missing = [param.name for param in thunk.params if not param.optional and param.name not in invoke_params]
+    missing = [param.name for param in thunk_params if not param.optional and param.name not in invoke_params]
     if missing:
         joined = ", ".join(f"{name}=..." for name in missing)
         raise click.ClickException(f"missing required invoke parameters: {joined}")
-    if thunk.accepts_message and not parts:
-        raise click.ClickException(f"thunk {thunk.name!r} requires at least one PART")
-    if parts and not thunk.accepts_message:
-        raise click.ClickException(f"thunk {thunk.name!r} does not accept message input")
+    thunk_name = _thunk_name(thunk)
+    accepts_message = thunk.input is not None
+    if accepts_message and not parts:
+        raise click.ClickException(f"thunk {thunk_name!r} requires at least one PART")
+    if parts and not accepts_message:
+        raise click.ClickException(f"thunk {thunk_name!r} does not accept message input")
     input_text, invoke_parts = _render_roaming_input(parts) if parts else (None, [])
     return RoamingInvokeRequest(
-        thunk_name=thunk.name,
+        thunk_name=thunk_name,
         input_text=input_text,
         models=tuple(models),
         invoke_params=invoke_params,
@@ -398,7 +401,7 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
 
     for thunk in program.thunks:
         app.command(
-            thunk.name,
+            _thunk_name(thunk),
             help=_thunk_summary(thunk),
             cls=_make_roaming_thunk_help_command_class(thunk),
             rich_help_panel="Thunks",
@@ -406,11 +409,11 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
     return app
 
 
-def _make_roaming_thunk_help_command_class(thunk: ProgramThunk) -> type[_RoamingThunkHelpCommand]:
+def _make_roaming_thunk_help_command_class(thunk: Thunk) -> type[_RoamingThunkHelpCommand]:
     class _ConfiguredRoamingThunkHelpCommand(_RoamingThunkHelpCommand):
         usage_tail = _roaming_thunk_usage_tail(thunk)
         show_params = bool(thunk.params)
-        show_parts = thunk.accepts_message
+        show_parts = thunk.input is not None
         help_thunk = thunk
 
     return _ConfiguredRoamingThunkHelpCommand
@@ -430,11 +433,11 @@ def _make_roaming_help_command() -> Callable[..., None]:
     return command
 
 
-def _roaming_thunk_usage_tail(thunk: ProgramThunk) -> str:
+def _roaming_thunk_usage_tail(thunk: Thunk) -> str:
     pieces = ["[OPTIONS]"]
     if thunk.params:
         pieces.append("[PARAMS]")
-    if thunk.accepts_message:
+    if thunk.input is not None:
         pieces.append("PARTS")
     return " ".join(pieces)
 
@@ -452,8 +455,8 @@ def _param_assignment_label(param: ParamDecl) -> str:
     return f"{param.name}={type_name}"
 
 
-def _thunk_summary(thunk: ProgramThunk) -> str:
-    for line in thunk.body.splitlines():
+def _thunk_summary(thunk: Thunk) -> str:
+    for line in thunk.messages_text().splitlines():
         text = line.strip()
         if text:
             return text
@@ -464,11 +467,12 @@ def _help_arguments(
     *,
     show_params: bool,
     show_parts: bool,
-    thunk: ProgramThunk | None = None,
+    thunk: Thunk | None = None,
 ) -> list[click.Parameter]:
     args: list[click.Parameter] = []
     if show_params:
-        if thunk is None or not thunk.params:
+        thunk_params = () if thunk is None else tuple(thunk.params)
+        if not thunk_params:
             args.append(
                 _HelpOnlyArgument(
                     param_decls=["params"],
@@ -481,7 +485,7 @@ def _help_arguments(
                 )
             )
         else:
-            for param in thunk.params:
+            for param in thunk_params:
                 required = "required" if not param.optional else "optional"
                 args.append(
                     _HelpOnlyArgument(
@@ -545,6 +549,10 @@ def _help_arguments(
             ]
         )
     return args
+
+
+def _thunk_name(thunk: Thunk) -> str:
+    return thunk.name or "main"
 
 
 def _rich_format_roaming_help(

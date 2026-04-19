@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -69,7 +70,7 @@ def test_program_parse_projects_typed_thunk_params_into_ast() -> None:
     program = parse(
         """
 thunk review(_, path: path, focus?) -> ReviewSummary:
-  model = gpt-5
+  models = gpt-5
   skills += review, patch
 
   Review the target carefully.
@@ -78,15 +79,20 @@ thunk review(_, path: path, focus?) -> ReviewSummary:
 
     thunk = program.thunks[0]
     assert thunk.name == "review"
-    assert thunk.params_omitted is False
-    assert [(item.name, item.message, item.type_name, item.optional) for item in thunk.params] == [
-        ("_", True, None, False),
-        ("path", False, "path", False),
-        ("focus", False, None, True),
+    assert thunk.input is not None
+    assert (thunk.input.name, thunk.input.type_name, thunk.input.optional) == ("_", None, False)
+    assert [(item.name, item.type_name, item.optional) for item in thunk.params] == [
+        ("path", "path", False),
+        ("focus", None, True),
     ]
-    assert thunk.returns == "ReviewSummary"
-    assert thunk.directives == ["model = gpt-5", "skills += review, patch"]
-    assert thunk.body == "Review the target carefully."
+    assert thunk.output == "ReviewSummary"
+    assert [(item.kind, item.op, item.items) for item in thunk.overlays] == [
+        ("model", "set", ("gpt-5",)),
+        ("skill", "add", ("review", "patch")),
+    ]
+    assert [(item.kind, item.text, item.explicit) for item in thunk.messages] == [
+        ("user", "Review the target carefully.", False),
+    ]
 
 
 def test_build_prepared_program_rejects_missing_service_frontmatter_in_grammar(tmp_path: Path) -> None:
@@ -107,11 +113,11 @@ Use this service when the agent needs GitHub access.
 def test_build_prepared_program_rejects_empty_thunk_body(tmp_path: Path) -> None:
     root = _write_program(
         tmp_path,
-        "thunk review():\n  model = gpt-5\n\n",
+        "thunk review():\n  models = gpt-5\n\n",
     )
 
     durable = scan_durable_state(root, "alice")
-    with pytest.raises(ToolangError, match="Thunk 'review' is missing body text"):
+    with pytest.raises(ToolangError, match="Syntax error at line 1"):
         build_prepared_program(durable)
 
 
@@ -126,12 +132,15 @@ thunk:
 
     durable = scan_durable_state(root, "alice")
     prepared = build_prepared_program(durable)
+    live = load_live_program(prepared)
 
-    assert prepared.thunks[0].name == "main"
-    assert prepared.thunks[0].accepts_message is True
-    assert prepared.thunks[0].params == ()
-    assert prepared.thunks[0].body == "Reply directly."
-    assert prepared.thunks[0].returns is None
+    thunk = live.thunks[0]
+    assert (thunk.name or "main") == "main"
+    assert thunk.input is not None
+    assert thunk.params == []
+    assert thunk.messages[0].kind == "user"
+    assert thunk.messages[0].text == "Reply directly."
+    assert thunk.output is None
 
 
 def test_build_prepared_program_respects_explicit_empty_param_list(tmp_path: Path) -> None:
@@ -145,10 +154,12 @@ thunk summarize():
 
     durable = scan_durable_state(root, "alice")
     prepared = build_prepared_program(durable)
+    live = load_live_program(prepared)
 
-    assert prepared.thunks[0].name == "summarize"
-    assert prepared.thunks[0].accepts_message is False
-    assert prepared.thunks[0].params == ()
+    thunk = live.thunks[0]
+    assert thunk.name == "summarize"
+    assert thunk.input is None
+    assert thunk.params == []
 
 
 def test_build_prepared_program_extracts_named_params_and_return_type(tmp_path: Path) -> None:
@@ -156,7 +167,7 @@ def test_build_prepared_program_extracts_named_params_and_return_type(tmp_path: 
         tmp_path,
         """
 thunk review(_, path: path, focus?) -> ReviewResult:
-  model = gpt-5
+  models = gpt-5
 
   Review the target carefully.
 """.strip(),
@@ -164,24 +175,26 @@ thunk review(_, path: path, focus?) -> ReviewResult:
 
     durable = scan_durable_state(root, "alice")
     prepared = build_prepared_program(durable)
-    thunk = prepared.thunks[0]
+    thunk = load_live_program(prepared).thunks[0]
 
     assert thunk.name == "review"
-    assert thunk.accepts_message is True
+    assert thunk.input is not None
     assert [(item.name, item.type_name, item.optional) for item in thunk.params] == [
         ("path", "path", False),
         ("focus", None, True),
     ]
-    assert thunk.returns == "ReviewResult"
-    assert thunk.directives == ("model = gpt-5",)
+    assert thunk.output == "ReviewResult"
+    assert [(item.kind, item.op, item.items) for item in thunk.overlays] == [
+        ("model", "set", ("gpt-5",)),
+    ]
 
 
-def test_build_prepared_program_treats_model_directive_as_ordered_csv(tmp_path: Path) -> None:
+def test_build_prepared_program_treats_models_directive_as_ordered_csv(tmp_path: Path) -> None:
     root = _write_program(
         tmp_path,
         """
 thunk review():
-  model = gpt-5, o3
+  models = gpt-5, o3
 
   Review the target carefully.
 """.strip(),
@@ -189,11 +202,31 @@ thunk review():
 
     durable = scan_durable_state(root, "alice")
     prepared = build_prepared_program(durable)
-    thunk = prepared.thunks[0]
+    thunk = load_live_program(prepared).thunks[0]
 
-    assert thunk.directives == ("model = gpt-5, o3",)
-    assert thunk.model_selectors() == ("gpt-5", "o3")
-    assert thunk.model_selector() == "gpt-5"
+    assert [(item.kind, item.op, item.items) for item in thunk.overlays] == [
+        ("model", "set", ("gpt-5", "o3")),
+    ]
+
+def test_program_parse_projects_explicit_message_blocks_into_ast() -> None:
+    program = parse(
+        """
+thunk rewrite(_, tone?: string):
+  models = gpt-5
+
+  system:
+    Rewrite the input for the requested tone.
+
+  user:
+    Rewrite the message faithfully.
+""".strip()
+    )
+
+    thunk = program.thunks[0]
+    assert [(item.kind, item.text, item.explicit) for item in thunk.messages] == [
+        ("system", "Rewrite the input for the requested tone.", True),
+        ("user", "Rewrite the message faithfully.", True),
+    ]
 
 
 def test_build_prepared_program_rejects_multiple_model_directives(tmp_path: Path) -> None:
@@ -201,15 +234,29 @@ def test_build_prepared_program_rejects_multiple_model_directives(tmp_path: Path
         tmp_path,
         """
 thunk review():
-  model = gpt-5
-  model = o3
+  models = gpt-5
+  models = o3
 
   Review the target carefully.
 """.strip(),
     )
 
     durable = scan_durable_state(root, "alice")
-    with pytest.raises(ToolangError, match="at most one model directive"):
+    with pytest.raises(ToolangError, match="at most one models directive"):
+        build_prepared_program(durable)
+
+
+def test_build_prepared_program_rejects_reserved_runtime_parameter_name(tmp_path: Path) -> None:
+    root = _write_program(
+        tmp_path,
+        """
+thunk review(runtime):
+  Review the target carefully.
+""".strip(),
+    )
+
+    durable = scan_durable_state(root, "alice")
+    with pytest.raises(ToolangError, match="reserved parameter name 'runtime'"):
         build_prepared_program(durable)
 
 
@@ -218,7 +265,7 @@ def test_build_prepared_program_rejects_routed_model_selectors(tmp_path: Path) -
         tmp_path,
         """
 thunk review():
-  model = openai/gpt-5@openrouter
+  models = openai/gpt-5@openrouter
 
   Review the target carefully.
 """.strip(),
@@ -259,7 +306,9 @@ def test_build_prepared_program_strips_shebang_before_agent_header(tmp_path: Pat
     prepared = build_prepared_program(durable)
 
     assert prepared.body_text == "thunk:\n  Reply directly."
-    assert prepared.thunks[0].name == "main"
+    snapshot = prepared.to_snapshot()
+    thunks = cast(list[dict[str, object]], snapshot["thunks"])
+    assert thunks[0]["name"] == "main"
 
 
 def test_live_program_expands_prompt_calls_with_positional_args_and_extra_body(tmp_path: Path) -> None:

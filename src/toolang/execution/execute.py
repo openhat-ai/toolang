@@ -11,14 +11,14 @@ from typing import TYPE_CHECKING
 from .context import RunContext
 from .db import PersistSink
 from .events import RunEnd, RunStart, TraceEvent, TraceEventHandler
-from .input import assemble_run_input, bind_run_request
+from .input import RunInput, bind_run_request
 from .model import resolve_model
 from .runner import RunOutcome, RunSubmission
 from ..strategies import load_run_strategy
 
 if TYPE_CHECKING:
     from ..up import UptimeContext
-    from .input import RunBinding, RunInput
+    from .input import RunBinding
     from .response import ResponseSink
 
 _LOGGER = logging.getLogger("toolang.runner")
@@ -42,7 +42,7 @@ async def execute_run(
     started = False
     try:
         bound = bind_run_request(context, request, live=submission.live)
-        run_input = assemble_run_input(context, bound)
+        run_input = RunInput.from_binding(context, bound)
         _emit_event(
             persist,
             response,
@@ -50,7 +50,7 @@ async def execute_run(
                 run_id=bound.run_id,
                 origin=bound.origin,
                 thread_id=bound.thread_id,
-                input=run_input.input,
+                input=run_input.message,
                 created_at=bound.created_at,
                 started_at=bound.created_at,
             ),
@@ -58,7 +58,7 @@ async def execute_run(
         started = True
         model = resolve_model(
             context,
-            selector=run_input.model,
+            selector=run_input.model_selector(context),
             default_selector=_activation_default_model_selector(context),
             allowed_selectors=_activation_allowed_model_selectors(context),
         )
