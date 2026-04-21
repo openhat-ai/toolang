@@ -61,13 +61,13 @@ def test_parse_log_level_accepts_warn_alias() -> None:
 
 def test_parse_log_spec_supports_directives_and_regex() -> None:
     spec = parse_log_spec(
-        "info,toolang.runner=debug,httpx=off/hello",
+        "info,toolang.run=debug,httpx=off/hello",
         default_root_level=logging.INFO,
     )
 
     assert spec.root_level == logging.INFO
     assert spec.logger_levels == {
-        "toolang.runner": logging.DEBUG,
+        "toolang.run": logging.DEBUG,
         "httpx": OFF_LOG_LEVEL,
     }
     assert spec.handler_level == logging.DEBUG
@@ -89,7 +89,7 @@ def test_resolve_log_spec_uses_py_log_when_cli_missing() -> None:
 def test_message_regex_filter_matches_formatted_message() -> None:
     filter_obj = MessageRegexFilter(re.compile("200 OK"))
     record = logging.LogRecord(
-        name="toolang.runner",
+        name="toolang.run",
         level=logging.INFO,
         pathname=__file__,
         lineno=1,
@@ -109,7 +109,7 @@ def test_configure_logging_installs_resolved_config(monkeypatch) -> None:
 
     monkeypatch.setattr(logging.config, "dictConfig", fake_dict_config)
 
-    configure_logging(spec="toolang.runner=debug", environ={})
+    configure_logging(spec="toolang.run=debug", environ={})
 
     config = cast(dict[str, object], captured["config"])
     handlers = cast(dict[str, dict[str, object]], config["handlers"])

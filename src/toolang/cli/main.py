@@ -413,8 +413,8 @@ def start_agent(
     command = [
         sys.executable,
         "-m",
-        agent_up.RUNTIME_ENTRY_MODULE,
-        *agent_up.build_runtime_argv(startup),
+        "toolang.cli.main",
+        *agent_up.build_run_argv(startup),
     ]
     with log_path.open("ab") as stream:
         process = subprocess.Popen(

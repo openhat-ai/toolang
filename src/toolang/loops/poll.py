@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from ..up import UptimeContext
 
 DEFAULT_INTERVAL_MS = 300.0
-logger = logging.getLogger("toolang.poll")
+logger = logging.getLogger("toolang.loop.poll")
 
 
 def spawn(

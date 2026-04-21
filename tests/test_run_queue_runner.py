@@ -159,7 +159,7 @@ def test_queue_runner_drains_requests_in_order(tmp_path: Path, caplog) -> None:
         context.runner.close()
 
         with (
-            caplog.at_level(logging.INFO, logger="toolang.runner"),
+            caplog.at_level(logging.INFO, logger="toolang.run"),
             _patched_runner_execution(),
         ):
             results = await context.runner.drain(context)
@@ -167,7 +167,7 @@ def test_queue_runner_drains_requests_in_order(tmp_path: Path, caplog) -> None:
         printed = [
             record.message
             for record in caplog.records
-            if record.name == "toolang.runner"
+            if record.name == "toolang.run"
         ]
         assert [result.input_text for result in results] == [
             "say hello",
@@ -1333,7 +1333,7 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
                 sandbox_root=request.sandbox_root,
                 sandbox_home=request.sandbox_home,
                 sandbox_working_directory=request.sandbox_home,
-                run_command=("toolang-runtime",),
+                run_command=("toolang",),
                 state=SandboxState(
                     selector=request.selector,
                     runtime_id="sandbox-alice",
@@ -1378,14 +1378,21 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
     assert request.sandbox_home == Path("/root/.toolang/agents/alice")
     assert request.env_vars["OPENAI_API_KEY"] == "secret"
     assert request.run_command[:7] == (
-        "toolang-runtime",
+        "toolang",
         "--root",
         "/root/.toolang",
-        "--agent",
+        "run",
         "alice",
         "--host",
         "0.0.0.0",
     )
+    assert "--public-host" in request.run_command
+    assert request.run_command[request.run_command.index("--public-host") + 1] == "127.0.0.1"
+    assert "--sandbox" in request.run_command
+    assert request.run_command[request.run_command.index("--sandbox") + 1] == "none"
+    assert "--sandbox-child" in request.run_command
+    assert "--loop" in request.run_command
+    assert request.run_command[request.run_command.index("--loop") + 1] == "inspect"
     runtime_state = json.loads(
         agents.agent_runtime_state_path(toolang_root, "alice").read_text(encoding="utf-8")
     )
@@ -2417,7 +2424,7 @@ def test_execute_run_pre_start_failure_does_not_emit_persist_sink_error(tmp_path
     )
     context.config.set("models.default_selector", "claude")
 
-    with caplog.at_level(logging.ERROR, logger="toolang.runner"):
+    with caplog.at_level(logging.ERROR, logger="toolang.run"):
         outcome = asyncio.run(
             run_execute_module.execute_run(
                 context,

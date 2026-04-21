@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from ..up import UptimeContext
 
 DEFAULT_DEBOUNCE_MS = 500.0
-logger = logging.getLogger("toolang.reload")
+logger = logging.getLogger("toolang.loop.reload")
 
 
 def spawn(

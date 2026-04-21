@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from .input import RunBinding
     from .response import ResponseSink
 
-_LOGGER = logging.getLogger("toolang.runner")
+_LOGGER = logging.getLogger("toolang.run")
 
 
 async def execute_run(

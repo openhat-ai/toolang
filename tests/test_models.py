@@ -947,7 +947,6 @@ def test_responses_adapter_logs_api_request_and_response_at_debug(caplog, monkey
         output_text = "done"
         output = ()
         usage = SimpleNamespace(input_tokens=11, output_tokens=7)
-
         def model_dump(self, *, mode="json", exclude_none=True) -> dict[str, object]:
             del mode, exclude_none
             return {
@@ -999,6 +998,69 @@ def test_responses_adapter_logs_api_request_and_response_at_debug(caplog, monkey
     assert '"id": "resp_123"' in caplog.text
     assert '"output_text": "done"' in caplog.text
     assert "secret" not in caplog.text
+
+
+def test_run_context_logs_model_and_tool_io_at_debug(caplog) -> None:
+    provider = _FakeModelProvider(
+        name="openai",
+        responses=[
+            ModelCallResult(
+                message=Message(
+                    role="assistant",
+                    parts=(
+                        ToolCallPart(
+                            tool_call_id="tool-1",
+                            call_id="call-1",
+                            tool_name="shell_execute",
+                            tool_family="shell_execute",
+                            input={"command": "pwd"},
+                        ),
+                    ),
+                ),
+                tool_calls=(
+                    ToolCall(
+                        tool_call_id="tool-1",
+                        call_id="call-1",
+                        name="shell_execute",
+                        input={"command": "pwd"},
+                    ),
+                ),
+                usage=ModelUsage(input_tokens=11, output_tokens=7),
+                state={"previous_response_id": "resp-1"},
+            ),
+            ModelCallResult(
+                message=Message.assistant("done"),
+                usage=ModelUsage(input_tokens=13, output_tokens=3),
+            ),
+        ],
+    )
+
+    with (
+        caplog.at_level(logging.DEBUG, logger="toolang.run.model"),
+        caplog.at_level(logging.DEBUG, logger="toolang.run.tool"),
+    ):
+        result = load_run_strategy("basic").run(
+            RunContext(
+                _run_input(),
+                ModelTarget(
+                    ref="openai/gpt-5",
+                    provider=provider.name,
+                    name="gpt-5",
+                    model="gpt-5",
+                    adapter="responses",
+                ),
+                provider,
+            )
+        )
+
+    assert result.output_text == "done"
+    assert "model call input instructions=" in caplog.text
+    assert '"command": "pwd"' in caplog.text
+    assert "model call output message=" in caplog.text
+    assert '"output_tokens": 7' in caplog.text
+    assert "tool call input name=shell_execute" in caplog.text
+    assert "tool call output name=shell_execute" in caplog.text
+    assert '"stdout": "ran:pwd"' in caplog.text
 def test_responses_encode_message_preserves_structured_content() -> None:
     encoded = encode_message(Message(role="user", parts=(Message.user("hello").parts[0],)))
 

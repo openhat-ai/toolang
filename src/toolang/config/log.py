@@ -16,7 +16,7 @@ from .log_spec import (
 )
 
 DEFAULT_LOG_LEVEL = "ERROR"
-DEFAULT_AGENT_LOG_SPEC = "error,toolang.runner=info,toolang.up=info,httpx=off,httpcore=off"
+DEFAULT_AGENT_LOG_SPEC = "error,toolang.run=info,toolang.runtime=info,httpx=off,httpcore=off"
 DEFAULT_LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 DEFAULT_LOG_FORMAT = "%(asctime)s %(levelprefix)s [%(name)s] %(message)s"
 DEFAULT_ACCESS_LOG_FORMAT = (

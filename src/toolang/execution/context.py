@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import json
 import logging
 from pathlib import Path
 import time
@@ -56,7 +57,9 @@ from .snapshot import RunSnapshot
 if TYPE_CHECKING:
     from .input import RunInput
 
-_LOGGER = logging.getLogger("toolang.runner")
+_MODEL_LOGGER = logging.getLogger("toolang.run.model")
+_TOOL_LOGGER = logging.getLogger("toolang.run.tool")
+_LOG_PREVIEW_LIMIT = 2_000
 
 
 class RunContext:
@@ -138,7 +141,7 @@ class RunContext:
             tools=self._tool_definitions,
             state=self._state,
         )
-        _LOGGER.info(
+        _MODEL_LOGGER.info(
             "model call target ref=%s provider=%s model=%s adapter=%s%s",
             self._model.ref,
             self._model.provider,
@@ -146,6 +149,7 @@ class RunContext:
             self._model.adapter,
             f" base_url={self._model.base_url}" if self._model.base_url else "",
         )
+        _log_model_request(request)
         if self._stream and self._on_event is not None and self._model.streaming:
             current = self._provider.stream(
                 self._model,
@@ -178,6 +182,7 @@ class RunContext:
             step_input = (StepOutputRef(step_index=self._last_step_index),)
         else:
             step_input = (RunInputRef(),)
+        _log_tool_call_input(call)
         self._emit(
             StepStart(
                 run_id=self._input.run.run_id,
@@ -220,6 +225,7 @@ class RunContext:
             )
         )
         status = "failed" if record.error else "finished"
+        _log_tool_call_output(record)
         self._emit(
             StepEnd(
                 run_id=self._input.run.run_id,
@@ -259,6 +265,7 @@ class RunContext:
         parsed_calls = tuple(current.tool_calls)
         current_text = message_text(current.message.parts) if current.message is not None else ""
         self._output_text = current_text
+        _log_model_result(current)
         output_parts = self._model_output_parts(current=current, tool_calls=parsed_calls)
         for part_index, part in output_parts:
             self._emit_part_start(step_index=step_index, part_index=part_index, kind=part.type)
@@ -507,6 +514,90 @@ def _tool_context(
         room=agents.tool_room(root, snapshot.agent.name, plugin_name),
         wd=home,
     )
+
+
+def _log_model_request(request: ModelCall) -> None:
+    if not _MODEL_LOGGER.isEnabledFor(logging.DEBUG):
+        return
+    _MODEL_LOGGER.debug(
+        "model call input instructions=%s messages=%s tools=%s state=%s",
+        _preview_text(request.instructions),
+        _preview_data([message.to_data() for message in request.messages]),
+        _preview_data([tool.name for tool in request.tools]),
+        _preview_data(request.state),
+    )
+
+
+def _log_model_result(result: ModelCallResult) -> None:
+    if not _MODEL_LOGGER.isEnabledFor(logging.DEBUG):
+        return
+    usage = None
+    if result.usage is not None:
+        usage = {
+            "input_tokens": result.usage.input_tokens,
+            "output_tokens": result.usage.output_tokens,
+        }
+    _MODEL_LOGGER.debug(
+        "model call output message=%s tool_calls=%s usage=%s state=%s",
+        _preview_data(result.message.to_data() if result.message is not None else None),
+        _preview_data(
+            [
+                {
+                    "tool_call_id": call.tool_call_id,
+                    "call_id": call.call_id,
+                    "name": call.name,
+                    "input": call.input,
+                }
+                for call in result.tool_calls
+            ]
+        ),
+        _preview_data(usage),
+        _preview_data(result.state),
+    )
+
+
+def _log_tool_call_input(call: ToolCall) -> None:
+    if not _TOOL_LOGGER.isEnabledFor(logging.DEBUG):
+        return
+    _TOOL_LOGGER.debug(
+        "tool call input name=%s tool_call_id=%s call_id=%s arguments=%s",
+        call.name,
+        call.tool_call_id,
+        call.call_id,
+        _preview_data(call.input),
+    )
+
+
+def _log_tool_call_output(result: ToolCallResult) -> None:
+    if not _TOOL_LOGGER.isEnabledFor(logging.DEBUG):
+        return
+    _TOOL_LOGGER.debug(
+        "tool call output name=%s tool_call_id=%s call_id=%s output=%s error=%s",
+        result.name,
+        result.tool_call_id,
+        result.call_id,
+        _preview_data(result.output),
+        result.error or "-",
+    )
+
+
+def _preview_text(value: str) -> str:
+    compact = " ".join(value.split())
+    if len(compact) <= _LOG_PREVIEW_LIMIT:
+        return compact
+    return compact[: _LOG_PREVIEW_LIMIT - 3] + "..."
+
+
+def _preview_data(value: object) -> str:
+    if value is None:
+        return "-"
+    try:
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    except TypeError:
+        text = repr(value)
+    if len(text) <= _LOG_PREVIEW_LIMIT:
+        return text
+    return text[: _LOG_PREVIEW_LIMIT - 3] + "..."
 
 
 def _tool_followup_message(tool_call: ToolCallResult) -> Message:
