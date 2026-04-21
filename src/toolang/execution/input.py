@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
+
+import frontmatter
 
 from toolang.base.protocols.tool import Tool
 from toolang.base.types.message import Message
 from toolang.base.types.model import ModelTarget
 from .. import work
-from ..program import MessageBlock, ParamDecl, Thunk, ThunkOverlay
+from ..program import MessageBlock, ParamDecl, SourceSpan, Thunk, ThunkOverlay
 from ..state.live import LiveState
 from ..state.prepared import PreparedEntry
 from ..template import render_text_template
@@ -31,6 +34,117 @@ from .snapshot import (
 if TYPE_CHECKING:
     from ..up import UptimeContext
     from .runner import RunRequest
+
+_THREAD_THUNK_NAMES = frozenset({"chat", "task", "chore"})
+_DEFAULT_THREAD_SYSTEM_TEMPLATE = """
+You are the {{runtime.agent.name}} Toolang agent.
+
+Runtime:
+- Origin: {{runtime.origin}}
+- Thread: {{runtime.thread_id}}
+- Toolang root: {{runtime.agent.root}}
+- Agent home: {{runtime.agent.home}}
+- Agent room: {{runtime.agent.room}}
+- Sandbox: {{runtime.sandbox}}
+{{#runtime.server.endpoint}}- Endpoint: {{runtime.server.endpoint}}
+{{/runtime.server.endpoint}}- Program source: {{runtime.program.source_path}}
+
+Psyches:
+{{#runtime.psyches}}
+{{name}}:
+{{content}}
+
+{{/runtime.psyches}}
+{{^runtime.psyches}}
+- none
+
+{{/runtime.psyches}}
+Skills:
+{{#runtime.skills}}
+- {{name}} (scope={{scope}}, source={{source}}, path={{path}})
+{{#description}}
+  description={{description}}
+{{/description}}
+{{#metadata_items}}
+  {{key}}={{value}}
+{{/metadata_items}}
+{{/runtime.skills}}
+{{^runtime.skills}}
+- none
+
+{{/runtime.skills}}
+Services:
+{{#runtime.services}}
+- {{name}} (scope={{scope}}, source={{source}}, path={{path}})
+{{#description}}
+  description={{description}}
+{{/description}}
+{{#metadata_items}}
+  {{key}}={{value}}
+{{/metadata_items}}
+{{/runtime.services}}
+{{^runtime.services}}
+- none
+
+{{/runtime.services}}
+Tools:
+{{#runtime.tools}}
+- {{name}}: {{description}}
+{{/runtime.tools}}
+{{^runtime.tools}}
+- none
+
+{{/runtime.tools}}
+""".strip()
+_DEFAULT_THREAD_SYSTEM_TAILS = {
+    "chat": """
+Respond helpfully, clearly, and directly to the user's message.
+Do not call tools or inspect files just to explore the environment.
+Use tools only when the user's request requires them.
+""".strip(),
+    "task": """
+Treat the user's message as the current task input.
+{{#runtime.job}}
+Current task:
+- Name: {{name}}
+- Status: {{status}}
+{{#requester}}
+- Requester: {{requester}}
+{{/requester}}
+{{#path}}
+- Path: {{path}}
+{{/path}}
+{{#writable}}
+- Update the task file as work progresses and before you finish.
+{{/writable}}
+{{^writable}}
+- The task record is read-only in this run.
+{{/writable}}
+{{/runtime.job}}
+Work the task directly and keep progress or outcome notes precise.
+Do not call tools or inspect files just to explore the environment.
+Use tools only when they materially help with the task.
+""".strip(),
+    "chore": """
+Treat the user's message as the current chore input.
+{{#runtime.job}}
+Current chore:
+- Name: {{name}}
+{{#title}}
+- Title: {{title}}
+{{/title}}
+{{#rrule}}
+- Schedule: {{rrule}}
+{{/rrule}}
+{{#path}}
+- Path: {{path}}
+{{/path}}
+{{/runtime.job}}
+Complete the chore directly and keep the result concise.
+Do not call tools or inspect files just to explore the environment.
+Use tools only when they materially help with the chore.
+""".strip(),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +188,7 @@ class RunInput:
         """Build one semantic run input from one bound run."""
 
         program = run.live.program
-        thunk = program.get_thunk(run.thunk_name)
+        thunk = _select_run_thunk(run)
         input_text = program.expand_input(run.input_text) if run.input_text else ""
         history = tuple(
             context.store.recent_conversation_messages(thread_id=run.thread_id, limit=19)
@@ -94,6 +208,9 @@ class RunInput:
             models_base=models_base,
         )
         resolved_models = _resolve_runtime_models(context, effective_models)
+        effective_psyches = _select_entries(psyches_base, thunk.overlays_for("psyche"))
+        effective_skills = _select_entries(skills_base, thunk.overlays_for("skill"))
+        effective_services = _select_entries(services_base, thunk.overlays_for("service"))
         user_template_context = _user_template_context(
             context,
             run=run,
@@ -107,9 +224,9 @@ class RunInput:
             params=params,
             models=resolved_models,
             tools=effective_tools,
-            psyches=_select_entries(psyches_base, thunk.overlays_for("psyche")),
-            skills=_select_entries(skills_base, thunk.overlays_for("skill")),
-            services=_select_entries(services_base, thunk.overlays_for("service")),
+            psyches=effective_psyches,
+            skills=effective_skills,
+            services=effective_services,
         )
         rendered_messages = _render_thunk_messages(
             thunk.messages,
@@ -158,9 +275,12 @@ class RunInput:
                 "thunk_model_refs": _thunk_model_refs(thunk),
                 "effective_model_selectors": effective_models,
                 "tool_names": sorted(effective_tools),
-                "psyche_names": [entry.name for entry in _select_entries(psyches_base, thunk.overlays_for("psyche"))],
-                "skill_names": [entry.name for entry in _select_entries(skills_base, thunk.overlays_for("skill"))],
-                "service_names": [entry.name for entry in _select_entries(services_base, thunk.overlays_for("service"))],
+                "psyche_names": [entry.name for entry in effective_psyches],
+                "skill_names": [entry.name for entry in effective_skills],
+                "service_names": [entry.name for entry in effective_services],
+                "instructions": _message_blocks_body(
+                    tuple(item for item in rendered_messages if item.kind == "system")
+                ),
             },
         )
 
@@ -218,9 +338,9 @@ class RunInput:
     def instructions(self) -> str:
         """Return the assembled instruction text for this run."""
 
-        if self.run.origin == "script":
-            return _script_instructions(self.snapshot, self)
-        return _thread_instructions(self.snapshot, self)
+        return _message_blocks_body(
+            tuple(item for item in self.rendered_messages() if item.kind == "system")
+        )
 
 
 def bind_run_request(
@@ -246,6 +366,50 @@ def bind_run_request(
         live=bound_live,
         created_at=utc_now(),
     )
+
+
+def _select_run_thunk(run: RunBinding) -> Thunk:
+    program = run.live.program
+    if run.thunk_name is not None:
+        return program.get_thunk(run.thunk_name)
+    if run.origin in _THREAD_THUNK_NAMES:
+        thunk = _find_named_thunk(program.thunks, run.origin)
+        if thunk is not None:
+            return thunk
+        return _default_thread_thunk(run.origin)
+    return program.get_thunk(None)
+
+
+def _find_named_thunk(thunks: tuple[Thunk, ...], name: str) -> Thunk | None:
+    for thunk in thunks:
+        if thunk.thunk_name() == name:
+            return thunk
+    return None
+
+
+def _default_thread_thunk(origin: str) -> Thunk:
+    template = _default_thread_system_template(origin)
+    return Thunk(
+        name=origin,
+        messages=(
+            MessageBlock(
+                kind="system",
+                text=template,
+                span=_synthetic_span(),
+                explicit=False,
+            ),
+        ),
+        span=_synthetic_span(),
+    )
+
+
+def _default_thread_system_template(origin: str) -> str:
+    tail = _DEFAULT_THREAD_SYSTEM_TAILS[origin]
+    return f"{_DEFAULT_THREAD_SYSTEM_TEMPLATE}\n\n{tail}".strip()
+
+
+def _synthetic_span() -> SourceSpan:
+    return SourceSpan(0)
 
 
 def _run_message(
@@ -469,15 +633,25 @@ def _runtime_base(
     run: RunBinding,
     thunk: Thunk,
 ) -> dict[str, object]:
+    host = context.config.get("server.host")
+    port = context.config.get("server.port")
+    endpoint = context.config.get("server.endpoint")
     return {
         "origin": run.origin,
         "group": run.group,
         "thread_id": run.thread_id,
+        "sandbox": _runtime_sandbox(context),
         "agent": {
             "name": context.name,
             "kind": "resident",
+            "root": str(context.root),
             "home": str(context.home),
             "room": str(context.room),
+        },
+        "server": {
+            "host": host if isinstance(host, str) else None,
+            "port": port if isinstance(port, int) else None,
+            "endpoint": endpoint if isinstance(endpoint, str) and endpoint.strip() else None,
         },
         "program": {
             "source_path": run.live.program.source_path,
@@ -488,6 +662,7 @@ def _runtime_base(
             "params": [_param_to_context(item) for item in thunk.params],
             "output": thunk.output,
         },
+        "job": _job_context(context, run),
     }
 
 
@@ -527,12 +702,17 @@ def _prepared_entry_to_context(
     context: UptimeContext,
     entry: PreparedEntry,
 ) -> dict[str, object]:
+    content = _entry_content(context, entry)
+    description = entry.meta.get("description")
     return {
         "name": entry.name,
         "kind": entry.kind,
         "path": entry.path,
-        "ref": entry.ref if entry.source.form == "remote" else None,
-        "description": str(entry.meta.get("description")) if entry.meta.get("description") is not None else None,
+        "ref": entry.ref,
+        "description": str(description) if description is not None else None,
+        "content": content,
+        "metadata": dict(entry.meta),
+        "metadata_items": _metadata_items(entry.meta),
         "source": entry.source.form,
         "scope": "agent" if entry.path.startswith(f"agents/{context.name}/") else "global",
     }
@@ -596,73 +776,6 @@ def _runtime_snapshot(
     )
 
 
-def _script_instructions(snapshot: RunSnapshot, run_input: RunInput) -> str:
-    return _instructions(
-        snapshot,
-        run_input,
-        mode_lines=(
-            "You are the Toolang runtime.",
-            "Execute the selected thunk once.",
-            "Treat this as a script-style run, not an ongoing thread.",
-        ),
-    )
-
-
-def _thread_instructions(snapshot: RunSnapshot, run_input: RunInput) -> str:
-    return _instructions(
-        snapshot,
-        run_input,
-        mode_lines=(
-            "You are the Toolang runtime.",
-            "Continue the selected thunk within the current thread.",
-            "Treat the conversation history as durable run context.",
-        ),
-    )
-
-
-def _instructions(
-    snapshot: RunSnapshot,
-    run_input: RunInput,
-    *,
-    mode_lines: tuple[str, ...],
-) -> str:
-    task_prompt = _task_prompt(snapshot)
-    rendered_messages = run_input.rendered_messages()
-    system_messages = tuple(item for item in rendered_messages if item.kind == "system")
-    source_path = getattr(run_input.run.live.program, "source_path", "") or "<unknown>"
-    sections = [
-        *mode_lines,
-        f"Selected thunk: {_thunk_name(run_input.thunk)}.",
-        f"Program source path: {source_path}.",
-        task_prompt or "",
-    ]
-    if run_input.thunk.overlays:
-        sections.extend(
-            [
-                "Thunk overlays:",
-                "\n".join(_overlay_lines(run_input.thunk.overlays)),
-            ]
-        )
-    authored_system_messages = tuple(item for item in run_input.thunk.messages if item.kind == "system")
-    if _message_blocks_text(system_messages) != _message_blocks_text(authored_system_messages):
-        sections.extend(
-            [
-                "System messages:",
-                _message_blocks_body(authored_system_messages),
-                "Rendered system messages:",
-                _message_blocks_body(system_messages),
-            ]
-        )
-    elif system_messages:
-        sections.extend(
-            [
-                "System messages:",
-                _message_blocks_body(system_messages),
-            ]
-        )
-    return "\n\n".join(section for section in sections if section.strip())
-
-
 def _task_snapshot(
     context: UptimeContext, run: RunBinding
 ) -> tuple[SnapshotTask, SnapshotTaskServices] | None:
@@ -695,57 +808,6 @@ def _task_snapshot(
     )
 
 
-def _task_prompt(snapshot: RunSnapshot) -> str | None:
-    task = snapshot.task
-    services = snapshot.task_services
-    if task is None or services is None:
-        return None
-
-    provider = _task_text(task.provider) or "unknown"
-    can_read = services.read
-    can_write = services.write
-    can_comment = services.comment
-    local_path = _task_text(services.path) or _task_text(task.path)
-    lines = [
-        "Task execution protocol:",
-        "- You are handling one task-driven run.",
-        "- Understand the current task before acting.",
-        "- Keep the task itself as the durable record of progress and outcome.",
-        f"- Task provider: {provider}.",
-        f"- Task read available: {'yes' if can_read else 'no'}.",
-        f"- Task write available: {'yes' if can_write else 'no'}.",
-        f"- Task comment available: {'yes' if can_comment else 'no'}.",
-    ]
-    if provider == "local":
-        lines.extend(
-            [
-                "- This task is backed by a local markdown file.",
-                f"- Update the task file directly at: {local_path or '<unknown path>'}.",
-                "- Keep front matter minimal: id, requester, status, paused.",
-                "- Move status from todo to doing when work starts.",
-                "- Move status to done or cancelled before finishing.",
-                "- Use the markdown body as the durable task input and append progress or outcome notes there.",
-            ]
-        )
-    if not can_write:
-        lines.append("- If task write is unavailable, you may proceed, but you must clearly state that the task could not be updated.")
-    else:
-        lines.append("- Update the task at important milestones and before finishing.")
-    return "\n".join(lines)
-
-
-def _overlay_lines(overlays: tuple[ThunkOverlay, ...]) -> tuple[str, ...]:
-    op_map = {
-        "set": "=",
-        "add": "+=",
-        "remove": "-=",
-    }
-    return tuple(
-        f"{overlay.kind} {op_map[overlay.op]} {', '.join(overlay.items)}"
-        for overlay in overlays
-    )
-
-
 def _script_message_text(
     *,
     thunk: Thunk,
@@ -769,22 +831,116 @@ def _message_blocks_body(blocks: tuple[MessageBlock, ...]) -> str:
     return "\n\n".join(block.text.strip() for block in blocks if block.text.strip()).strip()
 
 
-def _message_blocks_text(blocks: tuple[MessageBlock, ...]) -> str:
-    sections = [
-        f"{block.kind}:\n{block.text}".strip()
-        for block in blocks
-        if block.text.strip()
-    ]
-    return "\n\n".join(sections).strip()
+def _runtime_sandbox(context: UptimeContext) -> str:
+    value = context.config.get("runtime.sandbox")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return "none"
 
 
-def _task_text(value: Any) -> str | None:
+def _job_context(
+    context: UptimeContext,
+    run: RunBinding,
+) -> dict[str, object] | None:
+    if run.origin == "task":
+        return _task_context(context, run)
+    if run.origin == "chore":
+        return _chore_context(context, run)
+    return None
+
+
+def _task_context(
+    context: UptimeContext,
+    run: RunBinding,
+) -> dict[str, object] | None:
+    task_id = work.task_id_from_thread_id(run.thread_id)
+    if task_id is None:
+        return None
+    task = work.find_task(context.root, context.name, task_id)
+    if task is None:
+        return None
+    return {
+        "kind": "task",
+        "provider": "local",
+        "name": task.name.rsplit("/", 1)[-1],
+        "body": task.document.body,
+        "status": task.document.status,
+        "requester": task.document.requester,
+        "thread_id": task.document.thread_id(),
+        "path": str(task.path),
+        "readable": True,
+        "writable": True,
+        "commentable": True,
+    }
+
+
+def _chore_context(
+    context: UptimeContext,
+    run: RunBinding,
+) -> dict[str, object] | None:
+    chore_name = run.thread_id.removeprefix("chore:").strip()
+    if not chore_name:
+        return None
+    path = work.chore_path(context.root, context.name, chore_name)
+    if not path.is_file():
+        return None
+    chore = work.ChoreFile.load(path)
+    return {
+        "kind": "chore",
+        "provider": "local",
+        "name": chore_name,
+        "title": (chore.title or "").strip() or None,
+        "body": chore.body,
+        "paused": chore.paused,
+        "rrule": chore.rrule,
+        "thread_id": run.thread_id,
+        "path": str(path),
+        "readable": True,
+        "writable": False,
+        "commentable": False,
+    }
+
+
+def _entry_content(
+    context: UptimeContext,
+    entry: PreparedEntry,
+) -> str | None:
+    if entry.kind != "psyche":
+        return None
+    entry_path = context.root / entry.path
+    if not entry_path.is_file():
+        return None
+    try:
+        post = frontmatter.loads(entry_path.read_text(encoding="utf-8"))
+    except OSError:
+        return None
+    content = post.content.strip()
+    return content or None
+
+
+def _metadata_items(meta: dict[str, object]) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    for key in sorted(meta):
+        if key == "description":
+            continue
+        value = _metadata_value(meta[key])
+        if value is None:
+            continue
+        items.append({"key": key, "value": value})
+    return items
+
+
+def _metadata_value(value: object) -> str | None:
     if value is None:
         return None
-    text = str(value).strip()
-    if not text:
-        return None
-    return text
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int | float):
+        return str(value)
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
 def _invoke_params(run: RunBinding) -> dict[str, Any]:

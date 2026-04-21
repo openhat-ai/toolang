@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -10,7 +11,7 @@ from toolang.base.protocols.model import ModelProvider
 from toolang.base.protocols.tool import Tool
 from toolang.base.types.message import Message, ToolCallPart, ToolResultPart
 from toolang.base.types.model import ModelInfo, ModelTarget
-from toolang.base.types.run import ModelCall, ModelCallResult, ToolCall
+from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage, ToolCall
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.base.error import ToolangError
 from toolang.execution.context import RunContext
@@ -19,6 +20,7 @@ from toolang.execution.model import resolve_model, select_model_selectors
 from toolang.execution.snapshot import RunSnapshot, SnapshotAgent, SnapshotProgram, SnapshotRun
 from toolang.models import ollama as ollama_models
 from toolang.models import openrouter as openrouter_models
+from toolang.models import responses as responses_models
 from toolang.models.responses import encode_message, response_payload
 from toolang.program import MessageBlock, ParamDecl, SourceSpan, Thunk
 from toolang.strategies import load_run_strategy
@@ -741,7 +743,6 @@ def test_responses_payload_uses_typed_input_items() -> None:
         },
         {
             "type": "function_call_output",
-            "id": "fc_1",
             "call_id": "call_1",
             "output": '{"ok":true,"name":"shell_execute","output":{"ok":true,"stdout":"/tmp"}}',
         },
@@ -940,7 +941,64 @@ def test_run_context_omits_tools_for_model_without_tool_support() -> None:
     assert result.output_text == "done"
     assert provider.requests[0].tools == ()
 
+def test_responses_adapter_logs_api_request_and_response_at_debug(caplog, monkeypatch) -> None:
+    class _FakeResponse:
+        id = "resp_123"
+        output_text = "done"
+        output = ()
+        usage = SimpleNamespace(input_tokens=11, output_tokens=7)
 
+        def model_dump(self, *, mode="json", exclude_none=True) -> dict[str, object]:
+            del mode, exclude_none
+            return {
+                "id": self.id,
+                "output_text": self.output_text,
+                "usage": {
+                    "input_tokens": self.usage.input_tokens,
+                    "output_tokens": self.usage.output_tokens,
+                },
+            }
+
+    captured: dict[str, object] = {}
+
+    class _FakeResponses:
+        def create(self, **kwargs):
+            captured["payload"] = kwargs
+            return _FakeResponse()
+
+    monkeypatch.setattr(
+        responses_models,
+        "create_client",
+        lambda target: SimpleNamespace(responses=_FakeResponses()),
+    )
+    target = ModelTarget(
+        ref="openai/gpt-5",
+        provider="openai",
+        name="gpt-5",
+        model="gpt-5",
+        adapter="responses",
+        api_key="secret",
+        base_url="https://api.openai.com/v1",
+        headers={"X-Test": "value"},
+    )
+    request = ModelCall(
+        instructions="Rewrite the input.",
+        messages=[Message.user("hello")],
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="toolang.model.api"):
+        result = responses_models.invoke_response(target, request, stateful=True)
+
+    assert result.message == Message.assistant("done")
+    assert result.usage == ModelUsage(input_tokens=11, output_tokens=7)
+    assert captured["payload"] == response_payload(target, request, stateful=True)
+    assert "responses api request provider=openai ref=openai/gpt-5" in caplog.text
+    assert '"model": "gpt-5"' in caplog.text
+    assert '"text": "Rewrite the input."' in caplog.text
+    assert "responses api response provider=openai ref=openai/gpt-5" in caplog.text
+    assert '"id": "resp_123"' in caplog.text
+    assert '"output_text": "done"' in caplog.text
+    assert "secret" not in caplog.text
 def test_responses_encode_message_preserves_structured_content() -> None:
     encoded = encode_message(Message(role="user", parts=(Message.user("hello").parts[0],)))
 
@@ -1018,6 +1076,59 @@ def test_responses_skip_historical_tool_items_without_previous_response_id() -> 
             "status": "completed",
             "content": [{"type": "output_text", "text": "done"}],
         },
+    ]
+
+
+def test_responses_previous_response_id_replays_tool_output_without_item_id() -> None:
+    payload = response_payload(
+        ModelTarget(
+            ref="openai/gpt-5",
+            provider="openai",
+            name="gpt-5",
+            model="gpt-5",
+            adapter="responses",
+        ),
+        ModelCall(
+            instructions="dev",
+            messages=[
+                Message.user("hello"),
+                Message(
+                    role="assistant",
+                    parts=(
+                        ToolCallPart(
+                            tool_call_id="fc_1",
+                            call_id="call_1",
+                            tool_name="shell_execute",
+                            tool_family="shell_execute",
+                            input={"command": "pwd"},
+                        ),
+                    ),
+                ),
+                Message(
+                    role="tool",
+                    parts=(
+                        ToolResultPart(
+                            tool_call_id="fc_1",
+                            call_id="call_1",
+                            tool_name="shell_execute",
+                            tool_family="shell_execute",
+                            output={"ok": True, "stdout": "/tmp"},
+                        ),
+                    ),
+                ),
+            ],
+            state={"previous_response_id": "resp_1", "baseline_count": 2},
+        ),
+        stateful=True,
+    )
+
+    assert payload["previous_response_id"] == "resp_1"
+    assert payload["input"] == [
+        {
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": '{"ok":true,"name":"shell_execute","output":{"ok":true,"stdout":"/tmp"}}',
+        }
     ]
 
 

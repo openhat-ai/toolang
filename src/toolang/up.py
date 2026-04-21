@@ -789,6 +789,7 @@ def _load_runtime_context(
         agent_name,
         environ=environ,
     )
+    runtime_state = agents.load_runtime_state(toolang_root, agent_name) or {}
     durable = scan_durable_state(toolang_root, agent_name)
     prepared_state = prepare.build_prepared_state(durable)
     live = load_live_state(prepared_state, enabled_loops=enabled_loops)
@@ -798,6 +799,7 @@ def _load_runtime_context(
         {
             "server.host": host,
             "server.port": port,
+            "server.endpoint": _runtime_endpoint_value(host=host, port=port, runtime_state=runtime_state),
             "loops.enabled": tuple(enabled_loops),
             "loops.pulse.interval_ms": DEFAULT_LOOP_INTERVAL_MS["pulse"],
             "loops.poll.interval_ms": DEFAULT_LOOP_INTERVAL_MS["poll"],
@@ -806,6 +808,7 @@ def _load_runtime_context(
             "web.cors_allowed_origins": list(cors_allowed_origins),
             "models.default_selector": default_model_selector,
             "models.allowed_selectors": normalized_model_selectors,
+            "runtime.sandbox": _runtime_sandbox_value(runtime_state),
         }
     )
     return UptimeContext(
@@ -826,6 +829,36 @@ def _load_runtime_context(
         store=ExecutionStore(execution_db_path(toolang_root, agent_name)),
         config=config,
     )
+
+
+def _runtime_endpoint_value(
+    *,
+    host: str,
+    port: int,
+    runtime_state: Mapping[str, object],
+) -> str | None:
+    endpoint = runtime_state.get("endpoint")
+    if isinstance(endpoint, str) and endpoint.strip():
+        return endpoint.strip()
+    if port > 0:
+        return f"http://{host}:{port}"
+    return None
+
+
+def _runtime_sandbox_value(runtime_state: Mapping[str, object]) -> str:
+    sandbox = runtime_state.get("sandbox")
+    if isinstance(sandbox, dict):
+        sandbox_data = {str(key): value for key, value in sandbox.items()}
+        selector = sandbox_data.get("selector")
+        if isinstance(selector, dict):
+            selector_data = {str(key): value for key, value in selector.items()}
+            driver = selector_data.get("driver")
+            target = selector_data.get("target")
+            if isinstance(driver, str) and driver.strip():
+                if isinstance(target, str) and target.strip():
+                    return f"{driver.strip()}:{target.strip()}"
+                return driver.strip()
+    return "none"
 
 
 def _up_managed_sandbox(
