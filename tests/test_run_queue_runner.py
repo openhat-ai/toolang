@@ -1333,7 +1333,7 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
                 sandbox_root=request.sandbox_root,
                 sandbox_home=request.sandbox_home,
                 sandbox_working_directory=request.sandbox_home,
-                run_command=("toolang-runtime",),
+                run_command=("toolang",),
                 state=SandboxState(
                     selector=request.selector,
                     runtime_id="sandbox-alice",
@@ -1378,10 +1378,10 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
     assert request.sandbox_home == Path("/root/.toolang/agents/alice")
     assert request.env_vars["OPENAI_API_KEY"] == "secret"
     assert request.run_command[:7] == (
-        "toolang-runtime",
+        "toolang",
         "--root",
         "/root/.toolang",
-        "--agent",
+        "run",
         "alice",
         "--host",
         "0.0.0.0",

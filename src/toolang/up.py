@@ -90,8 +90,8 @@ OPENAPI_TAGS = [
 ]
 logger = logging.getLogger("toolang.runtime")
 FactoryT = TypeVar("FactoryT")
-RUNTIME_ENTRY_MODULE = "toolang.cli.runtime"
-RUNTIME_ENTRY_COMMAND = "toolang-runtime"
+CLI_ENTRY_MODULE = "toolang.cli.main"
+CLI_ENTRY_COMMAND = "toolang"
 
 
 class UptimeConfig:
@@ -616,7 +616,7 @@ def resolve_startup(
     )
 
 
-def build_runtime_argv(
+def build_run_argv(
     spec: StartupSpec,
     *,
     root: Path | None = None,
@@ -626,7 +626,7 @@ def build_runtime_argv(
     models: Sequence[str] | None = None,
     sandbox_child: bool = False,
 ) -> tuple[str, ...]:
-    """Build one explicit argv for the internal runtime entrypoint."""
+    """Build one explicit argv for the hidden managed-runtime run path."""
 
     command: list[str] = []
     if spec.log_spec is not None:
@@ -634,7 +634,7 @@ def build_runtime_argv(
     command.extend([
         "--root",
         str(root or spec.toolang_root),
-        "--agent",
+        "run",
         spec.agent_name,
         "--host",
         host or spec.host,
@@ -893,8 +893,8 @@ def _up_managed_sandbox(
         endpoint=endpoint,
         loop_names=enabled_loops,
         run_command=(
-            RUNTIME_ENTRY_COMMAND,
-            *build_runtime_argv(
+            CLI_ENTRY_COMMAND,
+            *build_run_argv(
                 startup,
                 root=sandbox_root,
                 host="0.0.0.0",
