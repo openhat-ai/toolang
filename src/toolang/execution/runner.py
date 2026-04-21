@@ -21,7 +21,7 @@ DEFAULT_GROUP_LIMITS: dict[str, int] = {
     "poll": 1,
     "hook": 1,
 }
-_LOGGER = logging.getLogger("toolang.runner")
+_LOGGER = logging.getLogger("toolang.run")
 
 
 @dataclass(frozen=True, slots=True)

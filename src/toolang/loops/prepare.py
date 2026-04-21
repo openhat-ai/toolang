@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from ..up import UptimeContext
 
 DEFAULT_INTERVAL_MS = 1_000.0
-logger = logging.getLogger("toolang.prepare")
+logger = logging.getLogger("toolang.loop.prepare")
 
 
 def spawn(

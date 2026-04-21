@@ -139,11 +139,11 @@ def test_cli_main_configures_logging_for_roaming_invoke(monkeypatch, tmp_path: P
     monkeypatch.setattr(cli.cli_invoke, "handle_roaming_invoke", fake_handle)
     monkeypatch.setattr(cli.sys, "argv", ["toolang"])
 
-    result = cli.main(["--log", "toolang.runner=debug", str(program_path), "--help"])
+    result = cli.main(["--log", "toolang.run=debug", str(program_path), "--help"])
 
     assert result == 0
-    assert captured["spec"] == "toolang.runner=debug"
-    assert captured["global_args"] == ["--log", "toolang.runner=debug"]
+    assert captured["spec"] == "toolang.run=debug"
+    assert captured["global_args"] == ["--log", "toolang.run=debug"]
     assert captured["body"] == [str(program_path), "--help"]
     assert captured["prog_name"] == "toolang"
 
@@ -279,13 +279,13 @@ def test_cli_callback_configures_logging_for_standard_commands(monkeypatch, tmp_
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(toolang_root), "--log", "toolang.runner=debug", "list"],
+        ["--root", str(toolang_root), "--log", "toolang.run=debug", "list"],
         env={},
     )
 
     assert result.exit_code == 0
     assert len(calls) == 1
-    assert calls[0][0] == "toolang.runner=debug"
+    assert calls[0][0] == "toolang.run=debug"
 
 
 def test_cli_new_supports_template_alias(tmp_path: Path) -> None:
@@ -1556,12 +1556,12 @@ def test_cli_run_does_not_override_explicit_log_spec(tmp_path: Path, monkeypatch
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(toolang_root), "--log", "toolang.runner=debug", "run", "alice"],
+        ["--root", str(toolang_root), "--log", "toolang.run=debug", "run", "alice"],
         env={},
     )
 
     assert result.exit_code == 0
-    assert captured["log_spec"] == "toolang.runner=debug"
+    assert captured["log_spec"] == "toolang.run=debug"
     assert PY_LOG_ENV_VAR not in cast(dict[str, str], captured["environ"])
 
 
@@ -1689,10 +1689,10 @@ def test_cli_start_spawns_background_run_and_reports_status(tmp_path: Path, monk
     assert captured["command"] == [
         cli.sys.executable,
         "-m",
-        cli.agent_up.RUNTIME_ENTRY_MODULE,
+        "toolang.cli.main",
         "--root",
         str(toolang_root),
-        "--agent",
+        "run",
         "alice",
         "--host",
         "127.0.0.1",
@@ -1758,7 +1758,7 @@ def test_cli_start_propagates_explicit_log_spec_to_agent_process(tmp_path: Path,
             "--root",
             str(toolang_root),
             "--log",
-            "toolang.runner=debug,httpx=off",
+            "toolang.run=debug,httpx=off",
             "start",
             "alice",
             "--sandbox",
@@ -1772,9 +1772,9 @@ def test_cli_start_propagates_explicit_log_spec_to_agent_process(tmp_path: Path,
     assert command[0:7] == [
         cli.sys.executable,
         "-m",
-        cli.agent_up.RUNTIME_ENTRY_MODULE,
+        "toolang.cli.main",
         "--log",
-        "toolang.runner=debug,httpx=off",
+        "toolang.run=debug,httpx=off",
         "--root",
         str(toolang_root),
     ]
@@ -1963,6 +1963,73 @@ def test_cli_start_includes_model_selectors_in_background_command(tmp_path: Path
     assert command[first_flag + 1] == "gpt-5"
     second_flag = command.index("--model", first_flag + 1)
     assert command[second_flag + 1] == "o3"
+
+
+def test_cli_start_preserves_host_public_host_and_sandbox_in_background_command(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    captured: dict[str, object] = {}
+
+    class FakeProcess:
+        def poll(self) -> None:
+            return None
+
+    def fake_popen(
+        command,
+        *,
+        stdin,
+        stdout,
+        stderr,
+        env,
+        cwd: str,
+        start_new_session: bool,
+        close_fds: bool,
+    ):
+        del stdin, stderr, env, cwd, start_new_session, close_fds
+        captured["command"] = list(command)
+        agents.write_runtime_state(
+            toolang_root,
+            "alice",
+            endpoint="http://agent.example.com:8765",
+            started_at="2026-04-07T11:00:01Z",
+            pid=os.getpid(),
+        )
+        return FakeProcess()
+
+    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(toolang_root),
+            "start",
+            "alice",
+            "--host",
+            "0.0.0.0",
+            "--public-host",
+            "agent.example.com",
+            "--port",
+            "8765",
+            "--sandbox",
+            "docker:python:3.13-slim",
+        ],
+        env={},
+    )
+
+    assert result.exit_code == 0
+    command = cast(list[str], captured["command"])
+    assert "--host" in command
+    assert command[command.index("--host") + 1] == "0.0.0.0"
+    assert "--public-host" in command
+    assert command[command.index("--public-host") + 1] == "agent.example.com"
+    assert "--sandbox" in command
+    assert command[command.index("--sandbox") + 1] == "docker:python:3.13-slim"
+    assert "--port" in command
+    assert command[command.index("--port") + 1] == "8765"
 
 
 def test_cli_start_reuses_preferred_runtime_port(tmp_path: Path, monkeypatch) -> None:

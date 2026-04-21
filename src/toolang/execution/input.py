@@ -13,8 +13,8 @@ from .. import work
 from ..program import MessageBlock, ParamDecl, Thunk, ThunkOverlay
 from ..state.live import LiveState
 from ..state.prepared import PreparedEntry
-from ..template import render_text_template
 from ..strategies import normalize_run_strategy_name
+from .template import render_text_template
 from .db import utc_now
 from .model import resolve_model, select_model_selectors
 from .records import RunStrategy
