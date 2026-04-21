@@ -1386,6 +1386,13 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
         "--host",
         "0.0.0.0",
     )
+    assert "--public-host" in request.run_command
+    assert request.run_command[request.run_command.index("--public-host") + 1] == "127.0.0.1"
+    assert "--sandbox" in request.run_command
+    assert request.run_command[request.run_command.index("--sandbox") + 1] == "none"
+    assert "--sandbox-child" in request.run_command
+    assert "--loop" in request.run_command
+    assert request.run_command[request.run_command.index("--loop") + 1] == "inspect"
     runtime_state = json.loads(
         agents.agent_runtime_state_path(toolang_root, "alice").read_text(encoding="utf-8")
     )

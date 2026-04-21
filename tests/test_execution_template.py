@@ -1,7 +1,7 @@
 import pytest
 
 from toolang.base.error import ToolangError
-from toolang.template import render_text_template
+from toolang.execution.template import render_text_template
 
 
 def test_render_text_template_supports_variables_sections_and_inverted_sections() -> None:

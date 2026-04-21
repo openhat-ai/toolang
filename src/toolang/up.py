@@ -90,8 +90,6 @@ OPENAPI_TAGS = [
 ]
 logger = logging.getLogger("toolang.runtime")
 FactoryT = TypeVar("FactoryT")
-CLI_ENTRY_MODULE = "toolang.cli.main"
-CLI_ENTRY_COMMAND = "toolang"
 
 
 class UptimeConfig:
@@ -893,7 +891,7 @@ def _up_managed_sandbox(
         endpoint=endpoint,
         loop_names=enabled_loops,
         run_command=(
-            CLI_ENTRY_COMMAND,
+            "toolang",
             *build_run_argv(
                 startup,
                 root=sandbox_root,
