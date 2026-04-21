@@ -8,7 +8,6 @@ import json
 import os
 from pathlib import Path
 import signal
-import socket
 import shutil
 import tempfile
 import time
@@ -458,8 +457,6 @@ def stop_agent(
     if isinstance(pid, int) and _pid_alive(pid):
         _stop_pid(pid, force=force)
         stopped = True
-    if stopped:
-        _wait_for_endpoint_release(runtime_state.get("endpoint"), timeout_sec=5.0)
 
     stop_runtime_state(toolang_root, agent_name)
     return stopped
@@ -653,40 +650,6 @@ def _stop_pid(pid: int, *, force: bool) -> None:
         return
     except PermissionError as exc:
         raise ValueError(f"permission denied while force-stopping pid {pid}") from exc
-
-
-def _wait_for_endpoint_release(endpoint: object, *, timeout_sec: float) -> bool:
-    target = _endpoint_host_port(endpoint)
-    if target is None:
-        return True
-    host, port = target
-    deadline = time.monotonic() + timeout_sec
-    while time.monotonic() < deadline:
-        if _port_is_available(host, port):
-            return True
-        time.sleep(0.05)
-    return _port_is_available(host, port)
-
-
-def _endpoint_host_port(endpoint: object) -> tuple[str, int] | None:
-    if not isinstance(endpoint, str) or not endpoint.strip():
-        return None
-    try:
-        parsed = urlsplit(endpoint)
-    except ValueError:
-        return None
-    if not parsed.hostname or parsed.port is None:
-        return None
-    return parsed.hostname, parsed.port
-
-
-def _port_is_available(host: str, port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        try:
-            sock.bind((host, port))
-        except OSError:
-            return False
-    return True
 
 
 def _sandbox_alive(payload: object) -> bool:

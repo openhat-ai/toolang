@@ -1333,7 +1333,7 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
                 sandbox_root=request.sandbox_root,
                 sandbox_home=request.sandbox_home,
                 sandbox_working_directory=request.sandbox_home,
-                run_command=("python", "-m", "toolang.cli.main"),
+                run_command=("toolang-runtime",),
                 state=SandboxState(
                     selector=request.selector,
                     runtime_id="sandbox-alice",
@@ -1377,10 +1377,11 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
     assert request.sandbox_root == Path("/root/.toolang")
     assert request.sandbox_home == Path("/root/.toolang/agents/alice")
     assert request.env_vars["OPENAI_API_KEY"] == "secret"
-    assert request.run_command[:6] == (
+    assert request.run_command[:7] == (
+        "toolang-runtime",
         "--root",
         "/root/.toolang",
-        "run",
+        "--agent",
         "alice",
         "--host",
         "0.0.0.0",
@@ -1673,7 +1674,7 @@ def test_stop_agent_terminates_local_pid_and_marks_state_stopped(tmp_path: Path,
     assert runtime_state["pid"] is None
 
 
-def test_stop_agent_waits_for_endpoint_release_before_marking_stopped(
+def test_stop_agent_marks_state_stopped_without_waiting_for_endpoint_release(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
@@ -1693,22 +1694,10 @@ def test_stop_agent_waits_for_endpoint_release_before_marking_stopped(
         lambda pid, *, force: observed.setdefault("stopped_pid", pid),
     )
 
-    def fake_wait_for_endpoint_release(endpoint: object, *, timeout_sec: float) -> bool:
-        observed["endpoint"] = endpoint
-        observed["timeout_sec"] = timeout_sec
-        return True
-
-    monkeypatch.setattr(
-        "toolang.agents._wait_for_endpoint_release",
-        fake_wait_for_endpoint_release,
-    )
-
     stopped = agents.stop_agent(toolang_root, "alice")
 
     assert stopped is True
     assert observed["stopped_pid"] == 43210
-    assert observed["endpoint"] == "http://127.0.0.1:53322"
-    assert observed["timeout_sec"] == 5.0
     runtime_state = agents.load_runtime_state(toolang_root, "alice")
     assert runtime_state is not None
     assert runtime_state["status"] == "stopped"

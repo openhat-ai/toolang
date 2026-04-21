@@ -416,9 +416,10 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
         dev: Path | None,
         sandbox_child: bool,
         loop_names: tuple[str, ...] | None,
+        log_spec: str | None,
         environ: dict[str, str],
     ) -> int:
-        del host, public_host, port, sandbox, models, dev, sandbox_child, loop_names, environ
+        del host, public_host, port, sandbox, models, dev, sandbox_child, loop_names, log_spec, environ
         captured["toolang_root"] = toolang_root
         captured["agent_name"] = agent_name
         program_path = toolang_root / "agents" / agent_name / f"{agent_name}.too"
@@ -462,9 +463,10 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
         dev: Path | None,
         sandbox_child: bool,
         loop_names: tuple[str, ...] | None,
+        log_spec: str | None,
         environ: dict[str, str],
     ) -> int:
-        del host, public_host, port, sandbox, models, dev, sandbox_child, loop_names, environ
+        del host, public_host, port, sandbox, models, dev, sandbox_child, loop_names, log_spec, environ
         captured["toolang_root"] = toolang_root
         captured["agent_name"] = agent_name
         return 0
@@ -1348,6 +1350,7 @@ def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
         dev: Path | None = None,
         sandbox_child: bool = False,
         loop_names: list[str] | None = None,
+        log_spec: str | None = None,
         environ: dict[str, str],
     ) -> int:
         captured["toolang_root"] = toolang_root
@@ -1360,6 +1363,7 @@ def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
         captured["dev"] = dev
         captured["sandbox_child"] = sandbox_child
         captured["loop_names"] = loop_names
+        captured["log_spec"] = log_spec
         captured["environ"] = environ
         return 0
 
@@ -1393,7 +1397,9 @@ def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     assert captured["dev"] is None
     assert captured["sandbox_child"] is False
     assert captured["loop_names"] == ["chat", "inspect"]
+    assert captured["log_spec"] == DEFAULT_AGENT_LOG_SPEC
     assert cast(dict[str, str], captured["environ"])["TOOLANG_ROOT"] == str(toolang_root)
+    assert cast(dict[str, str], captured["environ"])[PY_LOG_ENV_VAR] == DEFAULT_AGENT_LOG_SPEC
 
 
 def test_cli_run_omits_port_when_unspecified(tmp_path: Path, monkeypatch) -> None:
@@ -1412,6 +1418,7 @@ def test_cli_run_omits_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
         dev: Path | None = None,
         sandbox_child: bool = False,
         loop_names: list[str] | None = None,
+        log_spec: str | None = None,
         environ: dict[str, str],
     ) -> int:
         captured["toolang_root"] = toolang_root
@@ -1424,6 +1431,7 @@ def test_cli_run_omits_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
         captured["dev"] = dev
         captured["sandbox_child"] = sandbox_child
         captured["loop_names"] = loop_names
+        captured["log_spec"] = log_spec
         captured["environ"] = environ
         return 0
 
@@ -1446,6 +1454,7 @@ def test_cli_run_omits_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
     assert captured["dev"] is None
     assert captured["sandbox_child"] is False
     assert captured["loop_names"] == ["chat"]
+    assert captured["log_spec"] == DEFAULT_AGENT_LOG_SPEC
     assert cast(dict[str, str], captured["environ"])["TOOLANG_ROOT"] == str(toolang_root)
 
 
@@ -1465,9 +1474,10 @@ def test_cli_run_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
         dev: Path | None = None,
         sandbox_child: bool = False,
         loop_names: list[str] | None = None,
+        log_spec: str | None = None,
         environ: dict[str, str],
     ) -> int:
-        del toolang_root, agent_name, host, public_host, port, sandbox, models, dev, sandbox_child, environ
+        del toolang_root, agent_name, host, public_host, port, sandbox, models, dev, sandbox_child, log_spec, environ
         captured["loop_names"] = loop_names
         return 0
 
@@ -1499,9 +1509,10 @@ def test_cli_run_passes_model_selectors_to_agent_up(tmp_path: Path, monkeypatch)
         dev: Path | None = None,
         sandbox_child: bool = False,
         loop_names: list[str] | None = None,
+        log_spec: str | None = None,
         environ: dict[str, str],
     ) -> int:
-        del toolang_root, agent_name, host, public_host, port, sandbox, dev, sandbox_child, loop_names, environ
+        del toolang_root, agent_name, host, public_host, port, sandbox, dev, sandbox_child, loop_names, log_spec, environ
         captured["models"] = models
         return 0
 
@@ -1515,6 +1526,43 @@ def test_cli_run_passes_model_selectors_to_agent_up(tmp_path: Path, monkeypatch)
 
     assert result.exit_code == 0
     assert captured["models"] == ["openai/gpt-5@openai", "o3"]
+
+
+def test_cli_run_does_not_override_explicit_log_spec(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    captured: dict[str, object] = {}
+
+    def fake_up(
+        *,
+        toolang_root: Path,
+        agent_name: str,
+        host: str = "127.0.0.1",
+        public_host: str | None = None,
+        port: int | None = None,
+        sandbox: str | None = None,
+        models: list[str] | None = None,
+        dev: Path | None = None,
+        sandbox_child: bool = False,
+        loop_names: list[str] | None = None,
+        log_spec: str | None = None,
+        environ: dict[str, str],
+    ) -> int:
+        del toolang_root, agent_name, host, public_host, port, sandbox, models, dev, sandbox_child, loop_names
+        captured["environ"] = environ
+        captured["log_spec"] = log_spec
+        return 0
+
+    monkeypatch.setattr(cli.agent_up, "up", fake_up)
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(toolang_root), "--log", "toolang.runner=debug", "run", "alice"],
+        env={},
+    )
+
+    assert result.exit_code == 0
+    assert captured["log_spec"] == "toolang.runner=debug"
+    assert PY_LOG_ENV_VAR not in cast(dict[str, str], captured["environ"])
 
 
 def test_cli_run_requires_agent(tmp_path: Path) -> None:
@@ -1557,6 +1605,7 @@ def test_cli_run_loads_root_and_agent_env_with_agent_override(tmp_path: Path, mo
         dev: Path | None = None,
         sandbox_child: bool = False,
         loop_names: list[str] | None = None,
+        log_spec: str | None = None,
         environ: dict[str, str],
     ) -> int:
         captured["environ"] = environ
@@ -1565,6 +1614,7 @@ def test_cli_run_loads_root_and_agent_env_with_agent_override(tmp_path: Path, mo
         captured["models"] = models
         captured["dev"] = dev
         captured["sandbox_child"] = sandbox_child
+        captured["log_spec"] = log_spec
         return 0
 
     monkeypatch.setattr(cli.agent_up, "up", fake_up)
@@ -1585,6 +1635,7 @@ def test_cli_run_loads_root_and_agent_env_with_agent_override(tmp_path: Path, mo
     assert captured["models"] is None
     assert captured["dev"] is None
     assert captured["sandbox_child"] is False
+    assert captured["log_spec"] == DEFAULT_AGENT_LOG_SPEC
 
 
 def test_cli_start_spawns_background_run_and_reports_status(tmp_path: Path, monkeypatch) -> None:
@@ -1638,10 +1689,10 @@ def test_cli_start_spawns_background_run_and_reports_status(tmp_path: Path, monk
     assert captured["command"] == [
         cli.sys.executable,
         "-m",
-        "toolang.cli.main",
+        cli.agent_up.RUNTIME_ENTRY_MODULE,
         "--root",
         str(toolang_root),
-        "run",
+        "--agent",
         "alice",
         "--host",
         "127.0.0.1",
@@ -1721,11 +1772,11 @@ def test_cli_start_propagates_explicit_log_spec_to_agent_process(tmp_path: Path,
     assert command[0:7] == [
         cli.sys.executable,
         "-m",
-        "toolang.cli.main",
-        "--root",
-        str(toolang_root),
+        cli.agent_up.RUNTIME_ENTRY_MODULE,
         "--log",
         "toolang.runner=debug,httpx=off",
+        "--root",
+        str(toolang_root),
     ]
     assert PY_LOG_ENV_VAR not in cast(dict[str, str], captured["env"])
 
