@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import toolang.runtime_main as runtime_main
+import toolang.cli.runtime as cli_runtime
 
 
-def test_runtime_main_delegates_to_agent_up(monkeypatch) -> None:
+def test_cli_runtime_delegates_to_agent_up(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     def fake_configure_logging(*, spec, environ) -> None:
@@ -41,10 +41,10 @@ def test_runtime_main_delegates_to_agent_up(monkeypatch) -> None:
         captured["up_environ"] = environ
         return 17
 
-    monkeypatch.setattr(runtime_main, "configure_logging", fake_configure_logging)
-    monkeypatch.setattr(runtime_main.agent_up, "up", fake_up)
+    monkeypatch.setattr(cli_runtime, "configure_logging", fake_configure_logging)
+    monkeypatch.setattr(cli_runtime.agent_up, "up", fake_up)
 
-    result = runtime_main.main(
+    result = cli_runtime.main(
         [
             "--root",
             "/tmp/toolang",

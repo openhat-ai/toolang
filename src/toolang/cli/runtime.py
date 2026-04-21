@@ -1,4 +1,4 @@
-"""Slim runtime entrypoint for managed agent processes."""
+"""Slim CLI runtime entrypoint for managed agent processes."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ import argparse
 import os
 import sys
 
-from .config.log import configure_logging
-from .config.log_spec import PY_LOG_ENV_VAR
-from . import up as agent_up
+from ..config.log import configure_logging
+from ..config.log_spec import PY_LOG_ENV_VAR
+from .. import up as agent_up
 
 
 def main(argv: Sequence[str] | None = None) -> int:

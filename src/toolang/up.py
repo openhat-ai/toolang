@@ -90,7 +90,7 @@ OPENAPI_TAGS = [
 ]
 logger = logging.getLogger("toolang.runtime")
 FactoryT = TypeVar("FactoryT")
-RUNTIME_ENTRY_MODULE = "toolang.runtime_main"
+RUNTIME_ENTRY_MODULE = "toolang.cli.runtime"
 RUNTIME_ENTRY_COMMAND = "toolang-runtime"
 
 
