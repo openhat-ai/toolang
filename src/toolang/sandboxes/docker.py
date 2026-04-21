@@ -286,7 +286,11 @@ def _write_start_script(
     ]
     if run_command:
         source = str(sandbox_dev_artifact) if sandbox_dev_artifact is not None else "toolang"
-        tool_command = run_command if run_command[0] == "too" else ("too", *run_command)
+        tool_command = (
+            run_command
+            if run_command[0] in {"too", "toolang", "toolang-runtime"}
+            else ("too", *run_command)
+        )
         lines.append("ensure_uv")
         lines.append("write_runtime_status starting launching")
         lines.append(

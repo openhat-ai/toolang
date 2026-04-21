@@ -32,7 +32,7 @@ from toolang.base.types.sandbox import SandboxSelector, SandboxStartRequest, San
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.base.utils.channels import bind_delivery
 from toolang.base.utils.tools import join_tool_name
-from .config.log import build_uvicorn_log_config
+from .config.log import DEFAULT_LOG_LEVEL, build_uvicorn_log_config
 from .config.plugins import ChannelBinding, load_channel_bindings, load_sandbox_binding, load_tool_plugin_config
 from .config.web import resolve_cors_allowed_origins
 from .execution.response import build_channel_response_sink
@@ -90,6 +90,8 @@ OPENAPI_TAGS = [
 ]
 logger = logging.getLogger("toolang.up")
 FactoryT = TypeVar("FactoryT")
+RUNTIME_ENTRY_MODULE = "toolang.runtime_main"
+RUNTIME_ENTRY_COMMAND = "toolang-runtime"
 
 
 class UptimeConfig:
@@ -454,6 +456,7 @@ def up(
     dev: Path | None = None,
     sandbox_child: bool = False,
     loop_names: Sequence[str] | None = None,
+    log_spec: str | None = None,
     environ: Mapping[str, str],
 ) -> int:
     """Start one agent runtime."""
@@ -468,6 +471,7 @@ def up(
         models=models,
         dev=dev,
         loop_names=loop_names,
+        log_spec=log_spec,
         environ=environ,
     )
     if spec.selector.driver != "none":
@@ -495,6 +499,7 @@ def up(
         environ=environ,
         sandbox_child=sandbox_child,
         model_selectors=spec.model_selectors,
+        log_spec=spec.log_spec,
     )
 
 
@@ -611,7 +616,7 @@ def resolve_startup(
     )
 
 
-def build_run_argv(
+def build_runtime_argv(
     spec: StartupSpec,
     *,
     root: Path | None = None,
@@ -621,12 +626,15 @@ def build_run_argv(
     models: Sequence[str] | None = None,
     sandbox_child: bool = False,
 ) -> tuple[str, ...]:
-    """Build one explicit CLI argv for `too run`."""
+    """Build one explicit argv for the internal runtime entrypoint."""
 
-    command: list[str] = [
+    command: list[str] = []
+    if spec.log_spec is not None:
+        command.extend(["--log", spec.log_spec])
+    command.extend([
         "--root",
         str(root or spec.toolang_root),
-        "run",
+        "--agent",
         spec.agent_name,
         "--host",
         host or spec.host,
@@ -636,9 +644,7 @@ def build_run_argv(
         str(spec.port),
         "--sandbox",
         sandbox or spec.selector.render(),
-    ]
-    if spec.log_spec is not None:
-        command[2:2] = ["--log", spec.log_spec]
+    ])
     effective_models = _normalize_model_selectors(models) or spec.model_selectors
     for selector in effective_models:
         command.extend(["--model", selector])
@@ -662,6 +668,7 @@ def _up_local(
     environ: Mapping[str, str],
     sandbox_child: bool,
     model_selectors: tuple[str, ...],
+    log_spec: str | None,
 ) -> int:
     loop_intervals_ms = dict(DEFAULT_LOOP_INTERVAL_MS)
     for loop_name in BACKGROUND_LOOPS:
@@ -756,7 +763,7 @@ def _up_local(
         app,
         host=host,
         port=port,
-        log_config=build_uvicorn_log_config(),
+        log_config=build_uvicorn_log_config(level=log_spec or DEFAULT_LOG_LEVEL),
     )
     return 0
 
@@ -885,12 +892,15 @@ def _up_managed_sandbox(
         port=port,
         endpoint=endpoint,
         loop_names=enabled_loops,
-        run_command=build_run_argv(
-            startup,
-            root=sandbox_root,
-            host="0.0.0.0",
-            sandbox="none",
-            sandbox_child=True,
+        run_command=(
+            RUNTIME_ENTRY_COMMAND,
+            *build_runtime_argv(
+                startup,
+                root=sandbox_root,
+                host="0.0.0.0",
+                sandbox="none",
+                sandbox_child=True,
+            ),
         ),
         env_vars=dict(environ),
         local_dev_artifact=dev_artifact,

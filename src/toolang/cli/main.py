@@ -316,6 +316,8 @@ def run_agent(
     root = _context_root(ctx)
     try:
         with agents.materialized_run_target(root, selector) as (run_root, agent_name):
+            environ = _runtime_environ_for_agent(ctx, agent_name, toolang_root=run_root)
+            effective_log_spec = _configure_foreground_runtime_logging(ctx, environ)
             raise typer.Exit(
                 _wrap_user_error(
                     agent_up.up,
@@ -329,7 +331,8 @@ def run_agent(
                     dev=dev,
                     sandbox_child=sandbox_child,
                     loop_names=normalized_loops,
-                    environ=_runtime_environ_for_agent(ctx, agent_name, toolang_root=run_root),
+                    log_spec=effective_log_spec,
+                    environ=environ,
                 )
             )
     except (FileExistsError, FileNotFoundError, ValueError) as exc:
@@ -410,8 +413,8 @@ def start_agent(
     command = [
         sys.executable,
         "-m",
-        "toolang.cli.main",
-        *agent_up.build_run_argv(startup),
+        agent_up.RUNTIME_ENTRY_MODULE,
+        *agent_up.build_runtime_argv(startup),
     ]
     with log_path.open("ab") as stream:
         process = subprocess.Popen(
@@ -480,6 +483,23 @@ def stop_agent(
         force=force,
     )
     typer.echo(f"{agent_name}\tstopped" if stopped else f"{agent_name}\talready-stopped")
+
+
+def _configure_foreground_runtime_logging(
+    ctx: typer.Context,
+    environ: dict[str, str],
+) -> str | None:
+    explicit_log_spec = cast(str | None, ctx.obj.get("log"))
+    if explicit_log_spec is not None:
+        return explicit_log_spec
+    runtime_log_spec = environ.get(PY_LOG_ENV_VAR, "").strip()
+    if runtime_log_spec:
+        configure_logging(spec=runtime_log_spec, environ=environ)
+        return runtime_log_spec
+    environ[PY_LOG_ENV_VAR] = DEFAULT_AGENT_LOG_SPEC
+    configure_logging(spec=DEFAULT_AGENT_LOG_SPEC, environ=environ)
+    return DEFAULT_AGENT_LOG_SPEC
+
 
 def _info_caps_summary(toolang_root: Path, agent_name: str) -> str:
     counts = {
