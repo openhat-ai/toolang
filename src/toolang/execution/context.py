@@ -56,7 +56,7 @@ from .snapshot import RunSnapshot
 if TYPE_CHECKING:
     from .input import RunInput
 
-_LOGGER = logging.getLogger("toolang.runner")
+_LOGGER = logging.getLogger("toolang.run.model")
 
 
 class RunContext:

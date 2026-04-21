@@ -139,11 +139,11 @@ def test_cli_main_configures_logging_for_roaming_invoke(monkeypatch, tmp_path: P
     monkeypatch.setattr(cli.cli_invoke, "handle_roaming_invoke", fake_handle)
     monkeypatch.setattr(cli.sys, "argv", ["toolang"])
 
-    result = cli.main(["--log", "toolang.runner=debug", str(program_path), "--help"])
+    result = cli.main(["--log", "toolang.run=debug", str(program_path), "--help"])
 
     assert result == 0
-    assert captured["spec"] == "toolang.runner=debug"
-    assert captured["global_args"] == ["--log", "toolang.runner=debug"]
+    assert captured["spec"] == "toolang.run=debug"
+    assert captured["global_args"] == ["--log", "toolang.run=debug"]
     assert captured["body"] == [str(program_path), "--help"]
     assert captured["prog_name"] == "toolang"
 
@@ -279,13 +279,13 @@ def test_cli_callback_configures_logging_for_standard_commands(monkeypatch, tmp_
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(toolang_root), "--log", "toolang.runner=debug", "list"],
+        ["--root", str(toolang_root), "--log", "toolang.run=debug", "list"],
         env={},
     )
 
     assert result.exit_code == 0
     assert len(calls) == 1
-    assert calls[0][0] == "toolang.runner=debug"
+    assert calls[0][0] == "toolang.run=debug"
 
 
 def test_cli_new_supports_template_alias(tmp_path: Path) -> None:
@@ -1556,12 +1556,12 @@ def test_cli_run_does_not_override_explicit_log_spec(tmp_path: Path, monkeypatch
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(toolang_root), "--log", "toolang.runner=debug", "run", "alice"],
+        ["--root", str(toolang_root), "--log", "toolang.run=debug", "run", "alice"],
         env={},
     )
 
     assert result.exit_code == 0
-    assert captured["log_spec"] == "toolang.runner=debug"
+    assert captured["log_spec"] == "toolang.run=debug"
     assert PY_LOG_ENV_VAR not in cast(dict[str, str], captured["environ"])
 
 
@@ -1758,7 +1758,7 @@ def test_cli_start_propagates_explicit_log_spec_to_agent_process(tmp_path: Path,
             "--root",
             str(toolang_root),
             "--log",
-            "toolang.runner=debug,httpx=off",
+            "toolang.run=debug,httpx=off",
             "start",
             "alice",
             "--sandbox",
@@ -1774,7 +1774,7 @@ def test_cli_start_propagates_explicit_log_spec_to_agent_process(tmp_path: Path,
         "-m",
         cli.agent_up.RUNTIME_ENTRY_MODULE,
         "--log",
-        "toolang.runner=debug,httpx=off",
+        "toolang.run=debug,httpx=off",
         "--root",
         str(toolang_root),
     ]

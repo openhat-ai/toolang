@@ -70,12 +70,12 @@ def test_runtime_main_delegates_to_agent_up(monkeypatch) -> None:
             "/tmp/dist/toolang.whl",
             "--sandbox-child",
             "--log",
-            "toolang.runner=debug",
+            "toolang.run=debug",
         ]
     )
 
     assert result == 17
-    assert captured["log"] == "toolang.runner=debug"
+    assert captured["log"] == "toolang.run=debug"
     assert captured["toolang_root"] == Path("/tmp/toolang")
     assert captured["agent_name"] == "alice"
     assert captured["host"] == "0.0.0.0"
@@ -86,4 +86,4 @@ def test_runtime_main_delegates_to_agent_up(monkeypatch) -> None:
     assert captured["dev"] == Path("/tmp/dist/toolang.whl")
     assert captured["sandbox_child"] is True
     assert captured["loop_names"] == ("inspect", "reload")
-    assert captured["log_spec"] == "toolang.runner=debug"
+    assert captured["log_spec"] == "toolang.run=debug"

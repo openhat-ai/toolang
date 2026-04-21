@@ -39,7 +39,7 @@ Typical usage:
 ```bash
 toolang new alice
 toolang list
-toolang --log toolang.runner=info ./examples/invoke-playground.too summarize "Summarize this workspace"
+toolang --log toolang.run=info ./examples/invoke-playground.too summarize "Summarize this workspace"
 toolang ./examples/invoke-playground.too --help
 toolang ./examples/invoke-playground.too summarize "Summarize this workspace"
 toolang run alice
@@ -90,7 +90,7 @@ toolang path/to/agent.too THUNK [OPTIONS] [PARAMS] [PARTS]
 Behavior:
 
 - one local `.too` path enters roaming invoke mode
-- `toolang --log toolang.runner=info a.too thunk ...` shows runtime logs during invoke
+- `toolang --log toolang.run=info a.too thunk ...` shows runtime logs during invoke
 - `toolang --log debug a.too thunk ...` also shows lower-level provider and HTTP logs
 - `toolang a.too --help` lists invokable thunks
 - `toolang a.too thunk --help` prints thunk-specific dynamic usage

@@ -88,7 +88,7 @@ OPENAPI_TAGS = [
     {"name": "activity", "description": "Thread, run, and event history endpoints."},
     {"name": "hook", "description": "Inbound hook submission endpoints."},
 ]
-logger = logging.getLogger("toolang.up")
+logger = logging.getLogger("toolang.runtime")
 FactoryT = TypeVar("FactoryT")
 RUNTIME_ENTRY_MODULE = "toolang.runtime_main"
 RUNTIME_ENTRY_COMMAND = "toolang-runtime"

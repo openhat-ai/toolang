@@ -159,7 +159,7 @@ def test_queue_runner_drains_requests_in_order(tmp_path: Path, caplog) -> None:
         context.runner.close()
 
         with (
-            caplog.at_level(logging.INFO, logger="toolang.runner"),
+            caplog.at_level(logging.INFO, logger="toolang.run"),
             _patched_runner_execution(),
         ):
             results = await context.runner.drain(context)
@@ -167,7 +167,7 @@ def test_queue_runner_drains_requests_in_order(tmp_path: Path, caplog) -> None:
         printed = [
             record.message
             for record in caplog.records
-            if record.name == "toolang.runner"
+            if record.name == "toolang.run"
         ]
         assert [result.input_text for result in results] == [
             "say hello",
@@ -2338,7 +2338,7 @@ def test_execute_run_pre_start_failure_does_not_emit_persist_sink_error(tmp_path
     )
     context.config.set("models.default_selector", "claude")
 
-    with caplog.at_level(logging.ERROR, logger="toolang.runner"):
+    with caplog.at_level(logging.ERROR, logger="toolang.run"):
         outcome = asyncio.run(
             run_execute_module.execute_run(
                 context,
