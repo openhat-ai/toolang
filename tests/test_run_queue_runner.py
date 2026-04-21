@@ -2138,9 +2138,11 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
         path=str(toolang_root / "agents" / "alice" / "tasks" / "review.md"),
     )
     instructions = bundle.instructions()
-    assert "Task execution protocol:" in instructions
-    assert "Update the task file directly at:" in instructions
-    assert "Move status from todo to doing when work starts." in instructions
+    assert "Treat the user's message as the current task input." in instructions
+    assert "Current task:" in instructions
+    assert "- Status: todo" in instructions
+    assert f"- Path: {toolang_root / 'agents' / 'alice' / 'tasks' / 'review.md'}" in instructions
+    assert "- Update the task file as work progresses and before you finish." in instructions
 
 
 def test_assemble_run_input_prefers_thunk_model_over_activation_default(tmp_path: Path) -> None:
@@ -2295,9 +2297,86 @@ def test_assemble_run_input_keeps_thread_messages_out_of_system_instructions(tmp
         }
     ]
     instructions = bundle.instructions()
-    assert "System messages:" in instructions
-    assert "Reply directly." in instructions
+    assert instructions == "Reply directly."
     assert "hello" not in instructions
+
+
+def test_chat_run_prefers_named_chat_thunk_over_main(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "alice.too",
+        (
+            "agent alice\n\n"
+            "thunk:\n"
+            "  Script default.\n\n"
+            "thunk chat:\n"
+            "  Reply directly.\n"
+        ),
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("chat",),
+    )
+    bound = bind_run_request(
+        context,
+        RunRequest(group="chat", origin="chat", thunk="hello"),
+    )
+
+    bundle = RunInput.from_binding(context, bound)
+
+    assert bundle.thunk.name == "chat"
+    assert bundle.instructions() == "Reply directly."
+
+
+def test_chat_run_uses_default_template_when_chat_thunk_is_missing(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "alice.too",
+        "agent alice\n\nthunk:\n  Script default.\n",
+    )
+    _write_text(
+        toolang_root / "psyches" / "reviewer.md",
+        "Be precise.\n",
+    )
+    _write_text(
+        toolang_root / "skills" / "reviewer" / "SKILL.md",
+        "---\ndescription: Review carefully\n---\nUse this skill.\n",
+    )
+    _write_text(
+        toolang_root / "services" / "github.md",
+        (
+            "---\n"
+            "description: GitHub MCP\n"
+            "transport: http\n"
+            "url: https://example.com/mcp\n"
+            "---\n"
+            "Use this service.\n"
+        ),
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("chat",),
+    )
+    bound = bind_run_request(
+        context,
+        RunRequest(group="chat", origin="chat", thunk="hello"),
+    )
+
+    bundle = RunInput.from_binding(context, bound)
+    instructions = bundle.instructions()
+
+    assert bundle.thunk.name == "chat"
+    assert "Script default." not in instructions
+    assert "Be precise." in instructions
+    assert "Review carefully" in instructions
+    assert "GitHub MCP" in instructions
+    assert "transport=http" in instructions
+    assert "https://example.com/mcp" in instructions
+    assert f"- Agent home: {toolang_root / 'agents' / 'alice'}" in instructions
+    assert "- Sandbox: none" in instructions
+    assert "Do not call tools or inspect files just to explore the environment." in instructions
 
 
 def test_execute_run_rejects_thunk_model_outside_activation_allowlist(tmp_path: Path) -> None:
@@ -2596,11 +2675,13 @@ def _build_context(
             {
                 "server.host": "127.0.0.1",
                 "server.port": 8765,
+                "server.endpoint": "http://127.0.0.1:8765",
                 "loops.enabled": enabled_loops,
                 "loops.pulse.interval_ms": pulse.DEFAULT_INTERVAL_MS,
                 "loops.poll.interval_ms": poll.DEFAULT_INTERVAL_MS,
                 "loops.prepare.interval_ms": prepare.DEFAULT_INTERVAL_MS,
                 "loops.reload.debounce_ms": reload.DEFAULT_DEBOUNCE_MS,
+                "runtime.sandbox": "none",
             }
         ),
     )

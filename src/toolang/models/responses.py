@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from toolang.base.error import ToolangError
@@ -19,6 +20,9 @@ from toolang.base.types.run import (
     ToolCall,
 )
 from toolang.base.types.tool import ToolDefinition
+
+_API_LOGGER = logging.getLogger("toolang.model.api")
+_LOG_PREVIEW_LIMIT = 4_000
 
 
 def create_client(target: ModelTarget) -> Any:
@@ -49,12 +53,25 @@ def invoke_response(
     """Execute one non-streaming Responses API call."""
 
     client = create_client(target)
+    payload = response_payload(
+        target,
+        request,
+        stateful=stateful,
+    )
+    _log_api_request(
+        target,
+        payload,
+        stateful=stateful,
+        stream=False,
+    )
     response = client.responses.create(
-        **response_payload(
-            target,
-            request,
-            stateful=stateful,
-        )
+        **payload
+    )
+    _log_api_response(
+        target,
+        response,
+        stateful=stateful,
+        stream=False,
     )
     return parse_response(
         response,
@@ -73,12 +90,19 @@ def stream_response(
     """Execute one streaming Responses API call."""
 
     client = create_client(target)
+    payload = response_payload(
+        target,
+        request,
+        stateful=stateful,
+    )
+    _log_api_request(
+        target,
+        payload,
+        stateful=stateful,
+        stream=True,
+    )
     with client.responses.stream(
-        **response_payload(
-            target,
-            request,
-            stateful=stateful,
-        )
+        **payload
     ) as stream:
         seen_tool_inputs: set[str] = set()
         text_started = False
@@ -117,6 +141,12 @@ def stream_response(
                     )
                 )
         response = stream.get_final_response()
+    _log_api_response(
+        target,
+        response,
+        stateful=stateful,
+        stream=True,
+    )
     result = parse_response(
         response,
         request=request,
@@ -471,6 +501,7 @@ def _encode_tool_result_part(
 ) -> dict[str, Any]:
     if not isinstance(part, ToolResultPart):
         raise ToolangError("tool messages can only contain tool result parts")
+    del message_index, part_index
     payload: dict[str, Any] = {
         "ok": "error" not in message.meta,
         "name": part.tool_name,
@@ -481,10 +512,73 @@ def _encode_tool_result_part(
     call_id = part.call_id or part.tool_call_id
     if not call_id:
         raise ToolangError("tool follow-up message is missing call_id")
-    suffix = "current" if message_index is None else str(message_index)
     return {
         "type": "function_call_output",
-        "id": part.tool_call_id or f"fc_output_{suffix}_{part_index}",
         "call_id": call_id,
         "output": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
     }
+
+
+def _log_api_request(
+    target: ModelTarget,
+    payload: dict[str, Any],
+    *,
+    stateful: bool,
+    stream: bool,
+) -> None:
+    if not _API_LOGGER.isEnabledFor(logging.DEBUG):
+        return
+    _API_LOGGER.debug(
+        "responses api request provider=%s ref=%s model=%s adapter=%s stateful=%s stream=%s payload=%s",
+        target.provider,
+        target.ref,
+        target.model,
+        target.adapter,
+        stateful,
+        stream,
+        _preview_data(payload),
+    )
+
+
+def _log_api_response(
+    target: ModelTarget,
+    response: Any,
+    *,
+    stateful: bool,
+    stream: bool,
+) -> None:
+    if not _API_LOGGER.isEnabledFor(logging.DEBUG):
+        return
+    _API_LOGGER.debug(
+        "responses api response provider=%s ref=%s model=%s adapter=%s stateful=%s stream=%s payload=%s",
+        target.provider,
+        target.ref,
+        target.model,
+        target.adapter,
+        stateful,
+        stream,
+        _preview_data(_response_data(response)),
+    )
+
+
+def _response_data(response: Any) -> Any:
+    model_dump = getattr(response, "model_dump", None)
+    if callable(model_dump):
+        try:
+            return model_dump(mode="json", exclude_none=True)
+        except TypeError:
+            return model_dump()
+    to_dict = getattr(response, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
+    return response
+
+
+def _preview_data(value: object) -> str:
+    try:
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    except TypeError:
+        text = str(value)
+    if len(text) <= _LOG_PREVIEW_LIMIT:
+        return text
+    return f"{text[:_LOG_PREVIEW_LIMIT]}...<truncated>"
