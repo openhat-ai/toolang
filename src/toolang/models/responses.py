@@ -7,7 +7,17 @@ import logging
 from typing import Any
 
 from toolang.base.error import ToolangError
-from toolang.base.types.message import Message, TextDelta, TextPart, ToolCallDelta, ToolCallPart, ToolResultPart
+from toolang.base.types.message import (
+    AudioPart,
+    FilePart,
+    ImagePart,
+    Message,
+    TextDelta,
+    TextPart,
+    ToolCallDelta,
+    ToolCallPart,
+    ToolResultPart,
+)
 from toolang.base.types.model import ModelTarget
 from toolang.base.types.run import (
     ModelCall,
@@ -443,6 +453,21 @@ def _encode_actor_message(
         if isinstance(part, TextPart):
             text_buffer.append({"type": text_type, "text": part.text})
             continue
+        if isinstance(part, ImagePart):
+            if message.role != "user":
+                raise ToolangError("assistant messages cannot contain image parts")
+            text_buffer.append(_encode_image_part(part))
+            continue
+        if isinstance(part, AudioPart):
+            if message.role != "user":
+                raise ToolangError("assistant messages cannot contain audio parts")
+            text_buffer.append(_encode_audio_part(part))
+            continue
+        if isinstance(part, FilePart):
+            if message.role != "user":
+                raise ToolangError("assistant messages cannot contain file parts")
+            text_buffer.append(_encode_file_part(part))
+            continue
         _flush_text_buffer()
         if isinstance(part, ToolCallPart):
             if not replay_tool_items:
@@ -490,6 +515,45 @@ def _encode_tool_call_part(part: ToolCallPart) -> dict[str, Any]:
         "name": part.tool_name,
         "arguments": json.dumps(part.input, ensure_ascii=False, separators=(",", ":")),
     }
+
+
+def _encode_image_part(part: ImagePart) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "type": "input_image",
+        "detail": part.detail,
+    }
+    if part.file_id is not None:
+        payload["file_id"] = part.file_id
+    elif part.image_url is not None:
+        payload["image_url"] = part.image_url
+    else:  # pragma: no cover - guarded by ImagePart validation
+        raise ToolangError("image part is missing image_url or file_id")
+    return payload
+
+
+def _encode_audio_part(part: AudioPart) -> dict[str, Any]:
+    return {
+        "type": "input_audio",
+        "input_audio": {
+            "data": part.data,
+            "format": part.format,
+        },
+    }
+
+
+def _encode_file_part(part: FilePart) -> dict[str, Any]:
+    payload: dict[str, Any] = {"type": "input_file"}
+    if part.file_data is not None:
+        payload["file_data"] = part.file_data
+    elif part.file_url is not None:
+        payload["file_url"] = part.file_url
+    elif part.file_id is not None:
+        payload["file_id"] = part.file_id
+    else:  # pragma: no cover - guarded by FilePart validation
+        raise ToolangError("file part is missing file_data, file_url, or file_id")
+    if part.filename is not None:
+        payload["filename"] = part.filename
+    return payload
 
 
 def _encode_tool_result_part(

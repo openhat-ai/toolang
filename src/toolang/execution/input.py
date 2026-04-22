@@ -10,7 +10,7 @@ from uuid import uuid4
 import frontmatter
 
 from toolang.base.protocols.tool import Tool
-from toolang.base.types.message import Message
+from toolang.base.types.message import Message, message_summary, message_text
 from toolang.base.types.model import ModelTarget
 from .. import work
 from ..program import MessageBlock, ParamDecl, SourceSpan, Thunk, ThunkOverlay
@@ -32,6 +32,7 @@ from .snapshot import (
 )
 
 if TYPE_CHECKING:
+    from ..state.program import LiveProgram
     from ..up import UptimeContext
     from .runner import RunRequest
 
@@ -157,6 +158,8 @@ class RunBinding:
     thread_id: str
     thunk_name: str | None
     input_text: str
+    message: Message | None
+    model_selector: str | None
     run_strategy: RunStrategy
     metadata: dict[str, Any]
     live: LiveState
@@ -188,12 +191,16 @@ class RunInput:
         """Build one semantic run input from one bound run."""
 
         program = run.live.program
-        thunk = _select_run_thunk(run)
+        thunk = select_origin_thunk(
+            program,
+            origin=run.origin,
+            thunk_name=run.thunk_name,
+        )
         input_text = program.expand_input(run.input_text) if run.input_text else ""
         history = tuple(
             context.store.recent_conversation_messages(thread_id=run.thread_id, limit=19)
         )
-        models_base = _run_model_base(context, run)
+        models_base = _activation_allowed_model_selectors(context)
         tools_base = _run_tools_base(context, run)
         psyches_base = _cap_entries(run.live, kind="psyche")
         skills_base = _cap_entries(run.live, kind="skill")
@@ -265,13 +272,14 @@ class RunInput:
                 "thunk_name": _thunk_name(thunk),
                 "input_text": input_text,
                 "params": dict(params),
-                "message_text": message.content or "",
+                "message_text": message_summary(message.parts),
                 "rendered_messages": [
                     {"kind": item.kind, "text": item.text}
                     for item in rendered_messages
                 ],
                 "models_base": models_base,
                 "activation_default_model": _activation_default_model_selector(context),
+                "requested_model_selector": _run_selected_model_selector(run),
                 "thunk_model_refs": _thunk_model_refs(thunk),
                 "effective_model_selectors": effective_models,
                 "tool_names": sorted(effective_tools),
@@ -294,8 +302,16 @@ class RunInput:
     def model_selector(self, context: UptimeContext) -> str | None:
         """Return the primary effective model selector for this run."""
 
-        selectors = self.effective_model_selectors(context)
-        return selectors[0] if selectors else None
+        allowed = self.effective_model_selectors(context)
+        selector = _run_selected_model_selector(self.run)
+        if selector is not None:
+            resolve_model(
+                context,
+                selector=selector,
+                allowed_selectors=allowed,
+            )
+            return selector
+        return allowed[0] if allowed else None
 
     def effective_model_selectors(self, context: UptimeContext) -> tuple[str, ...]:
         """Return the ordered effective model selectors for this run."""
@@ -360,7 +376,9 @@ def bind_run_request(
         origin=request.origin,
         thread_id=thread_id,
         thunk_name=request.thunk_name,
-        input_text=request.thunk,
+        input_text=_request_input_text(request),
+        message=request.message,
+        model_selector=_request_model_selector(request),
         run_strategy=run_strategy,
         metadata=dict(request.metadata),
         live=bound_live,
@@ -368,16 +386,42 @@ def bind_run_request(
     )
 
 
-def _select_run_thunk(run: RunBinding) -> Thunk:
-    program = run.live.program
-    if run.thunk_name is not None:
-        return program.get_thunk(run.thunk_name)
-    if run.origin in _THREAD_THUNK_NAMES:
-        thunk = _find_named_thunk(program.thunks, run.origin)
+def select_origin_thunk(
+    program: LiveProgram,
+    *,
+    origin: str,
+    thunk_name: str | None = None,
+) -> Thunk:
+    """Return the effective thunk for one run origin."""
+
+    if thunk_name is not None:
+        return program.get_thunk(thunk_name)
+    if origin in _THREAD_THUNK_NAMES:
+        thunk = _find_named_thunk(program.thunks, origin)
         if thunk is not None:
             return thunk
-        return _default_thread_thunk(run.origin)
+        return _default_thread_thunk(origin)
     return program.get_thunk(None)
+
+
+def effective_origin_model_selectors(
+    context: UptimeContext,
+    *,
+    origin: str,
+    thunk_name: str | None = None,
+) -> tuple[str, ...]:
+    """Return effective model selectors for one run origin before per-run selection."""
+
+    thunk = select_origin_thunk(
+        context.live.program,
+        origin=origin,
+        thunk_name=thunk_name,
+    )
+    return _effective_model_selectors(
+        context,
+        thunk=thunk,
+        models_base=_activation_allowed_model_selectors(context),
+    )
 
 
 def _find_named_thunk(thunks: tuple[Thunk, ...], name: str) -> Thunk | None:
@@ -419,6 +463,8 @@ def _run_message(
     input_text: str,
     rendered_messages: tuple[MessageBlock, ...],
 ) -> Message:
+    if run.origin != "script" and run.message is not None:
+        return run.message
     if run.origin != "script":
         return Message.user(input_text)
     text = _script_message_text(
@@ -429,30 +475,34 @@ def _run_message(
     return Message.user(text)
 
 
-def _run_model_base(context: UptimeContext, run: RunBinding) -> tuple[str, ...]:
-    requested = _run_requested_model_selectors(run)
-    if requested:
-        return requested
-    return _activation_allowed_model_selectors(context)
-
-
 def _run_tools_base(context: UptimeContext, run: RunBinding) -> dict[str, Tool]:
     if run.origin == "script":
         return {}
     return context.tools
 
 
-def _run_requested_model_selectors(run: RunBinding) -> tuple[str, ...]:
-    raw_models = run.metadata.get("models")
-    if isinstance(raw_models, tuple):
-        return tuple(item for item in raw_models if isinstance(item, str) and item.strip())
-    if isinstance(raw_models, list):
-        return tuple(item for item in raw_models if isinstance(item, str) and item.strip())
+def _request_input_text(request: RunRequest) -> str:
+    if request.thunk:
+        return request.thunk
+    if request.message is None:
+        return ""
+    return message_text(request.message.parts)
+
+
+def _request_model_selector(request: RunRequest) -> str | None:
+    if isinstance(request.model_selector, str) and request.model_selector.strip():
+        return request.model_selector.strip()
+    return None
+
+
+def _run_selected_model_selector(run: RunBinding) -> str | None:
+    if isinstance(run.model_selector, str) and run.model_selector.strip():
+        return run.model_selector.strip()
     for key in ("model", "model_selector"):
         value = run.metadata.get(key)
         if isinstance(value, str) and value.strip():
-            return (value.strip(),)
-    return ()
+            return value.strip()
+    return None
 
 
 def _activation_default_model_selector(context: UptimeContext) -> str | None:

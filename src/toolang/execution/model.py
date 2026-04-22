@@ -129,9 +129,34 @@ def select_model_selectors(
         )
         return tuple(selector for selector, _target in resolved_thunk)
 
-    defaults = ((default_selector,) if default_selector and default_selector.strip() else tuple(context.default_models)) or (
-        DEFAULT_MODEL_SELECTOR,
-    )
+    if discovered_available:
+        defaults = (
+            (default_selector,)
+            if default_selector and default_selector.strip()
+            else tuple(context.default_models)
+        ) or (DEFAULT_MODEL_SELECTOR,)
+        preferred = _preferred_default_selectors(
+            defaults,
+            available=discovered_available,
+            providers=context.model_providers,
+            routes=context.model_routes,
+            environ=context.model_environ,
+        )
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for selector in (*preferred, *(selector for selector, _target in discovered_available)):
+            if selector in seen:
+                continue
+            seen.add(selector)
+            ordered.append(selector)
+        if ordered:
+            return tuple(ordered)
+
+    defaults = (
+        (default_selector,)
+        if default_selector and default_selector.strip()
+        else tuple(context.default_models)
+    ) or (DEFAULT_MODEL_SELECTOR,)
     resolved_defaults = _resolve_selector_targets(
         defaults,
         providers=context.model_providers,
@@ -284,6 +309,73 @@ def _select_discovered_by_ref_order(
             seen.add(selector)
             selected.append(selector)
     return tuple(selected)
+
+
+def _preferred_default_selectors(
+    defaults: Sequence[str],
+    *,
+    available: Sequence[tuple[str, ModelTarget]],
+    providers: Mapping[str, ModelProvider],
+    routes: Mapping[str, ModelRoute],
+    environ: Mapping[str, str],
+) -> tuple[str, ...]:
+    preferred: list[str] = []
+    seen: set[str] = set()
+    available_set = {selector for selector, _target in available}
+    for raw in defaults:
+        selector = raw.strip()
+        if not selector:
+            continue
+        matches = _matching_available_selectors(
+            selector,
+            available=available_set,
+            providers=providers,
+            environ=environ,
+        )
+        if not matches:
+            if selector in routes:
+                matches = (selector,)
+            else:
+                try:
+                    resolved = _resolve_selector_targets(
+                        (selector,),
+                        providers=providers,
+                        routes=routes,
+                        environ=environ,
+                    )
+                except ToolangError:
+                    resolved = ()
+                matches = tuple(item for item, _target in resolved)
+        for match in matches:
+            if match in seen:
+                continue
+            seen.add(match)
+            preferred.append(match)
+    return tuple(preferred)
+
+
+def _matching_available_selectors(
+    selector: str,
+    *,
+    available: set[str],
+    providers: Mapping[str, ModelProvider],
+    environ: Mapping[str, str],
+) -> tuple[str, ...]:
+    matches: list[str] = []
+    seen: set[str] = set()
+    text = selector.strip()
+    if not text:
+        return ()
+    for provider in providers.values():
+        if missing_provider_env_vars(provider, environ=environ):
+            continue
+        for info in _matching_model_infos(provider, text, environ=environ):
+            explicit = f"{info.ref}@{provider.name}"
+            if explicit not in available or explicit in seen:
+                continue
+            seen.add(explicit)
+            matches.append(explicit)
+    return tuple(matches)
 
 
 def _require_allowed(

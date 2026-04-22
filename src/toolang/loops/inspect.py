@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING, Literal, cast
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
-from toolang.base.types.message import message_text
+from toolang.base.types.message import message_summary
 from ..execution.detail import (
-    ThreadDetail,
+    RunDetail,
     ThreadInfo,
     run_detail_from_record,
     thread_info_from_runs,
@@ -108,7 +108,7 @@ def create_router() -> APIRouter:
         run = context.store.get_run(run_id=run_id)
         if run is None:
             raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
-        return asdict(_run_detail(context, run))
+        return _run_detail_data(_run_detail(context, run))
 
     @router.get("/instructions/{instructions_hash}", tags=["activity"], summary="Get Instructions")
     async def instructions(request: Request, instructions_hash: str) -> dict[str, object]:
@@ -144,7 +144,10 @@ def create_router() -> APIRouter:
                 key=lambda run: run.created_at,
             )
         ]
-        return asdict(ThreadDetail(info=info, runs=runs))
+        return {
+            "info": asdict(info),
+            "runs": [_run_detail_data(item) for item in runs],
+        }
 
     @router.get("/events", tags=["activity"], summary="List Events")
     async def events(request: Request, limit: int = Query(default=100)) -> dict[str, object]:
@@ -322,13 +325,13 @@ def _live_entry_by_name(context: UptimeContext, *, kind: CapKind, name: str) -> 
 
 def _run_item(run: RunRecord, *, steps: Sequence) -> dict[str, object]:
     detail = run_detail_from_record(run, steps=steps)
-    input_text = message_text(detail.input.parts) if detail.input is not None else ""
+    input_text = message_summary(detail.input.parts) if detail.input is not None else ""
     last_step_message = next(
         (item.message for item in reversed(detail.output.steps) if item.message is not None),
         None,
     )
     summary = (
-        message_text(last_step_message.parts)
+        message_summary(last_step_message.parts)
         if last_step_message is not None
         else input_text
     )
@@ -345,6 +348,24 @@ def _run_item(run: RunRecord, *, steps: Sequence) -> dict[str, object]:
         "started_at": run.started_at,
         "finished_at": run.finished_at,
         "updated_at": run.finished_at or run.started_at,
+    }
+
+
+def _run_detail_data(run_detail: RunDetail) -> dict[str, object]:
+    output_steps: list[dict[str, object]] = []
+    for item in run_detail.output.steps:
+        payload = asdict(item)
+        if item.message is not None:
+            payload["message"] = item.message.to_data()
+        output_steps.append(payload)
+    return {
+        "info": asdict(run_detail.info),
+        "input": run_detail.input.to_data() if run_detail.input is not None else None,
+        "output": {
+            "status": run_detail.output.status,
+            "error": run_detail.output.error,
+            "steps": output_steps,
+        },
     }
 
 

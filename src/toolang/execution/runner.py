@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 import logging
 from typing import TYPE_CHECKING, Any, Literal
 
+from toolang.base.types.message import Message, message_summary
 from ..state.live import LiveState
 
 if TYPE_CHECKING:
@@ -30,9 +31,11 @@ class RunRequest:
 
     group: str
     origin: str
-    thunk: str
+    thunk: str = ""
+    message: Message | None = None
     thunk_name: str | None = None
     thread_id: str | None = None
+    model_selector: str | None = None
     run_strategy: str = "basic"
     delay_sec: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -247,12 +250,15 @@ class QueueRunner:
         context = self._context
         request = submission.request
         delay_sec = self._delay_sec if request.delay_sec is None else request.delay_sec
+        input_summary = request.thunk
+        if request.message is not None:
+            input_summary = message_summary(request.message.parts) or input_summary
         _LOGGER.info(
             "starting run group=%s origin=%s thread_id=%s input=%r",
             request.group,
             request.origin,
             request.thread_id or "-",
-            request.thunk,
+            input_summary,
         )
         result = await execute_run(
             context,

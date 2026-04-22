@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
-from toolang.base.types.message import message_text
+from toolang.base.types.message import message_summary
 from .events import MessageData, run_input_message_data, step_message_data
 from .records import RunRecord, RunStatus, StepRecord
 
@@ -78,7 +78,7 @@ def thread_info_from_runs(
     first = runs[0]
     last = runs[-1]
     first_input = run_input_message_data(first)
-    title = message_text(first_input.parts) or first.origin
+    title = message_summary(first_input.parts) or first.origin
     return ThreadInfo(
         id=thread_id,
         title=title,
