@@ -24,6 +24,7 @@ Use this directory for:
 | Document | Scope |
 | --- | --- |
 | [concepts.md](./concepts.md) | Developer overview and core runtime vocabulary |
+| [ids.md](./ids.md) | Toolang-owned id families, reversible encoding, and durable allocator model |
 | [program.md](./program.md) | Program syntax, including `struct`, `slash`, thunk signatures, directives, and surface rules |
 | [layout.md](./layout.md) | Layout and storage, including Toolang root, agent home, and runtime room paths |
 | [caps.md](./caps.md) | Capability model, including scopes, sources, precedence, and effective-cap rules |

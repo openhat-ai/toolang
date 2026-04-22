@@ -87,6 +87,9 @@ A thread is a durable execution context.
 
 A thread groups related runs under one stable topic or work item.
 
+Toolang-owned local threads may use one short generated id family. External
+thread ids remain opaque. See [ids.md](./ids.md).
+
 
 ## Run
 
@@ -98,6 +101,9 @@ A run has:
 - one input message
 - one status
 - zero or more steps
+
+Toolang-owned run ids may also use one dedicated short generated id family. See
+[ids.md](./ids.md).
 
 
 ## Step
