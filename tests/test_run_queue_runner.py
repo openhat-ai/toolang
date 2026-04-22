@@ -208,7 +208,7 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
         with TestClient(app) as client:
             response = client.post(
                 "/api/v1/chat",
-                json={"thread": "thread-1", "message": "say hello"},
+                json={"thread": "thread-1", "message": _chat_message("say hello")},
             )
             assert response.status_code == 200
             body = response.json()
@@ -276,6 +276,96 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
             assert operational_facts["prepared_fingerprint"] == prepared_fingerprint
             assert live["completed_runs"] == 1
             assert live["queue_pending"] == 0
+
+
+def test_chat_models_lists_effective_selectors_for_chat_thunk(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "alice.too",
+        "agent alice\n\nthunk chat:\n  models = openai/gpt-5, openai/o3\n\n  Reply directly.\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("chat", "inspect"),
+    )
+    context.model_environ = {"OPENAI_API_KEY": "secret"}
+    context.config.set("models.allowed_selectors", ("openai/o3@openai", "openai/gpt-5@openai"))
+    app = _create_test_app(context)
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/chat/models")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {
+        "default": "openai/o3@openai",
+        "items": [
+            {
+                "selector": "openai/o3@openai",
+                "name": "o3",
+                "ref": "openai/o3",
+                "provider": "openai",
+                "model": "o3",
+                "adapter": "responses",
+                "tools": True,
+                "streaming": True,
+            },
+            {
+                "selector": "openai/gpt-5@openai",
+                "name": "gpt-5",
+                "ref": "openai/gpt-5",
+                "provider": "openai",
+                "model": "gpt-5",
+                "adapter": "responses",
+                "tools": True,
+                "streaming": True,
+            },
+        ],
+    }
+
+
+def test_chat_models_returns_all_discoverable_when_unrestricted(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("chat", "inspect"),
+    )
+    context.model_environ = {"OPENAI_API_KEY": "secret"}
+    app = _create_test_app(context)
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/chat/models")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {
+        "default": "openai/gpt-5@openai",
+        "items": [
+            {
+                "selector": "openai/gpt-5@openai",
+                "name": "gpt-5",
+                "ref": "openai/gpt-5",
+                "provider": "openai",
+                "model": "gpt-5",
+                "adapter": "responses",
+                "tools": True,
+                "streaming": True,
+            },
+            {
+                "selector": "openai/o3@openai",
+                "name": "o3",
+                "ref": "openai/o3",
+                "provider": "openai",
+                "model": "o3",
+                "adapter": "responses",
+                "tools": True,
+                "streaming": True,
+            },
+        ],
+    }
 
 
 def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
@@ -428,7 +518,7 @@ def test_chat_returns_failed_run_as_assistant_message(tmp_path: Path) -> None:
         with TestClient(app) as client:
             response = client.post(
                 "/api/v1/chat",
-                json={"thread": "thread-1", "message": "say hello"},
+                json={"thread": "thread-1", "message": _chat_message("say hello")},
             )
             runs = client.get("/api/v1/runs").json()["items"]
 
@@ -453,7 +543,7 @@ def test_chat_projects_tool_parts_from_tool_call_steps(tmp_path: Path) -> None:
         with TestClient(app) as client:
             response = client.post(
                 "/api/v1/chat",
-                json={"thread": "thread-1", "message": "tool me"},
+                json={"thread": "thread-1", "message": _chat_message("tool me")},
             )
 
     assert response.status_code == 200
@@ -477,7 +567,7 @@ def test_chat_stream_emits_tool_and_text_chunks(tmp_path: Path) -> None:
             with client.stream(
                 "POST",
                 "/api/v1/chat/stream",
-                json={"thread": "thread-1", "message": "tool me"},
+                json={"thread": "thread-1", "message": _chat_message("tool me")},
             ) as response:
                 assert response.status_code == 200
                 stream_text = "".join(chunk.decode("utf-8") for chunk in response.iter_raw())
@@ -519,7 +609,14 @@ def test_chat_stream_emits_before_run_completion(tmp_path: Path) -> None:
                 async with _running_context(context, enabled_loops=("chat", "inspect")):
                     stream = chat_loop._stream_chat_run(
                         context,
-                        chat_loop.ChatRequest(thread="thread-1", message="stream me"),
+                        chat_loop.ChatRequest(
+                            thread="thread-1",
+                            message=chat_loop.ChatMessagePayload(
+                                role="user",
+                                parts=[{"type": "text", "text": "stream me"}],
+                                meta={},
+                            ),
+                        ),
                     )
                     started_at = time.monotonic()
                     stream_text = ""
@@ -557,7 +654,7 @@ def test_chat_stream_allows_tool_only_turns(tmp_path: Path) -> None:
             with client.stream(
                 "POST",
                 "/api/v1/chat/stream",
-                json={"thread": "thread-1", "message": "tool only"},
+                json={"thread": "thread-1", "message": _chat_message("tool only")},
             ) as response:
                 assert response.status_code == 200
                 stream_text = "".join(chunk.decode("utf-8") for chunk in response.iter_raw())
@@ -2223,6 +2320,36 @@ def test_assemble_run_input_prefers_thunk_model_over_activation_default(tmp_path
     assert bundle.debug["activation_default_model"] == "openai/gpt-5@openai"
 
 
+def test_assemble_run_input_accepts_explicit_run_model_within_allowed_set(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "alice.too",
+        "agent alice\n\nthunk chat:\n  models = openai/gpt-5, openai/o3\n\n  Reply directly.\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("chat",),
+    )
+    context.model_environ = {"OPENAI_API_KEY": "secret"}
+    context.config.set("models.allowed_selectors", ("openai/o3@openai", "openai/gpt-5@openai"))
+    bound = bind_run_request(
+        context,
+        RunRequest(
+            group="chat",
+            origin="chat",
+            thunk="hello",
+            model_selector="openai/gpt-5@openai",
+        ),
+    )
+
+    bundle = RunInput.from_binding(context, bound)
+
+    assert bundle.effective_model_selectors(context) == ("openai/o3@openai", "openai/gpt-5@openai")
+    assert bundle.model_selector(context) == "openai/gpt-5@openai"
+    assert bundle.debug["requested_model_selector"] == "openai/gpt-5@openai"
+
+
 def test_assemble_run_input_uses_activation_default_when_thunk_omits_one(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
@@ -2540,6 +2667,45 @@ def test_execution_store_records_runs_steps_and_messages(tmp_path: Path) -> None
         store.close()
 
 
+def test_chat_accepts_structured_message_parts_and_model_selector(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("chat", "inspect"),
+    )
+    app = _create_test_app(context)
+
+    with _patched_runner_execution():
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/v1/chat",
+                json={
+                    "thread": "thread-1",
+                    "model": "openai/gpt-5@openai",
+                    "message": {
+                        "role": "user",
+                        "parts": [
+                            {"type": "text", "text": "summarize this"},
+                            {"type": "image", "image_url": "https://example.com/image.png"},
+                            {"type": "file", "file_url": "https://example.com/report.pdf", "filename": "report.pdf"},
+                        ],
+                    },
+                },
+            )
+            run_detail = client.get(f"/api/v1/runs/{response.json()['run_id']}").json()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["message"]["parts"] == [
+        {"type": "text", "text": "summarize this"},
+        {"type": "image", "detail": "auto", "image_url": "https://example.com/image.png"},
+        {"type": "file", "file_url": "https://example.com/report.pdf", "filename": "report.pdf"},
+    ]
+    assert run_detail["input"]["parts"] == body["message"]["parts"]
+
+
 def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     store = ExecutionStore(execution_db_path(toolang_root, "alice"))
@@ -2785,8 +2951,15 @@ def _write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def _chat_message(text: str) -> dict[str, object]:
+    return {
+        "role": "user",
+        "parts": [{"type": "text", "text": text}],
+    }
+
+
 def _fake_run_input(bound):
-    input_message = Message.user(bound.input_text or "hello")
+    input_message = bound.message or Message.user(bound.input_text or "hello")
 
     class RunInputStub:
         def __init__(self) -> None:
@@ -2817,6 +2990,9 @@ def _fake_run_input(bound):
 
         def model_selector(self, _context):
             return None
+
+        def effective_model_selectors(self, _context):
+            return ()
 
     return RunInputStub()
 

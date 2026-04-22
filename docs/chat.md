@@ -40,6 +40,9 @@ Current roles are:
 Current part kinds are:
 
 - `text`
+- `image`
+- `audio`
+- `file`
 - `tool_call`
 - `tool_result`
 
@@ -85,7 +88,16 @@ source used by trace and chat inspection pages.
 
 Buffered chat:
 
+- `GET /api/v1/chat/models`
 - `POST /api/v1/chat`
+
+request body:
+
+- `thread`
+- `message`
+  - `role`
+  - `parts`
+- `model` optional selected model selector
 
 returns:
 
@@ -99,6 +111,9 @@ Streaming chat:
 - `POST /api/v1/chat/stream`
 
 returns an SSE stream for the same run.
+
+`GET /api/v1/chat/models` returns the current chat-selectable model selectors
+and the default selector after applying activation config and the `chat` thunk.
 
 
 ## Streaming Rule

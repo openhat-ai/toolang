@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from toolang.base.error import ToolangError
 from toolang.base.protocols.model import ModelProvider
+from toolang.base.types.message import AudioPart
 from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelEventHandler
 from . import responses
@@ -19,6 +20,11 @@ _KNOWN_MODELS: tuple[tuple[str, str], ...] = (
 _DEFAULT_BASE_URL = "https://api.openai.com/v1"
 _DEFAULT_API_KEY_ENV = "OPENAI_API_KEY"
 _OPENAI_ADAPTER = "responses"
+_AUDIO_MODEL_PREFIXES: tuple[str, ...] = (
+    "gpt-audio",
+    "gpt-4o-audio-preview",
+    "gpt-4o-mini-audio-preview",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +68,7 @@ class OpenAIModelProvider(ModelProvider):
     ) -> ModelCallResult:
         if target.adapter != _OPENAI_ADAPTER:
             raise ToolangError(f"unsupported openai adapter: {target.adapter}")
+        _require_supported_openai_inputs(target, request)
         return responses.invoke_response(
             target,
             request,
@@ -77,12 +84,48 @@ class OpenAIModelProvider(ModelProvider):
     ) -> ModelCallResult:
         if target.adapter != _OPENAI_ADAPTER:
             raise ToolangError(f"unsupported openai adapter: {target.adapter}")
+        _require_supported_openai_inputs(target, request)
         return responses.stream_response(
             target,
             request,
             stateful=True,
             on_event=on_event,
         )
+
+
+def _require_supported_openai_inputs(
+    target: ModelTarget,
+    request: ModelCall,
+) -> None:
+    if _supports_openai_audio_input(target):
+        return
+    if not _request_has_audio_input(request):
+        return
+    raise ToolangError(
+        f"audio input is not supported for OpenAI model '{target.model}' via the Responses adapter; "
+        "transcribe audio first, send it as a generic file to a route that supports audio files, or use an audio-capable model route"
+    )
+
+
+def _supports_openai_audio_input(target: ModelTarget) -> bool:
+    candidates = (
+        target.model.strip().lower(),
+        target.ref.strip().lower(),
+        target.name.strip().lower(),
+    )
+    return any(
+        candidate.startswith(prefix)
+        for candidate in candidates
+        for prefix in _AUDIO_MODEL_PREFIXES
+    )
+
+
+def _request_has_audio_input(request: ModelCall) -> bool:
+    return any(
+        isinstance(part, AudioPart)
+        for message in request.messages
+        for part in message.parts
+    )
 
 
 def create_model(config: Mapping[str, object]) -> ModelProvider:

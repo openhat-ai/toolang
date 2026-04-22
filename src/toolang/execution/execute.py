@@ -56,11 +56,11 @@ async def execute_run(
             ),
         )
         started = True
+        allowed_model_selectors = run_input.effective_model_selectors(context)
         model = resolve_model(
             context,
             selector=run_input.model_selector(context),
-            default_selector=_activation_default_model_selector(context),
-            allowed_selectors=_activation_allowed_model_selectors(context),
+            allowed_selectors=allowed_model_selectors,
         )
         provider = context.model_providers[model.provider]
         strategy = load_run_strategy(bound.run_strategy)
@@ -137,23 +137,6 @@ async def execute_run(
         output_text=execution.output_text,
         live_fingerprint=bound.live.fingerprint,
     )
-
-
-def _activation_default_model_selector(context: UptimeContext) -> str | None:
-    value = context.config.get("models.default_selector")
-    if not isinstance(value, str):
-        return None
-    selector = value.strip()
-    return selector or None
-
-
-def _activation_allowed_model_selectors(context: UptimeContext) -> tuple[str, ...]:
-    value = context.config.get("models.allowed_selectors")
-    if isinstance(value, tuple):
-        return tuple(item for item in value if isinstance(item, str) and item.strip())
-    if isinstance(value, list):
-        return tuple(item for item in value if isinstance(item, str) and item.strip())
-    return ()
 
 
 def _event_handler(

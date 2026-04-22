@@ -9,7 +9,14 @@ import pytest
 
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.protocols.tool import Tool
-from toolang.base.types.message import Message, ToolCallPart, ToolResultPart
+from toolang.base.types.message import (
+    AudioPart,
+    FilePart,
+    ImagePart,
+    Message,
+    ToolCallPart,
+    ToolResultPart,
+)
 from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage, ToolCall
 from toolang.base.types.tool import ToolContext, ToolDefinition
@@ -19,6 +26,7 @@ from toolang.execution.input import RunBinding, RunInput
 from toolang.execution.model import resolve_model, select_model_selectors
 from toolang.execution.snapshot import RunSnapshot, SnapshotAgent, SnapshotProgram, SnapshotRun
 from toolang.models import ollama as ollama_models
+from toolang.models import openai as openai_models
 from toolang.models import openrouter as openrouter_models
 from toolang.models import responses as responses_models
 from toolang.models.responses import encode_message, response_payload
@@ -415,6 +423,40 @@ def test_select_model_selectors_prefers_exact_ref_over_version_aliases() -> None
     assert selectors == ("openai/gpt-5@openrouter",)
 
 
+def test_select_model_selectors_returns_all_discoverable_when_unrestricted() -> None:
+    openai = _FakeModelProvider(
+        name="openai",
+        models=(
+            ModelInfo(ref="openai/gpt-5", provider="openai", name="gpt-5", model="gpt-5", selectors=("gpt-5", "openai/gpt-5"), adapter="responses"),
+            ModelInfo(ref="openai/o3", provider="openai", name="o3", model="o3", selectors=("o3", "openai/o3"), adapter="responses"),
+        ),
+        required_env_vars=("OPENAI_API_KEY",),
+    )
+    openrouter = _FakeModelProvider(
+        name="openrouter",
+        models=(
+            ModelInfo(ref="openai/gpt-5", provider="openrouter", name="gpt-5", model="openai/gpt-5", selectors=("gpt-5", "openai/gpt-5"), adapter="responses"),
+            ModelInfo(ref="openai/o3", provider="openrouter", name="o3", model="openai/o3", selectors=("o3", "openai/o3"), adapter="responses"),
+        ),
+        required_env_vars=("OPENROUTER_API_KEY",),
+    )
+    context = SimpleNamespace(
+        model_providers={"openai": openai, "openrouter": openrouter},
+        model_routes={},
+        default_models=(),
+        model_environ={"OPENAI_API_KEY": "secret", "OPENROUTER_API_KEY": "secret"},
+    )
+
+    selectors = select_model_selectors(context)
+
+    assert selectors == (
+        "openai/gpt-5@openai",
+        "openai/gpt-5@openrouter",
+        "openai/o3@openai",
+        "openai/o3@openrouter",
+    )
+
+
 def test_model_info_discovery_is_cached_within_one_process() -> None:
     openrouter = _FakeModelProvider(
         name="openrouter",
@@ -644,6 +686,66 @@ def test_openrouter_provider_invokes_with_stateless_responses(monkeypatch) -> No
             "X-OpenRouter-Categories": "cli-agent",
         },
     )
+
+
+def test_openai_provider_rejects_audio_inputs_for_non_audio_models(monkeypatch) -> None:
+    def fail_invoke_response(*args, **kwargs):
+        raise AssertionError("responses.invoke_response should not be called")
+
+    monkeypatch.setattr(openai_models.responses, "invoke_response", fail_invoke_response)
+    provider = openai_models.create_model({})
+    target = ModelTarget(
+        ref="openai/gpt-5",
+        provider="openai",
+        name="gpt-5",
+        model="gpt-5",
+        adapter="responses",
+    )
+    request = ModelCall(
+        instructions="dev",
+        messages=[
+            Message(
+                role="user",
+                parts=(
+                    Message.user("hello").parts[0],
+                    AudioPart(data="ZGF0YQ==", format="mp3"),
+                ),
+            )
+        ],
+    )
+
+    with pytest.raises(ToolangError, match="audio input is not supported for OpenAI model 'gpt-5'"):
+        provider.invoke(target, request)
+
+
+def test_openai_provider_rejects_audio_inputs_for_non_audio_models_in_streaming(monkeypatch) -> None:
+    def fail_stream_response(*args, **kwargs):
+        raise AssertionError("responses.stream_response should not be called")
+
+    monkeypatch.setattr(openai_models.responses, "stream_response", fail_stream_response)
+    provider = openai_models.create_model({})
+    target = ModelTarget(
+        ref="openai/gpt-5",
+        provider="openai",
+        name="gpt-5",
+        model="gpt-5",
+        adapter="responses",
+    )
+    request = ModelCall(
+        instructions="dev",
+        messages=[
+            Message(
+                role="user",
+                parts=(
+                    Message.user("hello").parts[0],
+                    AudioPart(data="ZGF0YQ==", format="mp3"),
+                ),
+            )
+        ],
+    )
+
+    with pytest.raises(ToolangError, match="audio input is not supported for OpenAI model 'gpt-5'"):
+        provider.stream(target, request, on_event=lambda _event: None)
 
 
 def test_openrouter_provider_preserves_route_header_overrides(monkeypatch) -> None:
@@ -1061,6 +1163,8 @@ def test_run_context_logs_model_and_tool_io_at_debug(caplog) -> None:
     assert "tool call input name=shell_execute" in caplog.text
     assert "tool call output name=shell_execute" in caplog.text
     assert '"stdout": "ran:pwd"' in caplog.text
+
+
 def test_responses_encode_message_preserves_structured_content() -> None:
     encoded = encode_message(Message(role="user", parts=(Message.user("hello").parts[0],)))
 
@@ -1074,6 +1178,80 @@ def test_responses_encode_message_preserves_structured_content() -> None:
             }
         ],
     }
+
+
+def test_responses_encode_message_supports_multimodal_user_parts() -> None:
+    encoded = encode_message(
+        Message(
+            role="user",
+            parts=(
+                Message.user("describe this").parts[0],
+                ImagePart(image_url="https://example.com/image.png", detail="high"),
+                AudioPart(data="ZGF0YQ==", format="mp3"),
+                FilePart(file_url="https://example.com/report.pdf", filename="report.pdf"),
+            ),
+        )
+    )
+
+    assert encoded == {
+        "type": "message",
+        "role": "user",
+        "content": [
+            {"type": "input_text", "text": "describe this"},
+            {"type": "input_image", "image_url": "https://example.com/image.png", "detail": "high"},
+            {"type": "input_audio", "input_audio": {"data": "ZGF0YQ==", "format": "mp3"}},
+            {"type": "input_file", "file_url": "https://example.com/report.pdf", "filename": "report.pdf"},
+        ],
+    }
+
+
+def test_audio_part_accepts_data_url_in_data_field() -> None:
+    part = Message.from_data(
+        {
+            "role": "user",
+            "parts": [
+                {
+                    "type": "audio",
+                    "data": "data:audio/mpeg;base64,ZGF0YQ==",
+                }
+            ],
+        }
+    ).parts[0]
+
+    assert isinstance(part, AudioPart)
+    assert part.data == "ZGF0YQ=="
+    assert part.format == "mp3"
+    assert part.media_type == "audio/mpeg"
+
+
+def test_file_part_preserves_data_url_as_file_data() -> None:
+    part = Message.from_data(
+        {
+            "role": "user",
+            "parts": [
+                {
+                    "type": "file",
+                    "data_url": "data:application/pdf;base64,JVBERi0xLjc=",
+                    "filename": "report.pdf",
+                }
+            ],
+        }
+    ).parts[0]
+
+    assert isinstance(part, FilePart)
+    assert part.file_data == "data:application/pdf;base64,JVBERi0xLjc="
+    assert part.media_type == "application/pdf"
+    assert part.filename == "report.pdf"
+
+
+def test_responses_reject_non_text_assistant_multimodal_parts() -> None:
+    with pytest.raises(ToolangError, match="assistant messages cannot contain image parts"):
+        encode_message(
+            Message(
+                role="assistant",
+                parts=(ImagePart(image_url="https://example.com/image.png"),),
+            )
+        )
 
 
 def test_responses_skip_historical_tool_items_without_previous_response_id() -> None:
@@ -1211,6 +1389,8 @@ def _run_input() -> RunInput:
             thread_id="thread-1",
             thunk_name=None,
             input_text="hello",
+            message=Message.user("hello"),
+            model_selector=None,
             run_strategy="basic",
             metadata={},
             live=cast(Any, live),

@@ -223,8 +223,51 @@ Write:
 
 ## Chat Endpoints
 
+- `GET /api/v1/chat/models`
 - `POST /api/v1/chat`
 - `POST /api/v1/chat/stream`
+
+`GET /api/v1/chat/models` returns the effective selectable model selectors for
+chat runs after applying the current activation config and the `chat` thunk's
+`models` directive. The response includes:
+
+- `default`
+- `items`
+  - `selector`
+  - `name`
+  - `ref`
+  - `provider`
+  - `model`
+  - `adapter`
+  - `tools`
+  - `streaming`
+
+Chat request body uses:
+
+- `thread`
+- `message`
+  - `role`
+  - `parts`
+- `model` optional selected model selector for this run
+
+`message.parts` accepts canonical message parts such as:
+
+- `text`
+- `image`
+- `audio`
+- `file`
+
+Actual part support still depends on the selected model route. For example, the
+built-in OpenAI `responses` routes currently accept text, image, and file
+inputs, but not audio inputs.
+
+For multipart payload details:
+
+- `image.image_url` may be a remote URL or a local `data:` URL
+- `audio.data` should be base64 payload; `audio.data_url` is also accepted as an alias and is normalized to base64
+- `file.file_url` is for remote files
+- `file.file_data` should carry the provider-facing file payload and may be a full `data:...;base64,...` URL
+- `file.data_url` is also accepted as an alias and is normalized to `file_data`
 
 `POST /api/v1/chat` returns one completed user/assistant pair.
 
