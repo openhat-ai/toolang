@@ -80,6 +80,8 @@ DEFAULT_CORS_ORIGINS = [
     "http://127.0.0.1:3000",
     "https://too.run",
 ]
+AUTO_RUNTIME_PORT_MIN = 7001
+AUTO_RUNTIME_PORT_MAX = 7999
 OPENAPI_TAGS = [
     {"name": "agent", "description": "Agent profile and health endpoints."},
     {"name": "chat", "description": "Chat submission and streaming endpoints."},
@@ -1031,10 +1033,28 @@ def normalize_loop_names(loop_names: Sequence[str]) -> tuple[LoopName, ...]:
     return tuple(enabled)
 
 
-def _pick_free_port(host: str) -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind((host, 0))
-        return int(sock.getsockname()[1])
+def _pick_runtime_port(
+    host: str,
+    *,
+    toolang_root: Path,
+    agent_name: str,
+    preferred_port: int | None = None,
+) -> int:
+    tried = agents.assigned_runtime_ports(
+        toolang_root,
+        exclude_agent=agent_name,
+    )
+    if preferred_port is not None:
+        tried.add(preferred_port)
+    for candidate in range(AUTO_RUNTIME_PORT_MIN, AUTO_RUNTIME_PORT_MAX + 1):
+        if candidate in tried:
+            continue
+        if _port_is_available(host, candidate):
+            return candidate
+    raise ValueError(
+        "no available runtime port in Toolang auto range "
+        f"{AUTO_RUNTIME_PORT_MIN}-{AUTO_RUNTIME_PORT_MAX}; pass --port"
+    )
 
 
 def resolve_runtime_port(
@@ -1054,7 +1074,12 @@ def resolve_runtime_port(
         status = runtime_state.get("status") if runtime_state is not None else None
         if status == "stopped" and _wait_for_port_available(host, preferred_port, timeout_sec=5.0):
             return preferred_port
-    return _pick_free_port(host)
+    return _pick_runtime_port(
+        host,
+        toolang_root=toolang_root,
+        agent_name=agent_name,
+        preferred_port=preferred_port,
+    )
 
 
 def _port_is_available(host: str, port: int) -> bool:

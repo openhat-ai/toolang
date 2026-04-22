@@ -1091,7 +1091,10 @@ def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
     _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr("toolang.up._pick_free_port", lambda host: 43210)
+    monkeypatch.setattr(
+        "toolang.up._pick_runtime_port",
+        lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
+    )
 
     def fake_uvicorn_run(app, *, host: str, port: int, log_config) -> None:
         captured["app"] = app
@@ -1126,7 +1129,10 @@ def test_up_reuses_previous_agent_port_when_unspecified(tmp_path: Path, monkeypa
     )
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr("toolang.up._pick_free_port", lambda host: 43210)
+    monkeypatch.setattr(
+        "toolang.up._pick_runtime_port",
+        lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
+    )
 
     def fake_uvicorn_run(app, *, host: str, port: int, log_config) -> None:
         captured["app"] = app
@@ -1167,7 +1173,10 @@ def test_up_falls_back_when_previous_agent_port_is_unavailable(
             pid=12345,
         )
 
-        monkeypatch.setattr("toolang.up._pick_free_port", lambda host: 43210)
+        monkeypatch.setattr(
+            "toolang.up._pick_runtime_port",
+            lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
+        )
 
         def fake_uvicorn_run(app, *, host: str, port: int, log_config) -> None:
             captured["app"] = app
@@ -1212,7 +1221,10 @@ def test_up_waits_for_stopped_agent_port_to_become_available(tmp_path: Path, mon
 
     monkeypatch.setattr("toolang.up._port_is_available", fake_port_is_available)
     monkeypatch.setattr("toolang.up.time.sleep", lambda _: None)
-    monkeypatch.setattr("toolang.up._pick_free_port", lambda host: 43210)
+    monkeypatch.setattr(
+        "toolang.up._pick_runtime_port",
+        lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
+    )
 
     def fake_uvicorn_run(app, *, host: str, port: int, log_config) -> None:
         captured["host"] = host
@@ -1258,7 +1270,10 @@ def test_up_waits_longer_for_stopped_agent_port_to_become_available(
         return False
 
     monkeypatch.setattr("toolang.up._wait_for_port_available", fake_wait_for_port_available)
-    monkeypatch.setattr("toolang.up._pick_free_port", lambda host: 43210)
+    monkeypatch.setattr(
+        "toolang.up._pick_runtime_port",
+        lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
+    )
 
     resolved = up_module.resolve_runtime_port(
         host="127.0.0.1",
@@ -1273,6 +1288,45 @@ def test_up_waits_longer_for_stopped_agent_port_to_become_available(
         "port": 53322,
         "timeout_sec": 5.0,
     }
+
+
+def test_pick_runtime_port_uses_first_available_auto_port(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "bob" / "bob.too", "agent bob\n")
+    _write_text(toolang_root / "agents" / "carol" / "carol.too", "agent carol\n")
+    agents.write_runtime_state(
+        toolang_root,
+        "bob",
+        endpoint="http://127.0.0.1:7001",
+        started_at="2026-04-07T11:00:00Z",
+        pid=None,
+        status="stopped",
+    )
+    agents.write_runtime_state(
+        toolang_root,
+        "carol",
+        endpoint="http://127.0.0.1:7002",
+        started_at="2026-04-07T11:00:00Z",
+        pid=12345,
+    )
+
+    seen: list[int] = []
+
+    def fake_port_is_available(host: str, port: int) -> bool:
+        assert host == "127.0.0.1"
+        seen.append(port)
+        return port == 7003
+
+    monkeypatch.setattr("toolang.up._port_is_available", fake_port_is_available)
+
+    resolved = up_module._pick_runtime_port(
+        "127.0.0.1",
+        toolang_root=toolang_root,
+        agent_name="alice",
+    )
+
+    assert resolved == 7003
+    assert seen == [7003]
 
 
 def test_up_uses_cors_origins_from_root_config(tmp_path: Path, monkeypatch) -> None:

@@ -126,6 +126,12 @@ Behavior:
 | `toolang clone` | Clones one local agent, or fetches one remote agent program into a new local managed agent |
 | `toolang start` | Starts one local managed agent only. Remote selectors must be cloned first |
 
+When `toolang start` runs without `--port`, Toolang first tries the agent's last
+runtime port. If that port is not reusable, Toolang scans its auto-assigned
+local range `7001-7999`, starting at `7001` and counting upward, skipping ports
+already recorded by other local agents, instead of asking the OS for a random
+ephemeral port.
+
 
 ## Model Commands
 

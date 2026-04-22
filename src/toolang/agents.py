@@ -466,6 +466,35 @@ def preferred_runtime_port(toolang_root: Path, agent_name: str) -> int | None:
     """Return one previously used port for an agent when available."""
 
     runtime_state = _load_runtime_state(agent_runtime_state_path(toolang_root, agent_name))
+    return _runtime_state_port(runtime_state)
+
+
+def assigned_runtime_ports(
+    toolang_root: Path,
+    *,
+    exclude_agent: str | None = None,
+) -> set[int]:
+    """Return ports already recorded by local agents, including stopped ones."""
+
+    agents_dir = toolang_root / "agents"
+    if not agents_dir.is_dir():
+        return set()
+    ports: set[int] = set()
+    for home in agents_dir.iterdir():
+        if not home.is_dir():
+            continue
+        agent_name = home.name
+        if exclude_agent is not None and agent_name == exclude_agent:
+            continue
+        port = _runtime_state_port(_load_runtime_state(agent_runtime_state_path(toolang_root, agent_name)))
+        if port is not None:
+            ports.add(port)
+    return ports
+
+
+def _runtime_state_port(runtime_state: dict[str, object] | None) -> int | None:
+    """Return one parsed port from runtime state when available."""
+
     raw_endpoint = runtime_state.get("endpoint") if runtime_state else None
     if not isinstance(raw_endpoint, str) or not raw_endpoint.strip():
         return None
