@@ -824,7 +824,7 @@ def _make_work_list_command(kind: WorkKind, title: str) -> Callable[..., None]:
                 )
                 for entry in entries
             ]
-            _echo_table(("ID", title.upper(), "STATE", "STATUS", "LOCATION"), rows)
+            _echo_table(("ID", title.upper(), "STATE", "STAGE", "LOCATION"), rows)
             return
         entries = work.list_chores(root, agent_name, include_archived=all_items)
         if not entries:

@@ -2512,7 +2512,7 @@ def test_cli_task_list_shows_task_rows(tmp_path: Path, monkeypatch) -> None:
     assert "ID" in result.stdout
     assert "TASK" in result.stdout
     assert "STATE" in result.stdout
-    assert "STATUS" in result.stdout
+    assert "STAGE" in result.stdout
     assert "Review the current plan." in result.stdout
     assert "inactive" in result.stdout
     assert "running" in result.stdout
