@@ -2440,9 +2440,9 @@ def test_cli_task_new_supports_template_alias_and_persists_id(tmp_path: Path, mo
 
     assert result.exit_code == 0
     saved = (toolang_root / "agents" / "alice" / "tasks" / "review.md").read_text(encoding="utf-8")
-    assert "status: todo" in saved
-    assert "requester: owner" in saved
     assert "\nid: " in saved
+    assert "status: todo" not in saved
+    assert "requester:" not in saved
 
 
 def test_cli_task_list_shows_task_rows(tmp_path: Path, monkeypatch) -> None:
@@ -2452,7 +2452,6 @@ def test_cli_task_list_shows_task_rows(tmp_path: Path, monkeypatch) -> None:
         "edit",
         lambda *_args, **_kwargs: (
             "---\n"
-            "requester: bryan\n"
             "status: doing\n"
             "paused: true\n"
             "---\n"
@@ -2473,15 +2472,14 @@ def test_cli_task_list_shows_task_rows(tmp_path: Path, monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert "TASK" in result.stdout
+    assert "STATE" in result.stdout
     assert "STATUS" in result.stdout
-    assert "REQUESTER" in result.stdout
     assert "review" in result.stdout
-    assert "doing" in result.stdout
-    assert "bryan" in result.stdout
-    assert "yes" in result.stdout
+    assert "inactive" in result.stdout
+    assert "running" in result.stdout
 
 
-def test_cli_chore_new_and_list_show_rrule(tmp_path: Path, monkeypatch) -> None:
+def test_cli_chore_new_and_list_show_schedule(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
     _invoke_app(
@@ -2498,7 +2496,7 @@ def test_cli_chore_new_and_list_show_rrule(tmp_path: Path, monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert "CHORE" in result.stdout
-    assert "RRULE" in result.stdout
+    assert "SCHEDULE" in result.stdout
     assert "sync" in result.stdout
     assert "FREQ=HOURLY;INTERVAL=1" in result.stdout
 
@@ -2552,7 +2550,7 @@ def test_cli_work_template_commands_show_templates() -> None:
 
     assert task_result.exit_code == 0
     assert chore_list_result.exit_code == 0
-    assert "status: todo" in task_result.stdout
+    assert "Describe the task here." in task_result.stdout
     assert "TEMPLATE" in chore_list_result.stdout
     assert "default" in chore_list_result.stdout
 

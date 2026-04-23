@@ -5,14 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 from typing import TYPE_CHECKING, Any, cast
-from uuid import uuid4
 
 import frontmatter
 
 from toolang.base.protocols.tool import Tool
 from toolang.base.types.message import Message, message_summary, message_text
 from toolang.base.types.model import ModelTarget
-from .. import work
+from .. import agents, work
+from ..ids import LOCAL_ID_FAMILY, RUN_ID_FAMILY, allocate_id
 from ..program import MessageBlock, ParamDecl, SourceSpan, Thunk, ThunkOverlay
 from ..state.live import LiveState
 from ..state.prepared import PreparedEntry
@@ -108,19 +108,12 @@ Treat the user's message as the current task input.
 {{#runtime.job}}
 Current task:
 - Name: {{name}}
+- State: {{state}}
 - Status: {{status}}
-{{#requester}}
-- Requester: {{requester}}
-{{/requester}}
 {{#path}}
 - Path: {{path}}
 {{/path}}
-{{#writable}}
-- Update the task file as work progresses and before you finish.
-{{/writable}}
-{{^writable}}
-- The task record is read-only in this run.
-{{/writable}}
+- The task document is read-only during model execution; runtime updates task status.
 {{/runtime.job}}
 Work the task directly and keep progress or outcome notes precise.
 Do not call tools or inspect files just to explore the environment.
@@ -134,9 +127,9 @@ Current chore:
 {{#title}}
 - Title: {{title}}
 {{/title}}
-{{#rrule}}
-- Schedule: {{rrule}}
-{{/rrule}}
+{{#schedule}}
+- Schedule: {{schedule}}
+{{/schedule}}
 {{#path}}
 - Path: {{path}}
 {{/path}}
@@ -368,10 +361,10 @@ def bind_run_request(
     """Bind one queued run request to immutable runtime inputs."""
 
     bound_live = live or context.live
-    thread_id = request.thread_id or f"{request.origin}:{uuid4().hex}"
+    thread_id = request.thread_id or _new_thread_id(context, request.origin)
     run_strategy = cast(RunStrategy, normalize_run_strategy_name(request.run_strategy))
     return RunBinding(
-        run_id=uuid4().hex,
+        run_id=_new_run_id(context),
         group=request.group,
         origin=request.origin,
         thread_id=thread_id,
@@ -384,6 +377,27 @@ def bind_run_request(
         live=bound_live,
         created_at=utc_now(),
     )
+
+
+def _new_run_id(context: UptimeContext) -> str:
+    value = allocate_id(
+        agents.agent_id_state_path(context.root, context.name),
+        family=RUN_ID_FAMILY,
+    ).value
+    return f"run_{value}"
+
+
+def _new_thread_id(context: UptimeContext, origin: str) -> str:
+    value = allocate_id(
+        agents.agent_id_state_path(context.root, context.name),
+        family=LOCAL_ID_FAMILY,
+    ).value
+    return f"{_thread_id_kind(origin)}_{value}"
+
+
+def _thread_id_kind(origin: str) -> str:
+    text = "".join(char for char in origin.strip().lower() if char.isalnum())
+    return text or "thread"
 
 
 def select_origin_thunk(
@@ -843,16 +857,16 @@ def _task_snapshot(
             ref=task.document.thread_id(),
             name=task.name.rsplit("/", 1)[-1],
             body=task.document.body,
+            state=task.document.state,
             status=task.document.status,
-            requester=task.document.requester,
             thread_id=task.document.thread_id(),
             path=str(task.path),
         ),
         SnapshotTaskServices(
             provider="local",
             read=True,
-            write=True,
-            comment=True,
+            write=False,
+            comment=False,
             path=str(task.path),
         ),
     )
@@ -914,13 +928,13 @@ def _task_context(
         "provider": "local",
         "name": task.name.rsplit("/", 1)[-1],
         "body": task.document.body,
+        "state": task.document.state,
         "status": task.document.status,
-        "requester": task.document.requester,
         "thread_id": task.document.thread_id(),
         "path": str(task.path),
         "readable": True,
-        "writable": True,
-        "commentable": True,
+        "writable": False,
+        "commentable": False,
     }
 
 
@@ -928,23 +942,22 @@ def _chore_context(
     context: UptimeContext,
     run: RunBinding,
 ) -> dict[str, object] | None:
-    chore_name = run.thread_id.removeprefix("chore:").strip()
-    if not chore_name:
+    chore_id = work.chore_id_from_thread_id(run.thread_id)
+    if chore_id is None:
         return None
-    path = work.chore_path(context.root, context.name, chore_name)
-    if not path.is_file():
+    chore = work.find_chore(context.root, context.name, chore_id)
+    if chore is None:
         return None
-    chore = work.ChoreFile.load(path)
     return {
         "kind": "chore",
         "provider": "local",
-        "name": chore_name,
-        "title": (chore.title or "").strip() or None,
-        "body": chore.body,
-        "paused": chore.paused,
-        "rrule": chore.rrule,
+        "name": chore.name.rsplit("/", 1)[-1],
+        "title": (chore.document.title or "").strip() or None,
+        "body": chore.document.body,
+        "state": chore.document.state,
+        "schedule": chore.document.schedule,
         "thread_id": run.thread_id,
-        "path": str(path),
+        "path": str(chore.path),
         "readable": True,
         "writable": False,
         "commentable": False,

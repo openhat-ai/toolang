@@ -52,8 +52,8 @@ class SnapshotTask:
     ref: str
     name: str
     body: str
+    state: str
     status: str
-    requester: str | None
     thread_id: str
     path: str
 

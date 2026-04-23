@@ -802,14 +802,13 @@ def _make_work_list_command(kind: WorkKind, title: str) -> Callable[..., None]:
             rows = [
                 (
                     entry.name,
+                    entry.document.state,
                     entry.document.status,
-                    entry.document.requester,
-                    "yes" if entry.document.paused else "-",
                     str(entry.path),
                 )
                 for entry in entries
             ]
-            _echo_table((title.upper(), "STATUS", "REQUESTER", "PAUSED", "LOCATION"), rows)
+            _echo_table((title.upper(), "STATE", "STATUS", "LOCATION"), rows)
             return
         entries = work.list_chores(_context_root(ctx), agent_name)
         if not entries:
@@ -818,14 +817,14 @@ def _make_work_list_command(kind: WorkKind, title: str) -> Callable[..., None]:
         rows = [
             (
                 entry.name,
+                entry.document.state,
                 (entry.document.title or "-").strip() or "-",
-                entry.document.rrule,
-                "yes" if entry.document.paused else "-",
+                entry.document.schedule,
                 str(entry.path),
             )
             for entry in entries
         ]
-        _echo_table((title.upper(), "TITLE", "RRULE", "PAUSED", "LOCATION"), rows)
+        _echo_table((title.upper(), "STATE", "TITLE", "SCHEDULE", "LOCATION"), rows)
 
     return list_work
 

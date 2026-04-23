@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from collections.abc import AsyncIterator, Container, Sequence
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -21,6 +23,7 @@ from ..execution.records import ModelCallStepPayload
 from .. import agents, work
 from ..state.durable import scan_durable_state
 from ..state.prepared import PreparedEntry, load_prepared_state
+from ..state.pulse import PulseState
 
 if TYPE_CHECKING:
     from ..up import UptimeContext
@@ -161,14 +164,14 @@ def create_router() -> APIRouter:
         return StreamingResponse(_events_stream(), media_type="text/event-stream")
 
     @router.get("/tasks", tags=["jobs"], summary="List Tasks")
-    async def tasks(request: Request) -> dict[str, object]:
+    async def tasks(request: Request, include_archived: bool = False) -> dict[str, object]:
         context = request.app.state.runtime
-        return {"items": _task_collection(context)}
+        return {"items": _task_collection(context, include_archived=include_archived)}
 
     @router.get("/chores", tags=["jobs"], summary="List Chores")
-    async def chores(request: Request) -> dict[str, object]:
+    async def chores(request: Request, include_archived: bool = False) -> dict[str, object]:
         context = request.app.state.runtime
-        return {"items": _chore_collection(context)}
+        return {"items": _chore_collection(context, include_archived=include_archived)}
 
     @router.get("/will", tags=["jobs"], summary="Get Will")
     async def will() -> dict[str, object]:
@@ -242,46 +245,113 @@ def _cap_collection(context: UptimeContext, *, kind: CapKind) -> list[dict[str, 
     ]
 
 
-def _task_collection(context: UptimeContext) -> list[dict[str, object]]:
+def _task_collection(context: UptimeContext, *, include_archived: bool = False) -> list[dict[str, object]]:
     items: list[dict[str, object]] = []
-    for entry in context.live.job_entries:
-        if entry.kind != "task":
-            continue
-        path = context.root / entry.path
-        document = work.TaskFile.load(path, persist_id=True)
+    for entry in work.list_tasks(context.root, context.name, include_archived=include_archived):
+        document = entry.document
         items.append(
             {
                 "id": document.task_id(),
-                "name": entry.name,
-                "body": document.body,
+                "kind": "task",
+                "state": document.state,
                 "status": document.status,
-                "requester": document.requester,
-                "thread_id": document.thread_id(),
-                "paused": document.paused,
-                "path": str(path),
+                "title": document.display_title(fallback_name=entry.name.rsplit("/", 1)[-1]),
+                "path": _agent_relative_path(context, entry.path),
+                "updated_at": _path_updated_at(entry.path),
+                "runtime": _job_runtime(context, thread_id=document.thread_id()),
             }
         )
     return items
 
 
-def _chore_collection(context: UptimeContext) -> list[dict[str, object]]:
+def _chore_collection(context: UptimeContext, *, include_archived: bool = False) -> list[dict[str, object]]:
     items: list[dict[str, object]] = []
-    for entry in context.live.job_entries:
-        if entry.kind != "chore":
-            continue
-        path = context.root / entry.path
-        document = work.ChoreFile.load(path)
+    pulse_state = _pulse_state(context)
+    for entry in work.list_chores(context.root, context.name, include_archived=include_archived):
+        document = entry.document
+        item_state = pulse_state.chores.get(document.chore_id())
         items.append(
             {
-                "id": entry.name,
-                "title": document.title,
-                "body": document.body,
-                "rrule": document.rrule,
-                "paused": document.paused,
-                "path": str(path),
+                "id": document.chore_id(),
+                "kind": "chore",
+                "state": document.state,
+                "schedule": document.schedule,
+                "title": document.display_title(fallback_name=entry.name.rsplit("/", 1)[-1]),
+                "path": _agent_relative_path(context, entry.path),
+                "updated_at": _path_updated_at(entry.path),
+                "runtime": _job_runtime(
+                    context,
+                    thread_id=document.thread_id(),
+                    next_run_at=None if item_state is None else item_state.next_due_at,
+                ),
             }
         )
     return items
+
+
+def _job_runtime(
+    context: UptimeContext,
+    *,
+    thread_id: str,
+    next_run_at: datetime | None = None,
+) -> dict[str, object]:
+    runs = context.store.list_runs(limit=None, thread_id=thread_id)
+    ordered = sorted(runs, key=lambda item: item.created_at, reverse=True)
+    active = next((item for item in ordered if item.status == "running"), None)
+    last = next((item for item in ordered if item.status != "running"), None)
+    return {
+        "thread_id": thread_id,
+        "active_run": _active_run_item(active) if active is not None else None,
+        "last_run": _last_run_item(last) if last is not None else None,
+        "next_run": (
+            {"at": next_run_at.astimezone(timezone.utc).isoformat()}
+            if next_run_at is not None
+            else None
+        ),
+    }
+
+
+def _active_run_item(run: RunRecord) -> dict[str, object]:
+    return {
+        "id": run.run_id,
+        "started_at": run.started_at,
+    }
+
+
+def _last_run_item(run: RunRecord) -> dict[str, object]:
+    return {
+        "id": run.run_id,
+        "status": _runtime_run_status(run.status),
+        "started_at": run.started_at,
+        "finished_at": run.finished_at,
+    }
+
+
+def _runtime_run_status(status: str) -> str:
+    if status == "finished":
+        return "succeeded"
+    return status
+
+
+def _pulse_state(context: UptimeContext) -> PulseState:
+    path = agents.agent_pulse_state_path(context.root, context.name)
+    if not path.is_file():
+        return PulseState()
+    try:
+        return PulseState.load(path)
+    except Exception:
+        return PulseState()
+
+
+def _agent_relative_path(context: UptimeContext, path: Path) -> str:
+    try:
+        return str(path.relative_to(context.home))
+    except ValueError:
+        return str(path)
+
+
+def _path_updated_at(path: Path) -> str:
+    return datetime.fromtimestamp(path.stat().st_mtime_ns / 1_000_000_000, tz=timezone.utc).isoformat()
 
 
 def _cap_summary_item(context: UptimeContext, entry: PreparedEntry) -> dict[str, object]:
@@ -463,9 +533,9 @@ def _thread_items(context: UptimeContext) -> list[ThreadInfo]:
 
 
 def _thread_metric_kind(thread: ThreadInfo) -> Literal["chat", "chore", "task"]:
-    if thread.id.startswith("task:") or thread.origin == "task":
+    if thread.id.startswith("task_") or thread.origin == "task":
         return "task"
-    if thread.id.startswith("chore:") or thread.origin == "chore":
+    if thread.id.startswith("chore_") or thread.origin == "chore":
         return "chore"
     return "chat"
 

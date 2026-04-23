@@ -347,7 +347,7 @@ def active_job_entries(agent_lock: PreparedLock) -> tuple[PreparedEntry, ...]:
     jobs = [
         entry
         for entry in agent_lock.entries
-        if entry.kind in JOB_KINDS and entry.meta.get("archived") is not True
+        if entry.kind in JOB_KINDS and entry.meta.get("state") != "archived"
     ]
     return tuple(sorted(jobs, key=_entry_sort_key))
 
