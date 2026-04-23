@@ -290,8 +290,10 @@ Suggested derivation:
 ```text
 if state == "archived" -> archived
 else if runtime.active_run != null -> in_progress
-else if runtime.last_run?.status == "failed" -> failed
 else if kind == "task" && stage == "running" -> in_progress
+else if state == "inactive" -> inactive
+else if kind == "task" && stage == "failed" -> failed
+else if runtime.last_run?.status == "failed" -> failed
 else if kind == "task" && stage == "todo" -> todo
 else if kind == "task" && stage == "done" -> finished
 else if kind == "chore" && runtime.next_run != null -> scheduled
