@@ -278,18 +278,31 @@ message stream subset.
 ## Job Endpoints
 
 - `GET /api/v1/jobs`
+- `GET /api/v1/jobs/{job_id}`
+- `PATCH /api/v1/jobs/{job_id}`
+- `DELETE /api/v1/jobs/{job_id}`
+- `GET /api/v1/jobs/archived`
+- `GET /api/v1/jobs/archived/{job_id}`
+- `PATCH /api/v1/jobs/archived/{job_id}`
+- `DELETE /api/v1/jobs/archived/{job_id}`
 - `GET /api/v1/tasks`
 - `POST /api/v1/tasks`
 - `GET /api/v1/tasks/{task_id}`
 - `PATCH /api/v1/tasks/{task_id}`
-- `POST /api/v1/tasks/{task_id}/archive`
 - `DELETE /api/v1/tasks/{task_id}`
+- `GET /api/v1/tasks/archived`
+- `GET /api/v1/tasks/archived/{task_id}`
+- `PATCH /api/v1/tasks/archived/{task_id}`
+- `DELETE /api/v1/tasks/archived/{task_id}`
 - `GET /api/v1/chores`
 - `POST /api/v1/chores`
 - `GET /api/v1/chores/{chore_id}`
 - `PATCH /api/v1/chores/{chore_id}`
-- `POST /api/v1/chores/{chore_id}/archive`
 - `DELETE /api/v1/chores/{chore_id}`
+- `GET /api/v1/chores/archived`
+- `GET /api/v1/chores/archived/{chore_id}`
+- `PATCH /api/v1/chores/archived/{chore_id}`
+- `DELETE /api/v1/chores/archived/{chore_id}`
 - `GET /api/v1/will`
 
 `GET /api/v1/jobs` returns tasks and chores in one response. Use `kind=task` or
@@ -346,7 +359,7 @@ most recent finished run object or `null`; it must not point at the same run as
 `active_run`. `next_run` is the next scheduled chore run or `null`.
 
 Default job list endpoints return active and inactive jobs. Archived jobs are
-returned only when explicitly requested, such as with `include_archived=true`.
+available only through explicit `/archived` routes.
 
 Detail endpoints return the same item shape plus `body`.
 
@@ -362,7 +375,8 @@ Task create requests accept:
 ```
 
 Task patch requests accept any subset of `title`, `body`, `state`, and `stage`.
-Use the archive endpoint to move a task into `state: archived`.
+Patch `state: "archived"` on the normal route to archive a task. Patch
+`state: "active"` or `state: "inactive"` on the archived route to unarchive it.
 
 Chore create requests accept:
 
@@ -376,7 +390,9 @@ Chore create requests accept:
 ```
 
 Chore patch requests accept any subset of `title`, `body`, `state`, and
-`schedule`. Use the archive endpoint to move a chore into `state: archived`.
+`schedule`. Patch `state: "archived"` on the normal route to archive a chore.
+Patch `state: "active"` or `state: "inactive"` on the archived route to
+unarchive it.
 
 
 ## Activity Endpoints

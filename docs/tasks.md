@@ -309,27 +309,42 @@ The job phase is a projection. It is not stored in Markdown frontmatter.
 Current read endpoints:
 
 - `GET /api/v1/jobs`
+- `GET /api/v1/jobs/{job_id}`
+- `GET /api/v1/jobs/archived`
+- `GET /api/v1/jobs/archived/{job_id}`
 - `GET /api/v1/tasks`
 - `GET /api/v1/tasks/{task_id}`
+- `GET /api/v1/tasks/archived`
+- `GET /api/v1/tasks/archived/{task_id}`
 - `GET /api/v1/chores`
 - `GET /api/v1/chores/{chore_id}`
+- `GET /api/v1/chores/archived`
+- `GET /api/v1/chores/archived/{chore_id}`
 - `GET /api/v1/will`
 
 Default list endpoints return active and inactive jobs. Archived jobs are
-returned only when the endpoint explicitly requests archived content, for
-example with `include_archived=true`.
+returned only by explicit `/archived` routes.
 
 Current write endpoints:
 
 - `POST /api/v1/tasks`
+- `PATCH /api/v1/jobs/{job_id}`
+- `PATCH /api/v1/jobs/archived/{job_id}`
+- `DELETE /api/v1/jobs/{job_id}`
+- `DELETE /api/v1/jobs/archived/{job_id}`
 - `PATCH /api/v1/tasks/{task_id}`
-- `POST /api/v1/tasks/{task_id}/archive`
+- `PATCH /api/v1/tasks/archived/{task_id}`
 - `DELETE /api/v1/tasks/{task_id}`
+- `DELETE /api/v1/tasks/archived/{task_id}`
 - `POST /api/v1/chores`
 - `PATCH /api/v1/chores/{chore_id}`
-- `POST /api/v1/chores/{chore_id}/archive`
+- `PATCH /api/v1/chores/archived/{chore_id}`
 - `DELETE /api/v1/chores/{chore_id}`
+- `DELETE /api/v1/chores/archived/{chore_id}`
 
 Create and patch requests use structured JSON fields instead of raw
 frontmatter. Task writes accept `title`, `body`, `state`, and `stage`. Chore
 writes accept `title`, `body`, `state`, and `schedule`.
+
+Archive by patching `state: "archived"` on a normal route. Unarchive by
+patching `state: "active"` or `state: "inactive"` on an archived route.

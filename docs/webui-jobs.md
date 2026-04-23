@@ -33,7 +33,9 @@ Use filters when useful:
 ```http
 GET /api/v1/jobs?kind=task
 GET /api/v1/jobs?kind=chore
-GET /api/v1/jobs?include_archived=true
+GET /api/v1/jobs/archived
+GET /api/v1/jobs/archived?kind=task
+GET /api/v1/jobs/archived?kind=chore
 ```
 
 List responses intentionally omit `body`. Fetch detail when opening an edit
@@ -44,11 +46,12 @@ GET /api/v1/tasks/{task_id}
 GET /api/v1/chores/{chore_id}
 ```
 
-For archived items, pass `include_archived=true` to detail endpoints:
+For archived items, use the archived detail routes:
 
 ```http
-GET /api/v1/tasks/{task_id}?include_archived=true
-GET /api/v1/chores/{chore_id}?include_archived=true
+GET /api/v1/jobs/archived/{job_id}
+GET /api/v1/tasks/archived/{task_id}
+GET /api/v1/chores/archived/{chore_id}
 ```
 
 
@@ -209,6 +212,34 @@ Content-Type: application/json
 
 Task patch accepts any subset of `title`, `body`, `state`, and `stage`.
 
+Archive a task by patching `state: "archived"` on the normal route:
+
+```http
+PATCH /api/v1/tasks/{task_id}
+Content-Type: application/json
+```
+
+```json
+{
+  "state": "archived"
+}
+```
+
+Unarchive a task by patching `state: "active"` or `state: "inactive"` on the
+archived route:
+
+```http
+PATCH /api/v1/tasks/archived/{task_id}
+Content-Type: application/json
+```
+
+```json
+{
+  "state": "active",
+  "stage": "todo"
+}
+```
+
 Create a chore:
 
 ```http
@@ -241,14 +272,43 @@ Content-Type: application/json
 
 Chore patch accepts any subset of `title`, `body`, `state`, and `schedule`.
 
+Archive a chore by patching `state: "archived"` on the normal route:
+
+```http
+PATCH /api/v1/chores/{chore_id}
+Content-Type: application/json
+```
+
+```json
+{
+  "state": "archived"
+}
+```
+
+Unarchive a chore by patching `state: "active"` or `state: "inactive"` on the
+archived route:
+
+```http
+PATCH /api/v1/chores/archived/{chore_id}
+Content-Type: application/json
+```
+
+```json
+{
+  "state": "active"
+}
+```
+
 
 ## Archive And Delete
 
-Archive instead of deleting for normal UI retirement:
+Archive instead of deleting for normal UI retirement. Archive uses `PATCH
+state`, not a separate action endpoint:
 
 ```http
-POST /api/v1/tasks/{task_id}/archive
-POST /api/v1/chores/{chore_id}/archive
+PATCH /api/v1/tasks/{task_id}
+PATCH /api/v1/chores/{chore_id}
+PATCH /api/v1/jobs/{job_id}
 ```
 
 Delete is destructive:
@@ -258,11 +318,12 @@ DELETE /api/v1/tasks/{task_id}
 DELETE /api/v1/chores/{chore_id}
 ```
 
-To delete an archived item, pass `include_archived=true`:
+Delete archived items through the archived routes:
 
 ```http
-DELETE /api/v1/tasks/{task_id}?include_archived=true
-DELETE /api/v1/chores/{chore_id}?include_archived=true
+DELETE /api/v1/tasks/archived/{task_id}
+DELETE /api/v1/chores/archived/{chore_id}
+DELETE /api/v1/jobs/archived/{job_id}
 ```
 
 

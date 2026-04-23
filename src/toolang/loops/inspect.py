@@ -59,8 +59,16 @@ class TaskCreateRequest(_ApiModel):
 class TaskPatchRequest(_ApiModel):
     title: str | None = None
     body: str | None = None
-    state: JobWriteState | None = None
+    state: work.JobState | None = None
     stage: work.TaskStage | None = None
+
+
+class JobPatchRequest(_ApiModel):
+    title: str | None = None
+    body: str | None = None
+    state: work.JobState | None = None
+    stage: work.TaskStage | None = None
+    schedule: str | None = None
 
 
 class ChoreCreateRequest(_ApiModel):
@@ -73,7 +81,7 @@ class ChoreCreateRequest(_ApiModel):
 class ChorePatchRequest(_ApiModel):
     title: str | None = None
     body: str | None = None
-    state: JobWriteState | None = None
+    state: work.JobState | None = None
     schedule: str | None = None
 
 
@@ -201,19 +209,66 @@ def create_router() -> APIRouter:
     @router.get("/jobs", tags=["jobs"], summary="List Jobs")
     async def jobs(
         request: Request,
-        include_archived: bool = False,
         kind: JobKind | None = None,
     ) -> dict[str, object]:
         context = request.app.state.runtime
-        items = _job_collection(context, include_archived=include_archived)
+        items = _job_collection(context, archived=False)
         if kind is not None:
             items = [item for item in items if item["kind"] == kind]
         return {"items": items}
 
-    @router.get("/tasks", tags=["jobs"], summary="List Tasks")
-    async def tasks(request: Request, include_archived: bool = False) -> dict[str, object]:
+    @router.get("/jobs/archived", tags=["jobs"], summary="List Archived Jobs")
+    async def archived_jobs(request: Request, kind: JobKind | None = None) -> dict[str, object]:
         context = request.app.state.runtime
-        return {"items": _task_collection(context, include_archived=include_archived)}
+        items = _job_collection(context, archived=True)
+        if kind is not None:
+            items = [item for item in items if item["kind"] == kind]
+        return {"items": items}
+
+    @router.get("/jobs/archived/{job_id}", tags=["jobs"], summary="Get Archived Job")
+    async def archived_job_detail(request: Request, job_id: str) -> dict[str, object]:
+        context = request.app.state.runtime
+        kind, entry = _find_archived_job_or_404(context, job_id)
+        return {"item": _job_detail_item(context, kind=kind, entry=entry)}
+
+    @router.patch("/jobs/archived/{job_id}", tags=["jobs"], summary="Update Archived Job")
+    async def update_archived_job(request: Request, job_id: str, payload: JobPatchRequest) -> dict[str, object]:
+        context = request.app.state.runtime
+        kind, entry = _find_archived_job_or_404(context, job_id)
+        return _update_job(context, kind=kind, entry=entry, payload=payload)
+
+    @router.delete("/jobs/archived/{job_id}", tags=["jobs"], summary="Delete Archived Job")
+    async def delete_archived_job(request: Request, job_id: str) -> dict[str, object]:
+        context = request.app.state.runtime
+        kind, entry = _find_archived_job_or_404(context, job_id)
+        entry.path.unlink()
+        _append_job_update(context, kind=kind, item_id=job_id, action="deleted", path=entry.path)
+        return {"deleted": True, "id": job_id, "kind": kind}
+
+    @router.get("/jobs/{job_id}", tags=["jobs"], summary="Get Job")
+    async def job_detail(request: Request, job_id: str) -> dict[str, object]:
+        context = request.app.state.runtime
+        kind, entry = _find_job_or_404(context, job_id)
+        return {"item": _job_detail_item(context, kind=kind, entry=entry)}
+
+    @router.patch("/jobs/{job_id}", tags=["jobs"], summary="Update Job")
+    async def update_job(request: Request, job_id: str, payload: JobPatchRequest) -> dict[str, object]:
+        context = request.app.state.runtime
+        kind, entry = _find_job_or_404(context, job_id)
+        return _update_job(context, kind=kind, entry=entry, payload=payload)
+
+    @router.delete("/jobs/{job_id}", tags=["jobs"], summary="Delete Job")
+    async def delete_job(request: Request, job_id: str) -> dict[str, object]:
+        context = request.app.state.runtime
+        kind, entry = _find_job_or_404(context, job_id)
+        entry.path.unlink()
+        _append_job_update(context, kind=kind, item_id=job_id, action="deleted", path=entry.path)
+        return {"deleted": True, "id": job_id, "kind": kind}
+
+    @router.get("/tasks", tags=["jobs"], summary="List Tasks")
+    async def tasks(request: Request) -> dict[str, object]:
+        context = request.app.state.runtime
+        return {"items": _task_collection(context, archived=False)}
 
     @router.post("/tasks", tags=["jobs"], summary="Create Task", status_code=201)
     async def create_task(request: Request, payload: TaskCreateRequest) -> dict[str, object]:
@@ -225,44 +280,55 @@ def create_router() -> APIRouter:
         entry = _find_task_or_404(context, document.task_id())
         return {"item": _task_detail_item(context, entry)}
 
-    @router.get("/tasks/{task_id}", tags=["jobs"], summary="Get Task")
-    async def task_detail(request: Request, task_id: str, include_archived: bool = False) -> dict[str, object]:
+    @router.get("/tasks/archived", tags=["jobs"], summary="List Archived Tasks")
+    async def archived_tasks(request: Request) -> dict[str, object]:
         context = request.app.state.runtime
-        entry = _find_task_or_404(context, task_id, include_archived=include_archived)
+        return {"items": _task_collection(context, archived=True)}
+
+    @router.get("/tasks/archived/{task_id}", tags=["jobs"], summary="Get Archived Task")
+    async def archived_task_detail(request: Request, task_id: str) -> dict[str, object]:
+        context = request.app.state.runtime
+        entry = _find_archived_task_or_404(context, task_id)
+        return {"item": _task_detail_item(context, entry)}
+
+    @router.patch("/tasks/archived/{task_id}", tags=["jobs"], summary="Update Archived Task")
+    async def update_archived_task(request: Request, task_id: str, payload: TaskPatchRequest) -> dict[str, object]:
+        context = request.app.state.runtime
+        entry = _find_archived_task_or_404(context, task_id)
+        return _update_task(context, entry=entry, payload=payload)
+
+    @router.delete("/tasks/archived/{task_id}", tags=["jobs"], summary="Delete Archived Task")
+    async def delete_archived_task(request: Request, task_id: str) -> dict[str, object]:
+        context = request.app.state.runtime
+        entry = _find_archived_task_or_404(context, task_id)
+        entry.path.unlink()
+        _append_job_update(context, kind="task", item_id=task_id, action="deleted", path=entry.path)
+        return {"deleted": True, "id": task_id, "kind": "task"}
+
+    @router.get("/tasks/{task_id}", tags=["jobs"], summary="Get Task")
+    async def task_detail(request: Request, task_id: str) -> dict[str, object]:
+        context = request.app.state.runtime
+        entry = _find_task_or_404(context, task_id)
         return {"item": _task_detail_item(context, entry)}
 
     @router.patch("/tasks/{task_id}", tags=["jobs"], summary="Update Task")
     async def update_task(request: Request, task_id: str, payload: TaskPatchRequest) -> dict[str, object]:
         context = request.app.state.runtime
         entry = _find_task_or_404(context, task_id)
-        document = _patch_task_document(entry.document, payload)
-        document.save(entry.path)
-        _append_job_update(context, kind="task", item_id=task_id, action="updated", path=entry.path)
-        entry = _find_task_or_404(context, task_id)
-        return {"item": _task_detail_item(context, entry)}
-
-    @router.post("/tasks/{task_id}/archive", tags=["jobs"], summary="Archive Task")
-    async def archive_task(request: Request, task_id: str) -> dict[str, object]:
-        context = request.app.state.runtime
-        path = work.archive_task(context.root, context.name, task_id)
-        if path is None:
-            raise HTTPException(status_code=404, detail=f"task not found: {task_id}")
-        _append_job_update(context, kind="task", item_id=task_id, action="archived", path=path)
-        entry = _find_task_or_404(context, task_id, include_archived=True)
-        return {"item": _task_detail_item(context, entry)}
+        return _update_task(context, entry=entry, payload=payload)
 
     @router.delete("/tasks/{task_id}", tags=["jobs"], summary="Delete Task")
-    async def delete_task(request: Request, task_id: str, include_archived: bool = False) -> dict[str, object]:
+    async def delete_task(request: Request, task_id: str) -> dict[str, object]:
         context = request.app.state.runtime
-        entry = _find_task_or_404(context, task_id, include_archived=include_archived)
+        entry = _find_task_or_404(context, task_id)
         entry.path.unlink()
         _append_job_update(context, kind="task", item_id=task_id, action="deleted", path=entry.path)
         return {"deleted": True, "id": task_id, "kind": "task"}
 
     @router.get("/chores", tags=["jobs"], summary="List Chores")
-    async def chores(request: Request, include_archived: bool = False) -> dict[str, object]:
+    async def chores(request: Request) -> dict[str, object]:
         context = request.app.state.runtime
-        return {"items": _chore_collection(context, include_archived=include_archived)}
+        return {"items": _chore_collection(context, archived=False)}
 
     @router.post("/chores", tags=["jobs"], summary="Create Chore", status_code=201)
     async def create_chore(request: Request, payload: ChoreCreateRequest) -> dict[str, object]:
@@ -274,36 +340,47 @@ def create_router() -> APIRouter:
         entry = _find_chore_or_404(context, document.chore_id())
         return {"item": _chore_detail_item(context, entry)}
 
-    @router.get("/chores/{chore_id}", tags=["jobs"], summary="Get Chore")
-    async def chore_detail(request: Request, chore_id: str, include_archived: bool = False) -> dict[str, object]:
+    @router.get("/chores/archived", tags=["jobs"], summary="List Archived Chores")
+    async def archived_chores(request: Request) -> dict[str, object]:
         context = request.app.state.runtime
-        entry = _find_chore_or_404(context, chore_id, include_archived=include_archived)
+        return {"items": _chore_collection(context, archived=True)}
+
+    @router.get("/chores/archived/{chore_id}", tags=["jobs"], summary="Get Archived Chore")
+    async def archived_chore_detail(request: Request, chore_id: str) -> dict[str, object]:
+        context = request.app.state.runtime
+        entry = _find_archived_chore_or_404(context, chore_id)
+        return {"item": _chore_detail_item(context, entry)}
+
+    @router.patch("/chores/archived/{chore_id}", tags=["jobs"], summary="Update Archived Chore")
+    async def update_archived_chore(request: Request, chore_id: str, payload: ChorePatchRequest) -> dict[str, object]:
+        context = request.app.state.runtime
+        entry = _find_archived_chore_or_404(context, chore_id)
+        return _update_chore(context, entry=entry, payload=payload)
+
+    @router.delete("/chores/archived/{chore_id}", tags=["jobs"], summary="Delete Archived Chore")
+    async def delete_archived_chore(request: Request, chore_id: str) -> dict[str, object]:
+        context = request.app.state.runtime
+        entry = _find_archived_chore_or_404(context, chore_id)
+        entry.path.unlink()
+        _append_job_update(context, kind="chore", item_id=chore_id, action="deleted", path=entry.path)
+        return {"deleted": True, "id": chore_id, "kind": "chore"}
+
+    @router.get("/chores/{chore_id}", tags=["jobs"], summary="Get Chore")
+    async def chore_detail(request: Request, chore_id: str) -> dict[str, object]:
+        context = request.app.state.runtime
+        entry = _find_chore_or_404(context, chore_id)
         return {"item": _chore_detail_item(context, entry)}
 
     @router.patch("/chores/{chore_id}", tags=["jobs"], summary="Update Chore")
     async def update_chore(request: Request, chore_id: str, payload: ChorePatchRequest) -> dict[str, object]:
         context = request.app.state.runtime
         entry = _find_chore_or_404(context, chore_id)
-        document = _patch_chore_document(entry.document, payload)
-        document.save(entry.path)
-        _append_job_update(context, kind="chore", item_id=chore_id, action="updated", path=entry.path)
-        entry = _find_chore_or_404(context, chore_id)
-        return {"item": _chore_detail_item(context, entry)}
-
-    @router.post("/chores/{chore_id}/archive", tags=["jobs"], summary="Archive Chore")
-    async def archive_chore(request: Request, chore_id: str) -> dict[str, object]:
-        context = request.app.state.runtime
-        path = work.archive_chore(context.root, context.name, chore_id)
-        if path is None:
-            raise HTTPException(status_code=404, detail=f"chore not found: {chore_id}")
-        _append_job_update(context, kind="chore", item_id=chore_id, action="archived", path=path)
-        entry = _find_chore_or_404(context, chore_id, include_archived=True)
-        return {"item": _chore_detail_item(context, entry)}
+        return _update_chore(context, entry=entry, payload=payload)
 
     @router.delete("/chores/{chore_id}", tags=["jobs"], summary="Delete Chore")
-    async def delete_chore(request: Request, chore_id: str, include_archived: bool = False) -> dict[str, object]:
+    async def delete_chore(request: Request, chore_id: str) -> dict[str, object]:
         context = request.app.state.runtime
-        entry = _find_chore_or_404(context, chore_id, include_archived=include_archived)
+        entry = _find_chore_or_404(context, chore_id)
         entry.path.unlink()
         _append_job_update(context, kind="chore", item_id=chore_id, action="deleted", path=entry.path)
         return {"deleted": True, "id": chore_id, "kind": "chore"}
@@ -380,25 +457,35 @@ def _cap_collection(context: UptimeContext, *, kind: CapKind) -> list[dict[str, 
     ]
 
 
-def _job_collection(context: UptimeContext, *, include_archived: bool = False) -> list[dict[str, object]]:
+def _job_collection(context: UptimeContext, *, archived: bool) -> list[dict[str, object]]:
     return [
-        *_task_collection(context, include_archived=include_archived),
-        *_chore_collection(context, include_archived=include_archived),
+        *_task_collection(context, archived=archived),
+        *_chore_collection(context, archived=archived),
     ]
 
 
-def _task_collection(context: UptimeContext, *, include_archived: bool = False) -> list[dict[str, object]]:
+def _task_collection(context: UptimeContext, *, archived: bool) -> list[dict[str, object]]:
+    entries = (
+        work.list_archived_tasks(context.root, context.name)
+        if archived
+        else work.list_tasks(context.root, context.name)
+    )
     return [
         _task_item(context, entry)
-        for entry in work.list_tasks(context.root, context.name, include_archived=include_archived)
+        for entry in entries
     ]
 
 
-def _chore_collection(context: UptimeContext, *, include_archived: bool = False) -> list[dict[str, object]]:
+def _chore_collection(context: UptimeContext, *, archived: bool) -> list[dict[str, object]]:
     pulse_state = _pulse_state(context)
+    entries = (
+        work.list_archived_chores(context.root, context.name)
+        if archived
+        else work.list_chores(context.root, context.name)
+    )
     return [
         _chore_item(context, entry, pulse_state=pulse_state)
-        for entry in work.list_chores(context.root, context.name, include_archived=include_archived)
+        for entry in entries
     ]
 
 
@@ -455,27 +542,68 @@ def _chore_detail_item(context: UptimeContext, entry: work.ChoreEntry) -> dict[s
     }
 
 
+def _job_detail_item(
+    context: UptimeContext,
+    *,
+    kind: JobKind,
+    entry: work.TaskEntry | work.ChoreEntry,
+) -> dict[str, object]:
+    if kind == "task":
+        return _task_detail_item(context, cast(work.TaskEntry, entry))
+    return _chore_detail_item(context, cast(work.ChoreEntry, entry))
+
+
+def _find_job_or_404(context: UptimeContext, job_id: str) -> tuple[JobKind, work.TaskEntry | work.ChoreEntry]:
+    task = work.find_task(context.root, context.name, job_id)
+    if task is not None:
+        return "task", task
+    chore = work.find_chore(context.root, context.name, job_id)
+    if chore is not None:
+        return "chore", chore
+    raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
+
+
+def _find_archived_job_or_404(context: UptimeContext, job_id: str) -> tuple[JobKind, work.TaskEntry | work.ChoreEntry]:
+    task = work.find_archived_task(context.root, context.name, job_id)
+    if task is not None:
+        return "task", task
+    chore = work.find_archived_chore(context.root, context.name, job_id)
+    if chore is not None:
+        return "chore", chore
+    raise HTTPException(status_code=404, detail=f"archived job not found: {job_id}")
+
+
 def _find_task_or_404(
     context: UptimeContext,
     task_id: str,
-    *,
-    include_archived: bool = False,
 ) -> work.TaskEntry:
-    entry = work.find_task(context.root, context.name, task_id, include_archived=include_archived)
+    entry = work.find_task(context.root, context.name, task_id)
     if entry is None:
         raise HTTPException(status_code=404, detail=f"task not found: {task_id}")
+    return entry
+
+
+def _find_archived_task_or_404(context: UptimeContext, task_id: str) -> work.TaskEntry:
+    entry = work.find_archived_task(context.root, context.name, task_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"archived task not found: {task_id}")
     return entry
 
 
 def _find_chore_or_404(
     context: UptimeContext,
     chore_id: str,
-    *,
-    include_archived: bool = False,
 ) -> work.ChoreEntry:
-    entry = work.find_chore(context.root, context.name, chore_id, include_archived=include_archived)
+    entry = work.find_chore(context.root, context.name, chore_id)
     if entry is None:
         raise HTTPException(status_code=404, detail=f"chore not found: {chore_id}")
+    return entry
+
+
+def _find_archived_chore_or_404(context: UptimeContext, chore_id: str) -> work.ChoreEntry:
+    entry = work.find_archived_chore(context.root, context.name, chore_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"archived chore not found: {chore_id}")
     return entry
 
 
@@ -505,7 +633,69 @@ def _chore_document_from_create(context: UptimeContext, payload: ChoreCreateRequ
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-def _patch_task_document(document: work.TaskFile, payload: TaskPatchRequest) -> work.TaskFile:
+def _update_job(
+    context: UptimeContext,
+    *,
+    kind: JobKind,
+    entry: work.TaskEntry | work.ChoreEntry,
+    payload: JobPatchRequest,
+) -> dict[str, object]:
+    if kind == "task":
+        return _update_task(context, entry=cast(work.TaskEntry, entry), payload=payload)
+    return _update_chore(context, entry=cast(work.ChoreEntry, entry), payload=payload)
+
+
+def _update_task(
+    context: UptimeContext,
+    *,
+    entry: work.TaskEntry,
+    payload: TaskPatchRequest | JobPatchRequest,
+) -> dict[str, object]:
+    document = _patch_task_document(entry.document, payload)
+    path = work.save_task_entry(context.root, context.name, entry, document)
+    action = _job_change_action(before=entry.document.state, after=document.state)
+    _append_job_update(context, kind="task", item_id=document.task_id(), action=action, path=path)
+    updated = _task_entry_after_save(context, document.task_id(), archived=document.state == "archived")
+    return {"item": _task_detail_item(context, updated)}
+
+
+def _update_chore(
+    context: UptimeContext,
+    *,
+    entry: work.ChoreEntry,
+    payload: ChorePatchRequest | JobPatchRequest,
+) -> dict[str, object]:
+    document = _patch_chore_document(entry.document, payload)
+    path = work.save_chore_entry(context.root, context.name, entry, document)
+    action = _job_change_action(before=entry.document.state, after=document.state)
+    _append_job_update(context, kind="chore", item_id=document.chore_id(), action=action, path=path)
+    updated = _chore_entry_after_save(context, document.chore_id(), archived=document.state == "archived")
+    return {"item": _chore_detail_item(context, updated)}
+
+
+def _task_entry_after_save(context: UptimeContext, task_id: str, *, archived: bool) -> work.TaskEntry:
+    if archived:
+        return _find_archived_task_or_404(context, task_id)
+    return _find_task_or_404(context, task_id)
+
+
+def _chore_entry_after_save(context: UptimeContext, chore_id: str, *, archived: bool) -> work.ChoreEntry:
+    if archived:
+        return _find_archived_chore_or_404(context, chore_id)
+    return _find_chore_or_404(context, chore_id)
+
+
+def _job_change_action(*, before: work.JobState, after: work.JobState) -> str:
+    if before != "archived" and after == "archived":
+        return "archived"
+    if before == "archived" and after != "archived":
+        return "unarchived"
+    return "updated"
+
+
+def _patch_task_document(document: work.TaskFile, payload: TaskPatchRequest | JobPatchRequest) -> work.TaskFile:
+    if "schedule" in payload.model_fields_set:
+        raise HTTPException(status_code=400, detail="tasks do not support schedule")
     updates = {
         field: getattr(payload, field)
         for field in ("title", "body", "state", "stage")
@@ -517,7 +707,9 @@ def _patch_task_document(document: work.TaskFile, payload: TaskPatchRequest) -> 
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-def _patch_chore_document(document: work.ChoreFile, payload: ChorePatchRequest) -> work.ChoreFile:
+def _patch_chore_document(document: work.ChoreFile, payload: ChorePatchRequest | JobPatchRequest) -> work.ChoreFile:
+    if "stage" in payload.model_fields_set:
+        raise HTTPException(status_code=400, detail="chores do not support stage")
     updates = {
         field: getattr(payload, field)
         for field in ("title", "body", "state", "schedule")
