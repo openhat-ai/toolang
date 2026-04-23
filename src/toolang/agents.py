@@ -7,8 +7,10 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import shlex
 import signal
 import shutil
+import subprocess
 import tempfile
 import time
 from urllib.error import HTTPError, URLError
@@ -128,6 +130,12 @@ def agent_pulse_state_path(toolang_root: Path, agent_name: str) -> Path:
     """Return one agent pulse-state path."""
 
     return agent_room(toolang_root, agent_name) / "pulse.json"
+
+
+def agent_id_state_path(toolang_root: Path, agent_name: str) -> Path:
+    """Return one agent local-id allocator state path."""
+
+    return agent_room(toolang_root, agent_name) / "ids.json"
 
 
 def tool_room(toolang_root: Path, agent_name: str, plugin_name: str) -> Path:
@@ -286,6 +294,9 @@ def remove_agent(toolang_root: Path, agent_name: str) -> Path:
     status = get_agent_status(toolang_root, agent_name, ui_base_url="")
     if status is not None and status.status in {"running", "preparing", "starting"}:
         raise ValueError(f"agent is still active: {agent_name}")
+    runtime_pids = agent_runtime_process_pids(toolang_root, agent_name)
+    if runtime_pids:
+        raise ValueError(f"agent is still active: {agent_name} (pid {', '.join(str(pid) for pid in runtime_pids)})")
     shutil.rmtree(home)
     sandbox_stage_dir = _sandbox_stage_dir(toolang_root, agent_name)
     if sandbox_stage_dir.exists():
@@ -441,11 +452,12 @@ def stop_agent(
     """Stop one running agent and mark its runtime state as stopped."""
 
     runtime_state = load_runtime_state(toolang_root, agent_name)
-    if runtime_state is None:
+    runtime_pids = () if runtime_state is not None else agent_runtime_process_pids(toolang_root, agent_name)
+    if runtime_state is None and not runtime_pids:
         raise FileNotFoundError(f"runtime state not found: {agent_runtime_state_path(toolang_root, agent_name)}")
 
-    pid = runtime_state.get("pid")
-    sandbox = runtime_state.get("sandbox")
+    pid = runtime_state.get("pid") if runtime_state is not None else None
+    sandbox = runtime_state.get("sandbox") if runtime_state is not None else None
     stopped = False
     if isinstance(sandbox, dict):
         if sandbox_plugin is None:
@@ -457,8 +469,14 @@ def stop_agent(
     if isinstance(pid, int) and _pid_alive(pid):
         _stop_pid(pid, force=force)
         stopped = True
+    for runtime_pid in runtime_pids:
+        if runtime_pid == pid:
+            continue
+        _stop_pid(runtime_pid, force=force)
+        stopped = True
 
-    stop_runtime_state(toolang_root, agent_name)
+    if runtime_state is not None:
+        stop_runtime_state(toolang_root, agent_name)
     return stopped
 
 
@@ -590,6 +608,43 @@ def runtime_pid_label(runtime_state: dict[str, object] | None) -> str | None:
     return None
 
 
+def agent_runtime_process_pids(toolang_root: Path, agent_name: str) -> tuple[int, ...]:
+    """Return live local runtime process ids for one agent.
+
+    Runtime state is the normal source of truth, but older or interrupted
+    remove flows can leave an orphan runtime process that continues to recreate
+    prepared files. Detect those processes before deleting or recreating homes.
+    """
+
+    try:
+        completed = subprocess.run(
+            ("ps", "-axo", "pid=,command="),
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return ()
+
+    expected_root = _resolved_path_text(toolang_root)
+    pids: list[int] = []
+    for raw_line in completed.stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        pid_text, _, command = line.partition(" ")
+        try:
+            pid = int(pid_text)
+        except ValueError:
+            continue
+        if pid == os.getpid() or not _pid_alive(pid):
+            continue
+        if _runtime_command_matches(command, root=expected_root, agent_name=agent_name):
+            pids.append(pid)
+    return tuple(sorted(set(pids)))
+
+
 def _load_runtime_state(path: Path) -> dict[str, object] | None:
     if not path.is_file():
         return None
@@ -643,6 +698,42 @@ def _runtime_sandbox_label(runtime_state: dict[str, object] | None) -> str | Non
                     return f"{driver.strip()}:{target.strip()}"
                 return driver.strip()
     return "none"
+
+
+def _runtime_command_matches(command: str, *, root: str, agent_name: str) -> bool:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+    if not tokens:
+        return False
+
+    raw_root = _option_value(tokens, "--root")
+    if raw_root is None or _resolved_path_text(Path(raw_root)) != root:
+        return False
+
+    raw_agent = _option_value(tokens, "--agent")
+    if raw_agent == agent_name:
+        return True
+
+    for index, token in enumerate(tokens[:-1]):
+        if token == "run" and tokens[index + 1] == agent_name:
+            return True
+    return False
+
+
+def _option_value(tokens: Sequence[str], option: str) -> str | None:
+    prefix = f"{option}="
+    for index, token in enumerate(tokens):
+        if token.startswith(prefix):
+            return token.removeprefix(prefix)
+        if token == option and index + 1 < len(tokens):
+            return tokens[index + 1]
+    return None
+
+
+def _resolved_path_text(path: Path) -> str:
+    return str(path.expanduser().resolve())
 
 
 def _pid_alive(pid: int) -> bool:

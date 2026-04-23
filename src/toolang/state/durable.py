@@ -9,6 +9,7 @@ from pathlib import Path
 
 CAP_DIR_NAMES = ("psyches", "skills", "services", "prompts")
 JOB_DIR_NAMES = ("chores", "tasks")
+ARCHIVE_DIR_NAMES = ("archive",)
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +77,7 @@ def is_durable_path(toolang_root: Path, agent_name: str, path: Path) -> bool:
         return True
     if not agent_relative.parts:
         return False
-    return agent_relative.parts[0] in CAP_DIR_NAMES + JOB_DIR_NAMES and len(agent_relative.parts) >= 2
+    return agent_relative.parts[0] in CAP_DIR_NAMES + JOB_DIR_NAMES + ARCHIVE_DIR_NAMES and len(agent_relative.parts) >= 2
 
 
 def _durable_files(toolang_root: Path, agent_name: str) -> list[DurableFile]:
@@ -97,6 +98,8 @@ def _durable_files(toolang_root: Path, agent_name: str) -> list[DurableFile]:
     for directory_name in CAP_DIR_NAMES:
         files.extend(_collect_directory(toolang_root, agent_dir / directory_name, category="cap", origin="agent"))
     for directory_name in JOB_DIR_NAMES:
+        files.extend(_collect_directory(toolang_root, agent_dir / directory_name, category="job", origin="agent"))
+    for directory_name in ARCHIVE_DIR_NAMES:
         files.extend(_collect_directory(toolang_root, agent_dir / directory_name, category="job", origin="agent"))
     return files
 

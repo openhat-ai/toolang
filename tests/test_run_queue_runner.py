@@ -455,7 +455,7 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
 
     task_run = store.start_run(
         run_id="run-task",
-        thread_id="task:local:task-1",
+        thread_id="task_task-1",
         origin="task",
         input=Message.user("do the task"),
     )
@@ -463,7 +463,7 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
 
     chore_run = store.start_run(
         run_id="run-chore",
-        thread_id="chore:daily-sync",
+        thread_id="chore_daily-sync",
         origin="chore",
         input=Message.user("run the chore"),
     )
@@ -723,7 +723,7 @@ def test_poll_loop_queues_channel_deliveries_and_delivers_reply(tmp_path: Path) 
                         origin="chat",
                         channel="telegram",
                         sender="owner",
-                        thread_id="telegram:123",
+                        thread_id="tg_123",
                         text="hello from poll",
                         reply_target=ReplyTarget(channel="telegram", address="chat:123"),
                     )
@@ -770,7 +770,7 @@ def test_poll_loop_queues_channel_deliveries_and_delivers_reply(tmp_path: Path) 
             ):
                 await _wait_for_completed_count(context, 1)
                 run = context.store.list_runs(limit=1)[0]
-                assert run.thread_id == "telegram:123"
+                assert run.thread_id == "tg_123"
                 assert run.origin == "chat"
 
         asyncio.run(run_test())
@@ -835,7 +835,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
             origin="chat",
             channel="telegram",
             sender="owner",
-            thread_id="telegram:123",
+            thread_id="tg_123",
             text="hello from poll",
             reply_target=ReplyTarget(channel="telegram", address="chat:123"),
         ),
@@ -850,14 +850,14 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
             _started(
                 1,
                 run_id="run-1",
-                thread_id="telegram:123",
+                thread_id="tg_123",
                 kind="model_call",
             )
         )
         on_event(
             PartStart(
                 run_id="run-1",
-                thread_id="telegram:123",
+                thread_id="tg_123",
                 step_index=1,
                 part_index=0,
                 kind="tool_call",
@@ -866,7 +866,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
         on_event(
             PartStart(
                 run_id="run-1",
-                thread_id="telegram:123",
+                thread_id="tg_123",
                 step_index=1,
                 part_index=1,
                 kind="text",
@@ -875,7 +875,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
         on_event(
             PartDelta(
                 run_id="run-1",
-                thread_id="telegram:123",
+                thread_id="tg_123",
                 step_index=1,
                 part_index=1,
                 delta=TextDelta(text="hel"),
@@ -885,7 +885,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
         on_event(
             PartDelta(
                 run_id="run-1",
-                thread_id="telegram:123",
+                thread_id="tg_123",
                 step_index=1,
                 part_index=1,
                 delta=TextDelta(text="lo"),
@@ -895,7 +895,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
         on_event(
             PartDelta(
                 run_id="run-1",
-                thread_id="telegram:123",
+                thread_id="tg_123",
                 step_index=1,
                 part_index=1,
                 delta=TextDelta(text=" world"),
@@ -905,7 +905,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
         on_event(
             PartDelta(
                 run_id="run-1",
-                thread_id="telegram:123",
+                thread_id="tg_123",
                 step_index=1,
                 part_index=1,
                 delta=TextDelta(text=" and more"),
@@ -915,7 +915,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
         on_event(
             PartDelta(
                 run_id="run-1",
-                thread_id="telegram:123",
+                thread_id="tg_123",
                 step_index=1,
                 part_index=1,
                 delta=TextDelta(text=" from telegram"),
@@ -925,7 +925,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
             _completed(
                 1,
                 run_id="run-1",
-                thread_id="telegram:123",
+                thread_id="tg_123",
                 kind="model_call",
                 output=(
                     ToolCallPart(
@@ -1014,7 +1014,7 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
             origin="chat",
             channel="telegram",
             sender="owner",
-            thread_id="telegram:123",
+            thread_id="tg_123",
             text="hello from poll",
             reply_target=ReplyTarget(channel="telegram", address="chat:123"),
         ),
@@ -1029,14 +1029,14 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
             _started(
                 1,
                 run_id="run-1",
-                thread_id="telegram:123",
+                thread_id="tg_123",
                 kind="model_call",
             )
         )
         on_event(
             PartStart(
                 run_id="run-1",
-                thread_id="telegram:123",
+                thread_id="tg_123",
                 step_index=1,
                 part_index=0,
                 kind="text",
@@ -1045,7 +1045,7 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
         on_event(
             PartDelta(
                 run_id="run-1",
-                thread_id="telegram:123",
+                thread_id="tg_123",
                 step_index=1,
                 part_index=0,
                 delta=TextDelta(text="hello"),
@@ -1055,7 +1055,7 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
         on_event(
             PartDelta(
                 run_id="run-1",
-                thread_id="telegram:123",
+                thread_id="tg_123",
                 step_index=1,
                 part_index=0,
                 delta=TextDelta(text=" world"),
@@ -1065,7 +1065,7 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
             _completed(
                 1,
                 run_id="run-1",
-                thread_id="telegram:123",
+                thread_id="tg_123",
                 kind="model_call",
                 output=(TextPart(text="hello world"),),
             )
@@ -1150,7 +1150,7 @@ def test_background_loops_enqueue_runs(tmp_path: Path) -> None:
         _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
         _write_text(
             toolang_root / "agents" / "alice" / "tasks" / "review.md",
-            "---\nrequester: owner\nstatus: todo\n---\nReview the current plan.\n",
+            "---\ntitle: Review\n---\nReview the current plan.\n",
         )
         context = _build_context(
             toolang_root=toolang_root,
@@ -1178,9 +1178,28 @@ def test_background_loops_enqueue_runs(tmp_path: Path) -> None:
                 assert completed[0]["group"] == "pulse"
                 assert completed[0]["origin"] == "task"
                 assert completed[0]["input_text"] == "Review the current plan."
-                assert str(completed[0]["thread_id"]).startswith("task:local:")
+                assert str(completed[0]["thread_id"]).startswith("task_")
 
     asyncio.run(run_test())
+
+
+def test_bind_run_request_allocates_normalized_local_ids(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("chat",),
+    )
+
+    bound = bind_run_request(
+        context,
+        RunRequest(group="chat", origin="chat", thunk="hello"),
+    )
+
+    assert bound.run_id.startswith("run_")
+    assert bound.thread_id.startswith("chat_")
+    assert (toolang_root / "agents" / "alice" / ".runtime" / "ids.json").is_file()
 
 
 def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> None:
@@ -2171,7 +2190,7 @@ def test_new_task_reloads_into_live_state_and_tasks_endpoint(tmp_path: Path) -> 
         first_fingerprint = context.live.fingerprint
         _write_text(
             toolang_root / "agents" / "alice" / "tasks" / "review.md",
-            "---\nrequester: owner\nstatus: todo\n---\nReview the current plan.\n",
+            "---\ntitle: Review\n---\nReview the current plan.\n",
         )
         for _ in range(200):
             snapshot = inspect.snapshot_context(
@@ -2194,13 +2213,15 @@ def test_new_task_reloads_into_live_state_and_tasks_endpoint(tmp_path: Path) -> 
     assert context.live.fingerprint != first_fingerprint
     assert live["jobs"] == ["agents/alice/tasks/review.md"]
     assert len(tasks) == 1
-    assert tasks[0]["name"] == "review"
-    assert tasks[0]["body"] == "Review the current plan."
-    assert tasks[0]["status"] == "todo"
-    assert tasks[0]["requester"] == "owner"
-    assert tasks[0]["paused"] is False
-    assert tasks[0]["thread_id"] == f"task:local:{tasks[0]['id']}"
-    assert tasks[0]["path"] == str(toolang_root / "agents" / "alice" / "tasks" / "review.md")
+    assert tasks[0]["kind"] == "task"
+    assert tasks[0]["title"] == "Review"
+    assert tasks[0]["state"] == "active"
+    assert tasks[0]["stage"] == "todo"
+    assert tasks[0]["runtime"]["thread_id"] == f"task_{tasks[0]['id']}"
+    assert tasks[0]["runtime"]["active_run"] is None
+    assert tasks[0]["runtime"]["last_run"] is None
+    assert tasks[0]["runtime"]["next_run"] is None
+    assert tasks[0]["path"] == "tasks/review.md"
 
 
 def test_new_task_reloads_and_pulse_runs_it(tmp_path: Path) -> None:
@@ -2222,7 +2243,7 @@ def test_new_task_reloads_and_pulse_runs_it(tmp_path: Path) -> None:
         with TestClient(app):
             _write_text(
                 toolang_root / "agents" / "alice" / "tasks" / "review.md",
-                "---\nrequester: owner\nstatus: todo\n---\nReview the current plan.\n",
+                "---\ntitle: Review\n---\nReview the current plan.\n",
             )
             for _ in range(200):
                 completed = cast(
@@ -2239,7 +2260,7 @@ def test_new_task_reloads_and_pulse_runs_it(tmp_path: Path) -> None:
     assert completed[0]["group"] == "pulse"
     assert completed[0]["origin"] == "task"
     assert completed[0]["input_text"] == "Review the current plan."
-    assert str(completed[0]["thread_id"]).startswith("task:local:")
+    assert str(completed[0]["thread_id"]).startswith("task_")
 
 
 def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) -> None:
@@ -2247,17 +2268,15 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
     _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
     _write_text(
         toolang_root / "agents" / "alice" / "tasks" / "review.md",
-        "---\nrequester: owner\nstatus: todo\n---\nReview the current plan.\n",
+        "---\ntitle: Review\n---\nReview the current plan.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
         enabled_loops=("pulse",),
     )
-    task = work.TaskFile.load(
-        toolang_root / "agents" / "alice" / "tasks" / "review.md",
-        persist_id=True,
-    )
+    task_entry = work.list_tasks(toolang_root, "alice")[0]
+    task = task_entry.document
     bound = bind_run_request(
         context,
         RunRequest(
@@ -2276,24 +2295,25 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
         ref=task.thread_id(),
         name="review",
         body=task.body,
-        status="todo",
-        requester="owner",
+        state="active",
+        stage="todo",
         thread_id=task.thread_id(),
         path=str(toolang_root / "agents" / "alice" / "tasks" / "review.md"),
     )
     assert bundle.snapshot.task_services == SnapshotTaskServices(
         provider="local",
         read=True,
-        write=True,
-        comment=True,
+        write=False,
+        comment=False,
         path=str(toolang_root / "agents" / "alice" / "tasks" / "review.md"),
     )
     instructions = bundle.instructions()
     assert "Treat the user's message as the current task input." in instructions
     assert "Current task:" in instructions
-    assert "- Status: todo" in instructions
+    assert "- State: active" in instructions
+    assert "- Stage: todo" in instructions
     assert f"- Path: {toolang_root / 'agents' / 'alice' / 'tasks' / 'review.md'}" in instructions
-    assert "- Update the task file as work progresses and before you finish." in instructions
+    assert "- The task document is read-only during model execution; runtime updates task stage." in instructions
 
 
 def test_assemble_run_input_prefers_thunk_model_over_activation_default(tmp_path: Path) -> None:

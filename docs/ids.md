@@ -1,10 +1,9 @@
 # ID Model
 
-This document defines the proposed Toolang-owned id families and allocator
-model.
+This document defines the Toolang-owned id families and allocator model.
 
-This design is implemented in `toolang.ids` as an isolated prototype. It is
-not yet integrated into the current task, chore, thread, or run paths.
+This design is implemented in `toolang.ids` and is used for local task ids,
+chore ids, Toolang-owned local thread ids, and run ids.
 
 
 ## Goals
@@ -23,16 +22,17 @@ Toolang-owned ids should be:
 
 This design applies only to Toolang-owned local ids.
 
-It does not rewrite opaque external ids such as:
+It does not rewrite the opaque payload of external ids such as:
 
-- user-provided web thread ids like `web-1776857671893`
-- transport-native ids such as `telegram:<chat_id>`
+- user-provided web thread ids like `web_<external_id>`
+- transport-native ids exposed under Toolang prefixes such as
+  `tg_<external_id>`
 - provider-native ids such as OpenAI response ids
 
 
 ## Families
 
-The current prototype defines two families:
+Toolang currently defines two families:
 
 | Family | Width | Raw layout | Intended use |
 | --- | --- | --- | --- |
@@ -109,15 +109,13 @@ This gives Toolang-owned ids these properties:
 - allocation order is hidden
 - ids still decode back to raw `tick` and `seq`
 - ids from the same tick bucket can still display different visible prefixes
-- archive bucketing can still use the decoded tick-derived bucket prefix
+- archive bucketing can still use the decoded tick-derived UTC bucket
 
 This mechanism is not meant to be cryptographic secrecy. It is only a compact,
 reversible local obfuscation layer.
 
 
 ## Allocation
-
-The prototype separates allocation from integration.
 
 Allocator state is durable and per-agent. It is not runtime-only state.
 
@@ -148,8 +146,8 @@ Allocation steps:
 5. encode the id
 6. persist the updated state
 
-The prototype uses one POSIX file lock around the snapshot update so multiple
-CLI and runtime processes can share one allocator safely later.
+The allocator uses one POSIX file lock around the snapshot update so multiple
+CLI and runtime processes can share one allocator safely.
 
 
 ## Collision Handling
@@ -157,30 +155,27 @@ CLI and runtime processes can share one allocator safely later.
 The main uniqueness guarantee comes from the durable monotonic allocator state,
 not from random generation and not from scanning every existing job file.
 
-The prototype still supports one optional `exists(id)` callback as a safety
-belt. Callers can use this to reject ids already present in active or archived
-definitions if they want one extra local check during migration.
+The allocator supports one optional `exists(id)` callback as a safety belt.
+Callers use this to reject ids already present in active or archived
+definitions when local migration needs one extra check.
 
 
 ## Archive Buckets
 
 Because visible id prefixes are now mixed across the whole encoded value,
-archive bucketing should use the decoded tick-derived bucket prefix rather than
-the literal leading chars shown in the id string.
+archive bucketing uses the decoded tick-derived UTC bucket rather than the
+literal leading chars shown in the id string.
 
 Examples:
 
-- `archive/tasks/<prefix>/<id>.md`
-- `archive/chores/<prefix>/<id>.md`
+- `archive/tasks/20260423T10Z/<id>.md`
+- `archive/chores/20260423T10Z/<id>.md`
 
-Or the prefix can be decoded back into one UTC bucket start time and rendered as
-friendlier calendar directories such as `YYYY/MM`.
-
-The prototype currently exposes only the stable id prefix. It does not yet
-define one final archive path layout.
+The `T` separates date from hour and `Z` makes the UTC timezone explicit while
+keeping the directory compact.
 
 
-## Current Prototype API
+## Current API
 
 `toolang.ids` currently exposes:
 
@@ -195,5 +190,4 @@ define one final archive path layout.
 - `allocate_id(...)`
 - `archive_prefix(...)`
 
-This keeps the design concrete enough to test before wiring it into task,
-chore, thread, and run creation.
+These helpers are used by local task, chore, thread, and run creation.

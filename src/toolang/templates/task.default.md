@@ -1,8 +1,5 @@
 ---
-description: Local task definition.
-requester: owner
-status: todo
-paused: false
+title: Task title
 ---
 
 Describe the task here.

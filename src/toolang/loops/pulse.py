@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from .. import agents, work
@@ -53,7 +54,13 @@ async def run(
 
     while True:
         now = datetime.now(timezone.utc)
-        _record_completed_runs(state, context.runner.completed(), seen_completed=seen_completed, now=now)
+        _record_completed_runs(
+            context,
+            state,
+            context.runner.completed(),
+            seen_completed=seen_completed,
+            now=now,
+        )
         state, submissions = collect_pulse_submissions(
             context,
             state,
@@ -97,11 +104,18 @@ def collect_pulse_submissions(
         if entry.kind != "task":
             continue
         path = context.root / entry.path
-        document = work.TaskFile.load(path, persist_id=True)
+        if not path.is_file():
+            continue
+        document = work.TaskFile.load(
+            path,
+            id_factory=lambda: work.allocate_job_id(context.root, context.name),
+            persist_id=True,
+        )
         task_id = document.task_id()
         item_state = state.tasks.get(task_id, PulseItemState())
         task_items[task_id] = _next_task_state(
             task=document,
+            path=path,
             path_name=entry.name,
             state=item_state,
             now=current,
@@ -114,11 +128,19 @@ def collect_pulse_submissions(
         if entry.kind != "chore":
             continue
         path = context.root / entry.path
-        document = work.ChoreFile.load(path)
-        item_state = state.chores.get(entry.name, PulseItemState())
-        chore_items[entry.name] = _next_chore_state(
+        if not path.is_file():
+            continue
+        document = work.ChoreFile.load(
+            path,
+            id_factory=lambda: work.allocate_job_id(context.root, context.name),
+            persist_id=True,
+        )
+        chore_id = document.chore_id()
+        item_state = state.chores.get(chore_id, PulseItemState())
+        chore_items[chore_id] = _next_chore_state(
             chore=document,
-            key=entry.name,
+            key=chore_id,
+            fallback_title=entry.name,
             state=item_state,
             now=current,
             pending_keys=blocked,
@@ -131,6 +153,7 @@ def collect_pulse_submissions(
 def _next_task_state(
     *,
     task: work.TaskFile,
+    path: Path,
     path_name: str,
     state: PulseItemState,
     now: datetime,
@@ -140,19 +163,20 @@ def _next_task_state(
     task_id = task.task_id()
     content_hash = task.content_hash()
     next_state = state.model_copy(update={"content_hash": content_hash})
-    active = not task.paused and not work.task_terminal(task.status)
+    active = task.claimable()
     pending_key = f"task:{task_id}"
     if pending_key in pending_keys:
         if active and state.content_hash != content_hash:
             return state
         return next_state
     if active and next_state.content_hash != state.content_hash:
+        claimed = work.claim_task(path)
         submissions.append(
             PulseSubmission(
                 kind="task",
                 key=task_id,
-                thread_id=task.thread_id(),
-                text=task.render_input(fallback_name=path_name),
+                thread_id=claimed.thread_id(),
+                text=claimed.render_input(fallback_name=path_name),
             )
         )
         return next_state.model_copy(update={"last_enqueued_at": now})
@@ -163,6 +187,7 @@ def _next_chore_state(
     *,
     chore: work.ChoreFile,
     key: str,
+    fallback_title: str,
     state: PulseItemState,
     now: datetime,
     pending_keys: set[str],
@@ -179,23 +204,23 @@ def _next_chore_state(
     next_state = state.model_copy(
         update={
             "content_hash": content_hash,
-            "next_due_at": None if chore.paused else next_due_at,
+            "next_due_at": None if chore.state != "active" else next_due_at,
         }
     )
-    if chore.paused:
+    if chore.state != "active":
         return next_state
 
     due_at = next_state.next_due_at
     if due_at is None or due_at > now:
         return next_state
 
-    text = chore.render_input(fallback_title=key.rsplit("/", 1)[-1])
+    text = chore.render_input(fallback_title=fallback_title.rsplit("/", 1)[-1])
     if not text.strip():
         return next_state.model_copy(
             update={
                 "last_enqueued_at": None,
                 "next_due_at": work.next_scheduled_at(
-                    chore.rrule,
+                    chore.schedule,
                     anchor=due_at,
                     not_before=now,
                     inclusive=False,
@@ -207,7 +232,7 @@ def _next_chore_state(
         PulseSubmission(
             kind="chore",
             key=key,
-            thread_id=f"chore:{key}",
+            thread_id=chore.thread_id(),
             text=text,
         )
     )
@@ -215,7 +240,7 @@ def _next_chore_state(
         update={
             "last_enqueued_at": now,
             "next_due_at": work.next_scheduled_at(
-                chore.rrule,
+                chore.schedule,
                 anchor=due_at,
                 not_before=now,
                 inclusive=False,
@@ -254,12 +279,13 @@ def _request_key(request: RunRequest) -> str | None:
         task_id = work.task_id_from_thread_id(request.thread_id)
         return f"task:{task_id}" if task_id is not None else None
     if request.origin == "chore":
-        key = request.thread_id.removeprefix("chore:").strip()
+        key = work.chore_id_from_thread_id(request.thread_id)
         return f"chore:{key}" if key else None
     return None
 
 
 def _record_completed_runs(
+    context: UptimeContext,
     state: PulseState,
     results: list["RunOutcome"],
     *,
@@ -274,6 +300,12 @@ def _record_completed_runs(
             task_id = work.task_id_from_thread_id(result.thread_id)
             if task_id is None:
                 continue
+            work.finish_task(
+                context.root,
+                context.name,
+                task_id,
+                succeeded=result.status == "finished",
+            )
             item_state = state.tasks.get(task_id)
             if item_state is None:
                 continue
@@ -283,7 +315,9 @@ def _record_completed_runs(
             item_state.last_run_id = result.run_id
             continue
         if result.origin == "chore" and result.thread_id is not None:
-            key = result.thread_id.removeprefix("chore:").strip()
+            key = work.chore_id_from_thread_id(result.thread_id)
+            if key is None:
+                continue
             item_state = state.chores.get(key)
             if item_state is None:
                 continue
