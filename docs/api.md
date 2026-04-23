@@ -277,12 +277,27 @@ message stream subset.
 
 ## Job Endpoints
 
+- `GET /api/v1/jobs`
 - `GET /api/v1/tasks`
+- `POST /api/v1/tasks`
+- `GET /api/v1/tasks/{task_id}`
+- `PATCH /api/v1/tasks/{task_id}`
+- `POST /api/v1/tasks/{task_id}/archive`
+- `DELETE /api/v1/tasks/{task_id}`
 - `GET /api/v1/chores`
+- `POST /api/v1/chores`
+- `GET /api/v1/chores/{chore_id}`
+- `PATCH /api/v1/chores/{chore_id}`
+- `POST /api/v1/chores/{chore_id}/archive`
+- `DELETE /api/v1/chores/{chore_id}`
 - `GET /api/v1/will`
 
-`GET /api/v1/tasks` and `GET /api/v1/chores` return authored job fields at the
-top level and runtime-derived state under `runtime`.
+`GET /api/v1/jobs` returns tasks and chores in one response. Use `kind=task` or
+`kind=chore` to filter the unified list. `GET /api/v1/tasks` and
+`GET /api/v1/chores` return the same projections split by kind.
+
+List endpoints return authored job fields at the top level and runtime-derived
+state under `runtime`.
 
 Task items include:
 
@@ -332,6 +347,36 @@ most recent finished run object or `null`; it must not point at the same run as
 
 Default job list endpoints return active and inactive jobs. Archived jobs are
 returned only when explicitly requested, such as with `include_archived=true`.
+
+Detail endpoints return the same item shape plus `body`.
+
+Task create requests accept:
+
+```json
+{
+  "title": "Review API changes",
+  "body": "Review the API changes and summarize risks.",
+  "state": "active",
+  "stage": "todo"
+}
+```
+
+Task patch requests accept any subset of `title`, `body`, `state`, and `stage`.
+Use the archive endpoint to move a task into `state: archived`.
+
+Chore create requests accept:
+
+```json
+{
+  "title": "Check stale PRs",
+  "body": "Check stale pull requests and summarize blockers.",
+  "state": "active",
+  "schedule": "FREQ=HOURLY;INTERVAL=6"
+}
+```
+
+Chore patch requests accept any subset of `title`, `body`, `state`, and
+`schedule`. Use the archive endpoint to move a chore into `state: archived`.
 
 
 ## Activity Endpoints

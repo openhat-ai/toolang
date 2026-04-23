@@ -2224,6 +2224,172 @@ def test_new_task_reloads_into_live_state_and_tasks_endpoint(tmp_path: Path) -> 
     assert tasks[0]["path"] == "tasks/review.md"
 
 
+def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("inspect",),
+        runner=QueueRunner(delay_sec=0.0),
+    )
+    app = _create_test_app(context)
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/tasks",
+            json={
+                "title": "Review API",
+                "body": "Review the new API surface.",
+            },
+        )
+        assert created.status_code == 201
+        task = created.json()["item"]
+        task_id = task["id"]
+
+        assert task["kind"] == "task"
+        assert task["state"] == "active"
+        assert task["stage"] == "todo"
+        assert task["body"] == "Review the new API surface."
+        assert task["runtime"]["thread_id"] == f"task_{task_id}"
+
+        jobs = client.get("/api/v1/jobs").json()["items"]
+        assert [(item["kind"], item["id"]) for item in jobs] == [("task", task_id)]
+        assert "body" not in jobs[0]
+
+        detail = client.get(f"/api/v1/tasks/{task_id}").json()["item"]
+        assert detail["body"] == "Review the new API surface."
+
+        updated = client.patch(
+            f"/api/v1/tasks/{task_id}",
+            json={
+                "state": "inactive",
+                "stage": "running",
+                "body": "Updated task body.",
+            },
+        )
+        assert updated.status_code == 200
+        task = updated.json()["item"]
+        assert task["state"] == "inactive"
+        assert task["stage"] == "running"
+        assert task["body"] == "Updated task body."
+
+        archived = client.post(f"/api/v1/tasks/{task_id}/archive")
+        assert archived.status_code == 200
+        task = archived.json()["item"]
+        assert task["state"] == "archived"
+        assert task["path"].startswith("archive/tasks/")
+
+        assert client.get("/api/v1/tasks").json()["items"] == []
+        archived_tasks = client.get("/api/v1/tasks?include_archived=true").json()["items"]
+        assert [item["id"] for item in archived_tasks] == [task_id]
+
+        deleted = client.delete(f"/api/v1/tasks/{task_id}?include_archived=true")
+        assert deleted.status_code == 200
+        assert deleted.json() == {"deleted": True, "id": task_id, "kind": "task"}
+        assert client.get("/api/v1/tasks?include_archived=true").json()["items"] == []
+
+        updates = client.get("/api/v1/events").json()["items"]
+
+    assert [item["kind"] for item in updates] == [
+        "task_changed",
+        "task_changed",
+        "task_changed",
+        "task_changed",
+    ]
+    assert [item["payload"]["action"] for item in updates] == [
+        "created",
+        "updated",
+        "archived",
+        "deleted",
+    ]
+
+
+def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("inspect",),
+        runner=QueueRunner(delay_sec=0.0),
+    )
+    app = _create_test_app(context)
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/chores",
+            json={
+                "title": "Check PRs",
+                "body": "Check stale pull requests.",
+                "schedule": "FREQ=HOURLY;INTERVAL=6",
+            },
+        )
+        assert created.status_code == 201
+        chore = created.json()["item"]
+        chore_id = chore["id"]
+
+        assert chore["kind"] == "chore"
+        assert chore["state"] == "active"
+        assert chore["schedule"] == "FREQ=HOURLY;INTERVAL=6"
+        assert chore["body"] == "Check stale pull requests."
+        assert chore["runtime"]["thread_id"] == f"chore_{chore_id}"
+
+        jobs = client.get("/api/v1/jobs?kind=chore").json()["items"]
+        assert [(item["kind"], item["id"]) for item in jobs] == [("chore", chore_id)]
+        assert "body" not in jobs[0]
+
+        invalid = client.patch(
+            f"/api/v1/chores/{chore_id}",
+            json={"schedule": "not an rrule"},
+        )
+        assert invalid.status_code == 400
+
+        updated = client.patch(
+            f"/api/v1/chores/{chore_id}",
+            json={
+                "state": "inactive",
+                "schedule": "FREQ=DAILY",
+                "body": "Updated chore body.",
+            },
+        )
+        assert updated.status_code == 200
+        chore = updated.json()["item"]
+        assert chore["state"] == "inactive"
+        assert chore["schedule"] == "FREQ=DAILY"
+        assert chore["body"] == "Updated chore body."
+
+        archived = client.post(f"/api/v1/chores/{chore_id}/archive")
+        assert archived.status_code == 200
+        chore = archived.json()["item"]
+        assert chore["state"] == "archived"
+        assert chore["path"].startswith("archive/chores/")
+
+        assert client.get("/api/v1/chores").json()["items"] == []
+        archived_chores = client.get("/api/v1/chores?include_archived=true").json()["items"]
+        assert [item["id"] for item in archived_chores] == [chore_id]
+
+        deleted = client.delete(f"/api/v1/chores/{chore_id}?include_archived=true")
+        assert deleted.status_code == 200
+        assert deleted.json() == {"deleted": True, "id": chore_id, "kind": "chore"}
+        assert client.get("/api/v1/chores?include_archived=true").json()["items"] == []
+
+        updates = client.get("/api/v1/events").json()["items"]
+
+    assert [item["kind"] for item in updates] == [
+        "chore_changed",
+        "chore_changed",
+        "chore_changed",
+        "chore_changed",
+    ]
+    assert [item["payload"]["action"] for item in updates] == [
+        "created",
+        "updated",
+        "archived",
+        "deleted",
+    ]
+
+
 def test_new_task_reloads_and_pulse_runs_it(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
