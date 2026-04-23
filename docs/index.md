@@ -29,6 +29,7 @@ Use this directory for:
 | [layout.md](./layout.md) | Layout and storage, including Toolang root, agent home, and runtime room paths |
 | [caps.md](./caps.md) | Capability model, including scopes, sources, precedence, and effective-cap rules |
 | [tasks.md](./tasks.md) | Job model, including task, chore, will, and thread mapping |
+| [webui-jobs.md](./webui-jobs.md) | Web UI job board integration guide |
 | [execution.md](./execution.md) | Execution model, including durable records, trace events, and response events |
 | [chat.md](./chat.md) | Chat and transcript model, including thread, run, message, and stream behavior |
 | [models.md](./models.md) | Model integrations, including selectors, providers, routes, and built-in model providers |

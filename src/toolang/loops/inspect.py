@@ -1,4 +1,4 @@
-"""Formal read-only agent API routes."""
+"""Formal agent inspection and local job API routes."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from toolang.base.types.message import message_summary
 from ..execution.detail import (
@@ -31,6 +32,8 @@ if TYPE_CHECKING:
     from ..execution.records import RunRecord
 
 CapKind = Literal["psyche", "skill", "service", "prompt"]
+JobKind = Literal["task", "chore"]
+JobWriteState = Literal["active", "inactive"]
 RUN_LOOPS = frozenset({"chat", "pulse", "poll", "hook"})
 HTTP_LOOPS = frozenset({"chat", "hook", "control", "inspect"})
 BACKGROUND_LOOPS = frozenset({"pulse", "poll", "prepare", "reload"})
@@ -42,8 +45,40 @@ COLLECTION_TO_KIND: dict[str, CapKind] = {
 }
 
 
+class _ApiModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class TaskCreateRequest(_ApiModel):
+    title: str | None = None
+    body: str = ""
+    state: JobWriteState = "active"
+    stage: work.TaskStage = "todo"
+
+
+class TaskPatchRequest(_ApiModel):
+    title: str | None = None
+    body: str | None = None
+    state: JobWriteState | None = None
+    stage: work.TaskStage | None = None
+
+
+class ChoreCreateRequest(_ApiModel):
+    title: str | None = None
+    body: str = ""
+    state: JobWriteState = "active"
+    schedule: str = work.DEFAULT_CHORE_SCHEDULE
+
+
+class ChorePatchRequest(_ApiModel):
+    title: str | None = None
+    body: str | None = None
+    state: JobWriteState | None = None
+    schedule: str | None = None
+
+
 def create_router() -> APIRouter:
-    """Build the formal read-only agent API route group."""
+    """Build the formal agent API route group."""
 
     router = APIRouter(prefix="/api/v1")
 
@@ -163,15 +198,115 @@ def create_router() -> APIRouter:
     async def events_stream() -> StreamingResponse:
         return StreamingResponse(_events_stream(), media_type="text/event-stream")
 
+    @router.get("/jobs", tags=["jobs"], summary="List Jobs")
+    async def jobs(
+        request: Request,
+        include_archived: bool = False,
+        kind: JobKind | None = None,
+    ) -> dict[str, object]:
+        context = request.app.state.runtime
+        items = _job_collection(context, include_archived=include_archived)
+        if kind is not None:
+            items = [item for item in items if item["kind"] == kind]
+        return {"items": items}
+
     @router.get("/tasks", tags=["jobs"], summary="List Tasks")
     async def tasks(request: Request, include_archived: bool = False) -> dict[str, object]:
         context = request.app.state.runtime
         return {"items": _task_collection(context, include_archived=include_archived)}
 
+    @router.post("/tasks", tags=["jobs"], summary="Create Task", status_code=201)
+    async def create_task(request: Request, payload: TaskCreateRequest) -> dict[str, object]:
+        context = request.app.state.runtime
+        document = _task_document_from_create(context, payload)
+        path = work.task_path(context.root, context.name, document.task_id())
+        document.save(path)
+        _append_job_update(context, kind="task", item_id=document.task_id(), action="created", path=path)
+        entry = _find_task_or_404(context, document.task_id())
+        return {"item": _task_detail_item(context, entry)}
+
+    @router.get("/tasks/{task_id}", tags=["jobs"], summary="Get Task")
+    async def task_detail(request: Request, task_id: str, include_archived: bool = False) -> dict[str, object]:
+        context = request.app.state.runtime
+        entry = _find_task_or_404(context, task_id, include_archived=include_archived)
+        return {"item": _task_detail_item(context, entry)}
+
+    @router.patch("/tasks/{task_id}", tags=["jobs"], summary="Update Task")
+    async def update_task(request: Request, task_id: str, payload: TaskPatchRequest) -> dict[str, object]:
+        context = request.app.state.runtime
+        entry = _find_task_or_404(context, task_id)
+        document = _patch_task_document(entry.document, payload)
+        document.save(entry.path)
+        _append_job_update(context, kind="task", item_id=task_id, action="updated", path=entry.path)
+        entry = _find_task_or_404(context, task_id)
+        return {"item": _task_detail_item(context, entry)}
+
+    @router.post("/tasks/{task_id}/archive", tags=["jobs"], summary="Archive Task")
+    async def archive_task(request: Request, task_id: str) -> dict[str, object]:
+        context = request.app.state.runtime
+        path = work.archive_task(context.root, context.name, task_id)
+        if path is None:
+            raise HTTPException(status_code=404, detail=f"task not found: {task_id}")
+        _append_job_update(context, kind="task", item_id=task_id, action="archived", path=path)
+        entry = _find_task_or_404(context, task_id, include_archived=True)
+        return {"item": _task_detail_item(context, entry)}
+
+    @router.delete("/tasks/{task_id}", tags=["jobs"], summary="Delete Task")
+    async def delete_task(request: Request, task_id: str, include_archived: bool = False) -> dict[str, object]:
+        context = request.app.state.runtime
+        entry = _find_task_or_404(context, task_id, include_archived=include_archived)
+        entry.path.unlink()
+        _append_job_update(context, kind="task", item_id=task_id, action="deleted", path=entry.path)
+        return {"deleted": True, "id": task_id, "kind": "task"}
+
     @router.get("/chores", tags=["jobs"], summary="List Chores")
     async def chores(request: Request, include_archived: bool = False) -> dict[str, object]:
         context = request.app.state.runtime
         return {"items": _chore_collection(context, include_archived=include_archived)}
+
+    @router.post("/chores", tags=["jobs"], summary="Create Chore", status_code=201)
+    async def create_chore(request: Request, payload: ChoreCreateRequest) -> dict[str, object]:
+        context = request.app.state.runtime
+        document = _chore_document_from_create(context, payload)
+        path = work.chore_path(context.root, context.name, document.chore_id())
+        document.save(path)
+        _append_job_update(context, kind="chore", item_id=document.chore_id(), action="created", path=path)
+        entry = _find_chore_or_404(context, document.chore_id())
+        return {"item": _chore_detail_item(context, entry)}
+
+    @router.get("/chores/{chore_id}", tags=["jobs"], summary="Get Chore")
+    async def chore_detail(request: Request, chore_id: str, include_archived: bool = False) -> dict[str, object]:
+        context = request.app.state.runtime
+        entry = _find_chore_or_404(context, chore_id, include_archived=include_archived)
+        return {"item": _chore_detail_item(context, entry)}
+
+    @router.patch("/chores/{chore_id}", tags=["jobs"], summary="Update Chore")
+    async def update_chore(request: Request, chore_id: str, payload: ChorePatchRequest) -> dict[str, object]:
+        context = request.app.state.runtime
+        entry = _find_chore_or_404(context, chore_id)
+        document = _patch_chore_document(entry.document, payload)
+        document.save(entry.path)
+        _append_job_update(context, kind="chore", item_id=chore_id, action="updated", path=entry.path)
+        entry = _find_chore_or_404(context, chore_id)
+        return {"item": _chore_detail_item(context, entry)}
+
+    @router.post("/chores/{chore_id}/archive", tags=["jobs"], summary="Archive Chore")
+    async def archive_chore(request: Request, chore_id: str) -> dict[str, object]:
+        context = request.app.state.runtime
+        path = work.archive_chore(context.root, context.name, chore_id)
+        if path is None:
+            raise HTTPException(status_code=404, detail=f"chore not found: {chore_id}")
+        _append_job_update(context, kind="chore", item_id=chore_id, action="archived", path=path)
+        entry = _find_chore_or_404(context, chore_id, include_archived=True)
+        return {"item": _chore_detail_item(context, entry)}
+
+    @router.delete("/chores/{chore_id}", tags=["jobs"], summary="Delete Chore")
+    async def delete_chore(request: Request, chore_id: str, include_archived: bool = False) -> dict[str, object]:
+        context = request.app.state.runtime
+        entry = _find_chore_or_404(context, chore_id, include_archived=include_archived)
+        entry.path.unlink()
+        _append_job_update(context, kind="chore", item_id=chore_id, action="deleted", path=entry.path)
+        return {"deleted": True, "id": chore_id, "kind": "chore"}
 
     @router.get("/will", tags=["jobs"], summary="Get Will")
     async def will() -> dict[str, object]:
@@ -245,48 +380,172 @@ def _cap_collection(context: UptimeContext, *, kind: CapKind) -> list[dict[str, 
     ]
 
 
+def _job_collection(context: UptimeContext, *, include_archived: bool = False) -> list[dict[str, object]]:
+    return [
+        *_task_collection(context, include_archived=include_archived),
+        *_chore_collection(context, include_archived=include_archived),
+    ]
+
+
 def _task_collection(context: UptimeContext, *, include_archived: bool = False) -> list[dict[str, object]]:
-    items: list[dict[str, object]] = []
-    for entry in work.list_tasks(context.root, context.name, include_archived=include_archived):
-        document = entry.document
-        items.append(
-            {
-                "id": document.task_id(),
-                "kind": "task",
-                "state": document.state,
-                "stage": document.stage,
-                "title": document.display_title(fallback_name=entry.name.rsplit("/", 1)[-1]),
-                "path": _agent_relative_path(context, entry.path),
-                "updated_at": _path_updated_at(entry.path),
-                "runtime": _job_runtime(context, thread_id=document.thread_id()),
-            }
-        )
-    return items
+    return [
+        _task_item(context, entry)
+        for entry in work.list_tasks(context.root, context.name, include_archived=include_archived)
+    ]
 
 
 def _chore_collection(context: UptimeContext, *, include_archived: bool = False) -> list[dict[str, object]]:
-    items: list[dict[str, object]] = []
     pulse_state = _pulse_state(context)
-    for entry in work.list_chores(context.root, context.name, include_archived=include_archived):
-        document = entry.document
-        item_state = pulse_state.chores.get(document.chore_id())
-        items.append(
-            {
-                "id": document.chore_id(),
-                "kind": "chore",
-                "state": document.state,
-                "schedule": document.schedule,
-                "title": document.display_title(fallback_name=entry.name.rsplit("/", 1)[-1]),
-                "path": _agent_relative_path(context, entry.path),
-                "updated_at": _path_updated_at(entry.path),
-                "runtime": _job_runtime(
-                    context,
-                    thread_id=document.thread_id(),
-                    next_run_at=None if item_state is None else item_state.next_due_at,
-                ),
-            }
+    return [
+        _chore_item(context, entry, pulse_state=pulse_state)
+        for entry in work.list_chores(context.root, context.name, include_archived=include_archived)
+    ]
+
+
+def _task_item(context: UptimeContext, entry: work.TaskEntry) -> dict[str, object]:
+    document = entry.document
+    return {
+        "id": document.task_id(),
+        "kind": "task",
+        "state": document.state,
+        "stage": document.stage,
+        "title": document.display_title(fallback_name=entry.name.rsplit("/", 1)[-1]),
+        "path": _agent_relative_path(context, entry.path),
+        "updated_at": _path_updated_at(entry.path),
+        "runtime": _job_runtime(context, thread_id=document.thread_id()),
+    }
+
+
+def _task_detail_item(context: UptimeContext, entry: work.TaskEntry) -> dict[str, object]:
+    return {
+        **_task_item(context, entry),
+        "body": entry.document.body,
+    }
+
+
+def _chore_item(
+    context: UptimeContext,
+    entry: work.ChoreEntry,
+    *,
+    pulse_state: PulseState | None = None,
+) -> dict[str, object]:
+    document = entry.document
+    state = pulse_state or _pulse_state(context)
+    item_state = state.chores.get(document.chore_id())
+    return {
+        "id": document.chore_id(),
+        "kind": "chore",
+        "state": document.state,
+        "schedule": document.schedule,
+        "title": document.display_title(fallback_name=entry.name.rsplit("/", 1)[-1]),
+        "path": _agent_relative_path(context, entry.path),
+        "updated_at": _path_updated_at(entry.path),
+        "runtime": _job_runtime(
+            context,
+            thread_id=document.thread_id(),
+            next_run_at=None if item_state is None else item_state.next_due_at,
+        ),
+    }
+
+
+def _chore_detail_item(context: UptimeContext, entry: work.ChoreEntry) -> dict[str, object]:
+    return {
+        **_chore_item(context, entry),
+        "body": entry.document.body,
+    }
+
+
+def _find_task_or_404(
+    context: UptimeContext,
+    task_id: str,
+    *,
+    include_archived: bool = False,
+) -> work.TaskEntry:
+    entry = work.find_task(context.root, context.name, task_id, include_archived=include_archived)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"task not found: {task_id}")
+    return entry
+
+
+def _find_chore_or_404(
+    context: UptimeContext,
+    chore_id: str,
+    *,
+    include_archived: bool = False,
+) -> work.ChoreEntry:
+    entry = work.find_chore(context.root, context.name, chore_id, include_archived=include_archived)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"chore not found: {chore_id}")
+    return entry
+
+
+def _task_document_from_create(context: UptimeContext, payload: TaskCreateRequest) -> work.TaskFile:
+    try:
+        return work.TaskFile(
+            id=work.allocate_job_id(context.root, context.name),
+            title=payload.title,
+            body=payload.body,
+            state=payload.state,
+            stage=payload.stage,
         )
-    return items
+    except ValidationError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+def _chore_document_from_create(context: UptimeContext, payload: ChoreCreateRequest) -> work.ChoreFile:
+    try:
+        return work.ChoreFile(
+            id=work.allocate_job_id(context.root, context.name),
+            title=payload.title,
+            body=payload.body,
+            state=payload.state,
+            schedule=payload.schedule,
+        )
+    except ValidationError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+def _patch_task_document(document: work.TaskFile, payload: TaskPatchRequest) -> work.TaskFile:
+    updates = {
+        field: getattr(payload, field)
+        for field in ("title", "body", "state", "stage")
+        if field in payload.model_fields_set
+    }
+    try:
+        return work.TaskFile.model_validate(document.model_copy(update=updates).model_dump(mode="python"))
+    except ValidationError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+def _patch_chore_document(document: work.ChoreFile, payload: ChorePatchRequest) -> work.ChoreFile:
+    updates = {
+        field: getattr(payload, field)
+        for field in ("title", "body", "state", "schedule")
+        if field in payload.model_fields_set
+    }
+    try:
+        return work.ChoreFile.model_validate(document.model_copy(update=updates).model_dump(mode="python"))
+    except ValidationError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+def _append_job_update(
+    context: UptimeContext,
+    *,
+    kind: JobKind,
+    item_id: str,
+    action: str,
+    path: Path,
+) -> None:
+    context.store.append_update(
+        kind=cast(Literal["task_changed", "chore_changed"], f"{kind}_changed"),
+        payload={
+            "id": item_id,
+            "kind": kind,
+            "action": action,
+            "path": _agent_relative_path(context, path),
+        },
+    )
 
 
 def _job_runtime(

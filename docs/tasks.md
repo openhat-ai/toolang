@@ -290,6 +290,9 @@ Suggested derivation:
 ```text
 if state == "archived" -> archived
 else if runtime.active_run != null -> in_progress
+else if kind == "task" && stage == "running" -> in_progress
+else if state == "inactive" -> inactive
+else if kind == "task" && stage == "failed" -> failed
 else if runtime.last_run?.status == "failed" -> failed
 else if kind == "task" && stage == "todo" -> todo
 else if kind == "task" && stage == "done" -> finished
@@ -305,10 +308,28 @@ The job phase is a projection. It is not stored in Markdown frontmatter.
 
 Current read endpoints:
 
+- `GET /api/v1/jobs`
 - `GET /api/v1/tasks`
+- `GET /api/v1/tasks/{task_id}`
 - `GET /api/v1/chores`
+- `GET /api/v1/chores/{chore_id}`
 - `GET /api/v1/will`
 
 Default list endpoints return active and inactive jobs. Archived jobs are
 returned only when the endpoint explicitly requests archived content, for
 example with `include_archived=true`.
+
+Current write endpoints:
+
+- `POST /api/v1/tasks`
+- `PATCH /api/v1/tasks/{task_id}`
+- `POST /api/v1/tasks/{task_id}/archive`
+- `DELETE /api/v1/tasks/{task_id}`
+- `POST /api/v1/chores`
+- `PATCH /api/v1/chores/{chore_id}`
+- `POST /api/v1/chores/{chore_id}/archive`
+- `DELETE /api/v1/chores/{chore_id}`
+
+Create and patch requests use structured JSON fields instead of raw
+frontmatter. Task writes accept `title`, `body`, `state`, and `stage`. Chore
+writes accept `title`, `body`, `state`, and `schedule`.
