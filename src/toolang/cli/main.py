@@ -458,12 +458,14 @@ def stop_agent(
     ] = False,
 ) -> None:
     agent_name = _required_runtime_agent(ctx, agent)
-    runtime_state = agents.load_runtime_state(_context_root(ctx), agent_name)
-    if runtime_state is None:
+    root = _context_root(ctx)
+    runtime_state = agents.load_runtime_state(root, agent_name)
+    runtime_pids = () if runtime_state is not None else agents.agent_runtime_process_pids(root, agent_name)
+    if runtime_state is None and not runtime_pids:
         raise click.ClickException(f"Agent is not running: {agent_name}")
 
     sandbox_plugin = None
-    sandbox = runtime_state.get("sandbox")
+    sandbox = runtime_state.get("sandbox") if runtime_state is not None else None
     if isinstance(sandbox, dict):
         sandbox_data = {str(key): value for key, value in sandbox.items()}
         selector = sandbox_data.get("selector")
@@ -477,7 +479,7 @@ def stop_agent(
 
     stopped = _wrap_user_error(
         agents.stop_agent,
-        _context_root(ctx),
+        root,
         agent_name,
         sandbox_plugin=sandbox_plugin,
         force=force,

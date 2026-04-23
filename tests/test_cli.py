@@ -870,6 +870,44 @@ def test_cli_remove_rejects_active_agent(tmp_path: Path) -> None:
     assert "agent is still active: alice" in result.stderr
 
 
+def test_cli_remove_rejects_orphan_runtime_process(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    monkeypatch.setattr(agents, "agent_runtime_process_pids", lambda *_args: (12345,))
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(toolang_root), "remove", "alice"],
+        env={},
+    )
+
+    assert result.exit_code == 1
+    assert "agent is still active: alice" in result.stderr
+    assert (toolang_root / "agents" / "alice").is_dir()
+
+
+def test_cli_stop_stops_orphan_runtime_process_without_state(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    stopped: list[tuple[int, bool]] = []
+    monkeypatch.setattr(agents, "agent_runtime_process_pids", lambda *_args: (12345,))
+    monkeypatch.setattr(
+        agents,
+        "_stop_pid",
+        lambda pid, *, force: stopped.append((pid, force)),
+    )
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(toolang_root), "stop", "alice"],
+        env={},
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "alice\tstopped"
+    assert stopped == [(12345, False)]
+
+
 def test_cli_list_shows_agent_status_and_webui_url(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
