@@ -2274,20 +2274,40 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
         assert task["stage"] == "running"
         assert task["body"] == "Updated task body."
 
-        archived = client.post(f"/api/v1/tasks/{task_id}/archive")
+        archived = client.patch(f"/api/v1/jobs/{task_id}", json={"state": "archived"})
         assert archived.status_code == 200
         task = archived.json()["item"]
         assert task["state"] == "archived"
         assert task["path"].startswith("archive/tasks/")
 
         assert client.get("/api/v1/tasks").json()["items"] == []
-        archived_tasks = client.get("/api/v1/tasks?include_archived=true").json()["items"]
+        assert client.get(f"/api/v1/tasks/{task_id}").status_code == 404
+        archived_tasks = client.get("/api/v1/tasks/archived").json()["items"]
         assert [item["id"] for item in archived_tasks] == [task_id]
+        archived_detail = client.get(f"/api/v1/tasks/archived/{task_id}").json()["item"]
+        assert archived_detail["body"] == "Updated task body."
 
-        deleted = client.delete(f"/api/v1/tasks/{task_id}?include_archived=true")
+        reopened = client.patch(
+            f"/api/v1/jobs/archived/{task_id}",
+            json={
+                "state": "active",
+                "stage": "todo",
+            },
+        )
+        assert reopened.status_code == 200
+        task = reopened.json()["item"]
+        assert task["state"] == "active"
+        assert task["stage"] == "todo"
+        assert task["path"] == f"tasks/{task_id}.md"
+        assert [item["id"] for item in client.get("/api/v1/jobs").json()["items"]] == [task_id]
+
+        rearchived = client.patch(f"/api/v1/tasks/{task_id}", json={"state": "archived"})
+        assert rearchived.status_code == 200
+
+        deleted = client.delete(f"/api/v1/tasks/archived/{task_id}")
         assert deleted.status_code == 200
         assert deleted.json() == {"deleted": True, "id": task_id, "kind": "task"}
-        assert client.get("/api/v1/tasks?include_archived=true").json()["items"] == []
+        assert client.get("/api/v1/tasks/archived").json()["items"] == []
 
         updates = client.get("/api/v1/events").json()["items"]
 
@@ -2296,10 +2316,14 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
         "task_changed",
         "task_changed",
         "task_changed",
+        "task_changed",
+        "task_changed",
     ]
     assert [item["payload"]["action"] for item in updates] == [
         "created",
         "updated",
+        "archived",
+        "unarchived",
         "archived",
         "deleted",
     ]
@@ -2359,20 +2383,34 @@ def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
         assert chore["schedule"] == "FREQ=DAILY"
         assert chore["body"] == "Updated chore body."
 
-        archived = client.post(f"/api/v1/chores/{chore_id}/archive")
+        archived = client.patch(f"/api/v1/chores/{chore_id}", json={"state": "archived"})
         assert archived.status_code == 200
         chore = archived.json()["item"]
         assert chore["state"] == "archived"
         assert chore["path"].startswith("archive/chores/")
 
         assert client.get("/api/v1/chores").json()["items"] == []
-        archived_chores = client.get("/api/v1/chores?include_archived=true").json()["items"]
+        assert client.get(f"/api/v1/chores/{chore_id}").status_code == 404
+        archived_chores = client.get("/api/v1/jobs/archived?kind=chore").json()["items"]
         assert [item["id"] for item in archived_chores] == [chore_id]
 
-        deleted = client.delete(f"/api/v1/chores/{chore_id}?include_archived=true")
+        reopened = client.patch(
+            f"/api/v1/chores/archived/{chore_id}",
+            json={"state": "active"},
+        )
+        assert reopened.status_code == 200
+        chore = reopened.json()["item"]
+        assert chore["state"] == "active"
+        assert chore["path"] == f"chores/{chore_id}.md"
+        assert [item["id"] for item in client.get("/api/v1/chores").json()["items"]] == [chore_id]
+
+        rearchived = client.patch(f"/api/v1/jobs/{chore_id}", json={"state": "archived"})
+        assert rearchived.status_code == 200
+
+        deleted = client.delete(f"/api/v1/jobs/archived/{chore_id}")
         assert deleted.status_code == 200
         assert deleted.json() == {"deleted": True, "id": chore_id, "kind": "chore"}
-        assert client.get("/api/v1/chores?include_archived=true").json()["items"] == []
+        assert client.get("/api/v1/chores/archived").json()["items"] == []
 
         updates = client.get("/api/v1/events").json()["items"]
 
@@ -2381,10 +2419,14 @@ def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
         "chore_changed",
         "chore_changed",
         "chore_changed",
+        "chore_changed",
+        "chore_changed",
     ]
     assert [item["payload"]["action"] for item in updates] == [
         "created",
         "updated",
+        "archived",
+        "unarchived",
         "archived",
         "deleted",
     ]

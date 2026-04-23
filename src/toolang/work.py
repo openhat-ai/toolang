@@ -393,6 +393,12 @@ def list_tasks(
     return tuple(sorted(items, key=lambda item: str(item.path)))
 
 
+def list_archived_tasks(toolang_root: Path, agent_name: str) -> tuple[TaskEntry, ...]:
+    """List archived local tasks for one agent."""
+
+    return tuple(sorted(_task_entries(toolang_root, agent_name, archived=True), key=lambda item: str(item.path)))
+
+
 def find_task(
     toolang_root: Path,
     agent_name: str,
@@ -403,6 +409,15 @@ def find_task(
     """Find one local task by stable task id."""
 
     for entry in list_tasks(toolang_root, agent_name, include_archived=include_archived):
+        if entry.document.task_id() == task_id:
+            return entry
+    return None
+
+
+def find_archived_task(toolang_root: Path, agent_name: str, task_id: str) -> TaskEntry | None:
+    """Find one archived local task by stable task id."""
+
+    for entry in list_archived_tasks(toolang_root, agent_name):
         if entry.document.task_id() == task_id:
             return entry
     return None
@@ -422,6 +437,12 @@ def list_chores(
     return tuple(sorted(items, key=lambda item: str(item.path)))
 
 
+def list_archived_chores(toolang_root: Path, agent_name: str) -> tuple[ChoreEntry, ...]:
+    """List archived local chores for one agent."""
+
+    return tuple(sorted(_chore_entries(toolang_root, agent_name, archived=True), key=lambda item: str(item.path)))
+
+
 def find_chore(
     toolang_root: Path,
     agent_name: str,
@@ -432,6 +453,15 @@ def find_chore(
     """Find one local chore by stable chore id."""
 
     for entry in list_chores(toolang_root, agent_name, include_archived=include_archived):
+        if entry.document.chore_id() == chore_id:
+            return entry
+    return None
+
+
+def find_archived_chore(toolang_root: Path, agent_name: str, chore_id: str) -> ChoreEntry | None:
+    """Find one archived local chore by stable chore id."""
+
+    for entry in list_archived_chores(toolang_root, agent_name):
         if entry.document.chore_id() == chore_id:
             return entry
     return None
@@ -485,8 +515,7 @@ def update_task_text(toolang_root: Path, agent_name: str, task_id: str, text: st
         raise FileNotFoundError(f"task not found: {task_id}")
     document = TaskFile.parse_text(text)
     document = _task_with_existing_id(document, task_id=entry.document.task_id())
-    document.save(entry.path)
-    return entry.path
+    return save_task_entry(toolang_root, agent_name, entry, document)
 
 
 def update_chore_text(toolang_root: Path, agent_name: str, chore_id: str, text: str) -> Path:
@@ -497,8 +526,45 @@ def update_chore_text(toolang_root: Path, agent_name: str, chore_id: str, text: 
         raise FileNotFoundError(f"chore not found: {chore_id}")
     document = ChoreFile.parse_text(text)
     document = _chore_with_existing_id(document, chore_id=entry.document.chore_id())
-    document.save(entry.path)
-    return entry.path
+    return save_chore_entry(toolang_root, agent_name, entry, document)
+
+
+def save_task_entry(
+    toolang_root: Path,
+    agent_name: str,
+    entry: TaskEntry,
+    document: TaskFile,
+) -> Path:
+    """Save a task entry, moving it when its state changes archive placement."""
+
+    document = _task_with_existing_id(document, task_id=entry.document.task_id())
+    return _save_job_document(
+        toolang_root,
+        agent_name,
+        kind="task",
+        item_id=document.task_id(),
+        current_path=entry.path,
+        document=document,
+    )
+
+
+def save_chore_entry(
+    toolang_root: Path,
+    agent_name: str,
+    entry: ChoreEntry,
+    document: ChoreFile,
+) -> Path:
+    """Save a chore entry, moving it when its state changes archive placement."""
+
+    document = _chore_with_existing_id(document, chore_id=entry.document.chore_id())
+    return _save_job_document(
+        toolang_root,
+        agent_name,
+        kind="chore",
+        item_id=document.chore_id(),
+        current_path=entry.path,
+        document=document,
+    )
 
 
 def remove_task(toolang_root: Path, agent_name: str, task_id: str) -> bool:
@@ -586,6 +652,42 @@ def archive_chore(toolang_root: Path, agent_name: str, chore_id: str) -> Path | 
     return target
 
 
+def unarchive_task(
+    toolang_root: Path,
+    agent_name: str,
+    task_id: str,
+    *,
+    state: Literal["active", "inactive"] = "active",
+    stage: TaskStage | None = None,
+) -> Path | None:
+    """Move one archived task back to the active task directory."""
+
+    entry = find_archived_task(toolang_root, agent_name, task_id)
+    if entry is None:
+        return None
+    updates: dict[str, object] = {"state": state}
+    if stage is not None:
+        updates["stage"] = stage
+    document = entry.document.model_copy(update=updates)
+    return save_task_entry(toolang_root, agent_name, entry, document)
+
+
+def unarchive_chore(
+    toolang_root: Path,
+    agent_name: str,
+    chore_id: str,
+    *,
+    state: Literal["active", "inactive"] = "active",
+) -> Path | None:
+    """Move one archived chore back to the active chore directory."""
+
+    entry = find_archived_chore(toolang_root, agent_name, chore_id)
+    if entry is None:
+        return None
+    document = entry.document.model_copy(update={"state": state})
+    return save_chore_entry(toolang_root, agent_name, entry, document)
+
+
 def _task_entries(toolang_root: Path, agent_name: str, *, archived: bool) -> Iterable[TaskEntry]:
     root = _archive_dir(toolang_root, agent_name, kind="task") if archived else _work_dir(toolang_root, agent_name, kind="task")
     if not root.exists():
@@ -640,6 +742,62 @@ def _archive_path(
     item_id: str,
 ) -> Path:
     return _archive_dir(toolang_root, agent_name, kind=kind) / _archive_bucket(item_id) / f"{item_id}.md"
+
+
+def _job_path_for_state(
+    toolang_root: Path,
+    agent_name: str,
+    *,
+    kind: Literal["task", "chore"],
+    item_id: str,
+    state: JobState,
+) -> Path:
+    if state == "archived":
+        return _archive_path(toolang_root, agent_name, kind=kind, item_id=item_id)
+    if kind == "task":
+        return task_path(toolang_root, agent_name, item_id)
+    return chore_path(toolang_root, agent_name, item_id)
+
+
+def _save_job_document(
+    toolang_root: Path,
+    agent_name: str,
+    *,
+    kind: Literal["task", "chore"],
+    item_id: str,
+    current_path: Path,
+    document: TaskFile | ChoreFile,
+) -> Path:
+    target = _job_path_for_state(
+        toolang_root,
+        agent_name,
+        kind=kind,
+        item_id=item_id,
+        state=document.state,
+    )
+    document.save(target)
+    if current_path != target:
+        current_path.unlink(missing_ok=True)
+        _prune_empty_parents(
+            current_path.parent,
+            stop=_job_parent_root(toolang_root, agent_name, kind=kind, path=current_path),
+        )
+    return target
+
+
+def _job_parent_root(
+    toolang_root: Path,
+    agent_name: str,
+    *,
+    kind: Literal["task", "chore"],
+    path: Path,
+) -> Path:
+    archive = _archive_dir(toolang_root, agent_name, kind=kind)
+    try:
+        path.relative_to(archive)
+    except ValueError:
+        return _work_dir(toolang_root, agent_name, kind=kind)
+    return archive
 
 
 def _archive_bucket(item_id: str) -> str:
