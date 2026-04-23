@@ -1,9 +1,8 @@
 """Stable local id families and file-backed allocators.
 
-This module is intentionally standalone for early design work. It defines one
-shared short-id family for Toolang-owned local objects and execution records,
-plus one small file-backed allocator prototype that can be shared across CLI
-and runtime processes later.
+This module defines fixed-width short-id families for Toolang-owned local
+objects and execution records, plus one file-backed allocator that can be
+shared across CLI and runtime processes.
 """
 
 from __future__ import annotations

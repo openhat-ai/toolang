@@ -14,7 +14,7 @@ from dateutil.rrule import rrulestr
 import frontmatter
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from .ids import LOCAL_ID_FAMILY, allocate_id, archive_prefix as id_archive_prefix
+from .ids import LOCAL_ID_FAMILY, allocate_id, decode_id
 
 JobState = Literal["active", "inactive", "archived"]
 TaskStatus = Literal["todo", "running", "done", "failed"]
@@ -630,9 +630,10 @@ def _archive_path(
 
 def _archive_bucket(item_id: str) -> str:
     try:
-        return id_archive_prefix(item_id, family=LOCAL_ID_FAMILY)
+        started_at = decode_id(item_id, family=LOCAL_ID_FAMILY).bucket_started_at
     except ValueError:
         return (item_id[:4] or "legacy").lower()
+    return started_at.astimezone(timezone.utc).strftime("%Y%m%dT%HZ")
 
 
 def _relative_name(name: str) -> Path:

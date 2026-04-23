@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from toolang import work
+from toolang.ids import LOCAL_ID_FAMILY, decode_id
 
 
 def test_task_defaults_to_active_todo_and_archives_after_success(tmp_path) -> None:
@@ -37,6 +38,7 @@ def test_task_defaults_to_active_todo_and_archives_after_success(tmp_path) -> No
     assert archived.path == archived_path
     assert "archive" in archived_path.parts
     assert "tasks" in archived_path.parts
+    assert archived_path.parent.name == _archive_bucket(task_id)
 
 
 def test_chore_normalizes_legacy_rrule_and_paused_state(tmp_path) -> None:
@@ -58,3 +60,7 @@ def test_chore_normalizes_legacy_rrule_and_paused_state(tmp_path) -> None:
     assert "schedule: FREQ=HOURLY;INTERVAL=2" in saved
     assert "paused:" not in saved
     assert "rrule:" not in saved
+
+
+def _archive_bucket(value: str) -> str:
+    return decode_id(value, family=LOCAL_ID_FAMILY).bucket_started_at.strftime("%Y%m%dT%HZ")

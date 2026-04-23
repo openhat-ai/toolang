@@ -22,10 +22,10 @@ chores/
   <id>.md
 archive/
   tasks/
-    <archive_prefix>/
+    <YYYYMMDDTHHZ>/
       <id>.md
   chores/
-    <archive_prefix>/
+    <YYYYMMDDTHHZ>/
       <id>.md
 .runtime/
   ids.json
@@ -40,8 +40,10 @@ Rules:
 - `.runtime/ids.json` owns local id allocation state.
 - `.runtime/execution.db` owns run, thread, scheduler, and projection state.
 
-`archive_prefix` is derived from the decoded id tick bucket. It is not the
-visible leading chars of the id string. See [ids.md](./ids.md).
+The archive bucket directory is derived from the decoded id tick bucket and is
+rendered as one UTC hour in `YYYYMMDDTHHZ` form, for example
+`20260423T10Z`. It is not derived from the visible leading chars of the id
+string. See [ids.md](./ids.md).
 
 
 ## Shared Fields

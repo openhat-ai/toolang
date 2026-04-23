@@ -109,15 +109,13 @@ This gives Toolang-owned ids these properties:
 - allocation order is hidden
 - ids still decode back to raw `tick` and `seq`
 - ids from the same tick bucket can still display different visible prefixes
-- archive bucketing can still use the decoded tick-derived bucket prefix
+- archive bucketing can still use the decoded tick-derived UTC bucket
 
 This mechanism is not meant to be cryptographic secrecy. It is only a compact,
 reversible local obfuscation layer.
 
 
 ## Allocation
-
-The prototype separates allocation from integration.
 
 Allocator state is durable and per-agent. It is not runtime-only state.
 
@@ -165,19 +163,16 @@ definitions when local migration needs one extra check.
 ## Archive Buckets
 
 Because visible id prefixes are now mixed across the whole encoded value,
-archive bucketing should use the decoded tick-derived bucket prefix rather than
-the literal leading chars shown in the id string.
+archive bucketing uses the decoded tick-derived UTC bucket rather than the
+literal leading chars shown in the id string.
 
 Examples:
 
-- `archive/tasks/<prefix>/<id>.md`
-- `archive/chores/<prefix>/<id>.md`
+- `archive/tasks/20260423T10Z/<id>.md`
+- `archive/chores/20260423T10Z/<id>.md`
 
-Or the prefix can be decoded back into one UTC bucket start time and rendered as
-friendlier calendar directories such as `YYYY/MM`.
-
-Toolang currently uses decoded tick-derived bucket prefixes for local task and
-chore archive paths.
+The `T` separates date from hour and `Z` makes the UTC timezone explicit while
+keeping the directory compact.
 
 
 ## Current API
@@ -195,5 +190,4 @@ chore archive paths.
 - `allocate_id(...)`
 - `archive_prefix(...)`
 
-This keeps the design concrete enough to test before wiring it into task,
-chore, thread, and run creation.
+These helpers are used by local task, chore, thread, and run creation.
