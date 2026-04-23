@@ -254,7 +254,7 @@ def _task_collection(context: UptimeContext, *, include_archived: bool = False) 
                 "id": document.task_id(),
                 "kind": "task",
                 "state": document.state,
-                "status": document.status,
+                "stage": document.stage,
                 "title": document.display_title(fallback_name=entry.name.rsplit("/", 1)[-1]),
                 "path": _agent_relative_path(context, entry.path),
                 "updated_at": _path_updated_at(entry.path),

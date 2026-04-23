@@ -819,7 +819,7 @@ def _make_work_list_command(kind: WorkKind, title: str) -> Callable[..., None]:
                     entry.document.task_id(),
                     entry.document.display_title(fallback_name=entry.document.task_id()),
                     entry.document.state,
-                    entry.document.status,
+                    entry.document.stage,
                     _work_location(root, agent_name, entry.path),
                 )
                 for entry in entries

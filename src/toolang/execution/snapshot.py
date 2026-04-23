@@ -53,7 +53,7 @@ class SnapshotTask:
     name: str
     body: str
     state: str
-    status: str
+    stage: str
     thread_id: str
     path: str
 

@@ -289,7 +289,7 @@ Task items include:
 - `id`
 - `kind`
 - `state`
-- `status`
+- `stage`
 - `title`
 - `path`
 - `updated_at`
@@ -312,7 +312,7 @@ Chore items include:
 - `inactive`
 - `archived`
 
-Task `status` values are:
+Task `stage` values are:
 
 - `todo`
 - `running`

@@ -2480,7 +2480,7 @@ def test_cli_task_new_supports_template_alias_and_persists_id(tmp_path: Path, mo
     assert task.path == toolang_root / "agents" / "alice" / "tasks" / f"{task.document.task_id()}.md"
     assert "\nid: " in saved
     assert "title: Task title" in saved
-    assert "status: todo" not in saved
+    assert "stage: todo" not in saved
 
 
 def test_cli_task_list_shows_task_rows(tmp_path: Path, monkeypatch) -> None:
@@ -2491,7 +2491,7 @@ def test_cli_task_list_shows_task_rows(tmp_path: Path, monkeypatch) -> None:
         lambda *_args, **_kwargs: (
             "---\n"
             "state: inactive\n"
-            "status: running\n"
+            "stage: running\n"
             "---\n"
             "Review the current plan.\n"
         ),

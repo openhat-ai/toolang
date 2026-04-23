@@ -110,7 +110,7 @@ This is equivalent to:
 ---
 id: 3nprht
 state: active
-status: todo
+stage: todo
 ---
 
 Review the API changes and summarize risks.
@@ -120,27 +120,27 @@ Task-specific frontmatter fields:
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `status` | optional | One-shot task lifecycle state |
+| `stage` | optional | One-shot task progress stage |
 
-Valid task `status` values:
+Valid task `stage` values:
 
-| Status | Meaning |
+| Stage | Meaning |
 | --- | --- |
 | `todo` | Ready to be claimed and executed |
 | `running` | Claimed by one run; prevents duplicate execution |
 | `done` | Successfully completed; should be archived |
 | `failed` | Failed terminal state; not retried automatically |
 
-`status` is optional and defaults to `todo`.
+`stage` is optional and defaults to `todo`.
 
 Task execution rules:
 
-- only `state: active` tasks with `status: todo` can be claimed
-- claim writes `status: running` before execution starts
-- successful execution writes `status: done`, then archives the task
-- failed execution writes `status: failed`
+- only `state: active` tasks with `stage: todo` can be claimed
+- claim writes `stage: running` before execution starts
+- successful execution writes `stage: done`, then archives the task
+- failed execution writes `stage: failed`
 - Toolang does not retry failed tasks automatically
-- users can explicitly set `status: todo` again to request another attempt
+- users can explicitly set `stage: todo` again to request another attempt
 
 The task body is authored input. Runtime output is stored in execution records
 and projected through the job thread.
@@ -167,7 +167,7 @@ Chore-specific frontmatter fields:
 | --- | --- | --- |
 | `schedule` | required | RRULE schedule string |
 
-Chores do not have `status`.
+Chores do not have `stage`.
 
 Rules:
 
@@ -223,7 +223,7 @@ Task projection:
   "id": "3nprht",
   "kind": "task",
   "state": "active",
-  "status": "todo",
+  "stage": "todo",
   "title": "Review API changes",
   "path": "tasks/3nprht.md",
   "updated_at": "2026-04-23T10:10:00Z",
@@ -280,9 +280,9 @@ Runtime run statuses are:
 | `canceled` | The run was canceled |
 
 
-## Kanban Projection
+## Job Phase Projection
 
-Kanban columns are derived by the API or web UI from `state`, task `status`, and
+Job phases are derived by the API or web UI from `state`, task `stage`, and
 `runtime`.
 
 Suggested derivation:
@@ -291,14 +291,14 @@ Suggested derivation:
 if state == "archived" -> archived
 else if runtime.active_run != null -> in_progress
 else if runtime.last_run?.status == "failed" -> failed
-else if kind == "task" && status == "todo" -> todo
-else if kind == "task" && status == "done" -> finished
+else if kind == "task" && stage == "todo" -> todo
+else if kind == "task" && stage == "done" -> finished
 else if kind == "chore" && runtime.next_run != null -> scheduled
 else if runtime.last_run?.status == "succeeded" -> finished
 else -> ready
 ```
 
-The Kanban status is a projection. It is not stored in Markdown frontmatter.
+The job phase is a projection. It is not stored in Markdown frontmatter.
 
 
 ## HTTP API

@@ -2216,7 +2216,7 @@ def test_new_task_reloads_into_live_state_and_tasks_endpoint(tmp_path: Path) -> 
     assert tasks[0]["kind"] == "task"
     assert tasks[0]["title"] == "Review"
     assert tasks[0]["state"] == "active"
-    assert tasks[0]["status"] == "todo"
+    assert tasks[0]["stage"] == "todo"
     assert tasks[0]["runtime"]["thread_id"] == f"task_{tasks[0]['id']}"
     assert tasks[0]["runtime"]["active_run"] is None
     assert tasks[0]["runtime"]["last_run"] is None
@@ -2296,7 +2296,7 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
         name="review",
         body=task.body,
         state="active",
-        status="todo",
+        stage="todo",
         thread_id=task.thread_id(),
         path=str(toolang_root / "agents" / "alice" / "tasks" / "review.md"),
     )
@@ -2311,9 +2311,9 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
     assert "Treat the user's message as the current task input." in instructions
     assert "Current task:" in instructions
     assert "- State: active" in instructions
-    assert "- Status: todo" in instructions
+    assert "- Stage: todo" in instructions
     assert f"- Path: {toolang_root / 'agents' / 'alice' / 'tasks' / 'review.md'}" in instructions
-    assert "- The task document is read-only during model execution; runtime updates task status." in instructions
+    assert "- The task document is read-only during model execution; runtime updates task stage." in instructions
 
 
 def test_assemble_run_input_prefers_thunk_model_over_activation_default(tmp_path: Path) -> None:

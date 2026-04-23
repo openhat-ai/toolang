@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 from .ids import LOCAL_ID_FAMILY, allocate_id, decode_id
 
 JobState = Literal["active", "inactive", "archived"]
-TaskStatus = Literal["todo", "running", "done", "failed"]
+TaskStage = Literal["todo", "running", "done", "failed"]
 DEFAULT_CHORE_SCHEDULE = "FREQ=HOURLY;INTERVAL=1"
 
 
@@ -86,7 +86,7 @@ class TaskFile(_MarkdownDocument):
 
     id: str | None = None
     title: str | None = None
-    status: TaskStatus = "todo"
+    stage: TaskStage = "todo"
 
     @field_validator("id", mode="before")
     @classmethod
@@ -96,9 +96,9 @@ class TaskFile(_MarkdownDocument):
         text = str(value).strip()
         return text or None
 
-    @field_validator("status", mode="before")
+    @field_validator("stage", mode="before")
     @classmethod
-    def _normalize_status(cls, value: object) -> object:
+    def _normalize_stage(cls, value: object) -> object:
         if value is None:
             return "todo"
         text = str(value).strip().lower()
@@ -154,17 +154,17 @@ class TaskFile(_MarkdownDocument):
     def claimable(self) -> bool:
         """Return whether this task can be claimed by a run."""
 
-        return self.state == "active" and self.status == "todo"
+        return self.state == "active" and self.stage == "todo"
 
     def running(self) -> "TaskFile":
         """Return this task marked as claimed."""
 
-        return self.model_copy(update={"status": "running"})
+        return self.model_copy(update={"stage": "running"})
 
     def completed(self, *, succeeded: bool) -> "TaskFile":
         """Return this task marked as completed."""
 
-        return self.model_copy(update={"status": "done" if succeeded else "failed"})
+        return self.model_copy(update={"stage": "done" if succeeded else "failed"})
 
     def archived_copy(self) -> "TaskFile":
         """Return this task marked as archived."""
@@ -190,8 +190,8 @@ class TaskFile(_MarkdownDocument):
             metadata["id"] = self.id
         if self.title is not None and self.title.strip():
             metadata["title"] = self.title.strip()
-        if self.status != "todo":
-            metadata["status"] = self.status
+        if self.stage != "todo":
+            metadata["stage"] = self.stage
         return metadata
 
 
@@ -313,10 +313,10 @@ class ChoreEntry:
     document: ChoreFile
 
 
-def task_terminal(status: TaskStatus) -> bool:
-    """Return whether one task status is terminal."""
+def task_terminal(stage: TaskStage) -> bool:
+    """Return whether one task stage is terminal."""
 
-    return status in {"done", "failed"}
+    return stage in {"done", "failed"}
 
 
 def next_scheduled_at(

@@ -16,7 +16,7 @@ def test_task_defaults_to_active_todo_and_archives_after_success(tmp_path) -> No
     saved = path.read_text(encoding="utf-8")
     assert "\nid: " in saved
     assert "state: active" not in saved
-    assert "status: todo" not in saved
+    assert "stage: todo" not in saved
 
     task = work.list_tasks(toolang_root, "alice")[0]
     task_id = task.document.task_id()
@@ -34,7 +34,7 @@ def test_task_defaults_to_active_todo_and_archives_after_success(tmp_path) -> No
 
     archived = work.list_tasks(toolang_root, "alice", include_archived=True)[0]
     assert archived.document.state == "archived"
-    assert archived.document.status == "done"
+    assert archived.document.stage == "done"
     assert archived.path == archived_path
     assert "archive" in archived_path.parts
     assert "tasks" in archived_path.parts

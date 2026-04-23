@@ -109,11 +109,11 @@ Treat the user's message as the current task input.
 Current task:
 - Name: {{name}}
 - State: {{state}}
-- Status: {{status}}
+- Stage: {{stage}}
 {{#path}}
 - Path: {{path}}
 {{/path}}
-- The task document is read-only during model execution; runtime updates task status.
+- The task document is read-only during model execution; runtime updates task stage.
 {{/runtime.job}}
 Work the task directly and keep progress or outcome notes precise.
 Do not call tools or inspect files just to explore the environment.
@@ -858,7 +858,7 @@ def _task_snapshot(
             name=task.name.rsplit("/", 1)[-1],
             body=task.document.body,
             state=task.document.state,
-            status=task.document.status,
+            stage=task.document.stage,
             thread_id=task.document.thread_id(),
             path=str(task.path),
         ),
@@ -929,7 +929,7 @@ def _task_context(
         "name": task.name.rsplit("/", 1)[-1],
         "body": task.document.body,
         "state": task.document.state,
-        "status": task.document.status,
+        "stage": task.document.stage,
         "thread_id": task.document.thread_id(),
         "path": str(task.path),
         "readable": True,
