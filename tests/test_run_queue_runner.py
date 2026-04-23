@@ -1150,7 +1150,7 @@ def test_background_loops_enqueue_runs(tmp_path: Path) -> None:
         _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
         _write_text(
             toolang_root / "agents" / "alice" / "tasks" / "review.md",
-            "---\nrequester: owner\nstatus: todo\n---\nReview the current plan.\n",
+            "---\ntitle: Review\n---\nReview the current plan.\n",
         )
         context = _build_context(
             toolang_root=toolang_root,
@@ -2190,7 +2190,7 @@ def test_new_task_reloads_into_live_state_and_tasks_endpoint(tmp_path: Path) -> 
         first_fingerprint = context.live.fingerprint
         _write_text(
             toolang_root / "agents" / "alice" / "tasks" / "review.md",
-            "---\nrequester: owner\nstatus: todo\n---\nReview the current plan.\n",
+            "---\ntitle: Review\n---\nReview the current plan.\n",
         )
         for _ in range(200):
             snapshot = inspect.snapshot_context(
@@ -2214,7 +2214,7 @@ def test_new_task_reloads_into_live_state_and_tasks_endpoint(tmp_path: Path) -> 
     assert live["jobs"] == ["agents/alice/tasks/review.md"]
     assert len(tasks) == 1
     assert tasks[0]["kind"] == "task"
-    assert tasks[0]["title"] == "Review the current plan."
+    assert tasks[0]["title"] == "Review"
     assert tasks[0]["state"] == "active"
     assert tasks[0]["status"] == "todo"
     assert tasks[0]["runtime"]["thread_id"] == f"task_{tasks[0]['id']}"
@@ -2243,7 +2243,7 @@ def test_new_task_reloads_and_pulse_runs_it(tmp_path: Path) -> None:
         with TestClient(app):
             _write_text(
                 toolang_root / "agents" / "alice" / "tasks" / "review.md",
-                "---\nrequester: owner\nstatus: todo\n---\nReview the current plan.\n",
+                "---\ntitle: Review\n---\nReview the current plan.\n",
             )
             for _ in range(200):
                 completed = cast(
@@ -2268,7 +2268,7 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
     _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
     _write_text(
         toolang_root / "agents" / "alice" / "tasks" / "review.md",
-        "---\nrequester: owner\nstatus: todo\n---\nReview the current plan.\n",
+        "---\ntitle: Review\n---\nReview the current plan.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,

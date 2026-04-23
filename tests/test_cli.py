@@ -1023,17 +1023,15 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
         name="github",
         text="---\ntransport: http\ntarget: https://example.com/mcp\n---\n",
     )
-    work.put_task_text(
+    work.create_task_text(
         toolang_root,
         "alice",
-        "review",
-        "---\nstatus: todo\nrequester: owner\n---\n\nReview this change.\n",
+        "---\ntitle: Review\n---\n\nReview this change.\n",
     )
-    work.put_chore_text(
+    work.create_chore_text(
         toolang_root,
         "alice",
-        "sync",
-        "---\ntitle: Sync\nrrule: FREQ=HOURLY;INTERVAL=1\n---\n\nSync the service.\n",
+        "---\ntitle: Sync\nschedule: FREQ=HOURLY;INTERVAL=1\n---\n\nSync the service.\n",
     )
     agents.write_runtime_state(
         toolang_root,
@@ -2433,16 +2431,18 @@ def test_cli_task_new_supports_template_alias_and_persists_id(tmp_path: Path, mo
 
     monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
     result = _invoke_app(
-        ["task", "new", "review", "-t", "default"],
+        ["task", "new", "-t", "default"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
 
     assert result.exit_code == 0
-    saved = (toolang_root / "agents" / "alice" / "tasks" / "review.md").read_text(encoding="utf-8")
+    task = work.list_tasks(toolang_root, "alice")[0]
+    saved = task.path.read_text(encoding="utf-8")
+    assert task.path == toolang_root / "agents" / "alice" / "tasks" / f"{task.document.task_id()}.md"
     assert "\nid: " in saved
+    assert "title: Task title" in saved
     assert "status: todo" not in saved
-    assert "requester:" not in saved
 
 
 def test_cli_task_list_shows_task_rows(tmp_path: Path, monkeypatch) -> None:
@@ -2452,14 +2452,14 @@ def test_cli_task_list_shows_task_rows(tmp_path: Path, monkeypatch) -> None:
         "edit",
         lambda *_args, **_kwargs: (
             "---\n"
-            "status: doing\n"
-            "paused: true\n"
+            "state: inactive\n"
+            "status: running\n"
             "---\n"
             "Review the current plan.\n"
         ),
     )
     _invoke_app(
-        ["task", "new", "review"],
+        ["task", "new"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -2471,10 +2471,11 @@ def test_cli_task_list_shows_task_rows(tmp_path: Path, monkeypatch) -> None:
     )
 
     assert result.exit_code == 0
+    assert "ID" in result.stdout
     assert "TASK" in result.stdout
     assert "STATE" in result.stdout
     assert "STATUS" in result.stdout
-    assert "review" in result.stdout
+    assert "Review the current plan." in result.stdout
     assert "inactive" in result.stdout
     assert "running" in result.stdout
 
@@ -2483,7 +2484,7 @@ def test_cli_chore_new_and_list_show_schedule(tmp_path: Path, monkeypatch) -> No
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
     _invoke_app(
-        ["chore", "new", "sync", "-t", "default"],
+        ["chore", "new", "-t", "default"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -2495,9 +2496,10 @@ def test_cli_chore_new_and_list_show_schedule(tmp_path: Path, monkeypatch) -> No
     )
 
     assert result.exit_code == 0
+    assert "ID" in result.stdout
     assert "CHORE" in result.stdout
     assert "SCHEDULE" in result.stdout
-    assert "sync" in result.stdout
+    assert "Chore title" in result.stdout
     assert "FREQ=HOURLY;INTERVAL=1" in result.stdout
 
 
@@ -2506,7 +2508,7 @@ def test_cli_task_new_records_task_changed_update(tmp_path: Path, monkeypatch) -
     monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
 
     result = _invoke_app(
-        ["task", "new", "review", "-t", "default"],
+        ["task", "new", "-t", "default"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -2518,7 +2520,7 @@ def test_cli_task_new_records_task_changed_update(tmp_path: Path, monkeypatch) -
     finally:
         store.close()
     assert [item.kind for item in updates] == ["task_changed"]
-    assert updates[0].payload["name"] == "review"
+    assert str(updates[0].payload["id"]).strip()
 
 
 def test_cli_global_cap_change_does_not_create_agent_local_update_store(tmp_path: Path, monkeypatch) -> None:
@@ -2602,6 +2604,7 @@ def test_cli_task_new_help_shows_required_prefix_agent() -> None:
     assert "AGENT task new" in result.stdout
     assert "agent      TEXT" in result.stdout
     assert "Agent name." in result.stdout
+    assert "Task name" not in result.stdout
 
 
 def test_cli_cap_commands_cover_file_backed_kinds(tmp_path: Path, monkeypatch) -> None:

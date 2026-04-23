@@ -467,7 +467,8 @@ def _make_template_list_command(kind: TemplateKind, *, title: str) -> Callable[.
             typer.echo(f"No {kind} templates found.")
             return
         rows = [(item.name, item.description or "-") for item in specs]
-        _echo_table(("TEMPLATE", "DESCRIPTION"), rows)
+        summary_title = "TITLE" if kind in {"task", "chore"} else "DESCRIPTION"
+        _echo_table(("TEMPLATE", summary_title), rows)
 
     return list_templates
 

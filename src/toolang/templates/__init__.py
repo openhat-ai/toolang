@@ -40,13 +40,14 @@ def list_templates(kind: TemplateKind) -> tuple[TemplateSpec, ...]:
         matched = _TEMPLATE_FILE_RE.fullmatch(resource.name)
         if matched is None or matched.group("kind") != kind:
             continue
+        raw_text = resource.read_text(encoding="utf-8")
         items.append(
             TemplateSpec(
                 kind=kind,
                 name=matched.group("name"),
                 path=resource.name,
-                description=_template_description(resource.read_text(encoding="utf-8")),
-                raw_text=resource.read_text(encoding="utf-8"),
+                description=_template_description(kind, raw_text),
+                raw_text=raw_text,
             )
         )
     items.sort(key=lambda item: (0 if item.name == "default" else 1, item.name))
@@ -90,11 +91,11 @@ def load_info_palette() -> tuple[tuple[str, ...], tuple[str, ...]]:
     return rows[0], rows[1]
 
 
-def _template_description(raw_text: str) -> str | None:
+def _template_description(kind: TemplateKind, raw_text: str) -> str | None:
     if not raw_text.lstrip().startswith("---"):
         return None
     post = frontmatter.loads(raw_text)
-    value = post.metadata.get("description")
+    value = post.metadata.get("title" if kind in {"task", "chore"} else "description")
     text = str(value).strip() if value is not None else ""
     return text or None
 

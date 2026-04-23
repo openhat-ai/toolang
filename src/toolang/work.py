@@ -12,19 +12,13 @@ from typing import Literal
 
 from dateutil.rrule import rrulestr
 import frontmatter
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from .ids import LOCAL_ID_FAMILY, allocate_id, decode_id
 
 JobState = Literal["active", "inactive", "archived"]
 TaskStatus = Literal["todo", "running", "done", "failed"]
 DEFAULT_CHORE_SCHEDULE = "FREQ=HOURLY;INTERVAL=1"
-_TASK_STATUS_ALIASES = {
-    "doing": "running",
-    "in_progress": "running",
-    "cancelled": "failed",
-    "canceled": "failed",
-}
 
 
 class _MarkdownDocument(BaseModel):
@@ -34,17 +28,6 @@ class _MarkdownDocument(BaseModel):
 
     state: JobState = "active"
     body: str = ""
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_legacy_state(cls, value: object) -> object:
-        if not isinstance(value, dict):
-            return value
-        data = dict(value)
-        paused = data.pop("paused", None)
-        if "state" not in data and paused is True:
-            data["state"] = "inactive"
-        return data
 
     @field_validator("state", mode="before")
     @classmethod
@@ -119,7 +102,7 @@ class TaskFile(_MarkdownDocument):
         if value is None:
             return "todo"
         text = str(value).strip().lower()
-        return _TASK_STATUS_ALIASES.get(text, text or "todo")
+        return text or "todo"
 
     @classmethod
     def load(
@@ -218,17 +201,6 @@ class ChoreFile(_MarkdownDocument):
     id: str | None = None
     title: str | None = None
     schedule: str = DEFAULT_CHORE_SCHEDULE
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_legacy_schedule(cls, value: object) -> object:
-        if not isinstance(value, dict):
-            return value
-        data = dict(value)
-        rrule = data.pop("rrule", None)
-        if "schedule" not in data and rrule is not None:
-            data["schedule"] = rrule
-        return data
 
     @field_validator("id", mode="before")
     @classmethod
@@ -395,16 +367,16 @@ def chore_id_from_thread_id(thread_id: str) -> str | None:
     return chore_id or None
 
 
-def task_path(toolang_root: Path, agent_name: str, task_name: str) -> Path:
+def task_path(toolang_root: Path, agent_name: str, task_id: str) -> Path:
     """Return one local task path."""
 
-    return _work_dir(toolang_root, agent_name, kind="task") / _relative_name(task_name).with_suffix(".md")
+    return _work_dir(toolang_root, agent_name, kind="task") / _relative_id_path(task_id)
 
 
-def chore_path(toolang_root: Path, agent_name: str, chore_name: str) -> Path:
+def chore_path(toolang_root: Path, agent_name: str, chore_id: str) -> Path:
     """Return one local chore path."""
 
-    return _work_dir(toolang_root, agent_name, kind="chore") / _relative_name(chore_name).with_suffix(".md")
+    return _work_dir(toolang_root, agent_name, kind="chore") / _relative_id_path(chore_id)
 
 
 def list_tasks(
@@ -465,61 +437,89 @@ def find_chore(
     return None
 
 
-def load_task_text(toolang_root: Path, agent_name: str, task_name: str) -> str:
+def load_task_text(toolang_root: Path, agent_name: str, task_id: str) -> str:
     """Load one task document."""
 
-    path = task_path(toolang_root, agent_name, task_name)
-    if not path.is_file():
-        raise FileNotFoundError(f"task not found: {task_name}")
-    return path.read_text(encoding="utf-8")
+    entry = find_task(toolang_root, agent_name, task_id)
+    if entry is None:
+        raise FileNotFoundError(f"task not found: {task_id}")
+    return entry.path.read_text(encoding="utf-8")
 
 
-def load_chore_text(toolang_root: Path, agent_name: str, chore_name: str) -> str:
+def load_chore_text(toolang_root: Path, agent_name: str, chore_id: str) -> str:
     """Load one chore document."""
 
-    path = chore_path(toolang_root, agent_name, chore_name)
-    if not path.is_file():
-        raise FileNotFoundError(f"chore not found: {chore_name}")
-    return path.read_text(encoding="utf-8")
+    entry = find_chore(toolang_root, agent_name, chore_id)
+    if entry is None:
+        raise FileNotFoundError(f"chore not found: {chore_id}")
+    return entry.path.read_text(encoding="utf-8")
 
 
-def put_task_text(toolang_root: Path, agent_name: str, task_name: str, text: str) -> Path:
-    """Create or replace one validated task document."""
+def create_task_text(toolang_root: Path, agent_name: str, text: str) -> Path:
+    """Create one validated task document with an auto-generated id path."""
 
-    path = task_path(toolang_root, agent_name, task_name)
-    document = TaskFile.parse_text(text).with_id(lambda: allocate_job_id(toolang_root, agent_name))
+    document = TaskFile.parse_text(text).model_copy(
+        update={"id": allocate_job_id(toolang_root, agent_name)}
+    )
+    path = task_path(toolang_root, agent_name, document.task_id())
     document.save(path)
     return path
 
 
-def put_chore_text(toolang_root: Path, agent_name: str, chore_name: str, text: str) -> Path:
-    """Create or replace one validated chore document."""
+def create_chore_text(toolang_root: Path, agent_name: str, text: str) -> Path:
+    """Create one validated chore document with an auto-generated id path."""
 
-    path = chore_path(toolang_root, agent_name, chore_name)
-    document = ChoreFile.parse_text(text).with_id(lambda: allocate_job_id(toolang_root, agent_name))
+    document = ChoreFile.parse_text(text).model_copy(
+        update={"id": allocate_job_id(toolang_root, agent_name)}
+    )
+    path = chore_path(toolang_root, agent_name, document.chore_id())
     document.save(path)
     return path
 
 
-def remove_task(toolang_root: Path, agent_name: str, task_name: str) -> bool:
+def update_task_text(toolang_root: Path, agent_name: str, task_id: str, text: str) -> Path:
+    """Replace one task document, preserving its stable id."""
+
+    entry = find_task(toolang_root, agent_name, task_id)
+    if entry is None:
+        raise FileNotFoundError(f"task not found: {task_id}")
+    document = TaskFile.parse_text(text)
+    document = _task_with_existing_id(document, task_id=entry.document.task_id())
+    document.save(entry.path)
+    return entry.path
+
+
+def update_chore_text(toolang_root: Path, agent_name: str, chore_id: str, text: str) -> Path:
+    """Replace one chore document, preserving its stable id."""
+
+    entry = find_chore(toolang_root, agent_name, chore_id)
+    if entry is None:
+        raise FileNotFoundError(f"chore not found: {chore_id}")
+    document = ChoreFile.parse_text(text)
+    document = _chore_with_existing_id(document, chore_id=entry.document.chore_id())
+    document.save(entry.path)
+    return entry.path
+
+
+def remove_task(toolang_root: Path, agent_name: str, task_id: str) -> bool:
     """Remove one task document."""
 
-    path = task_path(toolang_root, agent_name, task_name)
-    if not path.exists():
+    entry = find_task(toolang_root, agent_name, task_id)
+    if entry is None:
         return False
-    path.unlink()
-    _prune_empty_parents(path.parent, stop=_work_dir(toolang_root, agent_name, kind="task"))
+    entry.path.unlink()
+    _prune_empty_parents(entry.path.parent, stop=_work_dir(toolang_root, agent_name, kind="task"))
     return True
 
 
-def remove_chore(toolang_root: Path, agent_name: str, chore_name: str) -> bool:
+def remove_chore(toolang_root: Path, agent_name: str, chore_id: str) -> bool:
     """Remove one chore document."""
 
-    path = chore_path(toolang_root, agent_name, chore_name)
-    if not path.exists():
+    entry = find_chore(toolang_root, agent_name, chore_id)
+    if entry is None:
         return False
-    path.unlink()
-    _prune_empty_parents(path.parent, stop=_work_dir(toolang_root, agent_name, kind="chore"))
+    entry.path.unlink()
+    _prune_empty_parents(entry.path.parent, stop=_work_dir(toolang_root, agent_name, kind="chore"))
     return True
 
 
@@ -551,6 +551,20 @@ def finish_task(
         completed.save(entry.path)
         return entry.path
     archived = completed.archived_copy()
+    target = _archive_path(toolang_root, agent_name, kind="task", item_id=task_id)
+    archived.save(target)
+    entry.path.unlink(missing_ok=True)
+    _prune_empty_parents(entry.path.parent, stop=_work_dir(toolang_root, agent_name, kind="task"))
+    return target
+
+
+def archive_task(toolang_root: Path, agent_name: str, task_id: str) -> Path | None:
+    """Archive one task by id."""
+
+    entry = find_task(toolang_root, agent_name, task_id)
+    if entry is None:
+        return None
+    archived = entry.document.archived_copy()
     target = _archive_path(toolang_root, agent_name, kind="task", item_id=task_id)
     archived.save(target)
     entry.path.unlink(missing_ok=True)
@@ -636,11 +650,27 @@ def _archive_bucket(item_id: str) -> str:
     return started_at.astimezone(timezone.utc).strftime("%Y%m%dT%HZ")
 
 
-def _relative_name(name: str) -> Path:
-    relative = Path(name)
-    if relative.is_absolute() or ".." in relative.parts:
-        raise ValueError(f"invalid name: {name}")
-    return relative
+def _relative_id_path(value: str) -> Path:
+    text = value.strip()
+    if not text or "/" in text or "\\" in text or text in {".", ".."}:
+        raise ValueError(f"invalid id: {value}")
+    return Path(text).with_suffix(".md")
+
+
+def _task_with_existing_id(document: TaskFile, *, task_id: str) -> TaskFile:
+    if document.id is None:
+        return document.model_copy(update={"id": task_id})
+    if document.id != task_id:
+        raise ValueError(f"task id cannot be changed: {task_id} -> {document.id}")
+    return document
+
+
+def _chore_with_existing_id(document: ChoreFile, *, chore_id: str) -> ChoreFile:
+    if document.id is None:
+        return document.model_copy(update={"id": chore_id})
+    if document.id != chore_id:
+        raise ValueError(f"chore id cannot be changed: {chore_id} -> {document.id}")
+    return document
 
 
 def _prune_empty_parents(path: Path, *, stop: Path) -> None:
@@ -679,6 +709,8 @@ def _job_id_exists(toolang_root: Path, agent_name: str, value: str) -> bool:
             post = frontmatter.loads(path.read_text(encoding="utf-8"))
         except Exception:
             continue
+        if path.stem == value:
+            return True
         if str(post.metadata.get("id", "")).strip() == value:
             return True
     return False

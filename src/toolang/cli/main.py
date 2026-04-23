@@ -698,7 +698,7 @@ def _append_work_update(
     agent_name: str,
     *,
     kind: WorkKind,
-    name: str,
+    job_id: str,
     path: Path,
 ) -> None:
     update_kind = cast(UpdateKind, f"{kind}_changed")
@@ -707,7 +707,7 @@ def _append_work_update(
         agent_name,
         update_kind,
         {
-            "name": name,
+            "id": job_id,
             "path": str(path),
         },
     )
@@ -743,12 +743,18 @@ def register_work_commands() -> None:
             help=lambda kind: f"Create a {kind}.",
             factory=_make_new_work_command,
             cls=_RequiredPrefixAgentCommand,
-            no_args_is_help=True,
         ),
         WorkCommandSpec(
             name="edit",
             help=lambda kind: f"Edit a {kind}.",
             factory=_make_edit_work_command,
+            cls=_RequiredPrefixAgentCommand,
+            no_args_is_help=True,
+        ),
+        WorkCommandSpec(
+            name="archive",
+            help=lambda kind: f"Archive a {kind}.",
+            factory=_make_archive_work_command,
             cls=_RequiredPrefixAgentCommand,
             no_args_is_help=True,
         ),
@@ -792,39 +798,47 @@ def register_work_commands() -> None:
 
 
 def _make_work_list_command(kind: WorkKind, title: str) -> Callable[..., None]:
-    def list_work(ctx: typer.Context) -> None:
+    def list_work(
+        ctx: typer.Context,
+        all_items: Annotated[
+            bool,
+            typer.Option("--all", help="Include archived items."),
+        ] = False,
+    ) -> None:
         agent_name = _required_prefix_agent(ctx, command_name=kind)
+        root = _context_root(ctx)
         if kind == "task":
-            entries = work.list_tasks(_context_root(ctx), agent_name)
+            entries = work.list_tasks(root, agent_name, include_archived=all_items)
             if not entries:
                 typer.echo("No tasks found.")
                 return
             rows = [
                 (
-                    entry.name,
+                    entry.document.task_id(),
+                    entry.document.display_title(fallback_name=entry.document.task_id()),
                     entry.document.state,
                     entry.document.status,
-                    str(entry.path),
+                    _work_location(root, agent_name, entry.path),
                 )
                 for entry in entries
             ]
-            _echo_table((title.upper(), "STATE", "STATUS", "LOCATION"), rows)
+            _echo_table(("ID", title.upper(), "STATE", "STATUS", "LOCATION"), rows)
             return
-        entries = work.list_chores(_context_root(ctx), agent_name)
+        entries = work.list_chores(root, agent_name, include_archived=all_items)
         if not entries:
             typer.echo("No chores found.")
             return
         rows = [
             (
-                entry.name,
+                entry.document.chore_id(),
+                entry.document.display_title(fallback_name=entry.document.chore_id()),
                 entry.document.state,
-                (entry.document.title or "-").strip() or "-",
                 entry.document.schedule,
-                str(entry.path),
+                _work_location(root, agent_name, entry.path),
             )
             for entry in entries
         ]
-        _echo_table((title.upper(), "STATE", "TITLE", "SCHEDULE", "LOCATION"), rows)
+        _echo_table(("ID", title.upper(), "STATE", "SCHEDULE", "LOCATION"), rows)
 
     return list_work
 
@@ -832,7 +846,6 @@ def _make_work_list_command(kind: WorkKind, title: str) -> Callable[..., None]:
 def _make_new_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
     def new_work(
         ctx: typer.Context,
-        name: str = typer.Argument(..., help=f"{title} name"),
         template: Annotated[
             str,
             typer.Option("--template", "-t", help="Template name."),
@@ -840,21 +853,21 @@ def _make_new_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
     ) -> None:
         agent_name = _required_prefix_agent(ctx, command_name=kind)
         text = click.edit(
-            templates.render_template(kind, template, name=name, agent_name=agent_name),
+            templates.render_template(kind, template, agent_name=agent_name),
             extension=".md",
             require_save=True,
         )
         if text is None:
             raise typer.Exit()
         path = _wrap_user_error(
-            work.put_task_text if kind == "task" else work.put_chore_text,
+            work.create_task_text if kind == "task" else work.create_chore_text,
             _context_root(ctx),
             agent_name,
-            name,
             text,
         )
-        _append_work_update(_context_root(ctx), agent_name, kind=kind, name=name, path=path)
-        typer.echo(str(path))
+        job_id = path.stem
+        _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
+        typer.echo(f"{kind} {job_id} created\t{path}")
 
     return new_work
 
@@ -862,14 +875,15 @@ def _make_new_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
 def _make_edit_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
     def edit_work(
         ctx: typer.Context,
-        name: str = typer.Argument(..., help=f"{title} name"),
+        id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
+        job_id = id
         agent_name = _required_prefix_agent(ctx, command_name=kind)
         text = _wrap_user_error(
             work.load_task_text if kind == "task" else work.load_chore_text,
             _context_root(ctx),
             agent_name,
-            name,
+            job_id,
         )
         updated_text = click.edit(
             text,
@@ -879,41 +893,73 @@ def _make_edit_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
         if updated_text is None:
             raise typer.Exit()
         path = _wrap_user_error(
-            work.put_task_text if kind == "task" else work.put_chore_text,
+            work.update_task_text if kind == "task" else work.update_chore_text,
             _context_root(ctx),
             agent_name,
-            name,
+            job_id,
             updated_text,
         )
-        _append_work_update(_context_root(ctx), agent_name, kind=kind, name=name, path=path)
+        _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
         typer.echo(str(path))
 
     return edit_work
 
 
+def _make_archive_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
+    def archive_work(
+        ctx: typer.Context,
+        id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
+    ) -> None:
+        job_id = id
+        agent_name = _required_prefix_agent(ctx, command_name=kind)
+        path = _wrap_user_error(
+            work.archive_task if kind == "task" else work.archive_chore,
+            _context_root(ctx),
+            agent_name,
+            job_id,
+        )
+        if path is None:
+            raise click.ClickException(f"{kind} not found: {job_id}")
+        _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
+        typer.echo(f"{kind} {job_id} archived\t{path}")
+
+    return archive_work
+
+
 def _make_remove_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
     def remove_work(
         ctx: typer.Context,
-        name: str = typer.Argument(..., help=f"{title} name"),
+        id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
+        job_id = id
         agent_name = _required_prefix_agent(ctx, command_name=kind)
-        path = (
-            work.task_path(_context_root(ctx), agent_name, name)
+        entry = (
+            work.find_task(_context_root(ctx), agent_name, job_id)
             if kind == "task"
-            else work.chore_path(_context_root(ctx), agent_name, name)
+            else work.find_chore(_context_root(ctx), agent_name, job_id)
         )
+        if entry is None:
+            raise click.ClickException(f"{kind} not found: {job_id}")
         removed = _wrap_user_error(
             work.remove_task if kind == "task" else work.remove_chore,
             _context_root(ctx),
             agent_name,
-            name,
+            job_id,
         )
         if not removed:
-            raise click.ClickException(f"{kind} not found: {name}")
-        _append_work_update(_context_root(ctx), agent_name, kind=kind, name=name, path=path)
-        typer.echo(f"Removed {kind} {name} from {path}")
+            raise click.ClickException(f"{kind} not found: {job_id}")
+        path = entry.path
+        _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
+        typer.echo(f"{kind} {job_id} removed")
 
     return remove_work
+
+
+def _work_location(toolang_root: Path, agent_name: str, path: Path) -> str:
+    try:
+        return str(path.relative_to(agents.agent_home(toolang_root, agent_name)))
+    except ValueError:
+        return str(path)
 
 caps_cli.register_cap_commands(app)
 app.add_typer(model_app, name="model", no_args_is_help=True)
