@@ -17,6 +17,32 @@ Chat uses the same runtime units as the rest of Toolang:
 
 One chat submission creates one run in one thread.
 
+Thread ids use one underscore-delimited normalized form:
+
+```text
+<kind>_<id>
+```
+
+Examples:
+
+- `task_3nprht`
+- `chore_xy1234`
+- `chat_ab12cd`
+- `web_1776857671893`
+- `tg_123456789`
+
+The parser splits on the first `_`; the trailing id may contain additional
+underscores.
+
+Run ids use:
+
+```text
+run_<id>
+```
+
+The `<id>` part is encoded with the `run` id family when Toolang owns the run
+id. See [ids.md](./ids.md).
+
 
 ## Messages
 

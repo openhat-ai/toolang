@@ -70,10 +70,12 @@ For the `run` family:
 
 The proposed full identities are:
 
-- task thread: `task:local:<id>`
-- chore thread: `chore:local:<id>`
-- local chat thread: `chat:local:<id>`
-- run id: `<id>`
+- task thread: `task_<id>`
+- chore thread: `chore_<id>`
+- local chat thread: `chat_<id>`
+- web chat thread: `web_<external_id>`
+- Telegram thread: `tg_<external_id>`
+- run id: `run_<id>`
 
 The bare `<id>` stays stable even when a file is renamed, moved, archived, or
 restored.

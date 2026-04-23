@@ -281,6 +281,58 @@ message stream subset.
 - `GET /api/v1/chores`
 - `GET /api/v1/will`
 
+`GET /api/v1/tasks` and `GET /api/v1/chores` return authored job fields at the
+top level and runtime-derived state under `runtime`.
+
+Task items include:
+
+- `id`
+- `kind`
+- `state`
+- `status`
+- `title`
+- `path`
+- `updated_at`
+- `runtime`
+
+Chore items include:
+
+- `id`
+- `kind`
+- `state`
+- `schedule`
+- `title`
+- `path`
+- `updated_at`
+- `runtime`
+
+`state` values are:
+
+- `active`
+- `inactive`
+- `archived`
+
+Task `status` values are:
+
+- `todo`
+- `running`
+- `done`
+- `failed`
+
+`runtime` contains:
+
+- `thread_id`
+- `active_run`
+- `last_run`
+- `next_run`
+
+`active_run` is the currently running run object or `null`. `last_run` is the
+most recent finished run object or `null`; it must not point at the same run as
+`active_run`. `next_run` is the next scheduled chore run or `null`.
+
+Default job list endpoints return active and inactive jobs. Archived jobs are
+returned only when explicitly requested, such as with `include_archived=true`.
+
 
 ## Activity Endpoints
 

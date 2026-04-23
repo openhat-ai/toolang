@@ -36,6 +36,7 @@ ${TOOLANG_ROOT}/
       prompts/
       tasks/
       chores/
+      archive/
       .prepared/
       .runtime/
 ```
@@ -56,6 +57,7 @@ Key paths:
 | `psyches/`, `skills/`, `services/`, `prompts/` | Agent-local cap definitions |
 | `tasks/` | Task documents |
 | `chores/` | Chore documents |
+| `archive/` | Retired task and chore documents |
 | `.prepared/` | Prepared runtime artifacts |
 | `.runtime/` | Live runtime state |
 
@@ -73,6 +75,7 @@ Key paths:
 | `runtime.json` | Runtime status, endpoint, sandbox summary, and enabled loops |
 | `agent.log`    | Runtime log                                                  |
 | `execution.db` | Runs, steps, updates, and instruction blobs                  |
+| `ids.json`     | Local id allocator state                                     |
 | `pulse.json`   | Pulse loop state                                             |
 | `tools/`       | Per-tool plugin working directories                          |
 | `channels/`    | Per-channel plugin working directories                       |
@@ -103,6 +106,7 @@ Durable authored state lives in:
 - agent cap directories
 - agent `tasks/`
 - agent `chores/`
+- agent `archive/`
 
 Durable execution state does not live in authored files. It lives in
 `execution.db`.
