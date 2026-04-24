@@ -60,6 +60,40 @@ Agent caps:
 - `${TOOLANG_ROOT}/agents/<agent>/prompts/`
 
 
+## Local Cap Frontmatter
+
+`skill` and `service` definitions use `description` as their progressive
+loading trigger summary. It should be a short natural-language phrase that
+helps the model decide whether to load the cap body or service details. The cap
+name comes from its file or directory name, not from frontmatter.
+
+Skill frontmatter:
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `description` | yes | Trigger summary used before the skill body is loaded |
+
+Skill bodies are required and contain the loaded workflow instructions. Put the
+selection hint in `description`; put the actual workflow, rules, and output
+shape in the body.
+
+Service frontmatter:
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `description` | yes | Trigger summary used before service details are loaded |
+| `transport` | yes | `http` or `stdio` |
+| `target` | yes | Endpoint URL for `http`; argv command line for `stdio` |
+| `headers` | no | String map for HTTP headers |
+| `env` | no | Comma-separated environment variable names |
+
+Service bodies are optional and can document exposed capabilities, auth notes,
+and when optional `headers` or `env` values are expected. Header values like
+`$API_TOKEN` declare required host environment variables. For `stdio`, `target`
+is written as one shell-like command line, and `env` can list required variables
+as `env: API_TOKEN, ANOTHER_ENV_VAR`.
+
+
 ## Effective Cap Set
 
 One activation sees one effective cap set.
@@ -87,17 +121,34 @@ Read endpoints:
 - `GET /api/v1/skills/{name}`
 - `GET /api/v1/services/{name}`
 - `GET /api/v1/prompts/{name}`
+- `GET /api/v1/psyches/templates`
+- `GET /api/v1/skills/templates`
+- `GET /api/v1/services/templates`
+- `GET /api/v1/prompts/templates`
+- `GET /api/v1/psyches/templates/{template_name}`
+- `GET /api/v1/skills/templates/{template_name}`
+- `GET /api/v1/services/templates/{template_name}`
+- `GET /api/v1/prompts/templates/{template_name}`
 
 Write endpoints:
 
-- `PUT /api/v1/psyches/{name}`
-- `PUT /api/v1/skills/{name}`
-- `PUT /api/v1/services/{name}`
-- `PUT /api/v1/prompts/{name}`
-- `DELETE /api/v1/psyches/{name}`
-- `DELETE /api/v1/skills/{name}`
-- `DELETE /api/v1/services/{name}`
-- `DELETE /api/v1/prompts/{name}`
+- `PUT /api/v1/psyches/{name}/local`
+- `PUT /api/v1/skills/{name}/local`
+- `PUT /api/v1/services/{name}/local`
+- `PUT /api/v1/prompts/{name}/local`
+- `DELETE /api/v1/psyches/{name}/local`
+- `DELETE /api/v1/skills/{name}/local`
+- `DELETE /api/v1/services/{name}/local`
+- `DELETE /api/v1/prompts/{name}/local`
+- `PUT /api/v1/psyches/{name}/remote`
+- `PUT /api/v1/skills/{name}/remote`
+- `PUT /api/v1/services/{name}/remote`
+- `PUT /api/v1/prompts/{name}/remote`
+- `DELETE /api/v1/psyches/{name}/remote`
+- `DELETE /api/v1/skills/{name}/remote`
+- `DELETE /api/v1/services/{name}/remote`
+- `DELETE /api/v1/prompts/{name}/remote`
 
-Write requests target authored definitions. Read requests return the effective
-runtime view.
+Local write requests carry `content`. Remote write requests carry `ref`.
+Template detail responses include template metadata and raw content. Cap read
+requests return the effective runtime view.

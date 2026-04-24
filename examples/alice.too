@@ -5,8 +5,9 @@ use skill briceyan/pdf-processing
 
 service context7: ```md
 ---
+description: Use when current library or framework documentation matters.
 transport: http
-url: https://mcp.context7.com/mcp
+target: https://mcp.context7.com/mcp
 ---
 
 Use this service when current library or framework documentation matters.

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 import tomllib
 from typing import Literal, cast
@@ -36,6 +37,9 @@ CAP_KINDS: tuple[EntryKind, ...] = ("psyche", "skill", "service", "prompt")
 JOB_KINDS: tuple[EntryKind, ...] = ("task", "chore")
 MANAGED_KINDS = frozenset((*CAP_KINDS, *JOB_KINDS))
 FILE_BACKED_KINDS = frozenset({"psyche", "service", "prompt", "task", "chore"})
+SKILL_FIELDS = frozenset({"description"})
+SERVICE_FIELDS = frozenset({"description", "transport", "target", "headers", "env"})
+ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 DIR_NAME_BY_KIND: dict[EntryKind, str] = {
     "psyche": "psyches",
     "skill": "skills",
@@ -124,6 +128,7 @@ def put_local_entry_text(
     """Create or replace one local entry from raw authored text."""
 
     _validate_local_kind(scope, kind)
+    _validate_authored_entry_text(kind=kind, text=text)
     entry_path = _local_entry_file_path(toolang_root, agent_name, scope=scope, kind=kind, name=name)
     ref = entry_path.resolve().as_uri() if kind != "skill" else entry_path.parent.resolve().as_uri()
     _ensure_name_available(toolang_root, agent_name, scope=scope, kind=kind, name=name, ref=ref)
@@ -232,27 +237,6 @@ def remote_entry_name(kind: EntryKind, ref: str) -> str:
     """Return the runtime name derived from one remote ref."""
 
     return _remote_name(kind, _canonicalize_remote_ref(kind, ref))
-
-
-def remove_entry(
-    toolang_root: Path,
-    agent_name: str,
-    *,
-    scope: PreparedScope,
-    kind: EntryKind,
-    name: str,
-) -> bool:
-    """Remove one local or remote entry by runtime name."""
-
-    removed_local = remove_local_entry(toolang_root, agent_name, scope=scope, kind=kind, name=name)
-    removed_remote = _remove_remote_entries_by_name(
-        toolang_root,
-        agent_name,
-        scope=scope,
-        kind=kind,
-        name=name,
-    )
-    return removed_local or removed_remote
 
 
 def collect_local_entries(
@@ -586,6 +570,68 @@ def _validate_local_kind(scope: PreparedScope, kind: EntryKind) -> None:
         raise ValueError(f"unsupported kind: {kind}")
     if scope == "global" and kind in JOB_KINDS:
         raise ValueError(f"global scope does not support kind: {kind}")
+
+
+def _validate_authored_entry_text(*, kind: EntryKind, text: str) -> None:
+    if kind not in {"skill", "service"}:
+        return
+    post = frontmatter.loads(text)
+    meta = dict(post.metadata)
+    if kind == "skill":
+        _require_exact_meta_fields(kind=kind, meta=meta, allowed=SKILL_FIELDS)
+        description = meta.get("description")
+        if not isinstance(description, str) or not description.strip():
+            raise ValueError("skill description is required")
+        if not post.content.strip():
+            raise ValueError("skill body is required")
+        return
+
+    _require_exact_meta_fields(kind=kind, meta=meta, allowed=SERVICE_FIELDS)
+    description = meta.get("description")
+    if not isinstance(description, str) or not description.strip():
+        raise ValueError("service description is required")
+    transport = meta.get("transport")
+    if transport not in {"http", "stdio"}:
+        raise ValueError("service transport must be http or stdio")
+    target = meta.get("target")
+    if not isinstance(target, str) or not target.strip():
+        raise ValueError("service target is required")
+    headers = meta.get("headers")
+    if headers is not None and not _is_string_map(headers):
+        raise ValueError("service headers must be a string map")
+    env = meta.get("env")
+    if env is not None and not _is_env_names(env):
+        raise ValueError("service env must list environment variable names")
+
+
+def _require_exact_meta_fields(
+    *,
+    kind: EntryKind,
+    meta: Mapping[str, object],
+    allowed: frozenset[str],
+) -> None:
+    unknown = sorted(set(meta) - set(allowed))
+    if unknown:
+        joined = ", ".join(repr(item) for item in unknown)
+        raise ValueError(f"{kind} has unsupported frontmatter fields: {joined}")
+
+
+def _is_string_map(value: object) -> bool:
+    return isinstance(value, dict) and all(
+        isinstance(key, str) and isinstance(item, str) for key, item in value.items()
+    )
+
+
+def _is_env_names(value: object) -> bool:
+    if isinstance(value, str):
+        items = [item.strip() for item in value.split(",")]
+    elif isinstance(value, list | tuple):
+        items = [item.strip() for item in value if isinstance(item, str)]
+        if len(items) != len(value):
+            return False
+    else:
+        return False
+    return bool(items) and all(ENV_NAME_RE.fullmatch(item) is not None for item in items)
 
 
 def _ensure_name_available(

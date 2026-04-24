@@ -286,20 +286,22 @@ The runtime expands the prompt before normal run-input assembly. The slash-style
 `service` declarations use fenced markdown bodies. Service metadata lives in
 frontmatter inside that markdown.
 
-`service` frontmatter uses one closed schema per transport.
+`service` frontmatter uses one minimal schema. `description` is the progressive
+loading trigger summary; write it as a short natural-language hint for when the
+agent should consider the service.
 
-| Transport | Required fields | Optional fields |
-| --- | --- | --- |
-| `http` | `transport`, `url` | `headers` |
-| `stdio` | `transport`, `command` | `args`, `env`, `cwd` |
+| Required fields | Optional fields |
+| --- | --- |
+| `description`, `transport`, `target` | `headers`, `env` |
 
 Example HTTP service:
 
 ```toolang
 service github: ```md
 ---
+description: Trigger this service when the agent needs GitHub MCP access.
 transport: http
-url: https://mcp.github.com/mcp
+target: https://mcp.github.com/mcp
 headers:
   Authorization: Bearer $GITHUB_TOKEN
 ---
@@ -313,29 +315,24 @@ Example stdio service:
 ```toolang
 service linear: ```md
 ---
+description: Trigger this service when the agent needs Linear MCP access.
 transport: stdio
-command: npx
-args:
-  - -y
-  - mcp-remote
-  - https://mcp.linear.app/sse
-env: LINEAR_API_KEY, API_KEY=NOT_THE_SAME_NAME
-cwd: /work/tools
+target: npx -y mcp-remote https://mcp.linear.app/sse
+env: LINEAR_API_KEY, API_KEY
 ---
 
 Use this service when the agent needs Linear access.
 ```
 ```
 
-`env` uses one compact mapping form:
+`target` is transport-specific. For `http`, it is the MCP endpoint URL. For
+`stdio`, it is one argv command line parsed by Toolang and executed without a
+shell.
 
-| Form | Meaning |
-| --- | --- |
-| `FOO` | Forward `FOO` from the host environment |
-| `BAR=FOO` | Set child env `BAR` from host env `FOO` |
-
-`headers` is one string map. Header values may reference host env vars with
-`$NAME`.
+`headers` is a string map for HTTP services. Header values may reference host
+env vars with `$NAME`; those references declare the required host variables.
+`env` lists required environment variable names for services that need process
+environment values, for example `env: API_TOKEN, ANOTHER_ENV_VAR`.
 
 
 ## Surface Rules

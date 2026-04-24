@@ -25,9 +25,14 @@ class PutCapRequest(BaseModel):
     """One authored cap write request."""
 
     scope: ApiScope = "agent"
-    source: Literal["local", "remote"] | None = None
-    ref: str | None = None
     content: str | None = None
+
+
+class RemoteCapRequest(BaseModel):
+    """One remote cap ref mutation request."""
+
+    scope: ApiScope = "agent"
+    ref: str
 
 
 def create_router() -> APIRouter:
@@ -35,11 +40,11 @@ def create_router() -> APIRouter:
 
     router = APIRouter(prefix="/api/v1", tags=["caps"])
 
-    @router.put("/psyches/{name}", summary="Upsert Psyche")
-    @router.put("/skills/{name}", summary="Upsert Skill")
-    @router.put("/services/{name}", summary="Upsert Service")
-    @router.put("/prompts/{name}", summary="Upsert Prompt")
-    async def put_cap(
+    @router.put("/psyches/{name}/local", summary="Upsert Local Psyche")
+    @router.put("/skills/{name}/local", summary="Upsert Local Skill")
+    @router.put("/services/{name}/local", summary="Upsert Local Service")
+    @router.put("/prompts/{name}/local", summary="Upsert Local Prompt")
+    async def put_local_cap(
         request: Request,
         name: str,
         payload: PutCapRequest,
@@ -47,35 +52,8 @@ def create_router() -> APIRouter:
         context = request.app.state.runtime
         kind = _collection_kind(_collection_from_path(str(request.url.path)))
         scope = _scope(payload.scope)
-        if payload.ref and payload.content:
-            raise HTTPException(status_code=400, detail="provide either ref or content, not both")
-        if not payload.ref and not payload.content:
-            raise HTTPException(status_code=400, detail="missing cap payload")
-
-        if payload.ref is not None:
-            if caps.remote_entry_name(cast(EntryKind, kind), payload.ref) != name:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Remote {kind} ref {payload.ref!r} does not match requested name {name!r}.",
-                )
-            _wrap_user_error(
-                caps.add_remote_entry,
-                context.root,
-                context.name,
-                scope=scope,
-                kind=cast(EntryKind, kind),
-                ref=payload.ref,
-            )
-            _append_cap_update(context, kind=kind, name=name, scope=scope)
-            item = _written_item(
-                kind=kind,
-                name=name,
-                scope=scope,
-                source="remote",
-                ref=payload.ref,
-                path=str(_config_path(context.root, context.name, scope)),
-            )
-            return {"item": item}
+        if payload.content is None:
+            raise HTTPException(status_code=400, detail="missing cap content")
 
         _wrap_user_error(
             caps.put_local_entry_text,
@@ -90,21 +68,55 @@ def create_router() -> APIRouter:
         entry = _find_authored_entry(context, scope=scope, kind=kind, name=name)
         return {"item": _cap_detail_item(context, entry)}
 
-    @router.delete("/psyches/{name}", summary="Delete Psyche")
-    @router.delete("/skills/{name}", summary="Delete Skill")
-    @router.delete("/services/{name}", summary="Delete Service")
-    @router.delete("/prompts/{name}", summary="Delete Prompt")
-    async def delete_cap(
+    @router.put("/psyches/{name}/remote", summary="Add Remote Psyche")
+    @router.put("/skills/{name}/remote", summary="Add Remote Skill")
+    @router.put("/services/{name}/remote", summary="Add Remote Service")
+    @router.put("/prompts/{name}/remote", summary="Add Remote Prompt")
+    async def put_remote_cap(
+        request: Request,
+        name: str,
+        payload: RemoteCapRequest,
+    ) -> dict[str, object]:
+        context = request.app.state.runtime
+        kind = _collection_kind(_collection_from_path(str(request.url.path)))
+        scope = _scope(payload.scope)
+        if caps.remote_entry_name(cast(EntryKind, kind), payload.ref) != name:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Remote {kind} ref {payload.ref!r} does not match requested name {name!r}.",
+            )
+        _wrap_user_error(
+            caps.add_remote_entry,
+            context.root,
+            context.name,
+            scope=scope,
+            kind=cast(EntryKind, kind),
+            ref=payload.ref,
+        )
+        _append_cap_update(context, kind=kind, name=name, scope=scope)
+        item = _written_item(
+            kind=kind,
+            name=name,
+            scope=scope,
+            source="remote",
+            ref=payload.ref,
+            path=str(_config_path(context.root, context.name, scope)),
+        )
+        return {"item": item}
+
+    @router.delete("/psyches/{name}/local", summary="Delete Local Psyche")
+    @router.delete("/skills/{name}/local", summary="Delete Local Skill")
+    @router.delete("/services/{name}/local", summary="Delete Local Service")
+    @router.delete("/prompts/{name}/local", summary="Delete Local Prompt")
+    async def delete_local_cap(
         request: Request,
         name: str,
         scope: ApiScope = Query(default="agent"),
-        source: Literal["local", "remote"] | None = Query(default=None),
     ) -> dict[str, object]:
-        del source
         context = request.app.state.runtime
         kind = _collection_kind(_collection_from_path(str(request.url.path)))
         removed = _wrap_user_error(
-            caps.remove_entry,
+            caps.remove_local_entry,
             context.root,
             context.name,
             scope=_scope(scope),
@@ -112,7 +124,31 @@ def create_router() -> APIRouter:
             name=name,
         )
         if not removed:
-            raise HTTPException(status_code=404, detail=f"{kind} not found: {name}")
+            raise HTTPException(status_code=404, detail=f"local {kind} not found: {name}")
+        _append_cap_update(context, kind=kind, name=name, scope=_scope(scope))
+        return {"ok": True}
+
+    @router.delete("/psyches/{name}/remote", summary="Remove Remote Psyche")
+    @router.delete("/skills/{name}/remote", summary="Remove Remote Skill")
+    @router.delete("/services/{name}/remote", summary="Remove Remote Service")
+    @router.delete("/prompts/{name}/remote", summary="Remove Remote Prompt")
+    async def delete_remote_cap(
+        request: Request,
+        name: str,
+        scope: ApiScope = Query(default="agent"),
+    ) -> dict[str, object]:
+        context = request.app.state.runtime
+        kind = _collection_kind(_collection_from_path(str(request.url.path)))
+        removed = _wrap_user_error(
+            caps.remove_remote_entry,
+            context.root,
+            context.name,
+            scope=_scope(scope),
+            kind=cast(EntryKind, kind),
+            name=name,
+        )
+        if not removed:
+            raise HTTPException(status_code=404, detail=f"remote {kind} not found: {name}")
         _append_cap_update(context, kind=kind, name=name, scope=_scope(scope))
         return {"ok": True}
 

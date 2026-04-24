@@ -1,11 +1,23 @@
 ---
-description: What this service is for.
+description: Trigger this service when the agent needs this remote MCP server.
 transport: http
 target: https://example.com/mcp
-# env:
-#   - API_TOKEN
+# headers:
+#   Authorization: Bearer $API_TOKEN
 ---
 
-Use this service when the agent needs access to the remote capability.
+`description` is the trigger summary. Keep it short; document the service
+details below.
 
-Document the exposed tools, resources, prompts, and any auth requirements.
+Connection:
+- `target` is the remote MCP URL.
+- Use optional `headers` for HTTP auth.
+- Header values like `$API_TOKEN` declare required environment variables.
+
+Capabilities:
+- Tools: ...
+- Resources: ...
+- Prompts: ...
+
+Auth notes:
+- ...

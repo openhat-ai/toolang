@@ -1,7 +1,8 @@
 service github: ```md
 ---
+description: Use when the agent needs GitHub repository context.
 transport: http
-url: https://mcp.github.com/mcp
+target: https://mcp.github.com/mcp
 headers:
   Authorization: Bearer $GITHUB_TOKEN
 ---

@@ -209,16 +209,35 @@ Detail:
 - `GET /api/v1/services/{name}`
 - `GET /api/v1/prompts/{name}`
 
+Templates:
+
+- `GET /api/v1/psyches/templates`
+- `GET /api/v1/skills/templates`
+- `GET /api/v1/services/templates`
+- `GET /api/v1/prompts/templates`
+- `GET /api/v1/psyches/templates/{template_name}`
+- `GET /api/v1/skills/templates/{template_name}`
+- `GET /api/v1/services/templates/{template_name}`
+- `GET /api/v1/prompts/templates/{template_name}`
+
 Write:
 
-- `PUT /api/v1/psyches/{name}`
-- `PUT /api/v1/skills/{name}`
-- `PUT /api/v1/services/{name}`
-- `PUT /api/v1/prompts/{name}`
-- `DELETE /api/v1/psyches/{name}`
-- `DELETE /api/v1/skills/{name}`
-- `DELETE /api/v1/services/{name}`
-- `DELETE /api/v1/prompts/{name}`
+- `PUT /api/v1/psyches/{name}/local`
+- `PUT /api/v1/skills/{name}/local`
+- `PUT /api/v1/services/{name}/local`
+- `PUT /api/v1/prompts/{name}/local`
+- `DELETE /api/v1/psyches/{name}/local`
+- `DELETE /api/v1/skills/{name}/local`
+- `DELETE /api/v1/services/{name}/local`
+- `DELETE /api/v1/prompts/{name}/local`
+- `PUT /api/v1/psyches/{name}/remote`
+- `PUT /api/v1/skills/{name}/remote`
+- `PUT /api/v1/services/{name}/remote`
+- `PUT /api/v1/prompts/{name}/remote`
+- `DELETE /api/v1/psyches/{name}/remote`
+- `DELETE /api/v1/skills/{name}/remote`
+- `DELETE /api/v1/services/{name}/remote`
+- `DELETE /api/v1/prompts/{name}/remote`
 
 
 ## Chat Endpoints
