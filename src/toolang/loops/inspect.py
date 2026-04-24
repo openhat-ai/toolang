@@ -241,7 +241,13 @@ def create_router() -> APIRouter:
     async def delete_archived_job(request: Request, job_id: str) -> dict[str, object]:
         context = request.app.state.runtime
         kind, entry = _find_archived_job_or_404(context, job_id)
-        entry.path.unlink()
+        removed = (
+            work.remove_archived_task(context.root, context.name, job_id)
+            if kind == "task"
+            else work.remove_archived_chore(context.root, context.name, job_id)
+        )
+        if not removed:
+            raise HTTPException(status_code=404, detail=f"archived job not found: {job_id}")
         _append_job_update(context, kind=kind, item_id=job_id, action="deleted", path=entry.path)
         return {"deleted": True, "id": job_id, "kind": kind}
 
@@ -256,14 +262,6 @@ def create_router() -> APIRouter:
         context = request.app.state.runtime
         kind, entry = _find_job_or_404(context, job_id)
         return _update_job(context, kind=kind, entry=entry, payload=payload)
-
-    @router.delete("/jobs/{job_id}", tags=["jobs"], summary="Delete Job")
-    async def delete_job(request: Request, job_id: str) -> dict[str, object]:
-        context = request.app.state.runtime
-        kind, entry = _find_job_or_404(context, job_id)
-        entry.path.unlink()
-        _append_job_update(context, kind=kind, item_id=job_id, action="deleted", path=entry.path)
-        return {"deleted": True, "id": job_id, "kind": kind}
 
     @router.get("/tasks", tags=["jobs"], summary="List Tasks")
     async def tasks(request: Request) -> dict[str, object]:
@@ -301,7 +299,8 @@ def create_router() -> APIRouter:
     async def delete_archived_task(request: Request, task_id: str) -> dict[str, object]:
         context = request.app.state.runtime
         entry = _find_archived_task_or_404(context, task_id)
-        entry.path.unlink()
+        if not work.remove_archived_task(context.root, context.name, task_id):
+            raise HTTPException(status_code=404, detail=f"archived task not found: {task_id}")
         _append_job_update(context, kind="task", item_id=task_id, action="deleted", path=entry.path)
         return {"deleted": True, "id": task_id, "kind": "task"}
 
@@ -316,14 +315,6 @@ def create_router() -> APIRouter:
         context = request.app.state.runtime
         entry = _find_task_or_404(context, task_id)
         return _update_task(context, entry=entry, payload=payload)
-
-    @router.delete("/tasks/{task_id}", tags=["jobs"], summary="Delete Task")
-    async def delete_task(request: Request, task_id: str) -> dict[str, object]:
-        context = request.app.state.runtime
-        entry = _find_task_or_404(context, task_id)
-        entry.path.unlink()
-        _append_job_update(context, kind="task", item_id=task_id, action="deleted", path=entry.path)
-        return {"deleted": True, "id": task_id, "kind": "task"}
 
     @router.get("/chores", tags=["jobs"], summary="List Chores")
     async def chores(request: Request) -> dict[str, object]:
@@ -361,7 +352,8 @@ def create_router() -> APIRouter:
     async def delete_archived_chore(request: Request, chore_id: str) -> dict[str, object]:
         context = request.app.state.runtime
         entry = _find_archived_chore_or_404(context, chore_id)
-        entry.path.unlink()
+        if not work.remove_archived_chore(context.root, context.name, chore_id):
+            raise HTTPException(status_code=404, detail=f"archived chore not found: {chore_id}")
         _append_job_update(context, kind="chore", item_id=chore_id, action="deleted", path=entry.path)
         return {"deleted": True, "id": chore_id, "kind": "chore"}
 
@@ -376,14 +368,6 @@ def create_router() -> APIRouter:
         context = request.app.state.runtime
         entry = _find_chore_or_404(context, chore_id)
         return _update_chore(context, entry=entry, payload=payload)
-
-    @router.delete("/chores/{chore_id}", tags=["jobs"], summary="Delete Chore")
-    async def delete_chore(request: Request, chore_id: str) -> dict[str, object]:
-        context = request.app.state.runtime
-        entry = _find_chore_or_404(context, chore_id)
-        entry.path.unlink()
-        _append_job_update(context, kind="chore", item_id=chore_id, action="deleted", path=entry.path)
-        return {"deleted": True, "id": chore_id, "kind": "chore"}
 
     @router.get("/will", tags=["jobs"], summary="Get Will")
     async def will() -> dict[str, object]:

@@ -2256,6 +2256,7 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
         jobs = client.get("/api/v1/jobs").json()["items"]
         assert [(item["kind"], item["id"]) for item in jobs] == [("task", task_id)]
         assert "body" not in jobs[0]
+        assert client.delete(f"/api/v1/tasks/{task_id}").status_code == 405
 
         detail = client.get(f"/api/v1/tasks/{task_id}").json()["item"]
         assert detail["body"] == "Review the new API surface."
@@ -2362,6 +2363,7 @@ def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
         jobs = client.get("/api/v1/jobs?kind=chore").json()["items"]
         assert [(item["kind"], item["id"]) for item in jobs] == [("chore", chore_id)]
         assert "body" not in jobs[0]
+        assert client.delete(f"/api/v1/jobs/{chore_id}").status_code == 405
 
         invalid = client.patch(
             f"/api/v1/chores/{chore_id}",

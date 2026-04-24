@@ -2464,12 +2464,12 @@ def test_cli_cap_new_supports_named_template(tmp_path: Path, monkeypatch) -> Non
     assert "command: uvx" in cast(str, captured["text"])
 
 
-def test_cli_task_new_supports_template_alias_and_persists_id(tmp_path: Path, monkeypatch) -> None:
+def test_cli_task_new_persists_id(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
 
     monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
     result = _invoke_app(
-        ["task", "new", "-t", "default"],
+        ["task", "new"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -2518,11 +2518,108 @@ def test_cli_task_list_shows_task_rows(tmp_path: Path, monkeypatch) -> None:
     assert "running" in result.stdout
 
 
+def test_cli_task_delete_requires_archived_task(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
+    _invoke_app(
+        ["task", "new"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    task_id = work.list_tasks(toolang_root, "alice")[0].document.task_id()
+
+    active_delete = _invoke_app(
+        ["task", "delete", task_id],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert active_delete.exit_code == 1
+    assert f"task is not archived: {task_id}; archive it before deleting" in active_delete.output
+    assert work.find_task(toolang_root, "alice", task_id) is not None
+
+    archive_result = _invoke_app(
+        ["task", "archive", task_id],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    delete_result = _invoke_app(
+        ["task", "delete", task_id],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert archive_result.exit_code == 0
+    assert delete_result.exit_code == 0
+    assert delete_result.stdout.strip() == f"task {task_id} deleted"
+    assert work.find_archived_task(toolang_root, "alice", task_id) is None
+
+
+def test_cli_task_pause_and_resume_update_state(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
+    _invoke_app(
+        ["task", "new"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    task_id = work.list_tasks(toolang_root, "alice")[0].document.task_id()
+
+    pause_result = _invoke_app(
+        ["task", "pause", task_id],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    paused = work.find_task(toolang_root, "alice", task_id)
+    resume_result = _invoke_app(
+        ["task", "resume", task_id],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    resumed = work.find_task(toolang_root, "alice", task_id)
+
+    assert pause_result.exit_code == 0
+    assert f"task {task_id} paused" in pause_result.stdout
+    assert paused is not None
+    assert paused.document.state == "inactive"
+    assert resume_result.exit_code == 0
+    assert f"task {task_id} resumed" in resume_result.stdout
+    assert resumed is not None
+    assert resumed.document.state == "active"
+
+
+def test_cli_task_restore_moves_archived_task_back(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
+    _invoke_app(
+        ["task", "new"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    task_id = work.list_tasks(toolang_root, "alice")[0].document.task_id()
+    _invoke_app(
+        ["task", "archive", task_id],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    result = _invoke_app(
+        ["task", "restore", task_id],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert result.exit_code == 0
+    assert f"task {task_id} restored" in result.stdout
+    assert work.find_task(toolang_root, "alice", task_id) is not None
+    assert work.find_archived_task(toolang_root, "alice", task_id) is None
+
+
 def test_cli_chore_new_and_list_show_schedule(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
     _invoke_app(
-        ["chore", "new", "-t", "default"],
+        ["chore", "new"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -2541,12 +2638,73 @@ def test_cli_chore_new_and_list_show_schedule(tmp_path: Path, monkeypatch) -> No
     assert "FREQ=HOURLY;INTERVAL=1" in result.stdout
 
 
+def test_cli_chore_pause_and_resume_update_state(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
+    _invoke_app(
+        ["chore", "new"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    chore_id = work.list_chores(toolang_root, "alice")[0].document.chore_id()
+
+    pause_result = _invoke_app(
+        ["chore", "pause", chore_id],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    paused = work.find_chore(toolang_root, "alice", chore_id)
+    resume_result = _invoke_app(
+        ["chore", "resume", chore_id],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    resumed = work.find_chore(toolang_root, "alice", chore_id)
+
+    assert pause_result.exit_code == 0
+    assert f"chore {chore_id} paused" in pause_result.stdout
+    assert paused is not None
+    assert paused.document.state == "inactive"
+    assert resume_result.exit_code == 0
+    assert f"chore {chore_id} resumed" in resume_result.stdout
+    assert resumed is not None
+    assert resumed.document.state == "active"
+
+
+def test_cli_chore_restore_can_restore_as_inactive(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
+    _invoke_app(
+        ["chore", "new"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    chore_id = work.list_chores(toolang_root, "alice")[0].document.chore_id()
+    _invoke_app(
+        ["chore", "archive", chore_id],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    result = _invoke_app(
+        ["chore", "restore", chore_id, "--inactive"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert result.exit_code == 0
+    chore = work.find_chore(toolang_root, "alice", chore_id)
+    assert chore is not None
+    assert chore.document.state == "inactive"
+    assert work.find_archived_chore(toolang_root, "alice", chore_id) is None
+
+
 def test_cli_task_new_records_task_changed_update(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
 
     result = _invoke_app(
-        ["task", "new", "-t", "default"],
+        ["task", "new"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -2583,24 +2741,6 @@ def test_cli_global_cap_change_does_not_create_agent_local_update_store(tmp_path
     assert result.exit_code == 0
     assert not execution_db_path(toolang_root, "default").exists()
 
-
-def test_cli_work_template_commands_show_templates() -> None:
-    task_result = runner.invoke(cli.app, ["task", "template"])
-    chore_list_result = runner.invoke(cli.app, ["chore", "templates"])
-
-    assert task_result.exit_code == 0
-    assert chore_list_result.exit_code == 0
-    assert "Describe the task here." in task_result.stdout
-    assert "TEMPLATE" in chore_list_result.stdout
-    assert "default" in chore_list_result.stdout
-
-
-def test_cli_task_template_help_shows_plain_text_metavar() -> None:
-    result = runner.invoke(cli.app, ["task", "template", "--help"])
-
-    assert result.exit_code == 0
-    assert "template      TEXT" in result.stdout
-    assert "Template name. [default: default]" in result.stdout
 
 
 def test_cli_task_requires_agent_prefix(tmp_path: Path) -> None:
@@ -2642,7 +2782,20 @@ def test_cli_task_new_help_shows_required_prefix_agent() -> None:
     assert "AGENT task new" in result.stdout
     assert "agent      TEXT" in result.stdout
     assert "Agent name." in result.stdout
+    assert "--template" not in result.stdout
     assert "Task name" not in result.stdout
+
+
+def test_cli_work_group_help_shows_required_prefix_agent() -> None:
+    task_result = runner.invoke(cli.app, ["task", "--help"])
+    chore_result = runner.invoke(cli.app, ["chore", "--help"])
+
+    assert task_result.exit_code == 0
+    assert chore_result.exit_code == 0
+    assert "Usage:" in task_result.stdout
+    assert "AGENT task" in task_result.stdout
+    assert "Usage:" in chore_result.stdout
+    assert "AGENT chore" in chore_result.stdout
 
 
 def test_cli_cap_commands_cover_file_backed_kinds(tmp_path: Path, monkeypatch) -> None:

@@ -567,6 +567,46 @@ def save_chore_entry(
     )
 
 
+def pause_task(toolang_root: Path, agent_name: str, task_id: str) -> Path | None:
+    """Mark one task inactive."""
+
+    entry = find_task(toolang_root, agent_name, task_id)
+    if entry is None:
+        return None
+    document = entry.document.model_copy(update={"state": "inactive"})
+    return save_task_entry(toolang_root, agent_name, entry, document)
+
+
+def resume_task(toolang_root: Path, agent_name: str, task_id: str) -> Path | None:
+    """Mark one task active."""
+
+    entry = find_task(toolang_root, agent_name, task_id)
+    if entry is None:
+        return None
+    document = entry.document.model_copy(update={"state": "active"})
+    return save_task_entry(toolang_root, agent_name, entry, document)
+
+
+def pause_chore(toolang_root: Path, agent_name: str, chore_id: str) -> Path | None:
+    """Mark one chore inactive."""
+
+    entry = find_chore(toolang_root, agent_name, chore_id)
+    if entry is None:
+        return None
+    document = entry.document.model_copy(update={"state": "inactive"})
+    return save_chore_entry(toolang_root, agent_name, entry, document)
+
+
+def resume_chore(toolang_root: Path, agent_name: str, chore_id: str) -> Path | None:
+    """Mark one chore active."""
+
+    entry = find_chore(toolang_root, agent_name, chore_id)
+    if entry is None:
+        return None
+    document = entry.document.model_copy(update={"state": "active"})
+    return save_chore_entry(toolang_root, agent_name, entry, document)
+
+
 def remove_task(toolang_root: Path, agent_name: str, task_id: str) -> bool:
     """Remove one task document."""
 
@@ -586,6 +626,28 @@ def remove_chore(toolang_root: Path, agent_name: str, chore_id: str) -> bool:
         return False
     entry.path.unlink()
     _prune_empty_parents(entry.path.parent, stop=_work_dir(toolang_root, agent_name, kind="chore"))
+    return True
+
+
+def remove_archived_task(toolang_root: Path, agent_name: str, task_id: str) -> bool:
+    """Remove one archived task document."""
+
+    entry = find_archived_task(toolang_root, agent_name, task_id)
+    if entry is None:
+        return False
+    entry.path.unlink()
+    _prune_empty_parents(entry.path.parent, stop=_archive_dir(toolang_root, agent_name, kind="task"))
+    return True
+
+
+def remove_archived_chore(toolang_root: Path, agent_name: str, chore_id: str) -> bool:
+    """Remove one archived chore document."""
+
+    entry = find_archived_chore(toolang_root, agent_name, chore_id)
+    if entry is None:
+        return False
+    entry.path.unlink()
+    _prune_empty_parents(entry.path.parent, stop=_archive_dir(toolang_root, agent_name, kind="chore"))
     return True
 
 

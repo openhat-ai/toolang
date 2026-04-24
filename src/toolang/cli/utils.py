@@ -17,7 +17,7 @@ from rich.table import Table
 from rich.text import Text
 import typer
 from typer import rich_utils as typer_rich_utils
-from typer.core import TyperArgument, TyperCommand
+from typer.core import TyperArgument, TyperCommand, TyperGroup
 
 from .. import agents, templates
 from ..config.env import load_runtime_environ
@@ -68,6 +68,26 @@ class _PrefixAgentCommand(TyperCommand):
         )
         pieces = [self.options_metavar] if self.options_metavar else []
         for param in self._real_params(ctx):
+            pieces.extend(param.get_usage_pieces(ctx))
+        formatter.write_usage(prefix_path, " ".join(pieces))
+
+
+class _PrefixAgentWorkGroup(TyperGroup):
+    """Render required AGENT between CLI root and group name in usage."""
+
+    prefix_agent_metavar = "AGENT"
+
+    def format_usage(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        command_path = ctx.command_path
+        root_name, _, remainder = command_path.partition(" ")
+        prefix_path = (
+            f"{root_name} {self.prefix_agent_metavar} {remainder}"
+            if remainder
+            else f"{root_name} {self.prefix_agent_metavar}"
+        )
+        pieces = [self.options_metavar] if self.options_metavar else []
+        pieces.append(self.subcommand_metavar or "[SUBCOMMAND]")
+        for param in self.get_params(ctx):
             pieces.extend(param.get_usage_pieces(ctx))
         formatter.write_usage(prefix_path, " ".join(pieces))
 

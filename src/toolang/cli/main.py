@@ -35,7 +35,7 @@ from . import caps as caps_cli
 from . import invoke as cli_invoke
 from .utils import (
     _AGENT_AVATAR,
-    _OptionalTemplateArgumentCommand,
+    _PrefixAgentWorkGroup,
     _RequiredPrefixAgentCommand,
     _RunAgentCommand,
     _RuntimeAgentCommand,
@@ -45,8 +45,6 @@ from .utils import (
     _echo_pairs_table,
     _echo_table,
     _format_runtime_row,
-    _make_template_list_command,
-    _make_template_show_command,
     _normalize_loop_option,
     _parse_utc_timestamp,
     _required_prefix_agent,
@@ -754,6 +752,20 @@ def register_work_commands() -> None:
             no_args_is_help=True,
         ),
         WorkCommandSpec(
+            name="pause",
+            help=lambda kind: f"Pause a {kind}.",
+            factory=_make_pause_work_command,
+            cls=_RequiredPrefixAgentCommand,
+            no_args_is_help=True,
+        ),
+        WorkCommandSpec(
+            name="resume",
+            help=lambda kind: f"Resume a {kind}.",
+            factory=_make_resume_work_command,
+            cls=_RequiredPrefixAgentCommand,
+            no_args_is_help=True,
+        ),
+        WorkCommandSpec(
             name="archive",
             help=lambda kind: f"Archive a {kind}.",
             factory=_make_archive_work_command,
@@ -761,28 +773,25 @@ def register_work_commands() -> None:
             no_args_is_help=True,
         ),
         WorkCommandSpec(
-            name="remove",
-            help=lambda kind: f"Remove a {kind}.",
-            factory=_make_remove_work_command,
+            name="restore",
+            help=lambda kind: f"Restore an archived {kind}.",
+            factory=_make_restore_work_command,
             cls=_RequiredPrefixAgentCommand,
             no_args_is_help=True,
         ),
         WorkCommandSpec(
-            name="templates",
-            help=lambda kind: f"List {kind} templates.",
-            factory=lambda kind, title: _make_template_list_command(kind, title=title),
-        ),
-        WorkCommandSpec(
-            name="template",
-            help=lambda kind: f"Show a {kind} template.",
-            factory=lambda kind, title: _make_template_show_command(kind, title=title),
-            cls=_OptionalTemplateArgumentCommand,
+            name="delete",
+            help=lambda kind: f"Delete an archived {kind}.",
+            factory=_make_delete_work_command,
+            cls=_RequiredPrefixAgentCommand,
+            no_args_is_help=True,
         ),
     )
 
     for kind in work_titles:
         title = work_titles[kind]
         work_app = typer.Typer(
+            cls=_PrefixAgentWorkGroup,
             help=work_group_help[kind],
             add_completion=False,
             no_args_is_help=True,
@@ -848,14 +857,10 @@ def _make_work_list_command(kind: WorkKind, title: str) -> Callable[..., None]:
 def _make_new_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
     def new_work(
         ctx: typer.Context,
-        template: Annotated[
-            str,
-            typer.Option("--template", "-t", help="Template name."),
-        ] = "default",
     ) -> None:
         agent_name = _required_prefix_agent(ctx, command_name=kind)
         text = click.edit(
-            templates.render_template(kind, template, agent_name=agent_name),
+            templates.render_template(kind, "default", agent_name=agent_name),
             extension=".md",
             require_save=True,
         )
@@ -907,6 +912,48 @@ def _make_edit_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
     return edit_work
 
 
+def _make_pause_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
+    def pause_work(
+        ctx: typer.Context,
+        id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
+    ) -> None:
+        job_id = id
+        agent_name = _required_prefix_agent(ctx, command_name=kind)
+        path = _wrap_user_error(
+            work.pause_task if kind == "task" else work.pause_chore,
+            _context_root(ctx),
+            agent_name,
+            job_id,
+        )
+        if path is None:
+            raise click.ClickException(f"{kind} not found: {job_id}")
+        _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
+        typer.echo(f"{kind} {job_id} paused\t{path}")
+
+    return pause_work
+
+
+def _make_resume_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
+    def resume_work(
+        ctx: typer.Context,
+        id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
+    ) -> None:
+        job_id = id
+        agent_name = _required_prefix_agent(ctx, command_name=kind)
+        path = _wrap_user_error(
+            work.resume_task if kind == "task" else work.resume_chore,
+            _context_root(ctx),
+            agent_name,
+            job_id,
+        )
+        if path is None:
+            raise click.ClickException(f"{kind} not found: {job_id}")
+        _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
+        typer.echo(f"{kind} {job_id} resumed\t{path}")
+
+    return resume_work
+
+
 def _make_archive_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
     def archive_work(
         ctx: typer.Context,
@@ -928,33 +975,67 @@ def _make_archive_work_command(kind: WorkKind, title: str) -> Callable[..., None
     return archive_work
 
 
-def _make_remove_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
-    def remove_work(
+def _make_restore_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
+    def restore_work(
+        ctx: typer.Context,
+        id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
+        inactive: Annotated[
+            bool,
+            typer.Option("--inactive", help="Restore as inactive instead of active."),
+        ] = False,
+    ) -> None:
+        job_id = id
+        agent_name = _required_prefix_agent(ctx, command_name=kind)
+        state: Literal["active", "inactive"] = "inactive" if inactive else "active"
+        path = _wrap_user_error(
+            work.unarchive_task if kind == "task" else work.unarchive_chore,
+            _context_root(ctx),
+            agent_name,
+            job_id,
+            state=state,
+        )
+        if path is None:
+            raise click.ClickException(f"archived {kind} not found: {job_id}")
+        _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
+        typer.echo(f"{kind} {job_id} restored\t{path}")
+
+    return restore_work
+
+
+def _make_delete_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
+    def delete_work(
         ctx: typer.Context,
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
         job_id = id
         agent_name = _required_prefix_agent(ctx, command_name=kind)
-        entry = (
+        active_entry = (
             work.find_task(_context_root(ctx), agent_name, job_id)
             if kind == "task"
             else work.find_chore(_context_root(ctx), agent_name, job_id)
         )
+        if active_entry is not None:
+            raise click.ClickException(f"{kind} is not archived: {job_id}; archive it before deleting")
+        entry = (
+            work.find_archived_task(_context_root(ctx), agent_name, job_id)
+            if kind == "task"
+            else work.find_archived_chore(_context_root(ctx), agent_name, job_id)
+        )
         if entry is None:
-            raise click.ClickException(f"{kind} not found: {job_id}")
+            raise click.ClickException(f"archived {kind} not found: {job_id}")
         removed = _wrap_user_error(
-            work.remove_task if kind == "task" else work.remove_chore,
+            work.remove_archived_task if kind == "task" else work.remove_archived_chore,
             _context_root(ctx),
             agent_name,
             job_id,
         )
         if not removed:
-            raise click.ClickException(f"{kind} not found: {job_id}")
+            raise click.ClickException(f"archived {kind} not found: {job_id}")
         path = entry.path
         _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
-        typer.echo(f"{kind} {job_id} removed")
+        typer.echo(f"{kind} {job_id} deleted")
 
-    return remove_work
+    return delete_work
 
 
 def _work_location(toolang_root: Path, agent_name: str, path: Path) -> str:

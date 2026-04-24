@@ -280,7 +280,6 @@ message stream subset.
 - `GET /api/v1/jobs`
 - `GET /api/v1/jobs/{job_id}`
 - `PATCH /api/v1/jobs/{job_id}`
-- `DELETE /api/v1/jobs/{job_id}`
 - `GET /api/v1/jobs/archived`
 - `GET /api/v1/jobs/archived/{job_id}`
 - `PATCH /api/v1/jobs/archived/{job_id}`
@@ -289,7 +288,6 @@ message stream subset.
 - `POST /api/v1/tasks`
 - `GET /api/v1/tasks/{task_id}`
 - `PATCH /api/v1/tasks/{task_id}`
-- `DELETE /api/v1/tasks/{task_id}`
 - `GET /api/v1/tasks/archived`
 - `GET /api/v1/tasks/archived/{task_id}`
 - `PATCH /api/v1/tasks/archived/{task_id}`
@@ -298,7 +296,6 @@ message stream subset.
 - `POST /api/v1/chores`
 - `GET /api/v1/chores/{chore_id}`
 - `PATCH /api/v1/chores/{chore_id}`
-- `DELETE /api/v1/chores/{chore_id}`
 - `GET /api/v1/chores/archived`
 - `GET /api/v1/chores/archived/{chore_id}`
 - `PATCH /api/v1/chores/archived/{chore_id}`
@@ -375,8 +372,11 @@ Task create requests accept:
 ```
 
 Task patch requests accept any subset of `title`, `body`, `state`, and `stage`.
-Patch `state: "archived"` on the normal route to archive a task. Patch
-`state: "active"` or `state: "inactive"` on the archived route to unarchive it.
+Patch `state: "inactive"` on the normal route to pause a task, and patch
+`state: "active"` on the normal route to resume it. Patch `state: "archived"`
+on the normal route to archive a task. Patch `state: "active"` or
+`state: "inactive"` on the archived route to unarchive it.
+Delete is destructive and is available only through archived routes.
 
 Chore create requests accept:
 
@@ -390,9 +390,11 @@ Chore create requests accept:
 ```
 
 Chore patch requests accept any subset of `title`, `body`, `state`, and
-`schedule`. Patch `state: "archived"` on the normal route to archive a chore.
-Patch `state: "active"` or `state: "inactive"` on the archived route to
-unarchive it.
+`schedule`. Patch `state: "inactive"` on the normal route to pause a chore,
+and patch `state: "active"` on the normal route to resume it. Patch
+`state: "archived"` on the normal route to archive a chore. Patch
+`state: "active"` or `state: "inactive"` on the archived route to unarchive it.
+Delete is destructive and is available only through archived routes.
 
 
 ## Activity Endpoints
