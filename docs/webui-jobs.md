@@ -299,6 +299,16 @@ Content-Type: application/json
 }
 ```
 
+Pause and resume active-directory jobs by patching `state` on the normal route:
+
+```http
+PATCH /api/v1/tasks/{task_id}
+PATCH /api/v1/chores/{chore_id}
+PATCH /api/v1/jobs/{job_id}
+```
+
+Use `state: "inactive"` to pause and `state: "active"` to resume.
+
 
 ## Archive And Delete
 
@@ -311,14 +321,7 @@ PATCH /api/v1/chores/{chore_id}
 PATCH /api/v1/jobs/{job_id}
 ```
 
-Delete is destructive:
-
-```http
-DELETE /api/v1/tasks/{task_id}
-DELETE /api/v1/chores/{chore_id}
-```
-
-Delete archived items through the archived routes:
+Delete is destructive and is available only for archived items:
 
 ```http
 DELETE /api/v1/tasks/archived/{task_id}

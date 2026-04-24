@@ -330,21 +330,21 @@ Current write endpoints:
 - `POST /api/v1/tasks`
 - `PATCH /api/v1/jobs/{job_id}`
 - `PATCH /api/v1/jobs/archived/{job_id}`
-- `DELETE /api/v1/jobs/{job_id}`
 - `DELETE /api/v1/jobs/archived/{job_id}`
 - `PATCH /api/v1/tasks/{task_id}`
 - `PATCH /api/v1/tasks/archived/{task_id}`
-- `DELETE /api/v1/tasks/{task_id}`
 - `DELETE /api/v1/tasks/archived/{task_id}`
 - `POST /api/v1/chores`
 - `PATCH /api/v1/chores/{chore_id}`
 - `PATCH /api/v1/chores/archived/{chore_id}`
-- `DELETE /api/v1/chores/{chore_id}`
 - `DELETE /api/v1/chores/archived/{chore_id}`
 
 Create and patch requests use structured JSON fields instead of raw
 frontmatter. Task writes accept `title`, `body`, `state`, and `stage`. Chore
 writes accept `title`, `body`, `state`, and `schedule`.
 
-Archive by patching `state: "archived"` on a normal route. Unarchive by
-patching `state: "active"` or `state: "inactive"` on an archived route.
+Pause by patching `state: "inactive"` on a normal route. Resume by patching
+`state: "active"` on a normal route. Archive by patching `state: "archived"`
+on a normal route. Unarchive by patching `state: "active"` or
+`state: "inactive"` on an archived route. Delete is destructive and is
+available only for archived jobs.
