@@ -5,13 +5,13 @@ from __future__ import annotations
 from typing import Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from .. import caps
-from ..state.prepared import EntryKind, PreparedEntry, PreparedScope
+from ..state.prepared import EntryKind, PreparedEntry, PreparedVisibility
 
 CapKind = Literal["psyche", "skill", "service", "prompt"]
-ApiScope = Literal["global", "agent", "shared"]
+ApiVisibility = Literal["private", "shared"]
 
 COLLECTION_TO_KIND: dict[str, CapKind] = {
     "psyches": "psyche",
@@ -24,14 +24,18 @@ COLLECTION_TO_KIND: dict[str, CapKind] = {
 class PutCapRequest(BaseModel):
     """One authored cap write request."""
 
-    scope: ApiScope = "agent"
+    model_config = ConfigDict(extra="forbid")
+
+    visibility: ApiVisibility = "private"
     content: str | None = None
 
 
 class RemoteCapRequest(BaseModel):
     """One remote cap ref mutation request."""
 
-    scope: ApiScope = "agent"
+    model_config = ConfigDict(extra="forbid")
+
+    visibility: ApiVisibility = "private"
     ref: str
 
 
@@ -51,7 +55,7 @@ def create_router() -> APIRouter:
     ) -> dict[str, object]:
         context = request.app.state.runtime
         kind = _collection_kind(_collection_from_path(str(request.url.path)))
-        scope = _scope(payload.scope)
+        visibility = payload.visibility
         if payload.content is None:
             raise HTTPException(status_code=400, detail="missing cap content")
 
@@ -59,13 +63,13 @@ def create_router() -> APIRouter:
             caps.put_local_entry_text,
             context.root,
             context.name,
-            scope=scope,
+            visibility=visibility,
             kind=cast(EntryKind, kind),
             name=name,
             text=payload.content or "",
         )
-        _append_cap_update(context, kind=kind, name=name, scope=scope)
-        entry = _find_authored_entry(context, scope=scope, kind=kind, name=name)
+        _append_cap_update(context, kind=kind, name=name, visibility=visibility)
+        entry = _find_authored_entry(context, visibility=visibility, kind=kind, name=name)
         return {"item": _cap_detail_item(context, entry)}
 
     @router.put("/psyches/{name}/remote", summary="Add Remote Psyche")
@@ -79,7 +83,7 @@ def create_router() -> APIRouter:
     ) -> dict[str, object]:
         context = request.app.state.runtime
         kind = _collection_kind(_collection_from_path(str(request.url.path)))
-        scope = _scope(payload.scope)
+        visibility = payload.visibility
         if caps.remote_entry_name(cast(EntryKind, kind), payload.ref) != name:
             raise HTTPException(
                 status_code=400,
@@ -89,20 +93,13 @@ def create_router() -> APIRouter:
             caps.add_remote_entry,
             context.root,
             context.name,
-            scope=scope,
+            visibility=visibility,
             kind=cast(EntryKind, kind),
             ref=payload.ref,
         )
-        _append_cap_update(context, kind=kind, name=name, scope=scope)
-        item = _written_item(
-            kind=kind,
-            name=name,
-            scope=scope,
-            source="remote",
-            ref=payload.ref,
-            path=str(_config_path(context.root, context.name, scope)),
-        )
-        return {"item": item}
+        _append_cap_update(context, kind=kind, name=name, visibility=visibility)
+        entry = _find_authored_entry(context, visibility=visibility, kind=kind, name=name)
+        return {"item": _cap_detail_item(context, entry)}
 
     @router.delete("/psyches/{name}/local", summary="Delete Local Psyche")
     @router.delete("/skills/{name}/local", summary="Delete Local Skill")
@@ -111,21 +108,22 @@ def create_router() -> APIRouter:
     async def delete_local_cap(
         request: Request,
         name: str,
-        scope: ApiScope = Query(default="agent"),
+        visibility: ApiVisibility = Query(default="private"),
     ) -> dict[str, object]:
         context = request.app.state.runtime
         kind = _collection_kind(_collection_from_path(str(request.url.path)))
+        requested_visibility = visibility
         removed = _wrap_user_error(
             caps.remove_local_entry,
             context.root,
             context.name,
-            scope=_scope(scope),
+            visibility=requested_visibility,
             kind=cast(EntryKind, kind),
             name=name,
         )
         if not removed:
             raise HTTPException(status_code=404, detail=f"local {kind} not found: {name}")
-        _append_cap_update(context, kind=kind, name=name, scope=_scope(scope))
+        _append_cap_update(context, kind=kind, name=name, visibility=requested_visibility)
         return {"ok": True}
 
     @router.delete("/psyches/{name}/remote", summary="Remove Remote Psyche")
@@ -135,28 +133,25 @@ def create_router() -> APIRouter:
     async def delete_remote_cap(
         request: Request,
         name: str,
-        scope: ApiScope = Query(default="agent"),
+        visibility: ApiVisibility = Query(default="private"),
     ) -> dict[str, object]:
         context = request.app.state.runtime
         kind = _collection_kind(_collection_from_path(str(request.url.path)))
+        requested_visibility = visibility
         removed = _wrap_user_error(
             caps.remove_remote_entry,
             context.root,
             context.name,
-            scope=_scope(scope),
+            visibility=requested_visibility,
             kind=cast(EntryKind, kind),
             name=name,
         )
         if not removed:
             raise HTTPException(status_code=404, detail=f"remote {kind} not found: {name}")
-        _append_cap_update(context, kind=kind, name=name, scope=_scope(scope))
+        _append_cap_update(context, kind=kind, name=name, visibility=requested_visibility)
         return {"ok": True}
 
     return router
-
-
-def _scope(scope: ApiScope) -> PreparedScope:
-    return "agent" if scope == "shared" else scope
 
 
 def _collection_kind(collection: str) -> CapKind:
@@ -176,14 +171,14 @@ def _collection_from_path(path: str) -> str:
 def _find_authored_entry(
     context,
     *,
-    scope: PreparedScope,
+    visibility: PreparedVisibility,
     kind: CapKind,
     name: str,
 ) -> PreparedEntry:
     for entry in caps.list_entries(
         context.root,
         context.name,
-        scope=scope,
+        visibility=visibility,
         kinds={cast(EntryKind, kind)},
     ):
         if entry.name == name:
@@ -195,52 +190,25 @@ def _cap_detail_item(context, entry: PreparedEntry) -> dict[str, object]:
     item: dict[str, object] = {
         "kind": entry.kind,
         "name": entry.name,
-        "scope": _entry_scope(context, entry),
-        "source": entry.source.form,
-        "ref": entry.ref if entry.source.form == "remote" else None,
-        "path": entry.path,
+        "visibility": caps.entry_visibility(entry, agent_name=context.name),
+        "form": caps.entry_form(entry),
+        "ref": caps.entry_ref(entry, agent_name=context.name),
+        "definition_file": caps.entry_definition_file(entry),
     }
+    line = caps.entry_line(entry)
+    if line is not None:
+        item["line"] = line
     return item
 
 
-def _written_item(
-    *,
-    kind: CapKind,
-    name: str,
-    scope: PreparedScope,
-    source: str,
-    ref: str,
-    path: str,
-) -> dict[str, object]:
-    return {
-        "kind": kind,
-        "name": name,
-        "scope": scope,
-        "source": source,
-        "path": path,
-        "ref": ref if source == "remote" else None,
-    }
-
-
-def _append_cap_update(context, *, kind: CapKind, name: str, scope: PreparedScope) -> None:
+def _append_cap_update(context, *, kind: CapKind, name: str, visibility: PreparedVisibility) -> None:
     context.store.append_update(
         kind=cast(Literal["psyche_changed", "skill_changed", "service_changed", "prompt_changed"], f"{kind}_changed"),
         payload={
             "name": name,
-            "scope": scope,
+            "visibility": visibility,
         },
     )
-
-
-def _entry_scope(context, entry: PreparedEntry) -> PreparedScope:
-    agent_prefix = f"agents/{context.name}/"
-    return "agent" if entry.path.startswith(agent_prefix) else "global"
-
-
-def _config_path(toolang_root, agent_name: str, scope: PreparedScope):
-    if scope == "global":
-        return toolang_root / "config.toml"
-    return toolang_root / "agents" / agent_name / "config.toml"
 
 
 def _wrap_user_error(function, *args, **kwargs):

@@ -23,18 +23,20 @@ from .state.prepared import (
     EntryKind,
     PreparedEntry,
     PreparedLock,
-    PreparedScope,
+    PreparedVisibility,
     PreparedSource,
-    agent_lock_path,
-    agent_prepared_dir,
-    global_lock_path,
-    global_prepared_dir,
+    private_lock_path,
+    private_prepared_dir,
+    shared_lock_path,
+    shared_prepared_dir,
 )
 
 CAP_DIR_NAMES = ("psyches", "skills", "services", "prompts")
 JOB_DIR_NAMES = ("chores", "tasks")
 CAP_KINDS: tuple[EntryKind, ...] = ("psyche", "skill", "service", "prompt")
 JOB_KINDS: tuple[EntryKind, ...] = ("task", "chore")
+Visibility = PreparedVisibility
+EntryForm = Literal["local", "inline", "linked", "remote"]
 MANAGED_KINDS = frozenset((*CAP_KINDS, *JOB_KINDS))
 FILE_BACKED_KINDS = frozenset({"psyche", "service", "prompt", "task", "chore"})
 SKILL_FIELDS = frozenset({"description"})
@@ -70,13 +72,13 @@ def list_entries(
     toolang_root: Path,
     agent_name: str,
     *,
-    scope: PreparedScope | None = None,
+    visibility: PreparedVisibility | None = None,
     kinds: set[EntryKind] | None = None,
 ) -> tuple[PreparedEntry, ...]:
     """List local and remote entries from durable authored files and config."""
 
     durable = scan_durable_state(toolang_root, agent_name)
-    entries, _ = _collect_scope_entries_with_files(durable, scope=scope, kinds=kinds)
+    entries, _ = _collect_visibility_entries_with_files(durable, visibility=visibility, kinds=kinds)
     return entries
 
 
@@ -84,20 +86,20 @@ def list_local_entries(
     toolang_root: Path,
     agent_name: str,
     *,
-    scope: PreparedScope | None = None,
+    visibility: PreparedVisibility | None = None,
     kinds: set[EntryKind] | None = None,
 ) -> tuple[PreparedEntry, ...]:
     """List local cap and job entries from durable authored files."""
 
     durable = scan_durable_state(toolang_root, agent_name)
-    return collect_local_entries(durable, scope=scope, kinds=kinds)
+    return collect_local_entries(durable, visibility=visibility, kinds=kinds)
 
 
 def put_local_entry(
     toolang_root: Path,
     agent_name: str,
     *,
-    scope: PreparedScope,
+    visibility: PreparedVisibility,
     kind: EntryKind,
     name: str,
     body: str = "",
@@ -109,7 +111,7 @@ def put_local_entry(
     return put_local_entry_text(
         toolang_root,
         agent_name,
-        scope=scope,
+        visibility=visibility,
         kind=kind,
         name=name,
         text=frontmatter.dumps(post),
@@ -120,18 +122,18 @@ def put_local_entry_text(
     toolang_root: Path,
     agent_name: str,
     *,
-    scope: PreparedScope,
+    visibility: PreparedVisibility,
     kind: EntryKind,
     name: str,
     text: str,
 ) -> Path:
     """Create or replace one local entry from raw authored text."""
 
-    _validate_local_kind(scope, kind)
+    _validate_local_kind(visibility, kind)
     _validate_authored_entry_text(kind=kind, text=text)
-    entry_path = _local_entry_file_path(toolang_root, agent_name, scope=scope, kind=kind, name=name)
-    ref = entry_path.resolve().as_uri() if kind != "skill" else entry_path.parent.resolve().as_uri()
-    _ensure_name_available(toolang_root, agent_name, scope=scope, kind=kind, name=name, ref=ref)
+    entry_path = _local_entry_file_path(toolang_root, agent_name, visibility=visibility, kind=kind, name=name)
+    ref = _local_ref(visibility=visibility, kind=kind, name=name)
+    _ensure_name_available(toolang_root, agent_name, visibility=visibility, kind=kind, name=name, ref=ref)
     entry_path.parent.mkdir(parents=True, exist_ok=True)
     entry_path.write_text(text, encoding="utf-8")
     return entry_path
@@ -141,14 +143,14 @@ def load_local_entry_text(
     toolang_root: Path,
     agent_name: str,
     *,
-    scope: PreparedScope,
+    visibility: PreparedVisibility,
     kind: EntryKind,
     name: str,
 ) -> str:
     """Load one local entry from authored files."""
 
-    _validate_local_kind(scope, kind)
-    entry_path = _local_entry_file_path(toolang_root, agent_name, scope=scope, kind=kind, name=name)
+    _validate_local_kind(visibility, kind)
+    entry_path = _local_entry_file_path(toolang_root, agent_name, visibility=visibility, kind=kind, name=name)
     if not entry_path.is_file():
         raise FileNotFoundError(f"local {kind} not found: {name}")
     return entry_path.read_text(encoding="utf-8")
@@ -158,20 +160,20 @@ def remove_local_entry(
     toolang_root: Path,
     agent_name: str,
     *,
-    scope: PreparedScope,
+    visibility: PreparedVisibility,
     kind: EntryKind,
     name: str,
 ) -> bool:
     """Remove one local entry if it exists."""
 
-    _validate_local_kind(scope, kind)
+    _validate_local_kind(visibility, kind)
     if kind == "skill":
-        target = toolang_root / _relative_definition_root(agent_name, scope=scope, kind=kind, name=name)
+        target = toolang_root / _relative_definition_root(agent_name, visibility=visibility, kind=kind, name=name)
         if not target.exists():
             return False
         shutil.rmtree(target)
         return True
-    entry_path = _local_entry_file_path(toolang_root, agent_name, scope=scope, kind=kind, name=name)
+    entry_path = _local_entry_file_path(toolang_root, agent_name, visibility=visibility, kind=kind, name=name)
     if not entry_path.exists():
         return False
     entry_path.unlink()
@@ -182,24 +184,24 @@ def add_remote_entry(
     toolang_root: Path,
     agent_name: str,
     *,
-    scope: PreparedScope,
+    visibility: PreparedVisibility,
     kind: EntryKind,
     ref: str,
 ) -> Path:
     """Add one remote entry ref to the authored config file."""
 
-    _validate_local_kind(scope, kind)
+    _validate_local_kind(visibility, kind)
     canonical_ref = _canonicalize_remote_ref(kind, ref)
     name = _remote_name(kind, canonical_ref)
     _ensure_name_available(
         toolang_root,
         agent_name,
-        scope=scope,
+        visibility=visibility,
         kind=kind,
         name=name,
         ref=canonical_ref,
     )
-    config_path = _config_path(toolang_root, agent_name, scope=scope)
+    config_path = _config_path(toolang_root, agent_name, visibility=visibility)
     data = _load_config_data(config_path)
     key = DIR_NAME_BY_KIND[kind]
     table = data.get(key)
@@ -217,17 +219,17 @@ def remove_remote_entry(
     toolang_root: Path,
     agent_name: str,
     *,
-    scope: PreparedScope,
+    visibility: PreparedVisibility,
     kind: EntryKind,
     name: str,
 ) -> bool:
     """Remove one remote entry ref by runtime name."""
 
-    _validate_local_kind(scope, kind)
+    _validate_local_kind(visibility, kind)
     return _remove_remote_entries_by_name(
         toolang_root,
         agent_name,
-        scope=scope,
+        visibility=visibility,
         kind=kind,
         name=name,
     )
@@ -239,10 +241,53 @@ def remote_entry_name(kind: EntryKind, ref: str) -> str:
     return _remote_name(kind, _canonicalize_remote_ref(kind, ref))
 
 
+def entry_visibility(entry: PreparedEntry, *, agent_name: str) -> Visibility:
+    """Return the external visibility for one prepared entry."""
+
+    if entry.source.form in {"inline", "linked"}:
+        return "private"
+    prefix = f"agents/{agent_name}/"
+    if entry.path.startswith(prefix) or entry.source.path.startswith(prefix):
+        return "private"
+    return "shared"
+
+
+def entry_form(entry: PreparedEntry) -> EntryForm:
+    """Return the external form for one prepared entry."""
+
+    return entry.source.form
+
+
+def entry_ref(entry: PreparedEntry, *, agent_name: str) -> str:
+    """Return the canonical external ref for one prepared entry."""
+
+    form = entry_form(entry)
+    if form in {"remote", "linked"}:
+        return entry.ref
+    if form == "inline":
+        return f"inline://{DIR_NAME_BY_KIND[entry.kind]}/{entry.name}"
+    visibility = entry_visibility(entry, agent_name=agent_name)
+    return f"{'root' if visibility == 'shared' else 'home'}://{DIR_NAME_BY_KIND[entry.kind]}/{entry.name}"
+
+
+def entry_definition_file(entry: PreparedEntry) -> str:
+    """Return the authored file that defines or links one prepared entry."""
+
+    if entry.source.form == "local":
+        return entry.path
+    return entry.source.path
+
+
+def entry_line(entry: PreparedEntry) -> int | None:
+    """Return the authored source line for one prepared entry when known."""
+
+    return entry.source.line
+
+
 def collect_local_entries(
     durable: DurableState,
     *,
-    scope: PreparedScope | None = None,
+    visibility: PreparedVisibility | None = None,
     kinds: set[EntryKind] | None = None,
 ) -> tuple[PreparedEntry, ...]:
     """Collect local prepared entries from durable authored files."""
@@ -252,8 +297,8 @@ def collect_local_entries(
         entry = _local_entry_from_file(durable.toolang_root, durable.agent_name, item)
         if entry is None:
             continue
-        entry_scope: PreparedScope = "global" if item.origin == "root" else "agent"
-        if scope is not None and entry_scope != scope:
+        entry_visibility_value: PreparedVisibility = "shared" if item.origin == "root" else "private"
+        if visibility is not None and entry_visibility_value != visibility:
             continue
         if kinds is not None and entry.kind not in kinds:
             continue
@@ -261,42 +306,42 @@ def collect_local_entries(
     return tuple(sorted(entries.values(), key=_entry_sort_key))
 
 
-def _collect_scope_entries_with_files(
+def _collect_visibility_entries_with_files(
     durable: DurableState,
     *,
-    scope: PreparedScope | None = None,
+    visibility: PreparedVisibility | None = None,
     kinds: set[EntryKind] | None = None,
 ) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
-    local_entries = collect_local_entries(durable, scope=scope, kinds=kinds)
+    local_entries = collect_local_entries(durable, visibility=visibility, kinds=kinds)
     remote_entries, files = _collect_remote_entries(
         durable.toolang_root,
         durable.agent_name,
-        scope=scope,
+        visibility=visibility,
         kinds=kinds,
     )
     entries = tuple(sorted((*local_entries, *remote_entries), key=_entry_sort_key))
     return entries, files
 
 
-def build_scope_lock(
+def build_visibility_lock(
     durable: DurableState,
     *,
-    scope: PreparedScope,
+    visibility: PreparedVisibility,
 ) -> tuple[PreparedLock, dict[str, bytes]]:
-    """Build one prepared lock and any materialized files for one scope."""
+    """Build one prepared lock and any materialized files for one visibility."""
 
-    entries, files = _collect_scope_entries_with_files(durable, scope=scope)
+    entries, files = _collect_visibility_entries_with_files(durable, visibility=visibility)
     _ensure_no_conflicts(entries)
     updated_at = datetime.now(timezone.utc).isoformat()
-    if scope == "global":
-        prepared_dir = global_prepared_dir(durable.toolang_root)
-        lock_path = global_lock_path(durable.toolang_root)
+    if visibility == "shared":
+        prepared_dir = shared_prepared_dir(durable.toolang_root)
+        lock_path = shared_lock_path(durable.toolang_root)
     else:
-        prepared_dir = agent_prepared_dir(durable.toolang_root, durable.agent_name)
-        lock_path = agent_lock_path(durable.toolang_root, durable.agent_name)
+        prepared_dir = private_prepared_dir(durable.toolang_root, durable.agent_name)
+        lock_path = private_lock_path(durable.toolang_root, durable.agent_name)
     return (
         PreparedLock(
-            scope=scope,
+            visibility=visibility,
             updated_at=updated_at,
             fingerprint=_lock_fingerprint(durable.toolang_root, entries, files),
             entries=entries,
@@ -310,27 +355,27 @@ def build_scope_lock(
 
 
 def effective_cap_entries(
-    global_lock: PreparedLock,
-    agent_lock: PreparedLock,
+    shared_lock: PreparedLock,
+    private_lock: PreparedLock,
 ) -> tuple[PreparedEntry, ...]:
-    """Return the runtime-visible cap set after scope precedence is applied."""
+    """Return the runtime-visible cap set after visibility precedence is applied."""
 
     effective: dict[tuple[str, str], PreparedEntry] = {}
-    for entry in global_lock.entries:
+    for entry in shared_lock.entries:
         if entry.kind in CAP_KINDS:
             effective[(entry.kind, entry.name)] = entry
-    for entry in agent_lock.entries:
+    for entry in private_lock.entries:
         if entry.kind in CAP_KINDS:
             effective[(entry.kind, entry.name)] = entry
     return tuple(sorted(effective.values(), key=_entry_sort_key))
 
 
-def active_job_entries(agent_lock: PreparedLock) -> tuple[PreparedEntry, ...]:
+def active_job_entries(private_lock: PreparedLock) -> tuple[PreparedEntry, ...]:
     """Return active runtime job entries."""
 
     jobs = [
         entry
-        for entry in agent_lock.entries
+        for entry in private_lock.entries
         if entry.kind in JOB_KINDS and entry.meta.get("state") != "archived"
     ]
     return tuple(sorted(jobs, key=_entry_sort_key))
@@ -341,13 +386,13 @@ def durable_entries_snapshot(
 ) -> dict[str, object]:
     """Return a JSON-friendly durable definitions snapshot."""
 
-    global_entries, _ = _collect_scope_entries_with_files(durable, scope="global")
-    agent_entries, _ = _collect_scope_entries_with_files(durable, scope="agent")
+    shared_entries, _ = _collect_visibility_entries_with_files(durable, visibility="shared")
+    private_entries, _ = _collect_visibility_entries_with_files(durable, visibility="private")
     return {
         "program_source": durable.program_source,
         "config_paths": list(durable.config_paths),
-        "global_entries": [entry.to_snapshot() for entry in global_entries],
-        "agent_entries": [entry.to_snapshot() for entry in agent_entries],
+        "shared_entries": [entry.to_snapshot() for entry in shared_entries],
+        "private_entries": [entry.to_snapshot() for entry in private_entries],
     }
 
 
@@ -358,9 +403,9 @@ def _local_entry_from_file(
 ) -> PreparedEntry | None:
     if item.category not in {"cap", "job"}:
         return None
-    scope: PreparedScope = "global" if item.origin == "root" else "agent"
+    visibility: PreparedVisibility = "shared" if item.origin == "root" else "private"
     relative_path = Path(item.relative_path)
-    local_parts = _local_parts(relative_path, agent_name=agent_name, scope=scope)
+    local_parts = _local_parts(relative_path, agent_name=agent_name, visibility=visibility)
     if len(local_parts) < 2:
         return None
     directory_name = local_parts[0]
@@ -368,7 +413,7 @@ def _local_entry_from_file(
     if kind is None:
         return None
     if kind == "skill":
-        return _skill_entry(toolang_root, agent_name, scope=scope, name=local_parts[1])
+        return _skill_entry(toolang_root, agent_name, visibility=visibility, name=local_parts[1])
     if kind in FILE_BACKED_KINDS and len(local_parts) == 2:
         return _file_entry(toolang_root, relative_path, kind=kind)
     return None
@@ -378,10 +423,10 @@ def _skill_entry(
     toolang_root: Path,
     agent_name: str,
     *,
-    scope: PreparedScope,
+    visibility: PreparedVisibility,
     name: str,
 ) -> PreparedEntry | None:
-    root_relative_dir = _relative_definition_root(agent_name, scope=scope, kind="skill", name=name)
+    root_relative_dir = _relative_definition_root(agent_name, visibility=visibility, kind="skill", name=name)
     root_relative_file = root_relative_dir / "SKILL.md"
     entry_file = toolang_root / root_relative_file
     if not entry_file.is_file():
@@ -391,7 +436,7 @@ def _skill_entry(
         kind="skill",
         name=name,
         shape="dir",
-        ref=source_path.resolve().as_uri(),
+        ref=_local_ref(visibility=visibility, kind="skill", name=name),
         path=str(root_relative_file),
         source=_source_record(
             root_relative_path=root_relative_dir,
@@ -408,13 +453,15 @@ def _file_entry(
     relative_path: Path,
     *,
     kind: EntryKind,
-) -> PreparedEntry:
+) -> PreparedEntry | None:
     absolute_path = toolang_root / relative_path
+    if not absolute_path.is_file():
+        return None
     return PreparedEntry(
         kind=kind,
         name=relative_path.stem,
         shape="file",
-        ref=absolute_path.resolve().as_uri(),
+        ref=_local_ref(visibility=_visibility_from_relative_path(relative_path), kind=kind, name=relative_path.stem),
         path=str(relative_path),
         source=_source_record(
             root_relative_path=relative_path,
@@ -430,7 +477,7 @@ def _source_record(
     *,
     root_relative_path: Path,
     absolute_path: Path,
-    form: Literal["local", "inline", "remote"],
+    form: Literal["local", "inline", "linked", "remote"],
     shape: Literal["file", "dir"],
 ) -> PreparedSource:
     fingerprint = _dir_fingerprint(absolute_path) if shape == "dir" else hashlib.sha256(absolute_path.read_bytes()).hexdigest()
@@ -449,7 +496,7 @@ def _ensure_no_conflicts(entries: tuple[PreparedEntry, ...]) -> None:
         existing = seen.get(key)
         if existing is not None and existing != entry.ref:
             raise ValueError(
-                f"conflicting entries in one scope: kind={entry.kind} name={entry.name}"
+                f"conflicting entries in one visibility: kind={entry.kind} name={entry.name}"
             )
         seen[key] = entry.ref
 
@@ -565,11 +612,11 @@ def _entry_sort_key(entry: PreparedEntry) -> tuple[str, str, str]:
     return (entry.kind, entry.name, entry.ref)
 
 
-def _validate_local_kind(scope: PreparedScope, kind: EntryKind) -> None:
+def _validate_local_kind(visibility: PreparedVisibility, kind: EntryKind) -> None:
     if kind not in MANAGED_KINDS:
         raise ValueError(f"unsupported kind: {kind}")
-    if scope == "global" and kind in JOB_KINDS:
-        raise ValueError(f"global scope does not support kind: {kind}")
+    if visibility == "shared" and kind in JOB_KINDS:
+        raise ValueError(f"shared visibility does not support kind: {kind}")
 
 
 def _validate_authored_entry_text(*, kind: EntryKind, text: str) -> None:
@@ -638,35 +685,35 @@ def _ensure_name_available(
     toolang_root: Path,
     agent_name: str,
     *,
-    scope: PreparedScope,
+    visibility: PreparedVisibility,
     kind: EntryKind,
     name: str,
     ref: str,
 ) -> None:
-    for entry in list_entries(toolang_root, agent_name, scope=scope, kinds={kind}):
+    for entry in list_entries(toolang_root, agent_name, visibility=visibility, kinds={kind}):
         if entry.name == name and entry.ref != ref:
-            raise ValueError(f"conflicting entries in one scope: kind={kind} name={name}")
+            raise ValueError(f"conflicting entries in one visibility: kind={kind} name={name}")
 
 
 def _local_entry_file_path(
     toolang_root: Path,
     agent_name: str,
     *,
-    scope: PreparedScope,
+    visibility: PreparedVisibility,
     kind: EntryKind,
     name: str,
 ) -> Path:
-    return toolang_root / _relative_entry_file_path(agent_name, scope=scope, kind=kind, name=name)
+    return toolang_root / _relative_entry_file_path(agent_name, visibility=visibility, kind=kind, name=name)
 
 
 def _relative_entry_file_path(
     agent_name: str,
     *,
-    scope: PreparedScope,
+    visibility: PreparedVisibility,
     kind: EntryKind,
     name: str,
 ) -> Path:
-    definition_root = _relative_definition_root(agent_name, scope=scope, kind=kind, name=name)
+    definition_root = _relative_definition_root(agent_name, visibility=visibility, kind=kind, name=name)
     if kind == "skill":
         return definition_root / "SKILL.md"
     return definition_root.with_suffix(".md")
@@ -675,16 +722,25 @@ def _relative_entry_file_path(
 def _relative_definition_root(
     agent_name: str,
     *,
-    scope: PreparedScope,
+    visibility: PreparedVisibility,
     kind: EntryKind,
     name: str,
 ) -> Path:
-    prefix = Path() if scope == "global" else Path("agents") / agent_name
+    prefix = Path() if visibility == "shared" else Path("agents") / agent_name
     return prefix / DIR_NAME_BY_KIND[kind] / name
 
 
-def _local_parts(relative_path: Path, *, agent_name: str, scope: PreparedScope) -> tuple[str, ...]:
-    if scope == "agent" and relative_path.parts[:2] == ("agents", agent_name):
+def _local_ref(*, visibility: PreparedVisibility, kind: EntryKind, name: str) -> str:
+    scheme = "root" if visibility == "shared" else "home"
+    return f"{scheme}://{DIR_NAME_BY_KIND[kind]}/{name}"
+
+
+def _visibility_from_relative_path(relative_path: Path) -> PreparedVisibility:
+    return "private" if relative_path.parts[:1] == ("agents",) else "shared"
+
+
+def _local_parts(relative_path: Path, *, agent_name: str, visibility: PreparedVisibility) -> tuple[str, ...]:
+    if visibility == "private" and relative_path.parts[:2] == ("agents", agent_name):
         return relative_path.parts[2:]
     return relative_path.parts
 
@@ -693,14 +749,14 @@ def _collect_remote_entries(
     toolang_root: Path,
     agent_name: str,
     *,
-    scope: PreparedScope | None = None,
+    visibility: PreparedVisibility | None = None,
     kinds: set[EntryKind] | None = None,
 ) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
-    scopes = ("global", "agent") if scope is None else (scope,)
+    visibilities = ("shared", "private") if visibility is None else (visibility,)
     entries: list[PreparedEntry] = []
     files: dict[str, bytes] = {}
-    for item_scope in scopes:
-        config_path = _config_path(toolang_root, agent_name, scope=item_scope)
+    for item_visibility in visibilities:
+        config_path = _config_path(toolang_root, agent_name, visibility=item_visibility)
         if not config_path.is_file():
             continue
         data = _load_config_data(config_path)
@@ -719,7 +775,7 @@ def _collect_remote_entries(
                 entry, entry_files = _remote_entry_from_ref(
                     toolang_root,
                     agent_name,
-                    scope=item_scope,
+                    visibility=item_visibility,
                     kind=kind,
                     ref=ref,
                     name=name,
@@ -735,7 +791,7 @@ def _remote_entry_from_ref(
     toolang_root: Path,
     agent_name: str,
     *,
-    scope: PreparedScope,
+    visibility: PreparedVisibility,
     kind: EntryKind,
     ref: str,
     name: str,
@@ -743,7 +799,7 @@ def _remote_entry_from_ref(
     config_path: Path,
 ) -> tuple[PreparedEntry, dict[str, bytes]]:
     canonical_ref = _canonicalize_remote_ref(kind, ref)
-    relative_entry_path = _relative_remote_entry_path(agent_name, scope=scope, kind=kind, name=name)
+    relative_entry_path = _relative_remote_entry_path(agent_name, visibility=visibility, kind=kind, name=name)
     content = _remote_materialized_content(kind=kind, name=name, ref=canonical_ref)
     return (
         PreparedEntry(
@@ -767,11 +823,11 @@ def _remote_entry_from_ref(
 def _relative_remote_entry_path(
     agent_name: str,
     *,
-    scope: PreparedScope,
+    visibility: PreparedVisibility,
     kind: EntryKind,
     name: str,
 ) -> Path:
-    prefix = Path(".prepared") if scope == "global" else Path("agents") / agent_name / ".prepared"
+    prefix = Path(".prepared") if visibility == "shared" else Path("agents") / agent_name / ".prepared"
     root = prefix / "remote" / DIR_NAME_BY_KIND[kind] / name
     if kind == "skill":
         return root / "SKILL.md"
@@ -825,8 +881,8 @@ def _remote_name(kind: EntryKind, ref: str) -> str:
     return Path(name).stem
 
 
-def _config_path(toolang_root: Path, agent_name: str, *, scope: PreparedScope) -> Path:
-    if scope == "global":
+def _config_path(toolang_root: Path, agent_name: str, *, visibility: PreparedVisibility) -> Path:
+    if visibility == "shared":
         return toolang_root / "config.toml"
     return toolang_root / "agents" / agent_name / "config.toml"
 
@@ -909,13 +965,13 @@ def _remove_remote_entries_by_name(
     toolang_root: Path,
     agent_name: str,
     *,
-    scope: PreparedScope,
+    visibility: PreparedVisibility,
     kind: EntryKind,
     name: str,
 ) -> bool:
     if kind in JOB_KINDS:
         return False
-    config_path = _config_path(toolang_root, agent_name, scope=scope)
+    config_path = _config_path(toolang_root, agent_name, visibility=visibility)
     if not config_path.is_file():
         return False
     data = _load_config_data(config_path)

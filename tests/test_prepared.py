@@ -3,17 +3,17 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from toolang.state.prepared import load_global_lock
+from toolang.state.prepared import load_shared_lock
 
 
-def test_load_global_lock_accepts_legacy_locator_entries(tmp_path: Path) -> None:
+def test_load_shared_lock_accepts_legacy_locator_entries(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     prepared_dir = toolang_root / ".prepared"
     prepared_dir.mkdir(parents=True, exist_ok=True)
     (prepared_dir / "lock.json").write_text(
         json.dumps(
             {
-                "scope": "global",
+                "visibility": "shared",
                 "updated_at": "2026-04-18T00:00:00Z",
                 "fingerprint": "abc",
                 "entries": [
@@ -37,7 +37,7 @@ def test_load_global_lock_accepts_legacy_locator_entries(tmp_path: Path) -> None
         encoding="utf-8",
     )
 
-    lock = load_global_lock(toolang_root)
+    lock = load_shared_lock(toolang_root)
 
     assert len(lock.entries) == 1
     assert lock.entries[0].ref == "github://by3gus/agent-skills/skills/pdf-processing"

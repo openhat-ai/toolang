@@ -503,10 +503,10 @@ def _configure_foreground_runtime_logging(
 
 def _info_caps_summary(toolang_root: Path, agent_name: str) -> str:
     counts = {
-        "skills": len(cap_store.list_entries(toolang_root, agent_name, scope=None, kinds={"skill"})),
-        "psyches": len(cap_store.list_entries(toolang_root, agent_name, scope=None, kinds={"psyche"})),
-        "services": len(cap_store.list_entries(toolang_root, agent_name, scope=None, kinds={"service"})),
-        "prompts": len(cap_store.list_entries(toolang_root, agent_name, scope=None, kinds={"prompt"})),
+        "skills": len(cap_store.list_entries(toolang_root, agent_name, visibility=None, kinds={"skill"})),
+        "psyches": len(cap_store.list_entries(toolang_root, agent_name, visibility=None, kinds={"psyche"})),
+        "services": len(cap_store.list_entries(toolang_root, agent_name, visibility=None, kinds={"service"})),
+        "prompts": len(cap_store.list_entries(toolang_root, agent_name, visibility=None, kinds={"prompt"})),
     }
     singular = {
         "skills": "skill",

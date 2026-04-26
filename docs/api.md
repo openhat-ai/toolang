@@ -34,6 +34,21 @@ Global options:
 - `--root`
 - `--log`
 
+Cap commands:
+
+- `toolang <kind> list [--visibility private|shared]`
+- `toolang [agent] <kind> new <name>`
+- `toolang [agent] <kind> edit <name>`
+- `toolang [agent] <kind> delete <name>`
+- `toolang [agent] <kind> add <ref>`
+- `toolang [agent] <kind> remove <name>`
+- `toolang <kind> template [template-name]`
+
+`<kind>` is one of `psyche`, `skill`, `service`, or `prompt`. Without an agent
+prefix, cap mutations target `shared` visibility. With an agent prefix, they
+target `private` visibility for that agent. List output uses `VISIBILITY`,
+`FORM`, and `REF`.
+
 Typical usage:
 
 ```bash
@@ -238,6 +253,28 @@ Write:
 - `DELETE /api/v1/skills/{name}/remote`
 - `DELETE /api/v1/services/{name}/remote`
 - `DELETE /api/v1/prompts/{name}/remote`
+
+Local write bodies use:
+
+- `visibility`: `private` or `shared`; defaults to `private`
+- `content`: raw cap content
+
+Remote write bodies use:
+
+- `visibility`: `private` or `shared`; defaults to `private`
+- `ref`: remote cap ref
+
+Delete routes accept `visibility=private|shared` as a query parameter. Cap read
+items include:
+
+- `name`
+- `description`
+- `visibility`
+- `form`
+- `ref`
+- `definition_file`
+- `line` when known
+- `editable`
 
 
 ## Chat Endpoints

@@ -15,8 +15,8 @@ class LiveState:
     """In-memory state used by the next run."""
 
     fingerprint: str
-    global_fingerprint: str
-    agent_fingerprint: str
+    shared_fingerprint: str
+    private_fingerprint: str
     updated_at: str
     loaded_at: str
     enabled_loops: tuple[str, ...]
@@ -38,8 +38,8 @@ class LiveState:
 
         return {
             "fingerprint": self.fingerprint,
-            "global_fingerprint": self.global_fingerprint,
-            "agent_fingerprint": self.agent_fingerprint,
+            "shared_fingerprint": self.shared_fingerprint,
+            "private_fingerprint": self.private_fingerprint,
             "updated_at": self.updated_at,
             "loaded_at": self.loaded_at,
             "enabled_loops": list(self.enabled_loops),
@@ -62,12 +62,12 @@ def load_live_state(
 
     return LiveState(
         fingerprint=prepared.fingerprint,
-        global_fingerprint=prepared.global_lock.fingerprint,
-        agent_fingerprint=prepared.agent_lock.fingerprint,
+        shared_fingerprint=prepared.shared_lock.fingerprint,
+        private_fingerprint=prepared.private_lock.fingerprint,
         updated_at=prepared.updated_at,
         loaded_at=datetime.now(timezone.utc).isoformat(),
         enabled_loops=enabled_loops,
         program=load_live_program(prepared.program),
-        cap_entries=effective_cap_entries(prepared.global_lock, prepared.agent_lock),
-        job_entries=active_job_entries(prepared.agent_lock),
+        cap_entries=effective_cap_entries(prepared.shared_lock, prepared.private_lock),
+        job_entries=active_job_entries(prepared.private_lock),
     )

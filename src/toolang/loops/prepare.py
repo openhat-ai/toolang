@@ -10,15 +10,15 @@ from typing import TYPE_CHECKING
 
 from watchfiles import Change, awatch
 
-from ..caps import build_scope_lock
+from ..caps import build_visibility_lock
 from ..state.durable import DurableState, is_durable_path, scan_durable_state
 from ..state.program import build_prepared_program
 from ..state.prepared import (
     PreparedLock,
     PreparedState,
-    PreparedScope,
-    load_agent_lock,
-    load_global_lock,
+    PreparedVisibility,
+    load_private_lock,
+    load_shared_lock,
     load_prepared_state,
     write_prepared_lock,
 )
@@ -80,17 +80,17 @@ def build_prepared_state(durable: DurableState) -> PreparedState:
         durable.agent_name,
         _short_fingerprint(durable.fingerprint),
     )
-    _write_scope_if_changed(durable.toolang_root, *build_scope_lock(durable, scope="global"))
-    agent_lock, agent_files = build_scope_lock(durable, scope="agent")
+    _write_visibility_if_changed(durable.toolang_root, *build_visibility_lock(durable, visibility="shared"))
+    private_lock, private_files = build_visibility_lock(durable, visibility="private")
     program = build_prepared_program(durable)
-    _write_scope_if_changed(
+    _write_visibility_if_changed(
         durable.toolang_root,
         replace(
-            agent_lock,
-            fingerprint=_combined_agent_fingerprint(agent_lock.fingerprint, program.fingerprint()),
+            private_lock,
+            fingerprint=_combined_private_fingerprint(private_lock.fingerprint, program.fingerprint()),
             program=program,
         ),
-        agent_files,
+        private_files,
     )
     prepared = load_prepared_state(durable.toolang_root, durable.agent_name)
     logger.debug(
@@ -124,10 +124,10 @@ def apply_changes(
     prepared = build_prepared_state(durable)
     should_reload = prepared.fingerprint != context.live.fingerprint
     logger.info(
-        "prepare applied agent=%s global=%s agent_lock=%s live=%s reload=%s",
+        "prepare applied agent=%s shared=%s private=%s live=%s reload=%s",
         context.name,
-        _lock_change(before, prepared, scope="global"),
-        _lock_change(before, prepared, scope="agent"),
+        _lock_change(before, prepared, visibility="shared"),
+        _lock_change(before, prepared, visibility="private"),
         _fingerprint_change(context.live.fingerprint, prepared.fingerprint),
         "yes" if should_reload else "no",
     )
@@ -138,7 +138,7 @@ def apply_changes(
 _RELEVANT_CHANGES = {Change.added, Change.modified, Change.deleted}
 
 
-def _write_scope_if_changed(
+def _write_visibility_if_changed(
     toolang_root: Path,
     lock: PreparedLock,
     files: dict[str, bytes],
@@ -151,9 +151,9 @@ def _write_scope_if_changed(
 
 def _load_lock_optional(lock: PreparedLock) -> PreparedLock | None:
     try:
-        if lock.scope == "global":
-            return load_global_lock(lock.lock_path.parent.parent)
-        return load_agent_lock(lock.lock_path.parents[3], lock.lock_path.parents[1].name)
+        if lock.visibility == "shared":
+            return load_shared_lock(lock.lock_path.parent.parent)
+        return load_private_lock(lock.lock_path.parents[3], lock.lock_path.parents[1].name)
     except FileNotFoundError:
         return None
 
@@ -190,14 +190,14 @@ def _lock_change(
     before: PreparedState | None,
     after: PreparedState,
     *,
-    scope: PreparedScope,
+    visibility: PreparedVisibility,
 ) -> str:
-    if scope == "global":
-        before_lock = before.global_lock if before is not None else None
-        after_lock = after.global_lock
+    if visibility == "shared":
+        before_lock = before.shared_lock if before is not None else None
+        after_lock = after.shared_lock
     else:
-        before_lock = before.agent_lock if before is not None else None
-        after_lock = after.agent_lock
+        before_lock = before.private_lock if before is not None else None
+        after_lock = after.private_lock
     before_fingerprint = before_lock.fingerprint if before_lock is not None else None
     return _fingerprint_change(before_fingerprint, after_lock.fingerprint)
 
@@ -216,7 +216,7 @@ def _short_fingerprint(value: str) -> str:
     return value[:12]
 
 
-def _combined_agent_fingerprint(lock_fingerprint: str, program_fingerprint: str) -> str:
+def _combined_private_fingerprint(lock_fingerprint: str, program_fingerprint: str) -> str:
     import hashlib
 
     digest = hashlib.sha256()

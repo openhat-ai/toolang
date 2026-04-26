@@ -13,46 +13,70 @@ Current cap kinds are:
 - `prompt`
 
 
-## Scopes
+## Visibility
 
-Current cap scopes are:
+Public cap views expose visibility:
 
-- `global`
-- `agent`
+- `shared`: available to all agents under the Toolang root
+- `private`: available to one agent
 
 Precedence is:
 
-1. `agent`
-2. `global`
+1. `private`
+2. `shared`
 
 One effective cap set is built by applying this precedence to all visible cap
 definitions.
 
+Prepared-state files, CLI, HTTP API, and UI-facing payloads all use `shared`
+and `private`.
 
-## Sources
 
-Caps may come from:
+## Forms
 
-| Source | Meaning |
+Cap entries have one form:
+
+| Form | Meaning |
 | --- | --- |
-| `local` | A local file or directory under the root or agent home |
-| `remote` | A remote ref stored in configuration |
-| `inline` | An entry authored in the program and materialized for runtime use |
+| `local` | A local cap file or skill directory under the root or agent home |
+| `remote` | A remote ref stored in `config.toml` |
+| `inline` | An embedded cap definition authored directly in an agent program |
+| `linked` | A cap ref authored in an agent program that points at a remote ref |
 
 Runtime APIs expose effective caps. They do not expose every authored source
 variant as a separate history object.
 
+`inline` caps are always `private`. `linked` caps are also `private`, but their
+`ref` is the linked target, not an `inline://` ref.
+
+
+## Refs
+
+Public cap refs identify the selected cap itself:
+
+| Ref | Meaning |
+| --- | --- |
+| `inline://skills/reviewer` | Embedded inline cap definition |
+| `home://services/github` | Private local cap in the agent home |
+| `root://skills/reviewer` | Shared local cap under the Toolang root |
+| `github://user/repo/path/name.md` | Remote cap target |
+
+Linked caps use the remote target ref, such as
+`github://user/repo/path/name.md`. Authored placement, such as `config.toml`,
+`agent.too`, or a cap file path, is exposed separately as `definition_file`.
+When known, APIs may also include `line`.
+
 
 ## Local Cap Paths
 
-Global caps:
+Shared local caps:
 
 - `${TOOLANG_ROOT}/psyches/`
 - `${TOOLANG_ROOT}/skills/`
 - `${TOOLANG_ROOT}/services/`
 - `${TOOLANG_ROOT}/prompts/`
 
-Agent caps:
+Private local caps:
 
 - `${TOOLANG_ROOT}/agents/<agent>/psyches/`
 - `${TOOLANG_ROOT}/agents/<agent>/skills/`
@@ -100,7 +124,7 @@ One activation sees one effective cap set.
 
 The runtime:
 
-1. collects global and agent definitions
+1. collects shared and private definitions
 2. resolves remote entries
 3. materializes runtime-ready artifacts when needed
 4. selects the winning definition for each `(kind, name)`
@@ -149,6 +173,8 @@ Write endpoints:
 - `DELETE /api/v1/services/{name}/remote`
 - `DELETE /api/v1/prompts/{name}/remote`
 
-Local write requests carry `content`. Remote write requests carry `ref`.
+Local write requests carry `visibility` and `content`. Remote write requests
+carry `visibility` and `ref`. Deletes use a `visibility` query parameter.
 Template detail responses include template metadata and raw content. Cap read
-requests return the effective runtime view.
+requests return the effective runtime view with `visibility`, `form`, `ref`,
+`definition_file`, and optional `line`.
