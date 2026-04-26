@@ -21,7 +21,7 @@ from ..execution.detail import (
 )
 from ..execution.events import MessageData, run_message_data
 from ..execution.records import ModelCallStepPayload
-from .. import agents, templates, work
+from .. import agents, caps, templates, work
 from ..state.durable import scan_durable_state
 from ..state.prepared import PreparedEntry, load_prepared_state
 from ..state.pulse import PulseState
@@ -433,8 +433,8 @@ def snapshot_context(
             "definitions": {
                 "program_source": durable.program_source,
                 "config_paths": list(durable.config_paths),
-                "global_entries": [entry.to_snapshot() for entry in _authored_entries(context, scope="global")],
-                "agent_entries": [entry.to_snapshot() for entry in _authored_entries(context, scope="agent")],
+                "shared_entries": [entry.to_snapshot() for entry in _authored_entries(context, visibility="shared")],
+                "private_entries": [entry.to_snapshot() for entry in _authored_entries(context, visibility="private")],
             },
             "operational_facts": durable_operational_facts,
         },
@@ -812,15 +812,19 @@ def _path_updated_at(path: Path) -> str:
 
 
 def _cap_summary_item(context: UptimeContext, entry: PreparedEntry) -> dict[str, object]:
-    return {
+    item: dict[str, object] = {
         "name": entry.name,
         "description": str(entry.meta["description"]) if entry.meta.get("description") is not None else None,
-        "path": entry.path,
-        "ref": entry.ref if entry.source.form == "remote" else None,
-        "scope": _entry_scope(context, entry),
-        "source": entry.source.form,
-        "editable": True,
+        "visibility": caps.entry_visibility(entry, agent_name=context.name),
+        "form": caps.entry_form(entry),
+        "ref": caps.entry_ref(entry, agent_name=context.name),
+        "definition_file": caps.entry_definition_file(entry),
+        "editable": entry.source.form == "local",
     }
+    line = caps.entry_line(entry)
+    if line is not None:
+        item["line"] = line
+    return item
 
 
 def _cap_detail_item(context: UptimeContext, entry: PreparedEntry) -> dict[str, object]:
@@ -838,7 +842,6 @@ def _cap_detail_item(context: UptimeContext, entry: PreparedEntry) -> dict[str, 
         **item,
         "kind": entry.kind,
         "content": content,
-        "entry_path": entry.path,
         "files": files,
     }
 
@@ -1081,15 +1084,8 @@ def _collection_kind(collection: str) -> CapKind:
     return kind
 
 
-def _entry_scope(context: UptimeContext, entry: PreparedEntry) -> str:
-    agent_prefix = f"agents/{context.name}/"
-    return "agent" if entry.path.startswith(agent_prefix) else "global"
-
-
-def _authored_entries(context: UptimeContext, *, scope: str) -> tuple[PreparedEntry, ...]:
-    from .. import caps
-
-    return caps.list_entries(context.root, context.name, scope=cast(Literal["global", "agent"], scope))
+def _authored_entries(context: UptimeContext, *, visibility: str) -> tuple[PreparedEntry, ...]:
+    return caps.list_entries(context.root, context.name, visibility=cast(Literal["shared", "private"], visibility))
 
 
 def _select_loops(enabled_loops: Sequence[str], allowed: Container[str]) -> list[str]:

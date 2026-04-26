@@ -6,7 +6,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal, cast
-from urllib.parse import urlparse
 
 import click
 import typer
@@ -14,7 +13,7 @@ import typer
 from .. import caps as cap_store
 from .. import templates
 from ..execution.records import UpdateKind
-from ..state.prepared import EntryKind, PreparedEntry, PreparedScope
+from ..state.prepared import EntryKind, PreparedEntry, PreparedVisibility
 from .utils import (
     _OptionalPrefixAgentCommand,
     _OptionalPrefixAgentTemplateCommand,
@@ -27,7 +26,7 @@ from .utils import (
 )
 
 CapKind = Literal["skill", "psyche", "prompt", "service"]
-CapListFilter = Literal["global", "agent"]
+CapVisibilityFilter = Literal["private", "shared"]
 
 
 def register_cap_commands(app: typer.Typer) -> None:
@@ -126,18 +125,18 @@ def register_cap_commands(app: typer.Typer) -> None:
 def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
     def list_caps(
         ctx: typer.Context,
-        filter_scope: Annotated[
-            CapListFilter | None,
-            typer.Option("--filter", help="Filter by scope: global or agent."),
+        visibility: Annotated[
+            CapVisibilityFilter | None,
+            typer.Option("--visibility", help="Filter by visibility: private or shared."),
         ] = None,
     ) -> None:
         selected_agent = _context_agent(ctx)
         agent_name = selected_agent or "default"
-        effective_scope = _cap_list_scope(ctx, filter_scope)
+        effective_visibility = _cap_list_visibility(ctx, visibility)
         entries = cap_store.list_entries(
             _context_root(ctx),
             agent_name,
-            scope=None if effective_scope == "all" else effective_scope,
+            visibility=None if effective_visibility == "all" else effective_visibility,
             kinds={cast(EntryKind, kind)},
         )
         if not entries:
@@ -146,14 +145,14 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
         rows = [
             (
                 entry.name,
-                _entry_ref(entry),
-                _entry_scope(entry, agent_name=agent_name),
-                _entry_location(_context_root(ctx), entry),
+                cap_store.entry_visibility(entry, agent_name=agent_name),
+                cap_store.entry_form(entry),
+                cap_store.entry_ref(entry, agent_name=agent_name),
             )
             for entry in entries
         ]
-        rows.sort(key=lambda item: (0 if item[2] == "global" else 1, item[0], item[1], item[3]))
-        _echo_table((title.upper(), "REF", "SCOPE", "LOCATION"), rows)
+        rows.sort(key=lambda item: (0 if item[1] == "shared" else 1, item[0], item[2], item[3]))
+        _echo_table((title.upper(), "VISIBILITY", "FORM", "REF"), rows)
 
     return list_caps
 
@@ -167,7 +166,7 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             typer.Option("--template", "-t", help="Template name."),
         ] = "default",
     ) -> None:
-        scope, agent_name = _target_scope(ctx)
+        visibility, agent_name = _target_visibility(ctx)
         selected_agent = _context_agent(ctx)
         text = click.edit(
             templates.render_template(kind, template, name=name, agent_name=agent_name),
@@ -180,13 +179,13 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             cap_store.put_local_entry_text,
             _context_root(ctx),
             agent_name,
-            scope=scope,
+            visibility=visibility,
             kind=cast(EntryKind, kind),
             name=name,
             text=text,
         )
         if selected_agent:
-            _append_cap_update(_context_root(ctx), selected_agent, kind=kind, name=name, scope=scope)
+            _append_cap_update(_context_root(ctx), selected_agent, kind=kind, name=name, visibility=visibility)
         typer.echo(str(path))
 
     return new_cap
@@ -197,13 +196,13 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         name: str = typer.Argument(..., help=f"{title} name"),
     ) -> None:
-        scope, agent_name = _target_scope(ctx)
+        visibility, agent_name = _target_visibility(ctx)
         selected_agent = _context_agent(ctx)
         text = _wrap_user_error(
             cap_store.load_local_entry_text,
             _context_root(ctx),
             agent_name,
-            scope=scope,
+            visibility=visibility,
             kind=cast(EntryKind, kind),
             name=name,
         )
@@ -218,13 +217,13 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             cap_store.put_local_entry_text,
             _context_root(ctx),
             agent_name,
-            scope=scope,
+            visibility=visibility,
             kind=cast(EntryKind, kind),
             name=name,
             text=updated_text,
         )
         if selected_agent:
-            _append_cap_update(_context_root(ctx), selected_agent, kind=kind, name=name, scope=scope)
+            _append_cap_update(_context_root(ctx), selected_agent, kind=kind, name=name, visibility=visibility)
         typer.echo(str(path))
 
     return edit_cap
@@ -235,13 +234,13 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         ref: str = typer.Argument(..., help=f"{title} ref"),
     ) -> None:
-        scope, agent_name = _target_scope(ctx)
+        visibility, agent_name = _target_visibility(ctx)
         selected_agent = _context_agent(ctx)
         path = _wrap_user_error(
             cap_store.add_remote_entry,
             _context_root(ctx),
             agent_name,
-            scope=scope,
+            visibility=visibility,
             kind=cast(EntryKind, kind),
             ref=ref,
         )
@@ -251,7 +250,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 selected_agent,
                 kind=kind,
                 name=cap_store.remote_entry_name(cast(EntryKind, kind), ref),
-                scope=scope,
+                visibility=visibility,
             )
         typer.echo(str(path))
 
@@ -263,12 +262,12 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         name: str = typer.Argument(..., help=f"{title} name"),
     ) -> None:
-        scope, agent_name = _target_scope(ctx)
+        visibility, agent_name = _target_visibility(ctx)
         selected_agent = _context_agent(ctx)
         entry = _named_entry(
             _context_root(ctx),
             agent_name,
-            scope=scope,
+            visibility=visibility,
             kind=cast(EntryKind, kind),
             name=name,
             source_form="remote",
@@ -277,14 +276,14 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             cap_store.remove_remote_entry,
             _context_root(ctx),
             agent_name,
-            scope=scope,
+            visibility=visibility,
             kind=cast(EntryKind, kind),
             name=name,
         )
         if not removed:
             raise click.ClickException(f"remote {kind} not found: {name}")
         if selected_agent:
-            _append_cap_update(_context_root(ctx), selected_agent, kind=kind, name=name, scope=scope)
+            _append_cap_update(_context_root(ctx), selected_agent, kind=kind, name=name, visibility=visibility)
         typer.echo(f"Removed remote {kind} {name} from {entry.ref}")
 
     return remove_cap
@@ -295,12 +294,12 @@ def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         name: str = typer.Argument(..., help=f"{title} name"),
     ) -> None:
-        scope, agent_name = _target_scope(ctx)
+        visibility, agent_name = _target_visibility(ctx)
         selected_agent = _context_agent(ctx)
         entry = _named_entry(
             _context_root(ctx),
             agent_name,
-            scope=scope,
+            visibility=visibility,
             kind=cast(EntryKind, kind),
             name=name,
             source_form="local",
@@ -312,14 +311,14 @@ def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             cap_store.remove_local_entry,
             _context_root(ctx),
             agent_name,
-            scope=scope,
+            visibility=visibility,
             kind=cast(EntryKind, kind),
             name=name,
         )
         if not removed:
             raise click.ClickException(f"local {kind} not found: {name}")
         if selected_agent:
-            _append_cap_update(_context_root(ctx), selected_agent, kind=kind, name=name, scope=scope)
+            _append_cap_update(_context_root(ctx), selected_agent, kind=kind, name=name, visibility=visibility)
         typer.echo(f"Deleted local {kind} {name} from {deleted_path}")
 
     return delete_cap
@@ -344,72 +343,30 @@ def _make_template_command(kind: CapKind, title: str) -> Callable[..., None]:
     return template
 
 
-def _target_scope(ctx: typer.Context) -> tuple[PreparedScope, str]:
+def _target_visibility(ctx: typer.Context) -> tuple[PreparedVisibility, str]:
     agent_name = _context_agent(ctx)
     if agent_name:
-        return "agent", agent_name
-    return "global", "default"
+        return "private", agent_name
+    return "shared", "default"
 
 
-def _cap_list_scope(
+def _cap_list_visibility(
     ctx: typer.Context,
-    filter_scope: CapListFilter | None,
-) -> PreparedScope | Literal["all"]:
+    visibility: CapVisibilityFilter | None,
+) -> PreparedVisibility | Literal["all"]:
     selected_agent = _context_agent(ctx)
-    if filter_scope is None:
-        return "all" if selected_agent else "global"
-    if filter_scope == "agent" and not selected_agent:
-        raise click.ClickException("an agent prefix is required when --filter is agent")
-    return filter_scope
-
-
-def _entry_scope(entry: PreparedEntry, *, agent_name: str) -> PreparedScope:
-    prefix = f"agents/{agent_name}/"
-    if entry.path.startswith(prefix) or entry.source.path.startswith(prefix):
-        return "agent"
-    return "global"
-
-
-def _entry_ref(entry: PreparedEntry) -> str:
-    if entry.source.form == "local":
-        return entry.name
-    return _remote_ref_shorthand(entry.kind, entry.ref)
-
-
-def _remote_ref_shorthand(kind: EntryKind, ref: str) -> str:
-    parsed = urlparse(ref)
-    if parsed.scheme != "github":
-        return ref
-    path = parsed.path.strip("/")
-    owner = parsed.netloc.strip()
-    if not owner or not path:
-        return ref
-    parts = path.split("/")
-    if kind == "skill" and len(parts) >= 3 and parts[-2] == "skills":
-        return f"{owner}/{parts[-1]}"
-    if kind == "service" and len(parts) >= 3 and parts[-2] == "services":
-        return f"{owner}/{Path(parts[-1]).stem}"
-    if kind == "prompt" and len(parts) >= 3 and parts[-2] == "prompts":
-        return f"{owner}/{Path(parts[-1]).stem}"
-    if kind == "psyche" and len(parts) >= 3 and parts[-2] == "psyches":
-        return f"{owner}/{Path(parts[-1]).stem}"
-    return ref
-
-
-def _entry_location(toolang_root: Path, entry: PreparedEntry) -> str:
-    if entry.source.form == "remote":
-        return entry.ref
-    location = toolang_root / entry.path
-    if entry.shape == "dir":
-        location = location.parent
-    return str(location)
+    if visibility is None:
+        return "all" if selected_agent else "shared"
+    if visibility == "private" and not selected_agent:
+        raise click.ClickException("an agent prefix is required when --visibility is private")
+    return visibility
 
 
 def _named_entry(
     toolang_root: Path,
     agent_name: str,
     *,
-    scope: PreparedScope,
+    visibility: PreparedVisibility,
     kind: EntryKind,
     name: str,
     source_form: Literal["local", "remote"] | None = None,
@@ -417,7 +374,7 @@ def _named_entry(
     entries = cap_store.list_entries(
         toolang_root,
         agent_name,
-        scope=scope,
+        visibility=visibility,
         kinds={kind},
     )
     for entry in entries:
@@ -436,7 +393,7 @@ def _append_cap_update(
     *,
     kind: CapKind,
     name: str,
-    scope: PreparedScope,
+    visibility: PreparedVisibility,
 ) -> None:
     update_kind = cast(UpdateKind, f"{kind}_changed")
     _append_agent_update(
@@ -445,6 +402,6 @@ def _append_cap_update(
         update_kind,
         {
             "name": name,
-            "scope": scope,
+            "visibility": visibility,
         },
     )

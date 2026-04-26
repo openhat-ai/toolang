@@ -60,7 +60,7 @@ from toolang.base.types.sandbox import (
 )
 from toolang.caps import (
     add_remote_entry,
-    build_scope_lock,
+    build_visibility_lock,
     list_entries,
     list_local_entries,
     put_local_entry,
@@ -216,7 +216,10 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
             assert body["thread_id"] == "thread-1"
             assert body["message"]["parts"][0]["text"] == "say hello"
             assert body["assistant"]["parts"][0]["text"] == "assistant:say hello"
-            assert client.put("/api/v1/skills/reviewer/remote", json={"scope": "agent", "ref": "acme/reviewer"}).status_code == 404
+            assert client.put(
+                "/api/v1/skills/reviewer/remote",
+                json={"visibility": "private", "ref": "acme/reviewer"},
+            ).status_code == 404
 
             runs = client.get("/api/v1/runs").json()["items"]
             profile = client.get("/api/v1/profile").json()
@@ -271,7 +274,7 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
                 "body": "You are a helpful assistant.",
             }
             assert definitions["program_source"] == "agents/alice/alice.too"
-            assert definitions["agent_entries"] == []
+            assert definitions["private_entries"] == []
             assert prepared_fingerprint == live["fingerprint"]
             assert operational_facts["completed_runs"] == 1
             assert operational_facts["prepared_fingerprint"] == prepared_fingerprint
@@ -1117,42 +1120,44 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
     with TestClient(app) as client:
         add_response = client.put(
             "/api/v1/skills/reviewer/remote",
-            json={"scope": "agent", "ref": "acme/reviewer"},
+            json={"visibility": "private", "ref": "acme/reviewer"},
         )
         assert add_response.status_code == 200
         assert add_response.json()["item"]["name"] == "reviewer"
-        assert add_response.json()["item"]["source"] == "remote"
+        assert add_response.json()["item"]["form"] == "remote"
+        assert add_response.json()["item"]["visibility"] == "private"
 
         snapshot = inspect.snapshot_context(context, enabled_loops=("control", "inspect"))
         durable = cast(dict[str, object], snapshot["durable"])
         prepared = cast(dict[str, object], snapshot["prepared"])
         live = cast(dict[str, object], snapshot["live"])
         definitions = cast(dict[str, object], durable["definitions"])
-        agent_entries = cast(list[dict[str, object]], definitions["agent_entries"])
-        assert [item["name"] for item in agent_entries] == ["reviewer"]
+        private_entries = cast(list[dict[str, object]], definitions["private_entries"])
+        assert [item["name"] for item in private_entries] == ["reviewer"]
         assert prepared["fingerprint"] == initial_prepared_fingerprint
         assert live["fingerprint"] == initial_live_fingerprint
         assert live["caps"] == []
         assert client.get("/api/v1/skills").json()["items"] == []
 
-        remove_response = client.delete("/api/v1/skills/reviewer/remote?scope=agent")
+        remove_response = client.delete("/api/v1/skills/reviewer/remote?visibility=private")
         assert remove_response.status_code == 200
         assert remove_response.json() == {"ok": True}
 
         snapshot = inspect.snapshot_context(context, enabled_loops=("control", "inspect"))
         durable = cast(dict[str, object], snapshot["durable"])
         definitions = cast(dict[str, object], durable["definitions"])
-        assert definitions["agent_entries"] == []
+        assert definitions["private_entries"] == []
 
         local_response = client.put(
             "/api/v1/prompts/rewrite/local",
-            json={"scope": "agent", "content": "Rewrite the request.\n"},
+            json={"visibility": "private", "content": "Rewrite the request.\n"},
         )
         assert local_response.status_code == 200
         assert local_response.json()["item"]["name"] == "rewrite"
-        assert local_response.json()["item"]["source"] == "local"
+        assert local_response.json()["item"]["form"] == "local"
+        assert local_response.json()["item"]["visibility"] == "private"
 
-        delete_local_response = client.delete("/api/v1/prompts/rewrite/local?scope=agent")
+        delete_local_response = client.delete("/api/v1/prompts/rewrite/local?visibility=private")
         assert delete_local_response.status_code == 200
         assert delete_local_response.json() == {"ok": True}
 
@@ -2022,12 +2027,12 @@ def test_prepare_reload_refreshes_prepared_and_live(tmp_path: Path) -> None:
             refreshed = await _wait_for_fingerprint_change(context, initial_fingerprint)
             assert refreshed
             prepared = load_prepared_state(context.root, context.name)
-            assert prepared.global_lock.lock_path.is_file()
-            assert prepared.agent_lock.lock_path.is_file()
+            assert prepared.shared_lock.lock_path.is_file()
+            assert prepared.private_lock.lock_path.is_file()
             assert context.live.fingerprint == prepared.fingerprint
             assert any(
                 entry.path == "agents/alice/prompts/rewrite.md"
-                for entry in prepared.agent_lock.entries
+                for entry in prepared.private_lock.entries
             )
 
     asyncio.run(run_test())
@@ -2039,7 +2044,7 @@ def test_durable_caps_collapse_skill_directories(tmp_path: Path) -> None:
     _write_text(toolang_root / "skills" / "reviewer" / "notes.txt", "asset\n")
     _write_text(toolang_root / "prompts" / "rewrite.md", "# Rewrite\n")
 
-    entries = list_local_entries(toolang_root, "alice", scope="global")
+    entries = list_local_entries(toolang_root, "alice", visibility="shared")
 
     assert [(entry.kind, entry.path) for entry in entries] == [
         ("prompt", "prompts/rewrite.md"),
@@ -2053,7 +2058,7 @@ def test_caps_put_list_remove_local_entries(tmp_path: Path) -> None:
     prompt_path = put_local_entry(
         toolang_root,
         "alice",
-        scope="global",
+        visibility="shared",
         kind="prompt",
         name="rewrite",
         meta={"description": "Rewrite text"},
@@ -2062,7 +2067,7 @@ def test_caps_put_list_remove_local_entries(tmp_path: Path) -> None:
     skill_path = put_local_entry(
         toolang_root,
         "alice",
-        scope="agent",
+        visibility="private",
         kind="skill",
         name="reviewer",
         meta={"description": "Review code"},
@@ -2071,7 +2076,7 @@ def test_caps_put_list_remove_local_entries(tmp_path: Path) -> None:
     service_path = put_local_entry(
         toolang_root,
         "alice",
-        scope="global",
+        visibility="shared",
         kind="service",
         name="linear",
         meta={
@@ -2086,22 +2091,22 @@ def test_caps_put_list_remove_local_entries(tmp_path: Path) -> None:
     assert skill_path == toolang_root / "agents" / "alice" / "skills" / "reviewer" / "SKILL.md"
     assert service_path == toolang_root / "services" / "linear.md"
 
-    global_entries = list_local_entries(toolang_root, "alice", scope="global")
-    agent_entries = list_local_entries(toolang_root, "alice", scope="agent")
+    shared_entries = list_local_entries(toolang_root, "alice", visibility="shared")
+    private_entries = list_local_entries(toolang_root, "alice", visibility="private")
 
-    assert [(entry.kind, entry.meta["description"]) for entry in global_entries] == [
+    assert [(entry.kind, entry.meta["description"]) for entry in shared_entries] == [
         ("prompt", "Rewrite text"),
         ("service", "Linear MCP"),
     ]
-    assert [(entry.kind, entry.path) for entry in agent_entries] == [
+    assert [(entry.kind, entry.path) for entry in private_entries] == [
         ("skill", "agents/alice/skills/reviewer/SKILL.md")
     ]
 
-    assert remove_local_entry(toolang_root, "alice", scope="global", kind="prompt", name="rewrite") is True
-    assert remove_local_entry(toolang_root, "alice", scope="global", kind="service", name="linear") is True
-    assert remove_local_entry(toolang_root, "alice", scope="agent", kind="skill", name="reviewer") is True
-    assert list_local_entries(toolang_root, "alice", scope="global") == ()
-    assert list_local_entries(toolang_root, "alice", scope="agent") == ()
+    assert remove_local_entry(toolang_root, "alice", visibility="shared", kind="prompt", name="rewrite") is True
+    assert remove_local_entry(toolang_root, "alice", visibility="shared", kind="service", name="linear") is True
+    assert remove_local_entry(toolang_root, "alice", visibility="private", kind="skill", name="reviewer") is True
+    assert list_local_entries(toolang_root, "alice", visibility="shared") == ()
+    assert list_local_entries(toolang_root, "alice", visibility="private") == ()
 
 
 def test_caps_reject_service_env_map(tmp_path: Path) -> None:
@@ -2111,7 +2116,7 @@ def test_caps_reject_service_env_map(tmp_path: Path) -> None:
         put_local_entry(
             toolang_root,
             "alice",
-            scope="global",
+            visibility="shared",
             kind="service",
             name="linear",
             meta={
@@ -2129,7 +2134,7 @@ def test_prepare_materializes_remote_entries_from_config(tmp_path: Path) -> None
     config_path = add_remote_entry(
         toolang_root,
         "alice",
-        scope="global",
+        visibility="shared",
         kind="prompt",
         ref="acme/rewrite",
     )
@@ -2140,13 +2145,13 @@ def test_prepare_materializes_remote_entries_from_config(tmp_path: Path) -> None
     live = load_live_state(prepared, enabled_loops=("reload",))
 
     assert (toolang_root / ".prepared" / "remote" / "prompts" / "rewrite.md").is_file()
-    assert [entry.source.form for entry in prepared.global_lock.entries] == ["remote"]
-    assert prepared.global_lock.entries[0].path == ".prepared/remote/prompts/rewrite.md"
-    assert prepared.global_lock.entries[0].ref == "github://acme/agent-prompts/prompts/rewrite.md"
+    assert [entry.source.form for entry in prepared.shared_lock.entries] == ["remote"]
+    assert prepared.shared_lock.entries[0].path == ".prepared/remote/prompts/rewrite.md"
+    assert prepared.shared_lock.entries[0].ref == "github://acme/agent-prompts/prompts/rewrite.md"
     assert live.caps == (".prepared/remote/prompts/rewrite.md",)
 
 
-def test_prepare_builds_program_into_agent_lock(tmp_path: Path) -> None:
+def test_prepare_builds_program_into_private_lock(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
 
@@ -2159,24 +2164,24 @@ def test_prepare_builds_program_into_agent_lock(tmp_path: Path) -> None:
     thunks = cast(list[dict[str, object]], program_snapshot["thunks"])
     assert len(thunks) == 1
     assert thunks[0]["name"] == "main"
-    program_snapshot = cast(dict[str, object], prepared.agent_lock.to_snapshot()["program"])
+    program_snapshot = cast(dict[str, object], prepared.private_lock.to_snapshot()["program"])
     assert program_snapshot["agent_name"] == "alice"
 
 
-def test_prepare_rewrites_legacy_agent_lock_missing_program(tmp_path: Path) -> None:
+def test_prepare_rewrites_legacy_private_lock_missing_program(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
 
     durable = scan_durable_state(toolang_root, "alice")
-    global_lock, global_files = build_scope_lock(durable, scope="global")
-    write_prepared_lock(toolang_root, global_lock, files=global_files)
-    legacy_agent_lock, legacy_agent_files = build_scope_lock(durable, scope="agent")
-    write_prepared_lock(toolang_root, legacy_agent_lock, files=legacy_agent_files)
+    shared_lock, shared_files = build_visibility_lock(durable, visibility="shared")
+    write_prepared_lock(toolang_root, shared_lock, files=shared_files)
+    legacy_private_lock, legacy_private_files = build_visibility_lock(durable, visibility="private")
+    write_prepared_lock(toolang_root, legacy_private_lock, files=legacy_private_files)
 
     prepared = prepare.build_prepared_state(durable)
 
-    assert prepared.agent_lock.program is not None
-    assert prepared.agent_lock.program.agent_name == "alice"
+    assert prepared.private_lock.program is not None
+    assert prepared.private_lock.program.agent_name == "alice"
 
 
 def test_caps_list_and_remove_remote_entries(tmp_path: Path) -> None:
@@ -2185,18 +2190,18 @@ def test_caps_list_and_remove_remote_entries(tmp_path: Path) -> None:
     add_remote_entry(
         toolang_root,
         "alice",
-        scope="agent",
+        visibility="private",
         kind="skill",
         ref="acme/reviewer",
     )
 
-    entries = list_entries(toolang_root, "alice", scope="agent", kinds={"skill"})
+    entries = list_entries(toolang_root, "alice", visibility="private", kinds={"skill"})
 
     assert [(entry.source.form, entry.path) for entry in entries] == [
         ("remote", "agents/alice/.prepared/remote/skills/reviewer/SKILL.md")
     ]
-    assert remove_remote_entry(toolang_root, "alice", scope="agent", kind="skill", name="reviewer") is True
-    assert list_entries(toolang_root, "alice", scope="agent", kinds={"skill"}) == ()
+    assert remove_remote_entry(toolang_root, "alice", visibility="private", kind="skill", name="reviewer") is True
+    assert list_entries(toolang_root, "alice", visibility="private", kinds={"skill"}) == ()
 
 
 def test_runs_bind_latest_live_snapshot(tmp_path: Path) -> None:

@@ -1048,7 +1048,7 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
     caps.put_local_entry_text(
         toolang_root,
         "alice",
-        scope="global",
+        visibility="shared",
         kind="skill",
         name="hello",
         text="---\ndescription: Say hello.\n---\n# Hello\n",
@@ -1056,7 +1056,7 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
     caps.put_local_entry_text(
         toolang_root,
         "alice",
-        scope="agent",
+        visibility="private",
         kind="service",
         name="github",
         text=(
@@ -2252,11 +2252,12 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     assert list_remote_result.exit_code == 0
     assert "SKILL" in list_remote_result.stdout
     assert "REF" in list_remote_result.stdout
-    assert "SCOPE" in list_remote_result.stdout
-    assert "LOCATION" in list_remote_result.stdout
+    assert "VISIBILITY" in list_remote_result.stdout
+    assert "FORM" in list_remote_result.stdout
+    assert "DESCRIPTION" not in list_remote_result.stdout
     assert "reviewer" in list_remote_result.stdout
-    assert "acme/reviewer" in list_remote_result.stdout
-    assert "agent" in list_remote_result.stdout
+    assert "private" in list_remote_result.stdout
+    assert "remote" in list_remote_result.stdout
     assert "github://acme/agent-skills/skills/reviewer" in list_remote_result.stdout
 
     remove_result = _invoke_app(
@@ -2300,10 +2301,12 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     assert list_result.exit_code == 0
     assert "SKILL" in list_result.stdout
     assert "REF" in list_result.stdout
-    assert "SCOPE" in list_result.stdout
+    assert "VISIBILITY" in list_result.stdout
+    assert "FORM" in list_result.stdout
     assert "reviewer" in list_result.stdout
-    assert "agent" in list_result.stdout
-    assert str(toolang_root / "agents" / "alice" / "skills" / "reviewer") in list_result.stdout
+    assert "private" in list_result.stdout
+    assert "local" in list_result.stdout
+    assert "home://skills/reviewer" in list_result.stdout
 
 
 def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -> None:
@@ -2344,10 +2347,12 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     assert list_result.exit_code == 0
     assert "SKILL" in list_result.stdout
     assert "REF" in list_result.stdout
-    assert "SCOPE" in list_result.stdout
+    assert "VISIBILITY" in list_result.stdout
+    assert "FORM" in list_result.stdout
     assert "reviewer" in list_result.stdout
-    assert "agent" in list_result.stdout
-    assert str(toolang_root / "agents" / "alice" / "skills" / "reviewer") in list_result.stdout
+    assert "private" in list_result.stdout
+    assert "local" in list_result.stdout
+    assert "home://skills/reviewer" in list_result.stdout
 
     edited_text = (
         "---\n"
@@ -2841,11 +2846,12 @@ def test_cli_cap_commands_cover_file_backed_kinds(tmp_path: Path, monkeypatch) -
         assert list_result.exit_code == 0
         assert kind.upper() in list_result.stdout
         assert "REF" in list_result.stdout
-        assert "SCOPE" in list_result.stdout
-        assert "LOCATION" in list_result.stdout
+        assert "VISIBILITY" in list_result.stdout
+        assert "FORM" in list_result.stdout
         assert name in list_result.stdout
-        assert "global" in list_result.stdout
-        assert str(path) in list_result.stdout
+        assert "shared" in list_result.stdout
+        assert "local" in list_result.stdout
+        assert f"root://{kind}s/{name}" in list_result.stdout
 
         delete_result = runner.invoke(
             cli.app,
@@ -2938,7 +2944,7 @@ def test_cli_skill_new_help_mentions_agent_scope() -> None:
     assert "Create a local skill." in result.stdout
     assert "[AGENT] skill new" in result.stdout
     assert "agent      TEXT" in result.stdout
-    assert "Apply to this agent instead of global scope." in result.stdout
+    assert "Apply with private visibility for this agent." in result.stdout
 
 
 def test_cli_skill_template_help_shows_plain_text_metavar() -> None:
@@ -2973,7 +2979,7 @@ def test_cli_skill_list_help_mentions_agent_scope_concisely() -> None:
     assert "[AGENT] skill list" in result.stdout
 
 
-def test_cli_cap_list_with_agent_defaults_to_global_and_agent_scopes(tmp_path: Path, monkeypatch) -> None:
+def test_cli_cap_list_with_agent_defaults_to_shared_and_private_visibility(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(
         cli.click,
@@ -3005,13 +3011,13 @@ def test_cli_cap_list_with_agent_defaults_to_global_and_agent_scopes(tmp_path: P
     assert result.exit_code == 0
     assert "abc" in result.stdout
     assert "def" in result.stdout
-    assert "global" in result.stdout
-    assert "agent" in result.stdout
-    assert str(toolang_root / "psyches" / "abc.md") in result.stdout
-    assert str(toolang_root / "agents" / "alice" / "psyches" / "def.md") in result.stdout
+    assert "shared" in result.stdout
+    assert "private" in result.stdout
+    assert "root://psyches/abc" in result.stdout
+    assert "home://psyches/def" in result.stdout
 
 
-def test_cli_cap_list_filter_filters_results(tmp_path: Path, monkeypatch) -> None:
+def test_cli_cap_list_visibility_filters_results(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(
         cli.click,
@@ -3034,38 +3040,38 @@ def test_cli_cap_list_filter_filters_results(tmp_path: Path, monkeypatch) -> Non
         prefix_agent="alice",
     )
 
-    global_result = _invoke_app(
-        ["psyche", "list", "--filter", "global"],
+    shared_result = _invoke_app(
+        ["psyche", "list", "--visibility", "shared"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    assert global_result.exit_code == 0
-    assert "abc" in global_result.stdout
-    assert "def" not in global_result.stdout
-    assert "global" in global_result.stdout
+    assert shared_result.exit_code == 0
+    assert "abc" in shared_result.stdout
+    assert "def" not in shared_result.stdout
+    assert "shared" in shared_result.stdout
 
-    agent_result = _invoke_app(
-        ["psyche", "list", "--filter", "agent"],
+    private_result = _invoke_app(
+        ["psyche", "list", "--visibility", "private"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    assert agent_result.exit_code == 0
-    assert "abc" not in agent_result.stdout
-    assert "def" in agent_result.stdout
-    assert "agent" in agent_result.stdout
+    assert private_result.exit_code == 0
+    assert "abc" not in private_result.stdout
+    assert "def" in private_result.stdout
+    assert "private" in private_result.stdout
 
 
-def test_cli_cap_list_rejects_agent_scope_without_agent(tmp_path: Path) -> None:
+def test_cli_cap_list_rejects_private_visibility_without_agent(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(toolang_root), "psyche", "list", "--filter", "agent"],
+        ["--root", str(toolang_root), "psyche", "list", "--visibility", "private"],
         env={},
     )
 
     assert result.exit_code == 1
-    assert "an agent prefix is required when --filter is agent" in result.stderr
+    assert "an agent prefix is required when --visibility is private" in result.stderr
 
 
 def test_cli_help_orders_cap_groups() -> None:

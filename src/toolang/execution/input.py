@@ -11,7 +11,7 @@ import frontmatter
 from toolang.base.protocols.tool import Tool
 from toolang.base.types.message import Message, message_summary, message_text
 from toolang.base.types.model import ModelTarget
-from .. import agents, work
+from .. import agents, caps as cap_store, work
 from ..ids import LOCAL_ID_FAMILY, RUN_ID_FAMILY, allocate_id
 from ..program import MessageBlock, ParamDecl, SourceSpan, Thunk, ThunkOverlay
 from ..state.live import LiveState
@@ -62,7 +62,7 @@ Psyches:
 {{/runtime.psyches}}
 Skills:
 {{#runtime.skills}}
-- {{name}} (scope={{scope}}, source={{source}}, path={{path}})
+- {{name}} (visibility={{visibility}}, form={{form}}, ref={{ref}})
 {{#description}}
   description={{description}}
 {{/description}}
@@ -76,7 +76,7 @@ Skills:
 {{/runtime.skills}}
 Services:
 {{#runtime.services}}
-- {{name}} (scope={{scope}}, source={{source}}, path={{path}})
+- {{name}} (visibility={{visibility}}, form={{form}}, ref={{ref}})
 {{#description}}
   description={{description}}
 {{/description}}
@@ -772,13 +772,13 @@ def _prepared_entry_to_context(
         "name": entry.name,
         "kind": entry.kind,
         "path": entry.path,
-        "ref": entry.ref,
+        "ref": cap_store.entry_ref(entry, agent_name=context.name),
         "description": str(description) if description is not None else None,
         "content": content,
         "metadata": dict(entry.meta),
         "metadata_items": _metadata_items(entry.meta),
-        "source": entry.source.form,
-        "scope": "agent" if entry.path.startswith(f"agents/{context.name}/") else "global",
+        "visibility": cap_store.entry_visibility(entry, agent_name=context.name),
+        "form": cap_store.entry_form(entry),
     }
 
 
