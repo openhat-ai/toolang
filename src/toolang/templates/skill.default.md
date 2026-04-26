@@ -1,13 +1,13 @@
 ---
-description: What this skill is for.
+description: Trigger this skill for requests that need this workflow.
 ---
 
 # Skill
 
-Use this skill when the task needs this workflow or domain knowledge.
+`description` is the trigger summary. Keep it short; write the full workflow
+below.
 
 When to use:
-- ...
 - ...
 
 Workflow:

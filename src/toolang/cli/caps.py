@@ -21,9 +21,8 @@ from .utils import (
     _append_agent_update,
     _context_agent,
     _context_root,
+    _echo_block,
     _echo_table,
-    _make_template_list_command,
-    _make_template_show_command,
     _wrap_user_error,
 )
 
@@ -84,19 +83,20 @@ def register_cap_commands(app: typer.Typer) -> None:
         ),
         CapCommandSpec(
             name="remove",
-            help=lambda kind: f"Remove a {kind}.",
+            help=lambda kind: f"Remove a remote {kind}.",
             factory=_make_remove_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
-            name="templates",
-            help=lambda kind: f"List {kind} templates.",
-            factory=lambda kind, title: _make_template_list_command(kind, title=title),
+            name="delete",
+            help=lambda kind: f"Delete a local {kind}.",
+            factory=_make_delete_cap_command,
+            no_args_is_help=True,
         ),
         CapCommandSpec(
             name="template",
-            help=lambda kind: f"Show a {kind} template.",
-            factory=lambda kind, title: _make_template_show_command(kind, title=title),
+            help=lambda kind: f"List or show {kind} templates.",
+            factory=_make_template_command,
         ),
     )
 
@@ -271,23 +271,40 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             scope=scope,
             kind=cast(EntryKind, kind),
             name=name,
+            source_form="remote",
         )
-        if entry.source.form == "remote":
-            removed = _wrap_user_error(
-                cap_store.remove_remote_entry,
-                _context_root(ctx),
-                agent_name,
-                scope=scope,
-                kind=cast(EntryKind, kind),
-                name=name,
-            )
-            if not removed:
-                raise click.ClickException(f"{kind} not found: {name}")
-            if selected_agent:
-                _append_cap_update(_context_root(ctx), selected_agent, kind=kind, name=name, scope=scope)
-            typer.echo(f"Removed {kind} {name} from {entry.ref}")
-            return
+        removed = _wrap_user_error(
+            cap_store.remove_remote_entry,
+            _context_root(ctx),
+            agent_name,
+            scope=scope,
+            kind=cast(EntryKind, kind),
+            name=name,
+        )
+        if not removed:
+            raise click.ClickException(f"remote {kind} not found: {name}")
+        if selected_agent:
+            _append_cap_update(_context_root(ctx), selected_agent, kind=kind, name=name, scope=scope)
+        typer.echo(f"Removed remote {kind} {name} from {entry.ref}")
 
+    return remove_cap
+
+
+def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
+    def delete_cap(
+        ctx: typer.Context,
+        name: str = typer.Argument(..., help=f"{title} name"),
+    ) -> None:
+        scope, agent_name = _target_scope(ctx)
+        selected_agent = _context_agent(ctx)
+        entry = _named_entry(
+            _context_root(ctx),
+            agent_name,
+            scope=scope,
+            kind=cast(EntryKind, kind),
+            name=name,
+            source_form="local",
+        )
         deleted_path = _context_root(ctx) / entry.path
         if entry.shape == "dir":
             deleted_path = deleted_path.parent
@@ -300,12 +317,31 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             name=name,
         )
         if not removed:
-            raise click.ClickException(f"{kind} not found: {name}")
+            raise click.ClickException(f"local {kind} not found: {name}")
         if selected_agent:
             _append_cap_update(_context_root(ctx), selected_agent, kind=kind, name=name, scope=scope)
-        typer.echo(f"Removed {kind} {name} from {deleted_path}")
+        typer.echo(f"Deleted local {kind} {name} from {deleted_path}")
 
-    return remove_cap
+    return delete_cap
+
+
+def _make_template_command(kind: CapKind, title: str) -> Callable[..., None]:
+    del title
+
+    def template(
+        template_name: Annotated[str | None, typer.Argument(help="Template name", hidden=True)] = None,
+    ) -> None:
+        if template_name is not None:
+            _echo_block(templates.load_template(kind, template_name).raw_text.rstrip("\n"))
+            return
+        specs = templates.list_templates(kind)
+        if not specs:
+            typer.echo(f"No {kind} templates found.")
+            return
+        rows = [(item.name, item.description or "-") for item in specs]
+        _echo_table(("TEMPLATE", "DESCRIPTION"), rows)
+
+    return template
 
 
 def _target_scope(ctx: typer.Context) -> tuple[PreparedScope, str]:

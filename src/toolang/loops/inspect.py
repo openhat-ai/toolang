@@ -21,7 +21,7 @@ from ..execution.detail import (
 )
 from ..execution.events import MessageData, run_message_data
 from ..execution.records import ModelCallStepPayload
-from .. import agents, work
+from .. import agents, templates, work
 from ..state.durable import scan_durable_state
 from ..state.prepared import PreparedEntry, load_prepared_state
 from ..state.pulse import PulseState
@@ -128,6 +128,28 @@ def create_router() -> APIRouter:
         context = request.app.state.runtime
         kind = _collection_kind(str(request.url.path).rsplit("/", 1)[-1])
         return {"items": _cap_collection(context, kind=kind)}
+
+    @router.get("/psyches/templates", tags=["caps"], summary="List Psyche Templates")
+    @router.get("/skills/templates", tags=["caps"], summary="List Skill Templates")
+    @router.get("/services/templates", tags=["caps"], summary="List Service Templates")
+    @router.get("/prompts/templates", tags=["caps"], summary="List Prompt Templates")
+    async def cap_template_list(request: Request) -> dict[str, object]:
+        collection = str(request.url.path).split("/")[3]
+        kind = _collection_kind(collection)
+        return {"items": [_template_summary(item) for item in templates.list_templates(kind)]}
+
+    @router.get("/psyches/templates/{template_name}", tags=["caps"], summary="Get Psyche Template")
+    @router.get("/skills/templates/{template_name}", tags=["caps"], summary="Get Skill Template")
+    @router.get("/services/templates/{template_name}", tags=["caps"], summary="Get Service Template")
+    @router.get("/prompts/templates/{template_name}", tags=["caps"], summary="Get Prompt Template")
+    async def cap_template_detail(request: Request, template_name: str) -> dict[str, object]:
+        collection = str(request.url.path).split("/")[3]
+        kind = _collection_kind(collection)
+        try:
+            template = templates.load_template(kind, template_name)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"item": _template_detail(template)}
 
     @router.get("/psyches/{name}", tags=["caps"], summary="Get Psyche")
     @router.get("/skills/{name}", tags=["caps"], summary="Get Skill")
@@ -818,6 +840,23 @@ def _cap_detail_item(context: UptimeContext, entry: PreparedEntry) -> dict[str, 
         "content": content,
         "entry_path": entry.path,
         "files": files,
+    }
+
+
+def _template_summary(template: templates.TemplateSpec) -> dict[str, object]:
+    return {
+        "kind": template.kind,
+        "name": template.name,
+        "title": template.title,
+        "description": template.description,
+        "path": template.path,
+    }
+
+
+def _template_detail(template: templates.TemplateSpec) -> dict[str, object]:
+    return {
+        **_template_summary(template),
+        "content": template.raw_text,
     }
 
 

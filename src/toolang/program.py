@@ -14,9 +14,9 @@ import tree_sitter_toolang
 from toolang.base.error import ToolangError
 
 
-HTTP_SERVICE_FIELDS = frozenset({"transport", "url", "headers"})
-STDIO_SERVICE_FIELDS = frozenset({"transport", "command", "args", "env", "cwd"})
+SERVICE_FIELDS = frozenset({"description", "transport", "target", "headers", "env"})
 PROMPT_FIELDS = frozenset({"params"})
+ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SIGNATURE_PARAM_RE = re.compile(r"^[A-Za-z_][\w-]*\??$")
 OverlayKind = Literal["model", "tool", "psyche", "skill", "service"]
 OverlayOperator = Literal["set", "add", "remove"]
@@ -401,55 +401,34 @@ def _declaration_semantics(
 def _service_declaration(*, raw_body: str, line_number: int) -> tuple[dict[str, Any], str, list[ParamDecl]]:
     post = frontmatter.loads(raw_body)
     meta = dict(post.metadata)
+    _require_exact_fields(
+        meta=meta,
+        allowed=SERVICE_FIELDS,
+        kind="service",
+        line_number=line_number,
+    )
+    description = meta.get("description")
+    if not isinstance(description, str) or not description:
+        raise ToolangError(f"Service declaration at line {line_number} is missing description.")
     transport = meta.get("transport")
     if not isinstance(transport, str) or not transport:
         raise ToolangError(f"Service declaration at line {line_number} is missing transport.")
-
-    if transport == "http":
-        _require_exact_fields(
-            meta=meta,
-            allowed=HTTP_SERVICE_FIELDS,
-            kind="service",
-            line_number=line_number,
-        )
-        url = meta.get("url")
-        headers = meta.get("headers")
-        if not isinstance(url, str) or not url:
-            raise ToolangError(f"HTTP service declaration at line {line_number} is missing url.")
-        if headers is not None and not _is_string_map(headers):
-            raise ToolangError(
-                f"HTTP service declaration at line {line_number} must define headers as a string map."
-            )
-    elif transport == "stdio":
-        _require_exact_fields(
-            meta=meta,
-            allowed=STDIO_SERVICE_FIELDS,
-            kind="service",
-            line_number=line_number,
-        )
-        command = meta.get("command")
-        args = meta.get("args")
-        env = meta.get("env")
-        cwd = meta.get("cwd")
-        if not isinstance(command, str) or not command:
-            raise ToolangError(
-                f"Stdio service declaration at line {line_number} is missing command."
-            )
-        if args is not None and not _is_string_list(args):
-            raise ToolangError(
-                f"Stdio service declaration at line {line_number} must define args as a string list."
-            )
-        if env is not None and not isinstance(env, str):
-            raise ToolangError(
-                f"Stdio service declaration at line {line_number} must define env as a string."
-            )
-        if cwd is not None and not isinstance(cwd, str):
-            raise ToolangError(
-                f"Stdio service declaration at line {line_number} must define cwd as a string."
-            )
-    else:
+    if transport not in {"http", "stdio"}:
         raise ToolangError(
             f"Service declaration at line {line_number} uses unsupported transport {transport!r}."
+        )
+    target = meta.get("target")
+    if not isinstance(target, str) or not target:
+        raise ToolangError(f"Service declaration at line {line_number} is missing target.")
+    headers = meta.get("headers")
+    if headers is not None and not _is_string_map(headers):
+        raise ToolangError(
+            f"Service declaration at line {line_number} must define headers as a string map."
+        )
+    env = meta.get("env")
+    if env is not None and not _is_env_names(env):
+        raise ToolangError(
+            f"Service declaration at line {line_number} must list environment variable names."
         )
     return meta, post.content.rstrip(), []
 
@@ -527,8 +506,16 @@ def _is_string_map(value: object) -> bool:
     )
 
 
-def _is_string_list(value: object) -> bool:
-    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+def _is_env_names(value: object) -> bool:
+    if isinstance(value, str):
+        items = [item.strip() for item in value.split(",")]
+    elif isinstance(value, list | tuple):
+        items = [item.strip() for item in value if isinstance(item, str)]
+        if len(items) != len(value):
+            return False
+    else:
+        return False
+    return bool(items) and all(ENV_NAME_RE.fullmatch(item) is not None for item in items)
 
 
 def _dedent_line_items(lines: list[tuple[int, str]]) -> list[tuple[int, str]]:

@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import pytest
 
 from toolang import agents
 from toolang import work
@@ -63,8 +64,8 @@ from toolang.caps import (
     list_entries,
     list_local_entries,
     put_local_entry,
-    remove_entry,
     remove_local_entry,
+    remove_remote_entry,
 )
 from toolang.config.plugins import ChannelBinding
 from toolang.execution import execute as run_execute_module
@@ -215,7 +216,7 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
             assert body["thread_id"] == "thread-1"
             assert body["message"]["parts"][0]["text"] == "say hello"
             assert body["assistant"]["parts"][0]["text"] == "assistant:say hello"
-            assert client.put("/api/v1/skills/reviewer", json={"scope": "agent", "ref": "acme/reviewer"}).status_code == 405
+            assert client.put("/api/v1/skills/reviewer/remote", json={"scope": "agent", "ref": "acme/reviewer"}).status_code == 404
 
             runs = client.get("/api/v1/runs").json()["items"]
             profile = client.get("/api/v1/profile").json()
@@ -1115,7 +1116,7 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
 
     with TestClient(app) as client:
         add_response = client.put(
-            "/api/v1/skills/reviewer",
+            "/api/v1/skills/reviewer/remote",
             json={"scope": "agent", "ref": "acme/reviewer"},
         )
         assert add_response.status_code == 200
@@ -1134,7 +1135,7 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
         assert live["caps"] == []
         assert client.get("/api/v1/skills").json()["items"] == []
 
-        remove_response = client.delete("/api/v1/skills/reviewer?scope=agent")
+        remove_response = client.delete("/api/v1/skills/reviewer/remote?scope=agent")
         assert remove_response.status_code == 200
         assert remove_response.json() == {"ok": True}
 
@@ -1142,6 +1143,48 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
         durable = cast(dict[str, object], snapshot["durable"])
         definitions = cast(dict[str, object], durable["definitions"])
         assert definitions["agent_entries"] == []
+
+        local_response = client.put(
+            "/api/v1/prompts/rewrite/local",
+            json={"scope": "agent", "content": "Rewrite the request.\n"},
+        )
+        assert local_response.status_code == 200
+        assert local_response.json()["item"]["name"] == "rewrite"
+        assert local_response.json()["item"]["source"] == "local"
+
+        delete_local_response = client.delete("/api/v1/prompts/rewrite/local?scope=agent")
+        assert delete_local_response.status_code == 200
+        assert delete_local_response.json() == {"ok": True}
+
+
+def test_cap_template_api_lists_and_reads_templates(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("inspect",),
+    )
+    app = _create_test_app(context)
+
+    with TestClient(app) as client:
+        list_response = client.get("/api/v1/services/templates")
+        assert list_response.status_code == 200
+        items = list_response.json()["items"]
+        assert [item["name"] for item in items] == ["default", "stdio"]
+        assert items[0]["kind"] == "service"
+        assert items[0]["description"] == (
+            "Trigger this service when the agent needs this remote MCP server."
+        )
+
+        detail_response = client.get("/api/v1/services/templates/stdio")
+        assert detail_response.status_code == 200
+        item = detail_response.json()["item"]
+        assert item["name"] == "stdio"
+        assert item["kind"] == "service"
+        assert "transport: stdio" in item["content"]
+        assert "target: uvx example-mcp-server" in item["content"]
+        assert "# env: API_TOKEN, ANOTHER_ENV_VAR" in item["content"]
 
 
 def test_background_loops_enqueue_runs(tmp_path: Path) -> None:
@@ -2025,24 +2068,59 @@ def test_caps_put_list_remove_local_entries(tmp_path: Path) -> None:
         meta={"description": "Review code"},
         body="Review code carefully.",
     )
+    service_path = put_local_entry(
+        toolang_root,
+        "alice",
+        scope="global",
+        kind="service",
+        name="linear",
+        meta={
+            "description": "Linear MCP",
+            "transport": "stdio",
+            "target": "uvx mcp-remote https://mcp.linear.app/sse",
+            "env": "LINEAR_API_KEY, API_KEY",
+        },
+    )
 
     assert prompt_path == toolang_root / "prompts" / "rewrite.md"
     assert skill_path == toolang_root / "agents" / "alice" / "skills" / "reviewer" / "SKILL.md"
+    assert service_path == toolang_root / "services" / "linear.md"
 
     global_entries = list_local_entries(toolang_root, "alice", scope="global")
     agent_entries = list_local_entries(toolang_root, "alice", scope="agent")
 
     assert [(entry.kind, entry.meta["description"]) for entry in global_entries] == [
-        ("prompt", "Rewrite text")
+        ("prompt", "Rewrite text"),
+        ("service", "Linear MCP"),
     ]
     assert [(entry.kind, entry.path) for entry in agent_entries] == [
         ("skill", "agents/alice/skills/reviewer/SKILL.md")
     ]
 
     assert remove_local_entry(toolang_root, "alice", scope="global", kind="prompt", name="rewrite") is True
+    assert remove_local_entry(toolang_root, "alice", scope="global", kind="service", name="linear") is True
     assert remove_local_entry(toolang_root, "alice", scope="agent", kind="skill", name="reviewer") is True
     assert list_local_entries(toolang_root, "alice", scope="global") == ()
     assert list_local_entries(toolang_root, "alice", scope="agent") == ()
+
+
+def test_caps_reject_service_env_map(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+
+    with pytest.raises(ValueError, match="service env must list environment variable names"):
+        put_local_entry(
+            toolang_root,
+            "alice",
+            scope="global",
+            kind="service",
+            name="linear",
+            meta={
+                "description": "Linear MCP",
+                "transport": "stdio",
+                "target": "uvx mcp-remote https://mcp.linear.app/sse",
+                "env": {"LINEAR_API_KEY": "$LINEAR_API_KEY"},
+            },
+        )
 
 
 def test_prepare_materializes_remote_entries_from_config(tmp_path: Path) -> None:
@@ -2101,7 +2179,7 @@ def test_prepare_rewrites_legacy_agent_lock_missing_program(tmp_path: Path) -> N
     assert prepared.agent_lock.program.agent_name == "alice"
 
 
-def test_caps_list_and_remove_include_remote_entries(tmp_path: Path) -> None:
+def test_caps_list_and_remove_remote_entries(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
 
     add_remote_entry(
@@ -2117,7 +2195,7 @@ def test_caps_list_and_remove_include_remote_entries(tmp_path: Path) -> None:
     assert [(entry.source.form, entry.path) for entry in entries] == [
         ("remote", "agents/alice/.prepared/remote/skills/reviewer/SKILL.md")
     ]
-    assert remove_entry(toolang_root, "alice", scope="agent", kind="skill", name="reviewer") is True
+    assert remove_remote_entry(toolang_root, "alice", scope="agent", kind="skill", name="reviewer") is True
     assert list_entries(toolang_root, "alice", scope="agent", kinds={"skill"}) == ()
 
 
@@ -2760,7 +2838,7 @@ def test_chat_run_uses_default_template_when_chat_thunk_is_missing(tmp_path: Pat
             "---\n"
             "description: GitHub MCP\n"
             "transport: http\n"
-            "url: https://example.com/mcp\n"
+            "target: https://example.com/mcp\n"
             "---\n"
             "Use this service.\n"
         ),

@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 import subprocess
 import time
-from typing import Annotated, cast
+from typing import cast
 
 import click
 from rich import box
@@ -24,7 +24,6 @@ from ..config.env import load_runtime_environ
 from ..config.web import resolve_ui_base_url
 from ..execution.db import ExecutionStore, execution_db_path
 from ..execution.records import UpdateKind
-from ..templates import TemplateKind
 
 # Typer renders command help text in dim style by default. Keep it at normal
 # weight so usage notes remain easy to read in terminal help output.
@@ -181,39 +180,13 @@ class _RunAgentCommand(_RuntimeAgentCommand):
         formatter.write_usage(ctx.command_path, " ".join(pieces))
 
 
-class _OptionalTemplateArgumentCommand(TyperCommand):
-    """Render one optional template argument as plain TEXT in help."""
-
-    def _real_params(self, ctx: click.Context) -> list[click.Parameter]:
-        return TyperCommand.get_params(self, ctx)
-
-    def _help_template_argument(self) -> click.Argument:
-        return _HelpOnlyTyperArgument(
-            param_decls=["template"],
-            metavar="TEXT",
-            required=False,
-            default="default",
-            expose_value=False,
-            help="Template name.",
-        )
-
-    def get_params(self, ctx: click.Context) -> list[click.Parameter]:
-        return [self._help_template_argument(), *self._real_params(ctx)]
-
-    def format_usage(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
-        pieces: list[str] = [self.options_metavar] if self.options_metavar else []
-        for param in self._real_params(ctx):
-            pieces.extend(param.get_usage_pieces(ctx))
-        formatter.write_usage(ctx.command_path, " ".join(pieces))
-
-
 class _OptionalPrefixAgentTemplateCommand(_OptionalPrefixAgentCommand):
     def _help_template_argument(self) -> click.Argument:
         return _HelpOnlyTyperArgument(
             param_decls=["template"],
             metavar="TEXT",
             required=False,
-            default="default",
+            default=None,
             expose_value=False,
             help="Template name.",
         )
@@ -476,29 +449,3 @@ def _wait_for_started_status(
     if state_path.is_file() and state_path.stat().st_mtime >= launched_at - 0.01:
         return agents.get_agent_status(root, agent_name, ui_base_url=_ui_base_url())
     return None
-
-
-def _make_template_list_command(kind: TemplateKind, *, title: str) -> Callable[..., None]:
-    del title
-
-    def list_templates() -> None:
-        specs = templates.list_templates(kind)
-        if not specs:
-            typer.echo(f"No {kind} templates found.")
-            return
-        rows = [(item.name, item.description or "-") for item in specs]
-        summary_title = "TITLE" if kind in {"task", "chore"} else "DESCRIPTION"
-        _echo_table(("TEMPLATE", summary_title), rows)
-
-    return list_templates
-
-
-def _make_template_show_command(kind: TemplateKind, *, title: str) -> Callable[..., None]:
-    del title
-
-    def show_template(
-        template: Annotated[str, typer.Argument(help="Template name", hidden=True)] = "default",
-    ) -> None:
-        _echo_block(templates.load_template(kind, template).raw_text.rstrip("\n"))
-
-    return show_template

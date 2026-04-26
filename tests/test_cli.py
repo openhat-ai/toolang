@@ -1051,7 +1051,7 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
         scope="global",
         kind="skill",
         name="hello",
-        text="# Hello\n",
+        text="---\ndescription: Say hello.\n---\n# Hello\n",
     )
     caps.put_local_entry_text(
         toolang_root,
@@ -1059,7 +1059,13 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
         scope="agent",
         kind="service",
         name="github",
-        text="---\ntransport: http\ntarget: https://example.com/mcp\n---\n",
+        text=(
+            "---\n"
+            "description: Example MCP service\n"
+            "transport: http\n"
+            "target: https://example.com/mcp\n"
+            "---\n"
+        ),
     )
     work.create_task_text(
         toolang_root,
@@ -2261,7 +2267,7 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     assert remove_result.exit_code == 0
     assert (
         remove_result.stdout.strip()
-        == "Removed skill reviewer from github://acme/agent-skills/skills/reviewer"
+        == "Removed remote skill reviewer from github://acme/agent-skills/skills/reviewer"
     )
 
     monkeypatch.setattr(
@@ -2364,14 +2370,14 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
         toolang_root / "agents" / "alice" / "skills" / "reviewer" / "SKILL.md"
     ).read_text(encoding="utf-8") == edited_text
 
-    remove_result = _invoke_app(
-        ["skill", "remove", "reviewer"],
+    delete_result = _invoke_app(
+        ["skill", "delete", "reviewer"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    assert remove_result.exit_code == 0
-    assert remove_result.stdout.strip() == (
-        f"Removed skill reviewer from {toolang_root / 'agents' / 'alice' / 'skills' / 'reviewer'}"
+    assert delete_result.exit_code == 0
+    assert delete_result.stdout.strip() == (
+        f"Deleted local skill reviewer from {toolang_root / 'agents' / 'alice' / 'skills' / 'reviewer'}"
     )
     assert not (toolang_root / "agents" / "alice" / "skills" / "reviewer").exists()
 
@@ -2461,7 +2467,7 @@ def test_cli_cap_new_supports_named_template(tmp_path: Path, monkeypatch) -> Non
 
     assert result.exit_code == 0
     assert "transport: stdio" in cast(str, captured["text"])
-    assert "command: uvx" in cast(str, captured["text"])
+    assert "target: uvx example-mcp-server" in cast(str, captured["text"])
 
 
 def test_cli_task_new_persists_id(tmp_path: Path, monkeypatch) -> None:
@@ -2806,16 +2812,18 @@ def test_cli_cap_commands_cover_file_backed_kinds(tmp_path: Path, monkeypatch) -
         ("service", "search", toolang_root / "services" / "search.md"),
     )
 
-    monkeypatch.setattr(
-        cli.click,
-        "edit",
-        lambda *_args, **_kwargs: (
-        "---\n"
-        "description: Example entry\n"
-        "---\n"
-        "Example body.\n"
-        ),
-    )
+    def fake_edit(text: str, **_kwargs) -> str:
+        if "transport: http" in text:
+            return (
+                "---\n"
+                "description: Example service\n"
+                "transport: http\n"
+                "target: https://example.com/mcp\n"
+                "---\n"
+            )
+        return "---\ndescription: Example entry\n---\nExample body.\n"
+
+    monkeypatch.setattr(cli.click, "edit", fake_edit)
     for kind, name, path in cases:
         add_result = runner.invoke(
             cli.app,
@@ -2839,36 +2847,41 @@ def test_cli_cap_commands_cover_file_backed_kinds(tmp_path: Path, monkeypatch) -
         assert "global" in list_result.stdout
         assert str(path) in list_result.stdout
 
-        remove_result = runner.invoke(
+        delete_result = runner.invoke(
             cli.app,
-            [kind, "remove", name],
+            [kind, "delete", name],
             env={"TOOLANG_ROOT": str(toolang_root)},
         )
-        assert remove_result.exit_code == 0
-        assert remove_result.stdout.strip() == f"Removed {kind} {name} from {path}"
+        assert delete_result.exit_code == 0
+        assert delete_result.stdout.strip() == f"Deleted local {kind} {name} from {path}"
         assert not path.exists()
 
 
-def test_cli_cap_template_outputs_template() -> None:
-    skill_result = runner.invoke(cli.app, ["skill", "template"])
-    prompt_result = runner.invoke(cli.app, ["prompt", "template"])
-    service_result = runner.invoke(cli.app, ["service", "template"])
-    psyche_result = runner.invoke(cli.app, ["psyche", "template"])
+def test_cli_cap_template_outputs_named_template() -> None:
+    skill_result = runner.invoke(cli.app, ["skill", "template", "default"])
+    prompt_result = runner.invoke(cli.app, ["prompt", "template", "default"])
+    service_result = runner.invoke(cli.app, ["service", "template", "default"])
+    psyche_result = runner.invoke(cli.app, ["psyche", "template", "default"])
 
     assert skill_result.exit_code == 0
     assert prompt_result.exit_code == 0
     assert service_result.exit_code == 0
     assert psyche_result.exit_code == 0
     assert skill_result.stdout.strip().startswith(
-        "---\ndescription: What this skill is for.\n---\n\n# Skill\n"
+        "---\ndescription: Trigger this skill for requests that need this workflow.\n---"
     )
+    assert "`description` is the trigger summary." in skill_result.stdout
     assert prompt_result.stdout.strip().startswith("Write the reusable prompt text here.\n")
     assert "transport: http" in service_result.stdout
+    assert "# headers:" in service_result.stdout
+    assert "# env:" not in service_result.stdout
+    assert "Use optional `headers` for HTTP auth." in service_result.stdout
+    assert "Header values like `$API_TOKEN` declare required environment variables." in service_result.stdout
     assert "Prefer:" in psyche_result.stdout
 
 
-def test_cli_cap_template_list_shows_named_templates() -> None:
-    result = runner.invoke(cli.app, ["service", "templates"])
+def test_cli_cap_template_without_argument_lists_named_templates() -> None:
+    result = runner.invoke(cli.app, ["service", "template"])
 
     assert result.exit_code == 0
     assert "TEMPLATE" in result.stdout
@@ -2885,6 +2898,7 @@ def test_cli_skill_help_describes_remote_and_local_commands() -> None:
     assert "remove" in result.stdout
     assert "new" in result.stdout
     assert "edit" in result.stdout
+    assert "delete" in result.stdout
     assert "list" in result.stdout
 
 
@@ -2932,14 +2946,14 @@ def test_cli_skill_template_help_shows_plain_text_metavar() -> None:
 
     assert result.exit_code == 0
     assert "template      TEXT" in result.stdout
-    assert "Template name. [default: default]" in result.stdout
+    assert "Template name." in result.stdout
 
 
 def test_cli_skill_remove_help_mentions_agent_scope() -> None:
     result = runner.invoke(cli.app, ["skill", "remove", "--help"])
 
     assert result.exit_code == 0
-    assert "Remove a skill." in result.stdout
+    assert "Remove a remote skill." in result.stdout
     assert "[AGENT] skill remove" in result.stdout
 
 

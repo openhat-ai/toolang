@@ -14,8 +14,9 @@ def test_program_parse_projects_inline_caps_and_structs_into_ast() -> None:
         """
 service github: ```md
 ---
+description: Use when the agent needs GitHub MCP access.
 transport: http
-url: https://mcp.github.com/mcp
+target: https://mcp.github.com/mcp
 headers:
   Authorization: Bearer $GITHUB_TOKEN
 ---
@@ -45,8 +46,9 @@ struct ReviewSummary:
     assert [item.kind for item in program.declarations] == ["service", "prompt", "psyche"]
     service_decl, prompt_decl, psyche_decl = program.declarations
     assert service_decl.meta == {
+        "description": "Use when the agent needs GitHub MCP access.",
         "transport": "http",
-        "url": "https://mcp.github.com/mcp",
+        "target": "https://mcp.github.com/mcp",
         "headers": {"Authorization": "Bearer $GITHUB_TOKEN"},
     }
     assert service_decl.body == "Use this service when the agent needs GitHub access."
@@ -64,6 +66,43 @@ struct ReviewSummary:
         ("title", "string"),
         ("summary", "string"),
     ]
+
+
+def test_program_parse_accepts_compact_service_env_names() -> None:
+    program = parse(
+        """
+service linear: ```md
+---
+description: Trigger this service when the agent needs Linear MCP access.
+transport: stdio
+target: uvx mcp-remote https://mcp.linear.app/sse
+env: LINEAR_API_KEY, API_KEY
+---
+
+Use this service when the agent needs Linear access.
+```
+""".strip()
+    )
+
+    service_decl = program.declarations[0]
+    assert service_decl.meta["env"] == "LINEAR_API_KEY, API_KEY"
+
+
+def test_program_parse_rejects_service_env_map_syntax() -> None:
+    with pytest.raises(ToolangError, match="Syntax error at line 1"):
+        parse(
+            """
+service linear: ```md
+---
+description: Trigger this service when the agent needs Linear MCP access.
+transport: stdio
+target: uvx mcp-remote https://mcp.linear.app/sse
+env:
+  LINEAR_API_KEY: $LINEAR_API_KEY
+---
+```
+""".strip()
+        )
 
 
 def test_program_parse_projects_typed_thunk_params_into_ast() -> None:
