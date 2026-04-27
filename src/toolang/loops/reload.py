@@ -67,6 +67,14 @@ async def run(
         if not isinstance(enabled_loops, tuple):
             raise TypeError("invalid config: loops.enabled")
         live = load_live_state(prepared, enabled_loops=cast(tuple[str, ...], enabled_loops))
+        from ..up import load_runtime_tool_plugins
+
+        tools = load_runtime_tool_plugins(
+            toolang_root=context.root,
+            agent_name=context.name,
+            live=live,
+            environ=context.model_environ,
+        )
         logger.info(
             "reload applied agent=%s live=%s->%s",
             context.name,
@@ -74,6 +82,7 @@ async def run(
             _short_fingerprint(live.fingerprint),
         )
         context.live = live
+        context.tools = tools
 
 
 async def _wait_for_reload_or_stop(

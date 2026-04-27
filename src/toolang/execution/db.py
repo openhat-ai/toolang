@@ -11,7 +11,15 @@ import threading
 import time
 from typing import Any, cast
 
-from toolang.base.types.message import Message, MessageRole, Part, parts_from_data, parts_to_data
+from toolang.base.types.message import (
+    Message,
+    MessageRole,
+    Part,
+    ToolCallPart,
+    ToolResultPart,
+    parts_from_data,
+    parts_to_data,
+)
 from .events import RunEnd, RunStart, StepStart, StepEnd, TraceEvent
 from .records import (
     ModelCallStepPayload,
@@ -304,6 +312,31 @@ class ExecutionStore:
                 results.extend(_replay_messages_from_step(step))
         return results[-limit:]
 
+    def recent_text_conversation_messages(
+        self,
+        *,
+        thread_id: str,
+        limit: int = 32,
+    ) -> list[Message]:
+        """Return recent actor messages without raw tool-call or tool-result parts."""
+
+        runs = sorted(
+            self.list_runs(thread_id=thread_id, limit=max(limit * 4, 100)),
+            key=lambda item: item.created_at,
+        )
+        steps_by_run = self.list_steps_for_runs(run_ids=tuple(run.run_id for run in runs))
+        results: list[Message] = []
+        for run in runs:
+            actor_message = _actor_text_message(run.input)
+            if actor_message is not None:
+                results.append(actor_message)
+            for step in steps_by_run.get(run.run_id, ()):
+                for message in _replay_messages_from_step(step):
+                    actor_message = _actor_text_message(message)
+                    if actor_message is not None:
+                        results.append(actor_message)
+        return results[-limit:]
+
     def append_update(
         self,
         *,
@@ -511,6 +544,19 @@ def _role_for_step(kind: StepKind) -> MessageRole | None:
     if kind == "tool_call":
         return "tool"
     return None
+
+
+def _actor_text_message(message: Message) -> Message | None:
+    if message.role not in {"user", "assistant"}:
+        return None
+    parts = tuple(
+        part
+        for part in message.parts
+        if not isinstance(part, (ToolCallPart, ToolResultPart))
+    )
+    if not parts:
+        return None
+    return Message(role=message.role, parts=parts, meta=dict(message.meta))
 
 
 class PersistSink:
