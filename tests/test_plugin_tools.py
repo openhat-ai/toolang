@@ -19,6 +19,7 @@ def _patch_tool_entry_points(monkeypatch) -> None:
     from toolang.tools.service_use import create_tool as create_service_use_tool
     from toolang.tools.shell import create_tool as create_shell_tool
     from toolang.tools.web_search import create_tool as create_web_search_tool
+    from toolang.tools.jobs import create_tool as create_jobs_tool
     from toolang.base.examples.tools import create_working_tree_tool
 
     entries = [
@@ -28,6 +29,7 @@ def _patch_tool_entry_points(monkeypatch) -> None:
         _FakeEntryPoint("service_use", create_service_use_tool),
         _FakeEntryPoint("shell", create_shell_tool),
         _FakeEntryPoint("web_search", create_web_search_tool),
+        _FakeEntryPoint("jobs", create_jobs_tool),
         _FakeEntryPoint("working_tree", create_working_tree_tool),
     ]
     monkeypatch.setattr(
@@ -41,6 +43,7 @@ def test_tool_plugins_load_from_entry_points(monkeypatch) -> None:
     assert list_plugin_names(group="toolang.tool") == [
         "echo",
         "filesystem",
+        "jobs",
         "math_add",
         "service_use",
         "shell",
@@ -64,6 +67,8 @@ def test_load_tool_plugins_uses_hyphenated_model_names(monkeypatch) -> None:
 
     assert "shell_execute" in tools
     assert "web_search_search" in tools
+    assert "jobs_task_create" in tools
+    assert "jobs_chore_create" in tools
     assert "service_use_bridge_start" in tools
     assert "service_use_init" in tools
     assert "service_use_auth_start" in tools

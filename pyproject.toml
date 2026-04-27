@@ -61,6 +61,7 @@ filesystem = "toolang.tools.filesystem:create_tool"
 service_use = "toolang.tools.service_use:create_tool"
 shell = "toolang.tools.shell:create_tool"
 web_search = "toolang.tools.web_search:create_tool"
+jobs = "toolang.tools.jobs:create_tool"
 
 [project.entry-points."toolang.model"]
 openai = "toolang.models.openai:create_model"

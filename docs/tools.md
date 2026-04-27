@@ -13,6 +13,7 @@ Current built-in tools are:
 - `shell`
 - `web_search`
 - `service_use`
+- `jobs`
 
 
 ## Filesystem
@@ -56,6 +57,21 @@ It is the bridge between:
 
 Service calls return structured input and output and are recorded as normal
 tool-call steps.
+
+
+## Jobs
+
+`jobs` exposes structured task and chore operations for the current agent.
+
+It provides model-facing tools to:
+
+- list and read tasks
+- create and update tasks
+- list and read chores
+- create and update chores
+
+Task and chore writes reuse the same Markdown document models, id allocation,
+RRULE validation, and archive placement rules as the CLI and jobs API.
 
 
 ## Runtime Rule
