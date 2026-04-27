@@ -19,6 +19,8 @@ if TYPE_CHECKING:
 DEFAULT_GROUP_LIMITS: dict[str, int] = {
     "chat": 1,
     "pulse": 1,
+    "pulse:chore": 2,
+    "pulse:task": 4,
     "poll": 1,
     "hook": 1,
 }
@@ -101,6 +103,7 @@ class QueueRunner:
         self._thread_locks: dict[str, asyncio.Lock] = {}
         self._thread_locks_lock = asyncio.Lock()
         self._completed: list[RunOutcome] = []
+        self._waiting_requests: dict[int, RunSubmission] = {}
         self._active_requests: dict[int, RunSubmission] = {}
 
     def enqueue(
@@ -172,6 +175,7 @@ class QueueRunner:
                 submission = await self._dequeue_submission()
                 if submission is None:
                     break
+                self._waiting_requests[id(submission)] = submission
                 tasks.append(task_group.create_task(self._run_request(submission)))
         return [task.result() for task in tasks]
 
@@ -206,7 +210,9 @@ class QueueRunner:
     def pending_requests(self) -> tuple[RunRequest, ...]:
         """Return a snapshot of currently queued requests."""
 
-        return tuple(item.request for item in self._pending)
+        return tuple(
+            item.request for item in (*self._pending, *self._waiting_requests.values())
+        )
 
     def active_requests(self) -> tuple[RunRequest, ...]:
         """Return a snapshot of currently executing requests."""
@@ -215,24 +221,28 @@ class QueueRunner:
 
     async def _run_request(self, submission: RunSubmission) -> RunOutcome:
         request = submission.request
-        semaphore = await self._semaphore_for_group(request.group)
-        async with semaphore:
-            await self._update_group_in_flight(request.group, delta=1)
-            request_key = id(submission)
-            self._active_requests[request_key] = submission
-            try:
-                result = await self._execute_thread_locked(submission)
-                if submission.completion is not None and not submission.completion.done():
-                    submission.completion.set_result(result)
-                self._completed.append(result)
-                return result
-            except Exception as exc:
-                if submission.completion is not None and not submission.completion.done():
-                    submission.completion.set_exception(exc)
-                raise
-            finally:
-                self._active_requests.pop(request_key, None)
-                await self._update_group_in_flight(request.group, delta=-1)
+        request_key = id(submission)
+        try:
+            semaphore = await self._semaphore_for_group(request.group)
+            async with semaphore:
+                self._waiting_requests.pop(request_key, None)
+                await self._update_group_in_flight(request.group, delta=1)
+                self._active_requests[request_key] = submission
+                try:
+                    result = await self._execute_thread_locked(submission)
+                    if submission.completion is not None and not submission.completion.done():
+                        submission.completion.set_result(result)
+                    self._completed.append(result)
+                    return result
+                except Exception as exc:
+                    if submission.completion is not None and not submission.completion.done():
+                        submission.completion.set_exception(exc)
+                    raise
+                finally:
+                    self._active_requests.pop(request_key, None)
+                    await self._update_group_in_flight(request.group, delta=-1)
+        finally:
+            self._waiting_requests.pop(request_key, None)
 
     async def _execute_thread_locked(self, submission: RunSubmission) -> RunOutcome:
         request = submission.request
@@ -301,4 +311,4 @@ class QueueRunner:
             self._group_in_flight[group] = max(current + delta, 0)
 
     def __len__(self) -> int:
-        return len(self._pending)
+        return len(self._pending) + len(self._waiting_requests)

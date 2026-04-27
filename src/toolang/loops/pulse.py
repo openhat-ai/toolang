@@ -70,7 +70,7 @@ async def run(
         for submission in submissions:
             context.runner.enqueue(
                 RunRequest(
-                    group="pulse",
+                    group=f"pulse:{submission.kind}",
                     origin=submission.kind,
                     thread_id=submission.thread_id,
                     thunk=submission.text,
@@ -99,30 +99,6 @@ def collect_pulse_submissions(
     blocked = pending_keys or set()
     submissions: list[PulseSubmission] = []
 
-    task_items: dict[str, PulseItemState] = {}
-    for entry in context.live.job_entries:
-        if entry.kind != "task":
-            continue
-        path = context.root / entry.path
-        if not path.is_file():
-            continue
-        document = work.TaskFile.load(
-            path,
-            id_factory=lambda: work.allocate_job_id(context.root, context.name),
-            persist_id=True,
-        )
-        task_id = document.task_id()
-        item_state = state.tasks.get(task_id, PulseItemState())
-        task_items[task_id] = _next_task_state(
-            task=document,
-            path=path,
-            path_name=entry.name,
-            state=item_state,
-            now=current,
-            pending_keys=blocked,
-            submissions=submissions,
-        )
-
     chore_items: dict[str, PulseItemState] = {}
     for entry in context.live.job_entries:
         if entry.kind != "chore":
@@ -141,6 +117,30 @@ def collect_pulse_submissions(
             chore=document,
             key=chore_id,
             fallback_title=entry.name,
+            state=item_state,
+            now=current,
+            pending_keys=blocked,
+            submissions=submissions,
+        )
+
+    task_items: dict[str, PulseItemState] = {}
+    for entry in context.live.job_entries:
+        if entry.kind != "task":
+            continue
+        path = context.root / entry.path
+        if not path.is_file():
+            continue
+        document = work.TaskFile.load(
+            path,
+            id_factory=lambda: work.allocate_job_id(context.root, context.name),
+            persist_id=True,
+        )
+        task_id = document.task_id()
+        item_state = state.tasks.get(task_id, PulseItemState())
+        task_items[task_id] = _next_task_state(
+            task=document,
+            path=path,
+            path_name=entry.name,
             state=item_state,
             now=current,
             pending_keys=blocked,
@@ -273,7 +273,10 @@ def _pending_keys(context: UptimeContext) -> set[str]:
 
 
 def _request_key(request: RunRequest) -> str | None:
-    if request.group != "pulse" or request.thread_id is None:
+    if (
+        not (request.group == "pulse" or request.group.startswith("pulse:"))
+        or request.thread_id is None
+    ):
         return None
     if request.origin == "task":
         task_id = work.task_id_from_thread_id(request.thread_id)
@@ -300,18 +303,13 @@ def _record_completed_runs(
             task_id = work.task_id_from_thread_id(result.thread_id)
             if task_id is None:
                 continue
-            work.finish_task(
-                context.root,
-                context.name,
-                task_id,
-                succeeded=result.status == "finished",
-            )
+            task_status = _finish_completed_task_run(context, task_id=task_id, result=result)
             item_state = state.tasks.get(task_id)
             if item_state is None:
                 continue
             item_state.last_started_at = now
             item_state.last_finished_at = now
-            item_state.last_status = result.status
+            item_state.last_status = task_status
             item_state.last_run_id = result.run_id
             continue
         if result.origin == "chore" and result.thread_id is not None:
@@ -325,3 +323,32 @@ def _record_completed_runs(
             item_state.last_finished_at = now
             item_state.last_status = result.status
             item_state.last_run_id = result.run_id
+
+
+def _finish_completed_task_run(
+    context: "UptimeContext",
+    *,
+    task_id: str,
+    result: "RunOutcome",
+) -> Literal["finished", "failed"]:
+    if result.status != "finished":
+        work.finish_task(context.root, context.name, task_id, succeeded=False)
+        return "failed"
+    task = work.find_task(context.root, context.name, task_id, include_archived=True)
+    if task is None:
+        return "failed"
+    remote_stage = task.document.remote_stage()
+    if task.document.stage == "done" and remote_stage not in {None, "done"}:
+        work.save_task_entry(
+            context.root,
+            context.name,
+            task,
+            task.document.model_copy(update={"stage": remote_stage}),
+        )
+        return "failed"
+    if task.document.stage == "done":
+        if task.document.state == "active":
+            work.finish_task(context.root, context.name, task_id, succeeded=True)
+        return "finished"
+    work.finish_task(context.root, context.name, task_id, succeeded=False)
+    return "failed"

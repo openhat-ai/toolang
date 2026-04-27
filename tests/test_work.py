@@ -4,7 +4,7 @@ from toolang import work
 from toolang.ids import LOCAL_ID_FAMILY, decode_id
 
 
-def test_task_defaults_to_active_todo_and_archives_after_success(tmp_path) -> None:
+def test_task_defaults_to_active_todo_and_stays_active_after_finish(tmp_path) -> None:
     toolang_root = tmp_path / "toolang"
 
     path = work.create_task_text(
@@ -21,24 +21,36 @@ def test_task_defaults_to_active_todo_and_archives_after_success(tmp_path) -> No
     task = work.list_tasks(toolang_root, "alice")[0]
     task_id = task.document.task_id()
     assert path == toolang_root / "agents" / "alice" / "tasks" / f"{task_id}.md"
-    archived_path = work.finish_task(
+    finished_path = work.finish_task(
         toolang_root,
         "alice",
         task_id,
         succeeded=True,
     )
 
-    assert archived_path is not None
-    assert not path.exists()
-    assert work.list_tasks(toolang_root, "alice") == ()
+    assert finished_path == path
+    assert path.exists()
+    finished = work.list_tasks(toolang_root, "alice")[0]
+    assert finished.document.state == "active"
+    assert finished.document.stage == "done"
+    assert work.find_archived_task(toolang_root, "alice", task_id) is None
 
-    archived = work.list_tasks(toolang_root, "alice", include_archived=True)[0]
-    assert archived.document.state == "archived"
-    assert archived.document.stage == "done"
-    assert archived.path == archived_path
-    assert "archive" in archived_path.parts
-    assert "tasks" in archived_path.parts
-    assert archived_path.parent.name == _archive_bucket(task_id)
+
+def test_task_remote_stage_maps_status_lines() -> None:
+    assert work.TaskFile(body="Status: Todo").remote_stage() == "todo"
+    assert work.TaskFile(body="Status: Backlog").remote_stage() == "todo"
+    assert work.TaskFile(body="Remote Status: Done").remote_stage() == "done"
+    assert work.TaskFile(body="Status: Canceled").remote_stage() == "failed"
+    assert work.TaskFile(body="No remote status").remote_stage() is None
+
+
+def test_task_remote_ref_extracts_issue_key_from_title_or_body() -> None:
+    assert work.TaskFile(title="XBY-26 - test").remote_ref() == "XBY-26"
+    assert (
+        work.TaskFile(body="Link: https://linear.app/xby/issue/XBY-35/example").remote_ref()
+        == "XBY-35"
+    )
+    assert work.TaskFile(title="Review plan", body="No remote link").remote_ref() is None
 
 
 def test_chore_persists_schedule_and_state(tmp_path) -> None:

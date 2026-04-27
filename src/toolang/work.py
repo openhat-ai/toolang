@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import re
 from typing import Literal
 
 from dateutil.rrule import rrulestr
@@ -19,6 +20,7 @@ from .ids import LOCAL_ID_FAMILY, allocate_id, decode_id
 JobState = Literal["active", "inactive", "archived"]
 TaskStage = Literal["todo", "running", "done", "failed"]
 DEFAULT_CHORE_SCHEDULE = "FREQ=HOURLY;INTERVAL=1"
+REMOTE_REF_PATTERN = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")
 
 
 class _MarkdownDocument(BaseModel):
@@ -165,6 +167,41 @@ class TaskFile(_MarkdownDocument):
         """Return this task marked as completed."""
 
         return self.model_copy(update={"stage": "done" if succeeded else "failed"})
+
+    def remote_stage(self) -> TaskStage | None:
+        """Return the local stage implied by a mirrored remote status."""
+
+        status = self.remote_status()
+        if status is None:
+            return None
+        normalized = status.lower()
+        if normalized in {"done", "completed", "complete", "closed", "resolved"}:
+            return "done"
+        if normalized in {"canceled", "cancelled"}:
+            return "failed"
+        return "todo"
+
+    def remote_status(self) -> str | None:
+        """Return the first explicit remote status line from the task body."""
+
+        for line in self.body.splitlines():
+            key, separator, value = line.partition(":")
+            if separator != ":":
+                continue
+            normalized_key = key.strip().lower()
+            if normalized_key in {"status", "remote status"}:
+                text = value.strip()
+                return text or None
+        return None
+
+    def remote_ref(self) -> str | None:
+        """Return a stable remote work-item key when one is present."""
+
+        text = "\n".join(part for part in (self.title or "", self.body) if part)
+        match = REMOTE_REF_PATTERN.search(text)
+        if match is None:
+            return None
+        return match.group(0)
 
     def archived_copy(self) -> "TaskFile":
         """Return this task marked as archived."""
@@ -669,21 +706,14 @@ def finish_task(
     *,
     succeeded: bool,
 ) -> Path | None:
-    """Mark one task as finished and archive successful tasks."""
+    """Mark one task as finished without archiving it."""
 
     entry = find_task(toolang_root, agent_name, task_id)
     if entry is None:
         return None
     completed = entry.document.completed(succeeded=succeeded)
-    if not succeeded:
-        completed.save(entry.path)
-        return entry.path
-    archived = completed.archived_copy()
-    target = _archive_path(toolang_root, agent_name, kind="task", item_id=task_id)
-    archived.save(target)
-    entry.path.unlink(missing_ok=True)
-    _prune_empty_parents(entry.path.parent, stop=_work_dir(toolang_root, agent_name, kind="task"))
-    return target
+    completed.save(entry.path)
+    return entry.path
 
 
 def archive_task(toolang_root: Path, agent_name: str, task_id: str) -> Path | None:

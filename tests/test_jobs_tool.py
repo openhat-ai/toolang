@@ -48,6 +48,7 @@ def test_jobs_tool_creates_lists_gets_and_updates_tasks(tmp_path: Path) -> None:
 
     assert listed["tasks"][0]["id"] == task_id
     assert loaded["task"]["title"] == "Review plan"
+    assert loaded["task"]["remote_ref"] is None
     assert updated["task"]["state"] == "inactive"
     assert updated["task"]["stage"] == "running"
     assert updated["task"]["body"] == "Review the merged implementation."
@@ -55,6 +56,23 @@ def test_jobs_tool_creates_lists_gets_and_updates_tasks(tmp_path: Path) -> None:
     assert task is not None
     assert task.document.state == "inactive"
     assert task.document.stage == "running"
+
+
+def test_jobs_tool_exposes_task_remote_identity(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    context = _tool_context(toolang_root)
+    tools = create_jobs_tool({}).tools()
+
+    created = tools["task_create"].invoke(
+        {
+            "title": "XBY-26 - test",
+            "body": "Link: https://linear.app/xby/issue/XBY-26/test\nStatus: Backlog",
+        },
+        context,
+    )
+
+    assert created["task"]["remote_ref"] == "XBY-26"
+    assert created["task"]["remote_status"] == "Backlog"
 
 
 def test_jobs_tool_creates_and_updates_chores(tmp_path: Path) -> None:

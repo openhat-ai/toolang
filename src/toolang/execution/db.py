@@ -15,6 +15,7 @@ from toolang.base.types.message import (
     Message,
     MessageRole,
     Part,
+    TextPart,
     ToolCallPart,
     ToolResultPart,
     parts_from_data,
@@ -25,6 +26,7 @@ from .records import (
     ModelCallStepPayload,
     RunRecord,
     RunStatus,
+    RuntimeStepPayload,
     StepInputItem,
     StepKind,
     StepPayload,
@@ -565,6 +567,7 @@ class PersistSink:
     def __init__(self, store: ExecutionStore) -> None:
         self._store = store
         self._pending_steps: dict[tuple[str, int], tuple[tuple[StepInputItem, ...], str, str | None]] = {}
+        self._last_step_index: dict[str, int] = {}
 
     def on_event(self, event: TraceEvent) -> None:
         if isinstance(event, RunStart):
@@ -618,11 +621,33 @@ class PersistSink:
                 started_at=started_at,
                 finished_at=event.finished_at,
             )
+            self._last_step_index[event.run_id] = max(
+                self._last_step_index.get(event.run_id, 0),
+                event.step_index,
+            )
             return
         if isinstance(event, RunEnd):
+            if event.error is not None:
+                self._append_runtime_failure_step(event)
             self._store.finish_run(
                 run_id=event.run_id,
                 status=event.status,
                 error=event.error,
                 finished_at=event.finished_at,
             )
+
+    def _append_runtime_failure_step(self, event: RunEnd) -> None:
+        step_index = self._last_step_index.get(event.run_id, 0) + 1
+        self._store.append_step(
+            run_id=event.run_id,
+            step_index=step_index,
+            kind="runtime",
+            status="failed",
+            input=(),
+            output=(TextPart(text=event.error or "Run failed."),),
+            payload=RuntimeStepPayload(),
+            error=event.error,
+            started_at=event.finished_at,
+            finished_at=event.finished_at,
+        )
+        self._last_step_index[event.run_id] = step_index
