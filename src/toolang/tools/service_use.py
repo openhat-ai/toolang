@@ -68,7 +68,10 @@ class _ServiceUseAdapter:
         tools = {
             "bridge_start": self._tool(
                 "bridge_start",
-                "Start one visible service bridge or prepare one HTTP service for auth and session use.",
+                (
+                    "Start one visible stdio service bridge by wrapping it as an HTTP MCP endpoint. "
+                    "HTTP services do not need bridge_start; call auth_start or init directly for HTTP."
+                ),
                 _schema(
                     properties={"service": service_schema},
                     required=("service",),
@@ -77,7 +80,7 @@ class _ServiceUseAdapter:
             ),
             "bridge_stop": self._tool(
                 "bridge_stop",
-                "Stop one visible service bridge or clear prepared HTTP service state.",
+                "Stop one visible stdio service bridge or clear HTTP service auth/session state.",
                 _schema(
                     properties={"service": service_schema},
                     required=("service",),
@@ -86,7 +89,17 @@ class _ServiceUseAdapter:
             ),
             "init": self._tool(
                 "init",
-                "Initialize one visible service session after bridge setup and any required auth.",
+                (
+                    "Initialize one visible service session after any required transport setup and auth. "
+                    "For stdio services, call bridge_start first. HTTP services do not need bridge_start. "
+                    "For HTTP OAuth services, if the user has not authorized the service yet or init "
+                    "reports a missing token, call auth_start, show the returned action URL to the "
+                    "user, then call auth_complete so the callback endpoint is listening while the "
+                    "user authorizes. After auth_complete succeeds, call init again. If a prior "
+                    "successful init session for this service is available, reuse it and do not call "
+                    "init again; call init again only when there is no usable session or a later "
+                    "service call reports an expired or invalid session."
+                ),
                 _schema(
                     properties={"service": service_schema},
                     required=("service",),
@@ -95,7 +108,11 @@ class _ServiceUseAdapter:
             ),
             "auth_start": self._tool(
                 "auth_start",
-                "Start OAuth for one visible HTTP service.",
+                (
+                    "Start OAuth for one visible HTTP service. When the result includes an action URL, "
+                    "show that URL to the user before completing auth. Then call auth_complete to open "
+                    "the callback listener that receives the token while the user approves the URL."
+                ),
                 _schema(
                     properties={"service": service_schema},
                     required=("service",),
@@ -104,7 +121,12 @@ class _ServiceUseAdapter:
             ),
             "auth_complete": self._tool(
                 "auth_complete",
-                "Complete OAuth for one visible HTTP service after the user authorizes access.",
+                (
+                    "Complete OAuth for one visible HTTP service by opening the callback endpoint and "
+                    "waiting for the token from the auth_start URL redirect. Call this after showing "
+                    "the auth_start URL to the user, while the user can still click and approve it. "
+                    "After this succeeds, call init before listing or calling service tools."
+                ),
                 _schema(
                     properties={"service": service_schema},
                     required=("service",),
@@ -113,7 +135,13 @@ class _ServiceUseAdapter:
             ),
             "tool_list": self._tool(
                 "tool_list",
-                "List tools exposed by one visible service.",
+                (
+                    "List tools exposed by one initialized service. Use this before tool_call and read "
+                    "the returned inputSchema for the selected service tool. If a prior successful "
+                    "tool_list result for this service is available, reuse that tool list and schemas; "
+                    "do not call tool_list again unless the service reports that the tool is missing "
+                    "or the schema is stale."
+                ),
                 _schema(
                     properties={"service": service_schema},
                     required=("service",),
@@ -122,14 +150,29 @@ class _ServiceUseAdapter:
             ),
             "tool_call": self._tool(
                 "tool_call",
-                "Call one tool exposed by one visible service.",
+                (
+                    "Call one tool exposed by one initialized service. Always put the selected service "
+                    "tool's arguments inside input as a JSON object shaped by tool_list inputSchema. "
+                    "For service tools with required inputSchema fields, fill those required fields "
+                    "inside input before calling. For service tools with no arguments, pass input={}. "
+                    "Do not place service tool arguments at the top level or under parameters/tool_input. "
+                    "If init and tool_list already succeeded for this service, call tool_call directly "
+                    "using the previously returned schema."
+                ),
                 _schema(
                     properties={
                         "service": service_schema,
                         "tool_name": {"type": "string"},
-                        "input": {"type": "object"},
+                        "input": {
+                            "type": "object",
+                            "description": (
+                                "The selected service tool's JSON arguments. For example, call "
+                                "save_issue with input={\"title\":\"...\",\"team\":\"...\"}, not with "
+                                "title/team at the top level."
+                            ),
+                        },
                     },
-                    required=("service", "tool_name"),
+                    required=("service", "tool_name", "input"),
                 ),
                 self._invoke_tool_call,
             ),
@@ -242,7 +285,7 @@ class _ServiceUseAdapter:
         return ServiceRuntime(
             service=service,
             connection_path=base / "connection.json",
-            session_path=base / "runs" / context.run_id / "session.json",
+            session_path=base / "session.json",
             token_path=base / "token.json",
             env_vars=_service_env(context.home, service.env_vars),
         )
@@ -255,14 +298,11 @@ class _ServiceUseAdapter:
         del arguments
         _safe_unlink(runtime.session_path)
         if runtime.service.transport == "http":
-            _ensure_http_connection(
-                runtime,
-                connection_version=self.connection_version,
-                write_connection_file=self.write_connection_file,
-            )
             return {
-                "status": "ready",
-                "connection_file": str(runtime.connection_path),
+                "status": "not_required",
+                "message": "HTTP services do not need bridge_start; use auth_start or init directly.",
+                "service": runtime.service.name,
+                "transport": runtime.service.transport,
             }
         return _with_service_env(
             runtime,
@@ -309,6 +349,12 @@ class _ServiceUseAdapter:
     ) -> dict[str, Any]:
         del arguments
         _safe_unlink(runtime.session_path)
+        if runtime.service.transport == "http":
+            _ensure_http_connection(
+                runtime,
+                connection_version=self.connection_version,
+                write_connection_file=self.write_connection_file,
+            )
         return _with_service_env(
             runtime,
             lambda: _wrap_mcat_errors(
@@ -354,6 +400,12 @@ class _ServiceUseAdapter:
         del arguments
         _safe_unlink(runtime.session_path)
         runtime.session_path.parent.mkdir(parents=True, exist_ok=True)
+        if runtime.service.transport == "http":
+            _ensure_http_connection(
+                runtime,
+                connection_version=self.connection_version,
+                write_connection_file=self.write_connection_file,
+            )
         return _with_service_env(
             runtime,
             lambda: _wrap_mcat_errors(

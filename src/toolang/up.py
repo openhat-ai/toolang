@@ -10,6 +10,7 @@ from importlib.metadata import entry_points
 import logging
 import os
 from pathlib import Path
+import shlex
 import socket
 import sys
 import time
@@ -42,6 +43,7 @@ from .execution.db import ExecutionStore, execution_db_path
 from .loops import chat, control, hook, inspect, poll, prepare, pulse, reload
 from .state.durable import scan_durable_state
 from .state.live import LiveState, load_live_state
+from .state.prepared import PreparedEntry
 
 LoopName = Literal[
     "chat", "pulse", "poll", "hook", "control", "inspect", "prepare", "reload"
@@ -779,11 +781,6 @@ def _load_runtime_context(
     port: int = 0,
     cors_allowed_origins: Sequence[str] = (),
 ) -> UptimeContext:
-    tool_plugin_config = load_tool_plugin_config(
-        toolang_root,
-        agent_name,
-        environ=environ,
-    )
     channel_bindings = load_channel_bindings(
         toolang_root,
         agent_name,
@@ -815,7 +812,12 @@ def _load_runtime_context(
         root=toolang_root,
         name=agent_name,
         live=live,
-        tools=load_tool_plugins(config=tool_plugin_config),
+        tools=load_runtime_tool_plugins(
+            toolang_root=toolang_root,
+            agent_name=agent_name,
+            live=live,
+            environ=environ,
+        ),
         model_providers=load_model_providers(),
         model_routes=load_model_routes(toolang_root, agent_name),
         default_models=load_default_models(toolang_root, agent_name),
@@ -829,6 +831,91 @@ def _load_runtime_context(
         store=ExecutionStore(execution_db_path(toolang_root, agent_name)),
         config=config,
     )
+
+
+def load_runtime_tool_plugins(
+    *,
+    toolang_root: Path,
+    agent_name: str,
+    live: LiveState,
+    environ: Mapping[str, str],
+) -> dict[str, Tool]:
+    """Load tool plugins with runtime service caps exposed to service_use."""
+
+    return load_tool_plugins(
+        config=runtime_tool_plugin_config(
+            toolang_root=toolang_root,
+            agent_name=agent_name,
+            live=live,
+            environ=environ,
+        )
+    )
+
+
+def runtime_tool_plugin_config(
+    *,
+    toolang_root: Path,
+    agent_name: str,
+    live: LiveState,
+    environ: Mapping[str, str],
+) -> dict[str, dict[str, object]]:
+    """Return tool plugin config merged with effective service cap visibility."""
+
+    config = load_tool_plugin_config(
+        toolang_root,
+        agent_name,
+        environ=environ,
+    )
+    visible_services = [
+        service
+        for entry in live.cap_entries
+        if entry.kind == "service"
+        if (service := _visible_service_config_from_cap(entry)) is not None
+    ]
+    if visible_services:
+        service_use = dict(config.get("service_use", {}))
+        service_use["visible_services"] = visible_services
+        config["service_use"] = service_use
+    return config
+
+
+def _visible_service_config_from_cap(entry: PreparedEntry) -> dict[str, object] | None:
+    transport = _optional_config_text(entry.meta.get("transport"))
+    target = _optional_config_text(entry.meta.get("target"))
+    if transport not in {"http", "stdio"} or target is None:
+        return None
+    service: dict[str, object] = {
+        "name": entry.name,
+        "description": _optional_config_text(entry.meta.get("description")),
+        "transport": transport,
+        "target": target,
+    }
+    if transport == "stdio":
+        try:
+            command = shlex.split(target)
+        except ValueError:
+            command = []
+        if command:
+            service["command"] = command
+    env_vars = _service_env_names(entry.meta.get("env"))
+    if env_vars:
+        service["env_vars"] = env_vars
+    return {key: value for key, value in service.items() if value is not None}
+
+
+def _service_env_names(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return []
+
+
+def _optional_config_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
 
 
 def _runtime_endpoint_value(

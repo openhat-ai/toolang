@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 import json
 from typing import TYPE_CHECKING, Any, cast
@@ -9,7 +10,13 @@ from typing import TYPE_CHECKING, Any, cast
 import frontmatter
 
 from toolang.base.protocols.tool import Tool
-from toolang.base.types.message import Message, message_summary, message_text
+from toolang.base.types.message import (
+    Message,
+    ToolCallPart,
+    ToolResultPart,
+    message_summary,
+    message_text,
+)
 from toolang.base.types.model import ModelTarget
 from .. import agents, caps as cap_store, work
 from ..ids import LOCAL_ID_FAMILY, RUN_ID_FAMILY, allocate_id
@@ -37,6 +44,10 @@ if TYPE_CHECKING:
     from .runner import RunRequest
 
 _THREAD_THUNK_NAMES = frozenset({"chat", "task", "chore"})
+_TEXT_HISTORY_MESSAGE_LIMIT = 32
+_TOOL_CONTEXT_RUN_LIMIT = 50
+_TOOL_CONTEXT_FACT_LIMIT = 50
+_TOOL_CONTEXT_CHAR_LIMIT = 8000
 _DEFAULT_THREAD_SYSTEM_TEMPLATE = """
 You are the {{runtime.agent.name}} Toolang agent.
 
@@ -96,6 +107,11 @@ Tools:
 - none
 
 {{/runtime.tools}}
+
+Tool Result Reuse:
+- Before calling a tool, check the visible prior messages and Prior Tool Results in this thread for successful tool results that already answer the request or provide reusable IDs, schemas, configuration, or other stable inputs.
+- Reuse applicable prior tool results instead of repeating the same tool call.
+- Call a tool again when the needed result is missing, failed, stale, expired, invalid for the current request, or the user explicitly asks to refresh it.
 """.strip()
 _DEFAULT_THREAD_SYSTEM_TAILS = {
     "chat": """
@@ -160,6 +176,12 @@ class RunBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class _ToolHistoryFact:
+    key: str
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class RunInput:
     """One assembled semantic input for one run."""
 
@@ -177,6 +199,7 @@ class RunInput:
     psyches_base: tuple[PreparedEntry, ...] = field(default_factory=tuple)
     skills_base: tuple[PreparedEntry, ...] = field(default_factory=tuple)
     services_base: tuple[PreparedEntry, ...] = field(default_factory=tuple)
+    tool_history_context: str = ""
     debug: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -191,8 +214,12 @@ class RunInput:
         )
         input_text = program.expand_input(run.input_text) if run.input_text else ""
         history = tuple(
-            context.store.recent_conversation_messages(thread_id=run.thread_id, limit=19)
+            context.store.recent_text_conversation_messages(
+                thread_id=run.thread_id,
+                limit=_TEXT_HISTORY_MESSAGE_LIMIT,
+            )
         )
+        tool_history_context = _tool_history_context(context, thread_id=run.thread_id)
         models_base = _activation_allowed_model_selectors(context)
         tools_base = _run_tools_base(context, run)
         psyches_base = _cap_entries(run.live, kind="psyche")
@@ -253,6 +280,7 @@ class RunInput:
             psyches_base=psyches_base,
             skills_base=skills_base,
             services_base=services_base,
+            tool_history_context=tool_history_context,
             snapshot=_runtime_snapshot(
                 context,
                 run,
@@ -279,6 +307,7 @@ class RunInput:
                 "psyche_names": [entry.name for entry in effective_psyches],
                 "skill_names": [entry.name for entry in effective_skills],
                 "service_names": [entry.name for entry in effective_services],
+                "tool_history_context": tool_history_context,
                 "instructions": _message_blocks_body(
                     tuple(item for item in rendered_messages if item.kind == "system")
                 ),
@@ -347,9 +376,349 @@ class RunInput:
     def instructions(self) -> str:
         """Return the assembled instruction text for this run."""
 
-        return _message_blocks_body(
+        instructions = _message_blocks_body(
             tuple(item for item in self.rendered_messages() if item.kind == "system")
         )
+        if not self.tool_history_context:
+            return instructions
+        if instructions:
+            return f"{instructions}\n\n{self.tool_history_context}"
+        return self.tool_history_context
+
+
+def _tool_history_context(context: UptimeContext, *, thread_id: str) -> str:
+    runs = sorted(
+        context.store.list_runs(thread_id=thread_id, limit=_TOOL_CONTEXT_RUN_LIMIT),
+        key=lambda item: item.created_at,
+    )
+    if not runs:
+        return ""
+    steps_by_run = context.store.list_steps_for_runs(run_ids=tuple(run.run_id for run in runs))
+    calls_by_id: dict[str, ToolCallPart] = {}
+    facts_by_key: dict[str, _ToolHistoryFact] = {}
+    for run in runs:
+        for step in steps_by_run.get(run.run_id, ()):
+            for part in step.output:
+                if isinstance(part, ToolCallPart):
+                    calls_by_id[part.tool_call_id] = part
+                    continue
+                if not isinstance(part, ToolResultPart):
+                    continue
+                fact = _tool_history_fact(part, calls_by_id.get(part.tool_call_id))
+                if fact is None:
+                    continue
+                if fact.key in facts_by_key:
+                    del facts_by_key[fact.key]
+                facts_by_key[fact.key] = fact
+    facts = list(facts_by_key.values())[-_TOOL_CONTEXT_FACT_LIMIT:]
+    if not facts:
+        return ""
+    lines = [
+        "Prior Tool Results:",
+        "Use these reusable facts from visible prior runs in this thread before deciding whether to call a tool again.",
+    ]
+    total = sum(len(line) + 1 for line in lines)
+    for fact in facts:
+        line = f"- {fact.text}"
+        remaining = _TOOL_CONTEXT_CHAR_LIMIT - total
+        if remaining <= 0:
+            break
+        if len(line) > remaining:
+            line = _limit_text(line, remaining)
+        lines.append(line)
+        total += len(line) + 1
+    return "\n".join(lines)
+
+
+def _tool_history_fact(
+    result: ToolResultPart,
+    call: ToolCallPart | None,
+) -> _ToolHistoryFact | None:
+    call_input = dict(call.input) if call is not None else {}
+    if result.tool_name == "service_use_init":
+        return _service_use_init_fact(result, call_input)
+    if result.tool_name == "service_use_tool_list":
+        return _service_use_tool_list_fact(result, call_input)
+    if result.tool_name == "service_use_tool_call":
+        return _service_use_tool_call_fact(result, call_input)
+    return _generic_tool_fact(result, call_input)
+
+
+def _service_use_init_fact(
+    result: ToolResultPart,
+    call_input: Mapping[str, object],
+) -> _ToolHistoryFact:
+    service = _service_name(result.output, call_input)
+    status = _tool_result_status(result.output)
+    if status == "failed":
+        text = f"service_use_init service={service or '<unknown>'} failed: {_error_summary(result.output)}."
+        return _ToolHistoryFact(key=f"service_use_init:{service}:failed", text=text)
+    text = f"service_use_init service={service or '<unknown>'} succeeded; session is available."
+    return _ToolHistoryFact(key=f"service_use_init:{service}:success", text=text)
+
+
+def _service_use_tool_list_fact(
+    result: ToolResultPart,
+    call_input: Mapping[str, object],
+) -> _ToolHistoryFact:
+    service = _service_name(result.output, call_input)
+    status = _tool_result_status(result.output)
+    if status == "failed":
+        text = f"service_use_tool_list service={service or '<unknown>'} failed: {_error_summary(result.output)}."
+        return _ToolHistoryFact(key=f"service_use_tool_list:{service}:failed", text=text)
+    tools = _service_tool_summaries(result.output)
+    if tools:
+        text = (
+            f"service_use_tool_list service={service or '<unknown>'} succeeded; "
+            f"reuse these schemas unless stale: {_join_with_limit(tools, 5000)}."
+        )
+    else:
+        text = f"service_use_tool_list service={service or '<unknown>'} succeeded."
+    return _ToolHistoryFact(key=f"service_use_tool_list:{service}:success", text=text)
+
+
+def _service_use_tool_call_fact(
+    result: ToolResultPart,
+    call_input: Mapping[str, object],
+) -> _ToolHistoryFact:
+    service = _optional_text(call_input.get("service"))
+    service_tool = _optional_text(call_input.get("tool_name"))
+    service_input = _as_mapping(call_input.get("input")) or {}
+    key_base = f"service_use_tool_call:{service}:{service_tool}:{_short_json(service_input, limit=240)}"
+    label = f"service_use_tool_call {service or '<unknown>'}.{service_tool or '<unknown>'}"
+    status = _tool_result_status(result.output)
+    if status == "failed":
+        text = (
+            f"{label} with input={_short_json(service_input, limit=320)} failed: "
+            f"{_error_summary(result.output)}. Do not repeat this shape unless corrected."
+        )
+        return _ToolHistoryFact(key=f"{key_base}:failed", text=text)
+    if service_tool == "list_teams":
+        teams = _linear_team_summaries(result.output)
+        if teams:
+            text = f"{label} succeeded; known teams: {_join_with_limit(teams, 1200)}."
+            return _ToolHistoryFact(key=f"service_use_tool_call:{service}:list_teams:success", text=text)
+    if service_tool == "save_issue":
+        issue = _linear_issue_summary(result.output)
+        if issue:
+            text = f"{label} succeeded; created issue {issue}."
+            return _ToolHistoryFact(key=f"{key_base}:success", text=text)
+    text = (
+        f"{label} with input={_short_json(service_input, limit=320)} succeeded; "
+        f"output summary: {_output_summary(result.output, limit=700)}."
+    )
+    return _ToolHistoryFact(key=f"{key_base}:success", text=text)
+
+
+def _generic_tool_fact(
+    result: ToolResultPart,
+    call_input: Mapping[str, object],
+) -> _ToolHistoryFact | None:
+    status = _tool_result_status(result.output)
+    input_summary = _short_json(call_input, limit=320)
+    if status == "failed":
+        text = (
+            f"{result.tool_name} input={input_summary} failed: {_error_summary(result.output)}. "
+            "Do not repeat this shape unless corrected."
+        )
+        return _ToolHistoryFact(key=f"{result.tool_name}:{input_summary}:failed", text=text)
+    summary = _output_summary(result.output, limit=700)
+    if not summary:
+        return None
+    text = f"{result.tool_name} input={input_summary} succeeded; output summary: {summary}."
+    return _ToolHistoryFact(key=f"{result.tool_name}:{input_summary}:success", text=text)
+
+
+def _service_name(
+    output: Mapping[str, object],
+    call_input: Mapping[str, object],
+) -> str | None:
+    service = _optional_text(call_input.get("service"))
+    if service is not None:
+        return service
+    result = _as_mapping(output.get("result"))
+    if result is None:
+        return None
+    return _optional_text(result.get("service"))
+
+
+def _service_tool_summaries(output: Mapping[str, object]) -> list[str]:
+    result = _as_mapping(output.get("result"))
+    service_result = _as_mapping(result.get("result")) if result is not None else None
+    tools = service_result.get("tools") if service_result is not None else None
+    if not isinstance(tools, list):
+        return []
+    summaries: list[str] = []
+    for item in tools:
+        tool = _as_mapping(item)
+        if tool is None:
+            continue
+        name = _optional_text(tool.get("name"))
+        if name is None:
+            continue
+        schema = _as_mapping(tool.get("inputSchema"))
+        required = _string_list(schema.get("required")) if schema is not None else []
+        properties = _as_mapping(schema.get("properties")) if schema is not None else None
+        property_names = list(properties) if properties is not None else []
+        optional = [name for name in property_names if name not in required]
+        summaries.append(
+            f"{name}(required: {_comma_or_none(required)}; optional: {_comma_or_none(optional[:8])})"
+        )
+    return summaries
+
+
+def _linear_team_summaries(output: Mapping[str, object]) -> list[str]:
+    content = _as_mapping(_service_content_json(output))
+    if content is None:
+        return []
+    teams = content.get("teams")
+    if not isinstance(teams, list):
+        return []
+    results: list[str] = []
+    for item in teams:
+        team = _as_mapping(item)
+        if team is None:
+            continue
+        name = _optional_text(team.get("name"))
+        team_id = _optional_text(team.get("id"))
+        if name is None:
+            continue
+        results.append(f"{name} ({team_id})" if team_id else name)
+    return results
+
+
+def _linear_issue_summary(output: Mapping[str, object]) -> str | None:
+    content = _as_mapping(_service_content_json(output))
+    if content is None:
+        return None
+    issue_id = _optional_text(content.get("id"))
+    title = _optional_text(content.get("title"))
+    url = _optional_text(content.get("url"))
+    team = _as_mapping(content.get("team"))
+    team_name = _optional_text(team.get("name")) if team is not None else None
+    state = _as_mapping(content.get("status")) or _as_mapping(content.get("state"))
+    state_name = _optional_text(state.get("name")) if state is not None else None
+    parts = [item for item in (issue_id, title, f"team={team_name}" if team_name else None, state_name, url) if item]
+    return " | ".join(parts) if parts else None
+
+
+def _service_content_json(output: Mapping[str, object]) -> object | None:
+    text = _service_content_text(output)
+    if text is None:
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
+def _service_content_text(output: Mapping[str, object]) -> str | None:
+    result = _as_mapping(output.get("result"))
+    service_result = _as_mapping(result.get("result")) if result is not None else None
+    content = service_result.get("content") if service_result is not None else None
+    if not isinstance(content, list):
+        return None
+    for item in content:
+        entry = _as_mapping(item)
+        if entry is None:
+            continue
+        text = _optional_text(entry.get("text"))
+        if text is not None:
+            return text
+    return None
+
+
+def _tool_result_status(output: Mapping[str, object]) -> str:
+    if output.get("ok") is False:
+        return "failed"
+    if _contains_error_flag(output):
+        return "failed"
+    text = _service_content_text(output)
+    if text is not None and text.strip().lower().startswith("error:"):
+        return "failed"
+    return "succeeded"
+
+
+def _contains_error_flag(value: object) -> bool:
+    mapping = _as_mapping(value)
+    if mapping is not None:
+        if mapping.get("isError") is True or mapping.get("is_error") is True:
+            return True
+        return any(_contains_error_flag(item) for item in mapping.values())
+    if isinstance(value, list):
+        return any(_contains_error_flag(item) for item in value)
+    return False
+
+
+def _error_summary(output: Mapping[str, object]) -> str:
+    error = output.get("error")
+    if error is not None:
+        return _limit_text(str(error), 500)
+    text = _service_content_text(output)
+    if text is not None:
+        return _limit_text(" ".join(text.split()), 500)
+    return _output_summary(output, limit=500) or "unknown error"
+
+
+def _output_summary(output: Mapping[str, object], *, limit: int) -> str:
+    content_text = _service_content_text(output)
+    if content_text is not None:
+        return _limit_text(" ".join(content_text.split()), limit)
+    return _short_json(output, limit=limit)
+
+
+def _as_mapping(value: object) -> Mapping[str, object] | None:
+    return cast(Mapping[str, object], value) if isinstance(value, Mapping) else None
+
+
+def _optional_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item).strip()]
+
+
+def _comma_or_none(values: list[str]) -> str:
+    return ", ".join(values) if values else "none"
+
+
+def _short_json(value: object, *, limit: int) -> str:
+    try:
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except TypeError:
+        text = str(value)
+    return _limit_text(text, limit)
+
+
+def _join_with_limit(values: list[str], limit: int) -> str:
+    items: list[str] = []
+    total = 0
+    for value in values:
+        addition = len(value) + (2 if items else 0)
+        if total + addition > limit:
+            remaining = len(values) - len(items)
+            if remaining > 0:
+                items.append(f"... {remaining} more")
+            break
+        items.append(value)
+        total += addition
+    return ", ".join(items)
+
+
+def _limit_text(text: str, limit: int) -> str:
+    if limit <= 0:
+        return ""
+    if len(text) <= limit:
+        return text
+    if limit <= 3:
+        return "." * limit
+    return f"{text[: limit - 3]}..."
 
 
 def bind_run_request(

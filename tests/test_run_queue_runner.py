@@ -93,7 +93,6 @@ from toolang.up import (
     load_default_models,
     load_model_providers,
     load_model_routes,
-    load_tool_plugins,
     up as run_experiments_up,
 )
 
@@ -2038,6 +2037,81 @@ def test_prepare_reload_refreshes_prepared_and_live(tmp_path: Path) -> None:
     asyncio.run(run_test())
 
 
+def test_prepare_reload_refreshes_service_use_visible_services(tmp_path: Path) -> None:
+    async def run_test() -> None:
+        toolang_root = tmp_path / "toolang"
+        _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+        context = _build_context(
+            toolang_root=toolang_root,
+            agent_name="alice",
+            enabled_loops=("prepare", "reload"),
+        )
+
+        initial_fingerprint = context.live.fingerprint
+        service_schema = context.tools["service_use_bridge_start"].definition().parameters[
+            "properties"
+        ]["service"]
+        assert "enum" not in service_schema
+
+        async with _running_context(
+            context,
+            enabled_loops=("prepare", "reload"),
+            loop_intervals_ms={"prepare": 10.0},
+        ):
+            _write_text(
+                toolang_root / "agents" / "alice" / "services" / "linear.md",
+                "---\n"
+                "description: Linear MCP\n"
+                "transport: http\n"
+                "target: https://mcp.linear.app/mcp\n"
+                "---\n",
+            )
+            refreshed = await _wait_for_fingerprint_change(context, initial_fingerprint)
+            assert refreshed
+
+            service_schema = context.tools["service_use_bridge_start"].definition().parameters[
+                "properties"
+            ]["service"]
+            assert service_schema["enum"] == ["linear"]
+
+    asyncio.run(run_test())
+
+
+def test_runtime_tool_plugin_config_maps_service_caps_to_service_use(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(
+        toolang_root / "agents" / "alice" / "services" / "linear.md",
+        "---\n"
+        "description: Linear MCP\n"
+        "transport: stdio\n"
+        "target: uvx mcp-remote https://mcp.linear.app/sse\n"
+        "env: LINEAR_API_KEY, API_KEY\n"
+        "---\n",
+    )
+    durable = scan_durable_state(toolang_root, "alice")
+    prepared = prepare.build_prepared_state(durable)
+    live = load_live_state(prepared, enabled_loops=("reload",))
+
+    config = up_module.runtime_tool_plugin_config(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        live=live,
+        environ={},
+    )
+
+    assert config["service_use"]["visible_services"] == [
+        {
+            "name": "linear",
+            "description": "Linear MCP",
+            "transport": "stdio",
+            "target": "uvx mcp-remote https://mcp.linear.app/sse",
+            "command": ["uvx", "mcp-remote", "https://mcp.linear.app/sse"],
+            "env_vars": ["LINEAR_API_KEY", "API_KEY"],
+        }
+    ]
+
+
 def test_durable_caps_collapse_skill_directories(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "skills" / "reviewer" / "SKILL.md", "# Reviewer\n")
@@ -2871,6 +2945,9 @@ def test_chat_run_uses_default_template_when_chat_thunk_is_missing(tmp_path: Pat
     assert f"- Agent home: {toolang_root / 'agents' / 'alice'}" in instructions
     assert "- Sandbox: none" in instructions
     assert "Do not call tools or inspect files just to explore the environment." in instructions
+    assert "Tool Result Reuse:" in instructions
+    assert "Reuse applicable prior tool results instead of repeating the same tool call." in instructions
+    assert "missing, failed, stale, expired, invalid for the current request" in instructions
 
 
 def test_execute_run_rejects_thunk_model_outside_activation_allowlist(tmp_path: Path) -> None:
@@ -3112,8 +3189,178 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
             },
             {"role": "assistant", "parts": [{"type": "text", "text": "15"}]},
         ]
+        assert [item.to_data() for item in store.recent_text_conversation_messages(thread_id="thread-1")] == [
+            {"role": "user", "parts": [{"type": "text", "text": "sum 7 and 8"}]},
+            {"role": "assistant", "parts": [{"type": "text", "text": "15"}]},
+        ]
     finally:
         store.close()
+
+
+def test_run_input_uses_text_history_and_prior_tool_context(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("chat",),
+    )
+    previous = context.store.start_run(
+        run_id="run-previous",
+        thread_id="thread-1",
+        origin="chat",
+        input=Message.user("create a Linear issue"),
+    )
+    context.store.append_step(
+        run_id=previous.run_id,
+        step_index=1,
+        kind="model_call",
+        status="finished",
+        input=(RunInputRef(),),
+        output=(
+            ToolCallPart(
+                tool_call_id="tool-list-call",
+                call_id="call-list",
+                tool_name="service_use_tool_list",
+                tool_family="service_use_tool_list",
+                input={"service": "linear"},
+            ),
+        ),
+        payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
+        started_at="2026-01-01T00:00:01Z",
+        finished_at="2026-01-01T00:00:02Z",
+    )
+    context.store.append_step(
+        run_id=previous.run_id,
+        step_index=2,
+        kind="tool_call",
+        status="finished",
+        input=(StepOutputRef(step_index=1, part_index=0),),
+        output=(
+            ToolResultPart(
+                tool_call_id="tool-list-call",
+                call_id="call-list",
+                tool_name="service_use_tool_list",
+                tool_family="service_use_tool_list",
+                output={
+                    "ok": True,
+                    "result": {
+                        "service": "linear",
+                        "transport": "http",
+                        "result": {
+                            "tools": [
+                                {
+                                    "name": "save_issue",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "title": {"type": "string"},
+                                            "team": {"type": "string"},
+                                            "description": {"type": "string"},
+                                        },
+                                        "required": ["title", "team"],
+                                    },
+                                },
+                                {
+                                    "name": "list_teams",
+                                    "inputSchema": {"type": "object", "properties": {}},
+                                },
+                            ]
+                        },
+                    },
+                },
+            ),
+        ),
+        payload=ToolCallStepPayload(),
+        started_at="2026-01-01T00:00:03Z",
+        finished_at="2026-01-01T00:00:04Z",
+    )
+    context.store.append_step(
+        run_id=previous.run_id,
+        step_index=3,
+        kind="model_call",
+        status="finished",
+        input=(StepOutputRef(step_index=2),),
+        output=(
+            ToolCallPart(
+                tool_call_id="empty-save-call",
+                call_id="call-save-empty",
+                tool_name="service_use_tool_call",
+                tool_family="service_use_tool_call",
+                input={"service": "linear", "tool_name": "save_issue"},
+            ),
+        ),
+        payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
+        started_at="2026-01-01T00:00:05Z",
+        finished_at="2026-01-01T00:00:06Z",
+    )
+    context.store.append_step(
+        run_id=previous.run_id,
+        step_index=4,
+        kind="tool_call",
+        status="finished",
+        input=(StepOutputRef(step_index=3, part_index=0),),
+        output=(
+            ToolResultPart(
+                tool_call_id="empty-save-call",
+                call_id="call-save-empty",
+                tool_name="service_use_tool_call",
+                tool_family="service_use_tool_call",
+                output={
+                    "ok": True,
+                    "result": {
+                        "service": "linear",
+                        "transport": "http",
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "Error: title is required when creating an issue",
+                                }
+                            ],
+                            "isError": True,
+                        },
+                    },
+                },
+            ),
+        ),
+        payload=ToolCallStepPayload(),
+        started_at="2026-01-01T00:00:07Z",
+        finished_at="2026-01-01T00:00:08Z",
+    )
+    context.store.append_step(
+        run_id=previous.run_id,
+        step_index=5,
+        kind="model_call",
+        status="finished",
+        input=(StepOutputRef(step_index=4),),
+        output=(TextPart(text="created XBY-31"),),
+        payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
+        started_at="2026-01-01T00:00:09Z",
+        finished_at="2026-01-01T00:00:10Z",
+    )
+    context.store.finish_run(run_id=previous.run_id, finished_at="2026-01-01T00:00:11Z")
+
+    bound = bind_run_request(
+        context,
+        RunRequest(group="chat", origin="chat", thread_id="thread-1", thunk="again"),
+    )
+    bundle = RunInput.from_binding(context, bound)
+    messages = bundle.messages()
+    instructions = bundle.instructions()
+
+    assert [item.role for item in messages] == ["user", "assistant", "user"]
+    assert [item.to_data() for item in messages] == [
+        {"role": "user", "parts": [{"type": "text", "text": "create a Linear issue"}]},
+        {"role": "assistant", "parts": [{"type": "text", "text": "created XBY-31"}]},
+        {"role": "user", "parts": [{"type": "text", "text": "again"}]},
+    ]
+    assert "Prior Tool Results:" in instructions
+    assert "service_use_tool_list service=linear succeeded" in instructions
+    assert "save_issue(required: title, team; optional: description)" in instructions
+    assert "list_teams(required: none; optional: none)" in instructions
+    assert "title is required when creating an issue" in instructions
+    assert "Do not repeat this shape unless corrected" in instructions
 
 
 @asynccontextmanager
@@ -3193,7 +3440,12 @@ def _build_context(
         root=toolang_root,
         name=agent_name,
         live=live,
-        tools=load_tool_plugins(),
+        tools=up_module.load_runtime_tool_plugins(
+            toolang_root=toolang_root,
+            agent_name=agent_name,
+            live=live,
+            environ={},
+        ),
         model_providers=load_model_providers(),
         model_routes=load_model_routes(toolang_root, agent_name),
         default_models=load_default_models(toolang_root, agent_name),
