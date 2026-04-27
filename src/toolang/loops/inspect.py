@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from toolang.base.types.message import message_summary
+from toolang.base.types.message import TextPart, message_summary
 from ..execution.detail import (
     RunDetail,
     ThreadInfo,
@@ -20,7 +20,7 @@ from ..execution.detail import (
     thread_info_from_runs,
 )
 from ..execution.events import MessageData, run_message_data
-from ..execution.records import ModelCallStepPayload
+from ..execution.records import ModelCallStepPayload, RuntimeStepPayload, StepRecord
 from .. import agents, caps, templates, work
 from ..state.durable import scan_durable_state
 from ..state.prepared import PreparedEntry, load_prepared_state
@@ -497,15 +497,18 @@ def _chore_collection(context: UptimeContext, *, archived: bool) -> list[dict[st
 
 def _task_item(context: UptimeContext, entry: work.TaskEntry) -> dict[str, object]:
     document = entry.document
+    runtime = _job_runtime(context, thread_id=document.thread_id())
     return {
         "id": document.task_id(),
         "kind": "task",
         "state": document.state,
-        "stage": document.stage,
+        "stage": "running" if runtime["active_run"] is not None else document.stage,
+        "remote_ref": document.remote_ref(),
+        "remote_status": document.remote_status(),
         "title": document.display_title(fallback_name=entry.name.rsplit("/", 1)[-1]),
         "path": _agent_relative_path(context, entry.path),
         "updated_at": _path_updated_at(entry.path),
-        "runtime": _job_runtime(context, thread_id=document.thread_id()),
+        "runtime": runtime,
     }
 
 
@@ -882,6 +885,8 @@ def _run_item(run: RunRecord, *, steps: Sequence) -> dict[str, object]:
         if last_step_message is not None
         else input_text
     )
+    if run.status == "failed" and run.error and (not summary or summary == input_text):
+        summary = run.error
     return {
         "id": run.run_id,
         "origin": run.origin,
@@ -891,6 +896,7 @@ def _run_item(run: RunRecord, *, steps: Sequence) -> dict[str, object]:
         "status": run.status,
         "type": "run",
         "error": run.error,
+        "failure": _run_failure_data(status=run.status, error=run.error, steps=steps),
         "created_at": run.created_at,
         "started_at": run.started_at,
         "finished_at": run.finished_at,
@@ -900,20 +906,88 @@ def _run_item(run: RunRecord, *, steps: Sequence) -> dict[str, object]:
 
 def _run_detail_data(run_detail: RunDetail) -> dict[str, object]:
     output_steps: list[dict[str, object]] = []
+    step_records = [item.record for item in run_detail.output.steps]
     for item in run_detail.output.steps:
         payload = asdict(item)
         if item.message is not None:
             payload["message"] = item.message.to_data()
         output_steps.append(payload)
+    virtual_failure_step = _virtual_runtime_failure_step(run_detail, steps=step_records)
+    if virtual_failure_step is not None:
+        step_records.append(virtual_failure_step)
+        output_steps.append(
+            {
+                "record": asdict(virtual_failure_step),
+                "message": None,
+                "virtual": True,
+            }
+        )
     return {
         "info": asdict(run_detail.info),
         "input": run_detail.input.to_data() if run_detail.input is not None else None,
         "output": {
             "status": run_detail.output.status,
             "error": run_detail.output.error,
+            "failure": _run_failure_data(
+                status=run_detail.output.status,
+                error=run_detail.output.error,
+                steps=step_records,
+            ),
             "steps": output_steps,
         },
     }
+
+
+def _virtual_runtime_failure_step(
+    run_detail: RunDetail,
+    *,
+    steps: Sequence[StepRecord],
+) -> StepRecord | None:
+    error = run_detail.output.error
+    if run_detail.output.status != "failed" or error is None:
+        return None
+    if any(
+        item.kind == "runtime" and item.status == "failed" and item.error == error
+        for item in steps
+    ):
+        return None
+    step_index = max((item.step_index for item in steps), default=0) + 1
+    timestamp = run_detail.info.finished_at or run_detail.info.updated_at
+    return StepRecord(
+        run_id=run_detail.info.id,
+        step_index=step_index,
+        kind="runtime",
+        status="failed",
+        input=(),
+        output=(TextPart(text=error),),
+        started_at=timestamp,
+        finished_at=timestamp,
+        payload=RuntimeStepPayload(),
+        error=error,
+    )
+
+
+def _run_failure_data(
+    *,
+    status: str,
+    error: str | None,
+    steps: Sequence,
+) -> dict[str, object] | None:
+    if status != "failed" and error is None:
+        return None
+    failed_step = next(
+        (item for item in reversed(steps) if getattr(item, "status", None) == "failed"),
+        None,
+    )
+    step_error = getattr(failed_step, "error", None) if failed_step is not None else None
+    reason = error or step_error or "Run failed."
+    payload: dict[str, object] = {"reason": reason}
+    if failed_step is not None:
+        payload["step_index"] = failed_step.step_index
+        payload["step_kind"] = failed_step.kind
+        if step_error is not None:
+            payload["step_error"] = step_error
+    return payload
 
 
 def _profile_metrics(context: UptimeContext) -> dict[str, object]:

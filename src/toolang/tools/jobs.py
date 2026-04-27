@@ -256,6 +256,8 @@ def _task_payload(entry: work.TaskEntry) -> dict[str, Any]:
         "thread_id": document.thread_id(),
         "path": str(entry.path),
         "title": document.title,
+        "remote_ref": document.remote_ref(),
+        "remote_status": document.remote_status(),
         "state": document.state,
         "stage": document.stage,
         "body": document.body,

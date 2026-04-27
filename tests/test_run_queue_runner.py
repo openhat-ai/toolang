@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager, contextmanager, suppress
+from datetime import datetime, timezone
 import json
 import logging
 import os
@@ -78,7 +79,7 @@ from toolang.execution.snapshot import (
     SnapshotTask,
     SnapshotTaskServices,
 )
-from toolang.execution.runner import QueueRunner, RunRequest, RunSubmission
+from toolang.execution.runner import QueueRunner, RunOutcome, RunRequest, RunSubmission
 from toolang.execution.db import ExecutionStore, execution_db_path
 from toolang.loops import chat as chat_loop, inspect, poll, prepare, pulse, reload
 from toolang.state.durable import scan_durable_state
@@ -112,6 +113,54 @@ def test_runner_queue_is_fifo() -> None:
         assert await runner.dequeue() == first
         assert await runner.dequeue() == second
         assert await runner.dequeue() is None
+
+    asyncio.run(run_test())
+
+
+def test_runner_pending_requests_include_group_waiters(tmp_path: Path) -> None:
+    async def run_test() -> None:
+        toolang_root = tmp_path / "toolang"
+        _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+        context = _build_context(
+            toolang_root=toolang_root,
+            agent_name="alice",
+            enabled_loops=("pulse",),
+            runner=QueueRunner(
+                group_limits={"pulse:task": 1, "pulse:chore": 1},
+                delay_sec=0.0,
+                sleep=asyncio.sleep,
+            ),
+        )
+        active = RunRequest(
+            group="pulse:task",
+            origin="task",
+            thread_id="task_abc123",
+            thunk="work task",
+            delay_sec=0.05,
+        )
+        waiting = RunRequest(
+            group="pulse:task",
+            origin="task",
+            thread_id="task_def456",
+            thunk="sync remote task",
+            delay_sec=0.0,
+        )
+
+        with _patched_runner_execution():
+            drain_task = asyncio.create_task(context.runner.drain(context))
+            context.runner.enqueue(active)
+            context.runner.enqueue(waiting)
+            for _ in range(50):
+                if waiting in context.runner.pending_requests():
+                    break
+                await asyncio.sleep(0.005)
+
+            assert waiting in context.runner.pending_requests()
+            assert len(context.runner) >= 1
+            assert "task:def456" in pulse._pending_keys(context)
+
+            context.runner.close()
+            await drain_task
 
     asyncio.run(run_test())
 
@@ -524,12 +573,117 @@ def test_chat_returns_failed_run_as_assistant_message(tmp_path: Path) -> None:
                 json={"thread": "thread-1", "message": _chat_message("say hello")},
             )
             runs = client.get("/api/v1/runs").json()["items"]
+            run_detail = client.get(f"/api/v1/runs/{runs[0]['id']}").json()
 
     assert response.status_code == 200
     body = response.json()
     assert body["message"]["parts"][0]["text"] == "say hello"
     assert body["assistant"]["parts"][0]["text"] == "model boom"
     assert runs[0]["status"] == "failed"
+    assert runs[0]["summary"] == "model boom"
+    assert runs[0]["failure"] == {
+        "reason": "model boom",
+        "step_index": 1,
+        "step_kind": "runtime",
+        "step_error": "model boom",
+    }
+    assert run_detail["output"]["steps"] == [
+        {
+            "record": {
+                "run_id": runs[0]["id"],
+                "step_index": 1,
+                "kind": "runtime",
+                "status": "failed",
+                "input": [],
+                "output": [{"type": "text", "text": "model boom"}],
+                "started_at": run_detail["info"]["finished_at"],
+                "finished_at": run_detail["info"]["finished_at"],
+                "payload": {},
+                "error": "model boom",
+            },
+            "message": None,
+        }
+    ]
+
+
+def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("inspect",),
+    )
+    context.store.start_run(
+        run_id="run-loop",
+        thread_id="chore_sync",
+        origin="chore",
+        input=Message.user("sync remote tasks"),
+    )
+    context.store.append_step(
+        run_id="run-loop",
+        step_index=1,
+        kind="tool_call",
+        status="finished",
+        input=(RunInputRef(),),
+        output=(
+            ToolResultPart(
+                tool_call_id="call-1",
+                call_id="call-1",
+                tool_name="service_use_tool_call",
+                tool_family="service_use_tool_call",
+                output={"ok": True},
+            ),
+        ),
+        payload=ToolCallStepPayload(),
+        started_at="2026-01-01T00:00:01Z",
+        finished_at="2026-01-01T00:00:02Z",
+    )
+    context.store.finish_run(
+        run_id="run-loop",
+        status="failed",
+        error="Model tool loop exceeded the maximum number of rounds.",
+        finished_at="2026-01-01T00:00:03Z",
+    )
+    app = _create_test_app(context)
+
+    with TestClient(app) as client:
+        run_item = client.get("/api/v1/runs").json()["items"][0]
+        detail = client.get("/api/v1/runs/run-loop").json()
+
+    assert run_item["status"] == "failed"
+    assert run_item["summary"] == "Model tool loop exceeded the maximum number of rounds."
+    assert run_item["failure"] == {
+        "reason": "Model tool loop exceeded the maximum number of rounds."
+    }
+    assert detail["output"]["error"] == "Model tool loop exceeded the maximum number of rounds."
+    assert detail["output"]["failure"] == {
+        "reason": "Model tool loop exceeded the maximum number of rounds.",
+        "step_index": 2,
+        "step_kind": "runtime",
+        "step_error": "Model tool loop exceeded the maximum number of rounds.",
+    }
+    assert detail["output"]["steps"][-1] == {
+        "record": {
+            "run_id": "run-loop",
+            "step_index": 2,
+            "kind": "runtime",
+            "status": "failed",
+            "input": [],
+            "output": [
+                {
+                    "type": "text",
+                    "text": "Model tool loop exceeded the maximum number of rounds.",
+                }
+            ],
+            "started_at": "2026-01-01T00:00:03Z",
+            "finished_at": "2026-01-01T00:00:03Z",
+            "payload": {},
+            "error": "Model tool loop exceeded the maximum number of rounds.",
+        },
+        "message": None,
+        "virtual": True,
+    }
 
 
 def test_chat_projects_tool_parts_from_tool_call_steps(tmp_path: Path) -> None:
@@ -1222,12 +1376,39 @@ def test_background_loops_enqueue_runs(tmp_path: Path) -> None:
                     ],
                 )
                 assert completed
-                assert completed[0]["group"] == "pulse"
+                assert completed[0]["group"] == "pulse:task"
                 assert completed[0]["origin"] == "task"
                 assert completed[0]["input_text"] == "Review the current plan."
                 assert str(completed[0]["thread_id"]).startswith("task_")
 
     asyncio.run(run_test())
+
+
+def test_pulse_collects_due_chores_before_claimable_tasks(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(
+        toolang_root / "agents" / "alice" / "chores" / "sync.md",
+        "---\ntitle: Sync\nschedule: FREQ=MINUTELY;INTERVAL=1\n---\nSync remote tasks.\n",
+    )
+    _write_text(
+        toolang_root / "agents" / "alice" / "tasks" / "review.md",
+        "---\ntitle: Review\n---\nReview synced remote task.\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("pulse",),
+    )
+
+    _state, submissions = pulse.collect_pulse_submissions(
+        context,
+        pulse.PulseState(),
+        now=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        pending_keys=set(),
+    )
+
+    assert [item.kind for item in submissions] == ["chore", "task"]
 
 
 def test_bind_run_request_allocates_normalized_local_ids(tmp_path: Path) -> None:
@@ -2374,6 +2555,8 @@ def test_new_task_reloads_into_live_state_and_tasks_endpoint(tmp_path: Path) -> 
     assert tasks[0]["title"] == "Review"
     assert tasks[0]["state"] == "active"
     assert tasks[0]["stage"] == "todo"
+    assert tasks[0]["remote_ref"] is None
+    assert tasks[0]["remote_status"] is None
     assert tasks[0]["runtime"]["thread_id"] == f"task_{tasks[0]['id']}"
     assert tasks[0]["runtime"]["active_run"] is None
     assert tasks[0]["runtime"]["last_run"] is None
@@ -2485,6 +2668,40 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
         "archived",
         "deleted",
     ]
+
+
+def test_jobs_api_projects_active_run_tasks_as_running(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(
+        toolang_root / "agents" / "alice" / "tasks" / "remote.md",
+        "---\ntitle: XBY-26 - test\n---\n"
+        "Link: https://linear.app/xby/issue/XBY-26/test\n"
+        "Status: Backlog\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("inspect",),
+        runner=QueueRunner(delay_sec=0.0),
+    )
+    task = work.list_tasks(toolang_root, "alice")[0].document
+    context.store.start_run(
+        run_id="run-active-task",
+        thread_id=task.thread_id(),
+        origin="task",
+        input=Message.user(task.body),
+    )
+    app = _create_test_app(context)
+
+    with TestClient(app) as client:
+        item = client.get("/api/v1/tasks").json()["items"][0]
+
+    assert item["id"] == task.task_id()
+    assert item["stage"] == "running"
+    assert item["remote_ref"] == "XBY-26"
+    assert item["remote_status"] == "Backlog"
+    assert item["runtime"]["active_run"]["id"] == "run-active-task"
 
 
 def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
@@ -2624,7 +2841,7 @@ def test_new_task_reloads_and_pulse_runs_it(tmp_path: Path) -> None:
                     break
                 time.sleep(0.01)
     assert completed
-    assert completed[0]["group"] == "pulse"
+    assert completed[0]["group"] == "pulse:task"
     assert completed[0]["origin"] == "task"
     assert completed[0]["input_text"] == "Review the current plan."
     assert str(completed[0]["thread_id"]).startswith("task_")
@@ -2633,6 +2850,14 @@ def test_new_task_reloads_and_pulse_runs_it(tmp_path: Path) -> None:
 def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(
+        toolang_root / "agents" / "alice" / "services" / "linear.md",
+        "---\n"
+        "description: Linear MCP\n"
+        "transport: http\n"
+        "target: https://mcp.linear.app/mcp\n"
+        "---\n",
+    )
     _write_text(
         toolang_root / "agents" / "alice" / "tasks" / "review.md",
         "---\ntitle: Review\n---\nReview the current plan.\n",
@@ -2670,7 +2895,7 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
     assert bundle.snapshot.task_services == SnapshotTaskServices(
         provider="local",
         read=True,
-        write=False,
+        write=True,
         comment=False,
         path=str(toolang_root / "agents" / "alice" / "tasks" / "review.md"),
     )
@@ -2680,7 +2905,264 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
     assert "- State: active" in instructions
     assert "- Stage: todo" in instructions
     assert f"- Path: {toolang_root / 'agents' / 'alice' / 'tasks' / 'review.md'}" in instructions
-    assert "- The task document is read-only during model execution; runtime updates task stage." in instructions
+    assert "- Before finishing, update this task with jobs_task_update." in instructions
+    assert "- Set stage=done only when the task acceptance criteria are actually complete." in instructions
+    assert "- Set stage=failed when the task is blocked, impossible, or incomplete after your attempt." in instructions
+    assert "If this task mirrors a remote work item" in instructions
+    assert "Do not mark the local task done just because you fetched or verified the remote item" in instructions
+    assert "For non-terminal remote statuses such as Backlog, Todo, or In Progress" in instructions
+    assert "keep the local stage runnable (`todo` or `running`), not `done`" in instructions
+    assert "update the remote status when supported" in instructions
+    service_schema = bundle.tools()["service_use_bridge_start"].definition().parameters[
+        "properties"
+    ]["service"]
+    assert service_schema["enum"] == ["linear"]
+
+
+def test_chore_run_includes_remote_task_sync_protocol_in_prompt_bundle(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(
+        toolang_root / "agents" / "alice" / "chores" / "sync.md",
+        "---\ntitle: Sync remote tasks\nschedule: FREQ=MINUTELY;INTERVAL=1\n---\n"
+        "Sync remote issues into local tasks.\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("pulse",),
+    )
+    chore = work.list_chores(toolang_root, "alice")[0].document
+    bound = bind_run_request(
+        context,
+        RunRequest(
+            group="pulse:chore",
+            origin="chore",
+            thread_id=chore.thread_id(),
+            thunk=chore.body,
+        ),
+    )
+
+    instructions = RunInput.from_binding(context, bound).instructions()
+
+    assert "Treat the user's message as the current chore input." in instructions
+    assert "When creating or updating local tasks that mirror remote work items" in instructions
+    assert "include the remote title, description, link, update timestamp, status" in instructions
+    assert "match by remote_ref, remote URL, or remote id" in instructions
+    assert "instead of creating another local task for the same remote item" in instructions
+    assert "keep the local task stage aligned with the remote status" in instructions
+    assert "if the remote item has a non-terminal status but the local task is `done` or `failed`" in instructions
+    assert "update the local task back to `todo`" in instructions
+    assert "even when remote updatedAt did not change" in instructions
+    assert "If an existing mirror task is already `running`" in instructions
+    assert "do not set its stage back to `todo`" in instructions
+
+
+def test_pulse_marks_task_failed_when_finished_run_leaves_task_incomplete(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(
+        toolang_root / "agents" / "alice" / "tasks" / "review.md",
+        "---\ntitle: Review\n---\nReview the current plan.\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("pulse",),
+    )
+    task = work.list_tasks(toolang_root, "alice")[0].document
+    claimed = work.claim_task(toolang_root / "agents" / "alice" / "tasks" / "review.md")
+    run_id = "run-failed-tool"
+    context.store.start_run(
+        run_id=run_id,
+        thread_id=claimed.thread_id(),
+        origin="task",
+        input=Message.user(claimed.body),
+    )
+    context.store.append_step(
+        run_id=run_id,
+        step_index=1,
+        kind="model_call",
+        status="finished",
+        input=(RunInputRef(),),
+        output=(
+            ToolCallPart(
+                tool_call_id="tool-1",
+                call_id="call-1",
+                tool_name="service_use_bridge_start",
+                tool_family="service_use_bridge_start",
+                input={"service": "linear"},
+            ),
+        ),
+        payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
+        started_at="2026-01-01T00:00:01Z",
+        finished_at="2026-01-01T00:00:02Z",
+    )
+    context.store.append_step(
+        run_id=run_id,
+        step_index=2,
+        kind="model_call",
+        status="finished",
+        input=(StepOutputRef(step_index=1),),
+        output=(TextPart(text="blocked"),),
+        payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
+        started_at="2026-01-01T00:00:05Z",
+        finished_at="2026-01-01T00:00:06Z",
+    )
+    context.store.finish_run(run_id=run_id, status="finished", finished_at="2026-01-01T00:00:07Z")
+
+    pulse._record_completed_runs(
+        context,
+        pulse.PulseState(),
+        [
+            RunOutcome(
+                run_id=run_id,
+                group="pulse",
+                origin="task",
+                input_text=claimed.body,
+                thunk_name=None,
+                thread_id=task.thread_id(),
+                delay_sec=0.0,
+                status="finished",
+                output_text="blocked",
+                live_fingerprint=context.live.fingerprint,
+            )
+        ],
+        seen_completed=set(),
+        now=datetime.now(timezone.utc),
+    )
+
+    failed = work.find_task(toolang_root, "alice", task.task_id())
+    assert failed is not None
+    assert failed.document.stage == "failed"
+    assert work.find_archived_task(toolang_root, "alice", task.task_id()) is None
+
+
+def test_pulse_leaves_done_task_active_until_manual_archive(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(
+        toolang_root / "agents" / "alice" / "tasks" / "review.md",
+        "---\ntitle: Review\n---\nReview the current plan.\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("pulse",),
+    )
+    task = work.list_tasks(toolang_root, "alice")[0].document
+    claimed = work.claim_task(toolang_root / "agents" / "alice" / "tasks" / "review.md")
+    entry = work.find_task(toolang_root, "alice", task.task_id())
+    assert entry is not None
+    work.save_task_entry(
+        toolang_root,
+        "alice",
+        entry,
+        entry.document.model_copy(update={"stage": "done"}),
+    )
+    run_id = "run-task-done"
+    context.store.start_run(
+        run_id=run_id,
+        thread_id=claimed.thread_id(),
+        origin="task",
+        input=Message.user(claimed.body),
+    )
+    context.store.append_step(
+        run_id=run_id,
+        step_index=1,
+        kind="model_call",
+        status="finished",
+        input=(RunInputRef(),),
+        output=(TextPart(text="completed"),),
+        payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
+        started_at="2026-01-01T00:00:01Z",
+        finished_at="2026-01-01T00:00:02Z",
+    )
+    context.store.finish_run(run_id=run_id, status="finished", finished_at="2026-01-01T00:00:03Z")
+
+    state = pulse.PulseState()
+    state.tasks[task.task_id()] = pulse.PulseItemState()
+    pulse._record_completed_runs(
+        context,
+        state,
+        [
+            RunOutcome(
+                run_id=run_id,
+                group="pulse",
+                origin="task",
+                input_text=claimed.body,
+                thunk_name=None,
+                thread_id=task.thread_id(),
+                delay_sec=0.0,
+                status="finished",
+                output_text="completed",
+                live_fingerprint=context.live.fingerprint,
+            )
+        ],
+        seen_completed=set(),
+        now=datetime.now(timezone.utc),
+    )
+
+    done = work.find_task(toolang_root, "alice", task.task_id())
+    assert done is not None
+    assert done.document.state == "active"
+    assert done.document.stage == "done"
+    assert work.find_archived_task(toolang_root, "alice", task.task_id()) is None
+    assert state.tasks[task.task_id()].last_status == "finished"
+
+
+def test_pulse_reopens_done_mirror_task_when_remote_status_is_active(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(
+        toolang_root / "agents" / "alice" / "tasks" / "review.md",
+        "---\ntitle: Review\n---\nLink: https://linear.app/xby/issue/XBY-35/example\n"
+        "Updated: 2026-04-27T13:01:59.877Z\n"
+        "Status: Todo\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("pulse",),
+    )
+    task = work.list_tasks(toolang_root, "alice")[0].document
+    claimed = work.claim_task(toolang_root / "agents" / "alice" / "tasks" / "review.md")
+    entry = work.find_task(toolang_root, "alice", task.task_id())
+    assert entry is not None
+    work.save_task_entry(
+        toolang_root,
+        "alice",
+        entry,
+        entry.document.model_copy(update={"stage": "done"}),
+    )
+    state = pulse.PulseState()
+    state.tasks[task.task_id()] = pulse.PulseItemState()
+
+    pulse._record_completed_runs(
+        context,
+        state,
+        [
+            RunOutcome(
+                run_id="run-task-false-done",
+                group="pulse:task",
+                origin="task",
+                input_text=claimed.body,
+                thunk_name=None,
+                thread_id=task.thread_id(),
+                delay_sec=0.0,
+                status="finished",
+                output_text="verified remote issue",
+                live_fingerprint=context.live.fingerprint,
+            )
+        ],
+        seen_completed=set(),
+        now=datetime.now(timezone.utc),
+    )
+
+    reopened = work.find_task(toolang_root, "alice", task.task_id())
+    assert reopened is not None
+    assert reopened.document.stage == "todo"
+    assert state.tasks[task.task_id()].last_status == "failed"
 
 
 def test_assemble_run_input_prefers_thunk_model_over_activation_default(tmp_path: Path) -> None:
