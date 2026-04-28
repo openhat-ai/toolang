@@ -78,7 +78,7 @@ class SseResponseSink:
 
     wants_stream = True
 
-    def __init__(self, *, thread_id: str) -> None:
+    def __init__(self, *, thread_id: str | None) -> None:
         self._thread_id = thread_id
         self._loop = asyncio.get_running_loop()
         self._queue: asyncio.Queue[str | None] = asyncio.Queue()
@@ -100,9 +100,10 @@ class SseResponseSink:
             return
         if isinstance(event, RunStart):
             self._run_id = event.run_id
+            self._thread_id = event.thread_id
             message_metadata = _message_metadata(
                 run_id=event.run_id,
-                thread_id=event.thread_id or self._thread_id,
+                thread_id=self._metadata_thread_id(event.thread_id),
             )
             self._enqueue_payload(
                 {
@@ -204,11 +205,14 @@ class SseResponseSink:
                     "finishReason": "stop",
                     "messageMetadata": _message_metadata(
                         run_id=event.run_id,
-                        thread_id=event.thread_id or self._thread_id,
+                        thread_id=self._metadata_thread_id(event.thread_id),
                     ),
                 }
             )
             self._enqueue_done()
+
+    def _metadata_thread_id(self, event_thread_id: str | None) -> str:
+        return event_thread_id or self._thread_id or ""
 
     def _emit_tool_input_start(self, run_id: str, tool_call_id: str) -> None:
         if tool_call_id in self._started_tool_inputs:
