@@ -3089,14 +3089,24 @@ def test_cli_help_orders_cap_groups() -> None:
     assert "Show agents and their status." in result.stdout
     assert "Show agent info." in result.stdout
     assert "Run an agent in the foreground." in result.stdout
+    assert "Agent Commands" in result.stdout
+    assert "Runtime Commands" in result.stdout
+    assert "Runtime Components" not in result.stdout
+    assert "Agent Capabilities" not in result.stdout
+    assert "Work Commands" not in result.stdout
     psyche_index = result.stdout.index("psyche")
     skill_index = result.stdout.index("skill")
     service_index = result.stdout.index("service")
     prompt_index = result.stdout.index("prompt")
     chore_index = result.stdout.index("chore")
     task_index = result.stdout.index("task")
+    model_index = result.stdout.index("model")
+    plugin_index = result.stdout.index("plugin")
+    assert result.stdout.index("Agent Commands") < psyche_index
     assert psyche_index < skill_index < service_index < prompt_index
+    assert prompt_index < chore_index
     assert chore_index < task_index
+    assert task_index < result.stdout.index("Runtime Commands") < model_index < plugin_index
 
 
 def _write_roaming_program(tmp_path: Path, body_text: str, *, name: str = "demo") -> Path:
