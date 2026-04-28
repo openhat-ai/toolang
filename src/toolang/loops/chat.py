@@ -33,7 +33,7 @@ class ChatMessagePayload(BaseModel):
 class ChatRequest(BaseModel):
     """One formal chat submission."""
 
-    thread: str = Field(min_length=1)
+    thread: str | None = Field(default=None, min_length=1)
     message: ChatMessagePayload
     model: str | None = None
 
@@ -46,7 +46,8 @@ def create_router() -> APIRouter:
     @router.post("/chat", summary="Submit Chat")
     async def submit_chat(request: Request, payload: ChatRequest) -> dict[str, object]:
         context = request.app.state.runtime
-        result, response = await _submit_chat_run(context, payload)
+        thread_id = _chat_thread_id_or_404(context, payload)
+        result, response = await _submit_chat_run(context, payload, thread_id=thread_id)
         run = context.store.get_run(run_id=result.run_id)
         if run is None:
             raise HTTPException(status_code=500, detail=f"run not found after completion: {result.run_id}")
@@ -73,7 +74,7 @@ def create_router() -> APIRouter:
         if user_message is None or assistant_message is None:
             raise HTTPException(status_code=500, detail=f"incomplete chat transcript for run {result.run_id}")
         return {
-            "thread_id": payload.thread,
+            "thread_id": result.thread_id,
             "run_id": result.run_id,
             "message": user_message,
             "assistant": assistant_message,
@@ -101,8 +102,9 @@ def create_router() -> APIRouter:
     @router.post("/chat/stream", summary="Submit Chat Stream")
     async def submit_chat_stream(request: Request, payload: ChatRequest) -> StreamingResponse:
         context = request.app.state.runtime
+        thread_id = _chat_thread_id_or_404(context, payload)
         return StreamingResponse(
-            _stream_chat_run(context, payload),
+            _stream_chat_run(context, payload, thread_id=thread_id),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -118,6 +120,8 @@ def create_router() -> APIRouter:
 async def _submit_chat_run(
     context: UptimeContext,
     payload: ChatRequest,
+    *,
+    thread_id: str | None,
 ) -> tuple[RunOutcome, BufferedResponseSink]:
     response = BufferedResponseSink()
     loop = asyncio.get_running_loop()
@@ -128,7 +132,7 @@ async def _submit_chat_run(
         RunRequest(
             group="chat",
             origin="chat",
-            thread_id=payload.thread,
+            thread_id=thread_id,
             message=user_message,
             model_selector=payload.model,
         ),
@@ -138,14 +142,19 @@ async def _submit_chat_run(
     return await completion, response
 
 
-async def _stream_chat_run(context: UptimeContext, payload: ChatRequest):
-    response = SseResponseSink(thread_id=payload.thread)
+async def _stream_chat_run(
+    context: UptimeContext,
+    payload: ChatRequest,
+    *,
+    thread_id: str | None,
+):
+    response = SseResponseSink(thread_id=thread_id)
     user_message = _chat_user_message(payload)
     context.runner.enqueue(
         RunRequest(
             group="chat",
             origin="chat",
-            thread_id=payload.thread,
+            thread_id=thread_id,
             message=user_message,
             model_selector=payload.model,
         ),
@@ -153,6 +162,17 @@ async def _stream_chat_run(context: UptimeContext, payload: ChatRequest):
     )
     async for chunk in response.stream():
         yield chunk
+
+
+def _chat_thread_id_or_404(context: UptimeContext, payload: ChatRequest) -> str | None:
+    if payload.thread is None:
+        return None
+    runs = context.store.list_runs(thread_id=payload.thread, limit=1)
+    if not runs:
+        raise HTTPException(status_code=404, detail=f"chat thread not found: {payload.thread}")
+    if runs[0].origin != "chat":
+        raise HTTPException(status_code=404, detail=f"chat thread not found: {payload.thread}")
+    return payload.thread
 
 
 def _chat_user_message(payload: ChatRequest) -> Message:

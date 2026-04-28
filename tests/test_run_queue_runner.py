@@ -257,11 +257,12 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
         with TestClient(app) as client:
             response = client.post(
                 "/api/v1/chat",
-                json={"thread": "thread-1", "message": _chat_message("say hello")},
+                json={"message": _chat_message("say hello")},
             )
             assert response.status_code == 200
             body = response.json()
-            assert body["thread_id"] == "thread-1"
+            thread_id = body["thread_id"]
+            assert thread_id.startswith("chat_")
             assert body["message"]["parts"][0]["text"] == "say hello"
             assert body["assistant"]["parts"][0]["text"] == "assistant:say hello"
             assert client.put(
@@ -293,9 +294,9 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
             }
             assert caps_response["agent"] == "alice"
             assert [item["input_text"] for item in runs] == ["say hello"]
-            assert [item["id"] for item in threads] == ["thread-1"]
+            assert [item["id"] for item in threads] == [thread_id]
             assert threads[0] == {
-                "id": "thread-1",
+                "id": thread_id,
                 "title": "say hello",
                 "origin": "chat",
                 "updated_at": runs[0]["updated_at"],
@@ -310,7 +311,7 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
                     "updated_at": runs[0]["updated_at"],
                 },
             }
-            thread_detail = client.get("/api/v1/threads/thread-1").json()
+            thread_detail = client.get(f"/api/v1/threads/{thread_id}").json()
             run_detail = client.get(f"/api/v1/runs/{body['run_id']}").json()
             assert thread_detail["info"] == threads[0]
             assert [item["info"]["id"] for item in thread_detail["runs"]] == [body["run_id"]]
@@ -395,6 +396,42 @@ def test_threads_api_reports_full_run_count_independent_of_recent_run_limit(tmp_
         "updated_at": "2026-01-01T00:01:01Z",
     }
     assert thread["updated_at"] == "2026-01-01T00:01:01Z"
+
+
+def test_chat_api_allocates_new_threads_and_rejects_unknown_thread_ids(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("chat", "inspect"),
+    )
+    app = _create_test_app(context)
+
+    with _patched_runner_execution():
+        with TestClient(app) as client:
+            rejected = client.post(
+                "/api/v1/chat",
+                json={"thread": "web-client-created", "message": _chat_message("hello")},
+            )
+            first = client.post(
+                "/api/v1/chat",
+                json={"message": _chat_message("hello")},
+            )
+            thread_id = first.json()["thread_id"]
+            second = client.post(
+                "/api/v1/chat",
+                json={"thread": thread_id, "message": _chat_message("again")},
+            )
+            thread = client.get(f"/api/v1/threads/{thread_id}").json()["info"]
+
+    assert rejected.status_code == 404
+    assert rejected.json()["detail"] == "chat thread not found: web-client-created"
+    assert first.status_code == 200
+    assert thread_id.startswith("chat_")
+    assert second.status_code == 200
+    assert second.json()["thread_id"] == thread_id
+    assert thread["run_count"] == 2
 
 
 def test_chat_models_lists_effective_selectors_for_chat_thunk(tmp_path: Path) -> None:
@@ -637,7 +674,7 @@ def test_chat_returns_failed_run_as_assistant_message(tmp_path: Path) -> None:
         with TestClient(app) as client:
             response = client.post(
                 "/api/v1/chat",
-                json={"thread": "thread-1", "message": _chat_message("say hello")},
+                json={"message": _chat_message("say hello")},
             )
             runs = client.get("/api/v1/runs").json()["items"]
             run_detail = client.get(f"/api/v1/runs/{runs[0]['id']}").json()
@@ -767,7 +804,7 @@ def test_chat_projects_tool_parts_from_tool_call_steps(tmp_path: Path) -> None:
         with TestClient(app) as client:
             response = client.post(
                 "/api/v1/chat",
-                json={"thread": "thread-1", "message": _chat_message("tool me")},
+                json={"message": _chat_message("tool me")},
             )
 
     assert response.status_code == 200
@@ -791,7 +828,7 @@ def test_chat_stream_emits_tool_and_text_chunks(tmp_path: Path) -> None:
             with client.stream(
                 "POST",
                 "/api/v1/chat/stream",
-                json={"thread": "thread-1", "message": _chat_message("tool me")},
+                json={"message": _chat_message("tool me")},
             ) as response:
                 assert response.status_code == 200
                 stream_text = "".join(chunk.decode("utf-8") for chunk in response.iter_raw())
@@ -834,13 +871,13 @@ def test_chat_stream_emits_before_run_completion(tmp_path: Path) -> None:
                     stream = chat_loop._stream_chat_run(
                         context,
                         chat_loop.ChatRequest(
-                            thread="thread-1",
                             message=chat_loop.ChatMessagePayload(
                                 role="user",
                                 parts=[{"type": "text", "text": "stream me"}],
                                 meta={},
                             ),
                         ),
+                        thread_id=None,
                     )
                     started_at = time.monotonic()
                     stream_text = ""
@@ -878,7 +915,7 @@ def test_chat_stream_allows_tool_only_turns(tmp_path: Path) -> None:
             with client.stream(
                 "POST",
                 "/api/v1/chat/stream",
-                json={"thread": "thread-1", "message": _chat_message("tool only")},
+                json={"message": _chat_message("tool only")},
             ) as response:
                 assert response.status_code == 200
                 stream_text = "".join(chunk.decode("utf-8") for chunk in response.iter_raw())
@@ -3621,7 +3658,6 @@ def test_chat_accepts_structured_message_parts_and_model_selector(tmp_path: Path
             response = client.post(
                 "/api/v1/chat",
                 json={
-                    "thread": "thread-1",
                     "model": "openai/gpt-5@openai",
                     "message": {
                         "role": "user",
