@@ -29,7 +29,7 @@ CapKind = Literal["skill", "psyche", "prompt", "service"]
 CapVisibilityFilter = Literal["private", "shared"]
 
 
-def register_cap_commands(app: typer.Typer) -> None:
+def register_cap_commands(app: typer.Typer, *, rich_help_panel: str | None = None) -> None:
     cap_titles: dict[CapKind, str] = {
         "psyche": "Psyche",
         "skill": "Skill",
@@ -119,7 +119,12 @@ def register_cap_commands(app: typer.Typer) -> None:
                     else _OptionalPrefixAgentCommand
                 ),
             )(spec.factory(kind, title))
-        app.add_typer(cap_app, name=kind, no_args_is_help=True)
+        app.add_typer(
+            cap_app,
+            name=kind,
+            no_args_is_help=True,
+            rich_help_panel=rich_help_panel,
+        )
 
 
 def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:

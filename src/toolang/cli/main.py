@@ -60,6 +60,8 @@ from .utils import (
 
 WorkKind = Literal["task", "chore"]
 _CLI_PREFIX_AGENT: str | None = None
+AGENT_COMMAND_PANEL = "Agent Commands"
+RUNTIME_COMMAND_PANEL = "Runtime Commands"
 TOP_LEVEL_COMMANDS = frozenset(
     {
         "new",
@@ -136,7 +138,7 @@ def callback(
     }
 
 
-@app.command("new", help="Create an agent.", no_args_is_help=True)
+@app.command("new", help="Create an agent.", no_args_is_help=True, rich_help_panel=AGENT_COMMAND_PANEL)
 def new_agent(
     ctx: typer.Context,
     agent: Annotated[str, typer.Argument(help="Agent name")],
@@ -160,7 +162,7 @@ def new_agent(
     typer.echo(str(program_path))
 
 
-@app.command("clone", help="Clone an agent.", no_args_is_help=True)
+@app.command("clone", help="Clone an agent.", no_args_is_help=True, rich_help_panel=AGENT_COMMAND_PANEL)
 def clone_agent(
     ctx: typer.Context,
     source: Annotated[str, typer.Argument(help="Agent source selector.")],
@@ -177,7 +179,7 @@ def clone_agent(
     typer.echo(str(program_path))
 
 
-@app.command("remove", help="Remove an agent.", no_args_is_help=True)
+@app.command("remove", help="Remove an agent.", no_args_is_help=True, rich_help_panel=AGENT_COMMAND_PANEL)
 def remove_agent(
     ctx: typer.Context,
     agent: Annotated[str, typer.Argument(help="Agent name")],
@@ -186,7 +188,7 @@ def remove_agent(
     typer.echo(f"{agent}\tremoved")
 
 
-@app.command("list", help="Show agents and their status.")
+@app.command("list", help="Show agents and their status.", rich_help_panel=AGENT_COMMAND_PANEL)
 def list_agents(ctx: typer.Context) -> None:
     items = agents.list_agent_statuses(
         _context_root(ctx),
@@ -208,7 +210,13 @@ def list_agents(ctx: typer.Context) -> None:
     _echo_table(("AGENT", "STATUS", "SANDBOX", "API", "WEBUI"), rows)
 
 
-@app.command("info", help="Show agent info.", no_args_is_help=True, cls=_RuntimeAgentCommand)
+@app.command(
+    "info",
+    help="Show agent info.",
+    no_args_is_help=True,
+    cls=_RuntimeAgentCommand,
+    rich_help_panel=AGENT_COMMAND_PANEL,
+)
 def info_agent(
     ctx: typer.Context,
     agent: str | None = typer.Argument(None, help="Agent name", hidden=True),
@@ -272,6 +280,7 @@ def info_agent(
     help="Run an agent in the foreground.",
     no_args_is_help=True,
     cls=_RunAgentCommand,
+    rich_help_panel=AGENT_COMMAND_PANEL,
 )
 def run_agent(
     ctx: typer.Context,
@@ -342,6 +351,7 @@ def run_agent(
     help="Start an agent.",
     no_args_is_help=True,
     cls=_RuntimeAgentCommand,
+    rich_help_panel=AGENT_COMMAND_PANEL,
 )
 def start_agent(
     ctx: typer.Context,
@@ -446,6 +456,7 @@ def start_agent(
     help="Stop an agent.",
     no_args_is_help=True,
     cls=_RuntimeAgentCommand,
+    rich_help_panel=AGENT_COMMAND_PANEL,
 )
 def stop_agent(
     ctx: typer.Context,
@@ -591,7 +602,7 @@ def list_plugins() -> None:
     if not rows:
         typer.echo("No plugins found.")
         return
-    _echo_table(("FAMILY", "NAME", "STATUS", "DETAILS"), rows)
+    _echo_table(("FAMILY", "NAME", "SOURCE", "CONFIG", "DETAILS"), rows)
 
 
 def _model_rows(environ: dict[str, str]) -> list[tuple[str, str, str, str]]:
@@ -634,39 +645,52 @@ def _format_price_per_million(value: float) -> str:
     return f"${value * 1_000_000:g}"
 
 
-def _plugin_rows(environ: dict[str, str]) -> list[tuple[str, str, str, str]]:
-    rows: list[tuple[str, str, str, str]] = []
+def _plugin_rows(environ: dict[str, str]) -> list[tuple[str, str, str, str, str]]:
+    rows: list[tuple[str, str, str, str, str]] = []
+    model_sources = _plugin_source_by_name("toolang.model")
     for name, provider in sorted(agent_up.load_model_providers().items()):
         rows.append(
             (
                 "model",
                 name,
-                _model_provider_status(provider, environ=environ),
+                model_sources.get(name, _model_provider_source(provider)),
+                _model_provider_config(provider, environ=environ),
                 _model_provider_details(provider, environ=environ),
             )
         )
-    rows.extend(
-        ("tool", name, "installed", "Installed plugin entry point.")
-        for name in agent_up.list_plugin_names(group="toolang.tool")
-    )
-    rows.extend(
-        ("channel", name, "installed", "Installed plugin entry point.")
-        for name in agent_up.list_plugin_names(group="toolang.channel")
-    )
-    rows.extend(
-        ("sandbox", name, "installed", "Installed plugin entry point.")
-        for name in agent_up.list_plugin_names(group="toolang.sandbox")
-    )
+    for family, group in (
+        ("tool", "toolang.tool"),
+        ("channel", "toolang.channel"),
+        ("sandbox", "toolang.sandbox"),
+    ):
+        rows.extend(
+            (
+                family,
+                info.name,
+                info.source,
+                "available",
+                "Entry point is discoverable.",
+            )
+            for info in agent_up.list_plugin_infos(group=group)
+        )
     return rows
 
 
-def _model_provider_status(
+def _plugin_source_by_name(group: str) -> dict[str, str]:
+    return {info.name: info.source for info in agent_up.list_plugin_infos(group=group)}
+
+
+def _model_provider_source(provider: ModelProvider) -> str:
+    return "built-in" if provider.__class__.__module__.startswith("toolang.") else "external"
+
+
+def _model_provider_config(
     provider: ModelProvider,
     *,
     environ: dict[str, str],
 ) -> str:
     missing = missing_provider_env_vars(provider, environ=environ)
-    return "missing-env" if missing else "ready"
+    return "missing env" if missing else "configured"
 
 
 def _model_provider_details(
@@ -805,7 +829,7 @@ def register_work_commands() -> None:
                 cls=spec.cls,
                 no_args_is_help=spec.no_args_is_help,
             )(spec.factory(kind, title))
-        app.add_typer(work_app, name=kind, no_args_is_help=True)
+        app.add_typer(work_app, name=kind, no_args_is_help=True, rich_help_panel=AGENT_COMMAND_PANEL)
 
 
 def _make_work_list_command(kind: WorkKind, title: str) -> Callable[..., None]:
@@ -1044,9 +1068,9 @@ def _work_location(toolang_root: Path, agent_name: str, path: Path) -> str:
     except ValueError:
         return str(path)
 
-caps_cli.register_cap_commands(app)
-app.add_typer(model_app, name="model", no_args_is_help=True)
-app.add_typer(plugin_app, name="plugin", no_args_is_help=True)
+caps_cli.register_cap_commands(app, rich_help_panel=AGENT_COMMAND_PANEL)
+app.add_typer(plugin_app, name="plugin", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
+app.add_typer(model_app, name="model", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
 register_work_commands()
 
 

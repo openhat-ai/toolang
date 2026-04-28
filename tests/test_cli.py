@@ -1275,15 +1275,25 @@ def test_cli_plugin_list_shows_installed_plugins(monkeypatch) -> None:
         },
     )
 
-    def fake_list_plugin_names(*, group: str) -> list[str]:
-        names = {
-            "toolang.tool": ["filesystem", "shell"],
-            "toolang.channel": ["telegram"],
-            "toolang.sandbox": ["docker", "none"],
+    def fake_list_plugin_infos(*, group: str) -> list[cli.agent_up.PluginInfo]:
+        infos = {
+            "toolang.model": [
+                cli.agent_up.PluginInfo(name="openai", source="built-in"),
+                cli.agent_up.PluginInfo(name="ollama", source="built-in"),
+            ],
+            "toolang.tool": [
+                cli.agent_up.PluginInfo(name="filesystem", source="built-in"),
+                cli.agent_up.PluginInfo(name="shell", source="external"),
+            ],
+            "toolang.channel": [cli.agent_up.PluginInfo(name="telegram", source="external")],
+            "toolang.sandbox": [
+                cli.agent_up.PluginInfo(name="docker", source="external"),
+                cli.agent_up.PluginInfo(name="none", source="built-in"),
+            ],
         }
-        return list(names[group])
+        return list(infos[group])
 
-    monkeypatch.setattr(cli.agent_up, "list_plugin_names", fake_list_plugin_names)
+    monkeypatch.setattr(cli.agent_up, "list_plugin_infos", fake_list_plugin_infos)
 
     result = runner.invoke(
         cli.app,
@@ -1294,11 +1304,15 @@ def test_cli_plugin_list_shows_installed_plugins(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "FAMILY" in result.stdout
     assert "NAME" in result.stdout
-    assert "STATUS" in result.stdout
+    assert "SOURCE" in result.stdout
+    assert "CONFIG" in result.stdout
     assert "model" in result.stdout
     assert "openai" in result.stdout
     assert "ollama" in result.stdout
-    assert "ready" in result.stdout
+    assert "built-in" in result.stdout
+    assert "external" in result.stdout
+    assert "configured" in result.stdout
+    assert "available" in result.stdout
     assert "base URL https://api.openai.com/v1" in result.stdout
     assert "env OPENAI_API_KEY" in result.stdout
     assert "1 discovered model" in result.stdout
@@ -3089,14 +3103,24 @@ def test_cli_help_orders_cap_groups() -> None:
     assert "Show agents and their status." in result.stdout
     assert "Show agent info." in result.stdout
     assert "Run an agent in the foreground." in result.stdout
+    assert "Agent Commands" in result.stdout
+    assert "Runtime Commands" in result.stdout
+    assert "Runtime Components" not in result.stdout
+    assert "Agent Capabilities" not in result.stdout
+    assert "Work Commands" not in result.stdout
     psyche_index = result.stdout.index("psyche")
     skill_index = result.stdout.index("skill")
     service_index = result.stdout.index("service")
     prompt_index = result.stdout.index("prompt")
     chore_index = result.stdout.index("chore")
     task_index = result.stdout.index("task")
+    plugin_index = result.stdout.index("plugin")
+    model_index = result.stdout.index("model")
+    assert result.stdout.index("Agent Commands") < psyche_index
     assert psyche_index < skill_index < service_index < prompt_index
+    assert prompt_index < chore_index
     assert chore_index < task_index
+    assert task_index < result.stdout.index("Runtime Commands") < plugin_index < model_index
 
 
 def _write_roaming_program(tmp_path: Path, body_text: str, *, name: str = "demo") -> Path:
