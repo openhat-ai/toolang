@@ -129,7 +129,7 @@ Current task:
 {{#path}}
 - Path: {{path}}
 {{/path}}
-- Before finishing, update this task with jobs_task_update.
+- Before finishing, update this task with agent_state_task_update.
 - Set stage=done only when the task acceptance criteria are actually complete.
 - Set stage=failed when the task is blocked, impossible, or incomplete after your attempt.
 - If this task mirrors a remote work item, follow the remote item's description and acceptance criteria. Do not mark the local task done just because you fetched or verified the remote item. For non-terminal remote statuses such as Backlog, Todo, or In Progress, keep the local stage runnable (`todo` or `running`), not `done`. Mark it done only after the remote work is complete or the remote status is terminal. Reply or comment on the remote item with the outcome when appropriate, update the remote status when supported, then set the local task stage to match the remote outcome.

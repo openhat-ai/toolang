@@ -2972,7 +2972,7 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
     assert "- State: active" in instructions
     assert "- Stage: todo" in instructions
     assert f"- Path: {toolang_root / 'agents' / 'alice' / 'tasks' / 'review.md'}" in instructions
-    assert "- Before finishing, update this task with jobs_task_update." in instructions
+    assert "- Before finishing, update this task with agent_state_task_update." in instructions
     assert "- Set stage=done only when the task acceptance criteria are actually complete." in instructions
     assert "- Set stage=failed when the task is blocked, impossible, or incomplete after your attempt." in instructions
     assert "If this task mirrors a remote work item" in instructions

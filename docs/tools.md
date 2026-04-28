@@ -13,7 +13,7 @@ Current built-in tools are:
 - `shell`
 - `web_search`
 - `service_use`
-- `jobs`
+- `agent_state`
 
 
 ## Filesystem
@@ -59,9 +59,10 @@ Service calls return structured input and output and are recorded as normal
 tool-call steps.
 
 
-## Jobs
+## Agent State
 
-`jobs` exposes structured task and chore operations for the current agent.
+`agent_state` exposes structured operations for the current agent's authored
+state.
 
 It provides model-facing tools to:
 
@@ -69,9 +70,15 @@ It provides model-facing tools to:
 - create and update tasks
 - list and read chores
 - create and update chores
+- list, read, create, update, and delete psyches
+- list, read, create, update, and delete skills
+- list, read, create, update, and delete services
+- list, read, create, update, and delete prompts
 
 Task and chore writes reuse the same Markdown document models, id allocation,
 RRULE validation, and archive placement rules as the CLI and jobs API.
+Psyche, skill, service, and prompt writes reuse the same authored cap file
+layout and validation rules as the CLI and cap API.
 
 
 ## Runtime Rule
