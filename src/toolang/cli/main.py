@@ -602,7 +602,7 @@ def list_plugins() -> None:
     if not rows:
         typer.echo("No plugins found.")
         return
-    _echo_table(("FAMILY", "NAME", "STATUS", "DETAILS"), rows)
+    _echo_table(("FAMILY", "NAME", "SOURCE", "CONFIG", "DETAILS"), rows)
 
 
 def _model_rows(environ: dict[str, str]) -> list[tuple[str, str, str, str]]:
@@ -645,39 +645,52 @@ def _format_price_per_million(value: float) -> str:
     return f"${value * 1_000_000:g}"
 
 
-def _plugin_rows(environ: dict[str, str]) -> list[tuple[str, str, str, str]]:
-    rows: list[tuple[str, str, str, str]] = []
+def _plugin_rows(environ: dict[str, str]) -> list[tuple[str, str, str, str, str]]:
+    rows: list[tuple[str, str, str, str, str]] = []
+    model_sources = _plugin_source_by_name("toolang.model")
     for name, provider in sorted(agent_up.load_model_providers().items()):
         rows.append(
             (
                 "model",
                 name,
-                _model_provider_status(provider, environ=environ),
+                model_sources.get(name, _model_provider_source(provider)),
+                _model_provider_config(provider, environ=environ),
                 _model_provider_details(provider, environ=environ),
             )
         )
-    rows.extend(
-        ("tool", name, "installed", "Installed plugin entry point.")
-        for name in agent_up.list_plugin_names(group="toolang.tool")
-    )
-    rows.extend(
-        ("channel", name, "installed", "Installed plugin entry point.")
-        for name in agent_up.list_plugin_names(group="toolang.channel")
-    )
-    rows.extend(
-        ("sandbox", name, "installed", "Installed plugin entry point.")
-        for name in agent_up.list_plugin_names(group="toolang.sandbox")
-    )
+    for family, group in (
+        ("tool", "toolang.tool"),
+        ("channel", "toolang.channel"),
+        ("sandbox", "toolang.sandbox"),
+    ):
+        rows.extend(
+            (
+                family,
+                info.name,
+                info.source,
+                "available",
+                "Entry point is discoverable.",
+            )
+            for info in agent_up.list_plugin_infos(group=group)
+        )
     return rows
 
 
-def _model_provider_status(
+def _plugin_source_by_name(group: str) -> dict[str, str]:
+    return {info.name: info.source for info in agent_up.list_plugin_infos(group=group)}
+
+
+def _model_provider_source(provider: ModelProvider) -> str:
+    return "built-in" if provider.__class__.__module__.startswith("toolang.") else "external"
+
+
+def _model_provider_config(
     provider: ModelProvider,
     *,
     environ: dict[str, str],
 ) -> str:
     missing = missing_provider_env_vars(provider, environ=environ)
-    return "missing-env" if missing else "ready"
+    return "missing env" if missing else "configured"
 
 
 def _model_provider_details(
@@ -1056,8 +1069,8 @@ def _work_location(toolang_root: Path, agent_name: str, path: Path) -> str:
         return str(path)
 
 caps_cli.register_cap_commands(app, rich_help_panel=AGENT_COMMAND_PANEL)
-app.add_typer(model_app, name="model", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
 app.add_typer(plugin_app, name="plugin", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
+app.add_typer(model_app, name="model", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
 register_work_commands()
 
 

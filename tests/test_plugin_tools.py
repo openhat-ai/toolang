@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from toolang.up import list_plugin_names, load_plugin_factory, load_tool_plugins
+from toolang.up import PluginInfo, list_plugin_infos, list_plugin_names, load_plugin_factory, load_tool_plugins
 
 
 class _FakeEntryPoint:
-    def __init__(self, name: str, target) -> None:
+    def __init__(self, name: str, target, *, value: str | None = None) -> None:
         self.name = name
         self._target = target
+        self.value = value
 
     def load(self):
         return self._target
@@ -49,6 +50,29 @@ def test_tool_plugins_load_from_entry_points(monkeypatch) -> None:
         "shell",
         "web_search",
         "working_tree",
+    ]
+
+
+def test_plugin_infos_include_source(monkeypatch) -> None:
+    from toolang.base.examples.tools import create_echo_tool
+    from toolang.tools.filesystem import create_tool as create_filesystem_tool
+
+    entries = [
+        _FakeEntryPoint("echo", create_echo_tool, value="demo.tools:create_tool"),
+        _FakeEntryPoint(
+            "filesystem",
+            create_filesystem_tool,
+            value="toolang.tools.filesystem:create_tool",
+        ),
+    ]
+    monkeypatch.setattr(
+        "toolang.up.entry_points",
+        lambda *, group: entries if group == "toolang.tool" else [],
+    )
+
+    assert list_plugin_infos(group="toolang.tool") == [
+        PluginInfo(name="echo", source="external"),
+        PluginInfo(name="filesystem", source="built-in"),
     ]
 
 

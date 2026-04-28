@@ -94,6 +94,15 @@ OPENAPI_TAGS = [
 ]
 logger = logging.getLogger("toolang.runtime")
 FactoryT = TypeVar("FactoryT")
+PluginSource = Literal["built-in", "external"]
+
+
+@dataclass(frozen=True, slots=True)
+class PluginInfo:
+    """One discoverable plugin entry point."""
+
+    name: str
+    source: PluginSource
 
 
 class UptimeConfig:
@@ -1253,6 +1262,36 @@ def _add_cors(
 
 def list_plugin_names(*, group: str) -> list[str]:
     return sorted(entry_point.name for entry_point in entry_points(group=group))
+
+
+def list_plugin_infos(*, group: str) -> list[PluginInfo]:
+    return sorted(
+        (
+            PluginInfo(
+                name=entry_point.name,
+                source=_entry_point_plugin_source(entry_point),
+            )
+            for entry_point in entry_points(group=group)
+        ),
+        key=lambda item: item.name,
+    )
+
+
+def _entry_point_plugin_source(entry_point: object) -> PluginSource:
+    dist = getattr(entry_point, "dist", None)
+    metadata = getattr(dist, "metadata", None)
+    if metadata is not None:
+        name = metadata.get("Name")
+        if isinstance(name, str) and _normalize_distribution_name(name) == "toolang":
+            return "built-in"
+    value = getattr(entry_point, "value", None)
+    if isinstance(value, str) and value.startswith("toolang."):
+        return "built-in"
+    return "external"
+
+
+def _normalize_distribution_name(name: str) -> str:
+    return name.replace("_", "-").replace(".", "-").lower()
 
 
 def load_plugin_factory(name: str, *, group: str) -> FactoryT:
