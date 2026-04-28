@@ -299,6 +299,16 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
                 "title": "say hello",
                 "origin": "chat",
                 "updated_at": runs[0]["updated_at"],
+                "run_count": 1,
+                "latest_run": {
+                    "id": runs[0]["id"],
+                    "origin": "chat",
+                    "status": "finished",
+                    "created_at": runs[0]["created_at"],
+                    "started_at": runs[0]["started_at"],
+                    "finished_at": runs[0]["finished_at"],
+                    "updated_at": runs[0]["updated_at"],
+                },
             }
             thread_detail = client.get("/api/v1/threads/thread-1").json()
             run_detail = client.get(f"/api/v1/runs/{body['run_id']}").json()
@@ -328,6 +338,63 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
             assert operational_facts["prepared_fingerprint"] == prepared_fingerprint
             assert live["completed_runs"] == 1
             assert live["queue_pending"] == 0
+
+
+def test_threads_api_reports_full_run_count_independent_of_recent_run_limit(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("inspect",),
+    )
+    context.store.start_run(
+        run_id="run-old",
+        thread_id="thread-1",
+        origin="chat",
+        input=Message.user("first message"),
+        created_at="2026-01-01T00:00:00Z",
+        started_at="2026-01-01T00:00:00Z",
+    )
+    context.store.finish_run(
+        run_id="run-old",
+        status="finished",
+        finished_at="2026-01-01T00:00:01Z",
+    )
+    context.store.start_run(
+        run_id="run-new",
+        thread_id="thread-1",
+        origin="chat",
+        input=Message.user("second message"),
+        created_at="2026-01-01T00:01:00Z",
+        started_at="2026-01-01T00:01:00Z",
+    )
+    context.store.finish_run(
+        run_id="run-new",
+        status="failed",
+        error="boom",
+        finished_at="2026-01-01T00:01:01Z",
+    )
+    app = _create_test_app(context)
+
+    with TestClient(app) as client:
+        recent_runs = client.get("/api/v1/runs?limit=1").json()["items"]
+        thread = client.get("/api/v1/threads").json()["items"][0]
+
+    assert [item["id"] for item in recent_runs] == ["run-new"]
+    assert thread["id"] == "thread-1"
+    assert thread["title"] == "first message"
+    assert thread["run_count"] == 2
+    assert thread["latest_run"] == {
+        "id": "run-new",
+        "origin": "chat",
+        "status": "failed",
+        "created_at": "2026-01-01T00:01:00Z",
+        "started_at": "2026-01-01T00:01:00Z",
+        "finished_at": "2026-01-01T00:01:01Z",
+        "updated_at": "2026-01-01T00:01:01Z",
+    }
+    assert thread["updated_at"] == "2026-01-01T00:01:01Z"
 
 
 def test_chat_models_lists_effective_selectors_for_chat_thunk(tmp_path: Path) -> None:
