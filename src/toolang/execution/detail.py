@@ -11,6 +11,19 @@ from .records import RunRecord, RunStatus, StepRecord
 
 
 @dataclass(frozen=True, slots=True)
+class ThreadRunInfo:
+    """One compact run summary embedded in a thread summary."""
+
+    id: str
+    origin: str
+    status: RunStatus
+    created_at: str
+    started_at: str
+    finished_at: str | None
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
 class ThreadInfo:
     """One thread summary payload."""
 
@@ -18,6 +31,8 @@ class ThreadInfo:
     title: str
     updated_at: str
     origin: str
+    run_count: int
+    latest_run: ThreadRunInfo
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +99,22 @@ def thread_info_from_runs(
         title=title,
         origin=last.origin,
         updated_at=last.finished_at or last.started_at,
+        run_count=len(runs),
+        latest_run=thread_run_info_from_record(last),
+    )
+
+
+def thread_run_info_from_record(run: RunRecord) -> ThreadRunInfo:
+    """Build one compact run summary for thread list payloads."""
+
+    return ThreadRunInfo(
+        id=run.run_id,
+        origin=run.origin,
+        status=run.status,
+        created_at=run.created_at,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+        updated_at=run.finished_at or run.started_at,
     )
 
 
