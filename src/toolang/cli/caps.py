@@ -13,6 +13,8 @@ import typer
 from .. import caps as cap_store
 from .. import templates
 from ..execution.records import UpdateKind
+from ..loops import prepare as prepare_loop
+from ..state.durable import scan_durable_state
 from ..state.prepared import EntryKind, PreparedEntry, PreparedVisibility
 from .utils import (
     _OptionalPrefixAgentCommand,
@@ -190,7 +192,13 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             text=text,
         )
         if selected_agent:
-            _append_cap_update(_context_root(ctx), selected_agent, kind=kind, name=name, visibility=visibility)
+            _refresh_and_append_cap_update(
+                _context_root(ctx),
+                selected_agent,
+                kind=kind,
+                name=name,
+                visibility=visibility,
+            )
         typer.echo(str(path))
 
     return new_cap
@@ -228,7 +236,13 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             text=updated_text,
         )
         if selected_agent:
-            _append_cap_update(_context_root(ctx), selected_agent, kind=kind, name=name, visibility=visibility)
+            _refresh_and_append_cap_update(
+                _context_root(ctx),
+                selected_agent,
+                kind=kind,
+                name=name,
+                visibility=visibility,
+            )
         typer.echo(str(path))
 
     return edit_cap
@@ -250,7 +264,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             ref=ref,
         )
         if selected_agent:
-            _append_cap_update(
+            _refresh_and_append_cap_update(
                 _context_root(ctx),
                 selected_agent,
                 kind=kind,
@@ -288,7 +302,13 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         if not removed:
             raise click.ClickException(f"remote {kind} not found: {name}")
         if selected_agent:
-            _append_cap_update(_context_root(ctx), selected_agent, kind=kind, name=name, visibility=visibility)
+            _refresh_and_append_cap_update(
+                _context_root(ctx),
+                selected_agent,
+                kind=kind,
+                name=name,
+                visibility=visibility,
+            )
         typer.echo(f"Removed remote {kind} {name} from {entry.ref}")
 
     return remove_cap
@@ -323,7 +343,13 @@ def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         if not removed:
             raise click.ClickException(f"local {kind} not found: {name}")
         if selected_agent:
-            _append_cap_update(_context_root(ctx), selected_agent, kind=kind, name=name, visibility=visibility)
+            _refresh_and_append_cap_update(
+                _context_root(ctx),
+                selected_agent,
+                kind=kind,
+                name=name,
+                visibility=visibility,
+            )
         typer.echo(f"Deleted local {kind} {name} from {deleted_path}")
 
     return delete_cap
@@ -409,4 +435,23 @@ def _append_cap_update(
             "name": name,
             "visibility": visibility,
         },
+    )
+
+
+def _refresh_and_append_cap_update(
+    toolang_root: Path,
+    agent_name: str,
+    *,
+    kind: CapKind,
+    name: str,
+    visibility: PreparedVisibility,
+) -> None:
+    durable = _wrap_user_error(scan_durable_state, toolang_root, agent_name)
+    _wrap_user_error(prepare_loop.build_prepared_state, durable)
+    _append_cap_update(
+        toolang_root,
+        agent_name,
+        kind=kind,
+        name=name,
+        visibility=visibility,
     )

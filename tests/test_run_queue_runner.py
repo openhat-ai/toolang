@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from toolang import agents
+from toolang import caps
 from toolang import work
 from toolang.base.protocols.channel import ChannelPlugin
 from toolang.base.protocols.sandbox import SandboxPlugin
@@ -1362,8 +1363,9 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
     )
 
 
-def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Path) -> None:
+def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
@@ -2487,8 +2489,15 @@ def test_caps_reject_service_env_map(tmp_path: Path) -> None:
         )
 
 
-def test_prepare_materializes_remote_entries_from_config(tmp_path: Path) -> None:
+def test_prepare_materializes_remote_entries_from_config(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+
+    def fake_materialized_files(*, relative_entry_path, kind, name, ref):
+        del kind, name, ref
+        return {str(relative_entry_path): b"---\ndescription: Rewrite\n---\nRewrite prompt.\n"}
+
+    monkeypatch.setattr(caps, "_remote_materialized_files", fake_materialized_files)
 
     config_path = add_remote_entry(
         toolang_root,
@@ -2508,6 +2517,112 @@ def test_prepare_materializes_remote_entries_from_config(tmp_path: Path) -> None
     assert prepared.shared_lock.entries[0].path == ".prepared/remote/prompts/rewrite.md"
     assert prepared.shared_lock.entries[0].ref == "github://acme/agent-prompts/prompts/rewrite.md"
     assert live.caps == (".prepared/remote/prompts/rewrite.md",)
+
+
+def test_remote_skill_shorthand_probes_agent_skills_and_skills_repos(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    probes: list[str] = []
+
+    def fake_exists(_kind, ref):
+        probes.append(ref)
+        return ref == "github://anthropics/skills/skills/pdf"
+
+    monkeypatch.setattr(caps, "_github_remote_exists", fake_exists)
+
+    add_remote_entry(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        ref="anthropics/pdf",
+    )
+
+    config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(encoding="utf-8")
+
+    assert probes == [
+        "github://anthropics/agent-skills/skills/pdf",
+        "github://anthropics/skills/skills/pdf",
+    ]
+    assert 'pdf = { ref = "github://anthropics/skills/skills/pdf" }' in config_text
+
+
+def test_remote_skill_add_canonicalizes_github_tree_url(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        caps,
+        "_fetch_github_directory",
+        lambda ref: {"SKILL.md": f"---\ndescription: {ref.render()}\n---\n# Answers\n".encode()},
+    )
+
+    add_remote_entry(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        ref="https://github.com/brave/brave-search-skills/tree/main/skills/answers",
+    )
+
+    config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(encoding="utf-8")
+    durable = scan_durable_state(toolang_root, "alice")
+    prepared = prepare.build_prepared_state(durable)
+
+    assert 'answers = { ref = "github://brave/brave-search-skills/skills/answers@main" }' in config_text
+    assert prepared.private_lock.entries[0].ref == "github://brave/brave-search-skills/skills/answers@main"
+    assert (
+        toolang_root / "agents" / "alice" / ".prepared" / "remote" / "skills" / "answers" / "SKILL.md"
+    ).is_file()
+
+
+def test_remote_skill_add_rejects_missing_github_tree_url(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: False)
+
+    with pytest.raises(ValueError, match="remote skill not found or missing entry file"):
+        add_remote_entry(
+            toolang_root,
+            "alice",
+            visibility="private",
+            kind="skill",
+            ref="https://github.com/brave/agent-skills/tree/main/skills/answers",
+        )
+
+    assert not (toolang_root / "agents" / "alice" / "config.toml").exists()
+
+
+def test_prepare_materializes_remote_skill_directory(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    config_path = toolang_root / "agents" / "alice" / "config.toml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        '[skills]\n'
+        'pdf = { ref = "github://anthropics/skills/skills/pdf" }\n',
+        encoding="utf-8",
+    )
+
+    def fake_directory(ref):
+        assert ref.render() == "github://anthropics/skills/skills/pdf"
+        return {
+            "SKILL.md": b"---\ndescription: PDF work\n---\n# PDF\n",
+            "REFERENCE.md": b"# Reference\n",
+        }
+
+    monkeypatch.setattr(caps, "_fetch_github_directory", fake_directory)
+
+    durable = scan_durable_state(toolang_root, "alice")
+    prepared = prepare.build_prepared_state(durable)
+
+    assert (
+        toolang_root / "agents" / "alice" / ".prepared" / "remote" / "skills" / "pdf" / "SKILL.md"
+    ).read_text(encoding="utf-8") == "---\ndescription: PDF work\n---\n# PDF\n"
+    assert (
+        toolang_root / "agents" / "alice" / ".prepared" / "remote" / "skills" / "pdf" / "REFERENCE.md"
+    ).read_text(encoding="utf-8") == "# Reference\n"
+    assert prepared.private_lock.entries[0].meta["description"] == "PDF work"
 
 
 def test_prepare_builds_program_into_private_lock(tmp_path: Path) -> None:
@@ -2543,8 +2658,9 @@ def test_prepare_rewrites_legacy_private_lock_missing_program(tmp_path: Path) ->
     assert prepared.private_lock.program.agent_name == "alice"
 
 
-def test_caps_list_and_remove_remote_entries(tmp_path: Path) -> None:
+def test_caps_list_and_remove_remote_entries(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
 
     add_remote_entry(
         toolang_root,

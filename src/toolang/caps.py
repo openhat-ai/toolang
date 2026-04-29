@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime, timezone
+import base64
 import hashlib
+import io
 import json
 from pathlib import Path
 import re
 import shutil
+import tarfile
 import tomllib
 from typing import Literal, cast
-from urllib.parse import urlparse
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlparse, urlsplit
+from urllib.request import Request, urlopen
 
 import frontmatter
 import tomli_w
@@ -66,6 +72,18 @@ CONFIG_SECTION_ORDER = {
     "tasks": 4,
     "chores": 5,
 }
+
+
+@dataclass(frozen=True, slots=True)
+class _GitHubRemoteRef:
+    owner: str
+    repo: str
+    path: str
+    rev: str | None = None
+
+    def render(self) -> str:
+        base = f"github://{self.owner}/{self.repo}/{self.path}"
+        return f"{base}@{self.rev}" if self.rev else base
 
 
 def list_entries(
@@ -191,7 +209,7 @@ def add_remote_entry(
     """Add one remote entry ref to the authored config file."""
 
     _validate_local_kind(visibility, kind)
-    canonical_ref = _canonicalize_remote_ref(kind, ref)
+    canonical_ref = _resolve_remote_ref(kind, ref)
     name = _remote_name(kind, canonical_ref)
     _ensure_name_available(
         toolang_root,
@@ -311,6 +329,7 @@ def _collect_visibility_entries_with_files(
     *,
     visibility: PreparedVisibility | None = None,
     kinds: set[EntryKind] | None = None,
+    materialize_remote: bool = False,
 ) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
     local_entries = collect_local_entries(durable, visibility=visibility, kinds=kinds)
     remote_entries, files = _collect_remote_entries(
@@ -318,6 +337,7 @@ def _collect_visibility_entries_with_files(
         durable.agent_name,
         visibility=visibility,
         kinds=kinds,
+        materialize=materialize_remote,
     )
     entries = tuple(sorted((*local_entries, *remote_entries), key=_entry_sort_key))
     return entries, files
@@ -330,7 +350,11 @@ def build_visibility_lock(
 ) -> tuple[PreparedLock, dict[str, bytes]]:
     """Build one prepared lock and any materialized files for one visibility."""
 
-    entries, files = _collect_visibility_entries_with_files(durable, visibility=visibility)
+    entries, files = _collect_visibility_entries_with_files(
+        durable,
+        visibility=visibility,
+        materialize_remote=True,
+    )
     _ensure_no_conflicts(entries)
     updated_at = datetime.now(timezone.utc).isoformat()
     if visibility == "shared":
@@ -751,6 +775,7 @@ def _collect_remote_entries(
     *,
     visibility: PreparedVisibility | None = None,
     kinds: set[EntryKind] | None = None,
+    materialize: bool = False,
 ) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
     visibilities = ("shared", "private") if visibility is None else (visibility,)
     entries: list[PreparedEntry] = []
@@ -781,6 +806,7 @@ def _collect_remote_entries(
                     name=name,
                     relative_config_path=relative_config_path,
                     config_path=config_path,
+                    materialize=materialize,
                 )
                 entries.append(entry)
                 files.update(entry_files)
@@ -797,10 +823,27 @@ def _remote_entry_from_ref(
     name: str,
     relative_config_path: Path,
     config_path: Path,
+    materialize: bool,
 ) -> tuple[PreparedEntry, dict[str, bytes]]:
-    canonical_ref = _canonicalize_remote_ref(kind, ref)
+    canonical_ref = _resolve_remote_ref(kind, ref) if materialize else _canonicalize_remote_ref(kind, ref)
     relative_entry_path = _relative_remote_entry_path(agent_name, visibility=visibility, kind=kind, name=name)
-    content = _remote_materialized_content(kind=kind, name=name, ref=canonical_ref)
+    entry_files = (
+        _remote_materialized_files(
+            relative_entry_path=relative_entry_path,
+            kind=kind,
+            name=name,
+            ref=canonical_ref,
+        )
+        if materialize
+        else {
+            str(relative_entry_path): _remote_placeholder_content(
+                kind=kind,
+                name=name,
+                ref=canonical_ref,
+            )
+        }
+    )
+    entry_content = entry_files[str(relative_entry_path)]
     return (
         PreparedEntry(
             kind=kind,
@@ -814,9 +857,9 @@ def _remote_entry_from_ref(
                 form="remote",
                 shape="file",
             ),
-            meta=_load_meta_text(content.decode("utf-8")),
+            meta=_load_meta_text(entry_content.decode("utf-8")),
         ),
-        {str(relative_entry_path): content},
+        entry_files,
     )
 
 
@@ -834,7 +877,7 @@ def _relative_remote_entry_path(
     return root.with_suffix(".md")
 
 
-def _remote_materialized_content(
+def _remote_placeholder_content(
     *,
     kind: EntryKind,
     name: str,
@@ -849,9 +892,48 @@ def _remote_materialized_content(
     return frontmatter.dumps(post).encode("utf-8")
 
 
+def _remote_materialized_files(
+    *,
+    relative_entry_path: Path,
+    kind: EntryKind,
+    name: str,
+    ref: str,
+) -> dict[str, bytes]:
+    del name
+    if not ref.startswith("github://"):
+        raise ValueError(f"unsupported remote {kind} ref: {ref}")
+    github_ref = _parse_github_remote_ref(ref)
+    if kind == "skill":
+        files = _fetch_github_directory(github_ref)
+        if "SKILL.md" not in files:
+            raise ValueError(f"remote skill is missing SKILL.md: {ref}")
+        root = relative_entry_path.parent
+        return {str(root / relative_path): content for relative_path, content in files.items()}
+    return {str(relative_entry_path): _fetch_github_file(github_ref)}
+
+
+def _resolve_remote_ref(kind: EntryKind, ref: str) -> str:
+    text = ref.strip()
+    if "://" in text:
+        canonical_ref = _canonicalize_remote_ref(kind, text)
+        if canonical_ref.startswith("github://") and not _github_remote_exists(kind, canonical_ref):
+            raise ValueError(f"remote {kind} not found or missing entry file: {ref}")
+        return canonical_ref
+    candidates = _remote_ref_candidates(kind, text)
+    if not candidates:
+        raise ValueError(f"invalid remote ref: {ref}")
+    for candidate in candidates:
+        if _github_remote_exists(kind, candidate):
+            return candidate
+    raise ValueError(f"could not resolve remote {kind} shorthand: {ref}")
+
+
 def _canonicalize_remote_ref(kind: EntryKind, ref: str) -> str:
     text = ref.strip()
     if "://" in text:
+        github_ref = _github_remote_ref_from_url(text)
+        if github_ref is not None:
+            return github_ref.render()
         return text
     parts = text.split("/", 1)
     if len(parts) != 2 or not parts[0] or not parts[1]:
@@ -868,16 +950,237 @@ def _canonicalize_remote_ref(kind: EntryKind, ref: str) -> str:
     raise ValueError(f"unsupported remote kind: {kind}")
 
 
+def _remote_ref_candidates(kind: EntryKind, ref: str) -> tuple[str, ...]:
+    parts = ref.split("/", 1)
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return ()
+    owner, name = parts
+    if kind == "skill":
+        return (
+            f"github://{owner}/agent-skills/skills/{name}",
+            f"github://{owner}/skills/skills/{name}",
+        )
+    if kind == "service":
+        return (
+            f"github://{owner}/agent-services/services/{name}.md",
+            f"github://{owner}/services/services/{name}.md",
+        )
+    if kind == "prompt":
+        return (
+            f"github://{owner}/agent-prompts/prompts/{name}.md",
+            f"github://{owner}/prompts/prompts/{name}.md",
+        )
+    if kind == "psyche":
+        return (
+            f"github://{owner}/agent-psyches/psyches/{name}.md",
+            f"github://{owner}/psyches/psyches/{name}.md",
+        )
+    return ()
+
+
+def _github_remote_exists(kind: EntryKind, ref: str) -> bool:
+    github_ref = _parse_github_remote_ref(ref)
+    probe_ref = github_ref
+    if kind == "skill":
+        probe_ref = _GitHubRemoteRef(
+            owner=github_ref.owner,
+            repo=github_ref.repo,
+            path=str(Path(github_ref.path) / "SKILL.md"),
+            rev=github_ref.rev,
+        )
+    return _github_raw_file_exists(probe_ref)
+
+
+def _parse_github_remote_ref(text: str) -> _GitHubRemoteRef:
+    parsed = urlsplit(text)
+    if parsed.scheme != "github":
+        raise ValueError(f"unsupported remote ref: {text}")
+    owner = parsed.netloc.strip()
+    path_text = parsed.path.strip("/")
+    if not owner or not path_text or "/" not in path_text:
+        raise ValueError(f"invalid GitHub remote ref: {text}")
+    repo, _, repo_path = path_text.partition("/")
+    if not repo or not repo_path:
+        raise ValueError(f"invalid GitHub remote ref: {text}")
+    path = repo_path
+    rev: str | None = None
+    if "@" in repo_path:
+        path, _, rev = repo_path.rpartition("@")
+        if not path or not rev:
+            raise ValueError(f"invalid GitHub remote ref: {text}")
+    return _GitHubRemoteRef(owner=owner, repo=repo, path=path, rev=rev)
+
+
+def _github_remote_ref_from_url(text: str) -> _GitHubRemoteRef | None:
+    parsed = urlsplit(text)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    if parsed.netloc == "github.com":
+        return _github_remote_ref_from_web_url(parsed.path, text)
+    if parsed.netloc == "raw.githubusercontent.com":
+        return _github_remote_ref_from_raw_url(parsed.path, text)
+    return None
+
+
+def _github_remote_ref_from_web_url(path_text: str, original: str) -> _GitHubRemoteRef:
+    parts = [part for part in path_text.strip("/").split("/") if part]
+    if len(parts) < 5 or parts[2] not in {"tree", "blob"}:
+        raise ValueError(f"invalid GitHub remote ref: {original}")
+    owner, repo, _mode, rev = parts[:4]
+    path = "/".join(parts[4:])
+    if not owner or not repo or not rev or not path:
+        raise ValueError(f"invalid GitHub remote ref: {original}")
+    return _GitHubRemoteRef(owner=owner, repo=repo, path=path, rev=rev)
+
+
+def _github_remote_ref_from_raw_url(path_text: str, original: str) -> _GitHubRemoteRef:
+    parts = [part for part in path_text.strip("/").split("/") if part]
+    if len(parts) < 4:
+        raise ValueError(f"invalid GitHub remote ref: {original}")
+    owner, repo, rev = parts[:3]
+    path = "/".join(parts[3:])
+    if not owner or not repo or not rev or not path:
+        raise ValueError(f"invalid GitHub remote ref: {original}")
+    return _GitHubRemoteRef(owner=owner, repo=repo, path=path, rev=rev)
+
+
+def _fetch_github_directory(ref: _GitHubRemoteRef) -> dict[str, bytes]:
+    root = ref.path.strip("/")
+    prefix = f"{root}/"
+    archive_url = (
+        f"https://codeload.github.com/{quote(ref.owner, safe='')}/"
+        f"{quote(ref.repo, safe='')}/tar.gz/{quote(ref.rev or 'HEAD', safe='')}"
+    )
+    archive_bytes = _fetch_url_bytes(archive_url)
+    files: dict[str, bytes] = {}
+    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as archive:
+        for member in archive.getmembers():
+            if not member.isfile():
+                continue
+            member_path = Path(member.name)
+            path = "/".join(member_path.parts[1:])
+            if not path.startswith(prefix):
+                continue
+            relative_path = path.removeprefix(prefix)
+            extracted = archive.extractfile(member)
+            if extracted is None:
+                continue
+            files[relative_path] = extracted.read()
+    if not files:
+        raise ValueError(f"could not fetch remote directory: {ref.render()}")
+    return files
+
+
+def _github_raw_file_exists(ref: _GitHubRemoteRef) -> bool:
+    request = Request(_github_raw_url(ref), method="HEAD", headers={"User-Agent": "toolang/0.1"})
+    try:
+        with urlopen(request, timeout=30):
+            return True
+    except (HTTPError, URLError):
+        return False
+
+
+def _github_raw_url(ref: _GitHubRemoteRef) -> str:
+    rev = quote(ref.rev or "HEAD", safe="/")
+    path = quote(ref.path.lstrip("/"), safe="/")
+    return f"https://raw.githubusercontent.com/{ref.owner}/{ref.repo}/{rev}/{path}"
+
+
+def _fetch_github_file(ref: _GitHubRemoteRef) -> bytes:
+    return _fetch_url_bytes(_github_raw_url(ref))
+
+
+def _fetch_github_file_from_api(ref: _GitHubRemoteRef) -> bytes:
+    data = _github_contents_json(ref)
+    if isinstance(data, list) or data.get("type") != "file":
+        raise ValueError(f"remote ref is not a file: {ref.render()}")
+    content = data.get("content")
+    encoding = data.get("encoding")
+    if isinstance(content, str) and encoding == "base64":
+        return base64.b64decode(content)
+    download_url = data.get("download_url")
+    if isinstance(download_url, str) and download_url:
+        return _fetch_url_bytes(download_url)
+    raise ValueError(f"could not decode remote file: {ref.render()}")
+
+
+def _github_contents_json(ref: _GitHubRemoteRef) -> dict[str, object] | list[dict[str, object]]:
+    path = quote(ref.path.lstrip("/"), safe="/")
+    api_url = f"https://api.github.com/repos/{ref.owner}/{ref.repo}/contents/{path}"
+    if ref.rev is not None:
+        api_url = f"{api_url}?ref={quote(ref.rev, safe='')}"
+    data = _fetch_json(api_url)
+    if isinstance(data, dict | list):
+        return cast(dict[str, object] | list[dict[str, object]], data)
+    raise ValueError(f"unexpected GitHub response for {ref.render()}")
+
+
+def _github_tree_json(ref: _GitHubRemoteRef) -> dict[str, object]:
+    branch = quote(ref.rev or "HEAD", safe="")
+    api_url = f"https://api.github.com/repos/{ref.owner}/{ref.repo}/git/trees/{branch}?recursive=1"
+    data = _fetch_json(api_url)
+    if isinstance(data, dict):
+        return cast(dict[str, object], data)
+    raise ValueError(f"unexpected GitHub tree response for {ref.render()}")
+
+
+def _fetch_json(url: str) -> object:
+    return json.loads(_fetch_url_bytes(url).decode("utf-8"))
+
+
+def _fetch_url_bytes(url: str) -> bytes:
+    request = Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "toolang/0.1",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    try:
+        with urlopen(request, timeout=30) as response:
+            return response.read()
+    except (HTTPError, URLError) as exc:
+        raise ValueError(f"could not fetch remote content: {url}") from exc
+
+
+def _legacy_fetch_github_directory(ref: _GitHubRemoteRef) -> dict[str, bytes]:
+    tree = _github_tree_json(ref)
+    root = ref.path.strip("/")
+    prefix = f"{root}/"
+    files: dict[str, bytes] = {}
+    for item in cast(list[dict[str, object]], tree.get("tree", [])):
+        if item.get("type") != "blob":
+            continue
+        path = str(item.get("path", ""))
+        if not path.startswith(prefix):
+            continue
+        relative_path = path.removeprefix(prefix)
+        if not relative_path:
+            continue
+        files[relative_path] = _fetch_github_file_from_api(
+            _GitHubRemoteRef(
+                owner=ref.owner,
+                repo=ref.repo,
+                path=path,
+                rev=ref.rev,
+            )
+        )
+    if not files:
+        raise ValueError(f"could not fetch remote directory: {ref.render()}")
+    return files
+
+
 def _remote_name(kind: EntryKind, ref: str) -> str:
     parsed = urlparse(ref)
     path = parsed.path.rstrip("/")
     if not path:
         raise ValueError(f"invalid remote ref: {ref}")
     name = Path(path).name
-    if kind == "skill":
-        return name
     if "@" in name:
         name = name.split("@", 1)[0]
+    if kind == "skill":
+        return name
     return Path(name).stem
 
 
