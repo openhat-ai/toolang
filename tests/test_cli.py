@@ -1107,7 +1107,9 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
     assert "PULSE" not in result.stdout
     assert "Caps" in result.stdout
     assert "1 skill" in result.stdout
+    assert "0 psyches" in result.stdout
     assert "1 service" in result.stdout
+    assert "0 prompts" in result.stdout
     assert "Jobs" in result.stdout
     assert "1 chore" in result.stdout
     assert "1 task" in result.stdout
@@ -2245,6 +2247,14 @@ def test_cli_stop_stops_sandboxed_agent(tmp_path: Path, monkeypatch) -> None:
 
 def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        caps,
+        "_remote_materialized_files",
+        lambda *, relative_entry_path, kind, name, ref: {
+            str(relative_entry_path): b"---\ndescription: Review code\n---\n# Reviewer\n"
+        },
+    )
 
     add_result = _invoke_app(
         ["skill", "add", "acme/reviewer"],
@@ -2257,6 +2267,9 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(encoding="utf-8")
     assert "[skills]" in config_text
     assert 'reviewer = { ref = "github://acme/agent-skills/skills/reviewer" }' in config_text
+    assert (
+        toolang_root / "agents" / "alice" / ".prepared" / "remote" / "skills" / "reviewer" / "SKILL.md"
+    ).read_text(encoding="utf-8") == "---\ndescription: Review code\n---\n# Reviewer\n"
 
     list_remote_result = _invoke_app(
         ["skill", "list"],
@@ -2401,8 +2414,9 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     assert not (toolang_root / "agents" / "alice" / "skills" / "reviewer").exists()
 
 
-def test_cli_cap_add_preserves_unrelated_config_sections(tmp_path: Path) -> None:
+def test_cli_cap_add_preserves_unrelated_config_sections(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     config_path = toolang_root / "config.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(

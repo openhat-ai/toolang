@@ -514,34 +514,30 @@ def _configure_foreground_runtime_logging(
 
 def _info_caps_summary(toolang_root: Path, agent_name: str) -> str:
     counts = {
-        "skills": len(cap_store.list_entries(toolang_root, agent_name, visibility=None, kinds={"skill"})),
         "psyches": len(cap_store.list_entries(toolang_root, agent_name, visibility=None, kinds={"psyche"})),
+        "skills": len(cap_store.list_entries(toolang_root, agent_name, visibility=None, kinds={"skill"})),
         "services": len(cap_store.list_entries(toolang_root, agent_name, visibility=None, kinds={"service"})),
         "prompts": len(cap_store.list_entries(toolang_root, agent_name, visibility=None, kinds={"prompt"})),
     }
     singular = {
-        "skills": "skill",
         "psyches": "psyche",
+        "skills": "skill",
         "services": "service",
         "prompts": "prompt",
     }
-    parts = [
+    return ", ".join(
         f"{count} {singular[label] if count == 1 else label}"
         for label, count in counts.items()
-        if count
-    ]
-    return ", ".join(parts) if parts else "0"
+    )
 
 
 def _info_jobs_summary(toolang_root: Path, agent_name: str) -> str:
     chore_count = len(work.list_chores(toolang_root, agent_name))
     task_count = len(work.list_tasks(toolang_root, agent_name))
-    parts = []
-    if chore_count:
-        parts.append(f"{chore_count} {'chore' if chore_count == 1 else 'chores'}")
-    if task_count:
-        parts.append(f"{task_count} {'task' if task_count == 1 else 'tasks'}")
-    return ", ".join(parts) if parts else "0"
+    return (
+        f"{chore_count} {'chore' if chore_count == 1 else 'chores'}, "
+        f"{task_count} {'task' if task_count == 1 else 'tasks'}"
+    )
 
 
 def _info_models_summary(
