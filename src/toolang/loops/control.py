@@ -191,7 +191,8 @@ def _cap_detail_item(context, entry: PreparedEntry) -> dict[str, object]:
         "kind": entry.kind,
         "name": entry.name,
         "visibility": caps.entry_visibility(entry, agent_name=context.name),
-        "form": caps.entry_form(entry),
+        "origin": caps.entry_origin(entry),
+        "inclusion": caps.entry_inclusion(entry),
         "ref": caps.entry_ref(entry, agent_name=context.name),
         "definition_file": caps.entry_definition_file(entry),
     }

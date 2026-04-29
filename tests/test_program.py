@@ -9,7 +9,7 @@ from toolang.state.durable import scan_durable_state
 from toolang.state.program import build_prepared_program, load_live_program
 
 
-def test_program_parse_projects_inline_caps_and_structs_into_ast() -> None:
+def test_program_parse_projects_embedded_caps_and_structs_into_ast() -> None:
     program = parse(
         """
 service github: ```md

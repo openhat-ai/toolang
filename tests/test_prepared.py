@@ -24,7 +24,8 @@ def test_load_shared_lock_accepts_legacy_locator_entries(tmp_path: Path) -> None
                         "locator": "github://by3gus/agent-skills/skills/pdf-processing",
                         "path": ".prepared/remote/skills/pdf-processing/SKILL.md",
                         "source": {
-                            "form": "remote",
+                            "origin": "remote",
+                            "inclusion": "configured",
                             "path": "config.toml",
                             "updated_at": "2026-04-18T00:00:00Z",
                             "fingerprint": "def",

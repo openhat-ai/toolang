@@ -20,6 +20,7 @@ import pytest
 from toolang import agents
 from toolang import caps
 from toolang import work
+from toolang.base.error import ToolangError
 from toolang.base.protocols.channel import ChannelPlugin
 from toolang.base.protocols.sandbox import SandboxPlugin
 from toolang.base.types.channel import (
@@ -1383,7 +1384,8 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
         )
         assert add_response.status_code == 200
         assert add_response.json()["item"]["name"] == "reviewer"
-        assert add_response.json()["item"]["form"] == "remote"
+        assert add_response.json()["item"]["origin"] == "remote"
+        assert add_response.json()["item"]["inclusion"] == "configured"
         assert add_response.json()["item"]["visibility"] == "private"
 
         snapshot = inspect.snapshot_context(context, enabled_loops=("control", "inspect"))
@@ -1413,7 +1415,8 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
         )
         assert local_response.status_code == 200
         assert local_response.json()["item"]["name"] == "rewrite"
-        assert local_response.json()["item"]["form"] == "local"
+        assert local_response.json()["item"]["origin"] == "local"
+        assert local_response.json()["item"]["inclusion"] == "authored"
         assert local_response.json()["item"]["visibility"] == "private"
 
         delete_local_response = client.delete("/api/v1/prompts/rewrite/local?visibility=private")
@@ -2513,7 +2516,8 @@ def test_prepare_materializes_remote_entries_from_config(tmp_path: Path, monkeyp
     live = load_live_state(prepared, enabled_loops=("reload",))
 
     assert (toolang_root / ".prepared" / "remote" / "prompts" / "rewrite.md").is_file()
-    assert [entry.source.form for entry in prepared.shared_lock.entries] == ["remote"]
+    assert [entry.source.origin for entry in prepared.shared_lock.entries] == ["remote"]
+    assert [entry.source.inclusion for entry in prepared.shared_lock.entries] == ["configured"]
     assert prepared.shared_lock.entries[0].path == ".prepared/remote/prompts/rewrite.md"
     assert prepared.shared_lock.entries[0].ref == "github://acme/agent-prompts/prompts/rewrite.md"
     assert live.caps == (".prepared/remote/prompts/rewrite.md",)
@@ -2623,6 +2627,179 @@ def test_prepare_materializes_remote_skill_directory(tmp_path: Path, monkeypatch
         toolang_root / "agents" / "alice" / ".prepared" / "remote" / "skills" / "pdf" / "REFERENCE.md"
     ).read_text(encoding="utf-8") == "# Reference\n"
     assert prepared.private_lock.entries[0].meta["description"] == "PDF work"
+    assert prepared.private_lock.entries[0].source.inclusion == "configured"
+
+
+def test_prepare_materializes_remote_skill_from_program_use(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "alice.too",
+        "agent alice\n\nuse skill https://github.com/coinbase/agentic-wallet-skills/tree/main/skills/fund\n",
+    )
+
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        caps,
+        "_fetch_github_directory",
+        lambda ref: {"SKILL.md": f"---\ndescription: {ref.render()}\n---\n# Fund\n".encode()},
+    )
+
+    durable = scan_durable_state(toolang_root, "alice")
+    prepared = prepare.build_prepared_state(durable)
+    live = load_live_state(prepared, enabled_loops=("reload",))
+
+    skill_path = toolang_root / "agents" / "alice" / ".prepared" / "remote" / "skills" / "fund" / "SKILL.md"
+    assert skill_path.read_text(encoding="utf-8").startswith("---\ndescription: github://coinbase/")
+    entry = prepared.private_lock.entries[0]
+    assert entry.name == "fund"
+    assert entry.ref == "github://coinbase/agentic-wallet-skills/skills/fund@main"
+    assert entry.source.origin == "remote"
+    assert entry.source.inclusion == "referenced"
+    assert entry.source.path == "agents/alice/alice.too"
+    assert entry.source.line == 3
+    assert live.caps == ("agents/alice/.prepared/remote/skills/fund/SKILL.md",)
+
+
+def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "alice.too",
+        (
+            "agent alice\n\n"
+            "psyche reviewer: ```md\n"
+            "Prefer concrete findings.\n"
+            "```\n\n"
+            "service github: ```md\n"
+            "---\n"
+            "description: Use when the agent needs GitHub MCP access.\n"
+            "transport: http\n"
+            "target: https://mcp.github.com/mcp\n"
+            "---\n\n"
+            "Use this service when the agent needs GitHub access.\n"
+            "```\n\n"
+            "prompt summarize: ```md\n"
+            "---\n"
+            "params: style, audience?\n"
+            "---\n\n"
+            "Summarize the user's request in a {{style}} style.\n"
+            "Target audience: {{audience}}\n"
+            "```\n"
+        ),
+    )
+
+    durable = scan_durable_state(toolang_root, "alice")
+    prepared = prepare.build_prepared_state(durable)
+    live = load_live_state(prepared, enabled_loops=("inspect",))
+
+    psyche_path = toolang_root / "agents" / "alice" / ".prepared" / "inline" / "psyches" / "reviewer.md"
+    assert psyche_path.read_text(encoding="utf-8") == "Prefer concrete findings."
+    service_path = toolang_root / "agents" / "alice" / ".prepared" / "inline" / "services" / "github.md"
+    service_content = service_path.read_text(encoding="utf-8")
+    assert "description: Use when the agent needs GitHub MCP access." in service_content
+    assert "Use this service when the agent needs GitHub access." in service_content
+    prompt_path = toolang_root / "agents" / "alice" / ".prepared" / "inline" / "prompts" / "summarize.md"
+    prompt_content = prompt_path.read_text(encoding="utf-8")
+    assert prompt_content == (
+        "---\n"
+        "params: style, audience?\n"
+        "---\n\n"
+        "Summarize the user's request in a {{style}} style.\n"
+        "Target audience: {{audience}}\n"
+    ).rstrip()
+    entries_by_kind = {entry.kind: entry for entry in prepared.private_lock.entries}
+    assert set(entries_by_kind) == {"prompt", "psyche", "service"}
+    assert entries_by_kind["psyche"].name == "reviewer"
+    assert entries_by_kind["psyche"].ref == "inline://psyches/reviewer"
+    assert entries_by_kind["psyche"].source.inclusion == "embedded"
+    assert entries_by_kind["psyche"].source.line == 3
+    assert entries_by_kind["service"].name == "github"
+    assert entries_by_kind["service"].ref == "inline://services/github"
+    assert entries_by_kind["service"].source.inclusion == "embedded"
+    assert entries_by_kind["service"].source.line == 7
+    assert entries_by_kind["prompt"].name == "summarize"
+    assert entries_by_kind["prompt"].ref == "inline://prompts/summarize"
+    assert entries_by_kind["prompt"].source.origin == "inline"
+    assert entries_by_kind["prompt"].source.inclusion == "embedded"
+    assert entries_by_kind["prompt"].source.path == "agents/alice/alice.too"
+    assert entries_by_kind["prompt"].source.line == 17
+    assert live.caps == (
+        "agents/alice/.prepared/inline/prompts/summarize.md",
+        "agents/alice/.prepared/inline/psyches/reviewer.md",
+        "agents/alice/.prepared/inline/services/github.md",
+    )
+
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("inspect",),
+    )
+    app = _create_test_app(context)
+    with TestClient(app) as client:
+        psyche_response = client.get("/api/v1/psyches/reviewer")
+        assert psyche_response.status_code == 200
+        psyche_detail = psyche_response.json()["item"]
+        assert psyche_detail["origin"] == "inline"
+        assert psyche_detail["inclusion"] == "embedded"
+        assert psyche_detail["definition_file"] == "agents/alice/alice.too"
+        assert psyche_detail["line"] == 3
+        assert psyche_detail["content"] == "Prefer concrete findings."
+
+        service_response = client.get("/api/v1/services/github")
+        assert service_response.status_code == 200
+        service_detail = service_response.json()["item"]
+        assert service_detail["description"] == "Use when the agent needs GitHub MCP access."
+        assert service_detail["origin"] == "inline"
+        assert service_detail["inclusion"] == "embedded"
+        assert service_detail["definition_file"] == "agents/alice/alice.too"
+        assert service_detail["line"] == 7
+        assert service_detail["content"] == service_content
+
+        list_response = client.get("/api/v1/prompts")
+        assert list_response.status_code == 200
+        assert list_response.json()["items"] == [
+            {
+                "name": "summarize",
+                "description": None,
+                "visibility": "private",
+                "origin": "inline",
+                "inclusion": "embedded",
+                "ref": "inline://prompts/summarize",
+                "definition_file": "agents/alice/alice.too",
+                "editable": False,
+                "line": 17,
+            }
+        ]
+
+        detail_response = client.get("/api/v1/prompts/summarize")
+        assert detail_response.status_code == 200
+        detail = detail_response.json()["item"]
+        assert detail["kind"] == "prompt"
+        assert detail["content"] == prompt_content
+        assert detail["files"] is None
+
+
+def test_prepare_rejects_duplicate_embedded_cap_names(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "alice.too",
+        (
+            "agent alice\n\n"
+            "prompt summarize: ```md\n"
+            "First body.\n"
+            "```\n\n"
+            "prompt summarize: ```md\n"
+            "Second body.\n"
+            "```\n"
+        ),
+    )
+
+    durable = scan_durable_state(toolang_root, "alice")
+    with pytest.raises(ToolangError, match=r"Duplicate prompt name 'summarize'"):
+        prepare.build_prepared_state(durable)
+
+    assert not (
+        toolang_root / "agents" / "alice" / ".prepared" / "inline" / "prompts" / "summarize.md"
+    ).exists()
 
 
 def test_prepare_builds_program_into_private_lock(tmp_path: Path) -> None:
@@ -2672,7 +2849,7 @@ def test_caps_list_and_remove_remote_entries(tmp_path: Path, monkeypatch) -> Non
 
     entries = list_entries(toolang_root, "alice", visibility="private", kinds={"skill"})
 
-    assert [(entry.source.form, entry.path) for entry in entries] == [
+    assert [(entry.source.origin, entry.path) for entry in entries] == [
         ("remote", "agents/alice/.prepared/remote/skills/reviewer/SKILL.md")
     ]
     assert remove_remote_entry(toolang_root, "alice", visibility="private", kind="skill", name="reviewer") is True
@@ -3569,6 +3746,54 @@ def test_assemble_run_input_keeps_thread_messages_out_of_system_instructions(tmp
     instructions = bundle.instructions()
     assert instructions == "Reply directly."
     assert "hello" not in instructions
+
+
+def test_assemble_run_input_expands_embedded_prompt_for_chat_message(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "alice.too",
+        (
+            "agent alice\n\n"
+            "prompt summarize: ```md\n"
+            "---\n"
+            "params: style, audience?\n"
+            "---\n\n"
+            "Summarize the user's request in a {{style}} style.\n"
+            "Target audience: {{audience}}\n"
+            "```\n"
+        ),
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("chat",),
+    )
+    bound = bind_run_request(
+        context,
+        RunRequest(
+            group="chat",
+            origin="chat",
+            message=Message.user("/summarize concise developers\n\nAdd a remote skill."),
+        ),
+    )
+
+    bundle = RunInput.from_binding(context, bound)
+
+    assert [item.to_data() for item in bundle.messages()] == [
+        {
+            "role": "user",
+            "parts": [
+                {
+                    "type": "text",
+                    "text": (
+                        "Summarize the user's request in a concise style.\n"
+                        "Target audience: developers\n\n"
+                        "Add a remote skill."
+                    ),
+                }
+            ],
+        }
+    ]
 
 
 def test_chat_run_prefers_named_chat_thunk_over_main(tmp_path: Path) -> None:

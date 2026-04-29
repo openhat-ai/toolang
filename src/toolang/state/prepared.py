@@ -15,14 +15,16 @@ from .program import PreparedProgram
 PreparedVisibility = Literal["shared", "private"]
 EntryKind = Literal["psyche", "skill", "service", "prompt", "task", "chore"]
 EntryShape = Literal["file", "dir"]
-SourceForm = Literal["local", "inline", "linked", "remote"]
+SourceOrigin = Literal["local", "remote", "inline"]
+SourceInclusion = Literal["authored", "configured", "referenced", "embedded"]
 
 
 @dataclass(frozen=True, slots=True)
 class PreparedSource:
     """One source record used to rebuild a prepared entry."""
 
-    form: SourceForm
+    origin: SourceOrigin
+    inclusion: SourceInclusion
     path: str
     updated_at: str
     fingerprint: str
@@ -30,7 +32,8 @@ class PreparedSource:
 
     def to_data(self) -> dict[str, object]:
         data: dict[str, object] = {
-            "form": self.form,
+            "origin": self.origin,
+            "inclusion": self.inclusion,
             "path": self.path,
             "updated_at": self.updated_at,
             "fingerprint": self.fingerprint,
@@ -44,7 +47,8 @@ class PreparedSource:
         raw_line = data.get("line")
         line = raw_line if isinstance(raw_line, int) else None
         return cls(
-            form=cast(SourceForm, str(data["form"])),
+            origin=cast(SourceOrigin, str(data["origin"])),
+            inclusion=cast(SourceInclusion, str(data["inclusion"])),
             path=str(data["path"]),
             updated_at=str(data["updated_at"]),
             fingerprint=str(data["fingerprint"]),

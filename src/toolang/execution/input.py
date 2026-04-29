@@ -12,6 +12,7 @@ import frontmatter
 from toolang.base.protocols.tool import Tool
 from toolang.base.types.message import (
     Message,
+    TextPart,
     ToolCallPart,
     ToolResultPart,
     message_summary,
@@ -73,7 +74,7 @@ Psyches:
 {{/runtime.psyches}}
 Skills:
 {{#runtime.skills}}
-- {{name}} (visibility={{visibility}}, form={{form}}, ref={{ref}})
+- {{name}} (visibility={{visibility}}, origin={{origin}}, inclusion={{inclusion}}, ref={{ref}})
 {{#description}}
   description={{description}}
 {{/description}}
@@ -87,7 +88,7 @@ Skills:
 {{/runtime.skills}}
 Services:
 {{#runtime.services}}
-- {{name}} (visibility={{visibility}}, form={{form}}, ref={{ref}})
+- {{name}} (visibility={{visibility}}, origin={{origin}}, inclusion={{inclusion}}, ref={{ref}})
 {{#description}}
   description={{description}}
 {{/description}}
@@ -851,7 +852,7 @@ def _run_message(
     rendered_messages: tuple[MessageBlock, ...],
 ) -> Message:
     if run.origin != "script" and run.message is not None:
-        return run.message
+        return _expanded_run_message(run.message, input_text=input_text)
     if run.origin != "script":
         return Message.user(input_text)
     text = _script_message_text(
@@ -860,6 +861,18 @@ def _run_message(
         rendered_messages=rendered_messages,
     )
     return Message.user(text)
+
+
+def _expanded_run_message(message: Message, *, input_text: str) -> Message:
+    original_text = message_text(message.parts)
+    if not input_text.strip() or input_text == original_text:
+        return message
+    parts = [part for part in message.parts if not isinstance(part, TextPart)]
+    return Message(
+        role=message.role,
+        parts=(TextPart(text=input_text), *parts),
+        meta=dict(message.meta),
+    )
 
 
 def _run_tools_base(context: UptimeContext, run: RunBinding) -> dict[str, Tool]:
@@ -1151,7 +1164,8 @@ def _prepared_entry_to_context(
         "metadata": dict(entry.meta),
         "metadata_items": _metadata_items(entry.meta),
         "visibility": cap_store.entry_visibility(entry, agent_name=context.name),
-        "form": cap_store.entry_form(entry),
+        "origin": cap_store.entry_origin(entry),
+        "inclusion": cap_store.entry_inclusion(entry),
     }
 
 

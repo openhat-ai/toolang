@@ -2280,11 +2280,13 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     assert "SKILL" in list_remote_result.stdout
     assert "REF" in list_remote_result.stdout
     assert "VISIBILITY" in list_remote_result.stdout
-    assert "FORM" in list_remote_result.stdout
+    assert "ORIGIN" in list_remote_result.stdout
+    assert "INCLUSION" in list_remote_result.stdout
     assert "DESCRIPTION" not in list_remote_result.stdout
     assert "reviewer" in list_remote_result.stdout
     assert "private" in list_remote_result.stdout
     assert "remote" in list_remote_result.stdout
+    assert "configured" in list_remote_result.stdout
     assert "github://acme/agent-skills/skills/reviewer" in list_remote_result.stdout
 
     remove_result = _invoke_app(
@@ -2329,7 +2331,8 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     assert "SKILL" in list_result.stdout
     assert "REF" in list_result.stdout
     assert "VISIBILITY" in list_result.stdout
-    assert "FORM" in list_result.stdout
+    assert "ORIGIN" in list_result.stdout
+    assert "INCLUSION" in list_result.stdout
     assert "reviewer" in list_result.stdout
     assert "private" in list_result.stdout
     assert "local" in list_result.stdout
@@ -2375,7 +2378,8 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     assert "SKILL" in list_result.stdout
     assert "REF" in list_result.stdout
     assert "VISIBILITY" in list_result.stdout
-    assert "FORM" in list_result.stdout
+    assert "ORIGIN" in list_result.stdout
+    assert "INCLUSION" in list_result.stdout
     assert "reviewer" in list_result.stdout
     assert "private" in list_result.stdout
     assert "local" in list_result.stdout
@@ -2875,7 +2879,7 @@ def test_cli_cap_commands_cover_file_backed_kinds(tmp_path: Path, monkeypatch) -
         assert kind.upper() in list_result.stdout
         assert "REF" in list_result.stdout
         assert "VISIBILITY" in list_result.stdout
-        assert "FORM" in list_result.stdout
+        assert "ORIGIN" in list_result.stdout
         assert name in list_result.stdout
         assert "shared" in list_result.stdout
         assert "local" in list_result.stdout

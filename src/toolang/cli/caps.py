@@ -153,13 +153,14 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             (
                 entry.name,
                 cap_store.entry_visibility(entry, agent_name=agent_name),
-                cap_store.entry_form(entry),
+                cap_store.entry_origin(entry),
+                cap_store.entry_inclusion(entry),
                 cap_store.entry_ref(entry, agent_name=agent_name),
             )
             for entry in entries
         ]
-        rows.sort(key=lambda item: (0 if item[1] == "shared" else 1, item[0], item[2], item[3]))
-        _echo_table((title.upper(), "VISIBILITY", "FORM", "REF"), rows)
+        rows.sort(key=lambda item: (0 if item[1] == "shared" else 1, item[0], item[2], item[3], item[4]))
+        _echo_table((title.upper(), "VISIBILITY", "ORIGIN", "INCLUSION", "REF"), rows)
 
     return list_caps
 
@@ -289,7 +290,8 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             visibility=visibility,
             kind=cast(EntryKind, kind),
             name=name,
-            source_form="remote",
+            source_origin="remote",
+            source_inclusion="configured",
         )
         removed = _wrap_user_error(
             cap_store.remove_remote_entry,
@@ -327,7 +329,7 @@ def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             visibility=visibility,
             kind=cast(EntryKind, kind),
             name=name,
-            source_form="local",
+            source_origin="local",
         )
         deleted_path = _context_root(ctx) / entry.path
         if entry.shape == "dir":
@@ -400,7 +402,8 @@ def _named_entry(
     visibility: PreparedVisibility,
     kind: EntryKind,
     name: str,
-    source_form: Literal["local", "remote"] | None = None,
+    source_origin: Literal["local", "remote"] | None = None,
+    source_inclusion: cap_store.EntryInclusion | None = None,
 ) -> PreparedEntry:
     entries = cap_store.list_entries(
         toolang_root,
@@ -411,10 +414,12 @@ def _named_entry(
     for entry in entries:
         if entry.name != name:
             continue
-        if source_form is not None and entry.source.form != source_form:
+        if source_origin is not None and entry.source.origin != source_origin:
+            continue
+        if source_inclusion is not None and entry.source.inclusion != source_inclusion:
             continue
         return entry
-    qualifier = f"{source_form} " if source_form is not None else ""
+    qualifier = f"{source_origin} " if source_origin is not None else ""
     raise click.ClickException(f"{qualifier}{kind} not found: {name}")
 
 
