@@ -32,22 +32,38 @@ Prepared-state files, CLI, HTTP API, and UI-facing payloads all use `shared`
 and `private`.
 
 
-## Forms
+## Origins And Inclusions
 
-Cap entries have one form:
+Cap entries separate content origin from inclusion kind.
 
-| Form | Meaning |
+`origin` describes where the cap content is authored:
+
+| Origin | Meaning |
 | --- | --- |
 | `local` | A local cap file or skill directory under the root or agent home |
-| `remote` | A remote ref stored in `config.toml` |
-| `inline` | An embedded cap definition authored directly in an agent program |
-| `linked` | A cap ref authored in an agent program that points at a remote ref |
+| `remote` | A remote authored cap fetched through a ref |
+| `inline` | A cap body written directly in an agent program |
+
+`inclusion` describes how the cap is included:
+
+| Inclusion | Meaning | Shared? |
+| --- | --- | --- |
+| `authored` | Included by a local authored cap file or skill directory | Yes |
+| `configured` | Included by `config.toml` with a remote ref | Yes |
+| `referenced` | Included by an agent program `use` statement | No |
+| `embedded` | Included by an agent program declaration body | No |
 
 Runtime APIs expose effective caps. They do not expose every authored source
 variant as a separate history object.
 
-`inline` caps are always `private`. `linked` caps are also `private`, but their
-`ref` is the linked target, not an `inline://` ref.
+Default visibility is `private`. Only `authored` and `configured` inclusions can
+be `shared`, because they can be authored at the Toolang root. `referenced` and
+`embedded` inclusions are scoped to one agent program, so they are always
+`private`.
+
+Authored placement, such as `config.toml`, `agent.too`, or a cap file path, is
+exposed separately as `definition_file`. When known, APIs may also include
+`line`.
 
 
 ## Refs
@@ -56,15 +72,10 @@ Public cap refs identify the selected cap itself:
 
 | Ref | Meaning |
 | --- | --- |
-| `inline://skills/reviewer` | Embedded inline cap definition |
+| `inline://prompts/reviewer` | Embedded inline cap definition |
 | `home://services/github` | Private local cap in the agent home |
 | `root://skills/reviewer` | Shared local cap under the Toolang root |
 | `github://user/repo/path/name.md` | Remote cap target |
-
-Linked caps use the remote target ref, such as
-`github://user/repo/path/name.md`. Authored placement, such as `config.toml`,
-`agent.too`, or a cap file path, is exposed separately as `definition_file`.
-When known, APIs may also include `line`.
 
 
 ## Local Cap Paths
@@ -176,5 +187,5 @@ Write endpoints:
 Local write requests carry `visibility` and `content`. Remote write requests
 carry `visibility` and `ref`. Deletes use a `visibility` query parameter.
 Template detail responses include template metadata and raw content. Cap read
-requests return the effective runtime view with `visibility`, `form`, `ref`,
-`definition_file`, and optional `line`.
+requests return the effective runtime view with `visibility`, `origin`,
+`inclusion`, `ref`, `definition_file`, and optional `line`.

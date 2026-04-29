@@ -16,6 +16,37 @@ Current program-level constructs are:
 | `thunk` | One callable program entrypoint |
 
 
+## Use Statements
+
+`use` declares one external cap reference that belongs to the authored program.
+During prepare, Toolang resolves the reference and materializes it into the
+agent's private prepared cap set, even when no thunk directive selects it yet.
+The prepared cap has `origin=remote` and `inclusion=referenced`.
+
+```toolang
+use skill https://github.com/coinbase/agentic-wallet-skills/tree/main/skills/fund
+```
+
+After prepare, the cap is ready for runtime selection by name:
+
+```toolang
+thunk pay:
+  skills += fund
+
+  Help with the requested wallet funding task.
+```
+
+
+## Embedded Cap Declarations
+
+Program-level `psyche`, `service`, and `prompt` declarations are embedded inline caps.
+During prepare, Toolang materializes them into the agent's private prepared cap
+set under `.prepared/inline`, preserving the `.too` file as the definition
+source. This makes embedded declarations visible through cap APIs and WebUI
+surfaces before any thunk selects them. The prepared cap has `origin=inline`
+and `inclusion=embedded`.
+
+
 ## Thunk
 
 A thunk is one callable entrypoint.

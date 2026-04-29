@@ -819,10 +819,11 @@ def _cap_summary_item(context: UptimeContext, entry: PreparedEntry) -> dict[str,
         "name": entry.name,
         "description": str(entry.meta["description"]) if entry.meta.get("description") is not None else None,
         "visibility": caps.entry_visibility(entry, agent_name=context.name),
-        "form": caps.entry_form(entry),
+        "origin": caps.entry_origin(entry),
+        "inclusion": caps.entry_inclusion(entry),
         "ref": caps.entry_ref(entry, agent_name=context.name),
         "definition_file": caps.entry_definition_file(entry),
-        "editable": entry.source.form == "local",
+        "editable": entry.source.origin == "local",
     }
     line = caps.entry_line(entry)
     if line is not None:

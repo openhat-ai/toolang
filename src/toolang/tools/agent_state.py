@@ -541,7 +541,7 @@ def _create_cap(
         name=name,
         text=text,
     )
-    entry = _find_cap_entry(scope, kind, name, visibility=cap_visibility, source_form="local")
+    entry = _find_cap_entry(scope, kind, name, visibility=cap_visibility, source_origin="local")
     return _cap_payload(scope, entry, include_content=True)
 
 
@@ -555,7 +555,7 @@ def _update_cap(
 ) -> dict[str, Any]:
     scope = _scope(context)
     cap_visibility = _visibility(visibility)
-    _find_cap_entry(scope, kind, name, visibility=cap_visibility, source_form="local")
+    _find_cap_entry(scope, kind, name, visibility=cap_visibility, source_origin="local")
     caps.put_local_entry_text(
         scope.toolang_root,
         scope.agent_name,
@@ -564,7 +564,7 @@ def _update_cap(
         name=name,
         text=text,
     )
-    entry = _find_cap_entry(scope, kind, name, visibility=cap_visibility, source_form="local")
+    entry = _find_cap_entry(scope, kind, name, visibility=cap_visibility, source_origin="local")
     return _cap_payload(scope, entry, include_content=True)
 
 
@@ -577,7 +577,7 @@ def _delete_cap(
 ) -> dict[str, Any]:
     scope = _scope(context)
     cap_visibility = _visibility(visibility)
-    entry = _find_cap_entry(scope, kind, name, visibility=cap_visibility, source_form="local")
+    entry = _find_cap_entry(scope, kind, name, visibility=cap_visibility, source_origin="local")
     deleted_path = scope.toolang_root / entry.path
     if entry.shape == "dir":
         deleted_path = deleted_path.parent
@@ -605,7 +605,7 @@ def _find_cap_entry(
     name: str,
     *,
     visibility: VisibilityFilter | PreparedVisibility,
-    source_form: str | None = None,
+    source_origin: str | None = None,
 ) -> PreparedEntry:
     entry_visibility = None if visibility == "all" else visibility
     entries = caps.list_entries(
@@ -617,10 +617,10 @@ def _find_cap_entry(
     matches = [
         entry
         for entry in entries
-        if entry.name == name and (source_form is None or entry.source.form == source_form)
+        if entry.name == name and (source_origin is None or entry.source.origin == source_origin)
     ]
     if not matches:
-        qualifier = f"{source_form} " if source_form is not None else ""
+        qualifier = f"{source_origin} " if source_origin is not None else ""
         raise ToolangError(f"{qualifier}{kind} not found: {name}")
     return sorted(matches, key=lambda entry: caps.entry_ref(entry, agent_name=scope.agent_name))[0]
 
@@ -633,7 +633,7 @@ def _local_cap_exists(
     visibility: PreparedVisibility,
 ) -> bool:
     try:
-        _find_cap_entry(scope, kind, name, visibility=visibility, source_form="local")
+        _find_cap_entry(scope, kind, name, visibility=visibility, source_origin="local")
     except ToolangError:
         return False
     return True
@@ -650,7 +650,8 @@ def _cap_payload(
         "kind": entry.kind,
         "name": entry.name,
         "visibility": visibility,
-        "form": caps.entry_form(entry),
+        "origin": caps.entry_origin(entry),
+        "inclusion": caps.entry_inclusion(entry),
         "ref": caps.entry_ref(entry, agent_name=scope.agent_name),
         "path": str(scope.toolang_root / entry.path),
         "definition_file": caps.entry_definition_file(entry),
@@ -659,7 +660,7 @@ def _cap_payload(
     line = caps.entry_line(entry)
     if line is not None:
         item["line"] = line
-    if include_content and entry.source.form == "local":
+    if include_content and entry.source.origin == "local":
         item["content"] = caps.load_local_entry_text(
             scope.toolang_root,
             scope.agent_name,

@@ -29,6 +29,8 @@ from .state.prepared import (
     EntryKind,
     PreparedEntry,
     PreparedLock,
+    SourceInclusion,
+    SourceOrigin,
     PreparedVisibility,
     PreparedSource,
     private_lock_path,
@@ -36,14 +38,18 @@ from .state.prepared import (
     shared_lock_path,
     shared_prepared_dir,
 )
+from .program import DeclBlock
+from .state.program import build_prepared_program, load_live_program
 
 CAP_DIR_NAMES = ("psyches", "skills", "services", "prompts")
 JOB_DIR_NAMES = ("chores", "tasks")
 CAP_KINDS: tuple[EntryKind, ...] = ("psyche", "skill", "service", "prompt")
 JOB_KINDS: tuple[EntryKind, ...] = ("task", "chore")
 Visibility = PreparedVisibility
-EntryForm = Literal["local", "inline", "linked", "remote"]
+EntryOrigin = SourceOrigin
+EntryInclusion = SourceInclusion
 MANAGED_KINDS = frozenset((*CAP_KINDS, *JOB_KINDS))
+EMBEDDED_DECL_KINDS = frozenset({"psyche", "service", "prompt"})
 FILE_BACKED_KINDS = frozenset({"psyche", "service", "prompt", "task", "chore"})
 SKILL_FIELDS = frozenset({"description"})
 SERVICE_FIELDS = frozenset({"description", "transport", "target", "headers", "env"})
@@ -262,7 +268,7 @@ def remote_entry_name(kind: EntryKind, ref: str) -> str:
 def entry_visibility(entry: PreparedEntry, *, agent_name: str) -> Visibility:
     """Return the external visibility for one prepared entry."""
 
-    if entry.source.form in {"inline", "linked"}:
+    if entry.source.inclusion in {"embedded", "referenced"}:
         return "private"
     prefix = f"agents/{agent_name}/"
     if entry.path.startswith(prefix) or entry.source.path.startswith(prefix):
@@ -270,19 +276,25 @@ def entry_visibility(entry: PreparedEntry, *, agent_name: str) -> Visibility:
     return "shared"
 
 
-def entry_form(entry: PreparedEntry) -> EntryForm:
-    """Return the external form for one prepared entry."""
+def entry_origin(entry: PreparedEntry) -> EntryOrigin:
+    """Return where one prepared entry's content originates."""
 
-    return entry.source.form
+    return entry.source.origin
+
+
+def entry_inclusion(entry: PreparedEntry) -> EntryInclusion:
+    """Return how one prepared entry is included by the agent."""
+
+    return entry.source.inclusion
 
 
 def entry_ref(entry: PreparedEntry, *, agent_name: str) -> str:
     """Return the canonical external ref for one prepared entry."""
 
-    form = entry_form(entry)
-    if form in {"remote", "linked"}:
+    origin = entry_origin(entry)
+    if origin == "remote":
         return entry.ref
-    if form == "inline":
+    if origin == "inline":
         return f"inline://{DIR_NAME_BY_KIND[entry.kind]}/{entry.name}"
     visibility = entry_visibility(entry, agent_name=agent_name)
     return f"{'root' if visibility == 'shared' else 'home'}://{DIR_NAME_BY_KIND[entry.kind]}/{entry.name}"
@@ -291,7 +303,7 @@ def entry_ref(entry: PreparedEntry, *, agent_name: str) -> str:
 def entry_definition_file(entry: PreparedEntry) -> str:
     """Return the authored file that defines or links one prepared entry."""
 
-    if entry.source.form == "local":
+    if entry.source.origin == "local":
         return entry.path
     return entry.source.path
 
@@ -339,7 +351,21 @@ def _collect_visibility_entries_with_files(
         kinds=kinds,
         materialize=materialize_remote,
     )
-    entries = tuple(sorted((*local_entries, *remote_entries), key=_entry_sort_key))
+    embedded_entries, embedded_files = _collect_program_embedded_entries(
+        durable,
+        visibility=visibility,
+        kinds=kinds,
+        materialize=materialize_remote,
+    )
+    use_entries, use_files = _collect_program_use_entries(
+        durable,
+        visibility=visibility,
+        kinds=kinds,
+        materialize=materialize_remote,
+    )
+    files.update(embedded_files)
+    files.update(use_files)
+    entries = _dedupe_entries((*local_entries, *remote_entries, *embedded_entries, *use_entries))
     return entries, files
 
 
@@ -465,7 +491,8 @@ def _skill_entry(
         source=_source_record(
             root_relative_path=root_relative_dir,
             absolute_path=source_path,
-            form="local",
+            origin="local",
+            inclusion="authored",
             shape="dir",
         ),
         meta=_load_meta(entry_file),
@@ -490,7 +517,8 @@ def _file_entry(
         source=_source_record(
             root_relative_path=relative_path,
             absolute_path=absolute_path,
-            form="local",
+            origin="local",
+            inclusion="authored",
             shape="file",
         ),
         meta=_load_meta(absolute_path),
@@ -501,15 +529,19 @@ def _source_record(
     *,
     root_relative_path: Path,
     absolute_path: Path,
-    form: Literal["local", "inline", "linked", "remote"],
+    origin: EntryOrigin,
+    inclusion: EntryInclusion,
     shape: Literal["file", "dir"],
+    line: int | None = None,
 ) -> PreparedSource:
     fingerprint = _dir_fingerprint(absolute_path) if shape == "dir" else hashlib.sha256(absolute_path.read_bytes()).hexdigest()
     return PreparedSource(
-        form=form,
+        origin=origin,
+        inclusion=inclusion,
         path=str(root_relative_path),
         updated_at=_updated_at(absolute_path, shape=shape),
         fingerprint=fingerprint,
+        line=line,
     )
 
 
@@ -525,6 +557,13 @@ def _ensure_no_conflicts(entries: tuple[PreparedEntry, ...]) -> None:
         seen[key] = entry.ref
 
 
+def _dedupe_entries(entries: tuple[PreparedEntry, ...]) -> tuple[PreparedEntry, ...]:
+    by_ref: dict[str, PreparedEntry] = {}
+    for entry in sorted(entries, key=_entry_sort_key):
+        by_ref.setdefault(entry.ref, entry)
+    return tuple(sorted(by_ref.values(), key=_entry_sort_key))
+
+
 def _lock_fingerprint(
     toolang_root: Path,
     entries: tuple[PreparedEntry, ...],
@@ -538,7 +577,8 @@ def _lock_fingerprint(
             "ref": entry.ref,
             "path": entry.path,
             "source": {
-                "form": entry.source.form,
+                "origin": entry.source.origin,
+                "inclusion": entry.source.inclusion,
                 "path": entry.source.path,
                 "fingerprint": entry.source.fingerprint,
             },
@@ -561,7 +601,7 @@ def _content_fingerprint(
     entry: PreparedEntry,
     materialized_files: Mapping[str, bytes],
 ) -> str:
-    if entry.source.form == "local":
+    if entry.source.origin == "local":
         entry_path = toolang_root / entry.path
         if entry.shape == "dir":
             return _dir_fingerprint(entry_path.parent)
@@ -806,11 +846,174 @@ def _collect_remote_entries(
                     name=name,
                     relative_config_path=relative_config_path,
                     config_path=config_path,
+                    inclusion="configured",
                     materialize=materialize,
                 )
                 entries.append(entry)
                 files.update(entry_files)
     return tuple(sorted(entries, key=_entry_sort_key)), files
+
+
+def _collect_program_use_entries(
+    durable: DurableState,
+    *,
+    visibility: PreparedVisibility | None = None,
+    kinds: set[EntryKind] | None = None,
+    materialize: bool = False,
+) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
+    if visibility == "shared" or durable.program_source is None:
+        return (), {}
+    prepared_program = build_prepared_program(durable)
+    live_program = load_live_program(prepared_program)
+    relative_program_path = Path(prepared_program.source_path)
+    program_path = durable.toolang_root / relative_program_path
+    line_offset = _program_body_line_offset(
+        source_text=prepared_program.source_text,
+        body_text=prepared_program.body_text,
+    )
+    entries: list[PreparedEntry] = []
+    files: dict[str, bytes] = {}
+    for use in live_program.parsed.uses:
+        kind = cast(EntryKind, use.kind)
+        if kind not in CAP_KINDS:
+            continue
+        if kinds is not None and kind not in kinds:
+            continue
+        canonical_ref = _resolve_remote_ref(kind, use.reference) if materialize else _canonicalize_remote_ref(kind, use.reference)
+        name = _remote_name(kind, canonical_ref)
+        entry, entry_files = _remote_entry_from_ref(
+            durable.toolang_root,
+            durable.agent_name,
+            visibility="private",
+            kind=kind,
+            ref=canonical_ref,
+            name=name,
+            relative_config_path=relative_program_path,
+            config_path=program_path,
+            inclusion="referenced",
+            source_line=use.span.line + line_offset,
+            materialize=materialize,
+        )
+        entries.append(entry)
+        files.update(entry_files)
+    return tuple(sorted(entries, key=_entry_sort_key)), files
+
+
+def _collect_program_embedded_entries(
+    durable: DurableState,
+    *,
+    visibility: PreparedVisibility | None = None,
+    kinds: set[EntryKind] | None = None,
+    materialize: bool = False,
+) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
+    del materialize
+    if visibility == "shared" or durable.program_source is None:
+        return (), {}
+    prepared_program = build_prepared_program(durable)
+    live_program = load_live_program(prepared_program)
+    relative_program_path = Path(prepared_program.source_path)
+    program_path = durable.toolang_root / relative_program_path
+    line_offset = _program_body_line_offset(
+        source_text=prepared_program.source_text,
+        body_text=prepared_program.body_text,
+    )
+    entries: list[PreparedEntry] = []
+    files: dict[str, bytes] = {}
+    seen: dict[tuple[EntryKind, str], int] = {}
+    for decl in live_program.parsed.declarations:
+        kind = _embedded_decl_kind(decl)
+        if kind is None:
+            continue
+        if kinds is not None and kind not in kinds:
+            continue
+        key = (kind, decl.name)
+        existing_line = seen.get(key)
+        if existing_line is not None:
+            raise ValueError(
+                f"duplicate embedded {kind} declaration: {decl.name} "
+                f"(lines {existing_line} and {decl.span.line + line_offset})"
+            )
+        seen[key] = decl.span.line + line_offset
+        entry, entry_files = _embedded_entry_from_decl(
+            durable.toolang_root,
+            durable.agent_name,
+            kind=kind,
+            decl=decl,
+            relative_program_path=relative_program_path,
+            program_path=program_path,
+            source_line=decl.span.line + line_offset,
+        )
+        entries.append(entry)
+        files.update(entry_files)
+    return tuple(sorted(entries, key=_entry_sort_key)), files
+
+
+def _embedded_decl_kind(decl: DeclBlock) -> EntryKind | None:
+    if decl.kind not in EMBEDDED_DECL_KINDS:
+        return None
+    return cast(EntryKind, decl.kind)
+
+
+def _embedded_entry_from_decl(
+    toolang_root: Path,
+    agent_name: str,
+    *,
+    kind: EntryKind,
+    decl: DeclBlock,
+    relative_program_path: Path,
+    program_path: Path,
+    source_line: int,
+) -> tuple[PreparedEntry, dict[str, bytes]]:
+    del toolang_root
+    relative_entry_path = _relative_embedded_entry_path(agent_name, kind=kind, name=decl.name)
+    content = _embedded_materialized_content(decl)
+    return (
+        PreparedEntry(
+            kind=kind,
+            name=decl.name,
+            shape="file",
+            ref=f"inline://{DIR_NAME_BY_KIND[kind]}/{decl.name}",
+            path=str(relative_entry_path),
+            source=_source_record(
+                root_relative_path=relative_program_path,
+                absolute_path=program_path,
+                origin="inline",
+                inclusion="embedded",
+                shape="file",
+                line=source_line,
+            ),
+            meta=_load_meta_text(content.decode("utf-8")),
+        ),
+        {str(relative_entry_path): content},
+    )
+
+
+def _relative_embedded_entry_path(
+    agent_name: str,
+    *,
+    kind: EntryKind,
+    name: str,
+) -> Path:
+    return Path("agents") / agent_name / ".prepared" / "inline" / DIR_NAME_BY_KIND[kind] / f"{name}.md"
+
+
+def _embedded_materialized_content(decl: DeclBlock) -> bytes:
+    if not decl.meta:
+        return decl.body.encode("utf-8")
+    post = frontmatter.Post(decl.body, **dict(decl.meta))
+    return frontmatter.dumps(post).encode("utf-8")
+
+
+def _program_body_line_offset(*, source_text: str, body_text: str) -> int:
+    body_lines = body_text.splitlines()
+    if not body_lines:
+        return 0
+    source_lines = source_text.splitlines()
+    body_len = len(body_lines)
+    for index in range(0, len(source_lines) - body_len + 1):
+        if source_lines[index : index + body_len] == body_lines:
+            return index
+    return 0
 
 
 def _remote_entry_from_ref(
@@ -823,6 +1026,8 @@ def _remote_entry_from_ref(
     name: str,
     relative_config_path: Path,
     config_path: Path,
+    inclusion: Literal["configured", "referenced"],
+    source_line: int | None = None,
     materialize: bool,
 ) -> tuple[PreparedEntry, dict[str, bytes]]:
     canonical_ref = _resolve_remote_ref(kind, ref) if materialize else _canonicalize_remote_ref(kind, ref)
@@ -854,8 +1059,10 @@ def _remote_entry_from_ref(
             source=_source_record(
                 root_relative_path=relative_config_path,
                 absolute_path=config_path,
-                form="remote",
+                origin="remote",
+                inclusion=inclusion,
                 shape="file",
+                line=source_line,
             ),
             meta=_load_meta_text(entry_content.decode("utf-8")),
         ),
