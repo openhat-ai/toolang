@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from toolang.base.types.message import message_summary
 from .events import MessageData, run_input_message_data, step_message_data
-from .records import RunRecord, RunStatus, StepRecord
+from .records import RunRecord, RunStatus, StepRecord, ThreadPeer, ThreadRecord
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,8 +31,10 @@ class ThreadInfo:
     title: str
     updated_at: str
     origin: str
+    peer: ThreadPeer
+    parent: str | None
     run_count: int
-    latest_run: ThreadRunInfo
+    latest_run: ThreadRunInfo | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +89,7 @@ def thread_info_from_runs(
     runs: Sequence[RunRecord],
     *,
     steps_by_run: Mapping[str, Sequence[StepRecord]],
+    thread: ThreadRecord | None = None,
 ) -> ThreadInfo:
     """Build one thread summary from ordered run records."""
 
@@ -99,8 +102,26 @@ def thread_info_from_runs(
         title=title,
         origin=last.origin,
         updated_at=last.finished_at or last.started_at,
+        peer=thread.peer if thread is not None else ThreadPeer(),
+        parent=thread.parent if thread is not None else None,
         run_count=len(runs),
         latest_run=thread_run_info_from_record(last),
+    )
+
+
+def thread_info_from_record(thread: ThreadRecord) -> ThreadInfo:
+    """Build one thread summary from metadata when no runs exist."""
+
+    title = thread.peer.name if thread.peer.type == "agent" else thread.origin
+    return ThreadInfo(
+        id=thread.thread_id,
+        title=title,
+        origin=thread.origin,
+        updated_at=thread.updated_at,
+        peer=thread.peer,
+        parent=thread.parent,
+        run_count=0,
+        latest_run=None,
     )
 
 

@@ -301,6 +301,8 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
                 "id": thread_id,
                 "title": "say hello",
                 "origin": "chat",
+                "peer": {"type": "user", "name": "user", "thread": None},
+                "parent": None,
                 "updated_at": runs[0]["updated_at"],
                 "run_count": 1,
                 "latest_run": {
@@ -434,6 +436,52 @@ def test_chat_api_allocates_new_threads_and_rejects_unknown_thread_ids(tmp_path:
     assert second.status_code == 200
     assert second.json()["thread_id"] == thread_id
     assert thread["run_count"] == 2
+
+
+def test_chat_api_records_peer_for_new_thread_and_rejects_mismatch(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "bob" / "bob.too", "agent bob\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="bob",
+        enabled_loops=("chat", "inspect"),
+    )
+    app = _create_test_app(context)
+
+    with _patched_runner_execution():
+        with TestClient(app) as client:
+            first = client.post(
+                "/api/v1/chat",
+                json={
+                    "peer": {"type": "agent", "name": "alice", "thread": "chat_a"},
+                    "message": _chat_message("Alice asks Bob"),
+                },
+            )
+            thread_id = first.json()["thread_id"]
+            accepted = client.post(
+                "/api/v1/chat",
+                json={
+                    "thread": thread_id,
+                    "peer": {"type": "agent", "name": "alice", "thread": "chat_a"},
+                    "message": _chat_message("follow up"),
+                },
+            )
+            rejected = client.post(
+                "/api/v1/chat",
+                json={
+                    "thread": thread_id,
+                    "peer": {"type": "agent", "name": "carol", "thread": "chat_c"},
+                    "message": _chat_message("wrong peer"),
+                },
+            )
+            thread = client.get(f"/api/v1/threads/{thread_id}").json()["info"]
+
+    assert first.status_code == 200
+    assert first.json()["thread"]["peer"] == {"type": "agent", "name": "alice", "thread": "chat_a"}
+    assert accepted.status_code == 200
+    assert rejected.status_code == 409
+    assert thread["peer"] == {"type": "agent", "name": "alice", "thread": "chat_a"}
+    assert thread["parent"] is None
 
 
 def test_chat_models_lists_effective_selectors_for_chat_thunk(tmp_path: Path) -> None:

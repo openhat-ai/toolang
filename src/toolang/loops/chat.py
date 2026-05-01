@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Request
@@ -11,9 +12,10 @@ from pydantic import BaseModel, Field
 
 from toolang.base.error import ToolangError
 from toolang.base.types.message import Message
-from ..execution.detail import run_detail_from_record
+from ..execution.detail import run_detail_from_record, thread_info_from_record, thread_info_from_runs
 from ..execution.input import effective_origin_model_selectors
 from ..execution.model import resolve_model
+from ..execution.records import ThreadPeer
 from ..execution.response import BufferedResponseSink, SseResponseSink
 from ..execution.runner import RunRequest
 from ..execution.runner import RunOutcome
@@ -30,10 +32,19 @@ class ChatMessagePayload(BaseModel):
     meta: dict[str, object] = Field(default_factory=dict)
 
 
+class ThreadPeerPayload(BaseModel):
+    """One optional chat thread peer descriptor."""
+
+    type: str = Field(default="user", min_length=1)
+    name: str = Field(default="user", min_length=1)
+    thread: str | None = None
+
+
 class ChatRequest(BaseModel):
     """One formal chat submission."""
 
     thread: str | None = Field(default=None, min_length=1)
+    peer: ThreadPeerPayload | None = None
     message: ChatMessagePayload
     model: str | None = None
 
@@ -73,8 +84,11 @@ def create_router() -> APIRouter:
         )
         if user_message is None or assistant_message is None:
             raise HTTPException(status_code=500, detail=f"incomplete chat transcript for run {result.run_id}")
+        if result.thread_id is None:
+            raise HTTPException(status_code=500, detail=f"missing chat thread for run {result.run_id}")
         return {
             "thread_id": result.thread_id,
+            "thread": asdict(_thread_info(context, result.thread_id)),
             "run_id": result.run_id,
             "message": user_message,
             "assistant": assistant_message,
@@ -135,6 +149,7 @@ async def _submit_chat_run(
             thread_id=thread_id,
             message=user_message,
             model_selector=payload.model,
+            metadata=_thread_metadata(payload),
         ),
         response=response,
         completion=completion,
@@ -157,6 +172,7 @@ async def _stream_chat_run(
             thread_id=thread_id,
             message=user_message,
             model_selector=payload.model,
+            metadata=_thread_metadata(payload),
         ),
         response=response,
     )
@@ -168,10 +184,17 @@ def _chat_thread_id_or_404(context: UptimeContext, payload: ChatRequest) -> str 
     if payload.thread is None:
         return None
     runs = context.store.list_runs(thread_id=payload.thread, limit=1)
-    if not runs:
+    thread = context.store.get_thread(thread_id=payload.thread)
+    if not runs and thread is None:
         raise HTTPException(status_code=404, detail=f"chat thread not found: {payload.thread}")
-    if runs[0].origin != "chat":
+    origin = runs[0].origin if runs else thread.origin if thread is not None else ""
+    if origin != "chat":
         raise HTTPException(status_code=404, detail=f"chat thread not found: {payload.thread}")
+    peer = _request_peer(payload)
+    if peer is not None:
+        existing_peer = thread.peer if thread is not None else ThreadPeer()
+        if existing_peer != peer:
+            raise HTTPException(status_code=409, detail=f"chat thread peer mismatch: {payload.thread}")
     return payload.thread
 
 
@@ -185,6 +208,41 @@ def _chat_user_message(payload: ChatRequest) -> Message:
     if not message.parts:
         raise HTTPException(status_code=422, detail="chat message parts cannot be empty")
     return message
+
+
+def _request_peer(payload: ChatRequest) -> ThreadPeer | None:
+    if payload.peer is None:
+        return None
+    try:
+        return ThreadPeer.from_data(payload.peer.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _thread_metadata(payload: ChatRequest) -> dict[str, object]:
+    peer = _request_peer(payload)
+    if peer is None:
+        return {}
+    return {"thread_peer": peer.to_data()}
+
+
+def _thread_info(context: UptimeContext, thread_id: str):
+    runs = sorted(
+        context.store.list_runs(limit=None, thread_id=thread_id),
+        key=lambda item: item.created_at,
+    )
+    thread = context.store.get_thread(thread_id=thread_id)
+    if not runs:
+        if thread is None:
+            raise HTTPException(status_code=500, detail=f"thread not found after completion: {thread_id}")
+        return thread_info_from_record(thread)
+    steps_by_run = context.store.list_steps_for_runs(run_ids=tuple(run.run_id for run in runs))
+    return thread_info_from_runs(
+        thread_id,
+        runs,
+        steps_by_run=steps_by_run,
+        thread=thread,
+    )
 
 
 def _chat_model_item(*, selector: str, context: UptimeContext) -> dict[str, object]:

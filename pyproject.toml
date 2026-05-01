@@ -57,6 +57,7 @@ toolang = "toolang.cli.main:main"
 too = "toolang.cli.main:main"
 
 [project.entry-points."toolang.tool"]
+agent_chat = "toolang.tools.agent_chat:create_tool"
 filesystem = "toolang.tools.filesystem:create_tool"
 service_use = "toolang.tools.service_use:create_tool"
 shell = "toolang.tools.shell:create_tool"

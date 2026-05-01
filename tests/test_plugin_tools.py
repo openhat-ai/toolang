@@ -16,6 +16,7 @@ class _FakeEntryPoint:
 def _patch_tool_entry_points(monkeypatch) -> None:
     from toolang.base.examples.tools import create_echo_tool
     from toolang.base.examples.tools import create_math_add_tool
+    from toolang.tools.agent_chat import create_tool as create_agent_chat_tool
     from toolang.tools.filesystem import create_tool as create_filesystem_tool
     from toolang.tools.service_use import create_tool as create_service_use_tool
     from toolang.tools.shell import create_tool as create_shell_tool
@@ -24,6 +25,7 @@ def _patch_tool_entry_points(monkeypatch) -> None:
     from toolang.base.examples.tools import create_working_tree_tool
 
     entries = [
+        _FakeEntryPoint("agent_chat", create_agent_chat_tool),
         _FakeEntryPoint("agent_state", create_agent_state_tool),
         _FakeEntryPoint("echo", create_echo_tool),
         _FakeEntryPoint("filesystem", create_filesystem_tool),
@@ -42,6 +44,7 @@ def test_tool_plugins_load_from_entry_points(monkeypatch) -> None:
     _patch_tool_entry_points(monkeypatch)
 
     assert list_plugin_names(group="toolang.tool") == [
+        "agent_chat",
         "agent_state",
         "echo",
         "filesystem",
@@ -91,6 +94,7 @@ def test_load_tool_plugins_uses_hyphenated_model_names(monkeypatch) -> None:
 
     assert "shell_execute" in tools
     assert "web_search_search" in tools
+    assert "agent_chat_send" in tools
     assert "agent_state_task_create" in tools
     assert "agent_state_chore_create" in tools
     assert "agent_state_skill_create" in tools

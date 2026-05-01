@@ -18,6 +18,7 @@ from ..execution.detail import (
     ThreadInfo,
     run_detail_from_record,
     thread_info_from_runs,
+    thread_info_from_record,
 )
 from ..execution.events import MessageData, run_message_data
 from ..execution.records import ModelCallStepPayload, RuntimeStepPayload, StepRecord
@@ -1071,6 +1072,7 @@ def _thread_items(context: UptimeContext) -> list[ThreadInfo]:
     grouped_runs: dict[str, list[RunRecord]] = {}
     for run in runs:
         grouped_runs.setdefault(run.thread_id, []).append(run)
+    thread_records = {item.thread_id: item for item in context.store.list_threads()}
     items: list[ThreadInfo] = []
     for thread_id, runs in grouped_runs.items():
         ordered_runs = sorted(runs, key=lambda item: item.created_at)
@@ -1079,8 +1081,12 @@ def _thread_items(context: UptimeContext) -> list[ThreadInfo]:
                 thread_id,
                 ordered_runs,
                 steps_by_run=steps_by_run,
+                thread=thread_records.get(thread_id),
             )
         )
+    for thread_id, thread in thread_records.items():
+        if thread_id not in grouped_runs:
+            items.append(thread_info_from_record(thread))
     return sorted(items, key=lambda item: item.updated_at, reverse=True)
 
 

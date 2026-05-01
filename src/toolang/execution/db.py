@@ -32,6 +32,8 @@ from .records import (
     StepPayload,
     StepRecord,
     StepStatus,
+    ThreadPeer,
+    ThreadRecord,
     UpdateKind,
     UpdateRecord,
     step_input_items_from_data,
@@ -40,7 +42,7 @@ from .records import (
     step_payload_to_data,
 )
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 
 class ExecutionStore:
@@ -71,6 +73,14 @@ class ExecutionStore:
         created = created_at or utc_now()
         started = started_at or created
         with self._lock:
+            self._ensure_thread_locked(
+                thread_id=thread_id,
+                origin=origin,
+                peer=None,
+                parent=None,
+                created_at=created,
+                updated_at=started,
+            )
             self._conn.execute(
                 """
                 INSERT INTO runs(
@@ -105,6 +115,78 @@ class ExecutionStore:
         if row is None:
             raise RuntimeError("run insert returned no row")
         return _run_from_row(row)
+
+    def ensure_thread(
+        self,
+        *,
+        thread_id: str,
+        origin: str = "chat",
+        peer: ThreadPeer | None = None,
+        parent: str | None = None,
+        created_at: str | None = None,
+        updated_at: str | None = None,
+    ) -> ThreadRecord:
+        """Create one thread metadata row if needed and validate supplied metadata."""
+
+        now = updated_at or created_at or utc_now()
+        with self._lock:
+            record = self._ensure_thread_locked(
+                thread_id=thread_id,
+                origin=origin,
+                peer=peer,
+                parent=parent,
+                created_at=created_at or now,
+                updated_at=now,
+            )
+            self._conn.commit()
+            return record
+
+    def get_thread(self, *, thread_id: str) -> ThreadRecord | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM threads WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchone()
+        return _thread_from_row(row) if row is not None else None
+
+    def list_threads(self) -> list[ThreadRecord]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM threads ORDER BY updated_at DESC, created_at DESC",
+            ).fetchall()
+        return [_thread_from_row(row) for row in rows]
+
+    def update_thread_peer(
+        self,
+        *,
+        thread_id: str,
+        peer: ThreadPeer,
+        updated_at: str | None = None,
+    ) -> ThreadRecord:
+        now = updated_at or utc_now()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM threads WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"thread not found: {thread_id}")
+            self._conn.execute(
+                """
+                UPDATE threads
+                SET peer = ?, updated_at = ?
+                WHERE thread_id = ?
+                """,
+                (_dump_json(peer.to_data()), now, thread_id),
+            )
+            updated = self._conn.execute(
+                "SELECT * FROM threads WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchone()
+            self._conn.commit()
+        if updated is None:
+            raise RuntimeError(f"thread not found after update: {thread_id}")
+        return _thread_from_row(updated)
 
     def finish_run(
         self,
@@ -387,8 +469,21 @@ class ExecutionStore:
             if version != _SCHEMA_VERSION:
                 self._conn.execute("DROP TABLE IF EXISTS steps")
                 self._conn.execute("DROP TABLE IF EXISTS runs")
+                self._conn.execute("DROP TABLE IF EXISTS threads")
                 self._conn.execute("DROP TABLE IF EXISTS updates")
                 self._conn.execute("DROP TABLE IF EXISTS instruction_blobs")
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS threads (
+                    thread_id TEXT PRIMARY KEY,
+                    origin TEXT NOT NULL,
+                    peer TEXT NOT NULL,
+                    parent TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS runs (
@@ -444,6 +539,9 @@ class ExecutionStore:
                 "CREATE INDEX IF NOT EXISTS idx_runs_thread_created ON runs(thread_id, created_at)"
             )
             self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_threads_updated ON threads(updated_at)"
+            )
+            self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_steps_run_step_index ON steps(run_id, step_index)"
             )
             self._conn.execute(
@@ -451,6 +549,68 @@ class ExecutionStore:
             )
             self._conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
             self._conn.commit()
+
+    def _ensure_thread_locked(
+        self,
+        *,
+        thread_id: str,
+        origin: str,
+        peer: ThreadPeer | None,
+        parent: str | None,
+        created_at: str,
+        updated_at: str,
+    ) -> ThreadRecord:
+        row = self._conn.execute(
+            "SELECT * FROM threads WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchone()
+        if row is not None:
+            record = _thread_from_row(row)
+            if peer is not None and record.peer != peer:
+                raise ValueError(f"thread peer mismatch: {thread_id}")
+            if parent is not None and record.parent not in {None, parent}:
+                raise ValueError(f"thread parent mismatch: {thread_id}")
+            if parent is not None and record.parent is None:
+                self._conn.execute(
+                    "UPDATE threads SET parent = ?, updated_at = ? WHERE thread_id = ?",
+                    (parent, updated_at, thread_id),
+                )
+                updated = self._conn.execute(
+                    "SELECT * FROM threads WHERE thread_id = ?",
+                    (thread_id,),
+                ).fetchone()
+                if updated is None:
+                    raise RuntimeError(f"thread not found after parent update: {thread_id}")
+                return _thread_from_row(updated)
+            return record
+        effective_peer = peer or ThreadPeer()
+        self._conn.execute(
+            """
+            INSERT INTO threads(
+                thread_id,
+                origin,
+                peer,
+                parent,
+                created_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                thread_id,
+                origin,
+                _dump_json(effective_peer.to_data()),
+                parent,
+                created_at,
+                updated_at,
+            ),
+        )
+        inserted = self._conn.execute(
+            "SELECT * FROM threads WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchone()
+        if inserted is None:
+            raise RuntimeError("thread insert returned no row")
+        return _thread_from_row(inserted)
 
 
 def execution_db_path(toolang_root: Path, agent_name: str) -> Path:
@@ -481,6 +641,19 @@ def _run_from_row(row: sqlite3.Row) -> RunRecord:
         created_at=str(row["created_at"]),
         started_at=str(row["started_at"]),
         finished_at=str(row["finished_at"]) if row["finished_at"] is not None else None,
+    )
+
+
+def _thread_from_row(row: sqlite3.Row) -> ThreadRecord:
+    raw = dict(row)
+    peer_raw = _load_json(str(raw["peer"]))
+    return ThreadRecord(
+        thread_id=str(raw["thread_id"]),
+        origin=str(raw["origin"]),
+        peer=ThreadPeer.from_data(peer_raw if isinstance(peer_raw, Mapping) else None),
+        parent=str(raw["parent"]) if raw["parent"] is not None else None,
+        created_at=str(raw["created_at"]),
+        updated_at=str(raw["updated_at"]),
     )
 
 
