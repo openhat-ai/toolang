@@ -170,6 +170,69 @@ def test_agent_chat_tool_creates_child_thread_and_sends_peer_request(monkeypatch
     assert local.peer == ThreadPeer(type="agent", name="bob", thread="chat_bob")
 
 
+def test_agent_chat_tool_accepts_direct_peer_object_without_config(monkeypatch, tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    home = root / "agents" / "eve"
+    home.mkdir(parents=True)
+    store = ExecutionStore(execution_db_path(root, "eve"))
+    store.start_run(
+        run_id="run-1",
+        thread_id="chat_user",
+        origin="chat",
+        input=Message.user("ask merkle"),
+        created_at="2026-01-01T00:00:00Z",
+        started_at="2026-01-01T00:00:00Z",
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "thread_id": "chat_merkle",
+                "run_id": "run-merkle",
+                "assistant": {
+                    "role": "assistant",
+                    "parts": [{"type": "text", "text": "pong"}],
+                },
+            }
+
+    def fake_post(url: str, *, json: dict[str, object], timeout: float):
+        calls.append({"url": url, "json": json, "timeout": timeout})
+        return FakeResponse()
+
+    monkeypatch.setattr("toolang.tools.agent_chat.httpx.post", fake_post)
+    tool = create_agent_chat_tool({}).tools()["send"]
+
+    try:
+        result = tool.invoke(
+            {
+                "peer": {"name": "merkle", "endpoint": "http://127.0.0.1:7002/"},
+                "message": "ping",
+            },
+            _tool_context(home, "agent_chat"),
+        )
+        local = store.get_thread(thread_id=str(result["local_thread"]))
+    finally:
+        store.close()
+
+    assert calls[0]["url"] == "http://127.0.0.1:7002/api/v1/chat"
+    assert calls[0]["json"] == {
+        "peer": {"type": "agent", "name": "eve", "thread": result["local_thread"]},
+        "message": {
+            "role": "user",
+            "parts": [{"type": "text", "text": "ping"}],
+        },
+    }
+    assert result["peer"] == "merkle"
+    assert result["peer_thread"] == "chat_merkle"
+    assert result["assistant_text"] == "pong"
+    assert local is not None
+    assert local.peer == ThreadPeer(type="agent", name="merkle", thread="chat_merkle")
+
+
 def test_service_use_tool_definition_uses_object_input_schema() -> None:
     plugin = create_service_use_tool(
         {

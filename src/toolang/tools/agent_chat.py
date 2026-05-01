@@ -69,13 +69,41 @@ class AgentChatPlugin:
         @tool(
             name="send",
             description=(
-                "Send one message to a configured peer Toolang agent. The tool creates or reuses "
+                "Send one message to a peer Toolang agent. The peer can be either one configured "
+                "peer name or an object with name and endpoint. The tool creates or reuses "
                 "one local child a2a thread for the current user thread and records the peer thread "
                 "returned by the remote agent."
             ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "peer": {
+                        "description": (
+                            "Either a configured peer name string or an object like "
+                            "{\"name\":\"bob\",\"endpoint\":\"http://127.0.0.1:7002\"}."
+                        ),
+                        "oneOf": [
+                            {"type": "string"},
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "endpoint": {"type": "string"},
+                                },
+                                "required": ["name", "endpoint"],
+                                "additionalProperties": False,
+                            },
+                        ],
+                    },
+                    "message": {"type": "string"},
+                    "thread": {"type": "string"},
+                },
+                "required": ["peer", "message"],
+                "additionalProperties": False,
+            },
         )
         def send(
-            peer: str,
+            peer: Any,
             message: str,
             thread: str | None = None,
             context: ToolContext | None = None,
@@ -145,13 +173,21 @@ class AgentChatPlugin:
             "send": create_function_tool(send),
         }
 
-    def _peer(self, name: str) -> AgentPeer:
-        peer_name = str(name).strip()
+    def _peer(self, value: Any) -> AgentPeer:
+        if isinstance(value, Mapping):
+            payload = dict(value)
+            peer_name = str(payload.get("name", "")).strip()
+            endpoint = str(payload.get("endpoint", "")).strip().rstrip("/")
+            if not peer_name or not endpoint:
+                raise ToolangError("agent_chat peer object requires name and endpoint")
+            return AgentPeer(name=peer_name, endpoint=endpoint)
+
+        peer_name = str(value).strip()
         if not peer_name:
             raise ToolangError("agent_chat peer cannot be empty")
         peer = self._peers.get(peer_name)
         if peer is None:
-            raise ToolangError(f"unknown agent_chat peer: {peer_name}")
+            raise ToolangError(f"unknown agent_chat peer: {peer_name}; pass an object with name and endpoint")
         return peer
 
 
