@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+import json
 from typing import Any
 
 import httpx
@@ -97,6 +98,11 @@ class AgentChatPlugin:
                     },
                     "message": {"type": "string"},
                     "thread": {"type": "string"},
+                    "stream": {
+                        "type": "boolean",
+                        "description": "When true, call the peer agent's streaming chat endpoint and aggregate text deltas.",
+                        "default": False,
+                    },
                 },
                 "required": ["peer", "message"],
                 "additionalProperties": False,
@@ -106,6 +112,7 @@ class AgentChatPlugin:
             peer: Any,
             message: str,
             thread: str | None = None,
+            stream: bool = False,
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             if context is None:
@@ -142,10 +149,10 @@ class AgentChatPlugin:
                 }
                 if peer_thread is not None:
                     payload["thread"] = peer_thread
-                response = _post_chat(
-                    target.endpoint,
-                    payload,
-                    timeout_sec=self._timeout_sec,
+                response = (
+                    _stream_chat(target.endpoint, payload, timeout_sec=self._timeout_sec)
+                    if stream
+                    else _post_chat(target.endpoint, payload, timeout_sec=self._timeout_sec)
                 )
                 remote_thread = str(response.get("thread_id", "")).strip()
                 if not remote_thread:
@@ -174,6 +181,7 @@ class AgentChatPlugin:
                     "local_run_id": mirror_run_id,
                     "assistant_text": assistant_text,
                     "assistant": response.get("assistant"),
+                    "streamed": bool(stream),
                     "truncated": len(full_assistant_text) > self._max_response_chars,
                 }
             finally:
@@ -339,6 +347,57 @@ def _post_chat(endpoint: str, payload: dict[str, Any], *, timeout_sec: float) ->
     if not isinstance(data, Mapping):
         raise ToolangError("agent_chat response must be an object")
     return dict(data)
+
+
+def _stream_chat(endpoint: str, payload: dict[str, Any], *, timeout_sec: float) -> dict[str, Any]:
+    thread_id = ""
+    run_id = ""
+    text_parts: list[str] = []
+    try:
+        with httpx.stream(
+            "POST",
+            f"{endpoint}/api/v1/chat/stream",
+            json=payload,
+            timeout=timeout_sec,
+        ) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                parsed = _parse_sse_data(line)
+                if parsed is None:
+                    continue
+                if parsed == "[DONE]":
+                    break
+                event = json.loads(parsed)
+                if not isinstance(event, Mapping):
+                    continue
+                metadata = event.get("messageMetadata")
+                if isinstance(metadata, Mapping):
+                    thread_id = str(metadata.get("threadId") or thread_id)
+                    run_id = str(metadata.get("runId") or metadata.get("id") or run_id)
+                if event.get("type") == "text-delta":
+                    text_parts.append(str(event.get("delta", "")))
+                if event.get("type") == "error":
+                    raise ToolangError(str(event.get("errorText", "agent_chat stream failed")))
+    except httpx.HTTPError as exc:
+        raise ToolangError(f"agent_chat stream request failed: {exc}") from exc
+    except ValueError as exc:
+        raise ToolangError("agent_chat stream response was not valid JSON") from exc
+    assistant_text = "".join(text_parts)
+    return {
+        "thread_id": thread_id,
+        "run_id": run_id,
+        "assistant": {
+            "role": "assistant",
+            "parts": [{"type": "text", "text": assistant_text}] if assistant_text else [],
+        },
+    }
+
+
+def _parse_sse_data(line: str | bytes) -> str | None:
+    text = line.decode("utf-8") if isinstance(line, bytes) else str(line)
+    if not text.startswith("data: "):
+        return None
+    return text.removeprefix("data: ").strip()
 
 
 def _assistant_text(response: Mapping[str, Any]) -> str:

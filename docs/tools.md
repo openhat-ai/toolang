@@ -38,7 +38,9 @@ peers = [
 
 `send` creates or reuses one local child agent-to-agent thread for the current
 chat thread, passes that local thread id to the peer through the chat request
-`peer` field, and records the peer thread id returned by the remote agent.
+`peer` field, and records the peer thread id returned by the remote agent. Pass
+`stream = true` to call the peer agent's streaming chat endpoint and aggregate
+the streamed text deltas into the local child thread transcript.
 
 
 ## Filesystem

@@ -241,6 +241,66 @@ def test_agent_chat_tool_accepts_direct_peer_object_without_config(monkeypatch, 
     assert [message_text(run.input.parts) for run in local_runs] == ["ping"]
 
 
+def test_agent_chat_tool_can_call_streaming_peer_chat(monkeypatch, tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    home = root / "agents" / "eve"
+    home.mkdir(parents=True)
+    store = ExecutionStore(execution_db_path(root, "eve"))
+    store.start_run(
+        run_id="run-1",
+        thread_id="chat_user",
+        origin="chat",
+        input=Message.user("ask merkle"),
+        created_at="2026-01-01T00:00:00Z",
+        started_at="2026-01-01T00:00:00Z",
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeStream:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_lines(self):
+            yield 'data: {"type":"start","messageMetadata":{"threadId":"chat_merkle","runId":"run-merkle"}}'
+            yield 'data: {"type":"text-delta","delta":"po"}'
+            yield 'data: {"type":"text-delta","delta":"ng"}'
+            yield "data: [DONE]"
+
+    def fake_stream(method: str, url: str, *, json: dict[str, object], timeout: float):
+        calls.append({"method": method, "url": url, "json": json, "timeout": timeout})
+        return FakeStream()
+
+    monkeypatch.setattr("toolang.tools.agent_chat.httpx.stream", fake_stream)
+    tool = create_agent_chat_tool({}).tools()["send"]
+
+    try:
+        result = tool.invoke(
+            {
+                "peer": {"name": "merkle", "endpoint": "http://127.0.0.1:7002"},
+                "message": "ping",
+                "stream": True,
+            },
+            _tool_context(home, "agent_chat"),
+        )
+        local_steps = store.list_steps(run_id=str(result["local_run_id"]))
+    finally:
+        store.close()
+
+    assert calls[0]["method"] == "POST"
+    assert calls[0]["url"] == "http://127.0.0.1:7002/api/v1/chat/stream"
+    assert result["streamed"] is True
+    assert result["peer_thread"] == "chat_merkle"
+    assert result["run_id"] == "run-merkle"
+    assert result["assistant_text"] == "pong"
+    assert [part.text for part in local_steps[0].output if isinstance(part, TextPart)] == ["pong"]
+
+
 def test_service_use_tool_definition_uses_object_input_schema() -> None:
     plugin = create_service_use_tool(
         {
