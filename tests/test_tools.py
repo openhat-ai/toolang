@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from toolang.base.types.message import Message
+from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.tool import ToolContext
 from toolang.execution.db import ExecutionStore, execution_db_path
 from toolang.execution.records import ThreadPeer
@@ -147,6 +147,8 @@ def test_agent_chat_tool_creates_child_thread_and_sends_peer_request(monkeypatch
             _tool_context(home, "agent_chat"),
         )
         local = store.get_thread(thread_id=str(result["local_thread"]))
+        local_runs = store.list_runs(thread_id=str(result["local_thread"]), limit=None)
+        local_steps = store.list_steps(run_id=str(result["local_run_id"]))
     finally:
         store.close()
 
@@ -164,10 +166,13 @@ def test_agent_chat_tool_creates_child_thread_and_sends_peer_request(monkeypatch
         }
     ]
     assert result["peer_thread"] == "chat_bob"
+    assert result["local_run_id"].startswith("run_")
     assert result["assistant_text"] == "bob says yes"
     assert local is not None
     assert local.parent == "chat_user"
     assert local.peer == ThreadPeer(type="agent", name="bob", thread="chat_bob")
+    assert [message_text(run.input.parts) for run in local_runs] == ["please review"]
+    assert [part.text for part in local_steps[0].output if isinstance(part, TextPart)] == ["bob says yes"]
 
 
 def test_agent_chat_tool_accepts_direct_peer_object_without_config(monkeypatch, tmp_path: Path) -> None:
@@ -215,6 +220,7 @@ def test_agent_chat_tool_accepts_direct_peer_object_without_config(monkeypatch, 
             _tool_context(home, "agent_chat"),
         )
         local = store.get_thread(thread_id=str(result["local_thread"]))
+        local_runs = store.list_runs(thread_id=str(result["local_thread"]), limit=None)
     finally:
         store.close()
 
@@ -228,9 +234,11 @@ def test_agent_chat_tool_accepts_direct_peer_object_without_config(monkeypatch, 
     }
     assert result["peer"] == "merkle"
     assert result["peer_thread"] == "chat_merkle"
+    assert result["local_run_id"].startswith("run_")
     assert result["assistant_text"] == "pong"
     assert local is not None
     assert local.peer == ThreadPeer(type="agent", name="merkle", thread="chat_merkle")
+    assert [message_text(run.input.parts) for run in local_runs] == ["ping"]
 
 
 def test_service_use_tool_definition_uses_object_input_schema() -> None:

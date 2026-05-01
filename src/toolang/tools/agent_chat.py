@@ -10,12 +10,12 @@ import httpx
 
 from toolang.base.error import ToolangError
 from toolang.base.protocols.tool import Tool, ToolPlugin
-from toolang.base.types.message import Message, message_text
+from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.tool import ToolContext
 from toolang.base.utils.function_tools import create_function_tool, tool
-from toolang.execution.db import ExecutionStore
-from toolang.execution.records import ThreadPeer, ThreadRecord
-from toolang.ids import LOCAL_ID_FAMILY, allocate_id
+from toolang.execution.db import ExecutionStore, utc_now
+from toolang.execution.records import ModelCallStepPayload, RunInputRef, ThreadPeer, ThreadRecord
+from toolang.ids import LOCAL_ID_FAMILY, RUN_ID_FAMILY, allocate_id
 
 DEFAULT_TIMEOUT_SEC = 60
 DEFAULT_MAX_RESPONSE_CHARS = 20_000
@@ -155,15 +155,26 @@ class AgentChatPlugin:
                         thread_id=local_thread.thread_id,
                         peer=ThreadPeer(type="agent", name=target.name, thread=remote_thread),
                     )
-                assistant_text = _assistant_text(response)[: self._max_response_chars]
+                full_assistant_text = _assistant_text(response)
+                assistant_text = full_assistant_text[: self._max_response_chars]
+                mirror_run_id = _record_local_a2a_exchange(
+                    store,
+                    context,
+                    thread=local_thread,
+                    peer=target.name,
+                    message=text,
+                    assistant_text=assistant_text,
+                    remote_run_id=response.get("run_id"),
+                )
                 return {
                     "peer": target.name,
                     "local_thread": local_thread.thread_id,
                     "peer_thread": remote_thread,
                     "run_id": response.get("run_id"),
+                    "local_run_id": mirror_run_id,
                     "assistant_text": assistant_text,
                     "assistant": response.get("assistant"),
-                    "truncated": len(_assistant_text(response)) > self._max_response_chars,
+                    "truncated": len(full_assistant_text) > self._max_response_chars,
                 }
             finally:
                 store.close()
@@ -256,6 +267,60 @@ def _find_or_create_local_thread(
         peer=ThreadPeer(type="agent", name=peer, thread=None),
         parent=parent,
     )
+
+
+def _record_local_a2a_exchange(
+    store: ExecutionStore,
+    context: ToolContext,
+    *,
+    thread: ThreadRecord,
+    peer: str,
+    message: str,
+    assistant_text: str,
+    remote_run_id: object,
+) -> str:
+    run_id = f"run_{allocate_id(context.home / '.runtime' / 'ids.json', family=RUN_ID_FAMILY).value}"
+    started_at = utc_now()
+    store.start_run(
+        run_id=run_id,
+        thread_id=thread.thread_id,
+        origin="chat",
+        input=Message(
+            role="user",
+            parts=(TextPart(text=message),),
+            meta={
+                "agent_chat": {
+                    "peer": peer,
+                    "remote_thread": thread.peer.thread,
+                    "remote_run_id": remote_run_id,
+                    "parent_thread": thread.parent,
+                }
+            },
+        ),
+        created_at=started_at,
+        started_at=started_at,
+    )
+    finished_at = utc_now()
+    store.append_step(
+        run_id=run_id,
+        step_index=1,
+        kind="model_call",
+        status="finished",
+        input=(RunInputRef(),),
+        output=(TextPart(text=assistant_text),),
+        payload=ModelCallStepPayload(
+            model_ref=f"agent_chat/{peer}",
+            input_tokens=0,
+            output_tokens=0,
+            provider="agent_chat",
+            model=peer,
+            adapter="chat",
+        ),
+        started_at=started_at,
+        finished_at=finished_at,
+    )
+    store.finish_run(run_id=run_id, status="finished", finished_at=finished_at)
+    return run_id
 
 
 def _post_chat(endpoint: str, payload: dict[str, Any], *, timeout_sec: float) -> dict[str, Any]:
