@@ -6,8 +6,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from toolang.base.types.message import message_summary
-from .events import MessageData, run_input_message_data, step_message_data
-from .records import RunRecord, RunStatus, StepRecord, ThreadPeer, ThreadRecord
+from .events import MessageData, run_control_message_data, run_input_message_data, step_message_data
+from .records import RunControlRecord, RunRecord, RunStatus, StepRecord, ThreadPeer, ThreadRecord
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,12 +61,21 @@ class StepDetail:
 
 
 @dataclass(frozen=True, slots=True)
+class RunControlDetail:
+    """One run control detail payload."""
+
+    record: RunControlRecord
+    message: MessageData | None
+
+
+@dataclass(frozen=True, slots=True)
 class RunOutput:
     """One run output payload."""
 
     status: RunStatus
     error: str | None
     steps: list[StepDetail] = field(default_factory=list)
+    controls: list[RunControlDetail] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +180,7 @@ def run_output_from_steps(
     run: RunRecord,
     *,
     steps: Sequence[StepRecord],
+    controls: Sequence[RunControlRecord] = (),
 ) -> RunOutput:
     """Build one run output payload from one durable run record and step trace."""
 
@@ -178,10 +188,15 @@ def run_output_from_steps(
         StepDetail(record=step, message=step_message_data(run, step))
         for step in steps
     ]
+    control_details = [
+        RunControlDetail(record=control, message=run_control_message_data(control))
+        for control in controls
+    ]
     return RunOutput(
         status=run.status,
         error=run.error,
         steps=step_details,
+        controls=control_details,
     )
 
 
@@ -189,11 +204,12 @@ def run_detail_from_record(
     run: RunRecord,
     *,
     steps: Sequence[StepRecord],
+    controls: Sequence[RunControlRecord] = (),
 ) -> RunDetail:
     """Build one run detail payload from one durable run record."""
 
     return RunDetail(
         info=run_info_from_record(run),
         input=run_input_from_steps(run, steps=steps),
-        output=run_output_from_steps(run, steps=steps),
+        output=run_output_from_steps(run, steps=steps, controls=controls),
     )

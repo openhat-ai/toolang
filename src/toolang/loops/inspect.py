@@ -1084,6 +1084,12 @@ def _run_detail_data(run_detail: RunDetail) -> dict[str, object]:
         if item.message is not None:
             payload["message"] = item.message.to_data()
         output_steps.append(payload)
+    output_controls: list[dict[str, object]] = []
+    for item in run_detail.output.controls:
+        payload = asdict(item)
+        if item.message is not None:
+            payload["message"] = item.message.to_data()
+        output_controls.append(payload)
     virtual_failure_step = _virtual_runtime_failure_step(run_detail, steps=step_records)
     if virtual_failure_step is not None:
         step_records.append(virtual_failure_step)
@@ -1106,6 +1112,7 @@ def _run_detail_data(run_detail: RunDetail) -> dict[str, object]:
                 steps=step_records,
             ),
             "steps": output_steps,
+            "controls": output_controls,
         },
     }
 
@@ -1223,7 +1230,8 @@ def _profile_environment(
 
 def _run_detail(context: UptimeContext, run: RunRecord):
     raw_steps = context.store.list_steps(run_id=run.run_id)
-    return run_detail_from_record(run, steps=raw_steps)
+    controls = context.store.list_run_controls(run_id=run.run_id)
+    return run_detail_from_record(run, steps=raw_steps, controls=controls)
 
 
 def _run_messages(

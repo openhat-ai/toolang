@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 import json
 import logging
 from pathlib import Path
@@ -47,6 +47,7 @@ from .events import (
 )
 from .records import (
     ModelCallStepPayload,
+    RunControlRecord,
     RunInputRef,
     StepInputItem,
     StepOutputRef,
@@ -72,12 +73,14 @@ class RunContext:
         provider: ModelProvider,
         *,
         on_event: TraceEventHandler | None = None,
+        consume_controls: Callable[[str, int], Sequence[RunControlRecord]] | None = None,
         stream: bool = False,
     ) -> None:
         self._input = run_input
         self._model = model
         self._provider = provider
         self._on_event = on_event
+        self._consume_controls = consume_controls
         self._stream = stream
         self._snapshot = run_input.snapshot
         self._messages = list(run_input.messages())
@@ -122,6 +125,7 @@ class RunContext:
 
         step_index = self._next_step_index()
         started_at = _utc_now()
+        self._consume_pending_controls(step_index)
         step_input = self._model_step_input()
         self._start_model_step(step_index)
         self._emit(
@@ -405,6 +409,15 @@ class RunContext:
         if self._last_step_index is None:
             return (RunInputRef(),)
         return (StepOutputRef(step_index=self._last_step_index),)
+
+    def _consume_pending_controls(self, step_index: int) -> None:
+        if self._consume_controls is None:
+            return
+        controls = self._consume_controls(self._input.run.run_id, step_index)
+        for control in controls:
+            if control.kind != "steer" or control.message is None:
+                continue
+            self._messages.append(control.message)
 
     def _start_model_step(self, step_index: int) -> None:
         self._active_model_step_index = step_index

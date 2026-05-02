@@ -70,6 +70,11 @@ async def execute_run(
             model,
             provider,
             on_event=_event_handler(context, persist, response),
+            consume_controls=lambda run_id, step_index: context.store.consume_pending_run_controls(
+                run_id=run_id,
+                step_index=step_index,
+                kind="steer",
+            ),
             stream=bool(response is not None and response.wants_stream),
         )
         execution = await asyncio.to_thread(strategy.run, run_context)
