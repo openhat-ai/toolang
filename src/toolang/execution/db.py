@@ -23,8 +23,11 @@ from toolang.base.types.message import (
 )
 from .events import RunEnd, RunStart, StepStart, StepEnd, TraceEvent
 from .records import (
+    EventDomain,
+    EventRecord,
     ModelCallStepPayload,
     RunRecord,
+    RunControlRecord,
     RunStatus,
     RuntimeStepPayload,
     StepInputItem,
@@ -461,6 +464,204 @@ class ExecutionStore:
             ).fetchall()
         return [_update_from_row(row) for row in reversed(rows)]
 
+    def append_event(
+        self,
+        *,
+        domain: EventDomain,
+        domain_id: str,
+        type: str,
+        payload: dict[str, Any] | None = None,
+        created_at: str | None = None,
+    ) -> EventRecord:
+        """Append one resource-scoped event and return it with its domain cursor."""
+
+        now = created_at or utc_now()
+        with self._lock:
+            cursor_row = self._conn.execute(
+                """
+                SELECT COALESCE(MAX(cursor), 0) + 1 AS next_cursor
+                FROM events
+                WHERE domain = ? AND domain_id = ?
+                """,
+                (domain, domain_id),
+            ).fetchone()
+            cursor = int(cursor_row["next_cursor"]) if cursor_row is not None else 1
+            inserted = self._conn.execute(
+                """
+                INSERT INTO events(
+                    domain,
+                    domain_id,
+                    cursor,
+                    type,
+                    payload,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    domain,
+                    domain_id,
+                    cursor,
+                    type,
+                    _dump_json(payload or {}),
+                    now,
+                ),
+            )
+            row = self._conn.execute(
+                "SELECT * FROM events WHERE event_id = ?",
+                (inserted.lastrowid,),
+            ).fetchone()
+            self._conn.commit()
+        if row is None:
+            raise RuntimeError("event insert returned no row")
+        return _event_from_row(row)
+
+    def list_events(
+        self,
+        *,
+        domain: EventDomain,
+        domain_id: str,
+        after: int | None = None,
+        limit: int = 100,
+    ) -> list[EventRecord]:
+        clauses = ["domain = ?", "domain_id = ?"]
+        params: list[object] = [domain, domain_id]
+        if after is not None:
+            clauses.append("cursor > ?")
+            params.append(after)
+        params.append(limit)
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT * FROM events
+                WHERE {' AND '.join(clauses)}
+                ORDER BY cursor ASC
+                LIMIT ?
+                """,
+                tuple(params),
+            ).fetchall()
+        return [_event_from_row(row) for row in rows]
+
+    def latest_event_cursor(self, *, domain: EventDomain, domain_id: str) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT COALESCE(MAX(cursor), 0) AS cursor
+                FROM events
+                WHERE domain = ? AND domain_id = ?
+                """,
+                (domain, domain_id),
+            ).fetchone()
+        return int(row["cursor"]) if row is not None else 0
+
+    def append_run_control(
+        self,
+        *,
+        control_id: str,
+        run_id: str,
+        thread_id: str,
+        kind: str,
+        message: Message | None = None,
+        status: str = "pending",
+        created_at: str | None = None,
+    ) -> RunControlRecord:
+        now = created_at or utc_now()
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO run_controls(
+                    control_id,
+                    run_id,
+                    thread_id,
+                    kind,
+                    message,
+                    status,
+                    created_at,
+                    updated_at,
+                    consumed_at,
+                    consumed_step_index
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    control_id,
+                    run_id,
+                    thread_id,
+                    kind,
+                    _dump_json(message.to_data()) if message is not None else None,
+                    status,
+                    now,
+                    now,
+                    None,
+                    None,
+                ),
+            )
+            row = self._conn.execute(
+                "SELECT * FROM run_controls WHERE control_id = ?",
+                (control_id,),
+            ).fetchone()
+            self._conn.commit()
+        if row is None:
+            raise RuntimeError("run control insert returned no row")
+        return _run_control_from_row(row)
+
+    def get_run_control(self, *, control_id: str) -> RunControlRecord | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM run_controls WHERE control_id = ?",
+                (control_id,),
+            ).fetchone()
+        return _run_control_from_row(row) if row is not None else None
+
+    def update_run_control_message(
+        self,
+        *,
+        control_id: str,
+        message: Message,
+        updated_at: str | None = None,
+    ) -> RunControlRecord:
+        now = updated_at or utc_now()
+        with self._lock:
+            self._conn.execute(
+                """
+                UPDATE run_controls
+                SET message = ?, updated_at = ?
+                WHERE control_id = ? AND status = 'pending'
+                """,
+                (_dump_json(message.to_data()), now, control_id),
+            )
+            row = self._conn.execute(
+                "SELECT * FROM run_controls WHERE control_id = ?",
+                (control_id,),
+            ).fetchone()
+            self._conn.commit()
+        if row is None:
+            raise RuntimeError(f"run control not found: {control_id}")
+        return _run_control_from_row(row)
+
+    def delete_pending_run_control(
+        self,
+        *,
+        control_id: str,
+        updated_at: str | None = None,
+    ) -> RunControlRecord:
+        now = updated_at or utc_now()
+        with self._lock:
+            self._conn.execute(
+                """
+                UPDATE run_controls
+                SET status = 'ignored', updated_at = ?
+                WHERE control_id = ? AND status = 'pending'
+                """,
+                (now, control_id),
+            )
+            row = self._conn.execute(
+                "SELECT * FROM run_controls WHERE control_id = ?",
+                (control_id,),
+            ).fetchone()
+            self._conn.commit()
+        if row is None:
+            raise RuntimeError(f"run control not found: {control_id}")
+        return _run_control_from_row(row)
+
     def _init_schema(self) -> None:
         with self._lock:
             self._conn.execute("PRAGMA journal_mode=WAL;")
@@ -471,6 +672,8 @@ class ExecutionStore:
                 self._conn.execute("DROP TABLE IF EXISTS runs")
                 self._conn.execute("DROP TABLE IF EXISTS threads")
                 self._conn.execute("DROP TABLE IF EXISTS updates")
+                self._conn.execute("DROP TABLE IF EXISTS events")
+                self._conn.execute("DROP TABLE IF EXISTS run_controls")
                 self._conn.execute("DROP TABLE IF EXISTS instruction_blobs")
             self._conn.execute(
                 """
@@ -529,6 +732,37 @@ class ExecutionStore:
             )
             self._conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    domain TEXT NOT NULL,
+                    domain_id TEXT NOT NULL,
+                    cursor INTEGER NOT NULL,
+                    type TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(domain, domain_id, cursor)
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS run_controls (
+                    control_id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    thread_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    message TEXT,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    consumed_at TEXT,
+                    consumed_step_index INTEGER,
+                    FOREIGN KEY(run_id) REFERENCES runs(run_id)
+                )
+                """
+            )
+            self._conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS instruction_blobs (
                     instructions_hash TEXT PRIMARY KEY,
                     body TEXT NOT NULL
@@ -546,6 +780,12 @@ class ExecutionStore:
             )
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_updates_created ON updates(created_at)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_events_domain_cursor ON events(domain, domain_id, cursor)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_run_controls_run_status ON run_controls(run_id, status)"
             )
             self._conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
             self._conn.commit()
@@ -700,6 +940,37 @@ def _update_from_row(row: sqlite3.Row) -> UpdateRecord:
         kind=cast(UpdateKind, row["kind"]),
         payload=dict(payload_raw) if isinstance(payload_raw, Mapping) else {},
         created_at=str(row["created_at"]),
+    )
+
+
+def _event_from_row(row: sqlite3.Row) -> EventRecord:
+    payload_raw = _load_json(str(row["payload"]))
+    return EventRecord(
+        event_id=int(row["event_id"]),
+        domain=cast(EventDomain, row["domain"]),
+        domain_id=str(row["domain_id"]),
+        cursor=int(row["cursor"]),
+        type=str(row["type"]),
+        payload=dict(payload_raw) if isinstance(payload_raw, Mapping) else {},
+        created_at=str(row["created_at"]),
+    )
+
+
+def _run_control_from_row(row: sqlite3.Row) -> RunControlRecord:
+    message_raw = _load_json(str(row["message"])) if row["message"] is not None else None
+    return RunControlRecord(
+        control_id=str(row["control_id"]),
+        run_id=str(row["run_id"]),
+        thread_id=str(row["thread_id"]),
+        kind=str(row["kind"]),
+        message=Message.from_data(message_raw) if isinstance(message_raw, Mapping) else None,
+        status=str(row["status"]),
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
+        consumed_at=str(row["consumed_at"]) if row["consumed_at"] is not None else None,
+        consumed_step_index=(
+            int(row["consumed_step_index"]) if row["consumed_step_index"] is not None else None
+        ),
     )
 
 

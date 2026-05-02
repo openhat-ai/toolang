@@ -29,12 +29,14 @@ class ThreadInfo:
 
     id: str
     title: str
+    created_at: str
     updated_at: str
     origin: str
     peer: ThreadPeer
     parent: str | None
     run_count: int
     latest_run: ThreadRunInfo | None
+    active_run: ThreadRunInfo | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,17 +97,20 @@ def thread_info_from_runs(
 
     first = runs[0]
     last = runs[-1]
+    active = next((run for run in reversed(runs) if run.status == "running"), None)
     first_input = run_input_message_data(first)
     title = message_summary(first_input.parts) or first.origin
     return ThreadInfo(
         id=thread_id,
         title=title,
+        created_at=thread.created_at if thread is not None else first.created_at,
         origin=last.origin,
         updated_at=last.finished_at or last.started_at,
         peer=thread.peer if thread is not None else ThreadPeer(),
         parent=thread.parent if thread is not None else None,
         run_count=len(runs),
         latest_run=thread_run_info_from_record(last),
+        active_run=thread_run_info_from_record(active) if active is not None else None,
     )
 
 
@@ -116,12 +121,14 @@ def thread_info_from_record(thread: ThreadRecord) -> ThreadInfo:
     return ThreadInfo(
         id=thread.thread_id,
         title=title,
+        created_at=thread.created_at,
         origin=thread.origin,
         updated_at=thread.updated_at,
         peer=thread.peer,
         parent=thread.parent,
         run_count=0,
         latest_run=None,
+        active_run=None,
     )
 
 

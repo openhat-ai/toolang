@@ -83,6 +83,7 @@ from toolang.execution.snapshot import (
 )
 from toolang.execution.runner import QueueRunner, RunOutcome, RunRequest, RunSubmission
 from toolang.execution.db import ExecutionStore, execution_db_path
+from toolang.execution.stream import RuntimeEventBus
 from toolang.loops import chat as chat_loop, inspect, poll, prepare, pulse, reload
 from toolang.state.durable import scan_durable_state
 from toolang.state.live import load_live_state
@@ -303,6 +304,7 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
                 "origin": "chat",
                 "peer": {"type": "user", "name": "user", "thread": None},
                 "parent": None,
+                "created_at": runs[0]["created_at"],
                 "updated_at": runs[0]["updated_at"],
                 "run_count": 1,
                 "latest_run": {
@@ -314,6 +316,7 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
                     "finished_at": runs[0]["finished_at"],
                     "updated_at": runs[0]["updated_at"],
                 },
+                "active_run": None,
             }
             thread_detail = client.get(f"/api/v1/threads/{thread_id}").json()
             run_detail = client.get(f"/api/v1/runs/{body['run_id']}").json()
@@ -390,6 +393,7 @@ def test_threads_api_reports_full_run_count_independent_of_recent_run_limit(tmp_
     assert thread["id"] == "thread-1"
     assert thread["title"] == "first message"
     assert thread["run_count"] == 2
+    assert thread["created_at"] == "2026-01-01T00:00:00Z"
     assert thread["latest_run"] == {
         "id": "run-new",
         "origin": "chat",
@@ -399,7 +403,82 @@ def test_threads_api_reports_full_run_count_independent_of_recent_run_limit(tmp_
         "finished_at": "2026-01-01T00:01:01Z",
         "updated_at": "2026-01-01T00:01:01Z",
     }
+    assert thread["active_run"] is None
     assert thread["updated_at"] == "2026-01-01T00:01:01Z"
+
+
+def test_threads_api_reports_active_run(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("inspect",),
+    )
+    context.store.start_run(
+        run_id="run-active",
+        thread_id="thread-1",
+        origin="chat",
+        input=Message.user("still running"),
+        created_at="2026-01-01T00:00:00Z",
+        started_at="2026-01-01T00:00:00Z",
+    )
+    app = _create_test_app(context)
+
+    with TestClient(app) as client:
+        thread = client.get("/api/v1/threads").json()["items"][0]
+        detail = client.get("/api/v1/threads/thread-1").json()
+
+    assert thread["active_run"] == {
+        "id": "run-active",
+        "origin": "chat",
+        "status": "running",
+        "created_at": "2026-01-01T00:00:00Z",
+        "started_at": "2026-01-01T00:00:00Z",
+        "finished_at": None,
+        "updated_at": "2026-01-01T00:00:00Z",
+    }
+    assert thread["created_at"] == "2026-01-01T00:00:00Z"
+    assert detail["info"]["active_run"] == thread["active_run"]
+    assert detail["event_cursor"] == 0
+
+
+def test_run_events_api_returns_resource_scoped_events(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("inspect",),
+    )
+    context.events.publish(
+        domain="run",
+        domain_id="run-1",
+        type="run_start",
+        payload={"run_id": "run-1", "thread_id": "thread-1"},
+    )
+    context.events.publish(
+        domain="run",
+        domain_id="run-1",
+        type="part_end",
+        payload={"run_id": "run-1", "thread_id": "thread-1", "step_index": 1},
+    )
+    context.store.start_run(
+        run_id="run-1",
+        thread_id="thread-1",
+        origin="chat",
+        input=Message.user("hello"),
+        created_at="2026-01-01T00:00:00Z",
+        started_at="2026-01-01T00:00:00Z",
+    )
+    app = _create_test_app(context)
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/runs/run-1/events?after=1").json()
+
+    assert response["cursor"] == 2
+    assert [item["type"] for item in response["items"]] == ["part_end"]
+    assert response["items"][0]["cursor"] == 2
 
 
 def test_chat_api_allocates_new_threads_and_rejects_unknown_thread_ids(tmp_path: Path) -> None:
@@ -4430,6 +4509,7 @@ def _build_context(
         if runner is not None
         else QueueRunner(delay_sec=0.0),
         store=store,
+        events=RuntimeEventBus(store),
         config=UptimeConfig(
             {
                 "server.host": "127.0.0.1",
