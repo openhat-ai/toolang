@@ -40,6 +40,7 @@ from .execution.response import build_channel_response_sink
 from .execution.execute import execute_run
 from .execution.runner import QueueRunner, RunRequest, RunSubmission, RunOutcome
 from .execution.db import ExecutionStore, execution_db_path
+from .execution.stream import RuntimeEventBus
 from .loops import chat, control, hook, inspect, poll, prepare, pulse, reload
 from .state.durable import scan_durable_state
 from .state.live import LiveState, load_live_state
@@ -144,6 +145,7 @@ class UptimeContext:
         channel_plugins: dict[str, ChannelPlugin],
         runner: QueueRunner,
         store: ExecutionStore,
+        events: RuntimeEventBus,
         config: UptimeConfig,
     ) -> None:
         self.root = root
@@ -160,6 +162,7 @@ class UptimeContext:
         self.channel_plugins = dict(channel_plugins)
         self.runner = runner
         self.store = store
+        self.events = events
         self.config = config
 
     def tool_context(self, tool_name: str, *, run_id: str, wd: Path | None = None) -> ToolContext:
@@ -700,15 +703,25 @@ def _up_local(
         port=port,
         cors_allowed_origins=cors_allowed_origins or [],
     )
-    store = context.store
     live = context.live
-    store.append_update(
+    context.store.append_update(
         kind="started",
         payload={
             "loops": list(enabled_loops),
             "live_fingerprint": live.fingerprint,
         },
         created_at=started_at,
+    )
+    context.events.publish(
+        domain="agent",
+        domain_id=context.name,
+        type="agent_start",
+        payload={
+            "agent": context.name,
+            "loops": list(enabled_loops),
+            "live_fingerprint": live.fingerprint,
+            "started_at": started_at,
+        },
     )
     endpoint = f"http://{public_host}:{port}"
 
@@ -767,6 +780,12 @@ def _up_local(
                     "outcome": "stopped",
                 },
             )
+            context.events.publish(
+                domain="agent",
+                domain_id=context.name,
+                type="agent_stop",
+                payload={"agent": context.name, "outcome": "stopped"},
+            )
             context.store.close()
 
     app = create_app(context, lifespan=lifespan)
@@ -817,6 +836,7 @@ def _load_runtime_context(
             "runtime.sandbox": _runtime_sandbox_value(runtime_state),
         }
     )
+    store = ExecutionStore(execution_db_path(toolang_root, agent_name))
     return UptimeContext(
         root=toolang_root,
         name=agent_name,
@@ -837,7 +857,8 @@ def _load_runtime_context(
             for name, binding in channel_bindings.items()
         },
         runner=QueueRunner(),
-        store=ExecutionStore(execution_db_path(toolang_root, agent_name)),
+        store=store,
+        events=RuntimeEventBus(store),
         config=config,
     )
 

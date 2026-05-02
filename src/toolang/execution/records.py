@@ -29,6 +29,7 @@ UpdateKind = Literal[
     "task_changed",
     "chore_changed",
 ]
+EventDomain = Literal["agent", "thread", "run"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,6 +230,35 @@ class UpdateRecord:
     kind: UpdateKind
     payload: dict[str, Any]
     created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class EventRecord:
+    """One durable resource-scoped event record."""
+
+    event_id: int
+    domain: EventDomain
+    domain_id: str
+    cursor: int
+    type: str
+    payload: dict[str, Any]
+    created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class RunControlRecord:
+    """One durable run control input."""
+
+    control_id: str
+    run_id: str
+    thread_id: str
+    kind: str
+    message: Message | None
+    status: str
+    created_at: str
+    updated_at: str
+    consumed_at: str | None = None
+    consumed_step_index: int | None = None
 
 
 def step_input_item_from_data(payload: Mapping[str, Any]) -> StepInputItem:

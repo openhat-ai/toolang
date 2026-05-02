@@ -7,12 +7,13 @@ from collections.abc import AsyncIterator, Container, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from toolang.base.types.message import TextPart, message_summary
+from toolang.base.types.message import Message, TextPart, message_summary
 from ..execution.detail import (
     RunDetail,
     ThreadInfo,
@@ -22,6 +23,8 @@ from ..execution.detail import (
 )
 from ..execution.events import MessageData, run_message_data
 from ..execution.records import ModelCallStepPayload, RuntimeStepPayload, StepRecord
+from ..execution.runner import RunRequest
+from ..execution.stream import event_data
 from .. import agents, caps, templates, work
 from ..state.durable import scan_durable_state
 from ..state.prepared import PreparedEntry, load_prepared_state
@@ -44,6 +47,32 @@ COLLECTION_TO_KIND: dict[str, CapKind] = {
     "services": "service",
     "prompts": "prompt",
 }
+
+
+class RunControlMessagePayload(BaseModel):
+    """One user-authored run control message."""
+
+    role: str = "user"
+    parts: list[dict[str, object]]
+    meta: dict[str, object] = Field(default_factory=dict)
+
+
+class RunCancelRequest(BaseModel):
+    """Request run cancellation."""
+
+    reason: str | None = None
+
+
+class RunEditRequest(BaseModel):
+    """Request an edited replacement input for one run."""
+
+    message: RunControlMessagePayload
+
+
+class RunSteerRequest(BaseModel):
+    """Request one steering message for a running run."""
+
+    message: RunControlMessagePayload
 
 
 class _ApiModel(BaseModel):
@@ -177,7 +206,105 @@ def create_router() -> APIRouter:
         run = context.store.get_run(run_id=run_id)
         if run is None:
             raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
-        return _run_detail_data(_run_detail(context, run))
+        return {
+            **_run_detail_data(_run_detail(context, run)),
+            "event_cursor": context.store.latest_event_cursor(domain="run", domain_id=run_id),
+        }
+
+    @router.get("/runs/{run_id}/events", tags=["activity"], summary="List Run Events")
+    async def run_events(request: Request, run_id: str, after: int | None = None, limit: int = Query(default=100)) -> dict[str, object]:
+        context = request.app.state.runtime
+        _run_or_404(context, run_id)
+        events = context.store.list_events(domain="run", domain_id=run_id, after=after, limit=limit)
+        return {
+            "cursor": context.store.latest_event_cursor(domain="run", domain_id=run_id),
+            "items": [event_data(item) for item in events],
+        }
+
+    @router.get("/runs/{run_id}/stream", tags=["activity"], summary="Stream Run Events")
+    async def run_stream(request: Request, run_id: str, after: int | None = None) -> StreamingResponse:
+        context = request.app.state.runtime
+        _run_or_404(context, run_id)
+        return _event_stream_response(context.events.stream(domain="run", domain_id=run_id, after=after))
+
+    @router.post("/runs/{run_id}/cancel", tags=["activity"], summary="Cancel Run")
+    async def cancel_run(request: Request, run_id: str, payload: RunCancelRequest | None = None) -> dict[str, object]:
+        context = request.app.state.runtime
+        run = _run_or_404(context, run_id)
+        if run.status == "running":
+            run = context.store.cancel_run(run_id=run_id, error=payload.reason if payload else None)
+            event_payload = _run_event_payload(run)
+            context.events.publish(domain="run", domain_id=run.run_id, type="run_end", payload=event_payload)
+            context.events.publish(domain="thread", domain_id=run.thread_id, type="run_end", payload=event_payload)
+        return {"run": _run_item(run, steps=context.store.list_steps(run_id=run.run_id))}
+
+    @router.post("/runs/{run_id}/edit", tags=["activity"], summary="Edit Run Input")
+    async def edit_run_input(request: Request, run_id: str, payload: RunEditRequest) -> dict[str, object]:
+        context = request.app.state.runtime
+        run = _run_or_404(context, run_id)
+        if run.origin != "chat":
+            raise HTTPException(status_code=409, detail=f"run input edits are only supported for chat runs: {run_id}")
+        message = _control_message(payload.message)
+        mode = "append" if context.store.list_steps(run_id=run.run_id) else "replace"
+        if run.status == "running":
+            run = context.store.cancel_run(run_id=run.run_id, error="Run input was edited.")
+        context.runner.enqueue(
+            RunRequest(
+                group="chat",
+                origin="chat",
+                thread_id=run.thread_id,
+                message=message,
+            )
+        )
+        event_payload = {
+            "run_id": run.run_id,
+            "thread_id": run.thread_id,
+            "mode": mode,
+            "message": message.to_data(),
+        }
+        context.events.publish(domain="run", domain_id=run.run_id, type="run_edit", payload=event_payload)
+        context.events.publish(domain="thread", domain_id=run.thread_id, type="run_edit", payload=event_payload)
+        return {
+            "mode": mode,
+            "previous_run": _run_item(run, steps=context.store.list_steps(run_id=run.run_id)),
+            "message": message.to_data(),
+        }
+
+    @router.post("/runs/{run_id}/steer", tags=["activity"], summary="Steer Run")
+    async def steer_run(request: Request, run_id: str, payload: RunSteerRequest) -> dict[str, object]:
+        context = request.app.state.runtime
+        run = _run_or_404(context, run_id)
+        if run.status != "running":
+            raise HTTPException(status_code=409, detail=f"run is not running: {run_id}")
+        message = _control_message(payload.message, meta={"source": "steer"})
+        control = context.store.append_run_control(
+            control_id=f"steer_{uuid4().hex[:12]}",
+            run_id=run.run_id,
+            thread_id=run.thread_id,
+            kind="steer",
+            message=message,
+        )
+        event_payload = _control_event_payload(control)
+        context.events.publish(domain="run", domain_id=run.run_id, type="run_steer", payload=event_payload)
+        context.events.publish(domain="thread", domain_id=run.thread_id, type="run_steer", payload=event_payload)
+        return {"steer": event_payload}
+
+    @router.post("/runs/{run_id}/steers/{steer_id}/edit", tags=["activity"], summary="Edit Run Steer")
+    async def edit_run_steer(request: Request, run_id: str, steer_id: str, payload: RunSteerRequest) -> dict[str, object]:
+        context = request.app.state.runtime
+        _run_or_404(context, run_id)
+        control = _pending_steer_or_409(context, run_id=run_id, steer_id=steer_id)
+        message = _control_message(payload.message, meta={"source": "steer", "steer_id": control.control_id})
+        control = context.store.update_run_control_message(control_id=control.control_id, message=message)
+        return {"steer": _control_event_payload(control)}
+
+    @router.post("/runs/{run_id}/steers/{steer_id}/delete", tags=["activity"], summary="Delete Run Steer")
+    async def delete_run_steer(request: Request, run_id: str, steer_id: str) -> dict[str, object]:
+        context = request.app.state.runtime
+        _run_or_404(context, run_id)
+        control = _pending_steer_or_409(context, run_id=run_id, steer_id=steer_id)
+        control = context.store.delete_pending_run_control(control_id=control.control_id)
+        return {"steer": _control_event_payload(control)}
 
     @router.get("/instructions/{instructions_hash}", tags=["activity"], summary="Get Instructions")
     async def instructions(request: Request, instructions_hash: str) -> dict[str, object]:
@@ -199,7 +326,7 @@ def create_router() -> APIRouter:
             items = [item for item in items if item.origin == origin]
         return {"items": [asdict(item) for item in items[:limit]]}
 
-    @router.get("/threads/{thread_id:path}", tags=["activity"], summary="Get Thread")
+    @router.get("/threads/{thread_id}", tags=["activity"], summary="Get Thread")
     async def thread_detail(request: Request, thread_id: str, limit: int = Query(default=50)) -> dict[str, object]:
         context = request.app.state.runtime
         items = _thread_items(context)
@@ -216,7 +343,24 @@ def create_router() -> APIRouter:
         return {
             "info": asdict(info),
             "runs": [_run_detail_data(item) for item in runs],
+            "event_cursor": context.store.latest_event_cursor(domain="thread", domain_id=thread_id),
         }
+
+    @router.get("/threads/{thread_id}/events", tags=["activity"], summary="List Thread Events")
+    async def thread_events(request: Request, thread_id: str, after: int | None = None, limit: int = Query(default=100)) -> dict[str, object]:
+        context = request.app.state.runtime
+        _thread_or_404(context, thread_id)
+        events = context.store.list_events(domain="thread", domain_id=thread_id, after=after, limit=limit)
+        return {
+            "cursor": context.store.latest_event_cursor(domain="thread", domain_id=thread_id),
+            "items": [event_data(item) for item in events],
+        }
+
+    @router.get("/threads/{thread_id}/stream", tags=["activity"], summary="Stream Thread Events")
+    async def thread_stream(request: Request, thread_id: str, after: int | None = None) -> StreamingResponse:
+        context = request.app.state.runtime
+        _thread_or_404(context, thread_id)
+        return _event_stream_response(context.events.stream(domain="thread", domain_id=thread_id, after=after))
 
     @router.get("/events", tags=["activity"], summary="List Events")
     async def events(request: Request, limit: int = Query(default=100)) -> dict[str, object]:
@@ -228,6 +372,20 @@ def create_router() -> APIRouter:
     @router.get("/events/stream", tags=["activity"], summary="Stream Events")
     async def events_stream() -> StreamingResponse:
         return StreamingResponse(_events_stream(), media_type="text/event-stream")
+
+    @router.get("/agent/events", tags=["activity"], summary="List Agent Events")
+    async def agent_events(request: Request, after: int | None = None, limit: int = Query(default=100)) -> dict[str, object]:
+        context = request.app.state.runtime
+        events = context.store.list_events(domain="agent", domain_id=context.name, after=after, limit=limit)
+        return {
+            "cursor": context.store.latest_event_cursor(domain="agent", domain_id=context.name),
+            "items": [event_data(item) for item in events],
+        }
+
+    @router.get("/agent/stream", tags=["activity"], summary="Stream Agent Events")
+    async def agent_stream(request: Request, after: int | None = None) -> StreamingResponse:
+        context = request.app.state.runtime
+        return _event_stream_response(context.events.stream(domain="agent", domain_id=context.name, after=after))
 
     @router.get("/jobs", tags=["jobs"], summary="List Jobs")
     async def jobs(
@@ -748,6 +906,17 @@ def _append_job_update(
             "path": _agent_relative_path(context, path),
         },
     )
+    context.events.publish(
+        domain="agent",
+        domain_id=context.name,
+        type=f"{kind}_update",
+        payload={
+            "id": item_id,
+            "kind": kind,
+            "action": action,
+            "path": _agent_relative_path(context, path),
+        },
+    )
 
 
 def _job_runtime(
@@ -1088,6 +1257,85 @@ def _thread_items(context: UptimeContext) -> list[ThreadInfo]:
         if thread_id not in grouped_runs:
             items.append(thread_info_from_record(thread))
     return sorted(items, key=lambda item: item.updated_at, reverse=True)
+
+
+def _run_or_404(context: UptimeContext, run_id: str):
+    run = context.store.get_run(run_id=run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
+    return run
+
+
+def _thread_or_404(context: UptimeContext, thread_id: str) -> None:
+    if context.store.get_thread(thread_id=thread_id) is not None:
+        return
+    if context.store.list_runs(thread_id=thread_id, limit=1):
+        return
+    raise HTTPException(status_code=404, detail=f"thread not found: {thread_id}")
+
+
+def _control_message(payload: RunControlMessagePayload, *, meta: dict[str, object] | None = None) -> Message:
+    data = payload.model_dump(mode="python")
+    merged_meta = dict(data.get("meta", {}))
+    if meta:
+        merged_meta.update(meta)
+    data["meta"] = merged_meta
+    try:
+        message = Message.from_data(data)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if message.role != "user":
+        raise HTTPException(status_code=422, detail="run control message role must be user")
+    return message
+
+
+def _pending_steer_or_409(context: UptimeContext, *, run_id: str, steer_id: str):
+    control = context.store.get_run_control(control_id=steer_id)
+    if control is None or control.run_id != run_id or control.kind != "steer":
+        raise HTTPException(status_code=404, detail=f"steer not found: {steer_id}")
+    if control.status != "pending":
+        raise HTTPException(status_code=409, detail=f"steer is not pending: {steer_id}")
+    return control
+
+
+def _control_event_payload(control) -> dict[str, object]:
+    return {
+        "steer_id": control.control_id,
+        "run_id": control.run_id,
+        "thread_id": control.thread_id,
+        "kind": control.kind,
+        "status": control.status,
+        "message": control.message.to_data() if control.message is not None else None,
+        "created_at": control.created_at,
+        "updated_at": control.updated_at,
+        "consumed_at": control.consumed_at,
+        "consumed_step_index": control.consumed_step_index,
+    }
+
+
+def _run_event_payload(run) -> dict[str, object]:
+    return {
+        "run_id": run.run_id,
+        "thread_id": run.thread_id,
+        "origin": run.origin,
+        "status": run.status,
+        "error": run.error,
+        "created_at": run.created_at,
+        "started_at": run.started_at,
+        "finished_at": run.finished_at,
+    }
+
+
+def _event_stream_response(stream: AsyncIterator[str]) -> StreamingResponse:
+    return StreamingResponse(
+        stream,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 def _thread_metric_kind(thread: ThreadInfo) -> Literal["chat", "chore", "task"]:

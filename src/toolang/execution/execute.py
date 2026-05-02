@@ -44,6 +44,7 @@ async def execute_run(
         bound = bind_run_request(context, request, live=submission.live)
         run_input = RunInput.from_binding(context, bound)
         _emit_event(
+            context,
             persist,
             response,
             RunStart(
@@ -68,7 +69,7 @@ async def execute_run(
             run_input,
             model,
             provider,
-            on_event=_event_handler(persist, response),
+            on_event=_event_handler(context, persist, response),
             stream=bool(response is not None and response.wants_stream),
         )
         execution = await asyncio.to_thread(strategy.run, run_context)
@@ -76,6 +77,7 @@ async def execute_run(
         error = str(exc)
         if bound is not None and started:
             _emit_event(
+                context,
                 persist,
                 response,
                 RunEnd(
@@ -115,13 +117,18 @@ async def execute_run(
             )
         raise
 
+    stored_run = context.store.get_run(run_id=bound.run_id)
+    final_status = "canceled" if stored_run is not None and stored_run.status == "canceled" else "finished"
+    final_error = stored_run.error if final_status == "canceled" and stored_run is not None else None
     _emit_event(
+        context,
         persist,
         response,
         RunEnd(
             run_id=bound.run_id,
             thread_id=bound.thread_id,
-            status="finished",
+            status=final_status,
+            error=final_error,
             finished_at=_utc_now(),
         ),
     )
@@ -133,30 +140,33 @@ async def execute_run(
         thunk_name=bound.thunk_name,
         thread_id=bound.thread_id,
         delay_sec=delay_sec,
-        status="finished",
+        status="failed" if final_status == "canceled" else "finished",
         output_text=execution.output_text,
+        error=final_error,
         live_fingerprint=bound.live.fingerprint,
     )
 
 
 def _event_handler(
+    context: UptimeContext,
     persist: PersistSink,
     response: ResponseSink | None,
 ) -> TraceEventHandler | None:
     if response is None:
 
         def handler(event: TraceEvent) -> None:
-            _emit_event(persist, None, event)
+            _emit_event(context, persist, None, event)
 
         return handler
 
     def handler(event: TraceEvent) -> None:
-        _emit_event(persist, response, event)
+        _emit_event(context, persist, response, event)
 
     return handler
 
 
 def _emit_event(
+    context: UptimeContext,
     persist: PersistSink | None,
     response: ResponseSink | None,
     event: TraceEvent,
@@ -171,6 +181,10 @@ def _emit_event(
             response.on_event(event)
         except Exception:
             _LOGGER.exception("response sink event handling failed")
+    try:
+        context.events.publish_trace(event)
+    except Exception:
+        _LOGGER.exception("runtime event publish failed")
 
 
 def _utc_now() -> str:
