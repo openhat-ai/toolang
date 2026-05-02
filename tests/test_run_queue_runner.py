@@ -546,6 +546,32 @@ def test_runtime_start_restores_ignored_termination_signals(monkeypatch) -> None
     ]
 
 
+def test_agent_events_include_cap_updates(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("control", "inspect"),
+    )
+    app = _create_test_app(context)
+
+    with TestClient(app) as client:
+        put_response = client.put(
+            "/api/v1/psyches/reviewer/local",
+            json={"visibility": "private", "content": "Prefer direct answers."},
+        )
+        response = client.get("/api/v1/agent/events").json()
+
+    assert put_response.status_code == 200
+    assert response["cursor"] == 1
+    assert [item["type"] for item in response["items"]] == ["psyche_changed"]
+    assert response["items"][0]["payload"] == {
+        "name": "reviewer",
+        "visibility": "private",
+    }
+
+
 def test_chat_api_allocates_new_threads_and_rejects_unknown_thread_ids(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
