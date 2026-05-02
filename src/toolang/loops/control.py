@@ -203,12 +203,20 @@ def _cap_detail_item(context, entry: PreparedEntry) -> dict[str, object]:
 
 
 def _append_cap_update(context, *, kind: CapKind, name: str, visibility: PreparedVisibility) -> None:
+    event_type = cast(Literal["psyche_changed", "skill_changed", "service_changed", "prompt_changed"], f"{kind}_changed")
+    payload = {
+        "name": name,
+        "visibility": visibility,
+    }
     context.store.append_update(
-        kind=cast(Literal["psyche_changed", "skill_changed", "service_changed", "prompt_changed"], f"{kind}_changed"),
-        payload={
-            "name": name,
-            "visibility": visibility,
-        },
+        kind=event_type,
+        payload=payload,
+    )
+    context.events.publish(
+        domain="agent",
+        domain_id=context.name,
+        type=event_type,
+        payload=payload,
     )
 
 
