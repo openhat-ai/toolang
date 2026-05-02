@@ -869,7 +869,7 @@ def _load_runtime_context(
         },
         runner=QueueRunner(),
         store=store,
-        events=RuntimeEventBus(store),
+        events=RuntimeEventBus(store, agent_id=agent_name),
         config=config,
     )
 

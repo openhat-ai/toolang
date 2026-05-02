@@ -483,14 +483,23 @@ def stop_agent(
         if sandbox_state.runtime_id:
             sandbox_plugin.stop(sandbox_state, force=force)
             stopped = True
+    failed_pids: list[int] = []
     if pid_alive and isinstance(pid, int):
-        _stop_pid(pid, force=force)
-        stopped = True
+        if _stop_pid(pid, force=force):
+            stopped = True
+        else:
+            failed_pids.append(pid)
     for runtime_pid in runtime_pids:
         if runtime_pid == pid:
             continue
-        _stop_pid(runtime_pid, force=force)
-        stopped = True
+        if _stop_pid(runtime_pid, force=force):
+            stopped = True
+        else:
+            failed_pids.append(runtime_pid)
+
+    if failed_pids:
+        pid_text = ", ".join(str(item) for item in sorted(set(failed_pids)))
+        raise ValueError(f"agent did not stop: {agent_name} (pid {pid_text}); retry with --force")
 
     if runtime_state is not None:
         stop_runtime_state(
@@ -772,30 +781,36 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def _stop_pid(pid: int, *, force: bool) -> None:
+def _stop_pid(pid: int, *, force: bool) -> bool:
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
-        return
+        return True
     except PermissionError as exc:
         raise ValueError(f"permission denied while stopping pid {pid}") from exc
 
     deadline = time.monotonic() + 2.0
     while time.monotonic() < deadline:
         if not _pid_alive(pid):
-            return
+            return True
         time.sleep(0.05)
     if not _pid_alive(pid):
-        return
+        return True
     if not force:
-        return
+        return False
     kill_signal = getattr(signal, "SIGKILL", signal.SIGTERM)
     try:
         os.kill(pid, kill_signal)
     except ProcessLookupError:
-        return
+        return True
     except PermissionError as exc:
         raise ValueError(f"permission denied while force-stopping pid {pid}") from exc
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if not _pid_alive(pid):
+            return True
+        time.sleep(0.05)
+    return not _pid_alive(pid)
 
 
 def _sandbox_alive(payload: object) -> bool:

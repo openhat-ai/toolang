@@ -894,7 +894,7 @@ def test_cli_stop_stops_orphan_runtime_process_without_state(tmp_path: Path, mon
     monkeypatch.setattr(
         agents,
         "_stop_pid",
-        lambda pid, *, force: stopped.append((pid, force)),
+        lambda pid, *, force: stopped.append((pid, force)) or True,
     )
 
     result = runner.invoke(
