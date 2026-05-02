@@ -103,8 +103,8 @@ class DockerSandbox:
                     "local_home": str(request.local_home),
                     "sandbox_root": str(request.sandbox_root),
                     "sandbox_home": str(request.sandbox_home),
-                    "local_host": request.local_host,
-                    "public_host": request.public_host,
+                    "bind_host": request.bind_host,
+                    "endpoint_host": request.endpoint_host,
                     "port": request.port,
                     "endpoint": request.endpoint,
                     "loop_names": list(request.loop_names),
@@ -147,7 +147,7 @@ class DockerSandbox:
             mounts=tuple(mounts),
             port_forwards=(
                 SandboxPortForward(
-                    local_host=request.local_host,
+                    bind_host=request.bind_host,
                     local_port=request.port,
                     sandbox_port=request.port,
                 ),
@@ -186,7 +186,7 @@ class DockerSandbox:
                 workdir=str(plan.sandbox_working_directory),
                 command=list(plan.run_command),
                 mounts=plan.mounts,
-                published_host=port_forward.local_host,
+                bind_host=port_forward.bind_host,
                 published_port=port_forward.local_port,
                 env_values=plan.env_vars,
             )
@@ -425,7 +425,7 @@ def docker_run_detached(
     workdir: str,
     command: list[str],
     mounts: tuple[SandboxMount, ...],
-    published_host: str,
+    bind_host: str,
     published_port: int,
     env_values: Mapping[str, str],
 ) -> str:
@@ -438,7 +438,7 @@ def docker_run_detached(
         "--workdir",
         workdir,
         "--publish",
-        f"{published_host}:{published_port}:{published_port}",
+        f"{bind_host}:{published_port}:{published_port}",
     ]
     for mount in mounts:
         suffix = ":ro" if mount.read_only else ""

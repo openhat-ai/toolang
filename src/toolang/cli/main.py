@@ -309,9 +309,9 @@ def run_agent(
             help="Wheel file, or a directory tree containing wheels, for managed sandbox startup.",
         ),
     ] = None,
-    public_host: Annotated[
+    endpoint_host: Annotated[
         str | None,
-        typer.Option("--public-host", help="Published host name.", hidden=True),
+        typer.Option("--endpoint-host", help="Endpoint host name.", hidden=True),
     ] = None,
     sandbox_child: Annotated[
         bool,
@@ -331,7 +331,7 @@ def run_agent(
                     toolang_root=run_root,
                     agent_name=agent_name,
                     host=host,
-                    public_host=public_host,
+                    endpoint_host=endpoint_host,
                     port=port,
                     sandbox=sandbox,
                     models=models,
@@ -380,9 +380,9 @@ def start_agent(
             help="Wheel file, or a directory tree containing wheels, for managed sandbox startup.",
         ),
     ] = None,
-    public_host: Annotated[
+    endpoint_host: Annotated[
         str | None,
-        typer.Option("--public-host", help="Published host name.", hidden=True),
+        typer.Option("--endpoint-host", help="Endpoint host name.", hidden=True),
     ] = None,
 ) -> None:
     selector = _required_runtime_agent(ctx, agent)
@@ -406,7 +406,7 @@ def start_agent(
         toolang_root=root,
         agent_name=agent_name,
         host=host,
-        public_host=public_host,
+        endpoint_host=endpoint_host,
         port=port,
         sandbox=sandbox,
         models=models,

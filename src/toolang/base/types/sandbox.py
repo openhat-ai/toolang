@@ -72,13 +72,13 @@ class SandboxMount:
 class SandboxPortForward:
     """One local-to-sandbox port forward."""
 
-    local_host: str
+    bind_host: str
     local_port: int
     sandbox_port: int
 
     def to_data(self) -> dict[str, object]:
         return {
-            "local_host": self.local_host,
+            "bind_host": self.bind_host,
             "local_port": self.local_port,
             "sandbox_port": self.sandbox_port,
         }
@@ -94,8 +94,8 @@ class SandboxStartRequest:
     sandbox_root: Path
     sandbox_home: Path
     agent_name: str
-    local_host: str
-    public_host: str
+    bind_host: str
+    endpoint_host: str
     port: int
     endpoint: str
     loop_names: tuple[str, ...] = ()

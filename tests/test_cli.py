@@ -409,7 +409,7 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
         toolang_root: Path,
         agent_name: str,
         host: str,
-        public_host: str | None,
+        endpoint_host: str | None,
         port: int | None,
         sandbox: str | None,
         models: list[str] | None,
@@ -419,7 +419,7 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
         log_spec: str | None,
         environ: dict[str, str],
     ) -> int:
-        del host, public_host, port, sandbox, models, dev, sandbox_child, loop_names, log_spec, environ
+        del host, endpoint_host, port, sandbox, models, dev, sandbox_child, loop_names, log_spec, environ
         captured["toolang_root"] = toolang_root
         captured["agent_name"] = agent_name
         program_path = toolang_root / "agents" / agent_name / f"{agent_name}.too"
@@ -456,7 +456,7 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
         toolang_root: Path,
         agent_name: str,
         host: str,
-        public_host: str | None,
+        endpoint_host: str | None,
         port: int | None,
         sandbox: str | None,
         models: list[str] | None,
@@ -466,7 +466,7 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
         log_spec: str | None,
         environ: dict[str, str],
     ) -> int:
-        del host, public_host, port, sandbox, models, dev, sandbox_child, loop_names, log_spec, environ
+        del host, endpoint_host, port, sandbox, models, dev, sandbox_child, loop_names, log_spec, environ
         captured["toolang_root"] = toolang_root
         captured["agent_name"] = agent_name
         return 0
@@ -1401,7 +1401,7 @@ def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
         toolang_root: Path,
         agent_name: str,
         host: str = "127.0.0.1",
-        public_host: str | None = None,
+        endpoint_host: str | None = None,
         port: int | None = None,
         sandbox: str | None = None,
         models: list[str] | None = None,
@@ -1414,7 +1414,7 @@ def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
         captured["toolang_root"] = toolang_root
         captured["agent_name"] = agent_name
         captured["host"] = host
-        captured["public_host"] = public_host
+        captured["endpoint_host"] = endpoint_host
         captured["port"] = port
         captured["sandbox"] = sandbox
         captured["models"] = models
@@ -1448,7 +1448,7 @@ def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     assert captured["toolang_root"] == toolang_root
     assert captured["agent_name"] == "alice"
     assert captured["host"] == "0.0.0.0"
-    assert captured["public_host"] is None
+    assert captured["endpoint_host"] is None
     assert captured["port"] == 9000
     assert captured["sandbox"] is None
     assert captured["models"] is None
@@ -1469,7 +1469,7 @@ def test_cli_run_omits_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
         toolang_root: Path,
         agent_name: str,
         host: str = "127.0.0.1",
-        public_host: str | None = None,
+        endpoint_host: str | None = None,
         port: int | None = None,
         sandbox: str | None = None,
         models: list[str] | None = None,
@@ -1482,7 +1482,7 @@ def test_cli_run_omits_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
         captured["toolang_root"] = toolang_root
         captured["agent_name"] = agent_name
         captured["host"] = host
-        captured["public_host"] = public_host
+        captured["endpoint_host"] = endpoint_host
         captured["port"] = port
         captured["sandbox"] = sandbox
         captured["models"] = models
@@ -1505,7 +1505,7 @@ def test_cli_run_omits_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
     assert captured["toolang_root"] == toolang_root
     assert captured["agent_name"] == "alice"
     assert captured["host"] == "127.0.0.1"
-    assert captured["public_host"] is None
+    assert captured["endpoint_host"] is None
     assert captured["port"] is None
     assert captured["sandbox"] is None
     assert captured["models"] is None
@@ -1525,7 +1525,7 @@ def test_cli_run_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
         toolang_root: Path,
         agent_name: str,
         host: str = "127.0.0.1",
-        public_host: str | None = None,
+        endpoint_host: str | None = None,
         port: int | None = None,
         sandbox: str | None = None,
         models: list[str] | None = None,
@@ -1535,7 +1535,7 @@ def test_cli_run_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
         log_spec: str | None = None,
         environ: dict[str, str],
     ) -> int:
-        del toolang_root, agent_name, host, public_host, port, sandbox, models, dev, sandbox_child, log_spec, environ
+        del toolang_root, agent_name, host, endpoint_host, port, sandbox, models, dev, sandbox_child, log_spec, environ
         captured["loop_names"] = loop_names
         return 0
 
@@ -1560,7 +1560,7 @@ def test_cli_run_passes_model_selectors_to_agent_up(tmp_path: Path, monkeypatch)
         toolang_root: Path,
         agent_name: str,
         host: str = "127.0.0.1",
-        public_host: str | None = None,
+        endpoint_host: str | None = None,
         port: int | None = None,
         sandbox: str | None = None,
         models: list[str] | None = None,
@@ -1570,7 +1570,7 @@ def test_cli_run_passes_model_selectors_to_agent_up(tmp_path: Path, monkeypatch)
         log_spec: str | None = None,
         environ: dict[str, str],
     ) -> int:
-        del toolang_root, agent_name, host, public_host, port, sandbox, dev, sandbox_child, loop_names, log_spec, environ
+        del toolang_root, agent_name, host, endpoint_host, port, sandbox, dev, sandbox_child, loop_names, log_spec, environ
         captured["models"] = models
         return 0
 
@@ -1595,7 +1595,7 @@ def test_cli_run_does_not_override_explicit_log_spec(tmp_path: Path, monkeypatch
         toolang_root: Path,
         agent_name: str,
         host: str = "127.0.0.1",
-        public_host: str | None = None,
+        endpoint_host: str | None = None,
         port: int | None = None,
         sandbox: str | None = None,
         models: list[str] | None = None,
@@ -1605,7 +1605,7 @@ def test_cli_run_does_not_override_explicit_log_spec(tmp_path: Path, monkeypatch
         log_spec: str | None = None,
         environ: dict[str, str],
     ) -> int:
-        del toolang_root, agent_name, host, public_host, port, sandbox, models, dev, sandbox_child, loop_names
+        del toolang_root, agent_name, host, endpoint_host, port, sandbox, models, dev, sandbox_child, loop_names
         captured["environ"] = environ
         captured["log_spec"] = log_spec
         return 0
@@ -1656,7 +1656,7 @@ def test_cli_run_loads_root_and_agent_env_with_agent_override(tmp_path: Path, mo
         toolang_root: Path,
         agent_name: str,
         host: str = "127.0.0.1",
-        public_host: str | None = None,
+        endpoint_host: str | None = None,
         port: int | None = None,
         sandbox: str | None = None,
         models: list[str] | None = None,
@@ -1667,7 +1667,7 @@ def test_cli_run_loads_root_and_agent_env_with_agent_override(tmp_path: Path, mo
         environ: dict[str, str],
     ) -> int:
         captured["environ"] = environ
-        captured["public_host"] = public_host
+        captured["endpoint_host"] = endpoint_host
         captured["sandbox"] = sandbox
         captured["models"] = models
         captured["dev"] = dev
@@ -1688,7 +1688,7 @@ def test_cli_run_loads_root_and_agent_env_with_agent_override(tmp_path: Path, mo
     assert environ["TELEGRAM_BOT_TOKEN"] == "agent-token"
     assert environ["ROOT_ONLY"] == "1"
     assert environ["AGENT_ONLY"] == "1"
-    assert captured["public_host"] is None
+    assert captured["endpoint_host"] is None
     assert captured["sandbox"] is None
     assert captured["models"] is None
     assert captured["dev"] is None
@@ -1728,7 +1728,7 @@ def test_cli_start_spawns_background_run_and_reports_status(tmp_path: Path, monk
         agents.write_runtime_state(
             toolang_root,
             "alice",
-            endpoint="http://127.0.0.1:8765",
+            endpoint="http://localhost:8765",
             started_at="2026-04-07T11:00:01Z",
             pid=os.getpid(),
         )
@@ -1743,7 +1743,7 @@ def test_cli_start_spawns_background_run_and_reports_status(tmp_path: Path, monk
     )
 
     assert result.exit_code == 0
-    assert result.stdout.strip() == "alice\trunning\thttp://127.0.0.1:8765/docs\thttp://localhost:3000/8765"
+    assert result.stdout.strip() == "alice\trunning\thttp://localhost:8765/docs\thttp://localhost:3000/8765"
     assert captured["command"] == [
         cli.sys.executable,
         "-m",
@@ -1754,8 +1754,8 @@ def test_cli_start_spawns_background_run_and_reports_status(tmp_path: Path, monk
         "alice",
         "--host",
         "127.0.0.1",
-        "--public-host",
-        "127.0.0.1",
+        "--endpoint-host",
+        "localhost",
         "--port",
         "8765",
         "--sandbox",
@@ -2023,7 +2023,7 @@ def test_cli_start_includes_model_selectors_in_background_command(tmp_path: Path
     assert command[second_flag + 1] == "o3"
 
 
-def test_cli_start_preserves_host_public_host_and_sandbox_in_background_command(
+def test_cli_start_preserves_host_endpoint_host_and_sandbox_in_background_command(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -2068,7 +2068,7 @@ def test_cli_start_preserves_host_public_host_and_sandbox_in_background_command(
             "alice",
             "--host",
             "0.0.0.0",
-            "--public-host",
+            "--endpoint-host",
             "agent.example.com",
             "--port",
             "8765",
@@ -2082,8 +2082,8 @@ def test_cli_start_preserves_host_public_host_and_sandbox_in_background_command(
     command = cast(list[str], captured["command"])
     assert "--host" in command
     assert command[command.index("--host") + 1] == "0.0.0.0"
-    assert "--public-host" in command
-    assert command[command.index("--public-host") + 1] == "agent.example.com"
+    assert "--endpoint-host" in command
+    assert command[command.index("--endpoint-host") + 1] == "agent.example.com"
     assert "--sandbox" in command
     assert command[command.index("--sandbox") + 1] == "docker:python:3.13-slim"
     assert "--port" in command
@@ -2102,6 +2102,7 @@ def test_cli_start_reuses_preferred_runtime_port(tmp_path: Path, monkeypatch) ->
         status="stopped",
     )
     captured: dict[str, object] = {}
+    monkeypatch.setattr("toolang.agents.agent_runtime_process_pids", lambda *_args: ())
 
     class FakeProcess:
         def poll(self) -> None:

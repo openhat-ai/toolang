@@ -21,8 +21,8 @@ def test_create_none_sandbox_plugin_prepares_direct_plan(tmp_path: Path) -> None
             sandbox_root=tmp_path / "root",
             sandbox_home=tmp_path / "root" / "agents" / "alice",
             agent_name="alice",
-            local_host="127.0.0.1",
-            public_host="127.0.0.1",
+            bind_host="127.0.0.1",
+            endpoint_host="127.0.0.1",
             port=8000,
             endpoint="http://127.0.0.1:8000",
             loop_names=("chat", "inspect"),
@@ -69,8 +69,8 @@ def test_create_docker_sandbox_plugin_prepares_and_starts(monkeypatch, tmp_path:
             sandbox_root=Path("/root/.toolang"),
             sandbox_home=Path("/root/.toolang/agents/alice"),
             agent_name="alice",
-            local_host="127.0.0.1",
-            public_host="127.0.0.1",
+            bind_host="127.0.0.1",
+            endpoint_host="127.0.0.1",
             port=8123,
             endpoint="http://127.0.0.1:8123",
             loop_names=("chat", "inspect"),
@@ -118,7 +118,7 @@ def test_create_docker_sandbox_plugin_prepares_and_starts(monkeypatch, tmp_path:
     assert calls["removed"] == "toolang-alice"
     run_call = cast(dict[str, Any], calls["run"])
     assert run_call["image"] == "python:3.13-slim"
-    assert run_call["published_host"] == "127.0.0.1"
+    assert run_call["bind_host"] == "127.0.0.1"
     assert run_call["published_port"] == 8123
     assert run_call["env_values"]["TOOLANG_ROOT"] == "/root/.toolang"
     assert plugin.alive(start.state) is True
@@ -138,8 +138,8 @@ def test_create_docker_sandbox_plugin_prefixes_too_for_uv_tool_run(tmp_path: Pat
             sandbox_root=Path("/root/.toolang"),
             sandbox_home=Path("/root/.toolang/agents/alice"),
             agent_name="alice",
-            local_host="127.0.0.1",
-            public_host="127.0.0.1",
+            bind_host="127.0.0.1",
+            endpoint_host="127.0.0.1",
             port=8123,
             endpoint="http://127.0.0.1:8123",
             loop_names=("chat", "inspect"),

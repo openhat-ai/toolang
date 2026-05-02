@@ -1779,7 +1779,7 @@ def test_up_falls_back_when_previous_agent_port_is_unavailable(
     assert captured["port"] == 43210
 
 
-def test_up_waits_for_stopped_agent_port_to_become_available(tmp_path: Path, monkeypatch) -> None:
+def test_up_falls_back_when_stopped_agent_port_is_unavailable(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
     agents.write_runtime_state(
@@ -1791,16 +1791,17 @@ def test_up_waits_for_stopped_agent_port_to_become_available(tmp_path: Path, mon
     )
     agents.stop_runtime_state(toolang_root, "alice")
     captured: dict[str, object] = {}
-    attempts = {"count": 0}
 
     def fake_port_is_available(host: str, port: int) -> bool:
         assert host == "127.0.0.1"
         assert port == 53322
-        attempts["count"] += 1
-        return attempts["count"] >= 3
+        return False
 
     monkeypatch.setattr("toolang.up._port_is_available", fake_port_is_available)
-    monkeypatch.setattr("toolang.up.time.sleep", lambda _: None)
+    monkeypatch.setattr(
+        "toolang.up._wait_for_port_available",
+        lambda *_args, **_kwargs: pytest.fail("stopped runtime ports should not be awaited"),
+    )
     monkeypatch.setattr(
         "toolang.up._pick_runtime_port",
         lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
@@ -1822,11 +1823,10 @@ def test_up_waits_for_stopped_agent_port_to_become_available(tmp_path: Path, mon
 
     assert result == 0
     assert captured["host"] == "127.0.0.1"
-    assert captured["port"] == 53322
-    assert attempts["count"] >= 3
+    assert captured["port"] == 43210
 
 
-def test_up_waits_longer_for_stopped_agent_port_to_become_available(
+def test_resolve_runtime_port_does_not_wait_for_stopped_preferred_port(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
@@ -1839,17 +1839,12 @@ def test_up_waits_longer_for_stopped_agent_port_to_become_available(
         pid=12345,
     )
     agents.stop_runtime_state(toolang_root, "alice")
-    observed: dict[str, object] = {}
 
     monkeypatch.setattr("toolang.up._port_is_available", lambda host, port: False)
-
-    def fake_wait_for_port_available(host: str, port: int, *, timeout_sec: float) -> bool:
-        observed["host"] = host
-        observed["port"] = port
-        observed["timeout_sec"] = timeout_sec
-        return False
-
-    monkeypatch.setattr("toolang.up._wait_for_port_available", fake_wait_for_port_available)
+    monkeypatch.setattr(
+        "toolang.up._wait_for_port_available",
+        lambda *_args, **_kwargs: pytest.fail("stopped runtime ports should not be awaited"),
+    )
     monkeypatch.setattr(
         "toolang.up._pick_runtime_port",
         lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
@@ -1863,11 +1858,6 @@ def test_up_waits_longer_for_stopped_agent_port_to_become_available(
     )
 
     assert resolved == 43210
-    assert observed == {
-        "host": "127.0.0.1",
-        "port": 53322,
-        "timeout_sec": 5.0,
-    }
 
 
 def test_pick_runtime_port_uses_first_available_auto_port(tmp_path: Path, monkeypatch) -> None:
@@ -1978,7 +1968,7 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
             captured["plan"] = plan
             return SandboxStartResult(
                 state=cast(SandboxState, plan.state),
-                endpoint="http://127.0.0.1:8765",
+                endpoint="http://localhost:8765",
             )
 
         def alive(self, state: SandboxState) -> bool:
@@ -1992,7 +1982,7 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
         raise AssertionError("uvicorn.run should not be called for managed sandboxes")
 
     monkeypatch.setattr("toolang.up.create_sandbox_plugin", lambda name, config=None: FakeSandbox())
-    monkeypatch.setattr("toolang.up._wait_for_sandbox_ready", lambda **kwargs: None)
+    monkeypatch.setattr("toolang.up._wait_for_sandbox_ready", lambda **kwargs: captured.setdefault("ready", kwargs))
     monkeypatch.setattr("toolang.up.uvicorn.run", fail_uvicorn_run)
 
     result = run_experiments_up(
@@ -2010,6 +2000,9 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
     assert request.selector == SandboxSelector(driver="docker", target="python:3.13-slim")
     assert request.sandbox_root == Path("/root/.toolang")
     assert request.sandbox_home == Path("/root/.toolang/agents/alice")
+    assert request.bind_host == "127.0.0.1"
+    assert request.endpoint_host == "localhost"
+    assert request.endpoint == "http://localhost:8765"
     assert request.env_vars["OPENAI_API_KEY"] == "secret"
     assert request.run_command[:7] == (
         "toolang",
@@ -2020,8 +2013,8 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
         "--host",
         "0.0.0.0",
     )
-    assert "--public-host" in request.run_command
-    assert request.run_command[request.run_command.index("--public-host") + 1] == "127.0.0.1"
+    assert "--endpoint-host" in request.run_command
+    assert request.run_command[request.run_command.index("--endpoint-host") + 1] == "localhost"
     assert "--sandbox" in request.run_command
     assert request.run_command[request.run_command.index("--sandbox") + 1] == "none"
     assert "--sandbox-child" in request.run_command
@@ -2031,8 +2024,12 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
         agents.agent_runtime_state_path(toolang_root, "alice").read_text(encoding="utf-8")
     )
     assert runtime_state["status"] == "running"
+    assert runtime_state["endpoint"] == "http://localhost:8765"
     assert runtime_state["sandbox"]["selector"]["driver"] == "docker"
     assert runtime_state["sandbox"]["runtime_id"] == "sandbox-alice"
+    ready = cast(dict[str, object], captured["ready"])
+    assert ready["host"] == "127.0.0.1"
+    assert ready["port"] == 8765
 
 
 def test_up_defaults_docker_target_when_selector_omits_one(tmp_path: Path, monkeypatch) -> None:
@@ -2266,6 +2263,67 @@ def test_list_agent_statuses_surfaces_preparing_and_failed_states(tmp_path: Path
     assert statuses["bob"].webui_url is None
 
 
+def test_stop_runtime_state_requires_matching_owner_when_expected(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    agents.write_runtime_state(
+        toolang_root,
+        "alice",
+        endpoint="http://127.0.0.1:8765",
+        started_at="2026-04-08T10:00:00Z",
+        pid=111,
+    )
+
+    stopped = agents.stop_runtime_state(
+        toolang_root,
+        "alice",
+        expected_pid=222,
+        expected_started_at="2026-04-08T10:00:00Z",
+    )
+
+    runtime_state = cast(dict[str, object], agents.load_runtime_state(toolang_root, "alice"))
+    assert stopped is False
+    assert runtime_state["status"] == "running"
+    assert runtime_state["pid"] == 111
+
+    stopped = agents.stop_runtime_state(
+        toolang_root,
+        "alice",
+        expected_pid=111,
+        expected_started_at="2026-04-08T10:00:00Z",
+    )
+
+    runtime_state = cast(dict[str, object], agents.load_runtime_state(toolang_root, "alice"))
+    assert stopped is True
+    assert runtime_state["status"] == "stopped"
+    assert runtime_state["pid"] is None
+
+
+def test_agent_status_uses_matching_process_when_runtime_state_is_stale(
+    tmp_path: Path, monkeypatch
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    agents.write_runtime_state(
+        toolang_root,
+        "alice",
+        endpoint="http://127.0.0.1:8765",
+        started_at="2026-04-08T10:00:00Z",
+        pid=None,
+        status="stopped",
+    )
+
+    monkeypatch.setattr("toolang.agents.agent_runtime_process_pids", lambda *_args: (43210,))
+
+    status = agents.get_agent_status(toolang_root, "alice", ui_base_url="http://localhost:3000")
+
+    assert status is not None
+    assert status.status == "running"
+    assert status.endpoint == "http://127.0.0.1:8765"
+    assert status.api_url == "http://127.0.0.1:8765/docs"
+    assert status.webui_url == "http://localhost:3000/8765"
+
+
 def test_resolve_dev_artifact_picks_newest_wheel_recursively(tmp_path: Path) -> None:
     from toolang import up as up_module
 
@@ -2342,6 +2400,36 @@ def test_stop_agent_marks_state_stopped_without_waiting_for_endpoint_release(
     runtime_state = agents.load_runtime_state(toolang_root, "alice")
     assert runtime_state is not None
     assert runtime_state["status"] == "stopped"
+
+
+def test_stop_agent_terminates_matching_process_when_runtime_state_is_stale(
+    tmp_path: Path, monkeypatch
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    agents.write_runtime_state(
+        toolang_root,
+        "alice",
+        endpoint="http://127.0.0.1:8765",
+        started_at="2026-04-08T10:00:00Z",
+        pid=None,
+        status="stopped",
+    )
+    stopped_pids: list[int] = []
+
+    monkeypatch.setattr("toolang.agents.agent_runtime_process_pids", lambda *_args: (43210,))
+    monkeypatch.setattr(
+        "toolang.agents._stop_pid",
+        lambda pid, *, force: stopped_pids.append(pid),
+    )
+
+    stopped = agents.stop_agent(toolang_root, "alice")
+
+    assert stopped is True
+    assert stopped_pids == [43210]
+    runtime_state = cast(dict[str, object], agents.load_runtime_state(toolang_root, "alice"))
+    assert runtime_state["status"] == "stopped"
+    assert runtime_state["pid"] is None
 
 
 def test_stop_agent_stops_managed_sandbox_and_marks_state_stopped(tmp_path: Path) -> None:

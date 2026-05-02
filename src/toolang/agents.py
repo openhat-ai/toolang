@@ -428,18 +428,29 @@ def write_runtime_state(
     return path
 
 
-def stop_runtime_state(toolang_root: Path, agent_name: str) -> None:
+def stop_runtime_state(
+    toolang_root: Path,
+    agent_name: str,
+    *,
+    expected_pid: int | None = None,
+    expected_started_at: str | None = None,
+) -> bool:
     """Mark one runtime state as stopped while keeping the last endpoint."""
 
     path = agent_runtime_state_path(toolang_root, agent_name)
     runtime_state = _load_runtime_state(path)
     if runtime_state is None:
-        return
+        return False
+    if expected_pid is not None and runtime_state.get("pid") != expected_pid:
+        return False
+    if expected_started_at is not None and runtime_state.get("started_at") != expected_started_at:
+        return False
     runtime_state["status"] = "stopped"
     runtime_state["pid"] = None
     runtime_state["message"] = None
     runtime_state["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     _save_runtime_state(path, runtime_state)
+    return True
 
 
 def stop_agent(
@@ -452,12 +463,18 @@ def stop_agent(
     """Stop one running agent and mark its runtime state as stopped."""
 
     runtime_state = load_runtime_state(toolang_root, agent_name)
-    runtime_pids = () if runtime_state is not None else agent_runtime_process_pids(toolang_root, agent_name)
+    pid = runtime_state.get("pid") if runtime_state is not None else None
+    pid_alive = isinstance(pid, int) and _pid_alive(pid)
+    runtime_pids = (
+        ()
+        if pid_alive
+        else agent_runtime_process_pids(toolang_root, agent_name)
+    )
     if runtime_state is None and not runtime_pids:
         raise FileNotFoundError(f"runtime state not found: {agent_runtime_state_path(toolang_root, agent_name)}")
 
-    pid = runtime_state.get("pid") if runtime_state is not None else None
     sandbox = runtime_state.get("sandbox") if runtime_state is not None else None
+    started_at = runtime_state.get("started_at") if runtime_state is not None else None
     stopped = False
     if isinstance(sandbox, dict):
         if sandbox_plugin is None:
@@ -466,7 +483,7 @@ def stop_agent(
         if sandbox_state.runtime_id:
             sandbox_plugin.stop(sandbox_state, force=force)
             stopped = True
-    if isinstance(pid, int) and _pid_alive(pid):
+    if pid_alive and isinstance(pid, int):
         _stop_pid(pid, force=force)
         stopped = True
     for runtime_pid in runtime_pids:
@@ -476,7 +493,12 @@ def stop_agent(
         stopped = True
 
     if runtime_state is not None:
-        stop_runtime_state(toolang_root, agent_name)
+        stop_runtime_state(
+            toolang_root,
+            agent_name,
+            expected_pid=pid if isinstance(pid, int) else None,
+            expected_started_at=started_at if isinstance(started_at, str) else None,
+        )
     return stopped
 
 
@@ -572,8 +594,12 @@ def get_agent_status(toolang_root: Path, agent_name: str, *, ui_base_url: str) -
     sandbox = runtime_state.get("sandbox") if runtime_state else None
     endpoint = raw_endpoint if isinstance(raw_endpoint, str) and raw_endpoint.strip() else None
     pid_alive = isinstance(pid, int) and _pid_alive(pid)
+    should_scan_processes = runtime_state is not None and raw_status == "stopped" and not pid_alive
+    runtime_process_alive = pid_alive or bool(
+        agent_runtime_process_pids(toolang_root, agent_name) if should_scan_processes else ()
+    )
     sandbox_alive = _sandbox_alive(sandbox)
-    status = _runtime_status_label(raw_status, pid_alive=pid_alive, sandbox_alive=sandbox_alive)
+    status = _runtime_status_label(raw_status, pid_alive=runtime_process_alive, sandbox_alive=sandbox_alive)
     return AgentStatus(
         name=agent_name,
         status=status,
