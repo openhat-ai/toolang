@@ -57,7 +57,8 @@ class NoneSandbox:
                 selector=request.selector,
                 meta={
                     "endpoint": request.endpoint,
-                    "local_host": request.local_host,
+                    "bind_host": request.bind_host,
+                    "endpoint_host": request.endpoint_host,
                     "port": request.port,
                 },
             ),

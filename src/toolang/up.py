@@ -379,7 +379,7 @@ class StartupSpec:
     toolang_root: Path
     agent_name: str
     host: str
-    public_host: str
+    endpoint_host: str
     port: int
     enabled_loops: tuple[LoopName, ...]
     sandbox_plugin: SandboxPlugin
@@ -463,7 +463,7 @@ def up(
     toolang_root: Path,
     agent_name: str,
     host: str = "127.0.0.1",
-    public_host: str | None = None,
+    endpoint_host: str | None = None,
     port: int | None = None,
     sandbox: str | None = None,
     models: Sequence[str] | None = None,
@@ -479,7 +479,7 @@ def up(
         host=host,
         toolang_root=toolang_root,
         agent_name=agent_name,
-        public_host=public_host,
+        endpoint_host=endpoint_host,
         port=port,
         sandbox=sandbox,
         models=models,
@@ -496,7 +496,7 @@ def up(
             toolang_root=spec.toolang_root,
             agent_name=spec.agent_name,
             host=spec.host,
-            public_host=spec.public_host,
+            endpoint_host=spec.endpoint_host,
             port=spec.port,
             enabled_loops=spec.enabled_loops,
             environ=environ,
@@ -507,7 +507,7 @@ def up(
         toolang_root=spec.toolang_root,
         agent_name=spec.agent_name,
         host=spec.host,
-        public_host=spec.public_host,
+        endpoint_host=spec.endpoint_host,
         port=spec.port,
         enabled_loops=spec.enabled_loops,
         environ=environ,
@@ -563,7 +563,7 @@ def resolve_startup(
     toolang_root: Path,
     agent_name: str,
     host: str = "127.0.0.1",
-    public_host: str | None = None,
+    endpoint_host: str | None = None,
     port: int | None = None,
     sandbox: str | None = None,
     models: Sequence[str] | None = None,
@@ -575,7 +575,7 @@ def resolve_startup(
     """Resolve one explicit startup request into stable runtime inputs."""
 
     enabled_loops = normalize_loop_names(loop_names or DEFAULT_ENABLED_LOOPS)
-    published_host = public_host or host
+    endpoint_host = endpoint_host or _default_endpoint_host(host)
     resolved_port = resolve_runtime_port(
         host=host,
         explicit_port=port,
@@ -618,7 +618,7 @@ def resolve_startup(
         toolang_root=toolang_root,
         agent_name=agent_name,
         host=host,
-        public_host=published_host,
+        endpoint_host=endpoint_host,
         port=resolved_port,
         enabled_loops=enabled_loops,
         sandbox_plugin=sandbox_plugin,
@@ -635,7 +635,7 @@ def build_run_argv(
     *,
     root: Path | None = None,
     host: str | None = None,
-    public_host: str | None = None,
+    endpoint_host: str | None = None,
     sandbox: str | None = None,
     models: Sequence[str] | None = None,
     sandbox_child: bool = False,
@@ -652,8 +652,8 @@ def build_run_argv(
         spec.agent_name,
         "--host",
         host or spec.host,
-        "--public-host",
-        public_host or spec.public_host,
+        "--endpoint-host",
+        endpoint_host or spec.endpoint_host,
         "--port",
         str(spec.port),
         "--sandbox",
@@ -671,12 +671,18 @@ def build_run_argv(
     return tuple(command)
 
 
+def _default_endpoint_host(host: str) -> str:
+    if host == "127.0.0.1":
+        return "localhost"
+    return host
+
+
 def _up_local(
     *,
     toolang_root: Path,
     agent_name: str,
     host: str,
-    public_host: str,
+    endpoint_host: str,
     port: int,
     enabled_loops: tuple[LoopName, ...],
     environ: Mapping[str, str],
@@ -723,7 +729,7 @@ def _up_local(
             "started_at": started_at,
         },
     )
-    endpoint = f"http://{public_host}:{port}"
+    endpoint = f"http://{endpoint_host}:{port}"
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -757,7 +763,7 @@ def _up_local(
             logger.info(
                 "runtime ready agent=%s addr=http://%s:%s loops=%s live=%s",
                 context.name,
-                public_host,
+                endpoint_host,
                 port,
                 ",".join(enabled_loops),
                 context.live.fingerprint[:12],
@@ -765,7 +771,12 @@ def _up_local(
             yield
         finally:
             if not sandbox_child:
-                agents.stop_runtime_state(toolang_root, agent_name)
+                agents.stop_runtime_state(
+                    toolang_root,
+                    agent_name,
+                    expected_pid=os.getpid(),
+                    expected_started_at=started_at,
+                )
             stop_signal.set()
             context.runner.close()
             for task in bg_tasks:
@@ -986,21 +997,21 @@ def _up_managed_sandbox(
     toolang_root: Path,
     agent_name: str,
     host: str,
-    public_host: str,
+    endpoint_host: str,
     port: int,
     enabled_loops: tuple[LoopName, ...],
     environ: Mapping[str, str],
     dev_artifact: Path | None,
     model_selectors: tuple[str, ...],
 ) -> int:
-    endpoint = f"http://{public_host}:{port}"
+    endpoint = f"http://{endpoint_host}:{port}"
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     initial_sandbox_state = SandboxState(selector=selector).to_data()
     startup = StartupSpec(
         toolang_root=toolang_root,
         agent_name=agent_name,
         host=host,
-        public_host=public_host,
+        endpoint_host=endpoint_host,
         port=port,
         enabled_loops=enabled_loops,
         sandbox_plugin=plugin,
@@ -1037,8 +1048,8 @@ def _up_managed_sandbox(
         sandbox_root=sandbox_root,
         sandbox_home=sandbox_home,
         agent_name=agent_name,
-        local_host=host,
-        public_host=public_host,
+        bind_host=host,
+        endpoint_host=endpoint_host,
         port=port,
         endpoint=endpoint,
         loop_names=enabled_loops,
@@ -1074,7 +1085,7 @@ def _up_managed_sandbox(
         _wait_for_sandbox_ready(
             plugin=plugin,
             state=start.state,
-            host=public_host,
+            host=host,
             port=port,
             timeout_sec=30.0,
             stable_sec=1.0,
@@ -1183,13 +1194,9 @@ def resolve_runtime_port(
 ) -> int:
     if explicit_port is not None:
         return explicit_port
-    runtime_state = agents.load_runtime_state(toolang_root, agent_name)
     preferred_port = agents.preferred_runtime_port(toolang_root, agent_name)
     if preferred_port is not None:
         if _port_is_available(host, preferred_port):
-            return preferred_port
-        status = runtime_state.get("status") if runtime_state is not None else None
-        if status == "stopped" and _wait_for_port_available(host, preferred_port, timeout_sec=5.0):
             return preferred_port
     return _pick_runtime_port(
         host,
