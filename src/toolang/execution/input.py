@@ -29,6 +29,7 @@ from .template import render_text_template
 from .db import utc_now
 from .model import resolve_model, select_model_selectors
 from .records import RunStrategy
+from .records import ThreadPeer
 from .snapshot import (
     RunSnapshot,
     SnapshotAgent,
@@ -736,6 +737,12 @@ def bind_run_request(
 
     bound_live = live or context.live
     thread_id = request.thread_id or _new_thread_id(context, request.origin)
+    thread_peer = _request_thread_peer(request.metadata)
+    context.store.ensure_thread(
+        thread_id=thread_id,
+        origin=request.origin,
+        peer=thread_peer,
+    )
     run_strategy = cast(RunStrategy, normalize_run_strategy_name(request.run_strategy))
     return RunBinding(
         run_id=_new_run_id(context),
@@ -772,6 +779,13 @@ def _new_thread_id(context: UptimeContext, origin: str) -> str:
 def _thread_id_kind(origin: str) -> str:
     text = "".join(char for char in origin.strip().lower() if char.isalnum())
     return text or "thread"
+
+
+def _request_thread_peer(metadata: Mapping[str, Any]) -> ThreadPeer | None:
+    raw = metadata.get("thread_peer")
+    if not isinstance(raw, Mapping):
+        return None
+    return ThreadPeer.from_data(cast(Mapping[str, Any], raw))
 
 
 def select_origin_thunk(

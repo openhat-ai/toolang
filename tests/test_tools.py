@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
+from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.tool import ToolContext
+from toolang.execution.db import ExecutionStore, execution_db_path
+from toolang.execution.records import ThreadPeer
+from toolang.tools.agent_chat import create_tool as create_agent_chat_tool
 from toolang.tools.filesystem import create_tool as create_filesystem_tool
 from toolang.tools.service_use import create_tool as create_service_use_tool
 from toolang.tools.shell import create_tool as create_shell_tool
@@ -97,6 +101,204 @@ def test_web_search_tool_filters_domains(monkeypatch, tmp_path: Path) -> None:
             "snippet": "example body",
         }
     ]
+
+
+def test_agent_chat_tool_creates_child_thread_and_sends_peer_request(monkeypatch, tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
+    store = ExecutionStore(execution_db_path(root, "alice"))
+    store.start_run(
+        run_id="run-1",
+        thread_id="chat_user",
+        origin="chat",
+        input=Message.user("ask bob"),
+        created_at="2026-01-01T00:00:00Z",
+        started_at="2026-01-01T00:00:00Z",
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "thread_id": "chat_bob",
+                "run_id": "run-bob",
+                "assistant": {
+                    "role": "assistant",
+                    "parts": [{"type": "text", "text": "bob says yes"}],
+                },
+            }
+
+    def fake_post(url: str, *, json: dict[str, object], timeout: float):
+        calls.append({"url": url, "json": json, "timeout": timeout})
+        return FakeResponse()
+
+    monkeypatch.setattr("toolang.tools.agent_chat.httpx.post", fake_post)
+    tool = create_agent_chat_tool(
+        {"peers": [{"name": "bob", "endpoint": "http://127.0.0.1:7002"}]}
+    ).tools()["send"]
+
+    try:
+        result = tool.invoke(
+            {"peer": "bob", "message": "please review"},
+            _tool_context(home, "agent_chat"),
+        )
+        local = store.get_thread(thread_id=str(result["local_thread"]))
+        local_runs = store.list_runs(thread_id=str(result["local_thread"]), limit=None)
+        local_steps = store.list_steps(run_id=str(result["local_run_id"]))
+    finally:
+        store.close()
+
+    assert calls == [
+        {
+            "url": "http://127.0.0.1:7002/api/v1/chat",
+            "json": {
+                "peer": {"type": "agent", "name": "alice", "thread": result["local_thread"]},
+                "message": {
+                    "role": "user",
+                    "parts": [{"type": "text", "text": "please review"}],
+                },
+            },
+            "timeout": 60.0,
+        }
+    ]
+    assert result["peer_thread"] == "chat_bob"
+    assert result["local_run_id"].startswith("run_")
+    assert result["assistant_text"] == "bob says yes"
+    assert local is not None
+    assert local.parent == "chat_user"
+    assert local.peer == ThreadPeer(type="agent", name="bob", thread="chat_bob")
+    assert [message_text(run.input.parts) for run in local_runs] == ["please review"]
+    assert [part.text for part in local_steps[0].output if isinstance(part, TextPart)] == ["bob says yes"]
+
+
+def test_agent_chat_tool_accepts_direct_peer_object_without_config(monkeypatch, tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    home = root / "agents" / "eve"
+    home.mkdir(parents=True)
+    store = ExecutionStore(execution_db_path(root, "eve"))
+    store.start_run(
+        run_id="run-1",
+        thread_id="chat_user",
+        origin="chat",
+        input=Message.user("ask merkle"),
+        created_at="2026-01-01T00:00:00Z",
+        started_at="2026-01-01T00:00:00Z",
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "thread_id": "chat_merkle",
+                "run_id": "run-merkle",
+                "assistant": {
+                    "role": "assistant",
+                    "parts": [{"type": "text", "text": "pong"}],
+                },
+            }
+
+    def fake_post(url: str, *, json: dict[str, object], timeout: float):
+        calls.append({"url": url, "json": json, "timeout": timeout})
+        return FakeResponse()
+
+    monkeypatch.setattr("toolang.tools.agent_chat.httpx.post", fake_post)
+    tool = create_agent_chat_tool({}).tools()["send"]
+
+    try:
+        result = tool.invoke(
+            {
+                "peer": {"name": "merkle", "endpoint": "http://127.0.0.1:7002/"},
+                "message": "ping",
+            },
+            _tool_context(home, "agent_chat"),
+        )
+        local = store.get_thread(thread_id=str(result["local_thread"]))
+        local_runs = store.list_runs(thread_id=str(result["local_thread"]), limit=None)
+    finally:
+        store.close()
+
+    assert calls[0]["url"] == "http://127.0.0.1:7002/api/v1/chat"
+    assert calls[0]["json"] == {
+        "peer": {"type": "agent", "name": "eve", "thread": result["local_thread"]},
+        "message": {
+            "role": "user",
+            "parts": [{"type": "text", "text": "ping"}],
+        },
+    }
+    assert result["peer"] == "merkle"
+    assert result["peer_thread"] == "chat_merkle"
+    assert result["local_run_id"].startswith("run_")
+    assert result["assistant_text"] == "pong"
+    assert local is not None
+    assert local.peer == ThreadPeer(type="agent", name="merkle", thread="chat_merkle")
+    assert [message_text(run.input.parts) for run in local_runs] == ["ping"]
+
+
+def test_agent_chat_tool_can_call_streaming_peer_chat(monkeypatch, tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    home = root / "agents" / "eve"
+    home.mkdir(parents=True)
+    store = ExecutionStore(execution_db_path(root, "eve"))
+    store.start_run(
+        run_id="run-1",
+        thread_id="chat_user",
+        origin="chat",
+        input=Message.user("ask merkle"),
+        created_at="2026-01-01T00:00:00Z",
+        started_at="2026-01-01T00:00:00Z",
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeStream:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_lines(self):
+            yield 'data: {"type":"start","messageMetadata":{"threadId":"chat_merkle","runId":"run-merkle"}}'
+            yield 'data: {"type":"text-delta","delta":"po"}'
+            yield 'data: {"type":"text-delta","delta":"ng"}'
+            yield "data: [DONE]"
+
+    def fake_stream(method: str, url: str, *, json: dict[str, object], timeout: float):
+        calls.append({"method": method, "url": url, "json": json, "timeout": timeout})
+        return FakeStream()
+
+    monkeypatch.setattr("toolang.tools.agent_chat.httpx.stream", fake_stream)
+    tool = create_agent_chat_tool({}).tools()["send"]
+
+    try:
+        result = tool.invoke(
+            {
+                "peer": {"name": "merkle", "endpoint": "http://127.0.0.1:7002"},
+                "message": "ping",
+                "stream": True,
+            },
+            _tool_context(home, "agent_chat"),
+        )
+        local_steps = store.list_steps(run_id=str(result["local_run_id"]))
+    finally:
+        store.close()
+
+    assert calls[0]["method"] == "POST"
+    assert calls[0]["url"] == "http://127.0.0.1:7002/api/v1/chat/stream"
+    assert result["streamed"] is True
+    assert result["peer_thread"] == "chat_merkle"
+    assert result["run_id"] == "run-merkle"
+    assert result["assistant_text"] == "pong"
+    assert [part.text for part in local_steps[0].output if isinstance(part, TextPart)] == ["pong"]
 
 
 def test_service_use_tool_definition_uses_object_input_schema() -> None:

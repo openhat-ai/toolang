@@ -84,6 +84,20 @@ Thread list responses return:
 - `title`
 - `updated_at`
 - `origin`
+- `peer`
+- `parent`
+- `run_count`
+- `latest_run`
+
+`peer` defaults to:
+
+```json
+{ "type": "user", "name": "user", "thread": null }
+```
+
+Agent-to-agent threads use `peer.type = "agent"` with the peer agent name and
+that peer's local thread id when known. `parent` is a local parent thread id and
+is not used for cross-agent thread references.
 
 Thread detail returns:
 
@@ -120,6 +134,7 @@ Buffered chat:
 request body:
 
 - `thread`
+- `peer` optional; defaults to the user peer
 - `message`
   - `role`
   - `parts`

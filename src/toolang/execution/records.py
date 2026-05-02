@@ -13,6 +13,7 @@ RunStatus = Literal["running", "finished", "failed", "canceled"]
 StepStatus = Literal["finished", "failed", "canceled"]
 RunStrategy = Literal["basic", "react"]
 StepKind = Literal["model_call", "tool_call", "runtime"]
+ThreadPeerType = Literal["user", "agent"]
 
 UpdateKind = Literal[
     "created",
@@ -43,6 +44,52 @@ class RunRecord:
     created_at: str
     started_at: str
     finished_at: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ThreadPeer:
+    """One local thread peer descriptor."""
+
+    type: ThreadPeerType = "user"
+    name: str = "user"
+    thread: str | None = None
+
+    @classmethod
+    def from_data(cls, payload: Mapping[str, Any] | None) -> "ThreadPeer":
+        if payload is None:
+            return cls()
+        peer_type = str(payload.get("type", "user")).strip() or "user"
+        if peer_type not in {"user", "agent"}:
+            raise ValueError(f"unsupported thread peer type: {peer_type}")
+        name = str(payload.get("name", "user" if peer_type == "user" else "")).strip()
+        if peer_type == "agent" and not name:
+            raise ValueError("agent thread peer requires name")
+        raw_thread = payload.get("thread")
+        thread = str(raw_thread).strip() if raw_thread is not None else None
+        return cls(
+            type=cast(ThreadPeerType, peer_type),
+            name=name or "user",
+            thread=thread or None,
+        )
+
+    def to_data(self) -> dict[str, Any]:
+        return {
+            "type": self.type,
+            "name": self.name,
+            "thread": self.thread,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ThreadRecord:
+    """Durable thread metadata."""
+
+    thread_id: str
+    origin: str
+    peer: ThreadPeer
+    parent: str | None
+    created_at: str
+    updated_at: str
 
 
 @dataclass(frozen=True, slots=True)
