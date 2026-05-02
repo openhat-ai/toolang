@@ -10,6 +10,7 @@ from importlib.metadata import entry_points
 import logging
 import os
 from pathlib import Path
+import signal
 import shlex
 import socket
 import sys
@@ -475,6 +476,7 @@ def up(
 ) -> int:
     """Start one agent runtime."""
 
+    _restore_termination_signal_defaults()
     spec = resolve_startup(
         host=host,
         toolang_root=toolang_root,
@@ -515,6 +517,20 @@ def up(
         model_selectors=spec.model_selectors,
         log_spec=spec.log_spec,
     )
+
+
+def _restore_termination_signal_defaults() -> None:
+    """Reset ignored termination signals before the runtime installs handlers."""
+
+    for name in ("SIGTERM", "SIGINT", "SIGHUP"):
+        signum = getattr(signal, name, None)
+        if signum is None:
+            continue
+        try:
+            if signal.getsignal(signum) == signal.SIG_IGN:
+                signal.signal(signum, signal.SIG_DFL)
+        except (OSError, RuntimeError, ValueError):
+            continue
 
 
 def invoke(
