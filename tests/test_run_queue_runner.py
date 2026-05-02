@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import json
 import logging
 import os
+import signal
 import socket
 import threading
 import time
@@ -520,6 +521,29 @@ def test_agent_events_include_thread_updates_for_run_lifecycle(tmp_path: Path) -
     assert response["items"][0]["payload"]["run_id"] == "run-1"
     assert response["items"][0]["payload"]["status"] == "running"
     assert response["items"][1]["payload"]["status"] == "finished"
+
+
+def test_runtime_start_restores_ignored_termination_signals(monkeypatch) -> None:
+    calls: list[tuple[int, signal.Handlers]] = []
+
+    def fake_getsignal(signum: int) -> signal.Handlers:
+        if signum in {signal.SIGTERM, signal.SIGINT}:
+            return signal.SIG_IGN
+        return signal.SIG_DFL
+
+    def fake_signal(signum: int, handler: signal.Handlers) -> signal.Handlers:
+        calls.append((signum, handler))
+        return signal.SIG_IGN
+
+    monkeypatch.setattr(up_module.signal, "getsignal", fake_getsignal)
+    monkeypatch.setattr(up_module.signal, "signal", fake_signal)
+
+    up_module._restore_termination_signal_defaults()
+
+    assert calls == [
+        (signal.SIGTERM, signal.SIG_DFL),
+        (signal.SIGINT, signal.SIG_DFL),
+    ]
 
 
 def test_chat_api_allocates_new_threads_and_rejects_unknown_thread_ids(tmp_path: Path) -> None:
