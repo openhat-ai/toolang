@@ -21,8 +21,9 @@ if TYPE_CHECKING:
 class RuntimeEventBus:
     """Persist and fan out resource-scoped runtime events."""
 
-    def __init__(self, store: "ExecutionStore") -> None:
+    def __init__(self, store: "ExecutionStore", *, agent_id: str | None = None) -> None:
         self._store = store
+        self._agent_id = agent_id
         self._lock = threading.Lock()
         self._subscribers: dict[tuple[EventDomain, str], list[_Subscription]] = {}
 
@@ -58,6 +59,11 @@ class RuntimeEventBus:
         thread_id = payload.get("thread_id")
         if isinstance(run_id, str) and run_id:
             self.publish(domain="run", domain_id=run_id, type=event_type, payload=payload)
+        if self._agent_id and isinstance(event, (RunStart, RunEnd)):
+            agent_payload = dict(payload)
+            if isinstance(event, RunStart):
+                agent_payload["status"] = "running"
+            self.publish(domain="agent", domain_id=self._agent_id, type="thread_update", payload=agent_payload)
         if isinstance(event, (RunStart, RunEnd)) and isinstance(thread_id, str) and thread_id:
             self.publish(domain="thread", domain_id=thread_id, type=event_type, payload=payload)
 

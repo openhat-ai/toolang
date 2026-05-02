@@ -236,6 +236,7 @@ def create_router() -> APIRouter:
             event_payload = _run_event_payload(run)
             context.events.publish(domain="run", domain_id=run.run_id, type="run_end", payload=event_payload)
             context.events.publish(domain="thread", domain_id=run.thread_id, type="run_end", payload=event_payload)
+            context.events.publish(domain="agent", domain_id=context.name, type="thread_update", payload=event_payload)
         return {"run": _run_item(run, steps=context.store.list_steps(run_id=run.run_id))}
 
     @router.post("/runs/{run_id}/edit", tags=["activity"], summary="Edit Run Input")

@@ -44,6 +44,8 @@ from toolang.execution.events import (
     PartDelta,
     PartEnd,
     PartStart,
+    RunEnd,
+    RunStart,
     StepEnd,
     StepStart,
 )
@@ -479,6 +481,45 @@ def test_run_events_api_returns_resource_scoped_events(tmp_path: Path) -> None:
     assert response["cursor"] == 2
     assert [item["type"] for item in response["items"]] == ["part_end"]
     assert response["items"][0]["cursor"] == 2
+
+
+def test_agent_events_include_thread_updates_for_run_lifecycle(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("inspect",),
+    )
+
+    context.events.publish_trace(
+        RunStart(
+            run_id="run-1",
+            origin="chat",
+            thread_id="thread-1",
+            input=Message.user("hello"),
+            created_at="2026-01-01T00:00:00Z",
+            started_at="2026-01-01T00:00:00Z",
+        )
+    )
+    context.events.publish_trace(
+        RunEnd(
+            run_id="run-1",
+            thread_id="thread-1",
+            status="finished",
+            finished_at="2026-01-01T00:00:01Z",
+        )
+    )
+    app = _create_test_app(context)
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/agent/events").json()
+
+    assert response["cursor"] == 2
+    assert [item["type"] for item in response["items"]] == ["thread_update", "thread_update"]
+    assert response["items"][0]["payload"]["run_id"] == "run-1"
+    assert response["items"][0]["payload"]["status"] == "running"
+    assert response["items"][1]["payload"]["status"] == "finished"
 
 
 def test_chat_api_allocates_new_threads_and_rejects_unknown_thread_ids(tmp_path: Path) -> None:
@@ -2390,7 +2431,7 @@ def test_stop_agent_marks_state_stopped_without_waiting_for_endpoint_release(
     monkeypatch.setattr("toolang.agents._pid_alive", lambda pid: pid == 43210)
     monkeypatch.setattr(
         "toolang.agents._stop_pid",
-        lambda pid, *, force: observed.setdefault("stopped_pid", pid),
+        lambda pid, *, force: observed.setdefault("stopped_pid", pid) and True,
     )
 
     stopped = agents.stop_agent(toolang_root, "alice")
@@ -2420,7 +2461,7 @@ def test_stop_agent_terminates_matching_process_when_runtime_state_is_stale(
     monkeypatch.setattr("toolang.agents.agent_runtime_process_pids", lambda *_args: (43210,))
     monkeypatch.setattr(
         "toolang.agents._stop_pid",
-        lambda pid, *, force: stopped_pids.append(pid),
+        lambda pid, *, force: stopped_pids.append(pid) or True,
     )
 
     stopped = agents.stop_agent(toolang_root, "alice")
@@ -2430,6 +2471,30 @@ def test_stop_agent_terminates_matching_process_when_runtime_state_is_stale(
     runtime_state = cast(dict[str, object], agents.load_runtime_state(toolang_root, "alice"))
     assert runtime_state["status"] == "stopped"
     assert runtime_state["pid"] is None
+
+
+def test_stop_agent_rejects_stubborn_process_without_marking_state_stopped(
+    tmp_path: Path, monkeypatch
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    agents.write_runtime_state(
+        toolang_root,
+        "alice",
+        endpoint="http://127.0.0.1:8765",
+        started_at="2026-04-08T10:00:00Z",
+        pid=None,
+        status="running",
+    )
+
+    monkeypatch.setattr("toolang.agents.agent_runtime_process_pids", lambda *_args: (43210,))
+    monkeypatch.setattr("toolang.agents._stop_pid", lambda _pid, *, force: False)
+
+    with pytest.raises(ValueError, match="retry with --force"):
+        agents.stop_agent(toolang_root, "alice")
+
+    runtime_state = cast(dict[str, object], agents.load_runtime_state(toolang_root, "alice"))
+    assert runtime_state["status"] == "running"
 
 
 def test_stop_agent_stops_managed_sandbox_and_marks_state_stopped(tmp_path: Path) -> None:
@@ -4597,7 +4662,7 @@ def _build_context(
         if runner is not None
         else QueueRunner(delay_sec=0.0),
         store=store,
-        events=RuntimeEventBus(store),
+        events=RuntimeEventBus(store, agent_id=agent_name),
         config=UptimeConfig(
             {
                 "server.host": "127.0.0.1",
