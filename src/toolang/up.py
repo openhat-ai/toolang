@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from importlib.metadata import entry_points
 import logging
@@ -79,6 +79,7 @@ DEFAULT_LOOP_INTERVAL_MS: dict[str, float] = {
     "prepare": prepare.DEFAULT_INTERVAL_MS,
 }
 DEFAULT_RELOAD_DEBOUNCE_MS = reload.DEFAULT_DEBOUNCE_MS
+RUNTIME_SHUTDOWN_TASK_TIMEOUT_SEC = 1.0
 DEFAULT_CORS_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -795,12 +796,10 @@ def _up_local(
                 )
             stop_signal.set()
             context.runner.close()
-            for task in bg_tasks:
-                with suppress(asyncio.CancelledError):
-                    await task
+            shutdown_tasks: list[asyncio.Task[Any]] = [*bg_tasks]
             if runner_task is not None:
-                with suppress(asyncio.CancelledError):
-                    await runner_task
+                shutdown_tasks.append(runner_task)
+            await _finish_runtime_tasks(shutdown_tasks)
             context.store.append_update(
                 kind="stopped",
                 payload={
@@ -823,6 +822,32 @@ def _up_local(
         log_config=build_uvicorn_log_config(level=log_spec or DEFAULT_LOG_LEVEL),
     )
     return 0
+
+
+async def _finish_runtime_tasks(
+    tasks: Sequence[asyncio.Task[Any]],
+    *,
+    timeout_sec: float = RUNTIME_SHUTDOWN_TASK_TIMEOUT_SEC,
+) -> None:
+    """Let runtime tasks stop cooperatively, then cancel anything stuck."""
+
+    if not tasks:
+        return
+    done, pending = await asyncio.wait(tasks, timeout=timeout_sec)
+    for task in pending:
+        task.cancel()
+    if pending:
+        done_after_cancel, pending_after_cancel = await asyncio.wait(pending, timeout=timeout_sec)
+        done |= done_after_cancel
+        for task in pending_after_cancel:
+            logger.warning("runtime task did not stop after cancellation task=%r", task)
+    for task in done:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.warning("runtime task failed during shutdown", exc_info=True)
 
 
 def _load_runtime_context(

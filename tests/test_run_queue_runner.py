@@ -546,6 +546,26 @@ def test_runtime_start_restores_ignored_termination_signals(monkeypatch) -> None
     ]
 
 
+def test_runtime_shutdown_cancels_stuck_tasks() -> None:
+    async def run_test() -> None:
+        cancelled = asyncio.Event()
+
+        async def stuck() -> None:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        task = asyncio.create_task(stuck())
+
+        await up_module._finish_runtime_tasks([task], timeout_sec=0.01)
+
+        assert task.cancelled()
+        assert cancelled.is_set()
+
+    asyncio.run(run_test())
+
+
 def test_agent_events_include_cap_updates(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
