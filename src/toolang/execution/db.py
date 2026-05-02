@@ -611,6 +611,84 @@ class ExecutionStore:
             ).fetchone()
         return _run_control_from_row(row) if row is not None else None
 
+    def list_run_controls(
+        self,
+        *,
+        run_id: str,
+        kind: str | None = None,
+        status: str | None = None,
+    ) -> tuple[RunControlRecord, ...]:
+        clauses = ["run_id = ?"]
+        params: list[object] = [run_id]
+        if kind is not None:
+            clauses.append("kind = ?")
+            params.append(kind)
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        where = " AND ".join(clauses)
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT * FROM run_controls
+                WHERE {where}
+                ORDER BY created_at, control_id
+                """,
+                tuple(params),
+            ).fetchall()
+        return tuple(_run_control_from_row(row) for row in rows)
+
+    def consume_pending_run_controls(
+        self,
+        *,
+        run_id: str,
+        step_index: int,
+        kind: str | None = None,
+        consumed_at: str | None = None,
+    ) -> tuple[RunControlRecord, ...]:
+        now = consumed_at or utc_now()
+        clauses = ["run_id = ?", "status = 'pending'"]
+        params: list[object] = [run_id]
+        if kind is not None:
+            clauses.append("kind = ?")
+            params.append(kind)
+        where = " AND ".join(clauses)
+        with self._lock:
+            pending_rows = self._conn.execute(
+                f"""
+                SELECT * FROM run_controls
+                WHERE {where}
+                ORDER BY created_at, control_id
+                """,
+                tuple(params),
+            ).fetchall()
+            control_ids = tuple(str(row["control_id"]) for row in pending_rows)
+            if control_ids:
+                placeholders = ",".join("?" for _ in control_ids)
+                self._conn.execute(
+                    f"""
+                    UPDATE run_controls
+                    SET status = 'consumed',
+                        updated_at = ?,
+                        consumed_at = ?,
+                        consumed_step_index = ?
+                    WHERE control_id IN ({placeholders})
+                    """,
+                    (now, now, step_index, *control_ids),
+                )
+            self._conn.commit()
+            if not control_ids:
+                return ()
+            rows = self._conn.execute(
+                f"""
+                SELECT * FROM run_controls
+                WHERE control_id IN ({placeholders})
+                ORDER BY created_at, control_id
+                """,
+                control_ids,
+            ).fetchall()
+        return tuple(_run_control_from_row(row) for row in rows)
+
     def update_run_control_message(
         self,
         *,

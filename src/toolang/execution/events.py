@@ -16,6 +16,7 @@ from toolang.base.types.message import (
     parts_to_data,
 )
 from .records import (
+    RunControlRecord,
     RunRecord,
     RunStatus,
     StepInputItem,
@@ -184,6 +185,33 @@ def run_input_message_data(run: RunRecord) -> MessageData:
         parts=list(run.input.parts),
         created_at=run.started_at,
         meta=dict(run.input.meta),
+    )
+
+
+def run_control_message_data(control: RunControlRecord) -> MessageData | None:
+    """Return the caller-facing message for one run control input."""
+
+    if control.message is None:
+        return None
+    meta = {
+        **dict(control.message.meta),
+        "control_id": control.control_id,
+        "control_kind": control.kind,
+        "control_status": control.status,
+    }
+    if control.consumed_at is not None:
+        meta["consumed_at"] = control.consumed_at
+    if control.consumed_step_index is not None:
+        meta["consumed_step_index"] = control.consumed_step_index
+    return MessageData(
+        id=f"{control.run_id}:control:{control.control_id}",
+        thread_id=control.thread_id,
+        run_id=control.run_id,
+        step_index=control.consumed_step_index or 0,
+        role=control.message.role,
+        parts=list(control.message.parts),
+        created_at=control.created_at,
+        meta=meta,
     )
 
 
