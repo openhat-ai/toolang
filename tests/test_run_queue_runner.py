@@ -11,7 +11,7 @@ import socket
 import threading
 import time
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 from unittest.mock import patch
 
 from fastapi import FastAPI
@@ -32,7 +32,7 @@ from toolang.base.types.channel import (
     PollResult,
     ReplyTarget,
 )
-from toolang.base.types.run import RunResult
+from toolang.base.types.run import ModelCallResult, RunResult
 from toolang.base.types.message import (
     Message,
     TextDelta,
@@ -91,6 +91,7 @@ from toolang.loops import chat as chat_loop, inspect, poll, prepare, pulse, relo
 from toolang.state.durable import scan_durable_state
 from toolang.state.live import load_live_state
 from toolang.state.prepared import load_prepared_state, write_prepared_lock
+from toolang.strategies.basic import BasicRunStrategy
 from toolang import up as up_module
 from toolang.up import (
     RUN_LOOPS,
@@ -651,6 +652,42 @@ def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
         {"kind": "step", "index": 1},
         {"kind": "input", "index": 1},
     ]
+
+
+def test_basic_strategy_continues_when_steer_arrives_before_finish() -> None:
+    class FakeContext:
+        instructions = ""
+        messages = ()
+        model = None
+        tools = {}
+
+        def __init__(self) -> None:
+            self.model_calls = 0
+            self.pending_checks = 0
+
+        def call_model(self) -> ModelCallResult:
+            self.model_calls += 1
+            return ModelCallResult(message=Message.assistant(f"answer {self.model_calls}"))
+
+        def call_tool(self, call):
+            raise AssertionError(f"unexpected tool call: {call}")
+
+        def call_tools(self, calls):
+            raise AssertionError(f"unexpected tool calls: {calls}")
+
+        def has_pending_inputs(self) -> bool:
+            self.pending_checks += 1
+            return self.pending_checks == 1
+
+        def finish(self) -> RunResult:
+            return RunResult(output_text=f"finished after {self.model_calls}")
+
+    context = FakeContext()
+
+    result = BasicRunStrategy().run(cast(Any, context))
+
+    assert context.model_calls == 2
+    assert result.output_text == "finished after 2"
 
 
 def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
