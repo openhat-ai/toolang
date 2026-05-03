@@ -654,6 +654,52 @@ def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
     ]
 
 
+def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("inspect",),
+    )
+    context.store.start_run(
+        run_id="run-1",
+        thread_id="thread-1",
+        origin="chat",
+        input=Message.user("hello"),
+        created_at="2026-01-01T00:00:00Z",
+        started_at="2026-01-01T00:00:00Z",
+    )
+    context.store.append_input(
+        run_id="run-1",
+        action="steer",
+        mode="next_step",
+        request_id="req-steer",
+        message=Message.user("focus on events"),
+        created_at="2026-01-01T00:00:01Z",
+    )
+    context.store.append_step(
+        run_id="run-1",
+        step_index=2,
+        kind="model_call",
+        status="finished",
+        input=(StepOutputRef(step_index=1), RunInputRef(index=1)),
+        output=(TextPart(text="ok"),),
+        payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
+        started_at="2026-01-01T00:00:02Z",
+        finished_at="2026-01-01T00:00:03Z",
+    )
+    app = _create_test_app(context)
+
+    with TestClient(app) as client:
+        detail = client.get("/api/v1/runs/run-1").json()
+
+    assert detail["output"]["steps"][0]["record"]["input"] == [
+        {"kind": "step", "index": 1},
+        {"kind": "input", "index": 1},
+    ]
+
+
 def test_basic_strategy_continues_when_steer_arrives_before_finish() -> None:
     class FakeContext:
         instructions = ""
