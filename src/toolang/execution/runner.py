@@ -33,6 +33,7 @@ class RunRequest:
 
     group: str
     origin: str
+    run_id: str | None = None
     thunk: str = ""
     message: Message | None = None
     thunk_name: str | None = None

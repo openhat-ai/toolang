@@ -523,6 +523,136 @@ def test_agent_events_include_thread_updates_for_run_lifecycle(tmp_path: Path) -
     assert response["items"][1]["payload"]["status"] == "finished"
 
 
+def test_run_start_trace_emits_run_input_after_run_start(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("inspect",),
+    )
+
+    context.events.publish_trace(
+        RunStart(
+            run_id="run-1",
+            origin="chat",
+            thread_id="thread-1",
+            input=Message.user("hello"),
+            request_id="req-start",
+            created_at="2026-01-01T00:00:00Z",
+            started_at="2026-01-01T00:00:00Z",
+        )
+    )
+
+    events = context.store.list_events(domain="run", domain_id="run-1")
+
+    assert [item.type for item in events] == ["run_start", "run_input"]
+    assert [item.seq for item in events] == [1, 2]
+    assert events[1].payload == {
+        "run_id": "run-1",
+        "thread_id": "thread-1",
+        "ref": {"kind": "input", "index": 0},
+        "action": "start",
+        "message": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
+        "created_at": "2026-01-01T00:00:00Z",
+        "type": "run_input",
+        "request_id": "req-start",
+    }
+
+
+def test_steer_run_appends_run_input_event(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("inspect",),
+    )
+    context.store.start_run(
+        run_id="run-1",
+        thread_id="thread-1",
+        origin="chat",
+        input=Message.user("hello"),
+        created_at="2026-01-01T00:00:00Z",
+        started_at="2026-01-01T00:00:00Z",
+    )
+    app = _create_test_app(context)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/runs/run-1/steer",
+            json={
+                "request_id": "req-steer",
+                "mode": "next_step",
+                "message": {
+                    "role": "user",
+                    "parts": [{"type": "text", "text": "focus on events"}],
+                },
+            },
+        ).json()
+        events = client.get("/api/v1/runs/run-1/events").json()["items"]
+
+    assert response["input"]["ref"] == {"kind": "input", "index": 1}
+    assert response["input"]["action"] == "steer"
+    assert response["input"]["request_id"] == "req-steer"
+    assert [item["type"] for item in events] == ["run_input"]
+    assert events[0]["payload"]["ref"] == {"kind": "input", "index": 1}
+    assert events[0]["payload"]["message"]["parts"] == [
+        {"type": "text", "text": "focus on events"}
+    ]
+
+
+def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("inspect",),
+    )
+    context.store.start_run(
+        run_id="run-1",
+        thread_id="thread-1",
+        origin="chat",
+        input=Message.user("hello"),
+        created_at="2026-01-01T00:00:00Z",
+        started_at="2026-01-01T00:00:00Z",
+    )
+    app = _create_test_app(context)
+
+    with TestClient(app) as client:
+        client.post(
+            "/api/v1/runs/run-1/steer",
+            json={
+                "request_id": "req-steer",
+                "mode": "next_step",
+                "message": {
+                    "role": "user",
+                    "parts": [{"type": "text", "text": "focus on events"}],
+                },
+            },
+        )
+        context.events.publish_trace(
+            StepStart(
+                run_id="run-1",
+                thread_id="thread-1",
+                step_index=2,
+                kind="model_call",
+                input=(StepOutputRef(step_index=1), RunInputRef(index=1)),
+                started_at="2026-01-01T00:00:01Z",
+            )
+        )
+        events = client.get("/api/v1/threads/thread-1/events").json()["items"]
+
+    assert [item["type"] for item in events] == ["run_input", "step_start"]
+    assert [item["cursor"] for item in events] == [1, 2]
+    assert events[0]["payload"]["ref"] == {"kind": "input", "index": 1}
+    assert events[1]["payload"]["input"] == [
+        {"kind": "step", "index": 1},
+        {"kind": "input", "index": 1},
+    ]
+
+
 def test_runtime_start_restores_ignored_termination_signals(monkeypatch) -> None:
     calls: list[tuple[int, signal.Handlers]] = []
 
@@ -626,6 +756,88 @@ def test_chat_api_allocates_new_threads_and_rejects_unknown_thread_ids(tmp_path:
     assert second.status_code == 200
     assert second.json()["thread_id"] == thread_id
     assert thread["run_count"] == 2
+
+
+def test_chat_restart_supersedes_previous_run_in_thread_projection(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("chat", "inspect"),
+    )
+    app = _create_test_app(context)
+
+    with _patched_runner_execution():
+        with TestClient(app) as client:
+            first = client.post(
+                "/api/v1/chat",
+                json={"message": _chat_message("first input")},
+            )
+            old_run_id = first.json()["run_id"]
+            thread_id = first.json()["thread_id"]
+            restart = client.post(
+                f"/api/v1/runs/{old_run_id}/restart",
+                json={"message": _chat_message("replacement input")},
+            )
+            new_run_id = restart.json()["run_id"]
+
+            for _ in range(100):
+                thread_detail = client.get(f"/api/v1/threads/{thread_id}").json()
+                if [item["info"]["id"] for item in thread_detail["runs"]] == [new_run_id]:
+                    break
+                time.sleep(0.01)
+            old_detail = client.get(f"/api/v1/runs/{old_run_id}").json()
+            runs = client.get(f"/api/v1/runs?thread_id={thread_id}").json()["items"]
+
+    assert first.status_code == 200
+    assert restart.status_code == 200
+    assert restart.json()["previous_run"]["superseded"] == {"type": "replaced", "by": new_run_id}
+    assert old_detail["info"]["superseded"] == {"type": "replaced", "by": new_run_id}
+    assert [item["info"]["id"] for item in thread_detail["runs"]] == [new_run_id]
+    assert thread_detail["runs"][0]["input"]["parts"][0]["text"] == "replacement input"
+    assert thread_detail["info"]["run_count"] == 1
+    assert [item["id"] for item in runs] == [new_run_id]
+
+
+def test_chat_restart_cancels_running_run_before_superseding(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("chat", "inspect"),
+    )
+    context.store.start_run(
+        run_id="run_running",
+        thread_id="chat_running",
+        origin="chat",
+        input=Message.user("original input"),
+    )
+    app = _create_test_app(context)
+
+    with _patched_runner_execution():
+        with TestClient(app) as client:
+            restart = client.post(
+                "/api/v1/runs/run_running/restart",
+                json={"message": _chat_message("replacement input")},
+            )
+            new_run_id = restart.json()["run_id"]
+
+            for _ in range(100):
+                thread_detail = client.get("/api/v1/threads/chat_running").json()
+                if [item["info"]["id"] for item in thread_detail["runs"]] == [new_run_id]:
+                    break
+                time.sleep(0.01)
+            old_detail = client.get("/api/v1/runs/run_running").json()
+
+    assert restart.status_code == 200
+    assert restart.json()["previous_run"]["status"] == "canceled"
+    assert restart.json()["previous_run"]["superseded"] == {"type": "replaced", "by": new_run_id}
+    assert old_detail["output"]["status"] == "canceled"
+    assert old_detail["output"]["error"] == "Run was restarted."
+    assert old_detail["info"]["superseded"] == {"type": "replaced", "by": new_run_id}
+    assert [item["info"]["id"] for item in thread_detail["runs"]] == [new_run_id]
 
 
 def test_chat_api_records_peer_for_new_thread_and_rejects_mismatch(tmp_path: Path) -> None:

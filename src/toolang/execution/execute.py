@@ -54,6 +54,7 @@ async def execute_run(
                 input=run_input.message,
                 created_at=bound.created_at,
                 started_at=bound.created_at,
+                request_id=_request_id(bound.metadata),
             ),
         )
         started = True
@@ -70,11 +71,7 @@ async def execute_run(
             model,
             provider,
             on_event=_event_handler(context, persist, response),
-            consume_controls=lambda run_id, step_index: context.store.consume_pending_run_controls(
-                run_id=run_id,
-                step_index=step_index,
-                kind="steer",
-            ),
+            consume_inputs=lambda run_id: context.store.pending_inputs(run_id=run_id, action="steer"),
             stream=bool(response is not None and response.wants_stream),
         )
         execution = await asyncio.to_thread(strategy.run, run_context)
@@ -194,3 +191,8 @@ def _emit_event(
 
 def _utc_now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _request_id(metadata: dict[str, object]) -> str | None:
+    value = metadata.get("request_id")
+    return str(value) if value is not None else None

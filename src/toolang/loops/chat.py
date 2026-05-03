@@ -45,6 +45,7 @@ class ChatRequest(BaseModel):
 
     thread: str | None = Field(default=None, min_length=1)
     peer: ThreadPeerPayload | None = None
+    request_id: str | None = Field(default=None, min_length=1)
     message: ChatMessagePayload
     model: str | None = None
 
@@ -65,6 +66,7 @@ def create_router() -> APIRouter:
         detail = run_detail_from_record(
             run,
             steps=context.store.list_steps(run_id=result.run_id),
+            inputs=context.store.list_inputs(run_id=result.run_id),
         )
         if detail.input is None:
             raise HTTPException(status_code=500, detail=f"missing chat input for run {result.run_id}")
@@ -220,10 +222,13 @@ def _request_peer(payload: ChatRequest) -> ThreadPeer | None:
 
 
 def _thread_metadata(payload: ChatRequest) -> dict[str, object]:
+    metadata: dict[str, object] = {}
+    if payload.request_id is not None:
+        metadata["request_id"] = payload.request_id
     peer = _request_peer(payload)
-    if peer is None:
-        return {}
-    return {"thread_peer": peer.to_data()}
+    if peer is not None:
+        metadata["thread_peer"] = peer.to_data()
+    return metadata
 
 
 def _thread_info(context: UptimeContext, thread_id: str):
@@ -237,9 +242,11 @@ def _thread_info(context: UptimeContext, thread_id: str):
             raise HTTPException(status_code=500, detail=f"thread not found after completion: {thread_id}")
         return thread_info_from_record(thread)
     steps_by_run = context.store.list_steps_for_runs(run_ids=tuple(run.run_id for run in runs))
+    inputs_by_run = {run.run_id: context.store.list_inputs(run_id=run.run_id) for run in runs}
     return thread_info_from_runs(
         thread_id,
         runs,
+        inputs_by_run=inputs_by_run,
         steps_by_run=steps_by_run,
         thread=thread,
     )

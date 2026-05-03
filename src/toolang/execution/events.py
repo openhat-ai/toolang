@@ -16,7 +16,7 @@ from toolang.base.types.message import (
     parts_to_data,
 )
 from .records import (
-    RunControlRecord,
+    InputRecord,
     RunRecord,
     RunStatus,
     StepInputItem,
@@ -87,6 +87,7 @@ class RunStart:
     input: Message
     created_at: str
     started_at: str
+    request_id: str | None = None
     type: str = "run-start"
 
 
@@ -173,46 +174,36 @@ TraceEvent = RunStart | StepStart | PartStart | PartDelta | PartEnd | StepEnd | 
 TraceEventHandler = Callable[[TraceEvent], None]
 
 
-def run_input_message_data(run: RunRecord) -> MessageData:
-    """Return the durable initial input message for one run."""
+def run_input_message_data(run: RunRecord, input: InputRecord) -> MessageData:
+    """Return one durable run input message."""
 
+    if input.message is None:
+        raise ValueError(f"run input has no message: {run.run_id}:{input.index}")
+    message = input.message
+    meta = dict(message.meta)
+    meta.update({"action": input.action, "input_index": input.index})
+    if input.mode is not None:
+        meta["mode"] = input.mode
+    if input.request_id is not None:
+        meta["request_id"] = input.request_id
     return MessageData(
-        id=_message_id(run.run_id, 0),
+        id=f"{run.run_id}:input:{input.index}",
         thread_id=run.thread_id,
         run_id=run.run_id,
-        step_index=0,
-        role=run.input.role,
-        parts=list(run.input.parts),
-        created_at=run.started_at,
-        meta=dict(run.input.meta),
-    )
-
-
-def run_control_message_data(control: RunControlRecord) -> MessageData | None:
-    """Return the caller-facing message for one run control input."""
-
-    if control.message is None:
-        return None
-    meta = {
-        **dict(control.message.meta),
-        "control_id": control.control_id,
-        "control_kind": control.kind,
-        "control_status": control.status,
-    }
-    if control.consumed_at is not None:
-        meta["consumed_at"] = control.consumed_at
-    if control.consumed_step_index is not None:
-        meta["consumed_step_index"] = control.consumed_step_index
-    return MessageData(
-        id=f"{control.run_id}:control:{control.control_id}",
-        thread_id=control.thread_id,
-        run_id=control.run_id,
-        step_index=control.consumed_step_index or 0,
-        role=control.message.role,
-        parts=list(control.message.parts),
-        created_at=control.created_at,
+        step_index=input.index,
+        role=message.role,
+        parts=list(message.parts),
+        created_at=input.created_at,
         meta=meta,
     )
+
+
+def run_input_record_message_data(run: RunRecord, input: InputRecord) -> MessageData | None:
+    """Return the caller-facing message for one run input."""
+
+    if input.message is None:
+        return None
+    return run_input_message_data(run, input)
 
 
 def step_message_data(run: RunRecord, step: StepRecord) -> MessageData | None:
@@ -238,15 +229,24 @@ def run_output_message_data(*, run: RunRecord, steps: Sequence[StepRecord]) -> M
     return None
 
 
-def run_message_data(run: RunRecord, *, steps: Sequence[StepRecord]) -> list[MessageData]:
+def run_message_data(
+    run: RunRecord,
+    *,
+    inputs: Sequence[InputRecord],
+    steps: Sequence[StepRecord],
+) -> list[MessageData]:
     """Return the derived run transcript view."""
 
-    messages: list[MessageData] = [run_input_message_data(run)]
+    messages = [
+        message
+        for input in inputs
+        if (message := run_input_record_message_data(run, input)) is not None
+    ]
     for step in steps:
         message = step_message_data(run, step)
         if message is not None:
             messages.append(message)
-    return messages
+    return sorted(messages, key=lambda item: item.created_at)
 
 
 def replay_message(message: MessageData) -> Message:

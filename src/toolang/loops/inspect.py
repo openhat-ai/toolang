@@ -7,7 +7,6 @@ from collections.abc import AsyncIterator, Container, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
-from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -22,7 +21,8 @@ from ..execution.detail import (
     thread_info_from_record,
 )
 from ..execution.events import MessageData, run_message_data
-from ..execution.records import ModelCallStepPayload, RuntimeStepPayload, StepRecord
+from ..execution.input import allocate_run_id
+from ..execution.records import InputMode, InputRecord, ModelCallStepPayload, RunRecord, RuntimeStepPayload, StepRecord
 from ..execution.runner import RunRequest
 from ..execution.stream import event_data
 from .. import agents, caps, templates, work
@@ -49,8 +49,8 @@ COLLECTION_TO_KIND: dict[str, CapKind] = {
 }
 
 
-class RunControlMessagePayload(BaseModel):
-    """One user-authored run control message."""
+class RunInputMessagePayload(BaseModel):
+    """One user-authored run input message."""
 
     role: str = "user"
     parts: list[dict[str, object]]
@@ -61,18 +61,23 @@ class RunCancelRequest(BaseModel):
     """Request run cancellation."""
 
     reason: str | None = None
+    mode: str = "immediate"
+    request_id: str | None = None
 
 
-class RunEditRequest(BaseModel):
-    """Request an edited replacement input for one run."""
+class RunRestartRequest(BaseModel):
+    """Request one restarted chat run with a replacement input."""
 
-    message: RunControlMessagePayload
+    request_id: str | None = None
+    message: RunInputMessagePayload
 
 
 class RunSteerRequest(BaseModel):
     """Request one steering message for a running run."""
 
-    message: RunControlMessagePayload
+    request_id: str | None = None
+    mode: str = "next_step"
+    message: RunInputMessagePayload
 
 
 class _ApiModel(BaseModel):
@@ -197,7 +202,15 @@ def create_router() -> APIRouter:
         context = request.app.state.runtime
         runs = context.store.list_runs(limit=limit, thread_id=thread_id)
         steps_by_run = context.store.list_steps_for_runs(run_ids=tuple(item.run_id for item in runs))
-        items = [_run_item(item, steps=steps_by_run.get(item.run_id, ())) for item in runs]
+        inputs_by_run = {run.run_id: context.store.list_inputs(run_id=run.run_id) for run in runs}
+        items = [
+            _run_item(
+                item,
+                inputs=inputs_by_run.get(item.run_id, ()),
+                steps=steps_by_run.get(item.run_id, ()),
+            )
+            for item in runs
+        ]
         return {"items": items}
 
     @router.get("/runs/{run_id}", tags=["activity"], summary="Get Run")
@@ -227,47 +240,80 @@ def create_router() -> APIRouter:
         _run_or_404(context, run_id)
         return _event_stream_response(context.events.stream(domain="run", domain_id=run_id, after=after))
 
-    @router.post("/runs/{run_id}/cancel", tags=["activity"], summary="Cancel Run")
-    async def cancel_run(request: Request, run_id: str, payload: RunCancelRequest | None = None) -> dict[str, object]:
+    @router.post("/runs/{run_id}/stop", tags=["activity"], summary="Stop Run")
+    async def stop_run(request: Request, run_id: str, payload: RunCancelRequest | None = None) -> dict[str, object]:
         context = request.app.state.runtime
         run = _run_or_404(context, run_id)
+        input_record = context.store.append_input(
+            run_id=run.run_id,
+            action="stop",
+            mode=_input_mode(payload.mode if payload else "immediate"),
+            request_id=payload.request_id if payload else None,
+        )
+        input_payload = _input_event_payload(run, input_record)
+        context.events.publish(domain="run", domain_id=run.run_id, type="run_input", payload=input_payload)
+        context.events.publish(domain="thread", domain_id=run.thread_id, type="run_input", payload=input_payload)
         if run.status == "running":
             run = context.store.cancel_run(run_id=run_id, error=payload.reason if payload else None)
             event_payload = _run_event_payload(run)
             context.events.publish(domain="run", domain_id=run.run_id, type="run_end", payload=event_payload)
             context.events.publish(domain="thread", domain_id=run.thread_id, type="run_end", payload=event_payload)
             context.events.publish(domain="agent", domain_id=context.name, type="thread_update", payload=event_payload)
-        return {"run": _run_item(run, steps=context.store.list_steps(run_id=run.run_id))}
+        return {
+            "run": _run_item(
+                run,
+                inputs=context.store.list_inputs(run_id=run.run_id),
+                steps=context.store.list_steps(run_id=run.run_id),
+            ),
+            "input": input_payload,
+        }
 
-    @router.post("/runs/{run_id}/edit", tags=["activity"], summary="Edit Run Input")
-    async def edit_run_input(request: Request, run_id: str, payload: RunEditRequest) -> dict[str, object]:
+    @router.post("/runs/{run_id}/restart", tags=["activity"], summary="Restart Run")
+    async def restart_run(request: Request, run_id: str, payload: RunRestartRequest) -> dict[str, object]:
         context = request.app.state.runtime
         run = _run_or_404(context, run_id)
         if run.origin != "chat":
-            raise HTTPException(status_code=409, detail=f"run input edits are only supported for chat runs: {run_id}")
-        message = _control_message(payload.message)
-        mode = "append" if context.store.list_steps(run_id=run.run_id) else "replace"
+            raise HTTPException(status_code=409, detail=f"run restarts are only supported for chat runs: {run_id}")
+        if run.superseded is not None:
+            raise HTTPException(status_code=409, detail=f"run is already superseded: {run_id}")
+        message = _input_message(payload.message)
+        new_run_id = allocate_run_id(context)
         if run.status == "running":
-            run = context.store.cancel_run(run_id=run.run_id, error="Run input was edited.")
+            run = context.store.cancel_run(run_id=run.run_id, error="Run was restarted.")
+            run_end_payload = _run_event_payload(run)
+            context.events.publish(domain="run", domain_id=run.run_id, type="run_end", payload=run_end_payload)
+            context.events.publish(domain="thread", domain_id=run.thread_id, type="run_end", payload=run_end_payload)
+        run = context.store.supersede_run(
+            run_id=run.run_id,
+            superseded={"type": "replaced", "by": new_run_id},
+        )
         context.runner.enqueue(
             RunRequest(
                 group="chat",
                 origin="chat",
+                run_id=new_run_id,
                 thread_id=run.thread_id,
                 message=message,
+                metadata={"request_id": payload.request_id} if payload.request_id is not None else {},
             )
         )
         event_payload = {
             "run_id": run.run_id,
+            "replacement_run_id": new_run_id,
             "thread_id": run.thread_id,
-            "mode": mode,
+            "superseded": run.superseded,
             "message": message.to_data(),
         }
-        context.events.publish(domain="run", domain_id=run.run_id, type="run_edit", payload=event_payload)
-        context.events.publish(domain="thread", domain_id=run.thread_id, type="run_edit", payload=event_payload)
+        context.events.publish(domain="run", domain_id=run.run_id, type="run_restart", payload=event_payload)
+        context.events.publish(domain="thread", domain_id=run.thread_id, type="run_restart", payload=event_payload)
+        context.events.publish(domain="agent", domain_id=context.name, type="thread_update", payload=event_payload)
         return {
-            "mode": mode,
-            "previous_run": _run_item(run, steps=context.store.list_steps(run_id=run.run_id)),
+            "run_id": new_run_id,
+            "previous_run": _run_item(
+                run,
+                inputs=context.store.list_inputs(run_id=run.run_id),
+                steps=context.store.list_steps(run_id=run.run_id),
+            ),
             "message": message.to_data(),
         }
 
@@ -277,35 +323,18 @@ def create_router() -> APIRouter:
         run = _run_or_404(context, run_id)
         if run.status != "running":
             raise HTTPException(status_code=409, detail=f"run is not running: {run_id}")
-        message = _control_message(payload.message, meta={"source": "steer"})
-        control = context.store.append_run_control(
-            control_id=f"steer_{uuid4().hex[:12]}",
+        message = _input_message(payload.message)
+        input_record = context.store.append_input(
             run_id=run.run_id,
-            thread_id=run.thread_id,
-            kind="steer",
+            action="steer",
+            mode=_input_mode(payload.mode),
+            request_id=payload.request_id,
             message=message,
         )
-        event_payload = _control_event_payload(control)
-        context.events.publish(domain="run", domain_id=run.run_id, type="run_steer", payload=event_payload)
-        context.events.publish(domain="thread", domain_id=run.thread_id, type="run_steer", payload=event_payload)
-        return {"steer": event_payload}
-
-    @router.post("/runs/{run_id}/steers/{steer_id}/edit", tags=["activity"], summary="Edit Run Steer")
-    async def edit_run_steer(request: Request, run_id: str, steer_id: str, payload: RunSteerRequest) -> dict[str, object]:
-        context = request.app.state.runtime
-        _run_or_404(context, run_id)
-        control = _pending_steer_or_409(context, run_id=run_id, steer_id=steer_id)
-        message = _control_message(payload.message, meta={"source": "steer", "steer_id": control.control_id})
-        control = context.store.update_run_control_message(control_id=control.control_id, message=message)
-        return {"steer": _control_event_payload(control)}
-
-    @router.post("/runs/{run_id}/steers/{steer_id}/delete", tags=["activity"], summary="Delete Run Steer")
-    async def delete_run_steer(request: Request, run_id: str, steer_id: str) -> dict[str, object]:
-        context = request.app.state.runtime
-        _run_or_404(context, run_id)
-        control = _pending_steer_or_409(context, run_id=run_id, steer_id=steer_id)
-        control = context.store.delete_pending_run_control(control_id=control.control_id)
-        return {"steer": _control_event_payload(control)}
+        event_payload = _input_event_payload(run, input_record)
+        context.events.publish(domain="run", domain_id=run.run_id, type="run_input", payload=event_payload)
+        context.events.publish(domain="thread", domain_id=run.thread_id, type="run_input", payload=event_payload)
+        return {"input": event_payload}
 
     @router.get("/instructions/{instructions_hash}", tags=["activity"], summary="Get Instructions")
     async def instructions(request: Request, instructions_hash: str) -> dict[str, object]:
@@ -579,6 +608,7 @@ def snapshot_context(
     }
     recent_runs = context.store.list_runs(limit=20)
     recent_steps = context.store.list_steps_for_runs(run_ids=tuple(item.run_id for item in recent_runs))
+    recent_inputs = {run.run_id: context.store.list_inputs(run_id=run.run_id) for run in recent_runs}
     return {
         "enabled_loops": list(enabled_loops),
         "http_loops": _select_loops(enabled_loops, HTTP_LOOPS),
@@ -608,7 +638,11 @@ def snapshot_context(
             "recent_messages": [
                 asdict(item)
                 for run in sorted(recent_runs, key=lambda item: item.created_at)
-                for item in run_message_data(run, steps=recent_steps.get(run.run_id, ()))
+                for item in run_message_data(
+                    run,
+                    inputs=recent_inputs.get(run.run_id, ()),
+                    steps=recent_steps.get(run.run_id, ()),
+                )
             ],
         },
         "completed_runs": [_run_outcome_data(result) for result in context.runner.completed()],
@@ -1045,8 +1079,8 @@ def _live_entry_by_name(context: UptimeContext, *, kind: CapKind, name: str) -> 
     raise HTTPException(status_code=404, detail=f"{kind} not found: {name}")
 
 
-def _run_item(run: RunRecord, *, steps: Sequence) -> dict[str, object]:
-    detail = run_detail_from_record(run, steps=steps)
+def _run_item(run: RunRecord, *, inputs: Sequence[InputRecord], steps: Sequence) -> dict[str, object]:
+    detail = run_detail_from_record(run, inputs=inputs, steps=steps)
     input_text = message_summary(detail.input.parts) if detail.input is not None else ""
     last_step_message = next(
         (item.message for item in reversed(detail.output.steps) if item.message is not None),
@@ -1068,6 +1102,7 @@ def _run_item(run: RunRecord, *, steps: Sequence) -> dict[str, object]:
         "status": run.status,
         "type": "run",
         "error": run.error,
+        "superseded": run.superseded,
         "failure": _run_failure_data(status=run.status, error=run.error, steps=steps),
         "created_at": run.created_at,
         "started_at": run.started_at,
@@ -1079,17 +1114,17 @@ def _run_item(run: RunRecord, *, steps: Sequence) -> dict[str, object]:
 def _run_detail_data(run_detail: RunDetail) -> dict[str, object]:
     output_steps: list[dict[str, object]] = []
     step_records = [item.record for item in run_detail.output.steps]
+    input_items: list[dict[str, object]] = []
+    for item in run_detail.inputs:
+        payload = asdict(item)
+        if item.message is not None:
+            payload["message"] = item.message.to_data()
+        input_items.append(payload)
     for item in run_detail.output.steps:
         payload = asdict(item)
         if item.message is not None:
             payload["message"] = item.message.to_data()
         output_steps.append(payload)
-    output_controls: list[dict[str, object]] = []
-    for item in run_detail.output.controls:
-        payload = asdict(item)
-        if item.message is not None:
-            payload["message"] = item.message.to_data()
-        output_controls.append(payload)
     virtual_failure_step = _virtual_runtime_failure_step(run_detail, steps=step_records)
     if virtual_failure_step is not None:
         step_records.append(virtual_failure_step)
@@ -1103,6 +1138,7 @@ def _run_detail_data(run_detail: RunDetail) -> dict[str, object]:
     return {
         "info": asdict(run_detail.info),
         "input": run_detail.input.to_data() if run_detail.input is not None else None,
+        "inputs": input_items,
         "output": {
             "status": run_detail.output.status,
             "error": run_detail.output.error,
@@ -1112,7 +1148,6 @@ def _run_detail_data(run_detail: RunDetail) -> dict[str, object]:
                 steps=step_records,
             ),
             "steps": output_steps,
-            "controls": output_controls,
         },
     }
 
@@ -1230,8 +1265,8 @@ def _profile_environment(
 
 def _run_detail(context: UptimeContext, run: RunRecord):
     raw_steps = context.store.list_steps(run_id=run.run_id)
-    controls = context.store.list_run_controls(run_id=run.run_id)
-    return run_detail_from_record(run, steps=raw_steps, controls=controls)
+    inputs = context.store.list_inputs(run_id=run.run_id)
+    return run_detail_from_record(run, steps=raw_steps, inputs=inputs)
 
 
 def _run_messages(
@@ -1240,13 +1275,17 @@ def _run_messages(
     run: RunRecord,
     raw_steps: Sequence,
 ) -> list[MessageData]:
-    del context
-    return run_message_data(run, steps=raw_steps)
+    return run_message_data(
+        run,
+        inputs=context.store.list_inputs(run_id=run.run_id),
+        steps=raw_steps,
+    )
 
 
 def _thread_items(context: UptimeContext) -> list[ThreadInfo]:
     runs = context.store.list_runs(limit=None)
     steps_by_run = context.store.list_steps_for_runs(run_ids=tuple(item.run_id for item in runs))
+    inputs_by_run = {run.run_id: context.store.list_inputs(run_id=run.run_id) for run in runs}
     grouped_runs: dict[str, list[RunRecord]] = {}
     for run in runs:
         grouped_runs.setdefault(run.thread_id, []).append(run)
@@ -1258,6 +1297,7 @@ def _thread_items(context: UptimeContext) -> list[ThreadInfo]:
             thread_info_from_runs(
                 thread_id,
                 ordered_runs,
+                inputs_by_run=inputs_by_run,
                 steps_by_run=steps_by_run,
                 thread=thread_records.get(thread_id),
             )
@@ -1283,43 +1323,38 @@ def _thread_or_404(context: UptimeContext, thread_id: str) -> None:
     raise HTTPException(status_code=404, detail=f"thread not found: {thread_id}")
 
 
-def _control_message(payload: RunControlMessagePayload, *, meta: dict[str, object] | None = None) -> Message:
+def _input_message(payload: RunInputMessagePayload) -> Message:
     data = payload.model_dump(mode="python")
-    merged_meta = dict(data.get("meta", {}))
-    if meta:
-        merged_meta.update(meta)
-    data["meta"] = merged_meta
     try:
         message = Message.from_data(data)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if message.role != "user":
-        raise HTTPException(status_code=422, detail="run control message role must be user")
+        raise HTTPException(status_code=422, detail="run input message role must be user")
     return message
 
 
-def _pending_steer_or_409(context: UptimeContext, *, run_id: str, steer_id: str):
-    control = context.store.get_run_control(control_id=steer_id)
-    if control is None or control.run_id != run_id or control.kind != "steer":
-        raise HTTPException(status_code=404, detail=f"steer not found: {steer_id}")
-    if control.status != "pending":
-        raise HTTPException(status_code=409, detail=f"steer is not pending: {steer_id}")
-    return control
+def _input_mode(value: str) -> InputMode:
+    if value not in {"immediate", "next_step", "next_call"}:
+        raise HTTPException(status_code=422, detail=f"unsupported run input mode: {value}")
+    return cast(InputMode, value)
 
 
-def _control_event_payload(control) -> dict[str, object]:
-    return {
-        "steer_id": control.control_id,
-        "run_id": control.run_id,
-        "thread_id": control.thread_id,
-        "kind": control.kind,
-        "status": control.status,
-        "message": control.message.to_data() if control.message is not None else None,
-        "created_at": control.created_at,
-        "updated_at": control.updated_at,
-        "consumed_at": control.consumed_at,
-        "consumed_step_index": control.consumed_step_index,
+def _input_event_payload(run: RunRecord, input: InputRecord) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "run_id": run.run_id,
+        "thread_id": run.thread_id,
+        "ref": {"kind": "input", "index": input.index},
+        "action": input.action,
+        "created_at": input.created_at,
     }
+    if input.mode is not None:
+        payload["mode"] = input.mode
+    if input.request_id is not None:
+        payload["request_id"] = input.request_id
+    if input.message is not None:
+        payload["message"] = input.message.to_data()
+    return payload
 
 
 def _run_event_payload(run) -> dict[str, object]:

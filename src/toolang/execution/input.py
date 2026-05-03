@@ -745,7 +745,7 @@ def bind_run_request(
     )
     run_strategy = cast(RunStrategy, normalize_run_strategy_name(request.run_strategy))
     return RunBinding(
-        run_id=_new_run_id(context),
+        run_id=request.run_id or allocate_run_id(context),
         group=request.group,
         origin=request.origin,
         thread_id=thread_id,
@@ -760,7 +760,7 @@ def bind_run_request(
     )
 
 
-def _new_run_id(context: UptimeContext) -> str:
+def allocate_run_id(context: UptimeContext) -> str:
     value = allocate_id(
         agents.agent_id_state_path(context.root, context.name),
         family=RUN_ID_FAMILY,

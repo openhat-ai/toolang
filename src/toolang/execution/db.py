@@ -25,9 +25,11 @@ from .events import RunEnd, RunStart, StepStart, StepEnd, TraceEvent
 from .records import (
     EventDomain,
     EventRecord,
+    InputAction,
+    InputMode,
+    InputRecord,
     ModelCallStepPayload,
     RunRecord,
-    RunControlRecord,
     RunStatus,
     RuntimeStepPayload,
     StepInputItem,
@@ -45,7 +47,7 @@ from .records import (
     step_payload_to_data,
 )
 
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 5
 
 
 class ExecutionStore:
@@ -70,6 +72,7 @@ class ExecutionStore:
         thread_id: str,
         origin: str,
         input: Message,
+        request_id: str | None = None,
         created_at: str | None = None,
         started_at: str | None = None,
     ) -> RunRecord:
@@ -90,9 +93,9 @@ class ExecutionStore:
                     run_id,
                     thread_id,
                     origin,
-                    input,
                     status,
                     error,
+                    superseded,
                     created_at,
                     started_at,
                     finished_at
@@ -102,12 +105,34 @@ class ExecutionStore:
                     run_id,
                     thread_id,
                     origin,
-                    _dump_json(input.to_data()),
                     "running",
+                    None,
                     None,
                     created,
                     started,
                     None,
+                ),
+            )
+            self._conn.execute(
+                """
+                INSERT INTO inputs(
+                    run_id,
+                    "index",
+                    action,
+                    mode,
+                    request_id,
+                    message,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    0,
+                    "start",
+                    None,
+                    request_id,
+                    _dump_json(input.to_data()),
+                    created,
                 ),
             )
             row = self._conn.execute(
@@ -246,6 +271,26 @@ class ExecutionStore:
             finished_at=finished_at,
         )
 
+    def supersede_run(
+        self,
+        *,
+        run_id: str,
+        superseded: Mapping[str, object],
+    ) -> RunRecord:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE runs SET superseded = ? WHERE run_id = ?",
+                (_dump_json(dict(superseded)), run_id),
+            )
+            row = self._conn.execute(
+                "SELECT * FROM runs WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+            self._conn.commit()
+        if row is None:
+            raise RuntimeError(f"run not found: {run_id}")
+        return _run_from_row(row)
+
     def get_run(self, *, run_id: str) -> RunRecord | None:
         with self._lock:
             row = self._conn.execute(
@@ -260,6 +305,7 @@ class ExecutionStore:
         limit: int | None = 50,
         thread_id: str | None = None,
         status: RunStatus | None = None,
+        include_superseded: bool = False,
     ) -> list[RunRecord]:
         clauses: list[str] = []
         params: list[object] = []
@@ -269,6 +315,8 @@ class ExecutionStore:
         if status is not None:
             clauses.append("status = ?")
             params.append(status)
+        if not include_superseded:
+            clauses.append("superseded IS NULL")
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         query = f"SELECT * FROM runs {where} ORDER BY created_at DESC"
         if limit is not None:
@@ -394,7 +442,9 @@ class ExecutionStore:
         steps_by_run = self.list_steps_for_runs(run_ids=tuple(run.run_id for run in runs))
         results: list[Message] = []
         for run in runs:
-            results.append(run.input)
+            inputs = self.list_inputs(run_id=run.run_id)
+            if inputs:
+                results.extend(item.message for item in inputs if item.message is not None)
             for step in steps_by_run.get(run.run_id, ()):
                 results.extend(_replay_messages_from_step(step))
         return results[-limit:]
@@ -414,9 +464,12 @@ class ExecutionStore:
         steps_by_run = self.list_steps_for_runs(run_ids=tuple(run.run_id for run in runs))
         results: list[Message] = []
         for run in runs:
-            actor_message = _actor_text_message(run.input)
-            if actor_message is not None:
-                results.append(actor_message)
+            inputs = self.list_inputs(run_id=run.run_id)
+            input_messages = [item.message for item in inputs if item.message is not None]
+            for input_message in input_messages:
+                actor_message = _actor_text_message(input_message)
+                if actor_message is not None:
+                    results.append(actor_message)
             for step in steps_by_run.get(run.run_id, ()):
                 for message in _replay_messages_from_step(step):
                     actor_message = _actor_text_message(message)
@@ -477,21 +530,21 @@ class ExecutionStore:
 
         now = created_at or utc_now()
         with self._lock:
-            cursor_row = self._conn.execute(
+            seq_row = self._conn.execute(
                 """
-                SELECT COALESCE(MAX(cursor), 0) + 1 AS next_cursor
+                SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq
                 FROM events
                 WHERE domain = ? AND domain_id = ?
                 """,
                 (domain, domain_id),
             ).fetchone()
-            cursor = int(cursor_row["next_cursor"]) if cursor_row is not None else 1
+            seq = int(seq_row["next_seq"]) if seq_row is not None else 1
             inserted = self._conn.execute(
                 """
                 INSERT INTO events(
                     domain,
                     domain_id,
-                    cursor,
+                    seq,
                     type,
                     payload,
                     created_at
@@ -500,7 +553,7 @@ class ExecutionStore:
                 (
                     domain,
                     domain_id,
-                    cursor,
+                    seq,
                     type,
                     _dump_json(payload or {}),
                     now,
@@ -526,7 +579,7 @@ class ExecutionStore:
         clauses = ["domain = ?", "domain_id = ?"]
         params: list[object] = [domain, domain_id]
         if after is not None:
-            clauses.append("cursor > ?")
+            clauses.append("seq > ?")
             params.append(after)
         params.append(limit)
         with self._lock:
@@ -534,7 +587,7 @@ class ExecutionStore:
                 f"""
                 SELECT * FROM events
                 WHERE {' AND '.join(clauses)}
-                ORDER BY cursor ASC
+                ORDER BY seq ASC
                 LIMIT ?
                 """,
                 tuple(params),
@@ -545,200 +598,125 @@ class ExecutionStore:
         with self._lock:
             row = self._conn.execute(
                 """
-                SELECT COALESCE(MAX(cursor), 0) AS cursor
+                SELECT COALESCE(MAX(seq), 0) AS seq
                 FROM events
                 WHERE domain = ? AND domain_id = ?
                 """,
                 (domain, domain_id),
             ).fetchone()
-        return int(row["cursor"]) if row is not None else 0
+        return int(row["seq"]) if row is not None else 0
 
-    def append_run_control(
+    def append_input(
         self,
         *,
-        control_id: str,
         run_id: str,
-        thread_id: str,
-        kind: str,
+        action: InputAction,
+        mode: InputMode | None = None,
+        request_id: str | None = None,
         message: Message | None = None,
-        status: str = "pending",
         created_at: str | None = None,
-    ) -> RunControlRecord:
+    ) -> InputRecord:
+        """Append one client-side input to one run."""
+
         now = created_at or utc_now()
         with self._lock:
+            index_row = self._conn.execute(
+                """
+                SELECT COALESCE(MAX("index"), -1) + 1 AS next_index
+                FROM inputs
+                WHERE run_id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+            index = int(index_row["next_index"]) if index_row is not None else 0
             self._conn.execute(
                 """
-                INSERT INTO run_controls(
-                    control_id,
+                INSERT INTO inputs(
                     run_id,
-                    thread_id,
-                    kind,
+                    "index",
+                    action,
+                    mode,
+                    request_id,
                     message,
-                    status,
-                    created_at,
-                    updated_at,
-                    consumed_at,
-                    consumed_step_index
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    control_id,
                     run_id,
-                    thread_id,
-                    kind,
+                    index,
+                    action,
+                    mode,
+                    request_id,
                     _dump_json(message.to_data()) if message is not None else None,
-                    status,
                     now,
-                    now,
-                    None,
-                    None,
                 ),
             )
             row = self._conn.execute(
-                "SELECT * FROM run_controls WHERE control_id = ?",
-                (control_id,),
+                'SELECT * FROM inputs WHERE run_id = ? AND "index" = ?',
+                (run_id, index),
             ).fetchone()
             self._conn.commit()
         if row is None:
-            raise RuntimeError("run control insert returned no row")
-        return _run_control_from_row(row)
+            raise RuntimeError("input insert returned no row")
+        return _input_from_row(row)
 
-    def get_run_control(self, *, control_id: str) -> RunControlRecord | None:
+    def get_input(self, *, run_id: str, index: int) -> InputRecord | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT * FROM run_controls WHERE control_id = ?",
-                (control_id,),
+                'SELECT * FROM inputs WHERE run_id = ? AND "index" = ?',
+                (run_id, index),
             ).fetchone()
-        return _run_control_from_row(row) if row is not None else None
+        return _input_from_row(row) if row is not None else None
 
-    def list_run_controls(
+    def list_inputs(
         self,
         *,
         run_id: str,
-        kind: str | None = None,
-        status: str | None = None,
-    ) -> tuple[RunControlRecord, ...]:
+        action: InputAction | None = None,
+    ) -> tuple[InputRecord, ...]:
         clauses = ["run_id = ?"]
         params: list[object] = [run_id]
-        if kind is not None:
-            clauses.append("kind = ?")
-            params.append(kind)
-        if status is not None:
-            clauses.append("status = ?")
-            params.append(status)
+        if action is not None:
+            clauses.append("action = ?")
+            params.append(action)
         where = " AND ".join(clauses)
         with self._lock:
             rows = self._conn.execute(
                 f"""
-                SELECT * FROM run_controls
+                SELECT * FROM inputs
                 WHERE {where}
-                ORDER BY created_at, control_id
+                ORDER BY "index" ASC
                 """,
                 tuple(params),
             ).fetchall()
-        return tuple(_run_control_from_row(row) for row in rows)
+        return tuple(_input_from_row(row) for row in rows)
 
-    def consume_pending_run_controls(
+    def pending_inputs(
         self,
         *,
         run_id: str,
-        step_index: int,
-        kind: str | None = None,
-        consumed_at: str | None = None,
-    ) -> tuple[RunControlRecord, ...]:
-        now = consumed_at or utc_now()
-        clauses = ["run_id = ?", "status = 'pending'"]
-        params: list[object] = [run_id]
-        if kind is not None:
-            clauses.append("kind = ?")
-            params.append(kind)
-        where = " AND ".join(clauses)
-        with self._lock:
-            pending_rows = self._conn.execute(
-                f"""
-                SELECT * FROM run_controls
-                WHERE {where}
-                ORDER BY created_at, control_id
-                """,
-                tuple(params),
-            ).fetchall()
-            control_ids = tuple(str(row["control_id"]) for row in pending_rows)
-            if control_ids:
-                placeholders = ",".join("?" for _ in control_ids)
-                self._conn.execute(
-                    f"""
-                    UPDATE run_controls
-                    SET status = 'consumed',
-                        updated_at = ?,
-                        consumed_at = ?,
-                        consumed_step_index = ?
-                    WHERE control_id IN ({placeholders})
-                    """,
-                    (now, now, step_index, *control_ids),
-                )
-            self._conn.commit()
-            if not control_ids:
-                return ()
-            rows = self._conn.execute(
-                f"""
-                SELECT * FROM run_controls
-                WHERE control_id IN ({placeholders})
-                ORDER BY created_at, control_id
-                """,
-                control_ids,
-            ).fetchall()
-        return tuple(_run_control_from_row(row) for row in rows)
+        action: InputAction,
+    ) -> tuple[InputRecord, ...]:
+        """Return run inputs not yet referenced by any step input."""
 
-    def update_run_control_message(
-        self,
-        *,
-        control_id: str,
-        message: Message,
-        updated_at: str | None = None,
-    ) -> RunControlRecord:
-        now = updated_at or utc_now()
         with self._lock:
-            self._conn.execute(
+            input_rows = self._conn.execute(
                 """
-                UPDATE run_controls
-                SET message = ?, updated_at = ?
-                WHERE control_id = ? AND status = 'pending'
+                SELECT * FROM inputs
+                WHERE run_id = ? AND action = ?
+                ORDER BY "index" ASC
                 """,
-                (_dump_json(message.to_data()), now, control_id),
-            )
-            row = self._conn.execute(
-                "SELECT * FROM run_controls WHERE control_id = ?",
-                (control_id,),
-            ).fetchone()
-            self._conn.commit()
-        if row is None:
-            raise RuntimeError(f"run control not found: {control_id}")
-        return _run_control_from_row(row)
-
-    def delete_pending_run_control(
-        self,
-        *,
-        control_id: str,
-        updated_at: str | None = None,
-    ) -> RunControlRecord:
-        now = updated_at or utc_now()
-        with self._lock:
-            self._conn.execute(
+                (run_id, action),
+            ).fetchall()
+            step_rows = self._conn.execute(
                 """
-                UPDATE run_controls
-                SET status = 'ignored', updated_at = ?
-                WHERE control_id = ? AND status = 'pending'
+                SELECT input FROM steps
+                WHERE run_id = ?
                 """,
-                (now, control_id),
-            )
-            row = self._conn.execute(
-                "SELECT * FROM run_controls WHERE control_id = ?",
-                (control_id,),
-            ).fetchone()
-            self._conn.commit()
-        if row is None:
-            raise RuntimeError(f"run control not found: {control_id}")
-        return _run_control_from_row(row)
+                (run_id,),
+            ).fetchall()
+        used = _used_input_indexes(step_rows)
+        return tuple(_input_from_row(row) for row in input_rows if int(row["index"]) not in used)
 
     def _init_schema(self) -> None:
         with self._lock:
@@ -748,10 +726,10 @@ class ExecutionStore:
             if version != _SCHEMA_VERSION:
                 self._conn.execute("DROP TABLE IF EXISTS steps")
                 self._conn.execute("DROP TABLE IF EXISTS runs")
+                self._conn.execute("DROP TABLE IF EXISTS inputs")
                 self._conn.execute("DROP TABLE IF EXISTS threads")
                 self._conn.execute("DROP TABLE IF EXISTS updates")
                 self._conn.execute("DROP TABLE IF EXISTS events")
-                self._conn.execute("DROP TABLE IF EXISTS run_controls")
                 self._conn.execute("DROP TABLE IF EXISTS instruction_blobs")
             self._conn.execute(
                 """
@@ -771,12 +749,27 @@ class ExecutionStore:
                     run_id TEXT PRIMARY KEY,
                     thread_id TEXT NOT NULL,
                     origin TEXT NOT NULL,
-                    input TEXT NOT NULL,
                     status TEXT NOT NULL,
                     error TEXT,
+                    superseded TEXT,
                     created_at TEXT NOT NULL,
                     started_at TEXT NOT NULL,
                     finished_at TEXT
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS inputs (
+                    run_id TEXT NOT NULL,
+                    "index" INTEGER NOT NULL,
+                    action TEXT NOT NULL,
+                    mode TEXT,
+                    request_id TEXT,
+                    message TEXT,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(run_id, "index"),
+                    FOREIGN KEY(run_id) REFERENCES runs(run_id)
                 )
                 """
             )
@@ -814,28 +807,11 @@ class ExecutionStore:
                     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     domain TEXT NOT NULL,
                     domain_id TEXT NOT NULL,
-                    cursor INTEGER NOT NULL,
+                    seq INTEGER NOT NULL,
                     type TEXT NOT NULL,
                     payload TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    UNIQUE(domain, domain_id, cursor)
-                )
-                """
-            )
-            self._conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS run_controls (
-                    control_id TEXT PRIMARY KEY,
-                    run_id TEXT NOT NULL,
-                    thread_id TEXT NOT NULL,
-                    kind TEXT NOT NULL,
-                    message TEXT,
-                    status TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    consumed_at TEXT,
-                    consumed_step_index INTEGER,
-                    FOREIGN KEY(run_id) REFERENCES runs(run_id)
+                    UNIQUE(domain, domain_id, seq)
                 )
                 """
             )
@@ -860,10 +836,10 @@ class ExecutionStore:
                 "CREATE INDEX IF NOT EXISTS idx_updates_created ON updates(created_at)"
             )
             self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_events_domain_cursor ON events(domain, domain_id, cursor)"
+                "CREATE INDEX IF NOT EXISTS idx_inputs_request_id ON inputs(request_id) WHERE request_id IS NOT NULL"
             )
             self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_run_controls_run_status ON run_controls(run_id, status)"
+                "CREATE INDEX IF NOT EXISTS idx_events_domain_seq ON events(domain, domain_id, seq)"
             )
             self._conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
             self._conn.commit()
@@ -948,14 +924,14 @@ def _load_json(value: str) -> Any:
 
 
 def _run_from_row(row: sqlite3.Row) -> RunRecord:
-    input_raw = _load_json(str(row["input"]))
+    raw_superseded = row["superseded"] if "superseded" in row.keys() else None
     return RunRecord(
         run_id=str(row["run_id"]),
         thread_id=str(row["thread_id"]),
         origin=str(row["origin"]),
-        input=Message.from_data(input_raw if isinstance(input_raw, Mapping) else {}),
         status=cast(RunStatus, row["status"]),
         error=str(row["error"]) if row["error"] is not None else None,
+        superseded=cast(dict[str, Any], _load_json(str(raw_superseded))) if raw_superseded is not None else None,
         created_at=str(row["created_at"]),
         started_at=str(row["started_at"]),
         finished_at=str(row["finished_at"]) if row["finished_at"] is not None else None,
@@ -1027,29 +1003,38 @@ def _event_from_row(row: sqlite3.Row) -> EventRecord:
         event_id=int(row["event_id"]),
         domain=cast(EventDomain, row["domain"]),
         domain_id=str(row["domain_id"]),
-        cursor=int(row["cursor"]),
+        seq=int(row["seq"]),
         type=str(row["type"]),
         payload=dict(payload_raw) if isinstance(payload_raw, Mapping) else {},
         created_at=str(row["created_at"]),
     )
 
 
-def _run_control_from_row(row: sqlite3.Row) -> RunControlRecord:
+def _input_from_row(row: sqlite3.Row) -> InputRecord:
     message_raw = _load_json(str(row["message"])) if row["message"] is not None else None
-    return RunControlRecord(
-        control_id=str(row["control_id"]),
+    return InputRecord(
         run_id=str(row["run_id"]),
-        thread_id=str(row["thread_id"]),
-        kind=str(row["kind"]),
+        index=int(row["index"]),
+        action=cast(InputAction, row["action"]),
+        mode=cast(InputMode, row["mode"]) if row["mode"] is not None else None,
+        request_id=str(row["request_id"]) if row["request_id"] is not None else None,
         message=Message.from_data(message_raw) if isinstance(message_raw, Mapping) else None,
-        status=str(row["status"]),
         created_at=str(row["created_at"]),
-        updated_at=str(row["updated_at"]),
-        consumed_at=str(row["consumed_at"]) if row["consumed_at"] is not None else None,
-        consumed_step_index=(
-            int(row["consumed_step_index"]) if row["consumed_step_index"] is not None else None
-        ),
     )
+
+
+def _used_input_indexes(rows: Sequence[sqlite3.Row]) -> set[int]:
+    used: set[int] = set()
+    for row in rows:
+        raw = _load_json(str(row["input"]))
+        if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes, bytearray)):
+            continue
+        for item in raw:
+            if not isinstance(item, Mapping):
+                continue
+            if item.get("kind") == "input":
+                used.add(int(item.get("index", 0)))
+    return used
 
 
 def _replay_messages_from_step(step: StepRecord) -> list[Message]:
@@ -1098,6 +1083,7 @@ class PersistSink:
                 thread_id=event.thread_id,
                 origin=event.origin,
                 input=event.input,
+                request_id=event.request_id,
                 created_at=event.created_at,
                 started_at=event.started_at,
             )

@@ -59,13 +59,27 @@ class RuntimeEventBus:
         thread_id = payload.get("thread_id")
         if isinstance(run_id, str) and run_id:
             self.publish(domain="run", domain_id=run_id, type=event_type, payload=payload)
+            if isinstance(event, RunStart):
+                self.publish(
+                    domain="run",
+                    domain_id=run_id,
+                    type="run_input",
+                    payload=_run_input_payload(event),
+                )
         if self._agent_id and isinstance(event, (RunStart, RunEnd)):
             agent_payload = dict(payload)
             if isinstance(event, RunStart):
                 agent_payload["status"] = "running"
             self.publish(domain="agent", domain_id=self._agent_id, type="thread_update", payload=agent_payload)
-        if isinstance(event, (RunStart, RunEnd)) and isinstance(thread_id, str) and thread_id:
+        if isinstance(thread_id, str) and thread_id:
             self.publish(domain="thread", domain_id=thread_id, type=event_type, payload=payload)
+            if isinstance(event, RunStart):
+                self.publish(
+                    domain="thread",
+                    domain_id=thread_id,
+                    type="run_input",
+                    payload=_run_input_payload(event),
+                )
 
     async def stream(
         self,
@@ -117,7 +131,7 @@ def event_data(event: EventRecord) -> dict[str, Any]:
 
     return {
         "id": event.event_id,
-        "cursor": event.cursor,
+        "cursor": event.seq,
         "domain": event.domain,
         "domain_id": event.domain_id,
         "type": event.type,
@@ -129,7 +143,7 @@ def event_data(event: EventRecord) -> dict[str, Any]:
 
 def _sse_event(event: EventRecord) -> str:
     data = json.dumps(event_data(event), separators=(",", ":"))
-    return f"id: {event.cursor}\nevent: event\ndata: {data}\n\n"
+    return f"id: {event.seq}\nevent: event\ndata: {data}\n\n"
 
 
 def _trace_event_type(event: TraceEvent) -> str:
@@ -152,6 +166,21 @@ def _trace_event_payload(event: TraceEvent) -> dict[str, Any]:
     elif isinstance(event, StepEnd):
         payload["output"] = parts_to_data(event.output)
         payload["payload"] = event.payload.to_data()
+    return payload
+
+
+def _run_input_payload(event: RunStart) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "run_id": event.run_id,
+        "thread_id": event.thread_id,
+        "ref": {"kind": "input", "index": 0},
+        "action": "start",
+        "message": event.input.to_data(),
+        "created_at": event.created_at,
+        "type": "run_input",
+    }
+    if event.request_id is not None:
+        payload["request_id"] = event.request_id
     return payload
 
 
