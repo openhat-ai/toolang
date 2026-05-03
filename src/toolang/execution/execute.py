@@ -173,6 +173,8 @@ def _emit_event(
     response: ResponseSink | None,
     event: TraceEvent,
 ) -> None:
+    if _event_is_after_canceled_run(context, event):
+        return
     if persist is not None:
         try:
             persist.on_event(event)
@@ -187,6 +189,13 @@ def _emit_event(
         context.events.publish_trace(event)
     except Exception:
         _LOGGER.exception("runtime event publish failed")
+
+
+def _event_is_after_canceled_run(context: UptimeContext, event: TraceEvent) -> bool:
+    if isinstance(event, RunStart):
+        return False
+    stored = context.store.get_run(run_id=event.run_id)
+    return stored is not None and stored.status == "canceled"
 
 
 def _utc_now() -> str:

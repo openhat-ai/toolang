@@ -653,6 +653,68 @@ def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
     ]
 
 
+def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("inspect",),
+    )
+    persist = run_execute_module.PersistSink(context.store)
+
+    run_execute_module._emit_event(
+        context,
+        persist,
+        None,
+        RunStart(
+            run_id="run-1",
+            origin="chat",
+            thread_id="thread-1",
+            input=Message.user("hello"),
+            created_at="2026-01-01T00:00:00Z",
+            started_at="2026-01-01T00:00:00Z",
+        ),
+    )
+    context.store.cancel_run(run_id="run-1", error="User stopped the run.")
+    run_execute_module._emit_event(
+        context,
+        persist,
+        None,
+        _started(1, run_id="run-1", thread_id="thread-1", kind="model_call"),
+    )
+    run_execute_module._emit_event(
+        context,
+        persist,
+        None,
+        _completed(
+            1,
+            run_id="run-1",
+            thread_id="thread-1",
+            kind="model_call",
+            output=(TextPart(text="late output"),),
+        ),
+    )
+    run_execute_module._emit_event(
+        context,
+        persist,
+        None,
+        RunEnd(
+            run_id="run-1",
+            thread_id="thread-1",
+            status="canceled",
+            error="User stopped the run.",
+            finished_at="2026-01-01T00:00:02Z",
+        ),
+    )
+
+    assert context.store.list_steps(run_id="run-1") == []
+    assert [item.type for item in context.store.list_events(domain="thread", domain_id="thread-1")] == [
+        "run_start",
+        "run_input",
+    ]
+
+
 def test_runtime_start_restores_ignored_termination_signals(monkeypatch) -> None:
     calls: list[tuple[int, signal.Handlers]] = []
 
