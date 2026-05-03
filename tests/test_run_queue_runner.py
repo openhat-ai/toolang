@@ -11,7 +11,7 @@ import socket
 import threading
 import time
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 from unittest.mock import patch
 
 from fastapi import FastAPI
@@ -32,7 +32,7 @@ from toolang.base.types.channel import (
     PollResult,
     ReplyTarget,
 )
-from toolang.base.types.run import RunResult
+from toolang.base.types.run import ModelCallResult, RunResult
 from toolang.base.types.message import (
     Message,
     TextDelta,
@@ -91,6 +91,7 @@ from toolang.loops import chat as chat_loop, inspect, poll, prepare, pulse, relo
 from toolang.state.durable import scan_durable_state
 from toolang.state.live import load_live_state
 from toolang.state.prepared import load_prepared_state, write_prepared_lock
+from toolang.strategies.basic import BasicRunStrategy
 from toolang import up as up_module
 from toolang.up import (
     RUN_LOOPS,
@@ -650,6 +651,150 @@ def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
     assert events[1]["payload"]["input"] == [
         {"kind": "step", "index": 1},
         {"kind": "input", "index": 1},
+    ]
+
+
+def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("inspect",),
+    )
+    context.store.start_run(
+        run_id="run-1",
+        thread_id="thread-1",
+        origin="chat",
+        input=Message.user("hello"),
+        created_at="2026-01-01T00:00:00Z",
+        started_at="2026-01-01T00:00:00Z",
+    )
+    context.store.append_input(
+        run_id="run-1",
+        action="steer",
+        mode="next_step",
+        request_id="req-steer",
+        message=Message.user("focus on events"),
+        created_at="2026-01-01T00:00:01Z",
+    )
+    context.store.append_step(
+        run_id="run-1",
+        step_index=2,
+        kind="model_call",
+        status="finished",
+        input=(StepOutputRef(step_index=1), RunInputRef(index=1)),
+        output=(TextPart(text="ok"),),
+        payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
+        started_at="2026-01-01T00:00:02Z",
+        finished_at="2026-01-01T00:00:03Z",
+    )
+    app = _create_test_app(context)
+
+    with TestClient(app) as client:
+        detail = client.get("/api/v1/runs/run-1").json()
+
+    assert detail["output"]["steps"][0]["record"]["input"] == [
+        {"kind": "step", "index": 1},
+        {"kind": "input", "index": 1},
+    ]
+
+
+def test_basic_strategy_continues_when_steer_arrives_before_finish() -> None:
+    class FakeContext:
+        instructions = ""
+        messages = ()
+        model = None
+        tools = {}
+
+        def __init__(self) -> None:
+            self.model_calls = 0
+            self.pending_checks = 0
+
+        def call_model(self) -> ModelCallResult:
+            self.model_calls += 1
+            return ModelCallResult(message=Message.assistant(f"answer {self.model_calls}"))
+
+        def call_tool(self, call):
+            raise AssertionError(f"unexpected tool call: {call}")
+
+        def call_tools(self, calls):
+            raise AssertionError(f"unexpected tool calls: {calls}")
+
+        def has_pending_inputs(self) -> bool:
+            self.pending_checks += 1
+            return self.pending_checks == 1
+
+        def finish(self) -> RunResult:
+            return RunResult(output_text=f"finished after {self.model_calls}")
+
+    context = FakeContext()
+
+    result = BasicRunStrategy().run(cast(Any, context))
+
+    assert context.model_calls == 2
+    assert result.output_text == "finished after 2"
+
+
+def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("inspect",),
+    )
+    persist = run_execute_module.PersistSink(context.store)
+
+    run_execute_module._emit_event(
+        context,
+        persist,
+        None,
+        RunStart(
+            run_id="run-1",
+            origin="chat",
+            thread_id="thread-1",
+            input=Message.user("hello"),
+            created_at="2026-01-01T00:00:00Z",
+            started_at="2026-01-01T00:00:00Z",
+        ),
+    )
+    context.store.cancel_run(run_id="run-1", error="User stopped the run.")
+    run_execute_module._emit_event(
+        context,
+        persist,
+        None,
+        _started(1, run_id="run-1", thread_id="thread-1", kind="model_call"),
+    )
+    run_execute_module._emit_event(
+        context,
+        persist,
+        None,
+        _completed(
+            1,
+            run_id="run-1",
+            thread_id="thread-1",
+            kind="model_call",
+            output=(TextPart(text="late output"),),
+        ),
+    )
+    run_execute_module._emit_event(
+        context,
+        persist,
+        None,
+        RunEnd(
+            run_id="run-1",
+            thread_id="thread-1",
+            status="canceled",
+            error="User stopped the run.",
+            finished_at="2026-01-01T00:00:02Z",
+        ),
+    )
+
+    assert context.store.list_steps(run_id="run-1") == []
+    assert [item.type for item in context.store.list_events(domain="thread", domain_id="thread-1")] == [
+        "run_start",
+        "run_input",
     ]
 
 

@@ -24,6 +24,8 @@ class BasicRunStrategy:
         for _ in range(MAX_TOOL_ROUNDS):
             model_call = context.call_model()
             if not model_call.tool_calls:
+                if context.has_pending_inputs():
+                    continue
                 return context.finish()
             context.call_tools(model_call.tool_calls)
         raise ToolangError("Model tool loop exceeded the maximum number of rounds.")

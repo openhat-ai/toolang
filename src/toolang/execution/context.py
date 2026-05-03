@@ -253,6 +253,11 @@ class RunContext:
 
         return tuple(self.call_tool(call) for call in calls)
 
+    def has_pending_inputs(self) -> bool:
+        """Return whether unconsumed steering inputs are waiting for this run."""
+
+        return bool(self._pending_inputs())
+
     def finish(self) -> RunResult:
         """Finalize one run result from accumulated state."""
 
@@ -411,14 +416,17 @@ class RunContext:
         return (StepOutputRef(step_index=self._last_step_index),)
 
     def _consume_pending_inputs(self) -> tuple[InputRecord, ...]:
-        if self._consume_inputs is None:
-            return ()
-        inputs = tuple(self._consume_inputs(self._input.run.run_id))
+        inputs = self._pending_inputs()
         for input in inputs:
             if input.action != "steer" or input.message is None:
                 continue
             self._messages.append(input.message)
         return inputs
+
+    def _pending_inputs(self) -> tuple[InputRecord, ...]:
+        if self._consume_inputs is None:
+            return ()
+        return tuple(self._consume_inputs(self._input.run.run_id))
 
     def _start_model_step(self, step_index: int) -> None:
         self._active_model_step_index = step_index

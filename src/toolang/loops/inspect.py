@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from toolang.base.types.message import Message, TextPart, message_summary
+from toolang.base.types.message import Message, TextPart, message_summary, parts_to_data
 from ..execution.detail import (
     RunDetail,
     ThreadInfo,
@@ -22,7 +22,16 @@ from ..execution.detail import (
 )
 from ..execution.events import MessageData, run_message_data
 from ..execution.input import allocate_run_id
-from ..execution.records import InputMode, InputRecord, ModelCallStepPayload, RunRecord, RuntimeStepPayload, StepRecord
+from ..execution.records import (
+    InputMode,
+    InputRecord,
+    ModelCallStepPayload,
+    RunRecord,
+    RuntimeStepPayload,
+    StepRecord,
+    step_input_items_to_data,
+    step_payload_to_data,
+)
 from ..execution.runner import RunRequest
 from ..execution.stream import event_data
 from .. import agents, caps, templates, work
@@ -1121,16 +1130,17 @@ def _run_detail_data(run_detail: RunDetail) -> dict[str, object]:
             payload["message"] = item.message.to_data()
         input_items.append(payload)
     for item in run_detail.output.steps:
-        payload = asdict(item)
-        if item.message is not None:
-            payload["message"] = item.message.to_data()
+        payload: dict[str, object] = {
+            "record": _step_record_data(item.record),
+            "message": item.message.to_data() if item.message is not None else None,
+        }
         output_steps.append(payload)
     virtual_failure_step = _virtual_runtime_failure_step(run_detail, steps=step_records)
     if virtual_failure_step is not None:
         step_records.append(virtual_failure_step)
         output_steps.append(
             {
-                "record": asdict(virtual_failure_step),
+                "record": _step_record_data(virtual_failure_step),
                 "message": None,
                 "virtual": True,
             }
@@ -1179,6 +1189,21 @@ def _virtual_runtime_failure_step(
         payload=RuntimeStepPayload(),
         error=error,
     )
+
+
+def _step_record_data(step: StepRecord) -> dict[str, object]:
+    return {
+        "run_id": step.run_id,
+        "step_index": step.step_index,
+        "kind": step.kind,
+        "status": step.status,
+        "input": step_input_items_to_data(step.input),
+        "output": parts_to_data(step.output),
+        "payload": step_payload_to_data(step.payload),
+        "error": step.error,
+        "started_at": step.started_at,
+        "finished_at": step.finished_at,
+    }
 
 
 def _run_failure_data(

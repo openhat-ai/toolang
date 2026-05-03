@@ -40,6 +40,9 @@ class RunContext(Protocol):
     def call_tools(self, calls: Sequence[ToolCall]) -> tuple[ToolCallResult, ...]:
         """Perform multiple tool calls and update run state."""
 
+    def has_pending_inputs(self) -> bool:
+        """Return whether unconsumed client inputs are waiting for this run."""
+
     def finish(self) -> RunResult:
         """Finalize one run result from accumulated state."""
 
