@@ -43,6 +43,7 @@ class RunRecord:
     origin: str
     status: RunStatus
     error: str | None
+    superseded: dict[str, Any] | None
     created_at: str
     started_at: str
     finished_at: str | None

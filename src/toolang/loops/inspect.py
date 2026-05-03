@@ -21,6 +21,7 @@ from ..execution.detail import (
     thread_info_from_record,
 )
 from ..execution.events import MessageData, run_message_data
+from ..execution.input import allocate_run_id
 from ..execution.records import InputMode, InputRecord, ModelCallStepPayload, RunRecord, RuntimeStepPayload, StepRecord
 from ..execution.runner import RunRequest
 from ..execution.stream import event_data
@@ -64,8 +65,8 @@ class RunCancelRequest(BaseModel):
     request_id: str | None = None
 
 
-class RunEditRequest(BaseModel):
-    """Request an edited replacement input for one run."""
+class RunRestartRequest(BaseModel):
+    """Request one restarted chat run with a replacement input."""
 
     request_id: str | None = None
     message: RunInputMessagePayload
@@ -267,20 +268,27 @@ def create_router() -> APIRouter:
             "input": input_payload,
         }
 
-    @router.post("/runs/{run_id}/edit", tags=["activity"], summary="Edit Run Input")
-    async def edit_run_input(request: Request, run_id: str, payload: RunEditRequest) -> dict[str, object]:
+    @router.post("/runs/{run_id}/restart", tags=["activity"], summary="Restart Run")
+    async def restart_run(request: Request, run_id: str, payload: RunRestartRequest) -> dict[str, object]:
         context = request.app.state.runtime
         run = _run_or_404(context, run_id)
         if run.origin != "chat":
-            raise HTTPException(status_code=409, detail=f"run input edits are only supported for chat runs: {run_id}")
+            raise HTTPException(status_code=409, detail=f"run restarts are only supported for chat runs: {run_id}")
+        if run.status != "canceled":
+            raise HTTPException(status_code=409, detail=f"run must be canceled before restart: {run_id}")
+        if run.superseded is not None:
+            raise HTTPException(status_code=409, detail=f"run is already superseded: {run_id}")
         message = _input_message(payload.message)
-        mode = "append" if context.store.list_steps(run_id=run.run_id) else "replace"
-        if run.status == "running":
-            run = context.store.cancel_run(run_id=run.run_id, error="Run input was edited.")
+        new_run_id = allocate_run_id(context)
+        run = context.store.supersede_run(
+            run_id=run.run_id,
+            superseded={"type": "replaced", "by": new_run_id},
+        )
         context.runner.enqueue(
             RunRequest(
                 group="chat",
                 origin="chat",
+                run_id=new_run_id,
                 thread_id=run.thread_id,
                 message=message,
                 metadata={"request_id": payload.request_id} if payload.request_id is not None else {},
@@ -288,14 +296,16 @@ def create_router() -> APIRouter:
         )
         event_payload = {
             "run_id": run.run_id,
+            "replacement_run_id": new_run_id,
             "thread_id": run.thread_id,
-            "mode": mode,
+            "superseded": run.superseded,
             "message": message.to_data(),
         }
-        context.events.publish(domain="run", domain_id=run.run_id, type="run_edit", payload=event_payload)
-        context.events.publish(domain="thread", domain_id=run.thread_id, type="run_edit", payload=event_payload)
+        context.events.publish(domain="run", domain_id=run.run_id, type="run_restart", payload=event_payload)
+        context.events.publish(domain="thread", domain_id=run.thread_id, type="run_restart", payload=event_payload)
+        context.events.publish(domain="agent", domain_id=context.name, type="thread_update", payload=event_payload)
         return {
-            "mode": mode,
+            "run_id": new_run_id,
             "previous_run": _run_item(
                 run,
                 inputs=context.store.list_inputs(run_id=run.run_id),
@@ -1089,6 +1099,7 @@ def _run_item(run: RunRecord, *, inputs: Sequence[InputRecord], steps: Sequence)
         "status": run.status,
         "type": "run",
         "error": run.error,
+        "superseded": run.superseded,
         "failure": _run_failure_data(status=run.status, error=run.error, steps=steps),
         "created_at": run.created_at,
         "started_at": run.started_at,

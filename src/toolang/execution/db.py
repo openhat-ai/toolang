@@ -47,7 +47,7 @@ from .records import (
     step_payload_to_data,
 )
 
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 
 
 class ExecutionStore:
@@ -95,16 +95,18 @@ class ExecutionStore:
                     origin,
                     status,
                     error,
+                    superseded,
                     created_at,
                     started_at,
                     finished_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
                     thread_id,
                     origin,
                     "running",
+                    None,
                     None,
                     created,
                     started,
@@ -269,6 +271,26 @@ class ExecutionStore:
             finished_at=finished_at,
         )
 
+    def supersede_run(
+        self,
+        *,
+        run_id: str,
+        superseded: Mapping[str, object],
+    ) -> RunRecord:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE runs SET superseded = ? WHERE run_id = ?",
+                (_dump_json(dict(superseded)), run_id),
+            )
+            row = self._conn.execute(
+                "SELECT * FROM runs WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+            self._conn.commit()
+        if row is None:
+            raise RuntimeError(f"run not found: {run_id}")
+        return _run_from_row(row)
+
     def get_run(self, *, run_id: str) -> RunRecord | None:
         with self._lock:
             row = self._conn.execute(
@@ -283,6 +305,7 @@ class ExecutionStore:
         limit: int | None = 50,
         thread_id: str | None = None,
         status: RunStatus | None = None,
+        include_superseded: bool = False,
     ) -> list[RunRecord]:
         clauses: list[str] = []
         params: list[object] = []
@@ -292,6 +315,8 @@ class ExecutionStore:
         if status is not None:
             clauses.append("status = ?")
             params.append(status)
+        if not include_superseded:
+            clauses.append("superseded IS NULL")
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         query = f"SELECT * FROM runs {where} ORDER BY created_at DESC"
         if limit is not None:
@@ -726,6 +751,7 @@ class ExecutionStore:
                     origin TEXT NOT NULL,
                     status TEXT NOT NULL,
                     error TEXT,
+                    superseded TEXT,
                     created_at TEXT NOT NULL,
                     started_at TEXT NOT NULL,
                     finished_at TEXT
@@ -898,12 +924,14 @@ def _load_json(value: str) -> Any:
 
 
 def _run_from_row(row: sqlite3.Row) -> RunRecord:
+    raw_superseded = row["superseded"] if "superseded" in row.keys() else None
     return RunRecord(
         run_id=str(row["run_id"]),
         thread_id=str(row["thread_id"]),
         origin=str(row["origin"]),
         status=cast(RunStatus, row["status"]),
         error=str(row["error"]) if row["error"] is not None else None,
+        superseded=cast(dict[str, Any], _load_json(str(raw_superseded))) if raw_superseded is not None else None,
         created_at=str(row["created_at"]),
         started_at=str(row["started_at"]),
         finished_at=str(row["finished_at"]) if row["finished_at"] is not None else None,

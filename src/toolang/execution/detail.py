@@ -46,6 +46,7 @@ class RunInfo:
     id: str
     origin: str
     thread_id: str
+    superseded: dict[str, object] | None
     created_at: str
     started_at: str
     finished_at: str | None
@@ -163,6 +164,7 @@ def run_info_from_record(run: RunRecord) -> RunInfo:
         id=run.run_id,
         origin=run.origin,
         thread_id=run.thread_id,
+        superseded=run.superseded,
         created_at=run.created_at,
         started_at=run.started_at,
         finished_at=run.finished_at,
