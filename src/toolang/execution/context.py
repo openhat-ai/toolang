@@ -46,8 +46,8 @@ from .events import (
     TraceEventHandler,
 )
 from .records import (
+    InputRecord,
     ModelCallStepPayload,
-    RunControlRecord,
     RunInputRef,
     StepInputItem,
     StepOutputRef,
@@ -73,14 +73,14 @@ class RunContext:
         provider: ModelProvider,
         *,
         on_event: TraceEventHandler | None = None,
-        consume_controls: Callable[[str, int], Sequence[RunControlRecord]] | None = None,
+        consume_inputs: Callable[[str], Sequence[InputRecord]] | None = None,
         stream: bool = False,
     ) -> None:
         self._input = run_input
         self._model = model
         self._provider = provider
         self._on_event = on_event
-        self._consume_controls = consume_controls
+        self._consume_inputs = consume_inputs
         self._stream = stream
         self._snapshot = run_input.snapshot
         self._messages = list(run_input.messages())
@@ -125,8 +125,8 @@ class RunContext:
 
         step_index = self._next_step_index()
         started_at = _utc_now()
-        self._consume_pending_controls(step_index)
-        step_input = self._model_step_input()
+        consumed_inputs = self._consume_pending_inputs()
+        step_input = (*self._model_step_input(), *(RunInputRef(index=item.index) for item in consumed_inputs))
         self._start_model_step(step_index)
         self._emit(
             StepStart(
@@ -410,14 +410,15 @@ class RunContext:
             return (RunInputRef(),)
         return (StepOutputRef(step_index=self._last_step_index),)
 
-    def _consume_pending_controls(self, step_index: int) -> None:
-        if self._consume_controls is None:
-            return
-        controls = self._consume_controls(self._input.run.run_id, step_index)
-        for control in controls:
-            if control.kind != "steer" or control.message is None:
+    def _consume_pending_inputs(self) -> tuple[InputRecord, ...]:
+        if self._consume_inputs is None:
+            return ()
+        inputs = tuple(self._consume_inputs(self._input.run.run_id))
+        for input in inputs:
+            if input.action != "steer" or input.message is None:
                 continue
-            self._messages.append(control.message)
+            self._messages.append(input.message)
+        return inputs
 
     def _start_model_step(self, step_index: int) -> None:
         self._active_model_step_index = step_index

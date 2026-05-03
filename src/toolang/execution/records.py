@@ -14,6 +14,8 @@ StepStatus = Literal["finished", "failed", "canceled"]
 RunStrategy = Literal["basic", "react"]
 StepKind = Literal["model_call", "tool_call", "runtime"]
 ThreadPeerType = Literal["user", "agent"]
+InputAction = Literal["start", "steer", "stop"]
+InputMode = Literal["immediate", "next_step", "next_call"]
 
 UpdateKind = Literal[
     "created",
@@ -39,7 +41,6 @@ class RunRecord:
     run_id: str
     thread_id: str
     origin: str
-    input: Message
     status: RunStatus
     error: str | None
     created_at: str
@@ -95,19 +96,24 @@ class ThreadRecord:
 
 @dataclass(frozen=True, slots=True)
 class RunInputRef:
-    """Reference one run input message or one input part."""
+    """Reference one run input item or one input part."""
 
+    index: int = 0
     part_index: int | None = None
 
     @classmethod
     def from_data(cls, payload: Mapping[str, Any]) -> RunInputRef:
-        part_index = payload.get("part_index")
-        return cls(part_index=int(part_index) if part_index is not None else None)
+        raw_index = payload.get("index", 0)
+        part_index = payload.get("part")
+        return cls(
+            index=int(raw_index) if raw_index is not None else 0,
+            part_index=int(part_index) if part_index is not None else None,
+        )
 
     def to_data(self) -> dict[str, Any]:
-        data: dict[str, Any] = {"kind": "run_input"}
+        data: dict[str, Any] = {"kind": "input", "index": self.index}
         if self.part_index is not None:
-            data["part_index"] = self.part_index
+            data["part"] = self.part_index
         return data
 
 
@@ -120,19 +126,20 @@ class StepOutputRef:
 
     @classmethod
     def from_data(cls, payload: Mapping[str, Any]) -> StepOutputRef:
-        part_index = payload.get("part_index")
+        raw_index = payload.get("index", 0)
+        part_index = payload.get("part")
         return cls(
-            step_index=int(payload.get("step_index", 0)),
+            step_index=int(raw_index),
             part_index=int(part_index) if part_index is not None else None,
         )
 
     def to_data(self) -> dict[str, Any]:
         data: dict[str, Any] = {
-            "kind": "step_output",
-            "step_index": self.step_index,
+            "kind": "step",
+            "index": self.step_index,
         }
         if self.part_index is not None:
-            data["part_index"] = self.part_index
+            data["part"] = self.part_index
         return data
 
 
@@ -239,35 +246,32 @@ class EventRecord:
     event_id: int
     domain: EventDomain
     domain_id: str
-    cursor: int
+    seq: int
     type: str
     payload: dict[str, Any]
     created_at: str
 
 
 @dataclass(frozen=True, slots=True)
-class RunControlRecord:
-    """One durable run control input."""
+class InputRecord:
+    """One durable client-side run input."""
 
-    control_id: str
     run_id: str
-    thread_id: str
-    kind: str
+    index: int
+    action: InputAction
+    mode: InputMode | None
+    request_id: str | None
     message: Message | None
-    status: str
     created_at: str
-    updated_at: str
-    consumed_at: str | None = None
-    consumed_step_index: int | None = None
 
 
 def step_input_item_from_data(payload: Mapping[str, Any]) -> StepInputItem:
     """Return one step input item from one serialized payload."""
 
     kind = str(payload.get("kind", "")).strip()
-    if kind == "run_input":
+    if kind == "input":
         return RunInputRef.from_data(payload)
-    if kind == "step_output":
+    if kind == "step":
         return StepOutputRef.from_data(payload)
     if kind == "message":
         return Message.from_data(payload.get("message", {}))

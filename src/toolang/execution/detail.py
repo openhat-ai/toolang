@@ -6,8 +6,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from toolang.base.types.message import message_summary
-from .events import MessageData, run_control_message_data, run_input_message_data, step_message_data
-from .records import RunControlRecord, RunRecord, RunStatus, StepRecord, ThreadPeer, ThreadRecord
+from .events import MessageData, run_input_record_message_data, run_input_message_data, step_message_data
+from .records import InputRecord, RunRecord, RunStatus, StepRecord, ThreadPeer, ThreadRecord
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,10 +61,10 @@ class StepDetail:
 
 
 @dataclass(frozen=True, slots=True)
-class RunControlDetail:
-    """One run control detail payload."""
+class InputDetail:
+    """One run input detail payload."""
 
-    record: RunControlRecord
+    record: InputRecord
     message: MessageData | None
 
 
@@ -75,7 +75,6 @@ class RunOutput:
     status: RunStatus
     error: str | None
     steps: list[StepDetail] = field(default_factory=list)
-    controls: list[RunControlDetail] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +83,7 @@ class RunDetail:
 
     info: RunInfo
     input: MessageData | None
+    inputs: list[InputDetail]
     output: RunOutput
 
 
@@ -99,6 +99,7 @@ def thread_info_from_runs(
     thread_id: str,
     runs: Sequence[RunRecord],
     *,
+    inputs_by_run: Mapping[str, Sequence[InputRecord]],
     steps_by_run: Mapping[str, Sequence[StepRecord]],
     thread: ThreadRecord | None = None,
 ) -> ThreadInfo:
@@ -107,7 +108,7 @@ def thread_info_from_runs(
     first = runs[0]
     last = runs[-1]
     active = next((run for run in reversed(runs) if run.status == "running"), None)
-    first_input = run_input_message_data(first)
+    first_input = run_input_message_data(first, _start_input(inputs_by_run.get(first.run_id, ())))
     title = message_summary(first_input.parts) or first.origin
     return ThreadInfo(
         id=thread_id,
@@ -169,18 +170,26 @@ def run_info_from_record(run: RunRecord) -> RunInfo:
     )
 
 
-def run_input_from_steps(run: RunRecord, *, steps: Sequence[StepRecord]) -> MessageData | None:
-    """Build one run input payload from one durable run record and step trace."""
+def run_input_from_records(run: RunRecord, *, inputs: Sequence[InputRecord]) -> MessageData | None:
+    """Build the start input payload from durable input records."""
 
-    del steps
-    return run_input_message_data(run)
+    start = _start_input(inputs)
+    return run_input_message_data(run, start)
+
+
+def run_inputs_from_records(run: RunRecord, *, inputs: Sequence[InputRecord]) -> list[InputDetail]:
+    """Build run input details from durable input records."""
+
+    return [
+        InputDetail(record=input, message=run_input_record_message_data(run, input))
+        for input in inputs
+    ]
 
 
 def run_output_from_steps(
     run: RunRecord,
     *,
     steps: Sequence[StepRecord],
-    controls: Sequence[RunControlRecord] = (),
 ) -> RunOutput:
     """Build one run output payload from one durable run record and step trace."""
 
@@ -188,15 +197,10 @@ def run_output_from_steps(
         StepDetail(record=step, message=step_message_data(run, step))
         for step in steps
     ]
-    control_details = [
-        RunControlDetail(record=control, message=run_control_message_data(control))
-        for control in controls
-    ]
     return RunOutput(
         status=run.status,
         error=run.error,
         steps=step_details,
-        controls=control_details,
     )
 
 
@@ -204,12 +208,20 @@ def run_detail_from_record(
     run: RunRecord,
     *,
     steps: Sequence[StepRecord],
-    controls: Sequence[RunControlRecord] = (),
+    inputs: Sequence[InputRecord] = (),
 ) -> RunDetail:
     """Build one run detail payload from one durable run record."""
 
     return RunDetail(
         info=run_info_from_record(run),
-        input=run_input_from_steps(run, steps=steps),
-        output=run_output_from_steps(run, steps=steps, controls=controls),
+        input=run_input_from_records(run, inputs=inputs),
+        inputs=run_inputs_from_records(run, inputs=inputs),
+        output=run_output_from_steps(run, steps=steps),
     )
+
+
+def _start_input(inputs: Sequence[InputRecord]) -> InputRecord:
+    for input in inputs:
+        if input.index == 0 and input.action == "start":
+            return input
+    raise ValueError("run start input not found")

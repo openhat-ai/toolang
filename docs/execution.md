@@ -77,10 +77,21 @@ Current step statuses are:
 - `failed`
 - `canceled`
 
+Run input is stored as an ordered `inputs` stream. Each input has:
+
+- `index`
+- `action`: `start`, `steer`, or `stop`
+- optional `mode`: `immediate`, `next_step`, or `next_call`
+- optional `request_id`
+- optional `message`
+
+`index = 0` is the `start` input that created the run. Later `steer`
+inputs belong to the same running run and can be referenced by later steps.
+
 Step input is an ordered mix of:
 
-- `RunInputRef`
-- `StepOutputRef`
+- input refs: `{ "kind": "input", "index": 0 }`
+- step refs: `{ "kind": "step", "index": 1, "part": 0 }`
 - inline `Message`
 
 This allows one step to depend on run input, prior step output, and newly added
@@ -130,6 +141,9 @@ Trace events drive both:
 - caller-facing response projection
 
 Trace events do not duplicate the initial user input as a synthetic step.
+Resource-scoped event streams also publish `run_input` events for client-side
+run inputs. A `run_input` event is emitted before any `step_start` that
+references the same input.
 
 
 ## Canonical Content Model

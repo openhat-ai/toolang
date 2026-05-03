@@ -523,6 +523,85 @@ def test_agent_events_include_thread_updates_for_run_lifecycle(tmp_path: Path) -
     assert response["items"][1]["payload"]["status"] == "finished"
 
 
+def test_run_start_trace_emits_run_input_after_run_start(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("inspect",),
+    )
+
+    context.events.publish_trace(
+        RunStart(
+            run_id="run-1",
+            origin="chat",
+            thread_id="thread-1",
+            input=Message.user("hello"),
+            request_id="req-start",
+            created_at="2026-01-01T00:00:00Z",
+            started_at="2026-01-01T00:00:00Z",
+        )
+    )
+
+    events = context.store.list_events(domain="run", domain_id="run-1")
+
+    assert [item.type for item in events] == ["run_start", "run_input"]
+    assert [item.seq for item in events] == [1, 2]
+    assert events[1].payload == {
+        "run_id": "run-1",
+        "thread_id": "thread-1",
+        "ref": {"kind": "input", "index": 0},
+        "action": "start",
+        "message": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
+        "created_at": "2026-01-01T00:00:00Z",
+        "type": "run_input",
+        "request_id": "req-start",
+    }
+
+
+def test_steer_run_appends_run_input_event(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("inspect",),
+    )
+    context.store.start_run(
+        run_id="run-1",
+        thread_id="thread-1",
+        origin="chat",
+        input=Message.user("hello"),
+        created_at="2026-01-01T00:00:00Z",
+        started_at="2026-01-01T00:00:00Z",
+    )
+    app = _create_test_app(context)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/runs/run-1/steer",
+            json={
+                "request_id": "req-steer",
+                "mode": "next_step",
+                "message": {
+                    "role": "user",
+                    "parts": [{"type": "text", "text": "focus on events"}],
+                },
+            },
+        ).json()
+        events = client.get("/api/v1/runs/run-1/events").json()["items"]
+
+    assert response["input"]["ref"] == {"kind": "input", "index": 1}
+    assert response["input"]["action"] == "steer"
+    assert response["input"]["request_id"] == "req-steer"
+    assert [item["type"] for item in events] == ["run_input"]
+    assert events[0]["payload"]["ref"] == {"kind": "input", "index": 1}
+    assert events[0]["payload"]["message"]["parts"] == [
+        {"type": "text", "text": "focus on events"}
+    ]
+
+
 def test_runtime_start_restores_ignored_termination_signals(monkeypatch) -> None:
     calls: list[tuple[int, signal.Handlers]] = []
 
