@@ -725,11 +725,6 @@ def test_chat_restart_supersedes_previous_run_in_thread_projection(tmp_path: Pat
             )
             old_run_id = first.json()["run_id"]
             thread_id = first.json()["thread_id"]
-            rejected = client.post(
-                f"/api/v1/runs/{old_run_id}/restart",
-                json={"message": _chat_message("replacement input")},
-            )
-            context.store.cancel_run(run_id=old_run_id, error="User stopped the run.")
             restart = client.post(
                 f"/api/v1/runs/{old_run_id}/restart",
                 json={"message": _chat_message("replacement input")},
@@ -745,8 +740,6 @@ def test_chat_restart_supersedes_previous_run_in_thread_projection(tmp_path: Pat
             runs = client.get(f"/api/v1/runs?thread_id={thread_id}").json()["items"]
 
     assert first.status_code == 200
-    assert rejected.status_code == 409
-    assert rejected.json()["detail"] == f"run must be canceled before restart: {old_run_id}"
     assert restart.status_code == 200
     assert restart.json()["previous_run"]["superseded"] == {"type": "replaced", "by": new_run_id}
     assert old_detail["info"]["superseded"] == {"type": "replaced", "by": new_run_id}
@@ -754,6 +747,46 @@ def test_chat_restart_supersedes_previous_run_in_thread_projection(tmp_path: Pat
     assert thread_detail["runs"][0]["input"]["parts"][0]["text"] == "replacement input"
     assert thread_detail["info"]["run_count"] == 1
     assert [item["id"] for item in runs] == [new_run_id]
+
+
+def test_chat_restart_cancels_running_run_before_superseding(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_loops=("chat", "inspect"),
+    )
+    context.store.start_run(
+        run_id="run_running",
+        thread_id="chat_running",
+        origin="chat",
+        input=Message.user("original input"),
+    )
+    app = _create_test_app(context)
+
+    with _patched_runner_execution():
+        with TestClient(app) as client:
+            restart = client.post(
+                "/api/v1/runs/run_running/restart",
+                json={"message": _chat_message("replacement input")},
+            )
+            new_run_id = restart.json()["run_id"]
+
+            for _ in range(100):
+                thread_detail = client.get("/api/v1/threads/chat_running").json()
+                if [item["info"]["id"] for item in thread_detail["runs"]] == [new_run_id]:
+                    break
+                time.sleep(0.01)
+            old_detail = client.get("/api/v1/runs/run_running").json()
+
+    assert restart.status_code == 200
+    assert restart.json()["previous_run"]["status"] == "canceled"
+    assert restart.json()["previous_run"]["superseded"] == {"type": "replaced", "by": new_run_id}
+    assert old_detail["output"]["status"] == "canceled"
+    assert old_detail["output"]["error"] == "Run was restarted."
+    assert old_detail["info"]["superseded"] == {"type": "replaced", "by": new_run_id}
+    assert [item["info"]["id"] for item in thread_detail["runs"]] == [new_run_id]
 
 
 def test_chat_api_records_peer_for_new_thread_and_rejects_mismatch(tmp_path: Path) -> None:

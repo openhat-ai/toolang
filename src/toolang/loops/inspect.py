@@ -274,12 +274,15 @@ def create_router() -> APIRouter:
         run = _run_or_404(context, run_id)
         if run.origin != "chat":
             raise HTTPException(status_code=409, detail=f"run restarts are only supported for chat runs: {run_id}")
-        if run.status != "canceled":
-            raise HTTPException(status_code=409, detail=f"run must be canceled before restart: {run_id}")
         if run.superseded is not None:
             raise HTTPException(status_code=409, detail=f"run is already superseded: {run_id}")
         message = _input_message(payload.message)
         new_run_id = allocate_run_id(context)
+        if run.status == "running":
+            run = context.store.cancel_run(run_id=run.run_id, error="Run was restarted.")
+            run_end_payload = _run_event_payload(run)
+            context.events.publish(domain="run", domain_id=run.run_id, type="run_end", payload=run_end_payload)
+            context.events.publish(domain="thread", domain_id=run.thread_id, type="run_end", payload=run_end_payload)
         run = context.store.supersede_run(
             run_id=run.run_id,
             superseded={"type": "replaced", "by": new_run_id},
