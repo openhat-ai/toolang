@@ -71,7 +71,7 @@ class RuntimeEventBus:
             if isinstance(event, RunStart):
                 agent_payload["status"] = "running"
             self.publish(domain="agent", domain_id=self._agent_id, type="thread_update", payload=agent_payload)
-        if isinstance(event, (RunStart, RunEnd)) and isinstance(thread_id, str) and thread_id:
+        if isinstance(thread_id, str) and thread_id:
             self.publish(domain="thread", domain_id=thread_id, type=event_type, payload=payload)
             if isinstance(event, RunStart):
                 self.publish(
