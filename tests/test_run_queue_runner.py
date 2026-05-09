@@ -3266,15 +3266,32 @@ def test_remote_skill_shorthand_probes_agent_skills_and_skills_repos(
     assert 'pdf = { ref = "github://anthropics/skills/skills/pdf@main" }' in config_text
 
 
-def test_remote_cap_shorthand_rejects_three_part_form(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="invalid remote ref"):
-        add_remote_entry(
-            tmp_path / "toolang",
-            "alice",
-            visibility="private",
-            kind="skill",
-            ref="anthropics/project/pdf",
-        )
+def test_remote_cap_repo_shorthand_uses_named_repo_path_probes(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    probes: list[str] = []
+
+    def fake_exists(_kind, ref):
+        probes.append(ref)
+        return ref == "github://anthropics/project/pdf@trunk"
+
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "trunk")
+    monkeypatch.setattr(caps, "_github_remote_exists", fake_exists)
+
+    add_remote_entry(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        ref="anthropics/project/pdf",
+    )
+
+    config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(encoding="utf-8")
+
+    assert probes == [
+        "github://anthropics/project/skills/pdf@trunk",
+        "github://anthropics/project/pdf@trunk",
+    ]
+    assert 'pdf = { ref = "github://anthropics/project/pdf@trunk" }' in config_text
 
 
 def test_remote_skill_add_canonicalizes_github_tree_url(tmp_path: Path, monkeypatch) -> None:

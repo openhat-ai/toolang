@@ -85,6 +85,7 @@ class AgentSelector:
     name: str | None = None
     ref: AgentRef | None = None
     github_owner: str | None = None
+    github_repo: str | None = None
 
     def resolved_ref(self) -> AgentRef:
         if self.ref is None:
@@ -209,7 +210,18 @@ def parse_agent_selector(text: str) -> AgentSelector:
             name=right,
             github_owner=left,
         )
-    if slash_count > 1:
+    if slash_count == 2:
+        owner, repo, name = raw.split("/", 2)
+        if not owner or not repo or not name:
+            raise ValueError(f"invalid agent shorthand: {text}")
+        return AgentSelector(
+            form="shorthand",
+            text=raw,
+            name=name,
+            github_owner=owner,
+            github_repo=repo,
+        )
+    if slash_count > 2:
         raise ValueError(f"invalid agent shorthand: {text}")
     return AgentSelector(form="name", text=raw, name=raw)
 
@@ -242,7 +254,11 @@ def resolve_agent_selector_ref(selector: AgentSelector) -> AgentRef:
     if selector.ref is not None:
         return selector.ref
     if selector.github_owner is not None and selector.name is not None:
-        return _resolve_github_agent_shorthand(selector.github_owner, selector.name)
+        return _resolve_github_agent_shorthand(
+            selector.github_owner,
+            selector.name,
+            repo=selector.github_repo or "agents",
+        )
     raise ValueError(f"selector is not a remote ref: {selector.text}")
 
 
@@ -410,15 +426,14 @@ def _github_agent_ref_from_raw_url(path_text: str, original: str) -> GitHubAgent
     return GitHubAgentRef(owner=owner, repo=repo, path=path, rev=rev)
 
 
-def _resolve_github_agent_shorthand(owner: str, name: str) -> GitHubAgentRef:
-    for candidate in _github_agent_shorthand_candidates(owner, name):
+def _resolve_github_agent_shorthand(owner: str, name: str, *, repo: str) -> GitHubAgentRef:
+    for candidate in _github_agent_shorthand_candidates(owner, repo, name):
         if _github_agent_ref_exists(candidate):
             return candidate
-    raise ValueError(f"could not resolve agent shorthand: {owner}/{name}")
+    raise ValueError(f"could not resolve agent shorthand: {owner}/{repo}/{name}")
 
 
-def _github_agent_shorthand_candidates(owner: str, name: str) -> tuple[GitHubAgentRef, ...]:
-    repo = "agents"
+def _github_agent_shorthand_candidates(owner: str, repo: str, name: str) -> tuple[GitHubAgentRef, ...]:
     try:
         rev = _github_repo_default_branch(owner, repo)
     except ValueError:

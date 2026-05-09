@@ -79,8 +79,8 @@ Public cap refs identify the selected cap itself:
 
 GitHub cap refs must include `@rev`. Shorthand refs such as `owner/name`
 resolve to the matched repository's default branch before they are stored.
-Three-part forms such as `owner/repo/name` are not shorthand; use a `github://`
-ref or GitHub URL for explicit repository paths.
+Three-part shorthand such as `owner/repo/name` specifies the repository exactly
+and probes only paths inside that repository.
 
 Current cap shorthand probe rules are:
 
@@ -90,6 +90,13 @@ Current cap shorthand probe rules are:
 | `psyche` | `owner/name` | `github://owner/agents/psyches/name.md@<default-branch>`, `github://owner/agent-psyches/name.md@<default-branch>`, `github://owner/psyches/name.md@<default-branch>` |
 | `service` | `owner/name` | `github://owner/agents/services/name.md@<default-branch>`, `github://owner/agent-services/name.md@<default-branch>`, `github://owner/services/name.md@<default-branch>` |
 | `prompt` | `owner/name` | `github://owner/agents/prompts/name.md@<default-branch>`, `github://owner/agent-prompts/name.md@<default-branch>`, `github://owner/prompts/name.md@<default-branch>` |
+
+For `owner/repo/name`, Toolang uses the specified repository and probes only
+kind-specific paths in that repository. Agents use `agents/name.too`, then
+`name.too`. Skills use `skills/name`, then `name`, except dedicated
+`agent-skills` and `skills` repositories prefer `name` first. File-backed caps
+use `{kind}s/name.md`, then `name.md`, except dedicated cap repositories prefer
+`name.md`.
 
 Skill existence checks look for `SKILL.md` inside the candidate directory.
 GitHub URLs are exact refs, not shorthand; a URL ending in

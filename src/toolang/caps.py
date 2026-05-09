@@ -1166,7 +1166,13 @@ def _canonicalize_remote_ref(kind: EntryKind, ref: str) -> str:
 
 
 def _remote_ref_candidates(kind: EntryKind, ref: str) -> tuple[str, ...]:
-    if ref.count("/") != 1:
+    slash_count = ref.count("/")
+    if slash_count == 2:
+        owner, repo, name = ref.split("/", 2)
+        if not owner or not repo or not name:
+            return ()
+        return _remote_ref_candidates_for_repo(kind, owner, repo, name)
+    if slash_count != 1:
         return ()
     parts = ref.split("/", 1)
     if not parts[0] or not parts[1]:
@@ -1198,6 +1204,28 @@ def _remote_ref_candidates(kind: EntryKind, ref: str) -> tuple[str, ...]:
             _github_remote_ref_with_default_branch(owner, "agent-psyches", f"{name}.md"),
             _github_remote_ref_with_default_branch(owner, "psyches", f"{name}.md"),
         )
+    return ()
+
+
+def _remote_ref_candidates_for_repo(kind: EntryKind, owner: str, repo: str, name: str) -> tuple[str, ...]:
+    return _remote_ref_existing_repo_candidates(
+        *(
+            _github_remote_ref_with_default_branch(owner, repo, path)
+            for path in _remote_path_candidates_for_repo(kind, repo, name)
+        )
+    )
+
+
+def _remote_path_candidates_for_repo(kind: EntryKind, repo: str, name: str) -> tuple[str, ...]:
+    if kind == "skill":
+        if repo in {"agent-skills", "skills"}:
+            return (name, f"skills/{name}")
+        return (f"skills/{name}", name)
+    if kind in {"psyche", "service", "prompt"}:
+        directory = DIR_NAME_BY_KIND[kind]
+        if repo in {f"agent-{directory}", directory}:
+            return (f"{name}.md",)
+        return (f"{directory}/{name}.md", f"{name}.md")
     return ()
 
 

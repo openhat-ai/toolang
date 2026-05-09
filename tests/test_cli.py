@@ -4,8 +4,6 @@ from pathlib import Path
 import os
 from datetime import datetime, timezone
 from typing import cast
-
-import pytest
 from typer.testing import CliRunner
 
 from toolang import agents
@@ -342,9 +340,13 @@ def test_agent_selector_parsing_supports_name_shorthand_and_ref() -> None:
     assert github_ref.resolved_ref().render() == "github://brice/agents/team/alice.too@main"
 
 
-def test_agent_selector_rejects_three_part_shorthand() -> None:
-    with pytest.raises(ValueError, match="invalid agent shorthand"):
-        agents.parse_agent_selector("brice/project/alice")
+def test_agent_selector_parsing_supports_repo_shorthand() -> None:
+    selector = agents.parse_agent_selector("brice/project/alice")
+
+    assert selector.form == "shorthand"
+    assert selector.github_owner == "brice"
+    assert selector.github_repo == "project"
+    assert selector.name == "alice"
 
 
 def test_cli_clone_remote_shorthand_defaults_target_name(tmp_path: Path, monkeypatch) -> None:
@@ -375,6 +377,36 @@ def test_cli_clone_remote_shorthand_defaults_target_name(tmp_path: Path, monkeyp
     assert program_path.read_text(encoding="utf-8") == "agent alice\n"
     assert probes == [
         "github://brice/agents/agents/alice.too@main",
+    ]
+
+
+def test_cli_clone_remote_repo_shorthand_uses_named_repo(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    probes: list[str] = []
+
+    def fake_fetch(ref: agents.AgentRef) -> str:
+        assert ref.render() == "github://brice/project/alice.too@trunk"
+        return "agent source-name\n"
+
+    def fake_exists(ref: agents.GitHubAgentRef) -> bool:
+        probes.append(ref.render())
+        return ref.path == "alice.too"
+
+    monkeypatch.setattr(agents, "_github_repo_default_branch", lambda owner, repo: "trunk")
+    monkeypatch.setattr(agents, "_github_agent_ref_exists", fake_exists)
+    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
+
+    result = runner.invoke(
+        cli.app,
+        ["clone", "brice/project/alice"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+    )
+
+    assert result.exit_code in {0, 2}
+    assert (toolang_root / "agents" / "alice" / "alice.too").read_text(encoding="utf-8") == "agent alice\n"
+    assert probes == [
+        "github://brice/project/agents/alice.too@trunk",
+        "github://brice/project/alice.too@trunk",
     ]
 
 
