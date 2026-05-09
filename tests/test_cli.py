@@ -2992,6 +2992,11 @@ def test_cli_skill_help_describes_remote_and_local_commands() -> None:
     assert "edit" in result.stdout
     assert "delete" in result.stdout
     assert "list" in result.stdout
+    assert result.stdout.index("list") < result.stdout.index("new")
+    assert result.stdout.index("new") < result.stdout.index("edit")
+    assert result.stdout.index("edit") < result.stdout.index("delete")
+    assert result.stdout.index("delete") < result.stdout.index("add")
+    assert result.stdout.index("add") < result.stdout.index("remove")
 
 
 def test_cli_run_help_mentions_how_to_select_agent() -> None:
