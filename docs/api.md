@@ -81,12 +81,15 @@ Runtime commands accept these selector forms:
 
 Current shorthand expansion rules are:
 
-| Shorthand | Expanded ref |
+| Shorthand | Expanded refs |
 | --- | --- |
-| `owner/name` | `github://owner/agents/name.too` |
+| `owner/name` | probes `github://owner/agents/agents/name.too@<default-branch>`, then `github://owner/agents/name.too@<default-branch>` |
 | `host/name` | `https://host/name.too` |
 
-GitHub refs may add one revision suffix:
+Three-part forms such as `owner/repo/name` are not shorthand. Use a
+`github://` ref or GitHub URL for explicit repository paths.
+
+GitHub refs must include one revision suffix:
 
 - `github://owner/repo/path/to/agent.too@rev`
 

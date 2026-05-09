@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
 import base64
 import hashlib
 import io
@@ -85,11 +86,10 @@ class _GitHubRemoteRef:
     owner: str
     repo: str
     path: str
-    rev: str | None = None
+    rev: str
 
     def render(self) -> str:
-        base = f"github://{self.owner}/{self.repo}/{self.path}"
-        return f"{base}@{self.rev}" if self.rev else base
+        return f"github://{self.owner}/{self.repo}/{self.path}@{self.rev}"
 
 
 def list_entries(
@@ -1140,49 +1140,77 @@ def _canonicalize_remote_ref(kind: EntryKind, ref: str) -> str:
     if "://" in text:
         github_ref = _github_remote_ref_from_url(text)
         if github_ref is not None:
+            if kind == "skill" and Path(github_ref.path).name == "SKILL.md":
+                github_ref = _GitHubRemoteRef(
+                    owner=github_ref.owner,
+                    repo=github_ref.repo,
+                    path=str(Path(github_ref.path).parent),
+                    rev=github_ref.rev,
+                )
+            return github_ref.render()
+        if text.startswith("github://"):
+            github_ref = _parse_github_remote_ref(text)
+            if kind == "skill" and Path(github_ref.path).name == "SKILL.md":
+                github_ref = _GitHubRemoteRef(
+                    owner=github_ref.owner,
+                    repo=github_ref.repo,
+                    path=str(Path(github_ref.path).parent),
+                    rev=github_ref.rev,
+                )
             return github_ref.render()
         return text
-    parts = text.split("/", 1)
-    if len(parts) != 2 or not parts[0] or not parts[1]:
+    candidates = _remote_ref_candidates(kind, text)
+    if not candidates:
         raise ValueError(f"invalid remote ref: {ref}")
-    owner, name = parts
-    if kind == "skill":
-        return f"github://{owner}/agent-skills/skills/{name}"
-    if kind == "service":
-        return f"github://{owner}/agent-services/services/{name}.md"
-    if kind == "prompt":
-        return f"github://{owner}/agent-prompts/prompts/{name}.md"
-    if kind == "psyche":
-        return f"github://{owner}/agent-psyches/psyches/{name}.md"
-    raise ValueError(f"unsupported remote kind: {kind}")
+    return candidates[0]
 
 
 def _remote_ref_candidates(kind: EntryKind, ref: str) -> tuple[str, ...]:
+    if ref.count("/") != 1:
+        return ()
     parts = ref.split("/", 1)
-    if len(parts) != 2 or not parts[0] or not parts[1]:
+    if not parts[0] or not parts[1]:
         return ()
     owner, name = parts
     if kind == "skill":
-        return (
-            f"github://{owner}/agent-skills/skills/{name}",
-            f"github://{owner}/skills/skills/{name}",
+        return _remote_ref_existing_repo_candidates(
+            _github_remote_ref_with_default_branch(owner, "agents", f"skills/{name}"),
+            _github_remote_ref_with_default_branch(owner, "agent-skills", name),
+            _github_remote_ref_with_default_branch(owner, "agent-skills", f"skills/{name}"),
+            _github_remote_ref_with_default_branch(owner, "skills", name),
+            _github_remote_ref_with_default_branch(owner, "skills", f"skills/{name}"),
         )
     if kind == "service":
-        return (
-            f"github://{owner}/agent-services/services/{name}.md",
-            f"github://{owner}/services/services/{name}.md",
+        return _remote_ref_existing_repo_candidates(
+            _github_remote_ref_with_default_branch(owner, "agents", f"services/{name}.md"),
+            _github_remote_ref_with_default_branch(owner, "agent-services", f"{name}.md"),
+            _github_remote_ref_with_default_branch(owner, "services", f"{name}.md"),
         )
     if kind == "prompt":
-        return (
-            f"github://{owner}/agent-prompts/prompts/{name}.md",
-            f"github://{owner}/prompts/prompts/{name}.md",
+        return _remote_ref_existing_repo_candidates(
+            _github_remote_ref_with_default_branch(owner, "agents", f"prompts/{name}.md"),
+            _github_remote_ref_with_default_branch(owner, "agent-prompts", f"{name}.md"),
+            _github_remote_ref_with_default_branch(owner, "prompts", f"{name}.md"),
         )
     if kind == "psyche":
-        return (
-            f"github://{owner}/agent-psyches/psyches/{name}.md",
-            f"github://{owner}/psyches/psyches/{name}.md",
+        return _remote_ref_existing_repo_candidates(
+            _github_remote_ref_with_default_branch(owner, "agents", f"psyches/{name}.md"),
+            _github_remote_ref_with_default_branch(owner, "agent-psyches", f"{name}.md"),
+            _github_remote_ref_with_default_branch(owner, "psyches", f"{name}.md"),
         )
     return ()
+
+
+def _remote_ref_existing_repo_candidates(*refs: str | None) -> tuple[str, ...]:
+    return tuple(ref for ref in refs if ref is not None)
+
+
+def _github_remote_ref_with_default_branch(owner: str, repo: str, path: str) -> str | None:
+    try:
+        rev = _github_repo_default_branch(owner, repo)
+    except ValueError:
+        return None
+    return _GitHubRemoteRef(owner=owner, repo=repo, path=path, rev=rev).render()
 
 
 def _github_remote_exists(kind: EntryKind, ref: str) -> bool:
@@ -1215,6 +1243,8 @@ def _parse_github_remote_ref(text: str) -> _GitHubRemoteRef:
         path, _, rev = repo_path.rpartition("@")
         if not path or not rev:
             raise ValueError(f"invalid GitHub remote ref: {text}")
+    if rev is None:
+        raise ValueError(f"GitHub remote ref must include @rev: {text}")
     return _GitHubRemoteRef(owner=owner, repo=repo, path=path, rev=rev)
 
 
@@ -1251,12 +1281,25 @@ def _github_remote_ref_from_raw_url(path_text: str, original: str) -> _GitHubRem
     return _GitHubRemoteRef(owner=owner, repo=repo, path=path, rev=rev)
 
 
+@lru_cache
+def _github_repo_default_branch(owner: str, repo: str) -> str:
+    api_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo, safe='')}"
+    data = _fetch_json(api_url)
+    if not isinstance(data, dict):
+        raise ValueError(f"unexpected GitHub repository response: {owner}/{repo}")
+    repo_data = cast(dict[str, object], data)
+    default_branch = repo_data.get("default_branch")
+    if not isinstance(default_branch, str):
+        raise ValueError(f"unexpected GitHub repository response: {owner}/{repo}")
+    return default_branch
+
+
 def _fetch_github_directory(ref: _GitHubRemoteRef) -> dict[str, bytes]:
     root = ref.path.strip("/")
     prefix = f"{root}/"
     archive_url = (
         f"https://codeload.github.com/{quote(ref.owner, safe='')}/"
-        f"{quote(ref.repo, safe='')}/tar.gz/{quote(ref.rev or 'HEAD', safe='')}"
+        f"{quote(ref.repo, safe='')}/tar.gz/{quote(ref.rev, safe='')}"
     )
     archive_bytes = _fetch_url_bytes(archive_url)
     files: dict[str, bytes] = {}
@@ -1288,7 +1331,7 @@ def _github_raw_file_exists(ref: _GitHubRemoteRef) -> bool:
 
 
 def _github_raw_url(ref: _GitHubRemoteRef) -> str:
-    rev = quote(ref.rev or "HEAD", safe="/")
+    rev = quote(ref.rev, safe="/")
     path = quote(ref.path.lstrip("/"), safe="/")
     return f"https://raw.githubusercontent.com/{ref.owner}/{ref.repo}/{rev}/{path}"
 
@@ -1314,8 +1357,7 @@ def _fetch_github_file_from_api(ref: _GitHubRemoteRef) -> bytes:
 def _github_contents_json(ref: _GitHubRemoteRef) -> dict[str, object] | list[dict[str, object]]:
     path = quote(ref.path.lstrip("/"), safe="/")
     api_url = f"https://api.github.com/repos/{ref.owner}/{ref.repo}/contents/{path}"
-    if ref.rev is not None:
-        api_url = f"{api_url}?ref={quote(ref.rev, safe='')}"
+    api_url = f"{api_url}?ref={quote(ref.rev, safe='')}"
     data = _fetch_json(api_url)
     if isinstance(data, dict | list):
         return cast(dict[str, object] | list[dict[str, object]], data)
@@ -1323,7 +1365,7 @@ def _github_contents_json(ref: _GitHubRemoteRef) -> dict[str, object] | list[dic
 
 
 def _github_tree_json(ref: _GitHubRemoteRef) -> dict[str, object]:
-    branch = quote(ref.rev or "HEAD", safe="")
+    branch = quote(ref.rev, safe="")
     api_url = f"https://api.github.com/repos/{ref.owner}/{ref.repo}/git/trees/{branch}?recursive=1"
     data = _fetch_json(api_url)
     if isinstance(data, dict):

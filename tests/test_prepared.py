@@ -21,7 +21,7 @@ def test_load_shared_lock_accepts_legacy_locator_entries(tmp_path: Path) -> None
                         "kind": "skill",
                         "name": "pdf-processing",
                         "shape": "dir",
-                        "locator": "github://by3gus/agent-skills/skills/pdf-processing",
+                        "locator": "github://by3gus/agents/skills/pdf-processing@main",
                         "path": ".prepared/remote/skills/pdf-processing/SKILL.md",
                         "source": {
                             "origin": "remote",
@@ -41,4 +41,4 @@ def test_load_shared_lock_accepts_legacy_locator_entries(tmp_path: Path) -> None
     lock = load_shared_lock(toolang_root)
 
     assert len(lock.entries) == 1
-    assert lock.entries[0].ref == "github://by3gus/agent-skills/skills/pdf-processing"
+    assert lock.entries[0].ref == "github://by3gus/agents/skills/pdf-processing@main"

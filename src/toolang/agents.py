@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import lru_cache
 import json
 import os
 from pathlib import Path
@@ -63,11 +64,10 @@ class GitHubAgentRef:
     owner: str
     repo: str
     path: str
-    rev: str | None = None
+    rev: str
 
     def render(self) -> str:
-        base = f"github://{self.owner}/{self.repo}/{self.path}"
-        return f"{base}@{self.rev}" if self.rev else base
+        return f"github://{self.owner}/{self.repo}/{self.path}@{self.rev}"
 
     def default_name(self) -> str:
         return Path(self.path).stem
@@ -84,6 +84,7 @@ class AgentSelector:
     text: str
     name: str | None = None
     ref: AgentRef | None = None
+    github_owner: str | None = None
 
     def resolved_ref(self) -> AgentRef:
         if self.ref is None:
@@ -191,7 +192,8 @@ def parse_agent_selector(text: str) -> AgentSelector:
         raise ValueError("agent selector cannot be empty")
     if "://" in raw:
         return AgentSelector(form="ref", text=raw, ref=_parse_agent_ref(raw))
-    if raw.count("/") == 1:
+    slash_count = raw.count("/")
+    if slash_count == 1:
         left, right = raw.split("/", 1)
         if not left or not right:
             raise ValueError(f"invalid agent shorthand: {text}")
@@ -204,8 +206,11 @@ def parse_agent_selector(text: str) -> AgentSelector:
         return AgentSelector(
             form="shorthand",
             text=raw,
-            ref=GitHubAgentRef(owner=left, repo="agents", path=f"{right}.too"),
+            name=right,
+            github_owner=left,
         )
+    if slash_count > 1:
+        raise ValueError(f"invalid agent shorthand: {text}")
     return AgentSelector(form="name", text=raw, name=raw)
 
 
@@ -225,9 +230,20 @@ def clone_agent(toolang_root: Path, source_selector: str, target_name: str | Non
         if target_name is None:
             raise ValueError("target name is required when cloning one local agent")
         return _clone_local_agent(toolang_root, selector.name or "", target_name)
+    resolved_ref = resolve_agent_selector_ref(selector)
     resolved_target = target_name or selector.default_name()
-    source_text = fetch_agent_ref(selector.resolved_ref())
+    source_text = fetch_agent_ref(resolved_ref)
     return write_agent_program(toolang_root, resolved_target, source_text)
+
+
+def resolve_agent_selector_ref(selector: AgentSelector) -> AgentRef:
+    """Resolve one remote selector to one canonical ref."""
+
+    if selector.ref is not None:
+        return selector.ref
+    if selector.github_owner is not None and selector.name is not None:
+        return _resolve_github_agent_shorthand(selector.github_owner, selector.name)
+    raise ValueError(f"selector is not a remote ref: {selector.text}")
 
 
 def write_agent_program(toolang_root: Path, agent_name: str, source_text: str) -> Path:
@@ -280,7 +296,7 @@ def materialized_run_target(
     with tempfile.TemporaryDirectory(prefix="toolang-run-") as temp_dir:
         temp_root = Path(temp_dir)
         agent_name = selector.default_name()
-        source_text = fetch_agent_ref(selector.resolved_ref())
+        source_text = fetch_agent_ref(resolve_agent_selector_ref(selector))
         write_agent_program(temp_root, agent_name, source_text)
         yield temp_root, agent_name
 
@@ -327,6 +343,9 @@ def _clone_local_agent(toolang_root: Path, source_name: str, target_name: str) -
 
 def _parse_agent_ref(text: str) -> AgentRef:
     if text.startswith(("http://", "https://")):
+        github_ref = _github_agent_ref_from_url(text)
+        if github_ref is not None:
+            return github_ref
         ref = HttpAgentRef(url=text)
         _require_too_path(urlsplit(ref.url).path, text)
         return ref
@@ -350,8 +369,100 @@ def _parse_github_agent_ref(text: str) -> GitHubAgentRef:
         path, _, rev = repo_path.rpartition("@")
         if not path or not rev:
             raise ValueError(f"invalid GitHub agent ref: {text}")
+    if rev is None:
+        raise ValueError(f"GitHub agent ref must include @rev: {text}")
     _require_too_path(path, text)
     return GitHubAgentRef(owner=owner, repo=repo, path=path, rev=rev)
+
+
+def _github_agent_ref_from_url(text: str) -> GitHubAgentRef | None:
+    parsed = urlsplit(text)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    if parsed.netloc == "github.com":
+        return _github_agent_ref_from_web_url(parsed.path, text)
+    if parsed.netloc == "raw.githubusercontent.com":
+        return _github_agent_ref_from_raw_url(parsed.path, text)
+    return None
+
+
+def _github_agent_ref_from_web_url(path_text: str, original: str) -> GitHubAgentRef:
+    parts = [part for part in path_text.strip("/").split("/") if part]
+    if len(parts) < 5 or parts[2] != "blob":
+        raise ValueError(f"invalid GitHub agent ref: {original}")
+    owner, repo, _mode, rev = parts[:4]
+    path = "/".join(parts[4:])
+    if not owner or not repo or not rev or not path:
+        raise ValueError(f"invalid GitHub agent ref: {original}")
+    _require_too_path(path, original)
+    return GitHubAgentRef(owner=owner, repo=repo, path=path, rev=rev)
+
+
+def _github_agent_ref_from_raw_url(path_text: str, original: str) -> GitHubAgentRef:
+    parts = [part for part in path_text.strip("/").split("/") if part]
+    if len(parts) < 4:
+        raise ValueError(f"invalid GitHub agent ref: {original}")
+    owner, repo, rev = parts[:3]
+    path = "/".join(parts[3:])
+    if not owner or not repo or not rev or not path:
+        raise ValueError(f"invalid GitHub agent ref: {original}")
+    _require_too_path(path, original)
+    return GitHubAgentRef(owner=owner, repo=repo, path=path, rev=rev)
+
+
+def _resolve_github_agent_shorthand(owner: str, name: str) -> GitHubAgentRef:
+    for candidate in _github_agent_shorthand_candidates(owner, name):
+        if _github_agent_ref_exists(candidate):
+            return candidate
+    raise ValueError(f"could not resolve agent shorthand: {owner}/{name}")
+
+
+def _github_agent_shorthand_candidates(owner: str, name: str) -> tuple[GitHubAgentRef, ...]:
+    repo = "agents"
+    try:
+        rev = _github_repo_default_branch(owner, repo)
+    except ValueError:
+        return ()
+    return (
+        GitHubAgentRef(owner=owner, repo=repo, path=f"agents/{name}.too", rev=rev),
+        GitHubAgentRef(owner=owner, repo=repo, path=f"{name}.too", rev=rev),
+    )
+
+
+def _github_agent_ref_exists(ref: GitHubAgentRef) -> bool:
+    request = Request(_github_raw_agent_url(ref), method="HEAD", headers={"User-Agent": "toolang/0.1"})
+    try:
+        with urlopen(request, timeout=30):
+            return True
+    except (HTTPError, URLError):
+        return False
+
+
+def _github_raw_agent_url(ref: GitHubAgentRef) -> str:
+    rev = quote(ref.rev, safe="/")
+    path = quote(ref.path.lstrip("/"), safe="/")
+    return f"https://raw.githubusercontent.com/{ref.owner}/{ref.repo}/{rev}/{path}"
+
+
+@lru_cache
+def _github_repo_default_branch(owner: str, repo: str) -> str:
+    api_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo, safe='')}"
+    request = Request(
+        api_url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "toolang/0.1",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    try:
+        with urlopen(request, timeout=30) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, json.JSONDecodeError) as exc:
+        raise ValueError(f"could not resolve GitHub default branch: {owner}/{repo}") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("default_branch"), str):
+        raise ValueError(f"unexpected GitHub repository response: {owner}/{repo}")
+    return data["default_branch"]
 
 
 def _require_too_path(path_text: str, text: str) -> None:
@@ -371,8 +482,7 @@ def _fetch_http_text(url: str) -> str:
 def _fetch_github_text(ref: GitHubAgentRef) -> str:
     path = quote(ref.path.lstrip("/"), safe="/")
     api_url = f"https://api.github.com/repos/{ref.owner}/{ref.repo}/contents/{path}"
-    if ref.rev is not None:
-        api_url = f"{api_url}?ref={quote(ref.rev, safe='')}"
+    api_url = f"{api_url}?ref={quote(ref.rev, safe='')}"
     request = Request(
         api_url,
         headers={
