@@ -75,7 +75,32 @@ Public cap refs identify the selected cap itself:
 | `inline://prompts/reviewer` | Embedded inline cap definition |
 | `home://services/github` | Private local cap in the agent home |
 | `root://skills/reviewer` | Shared local cap under the Toolang root |
-| `github://user/repo/path/name.md` | Remote cap target |
+| `github://user/repo/path/name.md@rev` | Remote cap target |
+
+GitHub cap refs must include `@rev`. Shorthand refs such as `owner/name`
+resolve to the matched repository's default branch before they are stored.
+Three-part shorthand such as `owner/repo/name` specifies the repository exactly
+and probes only paths inside that repository.
+
+Current cap shorthand probe rules are:
+
+| Kind | Input | Probe order |
+| --- | --- | --- |
+| `skill` | `owner/name` | `github://owner/agents/skills/name@<default-branch>`, `github://owner/agent-skills/name@<default-branch>`, `github://owner/agent-skills/skills/name@<default-branch>`, `github://owner/skills/name@<default-branch>`, `github://owner/skills/skills/name@<default-branch>` |
+| `psyche` | `owner/name` | `github://owner/agents/psyches/name.md@<default-branch>`, `github://owner/agent-psyches/name.md@<default-branch>`, `github://owner/psyches/name.md@<default-branch>` |
+| `service` | `owner/name` | `github://owner/agents/services/name.md@<default-branch>`, `github://owner/agent-services/name.md@<default-branch>`, `github://owner/services/name.md@<default-branch>` |
+| `prompt` | `owner/name` | `github://owner/agents/prompts/name.md@<default-branch>`, `github://owner/agent-prompts/name.md@<default-branch>`, `github://owner/prompts/name.md@<default-branch>` |
+
+For `owner/repo/name`, Toolang uses the specified repository and probes only
+kind-specific paths in that repository. Agents use `agents/name.too`, then
+`name.too`. Skills use `skills/name`, then `name`, except dedicated
+`agent-skills` and `skills` repositories prefer `name` first. File-backed caps
+use `{kind}s/name.md`, then `name.md`, except dedicated cap repositories prefer
+`name.md`.
+
+Skill existence checks look for `SKILL.md` inside the candidate directory.
+GitHub URLs are exact refs, not shorthand; a URL ending in
+`skills/name/SKILL.md` is stored as the parent skill directory ref.
 
 
 ## Local Cap Paths

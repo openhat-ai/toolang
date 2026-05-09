@@ -4,7 +4,6 @@ from pathlib import Path
 import os
 from datetime import datetime, timezone
 from typing import cast
-
 from typer.testing import CliRunner
 
 from toolang import agents
@@ -333,20 +332,37 @@ def test_agent_selector_parsing_supports_name_shorthand_and_ref() -> None:
     assert local.form == "name"
     assert local.name == "alice"
     assert github_short.form == "shorthand"
-    assert github_short.resolved_ref().render() == "github://brice/agents/alice.too"
+    assert github_short.github_owner == "brice"
+    assert github_short.name == "alice"
     assert host_short.form == "shorthand"
     assert host_short.resolved_ref().render() == "https://toolang.ai/alice.too"
     assert github_ref.form == "ref"
     assert github_ref.resolved_ref().render() == "github://brice/agents/team/alice.too@main"
 
 
+def test_agent_selector_parsing_supports_repo_shorthand() -> None:
+    selector = agents.parse_agent_selector("brice/project/alice")
+
+    assert selector.form == "shorthand"
+    assert selector.github_owner == "brice"
+    assert selector.github_repo == "project"
+    assert selector.name == "alice"
+
+
 def test_cli_clone_remote_shorthand_defaults_target_name(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
+    probes: list[str] = []
 
     def fake_fetch(ref: agents.AgentRef) -> str:
-        assert ref.render() == "github://brice/agents/alice.too"
+        assert ref.render() == "github://brice/agents/agents/alice.too@main"
         return "agent source-name\n"
 
+    def fake_exists(ref: agents.GitHubAgentRef) -> bool:
+        probes.append(ref.render())
+        return ref.path == "agents/alice.too"
+
+    monkeypatch.setattr(agents, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(agents, "_github_agent_ref_exists", fake_exists)
     monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
 
     result = runner.invoke(
@@ -359,6 +375,39 @@ def test_cli_clone_remote_shorthand_defaults_target_name(tmp_path: Path, monkeyp
     program_path = toolang_root / "agents" / "alice" / "alice.too"
     assert result.stdout.strip() == str(program_path)
     assert program_path.read_text(encoding="utf-8") == "agent alice\n"
+    assert probes == [
+        "github://brice/agents/agents/alice.too@main",
+    ]
+
+
+def test_cli_clone_remote_repo_shorthand_uses_named_repo(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    probes: list[str] = []
+
+    def fake_fetch(ref: agents.AgentRef) -> str:
+        assert ref.render() == "github://brice/project/alice.too@trunk"
+        return "agent source-name\n"
+
+    def fake_exists(ref: agents.GitHubAgentRef) -> bool:
+        probes.append(ref.render())
+        return ref.path == "alice.too"
+
+    monkeypatch.setattr(agents, "_github_repo_default_branch", lambda owner, repo: "trunk")
+    monkeypatch.setattr(agents, "_github_agent_ref_exists", fake_exists)
+    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
+
+    result = runner.invoke(
+        cli.app,
+        ["clone", "brice/project/alice"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+    )
+
+    assert result.exit_code in {0, 2}
+    assert (toolang_root / "agents" / "alice" / "alice.too").read_text(encoding="utf-8") == "agent alice\n"
+    assert probes == [
+        "github://brice/project/agents/alice.too@trunk",
+        "github://brice/project/alice.too@trunk",
+    ]
 
 
 def test_cli_clone_remote_url_supports_explicit_target(tmp_path: Path, monkeypatch) -> None:
@@ -401,7 +450,7 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     def fake_fetch(ref: agents.AgentRef) -> str:
-        assert ref.render() == "github://brice/agents/alice.too"
+        assert ref.render() == "github://brice/agents/agents/alice.too@main"
         return "agent remote-source\n"
 
     def fake_up(
@@ -427,6 +476,8 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
         captured["program_text"] = program_path.read_text(encoding="utf-8")
         return 0
 
+    monkeypatch.setattr(agents, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(agents, "_github_agent_ref_exists", lambda ref: ref.path == "agents/alice.too")
     monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
     monkeypatch.setattr(cli.agent_up, "up", fake_up)
 
@@ -1018,7 +1069,7 @@ def test_cli_list_reads_web_config_without_validating_experiments_caps(tmp_path:
         'ui_base_url = "http://localhost:3000"\n'
         '\n'
         '[skills]\n'
-        'pdf-processing = { ref = "github://by3gus/agent-skills/skills/pdf-processing" }\n',
+        'pdf-processing = { ref = "github://by3gus/agent-skills/skills/pdf-processing@main" }\n',
         encoding="utf-8",
     )
 
@@ -1131,7 +1182,7 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
     assert "API" in result.stdout
     assert "http://127.0.0.1:8765/docs" in result.stdout
     assert "WebUI" in result.stdout
-    assert "http://localhost:3000/8765" in result.stdout
+    assert "https://too.run/8765" in result.stdout
     assert "Updated" not in result.stdout
     assert result.stdout.index("PID") < result.stdout.index("API")
     assert result.stdout.index("WebUI") < result.stdout.index("Started")
@@ -1743,7 +1794,7 @@ def test_cli_start_spawns_background_run_and_reports_status(tmp_path: Path, monk
     )
 
     assert result.exit_code == 0
-    assert result.stdout.strip() == "alice\trunning\thttp://localhost:8765/docs\thttp://localhost:3000/8765"
+    assert result.stdout.strip() == "alice\trunning\thttp://localhost:8765/docs\thttps://too.run/8765"
     assert captured["command"] == [
         cli.sys.executable,
         "-m",
@@ -2248,6 +2299,7 @@ def test_cli_stop_stops_sandboxed_agent(tmp_path: Path, monkeypatch) -> None:
 
 def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         caps,
@@ -2267,7 +2319,7 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
 
     config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(encoding="utf-8")
     assert "[skills]" in config_text
-    assert 'reviewer = { ref = "github://acme/agent-skills/skills/reviewer" }' in config_text
+    assert 'reviewer = { ref = "github://acme/agents/skills/reviewer@main" }' in config_text
     assert (
         toolang_root / "agents" / "alice" / ".prepared" / "remote" / "skills" / "reviewer" / "SKILL.md"
     ).read_text(encoding="utf-8") == "---\ndescription: Review code\n---\n# Reviewer\n"
@@ -2288,7 +2340,7 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     assert "private" in list_remote_result.stdout
     assert "remote" in list_remote_result.stdout
     assert "configured" in list_remote_result.stdout
-    assert "github://acme/agent-skills/skills/reviewer" in list_remote_result.stdout
+    assert "github://acme/agents/skills/reviewer@main" in list_remote_result.stdout
 
     remove_result = _invoke_app(
         ["skill", "remove", "reviewer"],
@@ -2298,7 +2350,7 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     assert remove_result.exit_code == 0
     assert (
         remove_result.stdout.strip()
-        == "Removed remote skill reviewer from github://acme/agent-skills/skills/reviewer"
+        == "Removed remote skill reviewer from github://acme/agents/skills/reviewer@main"
     )
 
     monkeypatch.setattr(
@@ -2421,6 +2473,7 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
 
 def test_cli_cap_add_preserves_unrelated_config_sections(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     config_path = toolang_root / "config.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2444,7 +2497,7 @@ def test_cli_cap_add_preserves_unrelated_config_sections(tmp_path: Path, monkeyp
     assert "https://too.run" in text
     assert "[skills]" in text
     assert (
-        'pdf-processing = { ref = "github://by3gus/agent-skills/skills/pdf-processing" }'
+        'pdf-processing = { ref = "github://by3gus/agents/skills/pdf-processing@main" }'
         in text
     )
 
@@ -2939,6 +2992,11 @@ def test_cli_skill_help_describes_remote_and_local_commands() -> None:
     assert "edit" in result.stdout
     assert "delete" in result.stdout
     assert "list" in result.stdout
+    assert result.stdout.index("list") < result.stdout.index("new")
+    assert result.stdout.index("new") < result.stdout.index("edit")
+    assert result.stdout.index("edit") < result.stdout.index("delete")
+    assert result.stdout.index("delete") < result.stdout.index("add")
+    assert result.stdout.index("add") < result.stdout.index("remove")
 
 
 def test_cli_run_help_mentions_how_to_select_agent() -> None:

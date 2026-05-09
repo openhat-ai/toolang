@@ -77,6 +77,12 @@ def register_cap_commands(app: typer.Typer, *, rich_help_panel: str | None = Non
             no_args_is_help=True,
         ),
         CapCommandSpec(
+            name="delete",
+            help=lambda kind: f"Delete a local {kind}.",
+            factory=_make_delete_cap_command,
+            no_args_is_help=True,
+        ),
+        CapCommandSpec(
             name="add",
             help=lambda kind: f"Add a remote {kind}.",
             factory=_make_add_cap_command,
@@ -86,12 +92,6 @@ def register_cap_commands(app: typer.Typer, *, rich_help_panel: str | None = Non
             name="remove",
             help=lambda kind: f"Remove a remote {kind}.",
             factory=_make_remove_cap_command,
-            no_args_is_help=True,
-        ),
-        CapCommandSpec(
-            name="delete",
-            help=lambda kind: f"Delete a local {kind}.",
-            factory=_make_delete_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(

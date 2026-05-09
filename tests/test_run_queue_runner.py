@@ -1961,6 +1961,7 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
 
 def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
     context = _build_context(
@@ -2972,7 +2973,7 @@ def test_up_reads_web_config_without_validating_experiments_caps(tmp_path: Path,
         'cors_allowed_origins = ["http://localhost:3000", "https://too.run"]\n'
         '\n'
         '[skills]\n'
-        'pdf-processing = { ref = "github://by3gus/agent-skills/skills/pdf-processing" }\n',
+        'pdf-processing = { ref = "github://by3gus/agent-skills/skills/pdf-processing@main" }\n',
         encoding="utf-8",
     )
     captured: dict[str, object] = {}
@@ -3201,6 +3202,7 @@ def test_caps_reject_service_env_map(tmp_path: Path) -> None:
 
 def test_prepare_materializes_remote_entries_from_config(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_materialized_files(*, relative_entry_path, kind, name, ref):
@@ -3226,7 +3228,7 @@ def test_prepare_materializes_remote_entries_from_config(tmp_path: Path, monkeyp
     assert [entry.source.origin for entry in prepared.shared_lock.entries] == ["remote"]
     assert [entry.source.inclusion for entry in prepared.shared_lock.entries] == ["configured"]
     assert prepared.shared_lock.entries[0].path == ".prepared/remote/prompts/rewrite.md"
-    assert prepared.shared_lock.entries[0].ref == "github://acme/agent-prompts/prompts/rewrite.md"
+    assert prepared.shared_lock.entries[0].ref == "github://acme/agents/prompts/rewrite.md@main"
     assert live.caps == (".prepared/remote/prompts/rewrite.md",)
 
 
@@ -3239,8 +3241,9 @@ def test_remote_skill_shorthand_probes_agent_skills_and_skills_repos(
 
     def fake_exists(_kind, ref):
         probes.append(ref)
-        return ref == "github://anthropics/skills/skills/pdf"
+        return ref == "github://anthropics/skills/skills/pdf@main"
 
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
     monkeypatch.setattr(caps, "_github_remote_exists", fake_exists)
 
     add_remote_entry(
@@ -3254,10 +3257,41 @@ def test_remote_skill_shorthand_probes_agent_skills_and_skills_repos(
     config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(encoding="utf-8")
 
     assert probes == [
-        "github://anthropics/agent-skills/skills/pdf",
-        "github://anthropics/skills/skills/pdf",
+        "github://anthropics/agents/skills/pdf@main",
+        "github://anthropics/agent-skills/pdf@main",
+        "github://anthropics/agent-skills/skills/pdf@main",
+        "github://anthropics/skills/pdf@main",
+        "github://anthropics/skills/skills/pdf@main",
     ]
-    assert 'pdf = { ref = "github://anthropics/skills/skills/pdf" }' in config_text
+    assert 'pdf = { ref = "github://anthropics/skills/skills/pdf@main" }' in config_text
+
+
+def test_remote_cap_repo_shorthand_uses_named_repo_path_probes(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    probes: list[str] = []
+
+    def fake_exists(_kind, ref):
+        probes.append(ref)
+        return ref == "github://anthropics/project/pdf@trunk"
+
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "trunk")
+    monkeypatch.setattr(caps, "_github_remote_exists", fake_exists)
+
+    add_remote_entry(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        ref="anthropics/project/pdf",
+    )
+
+    config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(encoding="utf-8")
+
+    assert probes == [
+        "github://anthropics/project/skills/pdf@trunk",
+        "github://anthropics/project/pdf@trunk",
+    ]
+    assert 'pdf = { ref = "github://anthropics/project/pdf@trunk" }' in config_text
 
 
 def test_remote_skill_add_canonicalizes_github_tree_url(tmp_path: Path, monkeypatch) -> None:
@@ -3289,6 +3323,33 @@ def test_remote_skill_add_canonicalizes_github_tree_url(tmp_path: Path, monkeypa
     ).is_file()
 
 
+def test_remote_skill_add_canonicalizes_github_skill_file_url(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        caps,
+        "_fetch_github_directory",
+        lambda ref: {"SKILL.md": f"---\ndescription: {ref.render()}\n---\n# Agent Browser\n".encode()},
+    )
+
+    add_remote_entry(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        ref="https://github.com/vercel-labs/agent-browser/blob/main/skills/agent-browser/SKILL.md",
+    )
+
+    config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(encoding="utf-8")
+    durable = scan_durable_state(toolang_root, "alice")
+    prepared = prepare.build_prepared_state(durable)
+
+    expected_ref = "github://vercel-labs/agent-browser/skills/agent-browser@main"
+    assert f'agent-browser = {{ ref = "{expected_ref}" }}' in config_text
+    assert prepared.private_lock.entries[0].ref == expected_ref
+
+
 def test_remote_skill_add_rejects_missing_github_tree_url(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: False)
@@ -3311,12 +3372,12 @@ def test_prepare_materializes_remote_skill_directory(tmp_path: Path, monkeypatch
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
         '[skills]\n'
-        'pdf = { ref = "github://anthropics/skills/skills/pdf" }\n',
+        'pdf = { ref = "github://anthropics/skills/skills/pdf@main" }\n',
         encoding="utf-8",
     )
 
     def fake_directory(ref):
-        assert ref.render() == "github://anthropics/skills/skills/pdf"
+        assert ref.render() == "github://anthropics/skills/skills/pdf@main"
         return {
             "SKILL.md": b"---\ndescription: PDF work\n---\n# PDF\n",
             "REFERENCE.md": b"# Reference\n",
@@ -3544,6 +3605,7 @@ def test_prepare_rewrites_legacy_private_lock_missing_program(tmp_path: Path) ->
 
 def test_caps_list_and_remove_remote_entries(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
 
     add_remote_entry(
