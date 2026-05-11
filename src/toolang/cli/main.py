@@ -24,6 +24,7 @@ from ..config.log import DEFAULT_AGENT_LOG_SPEC, configure_logging
 from ..config.log_spec import PY_LOG_ENV_VAR
 from ..execution.model import DEFAULT_MODEL_SELECTOR
 from ..execution.records import UpdateKind
+from ..loops import prepare as prepare_loop
 from ..models.discovery import (
     default_provider_api_key_env,
     default_provider_base_url,
@@ -31,8 +32,11 @@ from ..models.discovery import (
     model_infos,
     required_provider_env_vars,
 )
+from ..progress import emit_progress
+from ..state.durable import scan_durable_state
 from . import caps as caps_cli
 from . import invoke as cli_invoke
+from .progress import as_progress_sink, make_cli_progress
 from .utils import (
     _AGENT_AVATAR,
     _PrefixAgentWorkGroup,
@@ -321,27 +325,29 @@ def run_agent(
     selector = _required_runtime_agent(ctx, agent)
     normalized_loops = _normalize_loop_option(loops)
     root = _context_root(ctx)
+    progress = make_cli_progress()
     try:
-        with agents.materialized_run_target(root, selector) as (run_root, agent_name):
+        with agents.materialized_run_target(root, selector, progress=as_progress_sink(progress)) as (run_root, agent_name):
             environ = _runtime_environ_for_agent(ctx, agent_name, toolang_root=run_root)
             effective_log_spec = _configure_foreground_runtime_logging(ctx, environ)
-            raise typer.Exit(
-                _wrap_user_error(
-                    agent_up.up,
-                    toolang_root=run_root,
-                    agent_name=agent_name,
-                    host=host,
-                    endpoint_host=endpoint_host,
-                    port=port,
-                    sandbox=sandbox,
-                    models=models,
-                    dev=dev,
-                    sandbox_child=sandbox_child,
-                    loop_names=normalized_loops,
-                    log_spec=effective_log_spec,
-                    environ=environ,
-                )
+            exit_code = _wrap_user_error(
+                agent_up.up,
+                toolang_root=run_root,
+                agent_name=agent_name,
+                host=host,
+                endpoint_host=endpoint_host,
+                port=port,
+                sandbox=sandbox,
+                models=models,
+                dev=dev,
+                sandbox_child=sandbox_child,
+                loop_names=normalized_loops,
+                log_spec=effective_log_spec,
+                environ=environ,
+                progress=as_progress_sink(progress),
             )
+            progress.finish()
+            raise typer.Exit(exit_code)
     except (FileExistsError, FileNotFoundError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -392,6 +398,7 @@ def start_agent(
     agent_name = parsed_selector.name or ""
     root = _context_root(ctx)
     normalized_loops = _normalize_loop_option(loops)
+    progress = make_cli_progress()
     existing = agents.get_agent_status(root, agent_name, ui_base_url=_ui_base_url())
     if existing is not None and existing.status in {"running", "preparing", "starting"}:
         raise click.ClickException(f"agent is already active: {agent_name}")
@@ -414,6 +421,24 @@ def start_agent(
         loop_names=normalized_loops,
         log_spec=explicit_log_spec,
         environ=environ,
+    )
+    emit_progress(
+        as_progress_sink(progress),
+        id="startup.prepare",
+        phase="startup.prepare",
+        label="Prepare startup state",
+        status="running",
+        detail=agent_name,
+    )
+    durable = _wrap_user_error(scan_durable_state, root, agent_name)
+    _wrap_user_error(prepare_loop.build_prepared_state, durable, progress=as_progress_sink(progress))
+    emit_progress(
+        as_progress_sink(progress),
+        id="startup.prepare",
+        phase="startup.prepare",
+        label="Prepare startup state",
+        status="ok",
+        detail=agent_name,
     )
     log_path = agents.agent_runtime_log_path(root, agent_name)
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -448,6 +473,7 @@ def start_agent(
         raise click.ClickException(f"agent start timed out: {agent_name} (see {log_path})")
     if status.status == "failed":
         raise click.ClickException(f"{agent_name}\tfailed\t{status.endpoint or '-'}\t{log_path}")
+    progress.finish()
     typer.echo(_format_runtime_row(status))
 
 

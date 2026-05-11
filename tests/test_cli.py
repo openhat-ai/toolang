@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 import os
 from datetime import datetime, timezone
@@ -10,8 +11,10 @@ from toolang import agents
 from toolang import caps
 from toolang.base.types.model import ModelInfo
 import toolang.cli.main as cli
+from toolang.cli.progress import CliProgress
 from toolang.config.log import DEFAULT_AGENT_LOG_SPEC
 from toolang.config.log_spec import PY_LOG_ENV_VAR
+from toolang.progress import ProgressEvent
 from toolang import work
 from toolang.execution.db import ExecutionStore, execution_db_path
 runner = CliRunner()
@@ -349,6 +352,15 @@ def test_agent_selector_parsing_supports_repo_shorthand() -> None:
     assert selector.name == "alice"
 
 
+def test_agent_selector_canonicalizes_raw_refs_heads_url() -> None:
+    selector = agents.parse_agent_selector(
+        "https://raw.githubusercontent.com/briceyan/agents/refs/heads/main/dev.too"
+    )
+
+    assert selector.form == "ref"
+    assert selector.resolved_ref().render() == "github://briceyan/agents/dev.too@refs/heads/main"
+
+
 def test_cli_clone_remote_shorthand_defaults_target_name(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     probes: list[str] = []
@@ -445,11 +457,81 @@ def test_cli_clone_local_source_requires_target_name(tmp_path: Path) -> None:
     assert "target name is required when cloning one local agent" in result.stderr
 
 
+def test_cli_progress_groups_agent_and_cap_steps() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream)
+
+    progress(
+        ProgressEvent(
+            id="agent.resolve:briceyan/dev",
+            phase="agent.resolve",
+            label="Resolve agent",
+            status="ok",
+            detail="github://briceyan/agents/dev.too@main",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="agent.fetch:github://briceyan/agents/dev.too@main",
+            phase="agent.fetch",
+            label="Fetch agent",
+            status="ok",
+            detail="github://briceyan/agents/dev.too@main",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="agent.materialize:github://briceyan/agents/dev.too@main",
+            phase="agent.materialize",
+            label="Materialize agent",
+            status="ok",
+            detail="dev",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="cap.resolve:psyche:briceyan/concise",
+            phase="cap.resolve",
+            label="Resolve psyche",
+            status="ok",
+            detail="github://briceyan/agents/psyches/concise.md@main",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="cap.fetch:psyche:github://briceyan/agents/psyches/concise.md@main",
+            phase="cap.fetch",
+            label="Fetch psyche",
+            status="ok",
+            detail="1 file",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="ok",
+            detail="abc123",
+        )
+    )
+
+    assert stream.getvalue() == ""
+    progress.finish()
+
+    assert stream.getvalue().splitlines() == [
+        "ok Agent dev resolve, fetch, materialize",
+        "ok Psyche concise resolve, fetch (1 file)",
+        "Progress: 1 agent, 1 caps, prepare ok",
+    ]
+
+
 def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     captured: dict[str, object] = {}
 
-    def fake_fetch(ref: agents.AgentRef) -> str:
+    def fake_fetch(ref: agents.AgentRef, *, progress=None) -> str:
+        del progress
         assert ref.render() == "github://brice/agents/agents/alice.too@main"
         return "agent remote-source\n"
 
@@ -467,8 +549,9 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
         loop_names: tuple[str, ...] | None,
         log_spec: str | None,
         environ: dict[str, str],
+        progress=None,
     ) -> int:
-        del host, endpoint_host, port, sandbox, models, dev, sandbox_child, loop_names, log_spec, environ
+        del host, endpoint_host, port, sandbox, models, dev, sandbox_child, loop_names, log_spec, environ, progress
         captured["toolang_root"] = toolang_root
         captured["agent_name"] = agent_name
         program_path = toolang_root / "agents" / agent_name / f"{agent_name}.too"
@@ -498,7 +581,8 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
     toolang_root = tmp_path / "toolang"
     captured: dict[str, object] = {}
 
-    def fake_fetch(ref: agents.AgentRef) -> str:
+    def fake_fetch(ref: agents.AgentRef, *, progress=None) -> str:
+        del progress
         assert ref.render() == "https://toolang.ai/demo/researcher.too"
         return "agent researcher\n"
 
@@ -516,8 +600,9 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
         loop_names: tuple[str, ...] | None,
         log_spec: str | None,
         environ: dict[str, str],
+        progress=None,
     ) -> int:
-        del host, endpoint_host, port, sandbox, models, dev, sandbox_child, loop_names, log_spec, environ
+        del host, endpoint_host, port, sandbox, models, dev, sandbox_child, loop_names, log_spec, environ, progress
         captured["toolang_root"] = toolang_root
         captured["agent_name"] = agent_name
         return 0
@@ -1461,7 +1546,9 @@ def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
         loop_names: list[str] | None = None,
         log_spec: str | None = None,
         environ: dict[str, str],
+        progress=None,
     ) -> int:
+        del progress
         captured["toolang_root"] = toolang_root
         captured["agent_name"] = agent_name
         captured["host"] = host
@@ -1529,7 +1616,9 @@ def test_cli_run_omits_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
         loop_names: list[str] | None = None,
         log_spec: str | None = None,
         environ: dict[str, str],
+        progress=None,
     ) -> int:
+        del progress
         captured["toolang_root"] = toolang_root
         captured["agent_name"] = agent_name
         captured["host"] = host
@@ -1585,8 +1674,9 @@ def test_cli_run_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
         loop_names: list[str] | None = None,
         log_spec: str | None = None,
         environ: dict[str, str],
+        progress=None,
     ) -> int:
-        del toolang_root, agent_name, host, endpoint_host, port, sandbox, models, dev, sandbox_child, log_spec, environ
+        del toolang_root, agent_name, host, endpoint_host, port, sandbox, models, dev, sandbox_child, log_spec, environ, progress
         captured["loop_names"] = loop_names
         return 0
 
@@ -1620,8 +1710,9 @@ def test_cli_run_passes_model_selectors_to_agent_up(tmp_path: Path, monkeypatch)
         loop_names: list[str] | None = None,
         log_spec: str | None = None,
         environ: dict[str, str],
+        progress=None,
     ) -> int:
-        del toolang_root, agent_name, host, endpoint_host, port, sandbox, dev, sandbox_child, loop_names, log_spec, environ
+        del toolang_root, agent_name, host, endpoint_host, port, sandbox, dev, sandbox_child, loop_names, log_spec, environ, progress
         captured["models"] = models
         return 0
 
@@ -1655,8 +1746,9 @@ def test_cli_run_does_not_override_explicit_log_spec(tmp_path: Path, monkeypatch
         loop_names: list[str] | None = None,
         log_spec: str | None = None,
         environ: dict[str, str],
+        progress=None,
     ) -> int:
-        del toolang_root, agent_name, host, endpoint_host, port, sandbox, models, dev, sandbox_child, loop_names
+        del toolang_root, agent_name, host, endpoint_host, port, sandbox, models, dev, sandbox_child, loop_names, progress
         captured["environ"] = environ
         captured["log_spec"] = log_spec
         return 0
@@ -1716,7 +1808,9 @@ def test_cli_run_loads_root_and_agent_env_with_agent_override(tmp_path: Path, mo
         loop_names: list[str] | None = None,
         log_spec: str | None = None,
         environ: dict[str, str],
+        progress=None,
     ) -> int:
+        del progress
         captured["environ"] = environ
         captured["endpoint_host"] = endpoint_host
         captured["sandbox"] = sandbox
@@ -2304,7 +2398,7 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     monkeypatch.setattr(
         caps,
         "_remote_materialized_files",
-        lambda *, relative_entry_path, kind, name, ref: {
+        lambda *, relative_entry_path, kind, name, ref, progress=None: {
             str(relative_entry_path): b"---\ndescription: Review code\n---\n# Reviewer\n"
         },
     )

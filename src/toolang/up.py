@@ -43,6 +43,7 @@ from .execution.runner import QueueRunner, RunRequest, RunSubmission, RunOutcome
 from .execution.db import ExecutionStore, execution_db_path
 from .execution.stream import RuntimeEventBus
 from .loops import chat, control, hook, inspect, poll, prepare, pulse, reload
+from .progress import ProgressSink
 from .state.durable import scan_durable_state
 from .state.live import LiveState, load_live_state
 from .state.prepared import PreparedEntry
@@ -474,6 +475,7 @@ def up(
     loop_names: Sequence[str] | None = None,
     log_spec: str | None = None,
     environ: Mapping[str, str],
+    progress: ProgressSink | None = None,
 ) -> int:
     """Start one agent runtime."""
 
@@ -517,6 +519,7 @@ def up(
         sandbox_child=sandbox_child,
         model_selectors=spec.model_selectors,
         log_spec=spec.log_spec,
+        progress=progress,
     )
 
 
@@ -706,6 +709,7 @@ def _up_local(
     sandbox_child: bool,
     model_selectors: tuple[str, ...],
     log_spec: str | None,
+    progress: ProgressSink | None = None,
 ) -> int:
     loop_intervals_ms = dict(DEFAULT_LOOP_INTERVAL_MS)
     for loop_name in BACKGROUND_LOOPS:
@@ -725,6 +729,7 @@ def _up_local(
         host=host,
         port=port,
         cors_allowed_origins=cors_allowed_origins or [],
+        progress=progress,
     )
     live = context.live
     context.store.append_update(
@@ -860,6 +865,7 @@ def _load_runtime_context(
     host: str = "127.0.0.1",
     port: int = 0,
     cors_allowed_origins: Sequence[str] = (),
+    progress: ProgressSink | None = None,
 ) -> UptimeContext:
     channel_bindings = load_channel_bindings(
         toolang_root,
@@ -868,7 +874,7 @@ def _load_runtime_context(
     )
     runtime_state = agents.load_runtime_state(toolang_root, agent_name) or {}
     durable = scan_durable_state(toolang_root, agent_name)
-    prepared_state = prepare.build_prepared_state(durable)
+    prepared_state = prepare.build_prepared_state(durable, progress=progress)
     live = load_live_state(prepared_state, enabled_loops=enabled_loops)
     normalized_model_selectors = _normalize_model_selectors(model_selectors)
     default_model_selector = normalized_model_selectors[0] if normalized_model_selectors else None

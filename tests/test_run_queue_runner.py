@@ -3350,6 +3350,83 @@ def test_remote_skill_add_canonicalizes_github_skill_file_url(tmp_path: Path, mo
     assert prepared.private_lock.entries[0].ref == expected_ref
 
 
+def test_remote_skill_add_canonicalizes_raw_refs_heads_skill_file_url(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        caps,
+        "_fetch_github_directory",
+        lambda ref: {"SKILL.md": f"---\ndescription: {ref.render()}\n---\n# Agent Browser\n".encode()},
+    )
+
+    add_remote_entry(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        ref="https://raw.githubusercontent.com/vercel-labs/agent-browser/refs/heads/main/skills/agent-browser/SKILL.md",
+    )
+
+    config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(encoding="utf-8")
+    durable = scan_durable_state(toolang_root, "alice")
+    prepared = prepare.build_prepared_state(durable)
+
+    expected_ref = "github://vercel-labs/agent-browser/skills/agent-browser@refs/heads/main"
+    assert f'agent-browser = {{ ref = "{expected_ref}" }}' in config_text
+    assert prepared.private_lock.entries[0].ref == expected_ref
+
+
+def test_prepare_apply_changes_records_remote_cap_updates(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        caps,
+        "_fetch_github_directory",
+        lambda ref: {"SKILL.md": f"---\ndescription: {ref.render()}\n---\n# Skill\n".encode()},
+    )
+
+    agents.create_agent(toolang_root, "alice")
+    add_remote_entry(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        ref="acme/pdf",
+    )
+    initial = prepare.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+    live = load_live_state(initial, enabled_loops=("reload",))
+    add_remote_entry(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        ref="acme/review",
+    )
+    config_path = toolang_root / "agents" / "alice" / "config.toml"
+    updates: list[tuple[str, dict[str, object]]] = []
+
+    class Store:
+        def append_update(self, *, kind, payload=None, created_at=None):
+            del created_at
+            updates.append((kind, dict(payload or {})))
+
+    live_state = type("LiveState", (), {"fingerprint": live.fingerprint})()
+
+    class Context:
+        root = toolang_root
+        name = "alice"
+        store = Store()
+        live = live_state
+
+    reload_signal = asyncio.Event()
+    prepare.apply_changes(cast(UptimeContext, Context()), {config_path}, reload_signal=reload_signal)
+
+    assert ("skill_changed", {"name": "review", "visibility": "private"}) in updates
+    assert reload_signal.is_set()
+
+
 def test_remote_skill_add_rejects_missing_github_tree_url(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: False)

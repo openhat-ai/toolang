@@ -26,6 +26,7 @@ from tomli_w._writer import Context as TomlContext
 from tomli_w._writer import format_inline_table, format_key_part, format_literal
 
 from .state.durable import DurableFile, DurableState, scan_durable_state
+from .progress import ProgressSink, emit_progress
 from .state.prepared import (
     EntryKind,
     PreparedEntry,
@@ -211,11 +212,12 @@ def add_remote_entry(
     visibility: PreparedVisibility,
     kind: EntryKind,
     ref: str,
+    progress: ProgressSink | None = None,
 ) -> Path:
     """Add one remote entry ref to the authored config file."""
 
     _validate_local_kind(visibility, kind)
-    canonical_ref = _resolve_remote_ref(kind, ref)
+    canonical_ref = _resolve_remote_ref(kind, ref, progress=progress)
     name = _remote_name(kind, canonical_ref)
     _ensure_name_available(
         toolang_root,
@@ -235,7 +237,23 @@ def add_remote_entry(
         kind_table = {}
         data[key] = kind_table
     kind_table[name] = {"ref": canonical_ref}
+    emit_progress(
+        progress,
+        id=f"cap.config:{kind}:{name}",
+        phase="cap.config",
+        label=f"Write {kind} config",
+        status="running",
+        detail=canonical_ref,
+    )
     _write_config_data(config_path, data)
+    emit_progress(
+        progress,
+        id=f"cap.config:{kind}:{name}",
+        phase="cap.config",
+        label=f"Write {kind} config",
+        status="ok",
+        detail=str(config_path),
+    )
     return config_path
 
 
@@ -342,6 +360,7 @@ def _collect_visibility_entries_with_files(
     visibility: PreparedVisibility | None = None,
     kinds: set[EntryKind] | None = None,
     materialize_remote: bool = False,
+    progress: ProgressSink | None = None,
 ) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
     local_entries = collect_local_entries(durable, visibility=visibility, kinds=kinds)
     remote_entries, files = _collect_remote_entries(
@@ -350,6 +369,7 @@ def _collect_visibility_entries_with_files(
         visibility=visibility,
         kinds=kinds,
         materialize=materialize_remote,
+        progress=progress,
     )
     embedded_entries, embedded_files = _collect_program_embedded_entries(
         durable,
@@ -362,6 +382,7 @@ def _collect_visibility_entries_with_files(
         visibility=visibility,
         kinds=kinds,
         materialize=materialize_remote,
+        progress=progress,
     )
     files.update(embedded_files)
     files.update(use_files)
@@ -373,13 +394,23 @@ def build_visibility_lock(
     durable: DurableState,
     *,
     visibility: PreparedVisibility,
+    progress: ProgressSink | None = None,
 ) -> tuple[PreparedLock, dict[str, bytes]]:
     """Build one prepared lock and any materialized files for one visibility."""
 
+    emit_progress(
+        progress,
+        id=f"prepare.visibility:{visibility}",
+        phase="prepare.visibility",
+        label=f"Prepare {visibility} caps",
+        status="running",
+        detail=durable.agent_name,
+    )
     entries, files = _collect_visibility_entries_with_files(
         durable,
         visibility=visibility,
         materialize_remote=True,
+        progress=progress,
     )
     _ensure_no_conflicts(entries)
     updated_at = datetime.now(timezone.utc).isoformat()
@@ -389,7 +420,7 @@ def build_visibility_lock(
     else:
         prepared_dir = private_prepared_dir(durable.toolang_root, durable.agent_name)
         lock_path = private_lock_path(durable.toolang_root, durable.agent_name)
-    return (
+    result = (
         PreparedLock(
             visibility=visibility,
             updated_at=updated_at,
@@ -402,6 +433,15 @@ def build_visibility_lock(
         ),
         files,
     )
+    emit_progress(
+        progress,
+        id=f"prepare.visibility:{visibility}",
+        phase="prepare.visibility",
+        label=f"Prepare {visibility} caps",
+        status="ok",
+        detail=f"{len(entries)} entries",
+    )
+    return result
 
 
 def effective_cap_entries(
@@ -816,6 +856,7 @@ def _collect_remote_entries(
     visibility: PreparedVisibility | None = None,
     kinds: set[EntryKind] | None = None,
     materialize: bool = False,
+    progress: ProgressSink | None = None,
 ) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
     visibilities = ("shared", "private") if visibility is None else (visibility,)
     entries: list[PreparedEntry] = []
@@ -848,6 +889,7 @@ def _collect_remote_entries(
                     config_path=config_path,
                     inclusion="configured",
                     materialize=materialize,
+                    progress=progress,
                 )
                 entries.append(entry)
                 files.update(entry_files)
@@ -860,6 +902,7 @@ def _collect_program_use_entries(
     visibility: PreparedVisibility | None = None,
     kinds: set[EntryKind] | None = None,
     materialize: bool = False,
+    progress: ProgressSink | None = None,
 ) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
     if visibility == "shared" or durable.program_source is None:
         return (), {}
@@ -879,7 +922,11 @@ def _collect_program_use_entries(
             continue
         if kinds is not None and kind not in kinds:
             continue
-        canonical_ref = _resolve_remote_ref(kind, use.reference) if materialize else _canonicalize_remote_ref(kind, use.reference)
+        canonical_ref = (
+            _resolve_remote_ref(kind, use.reference, progress=progress)
+            if materialize
+            else _canonicalize_remote_ref(kind, use.reference)
+        )
         name = _remote_name(kind, canonical_ref)
         entry, entry_files = _remote_entry_from_ref(
             durable.toolang_root,
@@ -893,6 +940,7 @@ def _collect_program_use_entries(
             inclusion="referenced",
             source_line=use.span.line + line_offset,
             materialize=materialize,
+            progress=progress,
         )
         entries.append(entry)
         files.update(entry_files)
@@ -1029,25 +1077,36 @@ def _remote_entry_from_ref(
     inclusion: Literal["configured", "referenced"],
     source_line: int | None = None,
     materialize: bool,
+    progress: ProgressSink | None = None,
 ) -> tuple[PreparedEntry, dict[str, bytes]]:
-    canonical_ref = _resolve_remote_ref(kind, ref) if materialize else _canonicalize_remote_ref(kind, ref)
+    if materialize and "://" not in ref:
+        canonical_ref = _resolve_remote_ref(kind, ref, progress=progress)
+    else:
+        canonical_ref = _canonicalize_remote_ref(kind, ref)
     relative_entry_path = _relative_remote_entry_path(agent_name, visibility=visibility, kind=kind, name=name)
-    entry_files = (
-        _remote_materialized_files(
+    if materialize and progress is not None:
+        entry_files = _remote_materialized_files(
+            relative_entry_path=relative_entry_path,
+            kind=kind,
+            name=name,
+            ref=canonical_ref,
+            progress=progress,
+        )
+    elif materialize:
+        entry_files = _remote_materialized_files(
             relative_entry_path=relative_entry_path,
             kind=kind,
             name=name,
             ref=canonical_ref,
         )
-        if materialize
-        else {
+    else:
+        entry_files = {
             str(relative_entry_path): _remote_placeholder_content(
                 kind=kind,
                 name=name,
                 ref=canonical_ref,
             )
         }
-    )
     entry_content = entry_files[str(relative_entry_path)]
     return (
         PreparedEntry(
@@ -1105,33 +1164,133 @@ def _remote_materialized_files(
     kind: EntryKind,
     name: str,
     ref: str,
+    progress: ProgressSink | None = None,
 ) -> dict[str, bytes]:
     del name
     if not ref.startswith("github://"):
         raise ValueError(f"unsupported remote {kind} ref: {ref}")
     github_ref = _parse_github_remote_ref(ref)
+    emit_progress(
+        progress,
+        id=f"cap.fetch:{kind}:{ref}",
+        phase="cap.fetch",
+        label=f"Fetch {kind}",
+        status="running",
+        detail=ref,
+    )
     if kind == "skill":
-        files = _fetch_github_directory(github_ref)
+        try:
+            files = _fetch_github_directory(github_ref)
+        except Exception:
+            emit_progress(
+                progress,
+                id=f"cap.fetch:{kind}:{ref}",
+                phase="cap.fetch",
+                label=f"Fetch {kind}",
+                status="failed",
+                detail=ref,
+            )
+            raise
         if "SKILL.md" not in files:
+            emit_progress(
+                progress,
+                id=f"cap.fetch:{kind}:{ref}",
+                phase="cap.fetch",
+                label=f"Fetch {kind}",
+                status="failed",
+                detail=ref,
+            )
             raise ValueError(f"remote skill is missing SKILL.md: {ref}")
         root = relative_entry_path.parent
-        return {str(root / relative_path): content for relative_path, content in files.items()}
-    return {str(relative_entry_path): _fetch_github_file(github_ref)}
+        materialized = {str(root / relative_path): content for relative_path, content in files.items()}
+    else:
+        try:
+            materialized = {str(relative_entry_path): _fetch_github_file(github_ref)}
+        except Exception:
+            emit_progress(
+                progress,
+                id=f"cap.fetch:{kind}:{ref}",
+                phase="cap.fetch",
+                label=f"Fetch {kind}",
+                status="failed",
+                detail=ref,
+            )
+            raise
+    emit_progress(
+        progress,
+        id=f"cap.fetch:{kind}:{ref}",
+        phase="cap.fetch",
+        label=f"Fetch {kind}",
+        status="ok",
+        detail=f"{len(materialized)} {'file' if len(materialized) == 1 else 'files'}",
+    )
+    return materialized
 
 
-def _resolve_remote_ref(kind: EntryKind, ref: str) -> str:
+def _resolve_remote_ref(kind: EntryKind, ref: str, *, progress: ProgressSink | None = None) -> str:
     text = ref.strip()
+    emit_progress(
+        progress,
+        id=f"cap.resolve:{kind}:{text}",
+        phase="cap.resolve",
+        label=f"Resolve {kind}",
+        status="running",
+        detail=text,
+    )
     if "://" in text:
-        canonical_ref = _canonicalize_remote_ref(kind, text)
-        if canonical_ref.startswith("github://") and not _github_remote_exists(kind, canonical_ref):
-            raise ValueError(f"remote {kind} not found or missing entry file: {ref}")
+        try:
+            canonical_ref = _canonicalize_remote_ref(kind, text)
+            if canonical_ref.startswith("github://") and not _github_remote_exists(kind, canonical_ref):
+                raise ValueError(f"remote {kind} not found or missing entry file: {ref}")
+        except Exception:
+            emit_progress(
+                progress,
+                id=f"cap.resolve:{kind}:{text}",
+                phase="cap.resolve",
+                label=f"Resolve {kind}",
+                status="failed",
+                detail=text,
+            )
+            raise
+        emit_progress(
+            progress,
+            id=f"cap.resolve:{kind}:{text}",
+            phase="cap.resolve",
+            label=f"Resolve {kind}",
+            status="ok",
+            detail=canonical_ref,
+        )
         return canonical_ref
     candidates = _remote_ref_candidates(kind, text)
     if not candidates:
+        emit_progress(
+            progress,
+            id=f"cap.resolve:{kind}:{text}",
+            phase="cap.resolve",
+            label=f"Resolve {kind}",
+            status="failed",
+            detail=text,
+        )
         raise ValueError(f"invalid remote ref: {ref}")
     for candidate in candidates:
         if _github_remote_exists(kind, candidate):
+            emit_progress(
+                progress,
+                id=f"cap.resolve:{kind}:{text}",
+                phase="cap.resolve",
+                label=f"Resolve {kind}",
+                status="ok",
+                detail=candidate,
+            )
             return candidate
+    emit_progress(
+        progress,
+        id=f"cap.resolve:{kind}:{text}",
+        phase="cap.resolve",
+        label=f"Resolve {kind}",
+        status="failed",
+        detail=text,
+    )
     raise ValueError(f"could not resolve remote {kind} shorthand: {ref}")
 
 
@@ -1291,8 +1450,8 @@ def _github_remote_ref_from_web_url(path_text: str, original: str) -> _GitHubRem
     parts = [part for part in path_text.strip("/").split("/") if part]
     if len(parts) < 5 or parts[2] not in {"tree", "blob"}:
         raise ValueError(f"invalid GitHub remote ref: {original}")
-    owner, repo, _mode, rev = parts[:4]
-    path = "/".join(parts[4:])
+    owner, repo = parts[:2]
+    rev, path = _split_github_url_rev_and_path(parts[3:], original)
     if not owner or not repo or not rev or not path:
         raise ValueError(f"invalid GitHub remote ref: {original}")
     return _GitHubRemoteRef(owner=owner, repo=repo, path=path, rev=rev)
@@ -1302,11 +1461,19 @@ def _github_remote_ref_from_raw_url(path_text: str, original: str) -> _GitHubRem
     parts = [part for part in path_text.strip("/").split("/") if part]
     if len(parts) < 4:
         raise ValueError(f"invalid GitHub remote ref: {original}")
-    owner, repo, rev = parts[:3]
-    path = "/".join(parts[3:])
+    owner, repo = parts[:2]
+    rev, path = _split_github_url_rev_and_path(parts[2:], original)
     if not owner or not repo or not rev or not path:
         raise ValueError(f"invalid GitHub remote ref: {original}")
     return _GitHubRemoteRef(owner=owner, repo=repo, path=path, rev=rev)
+
+
+def _split_github_url_rev_and_path(parts: list[str], original: str) -> tuple[str, str]:
+    if len(parts) >= 4 and parts[0] == "refs" and parts[1] in {"heads", "tags"}:
+        return "/".join(parts[:3]), "/".join(parts[3:])
+    if len(parts) >= 2:
+        return parts[0], "/".join(parts[1:])
+    raise ValueError(f"invalid GitHub remote ref: {original}")
 
 
 @lru_cache
@@ -1449,6 +1616,13 @@ def _legacy_fetch_github_directory(ref: _GitHubRemoteRef) -> dict[str, bytes]:
 
 
 def _remote_name(kind: EntryKind, ref: str) -> str:
+    if ref.startswith("github://"):
+        path = _parse_github_remote_ref(ref).path.rstrip("/")
+        if not path:
+            raise ValueError(f"invalid remote ref: {ref}")
+        if kind == "skill":
+            return Path(path).name
+        return Path(path).stem
     parsed = urlparse(ref)
     path = parsed.path.rstrip("/")
     if not path:

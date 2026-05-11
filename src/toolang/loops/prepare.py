@@ -6,11 +6,13 @@ import asyncio
 from dataclasses import replace
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from watchfiles import Change, awatch
 
 from ..caps import build_visibility_lock
+from ..progress import ProgressSink, emit_progress
+from ..execution.records import UpdateKind
 from ..state.durable import DurableState, is_durable_path, scan_durable_state
 from ..state.program import build_prepared_program
 from ..state.prepared import (
@@ -71,17 +73,28 @@ async def run(
         apply_changes(context, changed_paths, reload_signal=reload_signal)
 
 
-def build_prepared_state(durable: DurableState) -> PreparedState:
+def build_prepared_state(durable: DurableState, *, progress: ProgressSink | None = None) -> PreparedState:
     """Build and persist prepared locks for the current durable state."""
 
+    emit_progress(
+        progress,
+        id="prepare.state",
+        phase="prepare.state",
+        label="Prepare agent state",
+        status="running",
+        detail=durable.agent_name,
+    )
     logger.debug(
         "prepare build started root=%s agent=%s durable_fingerprint=%s",
         durable.toolang_root,
         durable.agent_name,
         _short_fingerprint(durable.fingerprint),
     )
-    _write_visibility_if_changed(durable.toolang_root, *build_visibility_lock(durable, visibility="shared"))
-    private_lock, private_files = build_visibility_lock(durable, visibility="private")
+    _write_visibility_if_changed(
+        durable.toolang_root,
+        *build_visibility_lock(durable, visibility="shared", progress=progress),
+    )
+    private_lock, private_files = build_visibility_lock(durable, visibility="private", progress=progress)
     program = build_prepared_program(durable)
     _write_visibility_if_changed(
         durable.toolang_root,
@@ -98,6 +111,14 @@ def build_prepared_state(durable: DurableState) -> PreparedState:
         durable.toolang_root,
         durable.agent_name,
         _short_fingerprint(prepared.fingerprint),
+    )
+    emit_progress(
+        progress,
+        id="prepare.state",
+        phase="prepare.state",
+        label="Prepare agent state",
+        status="ok",
+        detail=_short_fingerprint(prepared.fingerprint),
     )
     return prepared
 
@@ -122,6 +143,7 @@ def apply_changes(
     before = _load_prepared_optional(context.root, context.name)
     durable = scan_durable_state(context.root, context.name)
     prepared = build_prepared_state(durable)
+    _append_entry_change_updates(context, before, prepared)
     should_reload = prepared.fingerprint != context.live.fingerprint
     logger.info(
         "prepare applied agent=%s shared=%s private=%s live=%s reload=%s",
@@ -163,6 +185,44 @@ def _load_prepared_optional(toolang_root: Path, agent_name: str) -> PreparedStat
         return load_prepared_state(toolang_root, agent_name)
     except FileNotFoundError:
         return None
+
+
+def _append_entry_change_updates(
+    context: UptimeContext,
+    before: PreparedState | None,
+    after: PreparedState,
+) -> None:
+    before_entries = _entry_change_snapshot(before)
+    after_entries = _entry_change_snapshot(after)
+    changed_keys = sorted(
+        key
+        for key in before_entries.keys() | after_entries.keys()
+        if before_entries.get(key) != after_entries.get(key)
+    )
+    for visibility, kind, name in changed_keys:
+        context.store.append_update(
+            kind=cast(UpdateKind, f"{kind}_changed"),
+            payload={
+                "name": name,
+                "visibility": visibility,
+            },
+        )
+
+
+def _entry_change_snapshot(
+    prepared: PreparedState | None,
+) -> dict[tuple[PreparedVisibility, str, str], tuple[str, str, str]]:
+    if prepared is None:
+        return {}
+    snapshot: dict[tuple[PreparedVisibility, str, str], tuple[str, str, str]] = {}
+    for visibility, lock in (("shared", prepared.shared_lock), ("private", prepared.private_lock)):
+        for entry in lock.entries:
+            snapshot[(visibility, entry.kind, entry.name)] = (
+                entry.ref,
+                entry.source.fingerprint,
+                entry.path,
+            )
+    return snapshot
 
 
 def _durable_relative_paths(context: UptimeContext, changed_paths: set[Path]) -> list[Path]:
