@@ -107,6 +107,7 @@ class PreparedLock:
     visibility: PreparedVisibility
     updated_at: str
     fingerprint: str
+    input_fingerprint: str
     entries: tuple[PreparedEntry, ...]
     program: PreparedProgram | None
     prepared_dir: Path
@@ -120,6 +121,7 @@ class PreparedLock:
             "fingerprint": self.fingerprint,
             "entries": [entry.to_data() for entry in self.entries],
         }
+        data["input_fingerprint"] = self.input_fingerprint
         if self.program is not None:
             data["program"] = self.program.to_data()
         return data
@@ -129,6 +131,7 @@ class PreparedLock:
             "visibility": self.visibility,
             "updated_at": self.updated_at,
             "fingerprint": self.fingerprint,
+            "input_fingerprint": self.input_fingerprint,
             "prepared_dir": str(self.prepared_dir),
             "lock_path": str(self.lock_path),
             "entries": [entry.to_snapshot() for entry in self.entries],
@@ -242,6 +245,7 @@ def _load_lock(lock_path: Path, *, visibility: PreparedVisibility) -> PreparedLo
         visibility=visibility,
         updated_at=str(data["updated_at"]),
         fingerprint=str(data["fingerprint"]),
+        input_fingerprint=str(data["input_fingerprint"]),
         entries=tuple(PreparedEntry.from_data(item) for item in entries_data),
         program=(
             PreparedProgram.from_data(cast(dict[str, object], data["program"]))

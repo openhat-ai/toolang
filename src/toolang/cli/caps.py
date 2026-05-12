@@ -14,8 +14,10 @@ from .. import caps as cap_store
 from .. import templates
 from ..execution.records import UpdateKind
 from ..loops import prepare as prepare_loop
+from ..progress import ProgressSink
 from ..state.durable import scan_durable_state
 from ..state.prepared import EntryKind, PreparedEntry, PreparedVisibility
+from .progress import as_progress_sink, make_cli_progress
 from .utils import (
     _OptionalPrefixAgentCommand,
     _OptionalPrefixAgentTemplateCommand,
@@ -256,6 +258,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     ) -> None:
         visibility, agent_name = _target_visibility(ctx)
         selected_agent = _context_agent(ctx)
+        progress = make_cli_progress(live=False)
         path = _wrap_user_error(
             cap_store.add_remote_entry,
             _context_root(ctx),
@@ -263,6 +266,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             visibility=visibility,
             kind=cast(EntryKind, kind),
             ref=ref,
+            progress=as_progress_sink(progress),
         )
         if selected_agent:
             _refresh_and_append_cap_update(
@@ -271,7 +275,9 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 kind=kind,
                 name=cap_store.remote_entry_name(cast(EntryKind, kind), ref),
                 visibility=visibility,
+                progress=as_progress_sink(progress),
             )
+        progress.finish(details=False)
         typer.echo(str(path))
 
     return add_cap
@@ -284,6 +290,7 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     ) -> None:
         visibility, agent_name = _target_visibility(ctx)
         selected_agent = _context_agent(ctx)
+        progress = make_cli_progress(live=False)
         entry = _named_entry(
             _context_root(ctx),
             agent_name,
@@ -310,7 +317,9 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 kind=kind,
                 name=name,
                 visibility=visibility,
+                progress=as_progress_sink(progress),
             )
+        progress.finish(details=False)
         typer.echo(f"Removed remote {kind} {name} from {entry.ref}")
 
     return remove_cap
@@ -450,9 +459,10 @@ def _refresh_and_append_cap_update(
     kind: CapKind,
     name: str,
     visibility: PreparedVisibility,
+    progress: ProgressSink | None = None,
 ) -> None:
     durable = _wrap_user_error(scan_durable_state, toolang_root, agent_name)
-    _wrap_user_error(prepare_loop.build_prepared_state, durable)
+    _wrap_user_error(prepare_loop.build_prepared_state, durable, progress=progress)
     _append_cap_update(
         toolang_root,
         agent_name,

@@ -3350,6 +3350,188 @@ def test_remote_skill_add_canonicalizes_github_skill_file_url(tmp_path: Path, mo
     assert prepared.private_lock.entries[0].ref == expected_ref
 
 
+def test_remote_skill_add_canonicalizes_raw_refs_heads_skill_file_url(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        caps,
+        "_fetch_github_directory",
+        lambda ref: {"SKILL.md": f"---\ndescription: {ref.render()}\n---\n# Agent Browser\n".encode()},
+    )
+
+    add_remote_entry(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        ref="https://raw.githubusercontent.com/vercel-labs/agent-browser/refs/heads/main/skills/agent-browser/SKILL.md",
+    )
+
+    config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(encoding="utf-8")
+    durable = scan_durable_state(toolang_root, "alice")
+    prepared = prepare.build_prepared_state(durable)
+
+    expected_ref = "github://vercel-labs/agent-browser/skills/agent-browser@refs/heads/main"
+    assert f'agent-browser = {{ ref = "{expected_ref}" }}' in config_text
+    assert prepared.private_lock.entries[0].ref == expected_ref
+
+
+def test_prepare_apply_changes_records_remote_cap_updates(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        caps,
+        "_fetch_github_directory",
+        lambda ref: {"SKILL.md": f"---\ndescription: {ref.render()}\n---\n# Skill\n".encode()},
+    )
+
+    agents.create_agent(toolang_root, "alice")
+    add_remote_entry(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        ref="acme/pdf",
+    )
+    initial = prepare.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+    live = load_live_state(initial, enabled_loops=("reload",))
+    add_remote_entry(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        ref="acme/review",
+    )
+    config_path = toolang_root / "agents" / "alice" / "config.toml"
+    updates: list[tuple[str, dict[str, object]]] = []
+
+    class Store:
+        def append_update(self, *, kind, payload=None, created_at=None):
+            del created_at
+            updates.append((kind, dict(payload or {})))
+
+    live_state = type("LiveState", (), {"fingerprint": live.fingerprint})()
+
+    class Context:
+        root = toolang_root
+        name = "alice"
+        store = Store()
+        live = live_state
+
+    reload_signal = asyncio.Event()
+    prepare.apply_changes(cast(UptimeContext, Context()), {config_path}, reload_signal=reload_signal)
+
+    assert ("skill_changed", {"name": "review", "visibility": "private"}) in updates
+    assert reload_signal.is_set()
+
+
+def test_prepare_reuses_remote_caps_when_visibility_inputs_and_outputs_match(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    fetches: list[str] = []
+
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+
+    def fake_fetch(ref):
+        fetches.append(ref.render())
+        return {"SKILL.md": b"---\ndescription: PDF\n---\n# PDF\n"}
+
+    monkeypatch.setattr(caps, "_fetch_github_directory", fake_fetch)
+    add_remote_entry(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        ref="acme/pdf",
+    )
+
+    first = prepare.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+    monkeypatch.setattr(
+        caps,
+        "_fetch_github_directory",
+        lambda ref: pytest.fail(f"unexpected remote fetch: {ref.render()}"),
+    )
+    second = prepare.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+
+    assert fetches == ["github://acme/agents/skills/pdf@main"]
+    assert second.fingerprint == first.fingerprint
+
+
+def test_prepare_reuses_private_remote_caps_when_shared_inputs_change(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    fetches: list[str] = []
+
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+
+    def fake_fetch(ref):
+        fetches.append(ref.render())
+        return {"SKILL.md": b"---\ndescription: PDF\n---\n# PDF\n"}
+
+    monkeypatch.setattr(caps, "_fetch_github_directory", fake_fetch)
+    add_remote_entry(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        ref="acme/pdf",
+    )
+    prepare.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+
+    put_local_entry(
+        toolang_root,
+        "alice",
+        visibility="shared",
+        kind="prompt",
+        name="style",
+        body="Use a direct style.",
+    )
+    prepare.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+
+    assert fetches == ["github://acme/agents/skills/pdf@main"]
+
+
+def test_prepare_refetches_remote_caps_when_prepared_output_does_not_match_lock(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    fetch_count = 0
+
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+
+    def fake_fetch(ref):
+        nonlocal fetch_count
+        fetch_count += 1
+        return {"SKILL.md": f"---\ndescription: PDF {fetch_count}\n---\n# PDF\n".encode()}
+
+    monkeypatch.setattr(caps, "_fetch_github_directory", fake_fetch)
+    add_remote_entry(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        ref="acme/pdf",
+    )
+    prepare.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+    prepared_file = toolang_root / "agents" / "alice" / ".prepared" / "remote" / "skills" / "pdf" / "SKILL.md"
+    prepared_file.write_text("---\ndescription: Corrupt\n---\n# Corrupt\n", encoding="utf-8")
+
+    prepare.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+
+    assert fetch_count == 2
+    assert "PDF 2" in prepared_file.read_text(encoding="utf-8")
+
+
 def test_remote_skill_add_rejects_missing_github_tree_url(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: False)
