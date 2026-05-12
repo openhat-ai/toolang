@@ -258,7 +258,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     ) -> None:
         visibility, agent_name = _target_visibility(ctx)
         selected_agent = _context_agent(ctx)
-        progress = make_cli_progress()
+        progress = make_cli_progress(live=False)
         path = _wrap_user_error(
             cap_store.add_remote_entry,
             _context_root(ctx),
@@ -277,7 +277,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 visibility=visibility,
                 progress=as_progress_sink(progress),
             )
-        progress.finish()
+        progress.finish(details=False)
         typer.echo(str(path))
 
     return add_cap
@@ -290,7 +290,7 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     ) -> None:
         visibility, agent_name = _target_visibility(ctx)
         selected_agent = _context_agent(ctx)
-        progress = make_cli_progress()
+        progress = make_cli_progress(live=False)
         entry = _named_entry(
             _context_root(ctx),
             agent_name,
@@ -319,7 +319,7 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 visibility=visibility,
                 progress=as_progress_sink(progress),
             )
-        progress.finish()
+        progress.finish(details=False)
         typer.echo(f"Removed remote {kind} {name} from {entry.ref}")
 
     return remove_cap

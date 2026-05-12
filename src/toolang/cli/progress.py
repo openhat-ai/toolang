@@ -13,12 +13,12 @@ from ..progress import ProgressEvent, ProgressSink
 class CliProgress:
     """Render progress updates to stderr without affecting stdout contracts."""
 
-    def __init__(self, *, stream: TextIO | None = None) -> None:
+    def __init__(self, *, stream: TextIO | None = None, live: bool | None = None) -> None:
         self._stream = stream or sys.stderr
         self._items: dict[str, _ProgressItem] = {}
         self._aliases: dict[str, str] = {}
         self._prepare: dict[str, str] = {}
-        self._live = bool(getattr(self._stream, "isatty", lambda: False)())
+        self._live = bool(getattr(self._stream, "isatty", lambda: False)()) if live is None else live
         self._rendered_lines = 0
         self._printed = False
 
@@ -131,10 +131,10 @@ class CliProgress:
         return f"Progress: {agent_count} agent, {len(cap_items)} caps{prepare_text}"
 
 
-def make_cli_progress() -> CliProgress:
+def make_cli_progress(*, live: bool | None = None) -> CliProgress:
     """Return the default CLI progress sink."""
 
-    return CliProgress()
+    return CliProgress(live=live)
 
 
 def as_progress_sink(progress: CliProgress | None) -> ProgressSink | None:
