@@ -526,6 +526,24 @@ def test_cli_progress_groups_agent_and_cap_steps() -> None:
     ]
 
 
+def test_cli_progress_can_finish_with_summary_only() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream)
+
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="ok",
+            detail="abc123",
+        )
+    )
+    progress.finish(details=False)
+
+    assert stream.getvalue().splitlines() == ["Progress: 0 agent, 0 caps, prepare ok"]
+
+
 def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     captured: dict[str, object] = {}
@@ -563,6 +581,7 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(agents, "_github_agent_ref_exists", lambda ref: ref.path == "agents/alice.too")
     monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
     monkeypatch.setattr(cli.agent_up, "up", fake_up)
+    monkeypatch.setattr(cli.agent_up, "prepare_runtime", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -609,6 +628,7 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
 
     monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
     monkeypatch.setattr(cli.agent_up, "up", fake_up)
+    monkeypatch.setattr(cli.agent_up, "prepare_runtime", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -1564,6 +1584,7 @@ def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
         return 0
 
     monkeypatch.setattr(cli.agent_up, "up", fake_up)
+    monkeypatch.setattr(cli.agent_up, "prepare_runtime", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -1634,6 +1655,7 @@ def test_cli_run_omits_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
         return 0
 
     monkeypatch.setattr(cli.agent_up, "up", fake_up)
+    monkeypatch.setattr(cli.agent_up, "prepare_runtime", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -1681,6 +1703,7 @@ def test_cli_run_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
         return 0
 
     monkeypatch.setattr(cli.agent_up, "up", fake_up)
+    monkeypatch.setattr(cli.agent_up, "prepare_runtime", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -1717,6 +1740,7 @@ def test_cli_run_passes_model_selectors_to_agent_up(tmp_path: Path, monkeypatch)
         return 0
 
     monkeypatch.setattr(cli.agent_up, "up", fake_up)
+    monkeypatch.setattr(cli.agent_up, "prepare_runtime", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -1754,6 +1778,7 @@ def test_cli_run_does_not_override_explicit_log_spec(tmp_path: Path, monkeypatch
         return 0
 
     monkeypatch.setattr(cli.agent_up, "up", fake_up)
+    monkeypatch.setattr(cli.agent_up, "prepare_runtime", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -1821,6 +1846,7 @@ def test_cli_run_loads_root_and_agent_env_with_agent_override(tmp_path: Path, mo
         return 0
 
     monkeypatch.setattr(cli.agent_up, "up", fake_up)
+    monkeypatch.setattr(cli.agent_up, "prepare_runtime", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,

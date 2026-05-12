@@ -578,6 +578,18 @@ def invoke(
         context.store.close()
 
 
+def prepare_runtime(
+    *,
+    toolang_root: Path,
+    agent_name: str,
+    progress: ProgressSink | None = None,
+) -> None:
+    """Prepare one agent runtime without starting it."""
+
+    durable = scan_durable_state(toolang_root, agent_name)
+    prepare.build_prepared_state(durable, progress=progress)
+
+
 def resolve_startup(
     *,
     toolang_root: Path,

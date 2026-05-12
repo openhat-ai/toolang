@@ -28,13 +28,14 @@ class CliProgress:
             self._render_live()
         self._printed = True
 
-    def finish(self) -> None:
+    def finish(self, *, details: bool = True) -> None:
         if not self._printed:
             return
         if self._live and self._rendered_lines:
             self._clear_live()
-        for line in self._lines():
-            print(line, file=self._stream)
+        if details:
+            for line in self._lines():
+                print(line, file=self._stream)
         print(self._summary_line(), file=self._stream, flush=True)
 
     def _render_live(self) -> None:

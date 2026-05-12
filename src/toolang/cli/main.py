@@ -330,24 +330,31 @@ def run_agent(
         with agents.materialized_run_target(root, selector, progress=as_progress_sink(progress)) as (run_root, agent_name):
             environ = _runtime_environ_for_agent(ctx, agent_name, toolang_root=run_root)
             effective_log_spec = _configure_foreground_runtime_logging(ctx, environ)
-            exit_code = _wrap_user_error(
-                agent_up.up,
+            _wrap_user_error(
+                agent_up.prepare_runtime,
                 toolang_root=run_root,
                 agent_name=agent_name,
-                host=host,
-                endpoint_host=endpoint_host,
-                port=port,
-                sandbox=sandbox,
-                models=models,
-                dev=dev,
-                sandbox_child=sandbox_child,
-                loop_names=normalized_loops,
-                log_spec=effective_log_spec,
-                environ=environ,
                 progress=as_progress_sink(progress),
             )
-            progress.finish()
-            raise typer.Exit(exit_code)
+            progress.finish(details=False)
+            raise typer.Exit(
+                _wrap_user_error(
+                    agent_up.up,
+                    toolang_root=run_root,
+                    agent_name=agent_name,
+                    host=host,
+                    endpoint_host=endpoint_host,
+                    port=port,
+                    sandbox=sandbox,
+                    models=models,
+                    dev=dev,
+                    sandbox_child=sandbox_child,
+                    loop_names=normalized_loops,
+                    log_spec=effective_log_spec,
+                    environ=environ,
+                    progress=None,
+                )
+            )
     except (FileExistsError, FileNotFoundError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -440,6 +447,7 @@ def start_agent(
         status="ok",
         detail=agent_name,
     )
+    progress.finish(details=False)
     log_path = agents.agent_runtime_log_path(root, agent_name)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     launched_at = time.time()
@@ -473,7 +481,6 @@ def start_agent(
         raise click.ClickException(f"agent start timed out: {agent_name} (see {log_path})")
     if status.status == "failed":
         raise click.ClickException(f"{agent_name}\tfailed\t{status.endpoint or '-'}\t{log_path}")
-    progress.finish()
     typer.echo(_format_runtime_row(status))
 
 
