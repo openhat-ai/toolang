@@ -16,6 +16,7 @@ def test_load_shared_lock_accepts_legacy_locator_entries(tmp_path: Path) -> None
                 "visibility": "shared",
                 "updated_at": "2026-04-18T00:00:00Z",
                 "fingerprint": "abc",
+                "input_fingerprint": "input",
                 "entries": [
                     {
                         "kind": "skill",

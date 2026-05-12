@@ -425,6 +425,7 @@ def build_visibility_lock(
             visibility=visibility,
             updated_at=updated_at,
             fingerprint=_lock_fingerprint(durable.toolang_root, entries, files),
+            input_fingerprint=visibility_input_fingerprint(durable, visibility=visibility),
             entries=entries,
             program=None,
             prepared_dir=prepared_dir,
@@ -442,6 +443,26 @@ def build_visibility_lock(
         detail=f"{len(entries)} entries",
     )
     return result
+
+
+def visibility_input_fingerprint(
+    durable: DurableState,
+    *,
+    visibility: PreparedVisibility,
+) -> str:
+    """Return the authored input fingerprint for one visibility lock."""
+
+    return _durable_files_fingerprint(_visibility_input_files(durable, visibility=visibility))
+
+
+def visibility_lock_content_fingerprint(toolang_root: Path, lock: PreparedLock) -> str:
+    """Recompute one visibility lock fingerprint from current local content."""
+
+    return _lock_fingerprint(
+        toolang_root,
+        lock.entries,
+        _prepared_materialized_files(toolang_root, lock.entries),
+    )
 
 
 def effective_cap_entries(
@@ -604,6 +625,40 @@ def _dedupe_entries(entries: tuple[PreparedEntry, ...]) -> tuple[PreparedEntry, 
     return tuple(sorted(by_ref.values(), key=_entry_sort_key))
 
 
+def _visibility_input_files(
+    durable: DurableState,
+    *,
+    visibility: PreparedVisibility,
+) -> tuple[DurableFile, ...]:
+    if visibility == "shared":
+        return tuple(
+            item
+            for item in durable.files
+            if item.origin == "root" and item.category in {"config", "cap"}
+        )
+    return tuple(
+        item
+        for item in durable.files
+        if item.origin == "agent" and item.category in {"config", "cap", "job", "program"}
+    )
+
+
+def _durable_files_fingerprint(files: tuple[DurableFile, ...]) -> str:
+    digest = hashlib.sha256()
+    for item in files:
+        digest.update(item.relative_path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(item.category.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(item.origin.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(item.digest.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(item.size).encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
 def _lock_fingerprint(
     toolang_root: Path,
     entries: tuple[PreparedEntry, ...],
@@ -634,6 +689,28 @@ def _lock_fingerprint(
         separators=(",", ":"),
     )
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _prepared_materialized_files(
+    toolang_root: Path,
+    entries: tuple[PreparedEntry, ...],
+) -> dict[str, bytes]:
+    files: dict[str, bytes] = {}
+    for entry in entries:
+        if entry.source.origin == "local":
+            continue
+        entry_path = toolang_root / entry.path
+        if entry.shape == "dir":
+            root = entry_path.parent
+            if not root.is_dir():
+                raise FileNotFoundError(f"prepared entry directory not found: {root}")
+            for path in sorted(item for item in root.rglob("*") if item.is_file()):
+                files[str(path.relative_to(toolang_root))] = path.read_bytes()
+            continue
+        if not entry_path.is_file():
+            raise FileNotFoundError(f"prepared entry file not found: {entry_path}")
+        files[entry.path] = entry_path.read_bytes()
+    return files
 
 
 def _content_fingerprint(

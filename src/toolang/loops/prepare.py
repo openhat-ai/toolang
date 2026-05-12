@@ -10,7 +10,11 @@ from typing import TYPE_CHECKING, cast
 
 from watchfiles import Change, awatch
 
-from ..caps import build_visibility_lock
+from ..caps import (
+    build_visibility_lock,
+    visibility_input_fingerprint,
+    visibility_lock_content_fingerprint,
+)
 from ..progress import ProgressSink, emit_progress
 from ..execution.records import UpdateKind
 from ..state.durable import DurableState, is_durable_path, scan_durable_state
@@ -76,6 +80,7 @@ async def run(
 def build_prepared_state(durable: DurableState, *, progress: ProgressSink | None = None) -> PreparedState:
     """Build and persist prepared locks for the current durable state."""
 
+    current = _load_prepared_optional(durable.toolang_root, durable.agent_name)
     emit_progress(
         progress,
         id="prepare.state",
@@ -90,20 +95,17 @@ def build_prepared_state(durable: DurableState, *, progress: ProgressSink | None
         durable.agent_name,
         _short_fingerprint(durable.fingerprint),
     )
-    _write_visibility_if_changed(
-        durable.toolang_root,
-        *build_visibility_lock(durable, visibility="shared", progress=progress),
+    _build_or_reuse_visibility_lock(
+        durable,
+        visibility="shared",
+        current=current.shared_lock if current is not None else None,
+        progress=progress,
     )
-    private_lock, private_files = build_visibility_lock(durable, visibility="private", progress=progress)
-    program = build_prepared_program(durable)
-    _write_visibility_if_changed(
-        durable.toolang_root,
-        replace(
-            private_lock,
-            fingerprint=_combined_private_fingerprint(private_lock.fingerprint, program.fingerprint()),
-            program=program,
-        ),
-        private_files,
+    _build_or_reuse_visibility_lock(
+        durable,
+        visibility="private",
+        current=current.private_lock if current is not None else None,
+        progress=progress,
     )
     prepared = load_prepared_state(durable.toolang_root, durable.agent_name)
     logger.debug(
@@ -164,9 +166,16 @@ def _write_visibility_if_changed(
     toolang_root: Path,
     lock: PreparedLock,
     files: dict[str, bytes],
+    *,
+    force: bool = False,
 ) -> PreparedLock:
     current = _load_lock_optional(lock)
-    if current is not None and current.fingerprint == lock.fingerprint:
+    if (
+        not force
+        and current is not None
+        and current.fingerprint == lock.fingerprint
+        and current.input_fingerprint == lock.input_fingerprint
+    ):
         return current
     return write_prepared_lock(toolang_root, lock, files=files)
 
@@ -185,6 +194,55 @@ def _load_prepared_optional(toolang_root: Path, agent_name: str) -> PreparedStat
         return load_prepared_state(toolang_root, agent_name)
     except FileNotFoundError:
         return None
+
+
+def _build_or_reuse_visibility_lock(
+    durable: DurableState,
+    *,
+    visibility: PreparedVisibility,
+    current: PreparedLock | None,
+    progress: ProgressSink | None,
+) -> PreparedLock:
+    if current is not None and _visibility_lock_matches(durable, visibility=visibility, lock=current):
+        emit_progress(
+            progress,
+            id=f"prepare.visibility:{visibility}",
+            phase="prepare.visibility",
+            label=f"Prepare {visibility} caps",
+            status="ok",
+            detail="cached",
+        )
+        return current
+    lock, files = build_visibility_lock(durable, visibility=visibility, progress=progress)
+    if visibility == "private":
+        program = build_prepared_program(durable)
+        lock = replace(
+            lock,
+            fingerprint=_combined_private_fingerprint(lock.fingerprint, program.fingerprint()),
+            program=program,
+        )
+    return _write_visibility_if_changed(durable.toolang_root, lock, files, force=True)
+
+
+def _visibility_lock_matches(
+    durable: DurableState,
+    *,
+    visibility: PreparedVisibility,
+    lock: PreparedLock,
+) -> bool:
+    if lock.input_fingerprint != visibility_input_fingerprint(durable, visibility=visibility):
+        return False
+    if visibility == "private" and lock.program is None:
+        return False
+    try:
+        fingerprint = visibility_lock_content_fingerprint(durable.toolang_root, lock)
+    except (FileNotFoundError, KeyError):
+        return False
+    if visibility == "private":
+        if lock.program is None:
+            return False
+        fingerprint = _combined_private_fingerprint(fingerprint, lock.program.fingerprint())
+    return fingerprint == lock.fingerprint
 
 
 def _append_entry_change_updates(
