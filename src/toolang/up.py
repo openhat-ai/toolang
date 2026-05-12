@@ -81,6 +81,7 @@ DEFAULT_LOOP_INTERVAL_MS: dict[str, float] = {
 }
 DEFAULT_RELOAD_DEBOUNCE_MS = reload.DEFAULT_DEBOUNCE_MS
 RUNTIME_SHUTDOWN_TASK_TIMEOUT_SEC = 1.0
+UVICORN_GRACEFUL_SHUTDOWN_SEC = 1
 DEFAULT_CORS_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -837,6 +838,7 @@ def _up_local(
         host=host,
         port=port,
         log_config=build_uvicorn_log_config(level=log_spec or DEFAULT_LOG_LEVEL),
+        timeout_graceful_shutdown=UVICORN_GRACEFUL_SHUTDOWN_SEC,
     )
     return 0
 

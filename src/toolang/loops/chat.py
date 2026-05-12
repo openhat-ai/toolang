@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import asdict
-from typing import TYPE_CHECKING
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, Protocol, Any, cast
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -22,6 +23,10 @@ from ..execution.runner import RunOutcome
 
 if TYPE_CHECKING:
     from ..up import UptimeContext
+
+
+class _DisconnectAwareRequest(Protocol):
+    async def is_disconnected(self) -> bool: ...
 
 
 class ChatMessagePayload(BaseModel):
@@ -120,7 +125,10 @@ def create_router() -> APIRouter:
         context = request.app.state.runtime
         thread_id = _chat_thread_id_or_404(context, payload)
         return StreamingResponse(
-            _stream_chat_run(context, payload, thread_id=thread_id),
+            _guarded_stream(
+                request,
+                _stream_chat_run(context, payload, thread_id=thread_id),
+            ),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -180,6 +188,23 @@ async def _stream_chat_run(
     )
     async for chunk in response.stream():
         yield chunk
+
+
+async def _guarded_stream(
+    request: _DisconnectAwareRequest,
+    stream: AsyncIterator[str],
+) -> AsyncIterator[str]:
+    try:
+        async for chunk in stream:
+            if await request.is_disconnected():
+                return
+            yield chunk
+    except asyncio.CancelledError:
+        return
+    finally:
+        aclose = getattr(stream, "aclose", None)
+        if callable(aclose):
+            await cast(Any, aclose)()
 
 
 def _chat_thread_id_or_404(context: UptimeContext, payload: ChatRequest) -> str | None:

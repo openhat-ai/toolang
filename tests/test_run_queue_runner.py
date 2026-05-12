@@ -1497,6 +1497,36 @@ def test_chat_stream_emits_before_run_completion(tmp_path: Path) -> None:
     asyncio.run(run_test())
 
 
+def test_chat_guarded_stream_swallows_cancelled_error() -> None:
+    class _Request:
+        async def is_disconnected(self) -> bool:
+            return False
+
+    async def _run() -> list[str]:
+        async def broken():
+            raise asyncio.CancelledError()
+            yield ""
+
+        return [chunk async for chunk in chat_loop._guarded_stream(_Request(), broken())]
+
+    assert asyncio.run(_run()) == []
+
+
+def test_inspect_guarded_stream_swallows_cancelled_error() -> None:
+    class _Request:
+        async def is_disconnected(self) -> bool:
+            return False
+
+    async def _run() -> list[str]:
+        async def broken():
+            raise asyncio.CancelledError()
+            yield ""
+
+        return [chunk async for chunk in inspect._guarded_stream(_Request(), broken())]
+
+    assert asyncio.run(_run()) == []
+
+
 def test_chat_stream_allows_tool_only_turns(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
@@ -2145,11 +2175,12 @@ def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
         lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
     )
 
-    def fake_uvicorn_run(app, *, host: str, port: int, log_config) -> None:
+    def fake_uvicorn_run(app, *, host: str, port: int, log_config, timeout_graceful_shutdown: int) -> None:
         captured["app"] = app
         captured["host"] = host
         captured["port"] = port
         captured["log_config"] = log_config
+        captured["timeout_graceful_shutdown"] = timeout_graceful_shutdown
 
     monkeypatch.setattr("toolang.up.uvicorn.run", fake_uvicorn_run)
 
@@ -2164,6 +2195,7 @@ def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
     assert result == 0
     assert captured["host"] == "0.0.0.0"
     assert captured["port"] == 43210
+    assert captured["timeout_graceful_shutdown"] == up_module.UVICORN_GRACEFUL_SHUTDOWN_SEC
 
 
 def test_up_reuses_previous_agent_port_when_unspecified(tmp_path: Path, monkeypatch) -> None:
@@ -2183,11 +2215,12 @@ def test_up_reuses_previous_agent_port_when_unspecified(tmp_path: Path, monkeypa
         lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
     )
 
-    def fake_uvicorn_run(app, *, host: str, port: int, log_config) -> None:
+    def fake_uvicorn_run(app, *, host: str, port: int, log_config, timeout_graceful_shutdown: int) -> None:
         captured["app"] = app
         captured["host"] = host
         captured["port"] = port
         captured["log_config"] = log_config
+        captured["timeout_graceful_shutdown"] = timeout_graceful_shutdown
 
     monkeypatch.setattr("toolang.up.uvicorn.run", fake_uvicorn_run)
 
@@ -2202,6 +2235,7 @@ def test_up_reuses_previous_agent_port_when_unspecified(tmp_path: Path, monkeypa
     assert result == 0
     assert captured["host"] == "127.0.0.1"
     assert captured["port"] == 53322
+    assert captured["timeout_graceful_shutdown"] == up_module.UVICORN_GRACEFUL_SHUTDOWN_SEC
 
 
 def test_up_falls_back_when_previous_agent_port_is_unavailable(
@@ -2227,11 +2261,12 @@ def test_up_falls_back_when_previous_agent_port_is_unavailable(
             lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
         )
 
-        def fake_uvicorn_run(app, *, host: str, port: int, log_config) -> None:
+        def fake_uvicorn_run(app, *, host: str, port: int, log_config, timeout_graceful_shutdown: int) -> None:
             captured["app"] = app
             captured["host"] = host
             captured["port"] = port
             captured["log_config"] = log_config
+            captured["timeout_graceful_shutdown"] = timeout_graceful_shutdown
 
         monkeypatch.setattr("toolang.up.uvicorn.run", fake_uvicorn_run)
 
@@ -2246,6 +2281,7 @@ def test_up_falls_back_when_previous_agent_port_is_unavailable(
     assert result == 0
     assert captured["host"] == "127.0.0.1"
     assert captured["port"] == 43210
+    assert captured["timeout_graceful_shutdown"] == up_module.UVICORN_GRACEFUL_SHUTDOWN_SEC
 
 
 def test_up_falls_back_when_stopped_agent_port_is_unavailable(tmp_path: Path, monkeypatch) -> None:
@@ -2276,9 +2312,10 @@ def test_up_falls_back_when_stopped_agent_port_is_unavailable(tmp_path: Path, mo
         lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
     )
 
-    def fake_uvicorn_run(app, *, host: str, port: int, log_config) -> None:
+    def fake_uvicorn_run(app, *, host: str, port: int, log_config, timeout_graceful_shutdown: int) -> None:
         captured["host"] = host
         captured["port"] = port
+        captured["timeout_graceful_shutdown"] = timeout_graceful_shutdown
 
     monkeypatch.setattr("toolang.up.uvicorn.run", fake_uvicorn_run)
 
@@ -2293,6 +2330,7 @@ def test_up_falls_back_when_stopped_agent_port_is_unavailable(tmp_path: Path, mo
     assert result == 0
     assert captured["host"] == "127.0.0.1"
     assert captured["port"] == 43210
+    assert captured["timeout_graceful_shutdown"] == up_module.UVICORN_GRACEFUL_SHUTDOWN_SEC
 
 
 def test_resolve_runtime_port_does_not_wait_for_stopped_preferred_port(
@@ -2378,11 +2416,12 @@ def test_up_uses_cors_origins_from_root_config(tmp_path: Path, monkeypatch) -> N
     )
     captured: dict[str, object] = {}
 
-    def fake_uvicorn_run(app, *, host: str, port: int, log_config) -> None:
+    def fake_uvicorn_run(app, *, host: str, port: int, log_config, timeout_graceful_shutdown: int) -> None:
         captured["app"] = app
         captured["host"] = host
         captured["port"] = port
         captured["log_config"] = log_config
+        captured["timeout_graceful_shutdown"] = timeout_graceful_shutdown
 
     monkeypatch.setattr("toolang.up.uvicorn.run", fake_uvicorn_run)
 
@@ -2396,6 +2435,7 @@ def test_up_uses_cors_origins_from_root_config(tmp_path: Path, monkeypatch) -> N
     )
 
     assert result == 0
+    assert captured["timeout_graceful_shutdown"] == up_module.UVICORN_GRACEFUL_SHUTDOWN_SEC
     app = cast(FastAPI, captured["app"])
     with TestClient(app) as client:
         response = client.get(
@@ -2978,8 +3018,9 @@ def test_up_reads_web_config_without_validating_experiments_caps(tmp_path: Path,
     )
     captured: dict[str, object] = {}
 
-    def fake_uvicorn_run(app, *, host: str, port: int, log_config) -> None:
+    def fake_uvicorn_run(app, *, host: str, port: int, log_config, timeout_graceful_shutdown: int) -> None:
         captured["app"] = app
+        captured["timeout_graceful_shutdown"] = timeout_graceful_shutdown
 
     monkeypatch.setattr("toolang.up.uvicorn.run", fake_uvicorn_run)
 
@@ -2993,6 +3034,7 @@ def test_up_reads_web_config_without_validating_experiments_caps(tmp_path: Path,
     )
 
     assert result == 0
+    assert captured["timeout_graceful_shutdown"] == up_module.UVICORN_GRACEFUL_SHUTDOWN_SEC
     app = cast(FastAPI, captured["app"])
     with TestClient(app) as client:
         response = client.get(

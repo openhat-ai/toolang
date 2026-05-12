@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict
 from collections.abc import AsyncIterator, Container, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -38,6 +39,10 @@ from .. import agents, caps, templates, work
 from ..state.durable import scan_durable_state
 from ..state.prepared import PreparedEntry, load_prepared_state
 from ..state.pulse import PulseState
+
+
+class _DisconnectAwareRequest(Protocol):
+    async def is_disconnected(self) -> bool: ...
 
 if TYPE_CHECKING:
     from ..up import UptimeContext
@@ -247,7 +252,10 @@ def create_router() -> APIRouter:
     async def run_stream(request: Request, run_id: str, after: int | None = None) -> StreamingResponse:
         context = request.app.state.runtime
         _run_or_404(context, run_id)
-        return _event_stream_response(context.events.stream(domain="run", domain_id=run_id, after=after))
+        return _event_stream_response(
+            request,
+            context.events.stream(domain="run", domain_id=run_id, after=after),
+        )
 
     @router.post("/runs/{run_id}/stop", tags=["activity"], summary="Stop Run")
     async def stop_run(request: Request, run_id: str, payload: RunCancelRequest | None = None) -> dict[str, object]:
@@ -399,7 +407,10 @@ def create_router() -> APIRouter:
     async def thread_stream(request: Request, thread_id: str, after: int | None = None) -> StreamingResponse:
         context = request.app.state.runtime
         _thread_or_404(context, thread_id)
-        return _event_stream_response(context.events.stream(domain="thread", domain_id=thread_id, after=after))
+        return _event_stream_response(
+            request,
+            context.events.stream(domain="thread", domain_id=thread_id, after=after),
+        )
 
     @router.get("/events", tags=["activity"], summary="List Events")
     async def events(request: Request, limit: int = Query(default=100)) -> dict[str, object]:
@@ -409,8 +420,8 @@ def create_router() -> APIRouter:
         }
 
     @router.get("/events/stream", tags=["activity"], summary="Stream Events")
-    async def events_stream() -> StreamingResponse:
-        return StreamingResponse(_events_stream(), media_type="text/event-stream")
+    async def events_stream(request: Request) -> StreamingResponse:
+        return StreamingResponse(_guarded_stream(request, _events_stream()), media_type="text/event-stream")
 
     @router.get("/agent/events", tags=["activity"], summary="List Agent Events")
     async def agent_events(request: Request, after: int | None = None, limit: int = Query(default=100)) -> dict[str, object]:
@@ -424,7 +435,10 @@ def create_router() -> APIRouter:
     @router.get("/agent/stream", tags=["activity"], summary="Stream Agent Events")
     async def agent_stream(request: Request, after: int | None = None) -> StreamingResponse:
         context = request.app.state.runtime
-        return _event_stream_response(context.events.stream(domain="agent", domain_id=context.name, after=after))
+        return _event_stream_response(
+            request,
+            context.events.stream(domain="agent", domain_id=context.name, after=after),
+        )
 
     @router.get("/jobs", tags=["jobs"], summary="List Jobs")
     async def jobs(
@@ -1395,9 +1409,9 @@ def _run_event_payload(run) -> dict[str, object]:
     }
 
 
-def _event_stream_response(stream: AsyncIterator[str]) -> StreamingResponse:
+def _event_stream_response(request: Request, stream: AsyncIterator[str]) -> StreamingResponse:
     return StreamingResponse(
-        stream,
+        _guarded_stream(request, stream),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -1473,6 +1487,23 @@ def _channel_items(context: UptimeContext) -> list[dict[str, object]]:
 
 async def _events_stream() -> AsyncIterator[str]:
     yield ": ok\n\n"
+
+
+async def _guarded_stream(
+    request: _DisconnectAwareRequest,
+    stream: AsyncIterator[str],
+) -> AsyncIterator[str]:
+    try:
+        async for chunk in stream:
+            if await request.is_disconnected():
+                return
+            yield chunk
+    except asyncio.CancelledError:
+        return
+    finally:
+        aclose = getattr(stream, "aclose", None)
+        if callable(aclose):
+            await cast(Any, aclose)()
 
 
 def _collection_kind(collection: str) -> CapKind:
