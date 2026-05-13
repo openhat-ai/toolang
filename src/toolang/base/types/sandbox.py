@@ -98,7 +98,7 @@ class SandboxStartRequest:
     endpoint_host: str
     port: int
     endpoint: str
-    loop_names: tuple[str, ...] = ()
+    feature_names: tuple[str, ...] = ()
     run_command: tuple[str, ...] = ()
     run_shell_command: str | None = None
     env_vars: dict[str, str] = field(default_factory=dict)

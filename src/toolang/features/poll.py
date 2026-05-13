@@ -33,9 +33,9 @@ async def run(
     stop_signal: asyncio.Event,
 ) -> None:
     """Enqueue poll runs until the runtime stops."""
-    interval_value = context.config.require("loops.poll.interval_ms")
+    interval_value = context.config.require("features.poll.interval_ms")
     if not isinstance(interval_value, int | float):
-        raise TypeError("invalid config: loops.poll.interval_ms")
+        raise TypeError("invalid config: features.poll.interval_ms")
     interval_timeout = float(interval_value) / 1000
     logger.debug(
         "poll loop started root=%s agent=%s interval_ms=%s bindings=%s",

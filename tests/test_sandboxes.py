@@ -25,7 +25,7 @@ def test_create_none_sandbox_plugin_prepares_direct_plan(tmp_path: Path) -> None
             endpoint_host="127.0.0.1",
             port=8000,
             endpoint="http://127.0.0.1:8000",
-            loop_names=("chat", "inspect"),
+            feature_names=("chat", "inspect"),
             run_command=("too", "run", "alice"),
             env_vars={"TOOLANG_ROOT": str(tmp_path / "root")},
         )
@@ -73,7 +73,7 @@ def test_create_docker_sandbox_plugin_prepares_and_starts(monkeypatch, tmp_path:
             endpoint_host="127.0.0.1",
             port=8123,
             endpoint="http://127.0.0.1:8123",
-            loop_names=("chat", "inspect"),
+            feature_names=("chat", "inspect"),
             run_command=("too", "run", "alice", "--port", "8123"),
             env_vars={"TOOLANG_ROOT": str(root)},
             local_dev_artifact=dev_artifact,
@@ -142,7 +142,7 @@ def test_create_docker_sandbox_plugin_prefixes_too_for_uv_tool_run(tmp_path: Pat
             endpoint_host="127.0.0.1",
             port=8123,
             endpoint="http://127.0.0.1:8123",
-            loop_names=("chat", "inspect"),
+            feature_names=("chat", "inspect"),
             run_command=("--root", "/root/.toolang", "run", "alice", "--port", "8123"),
             env_vars={"TOOLANG_ROOT": str(root)},
         )

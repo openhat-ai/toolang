@@ -1,4 +1,4 @@
-"""Prepare loop that watches durable changes and writes prepared locks."""
+"""Watch feature that prepares and loads live state after durable changes."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from ..caps import (
 from ..progress import ProgressSink, emit_progress
 from ..execution.records import UpdateKind
 from ..state.durable import DurableState, is_durable_path, scan_durable_state
+from ..state.live import load_live_state
 from ..state.program import build_prepared_program
 from ..state.prepared import (
     PreparedLock,
@@ -33,34 +34,62 @@ if TYPE_CHECKING:
     from ..up import UptimeContext
 
 DEFAULT_INTERVAL_MS = 1_000.0
-logger = logging.getLogger("toolang.loop.prepare")
+DEFAULT_DEBOUNCE_MS = 500.0
+logger = logging.getLogger("toolang.feature.watch")
 
 
 def spawn(
     context: UptimeContext,
     *,
     stop_signal: asyncio.Event,
-    reload_signal: asyncio.Event,
 ) -> asyncio.Task[None]:
-    """Spawn the prepare loop in one background task."""
+    """Spawn the watch feature in one background task."""
 
-    return asyncio.create_task(run(context, stop_signal=stop_signal, reload_signal=reload_signal))
+    return asyncio.create_task(run(context, stop_signal=stop_signal))
 
 
 async def run(
     context: UptimeContext,
     *,
     stop_signal: asyncio.Event,
+) -> None:
+    """Watch durable inputs and keep the live state in sync."""
+
+    reload_signal = asyncio.Event()
+    prepare_task = asyncio.create_task(
+        _run_prepare_watch(context, stop_signal=stop_signal, reload_signal=reload_signal)
+    )
+    load_task = asyncio.create_task(
+        _run_load_live(context, stop_signal=stop_signal, reload_signal=reload_signal)
+    )
+    done, pending = await asyncio.wait(
+        {prepare_task, load_task},
+        return_when=asyncio.FIRST_EXCEPTION,
+    )
+    for task in pending:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    for task in done:
+        task.result()
+
+
+async def _run_prepare_watch(
+    context: UptimeContext,
+    *,
+    stop_signal: asyncio.Event,
     reload_signal: asyncio.Event,
 ) -> None:
     """Watch durable inputs and produce new prepared locks."""
-    interval_value = context.config.require("loops.prepare.interval_ms")
+    interval_value = context.config.require("features.watch.interval_ms")
     if not isinstance(interval_value, int | float):
-        raise TypeError("invalid config: loops.prepare.interval_ms")
+        raise TypeError("invalid config: features.watch.interval_ms")
     interval_ms = float(interval_value)
     context.root.mkdir(parents=True, exist_ok=True)
     logger.debug(
-        "prepare loop started root=%s agent=%s interval_ms=%s",
+        "watch prepare started root=%s agent=%s interval_ms=%s",
         context.root,
         context.name,
         int(interval_ms),
@@ -75,6 +104,65 @@ async def run(
             continue
         changed_paths = {Path(path) for kind, path in changes if kind in _RELEVANT_CHANGES}
         apply_changes(context, changed_paths, reload_signal=reload_signal)
+
+
+async def _run_load_live(
+    context: UptimeContext,
+    *,
+    stop_signal: asyncio.Event,
+    reload_signal: asyncio.Event,
+) -> None:
+    """Apply the latest prepared snapshot to live state after debounce."""
+
+    debounce_value = context.config.require("features.watch.debounce_ms")
+    if not isinstance(debounce_value, int | float):
+        raise TypeError("invalid config: features.watch.debounce_ms")
+    debounce_timeout = float(debounce_value) / 1000
+    logger.debug(
+        "watch load started root=%s agent=%s debounce_ms=%s live=%s",
+        context.root,
+        context.name,
+        int(float(debounce_value)),
+        _short_fingerprint(context.live.fingerprint),
+    )
+    while True:
+        if not await _wait_for_reload_or_stop(reload_signal, stop_signal):
+            return
+        logger.info("watch reload requested agent=%s", context.name)
+        if await _debounce_reload(reload_signal, stop_signal, debounce_timeout):
+            return
+        try:
+            prepared = load_prepared_state(context.root, context.name)
+        except FileNotFoundError:
+            logger.debug("watch reload skipped missing prepared state agent=%s", context.name)
+            continue
+        if context.live.fingerprint == prepared.fingerprint:
+            logger.debug(
+                "watch reload skipped unchanged fingerprint=%s agent=%s",
+                _short_fingerprint(prepared.fingerprint),
+                context.name,
+            )
+            continue
+        enabled_features = context.config.require("features.enabled")
+        if not isinstance(enabled_features, tuple):
+            raise TypeError("invalid config: features.enabled")
+        live = load_live_state(prepared, enabled_features=cast(tuple[str, ...], enabled_features))
+        from ..up import load_runtime_tool_plugins
+
+        tools = load_runtime_tool_plugins(
+            toolang_root=context.root,
+            agent_name=context.name,
+            live=live,
+            environ=context.model_environ,
+        )
+        logger.info(
+            "watch reload applied agent=%s live=%s->%s",
+            context.name,
+            _short_fingerprint(context.live.fingerprint),
+            _short_fingerprint(live.fingerprint),
+        )
+        context.live = live
+        context.tools = tools
 
 
 def build_prepared_state(durable: DurableState, *, progress: ProgressSink | None = None) -> PreparedState:
@@ -342,3 +430,39 @@ def _combined_private_fingerprint(lock_fingerprint: str, program_fingerprint: st
     digest.update(b"\0")
     digest.update(program_fingerprint.encode("utf-8"))
     return digest.hexdigest()
+
+
+async def _wait_for_reload_or_stop(
+    reload_signal: asyncio.Event,
+    stop_signal: asyncio.Event,
+) -> bool:
+    reload_task = asyncio.create_task(reload_signal.wait())
+    stop_task = asyncio.create_task(stop_signal.wait())
+    done, pending = await asyncio.wait(
+        {reload_task, stop_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    for task in pending:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    return reload_task in done
+
+
+async def _debounce_reload(
+    reload_signal: asyncio.Event,
+    stop_signal: asyncio.Event,
+    debounce_timeout: float,
+) -> bool:
+    while True:
+        reload_signal.clear()
+        try:
+            await asyncio.wait_for(stop_signal.wait(), timeout=debounce_timeout)
+            return True
+        except TimeoutError:
+            if reload_signal.is_set():
+                logger.debug("watch reload coalesced additional signals")
+                continue
+            return False

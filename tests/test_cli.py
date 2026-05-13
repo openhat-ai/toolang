@@ -564,12 +564,12 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
         models: list[str] | None,
         dev: Path | None,
         sandbox_child: bool,
-        loop_names: tuple[str, ...] | None,
+        feature_names: tuple[str, ...] | None,
         log_spec: str | None,
         environ: dict[str, str],
         progress=None,
     ) -> int:
-        del host, endpoint_host, port, sandbox, models, dev, sandbox_child, loop_names, log_spec, environ, progress
+        del host, endpoint_host, port, sandbox, models, dev, sandbox_child, feature_names, log_spec, environ, progress
         captured["toolang_root"] = toolang_root
         captured["agent_name"] = agent_name
         program_path = toolang_root / "agents" / agent_name / f"{agent_name}.too"
@@ -616,12 +616,12 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
         models: list[str] | None,
         dev: Path | None,
         sandbox_child: bool,
-        loop_names: tuple[str, ...] | None,
+        feature_names: tuple[str, ...] | None,
         log_spec: str | None,
         environ: dict[str, str],
         progress=None,
     ) -> int:
-        del host, endpoint_host, port, sandbox, models, dev, sandbox_child, loop_names, log_spec, environ, progress
+        del host, endpoint_host, port, sandbox, models, dev, sandbox_child, feature_names, log_spec, environ, progress
         captured["toolang_root"] = toolang_root
         captured["agent_name"] = agent_name
         return 0
@@ -1239,7 +1239,7 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-07T11:00:00Z",
         pid=os.getpid(),
-        loops=("chat", "pulse"),
+        features=("chat", "pulse"),
         status="running",
         message="ready",
     )
@@ -1275,7 +1275,7 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
     assert "running (up a day)" in result.stdout
     assert "Sandbox" in result.stdout
     assert "none" in result.stdout
-    assert "Loops" in result.stdout
+    assert "Features" in result.stdout
     assert "chat, pulse" in result.stdout
     assert "PID" in result.stdout
     assert str(os.getpid()) in result.stdout
@@ -1303,7 +1303,7 @@ def test_cli_info_for_stopped_agent_shows_created_only(tmp_path: Path) -> None:
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-07T11:00:00Z",
         pid=os.getpid(),
-        loops=("chat", "pulse"),
+        features=("chat", "pulse"),
         status="running",
     )
     agents.stop_runtime_state(toolang_root, "alice")
@@ -1321,7 +1321,7 @@ def test_cli_info_for_stopped_agent_shows_created_only(tmp_path: Path) -> None:
     assert "stopped" in result.stdout
     assert "Created" in result.stdout
     assert "Sandbox" not in result.stdout
-    assert "Loops" not in result.stdout
+    assert "Features" not in result.stdout
     assert "Started" not in result.stdout
     assert "Updated" not in result.stdout
     assert "ENDPOINT" not in result.stdout
@@ -1354,7 +1354,7 @@ def test_cli_info_for_running_docker_sandbox_shows_container_pid(tmp_path: Path,
             "runtime_id": "toolang-alice",
             "meta": {},
         },
-        loops=("chat", "pulse"),
+        features=("chat", "pulse"),
         status="running",
     )
 
@@ -1384,7 +1384,7 @@ def test_cli_info_prefers_runtime_models_for_active_agent(tmp_path: Path) -> Non
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-07T11:00:00Z",
         pid=os.getpid(),
-        loops=("chat",),
+        features=("chat",),
         models=("claude", "gpt-5"),
         status="running",
     )
@@ -1563,7 +1563,7 @@ def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
         models: list[str] | None = None,
         dev: Path | None = None,
         sandbox_child: bool = False,
-        loop_names: list[str] | None = None,
+        feature_names: list[str] | None = None,
         log_spec: str | None = None,
         environ: dict[str, str],
         progress=None,
@@ -1578,7 +1578,7 @@ def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
         captured["models"] = models
         captured["dev"] = dev
         captured["sandbox_child"] = sandbox_child
-        captured["loop_names"] = loop_names
+        captured["feature_names"] = feature_names
         captured["log_spec"] = log_spec
         captured["environ"] = environ
         return 0
@@ -1595,9 +1595,9 @@ def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
             "0.0.0.0",
             "--port",
             "9000",
-            "--loop",
+            "--feature",
             "chat",
-            "--loop",
+            "--feature",
             "inspect",
         ],
         env={"TOOLANG_ROOT": str(toolang_root)},
@@ -1613,7 +1613,7 @@ def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     assert captured["models"] is None
     assert captured["dev"] is None
     assert captured["sandbox_child"] is False
-    assert captured["loop_names"] == ["chat", "inspect"]
+    assert captured["feature_names"] == ["chat", "inspect"]
     assert captured["log_spec"] == DEFAULT_AGENT_LOG_SPEC
     assert cast(dict[str, str], captured["environ"])["TOOLANG_ROOT"] == str(toolang_root)
     assert cast(dict[str, str], captured["environ"])[PY_LOG_ENV_VAR] == DEFAULT_AGENT_LOG_SPEC
@@ -1634,7 +1634,7 @@ def test_cli_run_omits_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
         models: list[str] | None = None,
         dev: Path | None = None,
         sandbox_child: bool = False,
-        loop_names: list[str] | None = None,
+        feature_names: list[str] | None = None,
         log_spec: str | None = None,
         environ: dict[str, str],
         progress=None,
@@ -1649,7 +1649,7 @@ def test_cli_run_omits_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
         captured["models"] = models
         captured["dev"] = dev
         captured["sandbox_child"] = sandbox_child
-        captured["loop_names"] = loop_names
+        captured["feature_names"] = feature_names
         captured["log_spec"] = log_spec
         captured["environ"] = environ
         return 0
@@ -1659,7 +1659,7 @@ def test_cli_run_omits_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
 
     result = runner.invoke(
         cli.app,
-        ["run", "alice", "--loop", "chat"],
+        ["run", "alice", "--feature", "chat"],
         env={"TOOLANG_ROOT": str(toolang_root)},
     )
 
@@ -1673,7 +1673,7 @@ def test_cli_run_omits_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
     assert captured["models"] is None
     assert captured["dev"] is None
     assert captured["sandbox_child"] is False
-    assert captured["loop_names"] == ["chat"]
+    assert captured["feature_names"] == ["chat"]
     assert captured["log_spec"] == DEFAULT_AGENT_LOG_SPEC
     assert cast(dict[str, str], captured["environ"])["TOOLANG_ROOT"] == str(toolang_root)
 
@@ -1693,13 +1693,13 @@ def test_cli_run_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
         models: list[str] | None = None,
         dev: Path | None = None,
         sandbox_child: bool = False,
-        loop_names: list[str] | None = None,
+        feature_names: list[str] | None = None,
         log_spec: str | None = None,
         environ: dict[str, str],
         progress=None,
     ) -> int:
         del toolang_root, agent_name, host, endpoint_host, port, sandbox, models, dev, sandbox_child, log_spec, environ, progress
-        captured["loop_names"] = loop_names
+        captured["feature_names"] = feature_names
         return 0
 
     monkeypatch.setattr(cli.agent_up, "up", fake_up)
@@ -1707,12 +1707,12 @@ def test_cli_run_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
 
     result = runner.invoke(
         cli.app,
-        ["run", "alice", "--loop", "chat,inspect,poll"],
+        ["run", "alice", "--feature", "chat,inspect,poll"],
         env={"TOOLANG_ROOT": str(toolang_root)},
     )
 
     assert result.exit_code == 0
-    assert captured["loop_names"] == ["chat", "inspect", "poll"]
+    assert captured["feature_names"] == ["chat", "inspect", "poll"]
 
 
 def test_cli_run_passes_model_selectors_to_agent_up(tmp_path: Path, monkeypatch) -> None:
@@ -1730,12 +1730,12 @@ def test_cli_run_passes_model_selectors_to_agent_up(tmp_path: Path, monkeypatch)
         models: list[str] | None = None,
         dev: Path | None = None,
         sandbox_child: bool = False,
-        loop_names: list[str] | None = None,
+        feature_names: list[str] | None = None,
         log_spec: str | None = None,
         environ: dict[str, str],
         progress=None,
     ) -> int:
-        del toolang_root, agent_name, host, endpoint_host, port, sandbox, dev, sandbox_child, loop_names, log_spec, environ, progress
+        del toolang_root, agent_name, host, endpoint_host, port, sandbox, dev, sandbox_child, feature_names, log_spec, environ, progress
         captured["models"] = models
         return 0
 
@@ -1767,12 +1767,12 @@ def test_cli_run_does_not_override_explicit_log_spec(tmp_path: Path, monkeypatch
         models: list[str] | None = None,
         dev: Path | None = None,
         sandbox_child: bool = False,
-        loop_names: list[str] | None = None,
+        feature_names: list[str] | None = None,
         log_spec: str | None = None,
         environ: dict[str, str],
         progress=None,
     ) -> int:
-        del toolang_root, agent_name, host, endpoint_host, port, sandbox, models, dev, sandbox_child, loop_names, progress
+        del toolang_root, agent_name, host, endpoint_host, port, sandbox, models, dev, sandbox_child, feature_names, progress
         captured["environ"] = environ
         captured["log_spec"] = log_spec
         return 0
@@ -1830,7 +1830,7 @@ def test_cli_run_loads_root_and_agent_env_with_agent_override(tmp_path: Path, mo
         models: list[str] | None = None,
         dev: Path | None = None,
         sandbox_child: bool = False,
-        loop_names: list[str] | None = None,
+        feature_names: list[str] | None = None,
         log_spec: str | None = None,
         environ: dict[str, str],
         progress=None,
@@ -1850,7 +1850,7 @@ def test_cli_run_loads_root_and_agent_env_with_agent_override(tmp_path: Path, mo
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(toolang_root), "run", "alice", "--loop", "inspect"],
+        ["--root", str(toolang_root), "run", "alice", "--feature", "inspect"],
         env={},
     )
 
@@ -1909,7 +1909,7 @@ def test_cli_start_spawns_background_run_and_reports_status(tmp_path: Path, monk
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(toolang_root), "start", "alice", "--sandbox", "none", "--loop", "inspect"],
+        ["--root", str(toolang_root), "start", "alice", "--sandbox", "none", "--feature", "inspect"],
         env={},
     )
 
@@ -1931,7 +1931,7 @@ def test_cli_start_spawns_background_run_and_reports_status(tmp_path: Path, monk
         "8765",
         "--sandbox",
         "none",
-        "--loop",
+        "--feature",
         "inspect",
     ]
     assert cast(dict[str, str], captured["env"])["TOOLANG_ROOT"] == str(toolang_root)
@@ -2126,7 +2126,7 @@ def test_cli_start_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(toolang_root), "start", "alice", "--loop", "chat,inspect"],
+        ["--root", str(toolang_root), "start", "alice", "--feature", "chat,inspect"],
         env={},
     )
 
@@ -2134,7 +2134,7 @@ def test_cli_start_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None
     command = cast(list[str], captured["command"])
     assert "--port" in command
     assert command[command.index("--port") + 1] == "8765"
-    assert command[-4:] == ["--loop", "chat", "--loop", "inspect"]
+    assert command[-4:] == ["--feature", "chat", "--feature", "inspect"]
 
 
 def test_cli_start_includes_model_selectors_in_background_command(tmp_path: Path, monkeypatch) -> None:
@@ -2314,13 +2314,13 @@ def test_cli_start_reuses_preferred_runtime_port(tmp_path: Path, monkeypatch) ->
     command = cast(list[str], captured["command"])
     assert "--port" in command
     assert command[command.index("--port") + 1] == "63295"
-    assert "--loop" in command
-    loop_names = [
+    assert "--feature" in command
+    feature_names = [
         command[index + 1]
         for index, value in enumerate(command[:-1])
-        if value == "--loop"
+        if value == "--feature"
     ]
-    assert loop_names == ["chat", "pulse", "control", "inspect", "prepare", "reload"]
+    assert feature_names == ["chat", "pulse", "control", "inspect", "watch"]
 
 
 def test_cli_start_reports_failed_when_process_exits_before_state(tmp_path: Path, monkeypatch) -> None:

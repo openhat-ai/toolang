@@ -45,9 +45,9 @@ async def run(
     stop_signal: asyncio.Event,
 ) -> None:
     """Scan live work items and enqueue due runs until the runtime stops."""
-    interval_value = context.config.require("loops.pulse.interval_ms")
+    interval_value = context.config.require("features.pulse.interval_ms")
     if not isinstance(interval_value, int | float):
-        raise TypeError("invalid config: loops.pulse.interval_ms")
+        raise TypeError("invalid config: features.pulse.interval_ms")
     interval_timeout = float(interval_value) / 1000
     state = _load_pulse_state(context)
     seen_completed: set[str] = set()

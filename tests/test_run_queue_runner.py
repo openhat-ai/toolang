@@ -87,15 +87,15 @@ from toolang.execution.snapshot import (
 from toolang.execution.runner import QueueRunner, RunOutcome, RunRequest, RunSubmission
 from toolang.execution.db import ExecutionStore, execution_db_path
 from toolang.execution.stream import RuntimeEventBus
-from toolang.loops import chat as chat_loop, inspect, poll, prepare, pulse, reload
-from toolang.loops.streaming import ShutdownAwareStreamingResponse
+from toolang.features import chat as chat_loop, inspect, poll, pulse, watch
+from toolang.features.streaming import ShutdownAwareStreamingResponse
 from toolang.state.durable import scan_durable_state
 from toolang.state.live import load_live_state
 from toolang.state.prepared import load_prepared_state, write_prepared_lock
 from toolang.strategies.basic import BasicRunStrategy
 from toolang import up as up_module
 from toolang.up import (
-    RUN_LOOPS,
+    RUN_FEATURES,
     UptimeConfig,
     UptimeContext,
     create_app,
@@ -132,7 +132,7 @@ def test_runner_pending_requests_include_group_waiters(tmp_path: Path) -> None:
         context = _build_context(
             toolang_root=toolang_root,
             agent_name="alice",
-            enabled_loops=("pulse",),
+            enabled_features=("pulse",),
             runner=QueueRunner(
                 group_limits={"pulse:task": 1, "pulse:chore": 1},
                 delay_sec=0.0,
@@ -180,7 +180,7 @@ def test_queue_runner_drains_requests_in_order(tmp_path: Path, caplog) -> None:
         context = _build_context(
             toolang_root=toolang_root,
             agent_name="alice",
-            enabled_loops=("chat",),
+            enabled_features=("chat",),
             runner=QueueRunner(
                 group_limits={"chat": 1, "hook": 1},
                 delay_sec=0.01,
@@ -257,7 +257,7 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat", "inspect"),
+        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -282,7 +282,7 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
             profile = client.get("/api/v1/profile").json()
             caps_response = client.get("/api/v1/caps").json()
             threads = client.get("/api/v1/threads").json()["items"]
-            snapshot = inspect.snapshot_context(context, enabled_loops=("chat", "inspect"))
+            snapshot = inspect.snapshot_context(context, enabled_features=("chat", "inspect"))
             durable = cast(dict[str, object], snapshot["durable"])
             prepared = cast(dict[str, object], snapshot["prepared"])
             live = cast(dict[str, object], snapshot["live"])
@@ -359,7 +359,7 @@ def test_threads_api_reports_full_run_count_independent_of_recent_run_limit(tmp_
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("inspect",),
+        enabled_features=("inspect",),
     )
     context.store.start_run(
         run_id="run-old",
@@ -418,7 +418,7 @@ def test_threads_api_reports_active_run(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("inspect",),
+        enabled_features=("inspect",),
     )
     context.store.start_run(
         run_id="run-active",
@@ -454,7 +454,7 @@ def test_run_events_api_returns_resource_scoped_events(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("inspect",),
+        enabled_features=("inspect",),
     )
     context.events.publish(
         domain="run",
@@ -492,7 +492,7 @@ def test_agent_events_include_thread_updates_for_run_lifecycle(tmp_path: Path) -
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("inspect",),
+        enabled_features=("inspect",),
     )
 
     context.events.publish_trace(
@@ -531,7 +531,7 @@ def test_run_start_trace_emits_run_input_after_run_start(tmp_path: Path) -> None
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("inspect",),
+        enabled_features=("inspect",),
     )
 
     context.events.publish_trace(
@@ -568,7 +568,7 @@ def test_steer_run_appends_run_input_event(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("inspect",),
+        enabled_features=("inspect",),
     )
     context.store.start_run(
         run_id="run-1",
@@ -610,7 +610,7 @@ def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("inspect",),
+        enabled_features=("inspect",),
     )
     context.store.start_run(
         run_id="run-1",
@@ -661,7 +661,7 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("inspect",),
+        enabled_features=("inspect",),
     )
     context.store.start_run(
         run_id="run-1",
@@ -743,7 +743,7 @@ def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("inspect",),
+        enabled_features=("inspect",),
     )
     persist = run_execute_module.PersistSink(context.store)
 
@@ -848,7 +848,7 @@ def test_agent_events_include_cap_updates(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("control", "inspect"),
+        enabled_features=("control", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -874,7 +874,7 @@ def test_chat_api_allocates_new_threads_and_rejects_unknown_thread_ids(tmp_path:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat", "inspect"),
+        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -910,7 +910,7 @@ def test_chat_restart_supersedes_previous_run_in_thread_projection(tmp_path: Pat
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat", "inspect"),
+        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -952,7 +952,7 @@ def test_chat_restart_cancels_running_run_before_superseding(tmp_path: Path) -> 
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat", "inspect"),
+        enabled_features=("chat", "inspect"),
     )
     context.store.start_run(
         run_id="run_running",
@@ -992,7 +992,7 @@ def test_chat_api_records_peer_for_new_thread_and_rejects_mismatch(tmp_path: Pat
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="bob",
-        enabled_loops=("chat", "inspect"),
+        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -1041,7 +1041,7 @@ def test_chat_models_lists_effective_selectors_for_chat_thunk(tmp_path: Path) ->
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat", "inspect"),
+        enabled_features=("chat", "inspect"),
     )
     context.model_environ = {"OPENAI_API_KEY": "secret"}
     context.config.set("models.allowed_selectors", ("openai/o3@openai", "openai/gpt-5@openai"))
@@ -1085,7 +1085,7 @@ def test_chat_models_returns_all_discoverable_when_unrestricted(tmp_path: Path) 
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat", "inspect"),
+        enabled_features=("chat", "inspect"),
     )
     context.model_environ = {"OPENAI_API_KEY": "secret"}
     app = _create_test_app(context)
@@ -1128,7 +1128,7 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("inspect",),
+        enabled_features=("inspect",),
     )
     app = _create_test_app(context)
     store = context.store
@@ -1244,7 +1244,7 @@ def test_create_app_allows_webui_cors_origin(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("inspect",),
+        enabled_features=("inspect",),
     )
     app = _create_test_app(context)
 
@@ -1264,7 +1264,7 @@ def test_chat_returns_failed_run_as_assistant_message(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat", "inspect"),
+        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -1314,7 +1314,7 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("inspect",),
+        enabled_features=("inspect",),
     )
     context.store.start_run(
         run_id="run-loop",
@@ -1394,7 +1394,7 @@ def test_chat_projects_tool_parts_from_tool_call_steps(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat", "inspect"),
+        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -1417,7 +1417,7 @@ def test_chat_stream_emits_tool_and_text_chunks(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat", "inspect"),
+        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -1456,7 +1456,7 @@ def test_chat_stream_emits_before_run_completion(tmp_path: Path) -> None:
         context = _build_context(
             toolang_root=toolang_root,
             agent_name="alice",
-            enabled_loops=("chat", "inspect"),
+            enabled_features=("chat", "inspect"),
             runner=QueueRunner(delay_sec=0.0),
         )
 
@@ -1465,7 +1465,7 @@ def test_chat_stream_emits_before_run_completion(tmp_path: Path) -> None:
         timer.start()
         try:
             with _patched_runner_streaming_text(release):
-                async with _running_context(context, enabled_loops=("chat", "inspect")):
+                async with _running_context(context, enabled_features=("chat", "inspect")):
                     stream = chat_loop._stream_chat_run(
                         context,
                         chat_loop.ChatRequest(
@@ -1547,7 +1547,7 @@ def test_chat_stream_allows_tool_only_turns(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat", "inspect"),
+        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -1573,7 +1573,7 @@ def test_create_app_is_pure_route_assembly(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=tmp_path / "toolang",
         agent_name="alice",
-        enabled_loops=("chat", "inspect"),
+        enabled_features=("chat", "inspect"),
     )
 
     app = create_app(context)
@@ -1589,7 +1589,7 @@ def test_hook_routes_enqueue_runs(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("hook", "inspect"),
+        enabled_features=("hook", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -1597,12 +1597,12 @@ def test_hook_routes_enqueue_runs(tmp_path: Path) -> None:
         with TestClient(app) as client:
             response = client.post("/hook/runs", json={"thunk": "decode webhook"})
             assert response.status_code == 202
-            snapshot = inspect.snapshot_context(context, enabled_loops=("hook", "inspect"))
+            snapshot = inspect.snapshot_context(context, enabled_features=("hook", "inspect"))
             for _ in range(50):
                 if snapshot["completed_runs"]:
                     break
                 time.sleep(0.01)
-                snapshot = inspect.snapshot_context(context, enabled_loops=("hook", "inspect"))
+                snapshot = inspect.snapshot_context(context, enabled_features=("hook", "inspect"))
             completed_runs = cast(list[dict[str, object]], snapshot["completed_runs"])
             assert [item["group"] for item in completed_runs] == ["hook"]
             assert [item["input_text"] for item in completed_runs] == ["decode webhook"]
@@ -1652,7 +1652,7 @@ def test_poll_loop_queues_channel_deliveries_and_delivers_reply(tmp_path: Path) 
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("poll", "inspect"),
+        enabled_features=("poll", "inspect"),
         channel_bindings={
             "telegram": ChannelBinding(
                 name="telegram",
@@ -1667,7 +1667,7 @@ def test_poll_loop_queues_channel_deliveries_and_delivers_reply(tmp_path: Path) 
         async def run_test() -> None:
             async with _running_context(
                 context,
-                enabled_loops=("poll", "inspect"),
+                enabled_features=("poll", "inspect"),
                 loop_intervals_ms={"poll": 10.0},
             ):
                 await _wait_for_completed_count(context, 1)
@@ -1719,7 +1719,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("poll",),
+        enabled_features=("poll",),
         channel_bindings={
             "telegram": ChannelBinding(
                 name="telegram",
@@ -1898,7 +1898,7 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("poll",),
+        enabled_features=("poll",),
         channel_bindings={
             "telegram": ChannelBinding(
                 name="telegram",
@@ -2011,7 +2011,7 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("control", "inspect"),
+        enabled_features=("control", "inspect"),
     )
     initial_live_fingerprint = context.live.fingerprint
     initial_prepared_fingerprint = load_prepared_state(toolang_root, "alice").fingerprint
@@ -2028,7 +2028,7 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
         assert add_response.json()["item"]["inclusion"] == "configured"
         assert add_response.json()["item"]["visibility"] == "private"
 
-        snapshot = inspect.snapshot_context(context, enabled_loops=("control", "inspect"))
+        snapshot = inspect.snapshot_context(context, enabled_features=("control", "inspect"))
         durable = cast(dict[str, object], snapshot["durable"])
         prepared = cast(dict[str, object], snapshot["prepared"])
         live = cast(dict[str, object], snapshot["live"])
@@ -2044,7 +2044,7 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
         assert remove_response.status_code == 200
         assert remove_response.json() == {"ok": True}
 
-        snapshot = inspect.snapshot_context(context, enabled_loops=("control", "inspect"))
+        snapshot = inspect.snapshot_context(context, enabled_features=("control", "inspect"))
         durable = cast(dict[str, object], snapshot["durable"])
         definitions = cast(dict[str, object], durable["definitions"])
         assert definitions["private_entries"] == []
@@ -2070,7 +2070,7 @@ def test_cap_template_api_lists_and_reads_templates(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("inspect",),
+        enabled_features=("inspect",),
     )
     app = _create_test_app(context)
 
@@ -2094,7 +2094,7 @@ def test_cap_template_api_lists_and_reads_templates(tmp_path: Path) -> None:
         assert "# env: API_TOKEN, ANOTHER_ENV_VAR" in item["content"]
 
 
-def test_background_loops_enqueue_runs(tmp_path: Path) -> None:
+def test_background_features_enqueue_runs(tmp_path: Path) -> None:
     async def run_test() -> None:
         toolang_root = tmp_path / "toolang"
         _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
@@ -2105,22 +2105,22 @@ def test_background_loops_enqueue_runs(tmp_path: Path) -> None:
         context = _build_context(
             toolang_root=toolang_root,
             agent_name="alice",
-            enabled_loops=("pulse",),
+            enabled_features=("pulse",),
         )
 
         with _patched_runner_execution():
             async with _running_context(
-                context, enabled_loops=("pulse",), loop_intervals_ms={"pulse": 10.0}
+                context, enabled_features=("pulse",), loop_intervals_ms={"pulse": 10.0}
             ):
                 for _ in range(50):
-                    if inspect.snapshot_context(context, enabled_loops=("pulse",))[
+                    if inspect.snapshot_context(context, enabled_features=("pulse",))[
                         "completed_runs"
                     ]:
                         break
                     await asyncio.sleep(0.01)
                 completed = cast(
                     list[dict[str, object]],
-                    inspect.snapshot_context(context, enabled_loops=("pulse",))[
+                    inspect.snapshot_context(context, enabled_features=("pulse",))[
                         "completed_runs"
                     ],
                 )
@@ -2147,7 +2147,7 @@ def test_pulse_collects_due_chores_before_claimable_tasks(tmp_path: Path) -> Non
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("pulse",),
+        enabled_features=("pulse",),
     )
 
     _state, submissions = pulse.collect_pulse_submissions(
@@ -2166,7 +2166,7 @@ def test_bind_run_request_allocates_normalized_local_ids(tmp_path: Path) -> None
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat",),
+        enabled_features=("chat",),
     )
 
     bound = bind_run_request(
@@ -2202,7 +2202,7 @@ def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
         toolang_root=toolang_root,
         agent_name="alice",
         host="0.0.0.0",
-        loop_names=("inspect",),
+        feature_names=("inspect",),
         environ={},
     )
 
@@ -2242,7 +2242,7 @@ def test_up_reuses_previous_agent_port_when_unspecified(tmp_path: Path, monkeypa
         toolang_root=toolang_root,
         agent_name="alice",
         host="127.0.0.1",
-        loop_names=("inspect",),
+        feature_names=("inspect",),
         environ={},
     )
 
@@ -2288,7 +2288,7 @@ def test_up_falls_back_when_previous_agent_port_is_unavailable(
             toolang_root=toolang_root,
             agent_name="alice",
             host="127.0.0.1",
-            loop_names=("inspect",),
+            feature_names=("inspect",),
             environ={},
         )
 
@@ -2337,7 +2337,7 @@ def test_up_falls_back_when_stopped_agent_port_is_unavailable(tmp_path: Path, mo
         toolang_root=toolang_root,
         agent_name="alice",
         host="127.0.0.1",
-        loop_names=("inspect",),
+        feature_names=("inspect",),
         environ={},
     )
 
@@ -2444,7 +2444,7 @@ def test_up_uses_cors_origins_from_root_config(tmp_path: Path, monkeypatch) -> N
         agent_name="alice",
         host="127.0.0.1",
         port=8765,
-        loop_names=("inspect",),
+        feature_names=("inspect",),
         environ={},
     )
 
@@ -2514,7 +2514,7 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
         host="127.0.0.1",
         port=8765,
         sandbox="docker:python:3.13-slim",
-        loop_names=("inspect",),
+        feature_names=("inspect",),
         environ={"OPENAI_API_KEY": "secret"},
     )
 
@@ -2541,8 +2541,8 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
     assert "--sandbox" in request.run_command
     assert request.run_command[request.run_command.index("--sandbox") + 1] == "none"
     assert "--sandbox-child" in request.run_command
-    assert "--loop" in request.run_command
-    assert request.run_command[request.run_command.index("--loop") + 1] == "inspect"
+    assert "--feature" in request.run_command
+    assert request.run_command[request.run_command.index("--feature") + 1] == "inspect"
     runtime_state = json.loads(
         agents.agent_runtime_state_path(toolang_root, "alice").read_text(encoding="utf-8")
     )
@@ -2609,7 +2609,7 @@ def test_up_defaults_docker_target_when_selector_omits_one(tmp_path: Path, monke
         host="127.0.0.1",
         port=8765,
         sandbox="docker",
-        loop_names=("inspect",),
+        feature_names=("inspect",),
         environ={},
     )
 
@@ -2669,7 +2669,7 @@ def test_up_marks_managed_sandbox_failed_when_ready_check_fails(tmp_path: Path, 
             host="127.0.0.1",
             port=8765,
             sandbox="docker:python:3.13-slim",
-            loop_names=("inspect",),
+            feature_names=("inspect",),
             environ={},
         )
     except ValueError as exc:
@@ -2719,7 +2719,7 @@ def test_up_marks_managed_sandbox_failed_when_prepare_fails(tmp_path: Path, monk
             host="127.0.0.1",
             port=8765,
             sandbox="docker",
-            loop_names=("inspect",),
+            feature_names=("inspect",),
             environ={},
         )
     except ValueError as exc:
@@ -3043,7 +3043,7 @@ def test_up_reads_web_config_without_validating_experiments_caps(tmp_path: Path,
         agent_name="alice",
         host="127.0.0.1",
         port=8765,
-        loop_names=("inspect",),
+        feature_names=("inspect",),
         environ={},
     )
 
@@ -3067,14 +3067,14 @@ def test_prepare_reload_refreshes_prepared_and_live(tmp_path: Path) -> None:
         context = _build_context(
             toolang_root=toolang_root,
             agent_name="alice",
-            enabled_loops=("prepare", "reload"),
+            enabled_features=("watch",),
         )
 
         initial_fingerprint = context.live.fingerprint
         async with _running_context(
             context,
-            enabled_loops=("prepare", "reload"),
-            loop_intervals_ms={"prepare": 10.0},
+            enabled_features=("watch",),
+            loop_intervals_ms={"watch": 10.0},
         ):
             _write_text(prompt_path, "---\ndescription: v2\n---\nPrompt v2\n")
             refreshed = await _wait_for_fingerprint_change(context, initial_fingerprint)
@@ -3098,7 +3098,7 @@ def test_prepare_reload_refreshes_service_use_visible_services(tmp_path: Path) -
         context = _build_context(
             toolang_root=toolang_root,
             agent_name="alice",
-            enabled_loops=("prepare", "reload"),
+            enabled_features=("watch",),
         )
 
         initial_fingerprint = context.live.fingerprint
@@ -3109,8 +3109,8 @@ def test_prepare_reload_refreshes_service_use_visible_services(tmp_path: Path) -
 
         async with _running_context(
             context,
-            enabled_loops=("prepare", "reload"),
-            loop_intervals_ms={"prepare": 10.0},
+            enabled_features=("watch",),
+            loop_intervals_ms={"watch": 10.0},
         ):
             _write_text(
                 toolang_root / "agents" / "alice" / "services" / "linear.md",
@@ -3144,8 +3144,8 @@ def test_runtime_tool_plugin_config_maps_service_caps_to_service_use(tmp_path: P
         "---\n",
     )
     durable = scan_durable_state(toolang_root, "alice")
-    prepared = prepare.build_prepared_state(durable)
-    live = load_live_state(prepared, enabled_loops=("reload",))
+    prepared = watch.build_prepared_state(durable)
+    live = load_live_state(prepared, enabled_features=("watch",))
 
     config = up_module.runtime_tool_plugin_config(
         toolang_root=toolang_root,
@@ -3277,8 +3277,8 @@ def test_prepare_materializes_remote_entries_from_config(tmp_path: Path, monkeyp
     assert config_path == toolang_root / "config.toml"
 
     durable = scan_durable_state(toolang_root, "alice")
-    prepared = prepare.build_prepared_state(durable)
-    live = load_live_state(prepared, enabled_loops=("reload",))
+    prepared = watch.build_prepared_state(durable)
+    live = load_live_state(prepared, enabled_features=("watch",))
 
     assert (toolang_root / ".prepared" / "remote" / "prompts" / "rewrite.md").is_file()
     assert [entry.source.origin for entry in prepared.shared_lock.entries] == ["remote"]
@@ -3370,7 +3370,7 @@ def test_remote_skill_add_canonicalizes_github_tree_url(tmp_path: Path, monkeypa
 
     config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(encoding="utf-8")
     durable = scan_durable_state(toolang_root, "alice")
-    prepared = prepare.build_prepared_state(durable)
+    prepared = watch.build_prepared_state(durable)
 
     assert 'answers = { ref = "github://brave/brave-search-skills/skills/answers@main" }' in config_text
     assert prepared.private_lock.entries[0].ref == "github://brave/brave-search-skills/skills/answers@main"
@@ -3399,7 +3399,7 @@ def test_remote_skill_add_canonicalizes_github_skill_file_url(tmp_path: Path, mo
 
     config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(encoding="utf-8")
     durable = scan_durable_state(toolang_root, "alice")
-    prepared = prepare.build_prepared_state(durable)
+    prepared = watch.build_prepared_state(durable)
 
     expected_ref = "github://vercel-labs/agent-browser/skills/agent-browser@main"
     assert f'agent-browser = {{ ref = "{expected_ref}" }}' in config_text
@@ -3426,7 +3426,7 @@ def test_remote_skill_add_canonicalizes_raw_refs_heads_skill_file_url(tmp_path: 
 
     config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(encoding="utf-8")
     durable = scan_durable_state(toolang_root, "alice")
-    prepared = prepare.build_prepared_state(durable)
+    prepared = watch.build_prepared_state(durable)
 
     expected_ref = "github://vercel-labs/agent-browser/skills/agent-browser@refs/heads/main"
     assert f'agent-browser = {{ ref = "{expected_ref}" }}' in config_text
@@ -3451,8 +3451,8 @@ def test_prepare_apply_changes_records_remote_cap_updates(tmp_path: Path, monkey
         kind="skill",
         ref="acme/pdf",
     )
-    initial = prepare.build_prepared_state(scan_durable_state(toolang_root, "alice"))
-    live = load_live_state(initial, enabled_loops=("reload",))
+    initial = watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+    live = load_live_state(initial, enabled_features=("watch",))
     add_remote_entry(
         toolang_root,
         "alice",
@@ -3477,7 +3477,7 @@ def test_prepare_apply_changes_records_remote_cap_updates(tmp_path: Path, monkey
         live = live_state
 
     reload_signal = asyncio.Event()
-    prepare.apply_changes(cast(UptimeContext, Context()), {config_path}, reload_signal=reload_signal)
+    watch.apply_changes(cast(UptimeContext, Context()), {config_path}, reload_signal=reload_signal)
 
     assert ("skill_changed", {"name": "review", "visibility": "private"}) in updates
     assert reload_signal.is_set()
@@ -3506,13 +3506,13 @@ def test_prepare_reuses_remote_caps_when_visibility_inputs_and_outputs_match(
         ref="acme/pdf",
     )
 
-    first = prepare.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+    first = watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
     monkeypatch.setattr(
         caps,
         "_fetch_github_directory",
         lambda ref: pytest.fail(f"unexpected remote fetch: {ref.render()}"),
     )
-    second = prepare.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+    second = watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
 
     assert fetches == ["github://acme/agents/skills/pdf@main"]
     assert second.fingerprint == first.fingerprint
@@ -3540,7 +3540,7 @@ def test_prepare_reuses_private_remote_caps_when_shared_inputs_change(
         kind="skill",
         ref="acme/pdf",
     )
-    prepare.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+    watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
 
     put_local_entry(
         toolang_root,
@@ -3550,7 +3550,7 @@ def test_prepare_reuses_private_remote_caps_when_shared_inputs_change(
         name="style",
         body="Use a direct style.",
     )
-    prepare.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+    watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
 
     assert fetches == ["github://acme/agents/skills/pdf@main"]
 
@@ -3578,11 +3578,11 @@ def test_prepare_refetches_remote_caps_when_prepared_output_does_not_match_lock(
         kind="skill",
         ref="acme/pdf",
     )
-    prepare.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+    watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
     prepared_file = toolang_root / "agents" / "alice" / ".prepared" / "remote" / "skills" / "pdf" / "SKILL.md"
     prepared_file.write_text("---\ndescription: Corrupt\n---\n# Corrupt\n", encoding="utf-8")
 
-    prepare.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+    watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
 
     assert fetch_count == 2
     assert "PDF 2" in prepared_file.read_text(encoding="utf-8")
@@ -3624,7 +3624,7 @@ def test_prepare_materializes_remote_skill_directory(tmp_path: Path, monkeypatch
     monkeypatch.setattr(caps, "_fetch_github_directory", fake_directory)
 
     durable = scan_durable_state(toolang_root, "alice")
-    prepared = prepare.build_prepared_state(durable)
+    prepared = watch.build_prepared_state(durable)
 
     assert (
         toolang_root / "agents" / "alice" / ".prepared" / "remote" / "skills" / "pdf" / "SKILL.md"
@@ -3651,8 +3651,8 @@ def test_prepare_materializes_remote_skill_from_program_use(tmp_path: Path, monk
     )
 
     durable = scan_durable_state(toolang_root, "alice")
-    prepared = prepare.build_prepared_state(durable)
-    live = load_live_state(prepared, enabled_loops=("reload",))
+    prepared = watch.build_prepared_state(durable)
+    live = load_live_state(prepared, enabled_features=("watch",))
 
     skill_path = toolang_root / "agents" / "alice" / ".prepared" / "remote" / "skills" / "fund" / "SKILL.md"
     assert skill_path.read_text(encoding="utf-8").startswith("---\ndescription: github://coinbase/")
@@ -3694,8 +3694,8 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
     )
 
     durable = scan_durable_state(toolang_root, "alice")
-    prepared = prepare.build_prepared_state(durable)
-    live = load_live_state(prepared, enabled_loops=("inspect",))
+    prepared = watch.build_prepared_state(durable)
+    live = load_live_state(prepared, enabled_features=("inspect",))
 
     psyche_path = toolang_root / "agents" / "alice" / ".prepared" / "inline" / "psyches" / "reviewer.md"
     assert psyche_path.read_text(encoding="utf-8") == "Prefer concrete findings."
@@ -3737,7 +3737,7 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("inspect",),
+        enabled_features=("inspect",),
     )
     app = _create_test_app(context)
     with TestClient(app) as client:
@@ -3801,7 +3801,7 @@ def test_prepare_rejects_duplicate_embedded_cap_names(tmp_path: Path) -> None:
 
     durable = scan_durable_state(toolang_root, "alice")
     with pytest.raises(ToolangError, match=r"Duplicate prompt name 'summarize'"):
-        prepare.build_prepared_state(durable)
+        watch.build_prepared_state(durable)
 
     assert not (
         toolang_root / "agents" / "alice" / ".prepared" / "inline" / "prompts" / "summarize.md"
@@ -3813,7 +3813,7 @@ def test_prepare_builds_program_into_private_lock(tmp_path: Path) -> None:
     _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
 
     durable = scan_durable_state(toolang_root, "alice")
-    prepared = prepare.build_prepared_state(durable)
+    prepared = watch.build_prepared_state(durable)
 
     assert prepared.program.agent_name == "alice"
     assert prepared.program.source_path == "agents/alice/alice.too"
@@ -3835,7 +3835,7 @@ def test_prepare_rewrites_legacy_private_lock_missing_program(tmp_path: Path) ->
     legacy_private_lock, legacy_private_files = build_visibility_lock(durable, visibility="private")
     write_prepared_lock(toolang_root, legacy_private_lock, files=legacy_private_files)
 
-    prepared = prepare.build_prepared_state(durable)
+    prepared = watch.build_prepared_state(durable)
 
     assert prepared.private_lock.program is not None
     assert prepared.private_lock.program.agent_name == "alice"
@@ -3871,15 +3871,15 @@ def test_runs_bind_latest_live_snapshot(tmp_path: Path) -> None:
         context = _build_context(
             toolang_root=toolang_root,
             agent_name="alice",
-            enabled_loops=("chat", "prepare", "reload"),
+            enabled_features=("chat", "watch"),
             runner=QueueRunner(delay_sec=0.03),
         )
 
         with _patched_runner_execution():
             async with _running_context(
                 context,
-                enabled_loops=("chat", "prepare", "reload"),
-                loop_intervals_ms={"prepare": 10.0},
+                enabled_features=("chat", "watch"),
+                loop_intervals_ms={"watch": 10.0},
             ):
                 first_fingerprint = context.live.fingerprint
                 context.runner.enqueue(
@@ -3908,7 +3908,7 @@ def test_runs_bind_latest_live_snapshot(tmp_path: Path) -> None:
                     list[dict[str, object]],
                     inspect.snapshot_context(
                         context,
-                        enabled_loops=("chat", "prepare", "reload"),
+                        enabled_features=("chat", "watch"),
                     )["completed_runs"],
                 )
                 fingerprints = [item["live_fingerprint"] for item in completed_runs]
@@ -3923,7 +3923,7 @@ def test_new_task_reloads_into_live_state_and_tasks_endpoint(tmp_path: Path) -> 
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("inspect", "prepare", "reload"),
+        enabled_features=("inspect", "watch"),
         runner=QueueRunner(delay_sec=0.0),
     )
     app = _create_test_app(context)
@@ -3937,7 +3937,7 @@ def test_new_task_reloads_into_live_state_and_tasks_endpoint(tmp_path: Path) -> 
         for _ in range(200):
             snapshot = inspect.snapshot_context(
                 context,
-                enabled_loops=("inspect", "prepare", "reload"),
+                enabled_features=("inspect", "watch"),
             )
             live = cast(dict[str, object], snapshot["live"])
             tasks = client.get("/api/v1/tasks").json()["items"]
@@ -3947,7 +3947,7 @@ def test_new_task_reloads_into_live_state_and_tasks_endpoint(tmp_path: Path) -> 
 
         snapshot = inspect.snapshot_context(
             context,
-            enabled_loops=("inspect", "prepare", "reload"),
+            enabled_features=("inspect", "watch"),
         )
         live = cast(dict[str, object], snapshot["live"])
         tasks = client.get("/api/v1/tasks").json()["items"]
@@ -3974,7 +3974,7 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("inspect",),
+        enabled_features=("inspect", "control"),
         runner=QueueRunner(delay_sec=0.0),
     )
     app = _create_test_app(context)
@@ -4086,7 +4086,7 @@ def test_jobs_api_projects_active_run_tasks_as_running(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("inspect",),
+        enabled_features=("inspect", "control"),
         runner=QueueRunner(delay_sec=0.0),
     )
     task = work.list_tasks(toolang_root, "alice")[0].document
@@ -4114,7 +4114,7 @@ def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("inspect",),
+        enabled_features=("inspect", "control"),
         runner=QueueRunner(delay_sec=0.0),
     )
     app = _create_test_app(context)
@@ -4218,12 +4218,12 @@ def test_new_task_reloads_and_pulse_runs_it(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("inspect", "prepare", "reload", "pulse"),
+        enabled_features=("inspect", "watch", "pulse"),
         runner=QueueRunner(delay_sec=0.0),
     )
-    context.config.set("loops.prepare.interval_ms", 10.0)
-    context.config.set("loops.reload.debounce_ms", 10.0)
-    context.config.set("loops.pulse.interval_ms", 10.0)
+    context.config.set("features.watch.interval_ms", 10.0)
+    context.config.set("features.watch.debounce_ms", 10.0)
+    context.config.set("features.pulse.interval_ms", 10.0)
     app = _create_test_app(context)
     completed: list[dict[str, object]] = []
 
@@ -4238,7 +4238,7 @@ def test_new_task_reloads_and_pulse_runs_it(tmp_path: Path) -> None:
                     list[dict[str, object]],
                     inspect.snapshot_context(
                         context,
-                        enabled_loops=("inspect", "prepare", "reload", "pulse"),
+                        enabled_features=("inspect", "watch", "pulse"),
                     )["completed_runs"],
                 )
                 if completed and completed[0]["origin"] == "task":
@@ -4269,7 +4269,7 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("pulse",),
+        enabled_features=("pulse",),
     )
     task_entry = work.list_tasks(toolang_root, "alice")[0]
     task = task_entry.document
@@ -4334,7 +4334,7 @@ def test_chore_run_includes_remote_task_sync_protocol_in_prompt_bundle(tmp_path:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("pulse",),
+        enabled_features=("pulse",),
     )
     chore = work.list_chores(toolang_root, "alice")[0].document
     bound = bind_run_request(
@@ -4372,7 +4372,7 @@ def test_pulse_marks_task_failed_when_finished_run_leaves_task_incomplete(tmp_pa
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("pulse",),
+        enabled_features=("pulse",),
     )
     task = work.list_tasks(toolang_root, "alice")[0].document
     claimed = work.claim_task(toolang_root / "agents" / "alice" / "tasks" / "review.md")
@@ -4452,7 +4452,7 @@ def test_pulse_leaves_done_task_active_until_manual_archive(tmp_path: Path) -> N
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("pulse",),
+        enabled_features=("pulse",),
     )
     task = work.list_tasks(toolang_root, "alice")[0].document
     claimed = work.claim_task(toolang_root / "agents" / "alice" / "tasks" / "review.md")
@@ -4527,7 +4527,7 @@ def test_pulse_reopens_done_mirror_task_when_remote_status_is_active(tmp_path: P
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("pulse",),
+        enabled_features=("pulse",),
     )
     task = work.list_tasks(toolang_root, "alice")[0].document
     claimed = work.claim_task(toolang_root / "agents" / "alice" / "tasks" / "review.md")
@@ -4578,7 +4578,7 @@ def test_assemble_run_input_prefers_thunk_model_over_activation_default(tmp_path
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat",),
+        enabled_features=("chat",),
     )
     context.model_environ = {"OPENAI_API_KEY": "secret"}
     context.config.set("models.default_selector", "openai/gpt-5@openai")
@@ -4602,7 +4602,7 @@ def test_assemble_run_input_accepts_explicit_run_model_within_allowed_set(tmp_pa
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat",),
+        enabled_features=("chat",),
     )
     context.model_environ = {"OPENAI_API_KEY": "secret"}
     context.config.set("models.allowed_selectors", ("openai/o3@openai", "openai/gpt-5@openai"))
@@ -4632,7 +4632,7 @@ def test_assemble_run_input_uses_activation_default_when_thunk_omits_one(tmp_pat
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat",),
+        enabled_features=("chat",),
     )
     context.config.set("models.default_selector", "openai/gpt-5@openai")
     bound = bind_run_request(
@@ -4655,7 +4655,7 @@ def test_assemble_run_input_hides_tools_for_invoke_runs(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat",),
+        enabled_features=("chat",),
     )
     context.config.set("models.default_selector", "openai/gpt-5@openai")
     invoke_bound = bind_run_request(
@@ -4699,7 +4699,7 @@ def test_assemble_run_input_uses_thunk_user_message_for_script_runs(tmp_path: Pa
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat",),
+        enabled_features=("chat",),
     )
     bound = bind_run_request(
         context,
@@ -4735,7 +4735,7 @@ def test_assemble_run_input_keeps_thread_messages_out_of_system_instructions(tmp
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat",),
+        enabled_features=("chat",),
     )
     bound = bind_run_request(
         context,
@@ -4773,7 +4773,7 @@ def test_assemble_run_input_expands_embedded_prompt_for_chat_message(tmp_path: P
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat",),
+        enabled_features=("chat",),
     )
     bound = bind_run_request(
         context,
@@ -4818,7 +4818,7 @@ def test_chat_run_prefers_named_chat_thunk_over_main(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat",),
+        enabled_features=("chat",),
     )
     bound = bind_run_request(
         context,
@@ -4859,7 +4859,7 @@ def test_chat_run_uses_default_template_when_chat_thunk_is_missing(tmp_path: Pat
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat",),
+        enabled_features=("chat",),
     )
     bound = bind_run_request(
         context,
@@ -4893,7 +4893,7 @@ def test_execute_run_rejects_thunk_model_outside_activation_allowlist(tmp_path: 
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat",),
+        enabled_features=("chat",),
     )
     context.model_environ = {"OPENAI_API_KEY": "secret"}
     context.config.set("models.allowed_selectors", ("openai/o3@openai",))
@@ -4925,7 +4925,7 @@ def test_execute_run_pre_start_failure_does_not_emit_persist_sink_error(tmp_path
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat",),
+        enabled_features=("chat",),
     )
     context.config.set("models.default_selector", "claude")
 
@@ -4997,7 +4997,7 @@ def test_chat_accepts_structured_message_parts_and_model_selector(tmp_path: Path
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat", "inspect"),
+        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -5136,7 +5136,7 @@ def test_run_input_uses_text_history_and_prior_tool_context(tmp_path: Path) -> N
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_loops=("chat",),
+        enabled_features=("chat",),
     )
     previous = context.store.start_run(
         run_id="run-previous",
@@ -5300,30 +5300,26 @@ def test_run_input_uses_text_history_and_prior_tool_context(tmp_path: Path) -> N
 async def _running_context(
     context: UptimeContext,
     *,
-    enabled_loops: tuple[str, ...],
+    enabled_features: tuple[str, ...],
     loop_intervals_ms: dict[str, float] | None = None,
 ):
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         stop_signal = asyncio.Event()
-        reload_signal = asyncio.Event()
         if loop_intervals_ms is not None:
-            for loop_name, interval_ms in loop_intervals_ms.items():
-                context.config.set(f"loops.{loop_name}.interval_ms", interval_ms)
+            for feature_name, interval_ms in loop_intervals_ms.items():
+                context.config.set(f"features.{feature_name}.interval_ms", interval_ms)
 
         background_tasks: list[asyncio.Task[None]] = []
-        if "pulse" in enabled_loops:
+        if "pulse" in enabled_features:
             background_tasks.append(pulse.spawn(context, stop_signal=stop_signal))
-        if "poll" in enabled_loops:
+        if "poll" in enabled_features:
             background_tasks.append(poll.spawn(context, stop_signal=stop_signal))
-        if "prepare" in enabled_loops:
-            background_tasks.append(prepare.spawn(context, stop_signal=stop_signal, reload_signal=reload_signal))
-        reload_task: asyncio.Task[None] | None = None
-        if "reload" in enabled_loops:
-            context.config.set("loops.reload.debounce_ms", 10.0)
-            reload_task = reload.spawn(context, stop_signal=stop_signal, reload_signal=reload_signal)
+        if "watch" in enabled_features:
+            context.config.set("features.watch.debounce_ms", 10.0)
+            background_tasks.append(watch.spawn(context, stop_signal=stop_signal))
         runner_task = None
-        if any(loop in RUN_LOOPS for loop in enabled_loops):
+        if any(feature in RUN_FEATURES for feature in enabled_features):
             runner_task = context.runner.spawn(context)
 
         try:
@@ -5331,9 +5327,6 @@ async def _running_context(
             yield
         finally:
             stop_signal.set()
-            if reload_task is not None:
-                with suppress(asyncio.CancelledError):
-                    await reload_task
             for task in background_tasks:
                 with suppress(asyncio.CancelledError):
                     await task
@@ -5349,8 +5342,8 @@ async def _running_context(
 def _create_test_app(context: UptimeContext) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        enabled_loops = cast(tuple[str, ...], context.config.require("loops.enabled"))
-        async with _running_context(context, enabled_loops=enabled_loops):
+        enabled_features = cast(tuple[str, ...], context.config.require("features.enabled"))
+        async with _running_context(context, enabled_features=enabled_features):
             yield
 
     return create_app(context, lifespan=lifespan)
@@ -5360,14 +5353,14 @@ def _build_context(
     *,
     toolang_root: Path,
     agent_name: str,
-    enabled_loops: tuple[str, ...],
+    enabled_features: tuple[str, ...],
     runner: QueueRunner | None = None,
     channel_bindings: dict[str, ChannelBinding] | None = None,
     channel_plugins: dict[str, ChannelPlugin] | None = None,
 ) -> UptimeContext:
     durable = scan_durable_state(toolang_root, agent_name)
-    prepared = prepare.build_prepared_state(durable)
-    live = load_live_state(prepared, enabled_loops=enabled_loops)
+    prepared = watch.build_prepared_state(durable)
+    live = load_live_state(prepared, enabled_features=enabled_features)
     store = ExecutionStore(execution_db_path(toolang_root, agent_name))
     return UptimeContext(
         root=toolang_root,
@@ -5395,11 +5388,11 @@ def _build_context(
                 "server.host": "127.0.0.1",
                 "server.port": 8765,
                 "server.endpoint": "http://127.0.0.1:8765",
-                "loops.enabled": enabled_loops,
-                "loops.pulse.interval_ms": pulse.DEFAULT_INTERVAL_MS,
-                "loops.poll.interval_ms": poll.DEFAULT_INTERVAL_MS,
-                "loops.prepare.interval_ms": prepare.DEFAULT_INTERVAL_MS,
-                "loops.reload.debounce_ms": reload.DEFAULT_DEBOUNCE_MS,
+                "features.enabled": enabled_features,
+                "features.pulse.interval_ms": pulse.DEFAULT_INTERVAL_MS,
+                "features.poll.interval_ms": poll.DEFAULT_INTERVAL_MS,
+                "features.watch.interval_ms": watch.DEFAULT_INTERVAL_MS,
+                "features.watch.debounce_ms": watch.DEFAULT_DEBOUNCE_MS,
                 "runtime.sandbox": "none",
             }
         ),
@@ -5427,7 +5420,7 @@ async def _wait_for_active_run(context: UptimeContext) -> None:
     for _ in range(100):
         live = cast(
             dict[str, object],
-            inspect.snapshot_context(context, enabled_loops=context.live.enabled_loops)[
+            inspect.snapshot_context(context, enabled_features=context.live.enabled_features)[
                 "live"
             ],
         )

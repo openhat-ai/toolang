@@ -24,7 +24,7 @@ from ..config.log import DEFAULT_AGENT_LOG_SPEC, configure_logging
 from ..config.log_spec import PY_LOG_ENV_VAR
 from ..execution.model import DEFAULT_MODEL_SELECTOR
 from ..execution.records import UpdateKind
-from ..loops import prepare as prepare_loop
+from ..features import watch as watch_feature
 from ..models.discovery import (
     default_provider_api_key_env,
     default_provider_base_url,
@@ -49,12 +49,12 @@ from .utils import (
     _echo_pairs_table,
     _echo_table,
     _format_runtime_row,
-    _normalize_loop_option,
+    _normalize_feature_option,
     _parse_utc_timestamp,
     _required_prefix_agent,
     _required_runtime_agent,
     _runtime_environ_for_agent,
-    _runtime_loops,
+    _runtime_features,
     _runtime_value,
     _toolang_root,
     _ui_base_url,
@@ -258,9 +258,9 @@ def info_agent(
     if status.sandbox:
         rows.append(("Sandbox", status.sandbox))
     if status.status == "running":
-        loops_text = _runtime_loops(runtime_state)
+        loops_text = _runtime_features(runtime_state)
         if loops_text is not None:
-            rows.append(("Loops", loops_text))
+            rows.append(("Features", loops_text))
     message = _runtime_value(runtime_state.get("message"))
     pid_text = agents.runtime_pid_label(runtime_state)
     if pid_text is not None and status.status != "stopped":
@@ -300,9 +300,9 @@ def run_agent(
             help="Allow a model selector for this activation. Repeat to allow multiple; the first becomes default.",
         ),
     ] = None,
-    loops: Annotated[
+    features: Annotated[
         list[str] | None,
-        typer.Option("--loop", help="Runtime loop to enable. Repeat or pass CSV."),
+        typer.Option("--feature", help="Runtime feature to enable. Repeat or pass CSV."),
     ] = None,
     port: Annotated[int | None, typer.Option(help="Port to listen on.")] = None,
     host: Annotated[str, typer.Option(help="Host interface to bind.")] = "127.0.0.1",
@@ -323,7 +323,7 @@ def run_agent(
     ] = False,
 ) -> None:
     selector = _required_runtime_agent(ctx, agent)
-    normalized_loops = _normalize_loop_option(loops)
+    normalized_features = _normalize_feature_option(features)
     root = _context_root(ctx)
     progress = make_cli_progress()
     try:
@@ -349,7 +349,7 @@ def run_agent(
                     models=models,
                     dev=dev,
                     sandbox_child=sandbox_child,
-                    loop_names=normalized_loops,
+                    feature_names=normalized_features,
                     log_spec=effective_log_spec,
                     environ=environ,
                     progress=None,
@@ -380,9 +380,9 @@ def start_agent(
             help="Allow a model selector for this activation. Repeat to allow multiple; the first becomes default.",
         ),
     ] = None,
-    loops: Annotated[
+    features: Annotated[
         list[str] | None,
-        typer.Option("--loop", help="Runtime loop to enable. Repeat or pass CSV."),
+        typer.Option("--feature", help="Runtime feature to enable. Repeat or pass CSV."),
     ] = None,
     port: Annotated[int | None, typer.Option(help="Port to listen on.")] = None,
     host: Annotated[str, typer.Option(help="Host interface to bind.")] = "127.0.0.1",
@@ -404,7 +404,7 @@ def start_agent(
         raise click.ClickException("start only supports local agent names; clone the remote source first")
     agent_name = parsed_selector.name or ""
     root = _context_root(ctx)
-    normalized_loops = _normalize_loop_option(loops)
+    normalized_features = _normalize_feature_option(features)
     progress = make_cli_progress()
     existing = agents.get_agent_status(root, agent_name, ui_base_url=_ui_base_url())
     if existing is not None and existing.status in {"running", "preparing", "starting"}:
@@ -425,7 +425,7 @@ def start_agent(
         sandbox=sandbox,
         models=models,
         dev=dev,
-        loop_names=normalized_loops,
+        feature_names=normalized_features,
         log_spec=explicit_log_spec,
         environ=environ,
     )
@@ -438,7 +438,7 @@ def start_agent(
         detail=agent_name,
     )
     durable = _wrap_user_error(scan_durable_state, root, agent_name)
-    _wrap_user_error(prepare_loop.build_prepared_state, durable, progress=as_progress_sink(progress))
+    _wrap_user_error(watch_feature.build_prepared_state, durable, progress=as_progress_sink(progress))
     emit_progress(
         as_progress_sink(progress),
         id="startup.prepare",
