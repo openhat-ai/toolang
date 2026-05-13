@@ -88,6 +88,7 @@ from toolang.execution.runner import QueueRunner, RunOutcome, RunRequest, RunSub
 from toolang.execution.db import ExecutionStore, execution_db_path
 from toolang.execution.stream import RuntimeEventBus
 from toolang.loops import chat as chat_loop, inspect, poll, prepare, pulse, reload
+from toolang.loops.streaming import ShutdownAwareStreamingResponse
 from toolang.state.durable import scan_durable_state
 from toolang.state.live import load_live_state
 from toolang.state.prepared import load_prepared_state, write_prepared_lock
@@ -1498,33 +1499,46 @@ def test_chat_stream_emits_before_run_completion(tmp_path: Path) -> None:
 
 
 def test_chat_guarded_stream_swallows_cancelled_error() -> None:
-    class _Request:
-        async def is_disconnected(self) -> bool:
-            return False
-
     async def _run() -> list[str]:
         async def broken():
             raise asyncio.CancelledError()
             yield ""
 
-        return [chunk async for chunk in chat_loop._guarded_stream(_Request(), broken())]
+        return [chunk async for chunk in chat_loop._guarded_stream(broken())]
 
     assert asyncio.run(_run()) == []
 
 
 def test_inspect_guarded_stream_swallows_cancelled_error() -> None:
-    class _Request:
-        async def is_disconnected(self) -> bool:
-            return False
-
     async def _run() -> list[str]:
         async def broken():
             raise asyncio.CancelledError()
             yield ""
 
-        return [chunk async for chunk in inspect._guarded_stream(_Request(), broken())]
+        return [chunk async for chunk in inspect._guarded_stream(broken())]
 
     assert asyncio.run(_run()) == []
+
+
+def test_shutdown_aware_streaming_response_stops_when_shutdown_starts() -> None:
+    shutdown_signal = threading.Event()
+    response = ShutdownAwareStreamingResponse(
+        iter(()),
+        shutdown_signal=shutdown_signal,
+        disconnect_poll_sec=0.001,
+    )
+
+    async def receive() -> dict[str, str]:
+        await asyncio.sleep(1)
+        return {"type": "http.request"}
+
+    async def _run() -> None:
+        task = asyncio.create_task(response.listen_for_disconnect(receive))
+        await asyncio.sleep(0.01)
+        shutdown_signal.set()
+        await asyncio.wait_for(task, timeout=0.1)
+
+    asyncio.run(_run())
 
 
 def test_chat_stream_allows_tool_only_turns(tmp_path: Path) -> None:
@@ -2175,14 +2189,14 @@ def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
         lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
     )
 
-    def fake_uvicorn_run(app, *, host: str, port: int, log_config, timeout_graceful_shutdown: int) -> None:
+    def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal) -> None:
         captured["app"] = app
         captured["host"] = host
         captured["port"] = port
         captured["log_config"] = log_config
-        captured["timeout_graceful_shutdown"] = timeout_graceful_shutdown
+        captured["shutdown_signal"] = shutdown_signal
 
-    monkeypatch.setattr("toolang.up.uvicorn.run", fake_uvicorn_run)
+    monkeypatch.setattr("toolang.up._run_uvicorn_app", fake_run_uvicorn_app)
 
     result = run_experiments_up(
         toolang_root=toolang_root,
@@ -2195,7 +2209,7 @@ def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
     assert result == 0
     assert captured["host"] == "0.0.0.0"
     assert captured["port"] == 43210
-    assert captured["timeout_graceful_shutdown"] == up_module.UVICORN_GRACEFUL_SHUTDOWN_SEC
+    assert isinstance(captured["shutdown_signal"], threading.Event)
 
 
 def test_up_reuses_previous_agent_port_when_unspecified(tmp_path: Path, monkeypatch) -> None:
@@ -2215,14 +2229,14 @@ def test_up_reuses_previous_agent_port_when_unspecified(tmp_path: Path, monkeypa
         lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
     )
 
-    def fake_uvicorn_run(app, *, host: str, port: int, log_config, timeout_graceful_shutdown: int) -> None:
+    def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal) -> None:
         captured["app"] = app
         captured["host"] = host
         captured["port"] = port
         captured["log_config"] = log_config
-        captured["timeout_graceful_shutdown"] = timeout_graceful_shutdown
+        captured["shutdown_signal"] = shutdown_signal
 
-    monkeypatch.setattr("toolang.up.uvicorn.run", fake_uvicorn_run)
+    monkeypatch.setattr("toolang.up._run_uvicorn_app", fake_run_uvicorn_app)
 
     result = run_experiments_up(
         toolang_root=toolang_root,
@@ -2235,7 +2249,7 @@ def test_up_reuses_previous_agent_port_when_unspecified(tmp_path: Path, monkeypa
     assert result == 0
     assert captured["host"] == "127.0.0.1"
     assert captured["port"] == 53322
-    assert captured["timeout_graceful_shutdown"] == up_module.UVICORN_GRACEFUL_SHUTDOWN_SEC
+    assert isinstance(captured["shutdown_signal"], threading.Event)
 
 
 def test_up_falls_back_when_previous_agent_port_is_unavailable(
@@ -2261,14 +2275,14 @@ def test_up_falls_back_when_previous_agent_port_is_unavailable(
             lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
         )
 
-        def fake_uvicorn_run(app, *, host: str, port: int, log_config, timeout_graceful_shutdown: int) -> None:
+        def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal) -> None:
             captured["app"] = app
             captured["host"] = host
             captured["port"] = port
             captured["log_config"] = log_config
-            captured["timeout_graceful_shutdown"] = timeout_graceful_shutdown
+            captured["shutdown_signal"] = shutdown_signal
 
-        monkeypatch.setattr("toolang.up.uvicorn.run", fake_uvicorn_run)
+        monkeypatch.setattr("toolang.up._run_uvicorn_app", fake_run_uvicorn_app)
 
         result = run_experiments_up(
             toolang_root=toolang_root,
@@ -2281,7 +2295,7 @@ def test_up_falls_back_when_previous_agent_port_is_unavailable(
     assert result == 0
     assert captured["host"] == "127.0.0.1"
     assert captured["port"] == 43210
-    assert captured["timeout_graceful_shutdown"] == up_module.UVICORN_GRACEFUL_SHUTDOWN_SEC
+    assert isinstance(captured["shutdown_signal"], threading.Event)
 
 
 def test_up_falls_back_when_stopped_agent_port_is_unavailable(tmp_path: Path, monkeypatch) -> None:
@@ -2312,12 +2326,12 @@ def test_up_falls_back_when_stopped_agent_port_is_unavailable(tmp_path: Path, mo
         lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
     )
 
-    def fake_uvicorn_run(app, *, host: str, port: int, log_config, timeout_graceful_shutdown: int) -> None:
+    def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal) -> None:
         captured["host"] = host
         captured["port"] = port
-        captured["timeout_graceful_shutdown"] = timeout_graceful_shutdown
+        captured["shutdown_signal"] = shutdown_signal
 
-    monkeypatch.setattr("toolang.up.uvicorn.run", fake_uvicorn_run)
+    monkeypatch.setattr("toolang.up._run_uvicorn_app", fake_run_uvicorn_app)
 
     result = run_experiments_up(
         toolang_root=toolang_root,
@@ -2330,7 +2344,7 @@ def test_up_falls_back_when_stopped_agent_port_is_unavailable(tmp_path: Path, mo
     assert result == 0
     assert captured["host"] == "127.0.0.1"
     assert captured["port"] == 43210
-    assert captured["timeout_graceful_shutdown"] == up_module.UVICORN_GRACEFUL_SHUTDOWN_SEC
+    assert isinstance(captured["shutdown_signal"], threading.Event)
 
 
 def test_resolve_runtime_port_does_not_wait_for_stopped_preferred_port(
@@ -2416,14 +2430,14 @@ def test_up_uses_cors_origins_from_root_config(tmp_path: Path, monkeypatch) -> N
     )
     captured: dict[str, object] = {}
 
-    def fake_uvicorn_run(app, *, host: str, port: int, log_config, timeout_graceful_shutdown: int) -> None:
+    def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal) -> None:
         captured["app"] = app
         captured["host"] = host
         captured["port"] = port
         captured["log_config"] = log_config
-        captured["timeout_graceful_shutdown"] = timeout_graceful_shutdown
+        captured["shutdown_signal"] = shutdown_signal
 
-    monkeypatch.setattr("toolang.up.uvicorn.run", fake_uvicorn_run)
+    monkeypatch.setattr("toolang.up._run_uvicorn_app", fake_run_uvicorn_app)
 
     result = run_experiments_up(
         toolang_root=toolang_root,
@@ -2435,7 +2449,7 @@ def test_up_uses_cors_origins_from_root_config(tmp_path: Path, monkeypatch) -> N
     )
 
     assert result == 0
-    assert captured["timeout_graceful_shutdown"] == up_module.UVICORN_GRACEFUL_SHUTDOWN_SEC
+    assert isinstance(captured["shutdown_signal"], threading.Event)
     app = cast(FastAPI, captured["app"])
     with TestClient(app) as client:
         response = client.get(
@@ -2487,12 +2501,12 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
         def stop(self, state: SandboxState, *, force: bool = False) -> None:
             del state, force
 
-    def fail_uvicorn_run(*args, **kwargs) -> None:
-        raise AssertionError("uvicorn.run should not be called for managed sandboxes")
+    def fail_run_uvicorn_app(*args, **kwargs) -> None:
+        raise AssertionError("_run_uvicorn_app should not be called for managed sandboxes")
 
     monkeypatch.setattr("toolang.up.create_sandbox_plugin", lambda name, config=None: FakeSandbox())
     monkeypatch.setattr("toolang.up._wait_for_sandbox_ready", lambda **kwargs: captured.setdefault("ready", kwargs))
-    monkeypatch.setattr("toolang.up.uvicorn.run", fail_uvicorn_run)
+    monkeypatch.setattr("toolang.up._run_uvicorn_app", fail_run_uvicorn_app)
 
     result = run_experiments_up(
         toolang_root=toolang_root,
@@ -3018,11 +3032,11 @@ def test_up_reads_web_config_without_validating_experiments_caps(tmp_path: Path,
     )
     captured: dict[str, object] = {}
 
-    def fake_uvicorn_run(app, *, host: str, port: int, log_config, timeout_graceful_shutdown: int) -> None:
+    def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal) -> None:
         captured["app"] = app
-        captured["timeout_graceful_shutdown"] = timeout_graceful_shutdown
+        captured["shutdown_signal"] = shutdown_signal
 
-    monkeypatch.setattr("toolang.up.uvicorn.run", fake_uvicorn_run)
+    monkeypatch.setattr("toolang.up._run_uvicorn_app", fake_run_uvicorn_app)
 
     result = run_experiments_up(
         toolang_root=toolang_root,
@@ -3034,7 +3048,7 @@ def test_up_reads_web_config_without_validating_experiments_caps(tmp_path: Path,
     )
 
     assert result == 0
-    assert captured["timeout_graceful_shutdown"] == up_module.UVICORN_GRACEFUL_SHUTDOWN_SEC
+    assert isinstance(captured["shutdown_signal"], threading.Event)
     app = cast(FastAPI, captured["app"])
     with TestClient(app) as client:
         response = client.get(

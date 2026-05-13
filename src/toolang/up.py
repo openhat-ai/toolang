@@ -15,12 +15,15 @@ import shlex
 import socket
 import sys
 import time
+import threading
 import tomllib
+from types import FrameType
 from typing import Any, Literal, TypeVar, cast
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+from uvicorn.main import STARTUP_FAILURE
 
 from . import agents
 from toolang.base.protocols.channel import ChannelPlugin
@@ -425,6 +428,7 @@ def create_app(
     context: UptimeContext,
     *,
     lifespan: Callable[[FastAPI], AbstractAsyncContextManager[None]] | None = None,
+    shutdown_signal: threading.Event | None = None,
 ) -> FastAPI:
     """Create one FastAPI app for an existing loop context."""
 
@@ -446,6 +450,7 @@ def create_app(
     )
     app.state.runtime = context
     app.state.enabled_loops = enabled_loops
+    app.state.shutdown_signal = shutdown_signal
 
     @app.get("/healthz", tags=["agent"], summary="Health Check")
     def healthz() -> dict[str, object]:
@@ -765,6 +770,7 @@ def _up_local(
         },
     )
     endpoint = f"http://{endpoint_host}:{port}"
+    shutdown_signal = threading.Event()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -832,15 +838,53 @@ def _up_local(
             )
             context.store.close()
 
-    app = create_app(context, lifespan=lifespan)
-    uvicorn.run(
+    app = create_app(context, lifespan=lifespan, shutdown_signal=shutdown_signal)
+    _run_uvicorn_app(
         app,
         host=host,
         port=port,
         log_config=build_uvicorn_log_config(level=log_spec or DEFAULT_LOG_LEVEL),
-        timeout_graceful_shutdown=UVICORN_GRACEFUL_SHUTDOWN_SEC,
+        shutdown_signal=shutdown_signal,
     )
     return 0
+
+
+class _ToolangServer(uvicorn.Server):
+    """Uvicorn server with one runtime-visible shutdown signal."""
+
+    def __init__(self, config: uvicorn.Config, *, shutdown_signal: threading.Event) -> None:
+        super().__init__(config=config)
+        self._shutdown_signal = shutdown_signal
+
+    def handle_exit(self, sig: int, frame: FrameType | None) -> None:
+        self._shutdown_signal.set()
+        super().handle_exit(sig, frame)
+
+
+def _run_uvicorn_app(
+    app: FastAPI,
+    *,
+    host: str,
+    port: int,
+    log_config: dict[str, object],
+    shutdown_signal: threading.Event,
+) -> None:
+    """Run one FastAPI app with signal-aware shutdown for long-lived streams."""
+
+    config = uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        log_config=log_config,
+        timeout_graceful_shutdown=UVICORN_GRACEFUL_SHUTDOWN_SEC,
+    )
+    server = _ToolangServer(config=config, shutdown_signal=shutdown_signal)
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        pass
+    if not server.started:
+        raise SystemExit(STARTUP_FAILURE)
 
 
 async def _finish_runtime_tasks(

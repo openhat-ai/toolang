@@ -7,10 +7,9 @@ from dataclasses import asdict
 from collections.abc import AsyncIterator, Container, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from toolang.base.types.message import Message, TextPart, message_summary, parts_to_data
@@ -39,10 +38,7 @@ from .. import agents, caps, templates, work
 from ..state.durable import scan_durable_state
 from ..state.prepared import PreparedEntry, load_prepared_state
 from ..state.pulse import PulseState
-
-
-class _DisconnectAwareRequest(Protocol):
-    async def is_disconnected(self) -> bool: ...
+from .streaming import ShutdownAwareStreamingResponse
 
 if TYPE_CHECKING:
     from ..up import UptimeContext
@@ -249,7 +245,7 @@ def create_router() -> APIRouter:
         }
 
     @router.get("/runs/{run_id}/stream", tags=["activity"], summary="Stream Run Events")
-    async def run_stream(request: Request, run_id: str, after: int | None = None) -> StreamingResponse:
+    async def run_stream(request: Request, run_id: str, after: int | None = None) -> ShutdownAwareStreamingResponse:
         context = request.app.state.runtime
         _run_or_404(context, run_id)
         return _event_stream_response(
@@ -404,7 +400,7 @@ def create_router() -> APIRouter:
         }
 
     @router.get("/threads/{thread_id}/stream", tags=["activity"], summary="Stream Thread Events")
-    async def thread_stream(request: Request, thread_id: str, after: int | None = None) -> StreamingResponse:
+    async def thread_stream(request: Request, thread_id: str, after: int | None = None) -> ShutdownAwareStreamingResponse:
         context = request.app.state.runtime
         _thread_or_404(context, thread_id)
         return _event_stream_response(
@@ -420,8 +416,12 @@ def create_router() -> APIRouter:
         }
 
     @router.get("/events/stream", tags=["activity"], summary="Stream Events")
-    async def events_stream(request: Request) -> StreamingResponse:
-        return StreamingResponse(_guarded_stream(request, _events_stream()), media_type="text/event-stream")
+    async def events_stream(request: Request) -> ShutdownAwareStreamingResponse:
+        return ShutdownAwareStreamingResponse(
+            _guarded_stream(_events_stream()),
+            shutdown_signal=getattr(request.app.state, "shutdown_signal", None),
+            media_type="text/event-stream",
+        )
 
     @router.get("/agent/events", tags=["activity"], summary="List Agent Events")
     async def agent_events(request: Request, after: int | None = None, limit: int = Query(default=100)) -> dict[str, object]:
@@ -433,7 +433,7 @@ def create_router() -> APIRouter:
         }
 
     @router.get("/agent/stream", tags=["activity"], summary="Stream Agent Events")
-    async def agent_stream(request: Request, after: int | None = None) -> StreamingResponse:
+    async def agent_stream(request: Request, after: int | None = None) -> ShutdownAwareStreamingResponse:
         context = request.app.state.runtime
         return _event_stream_response(
             request,
@@ -1409,9 +1409,10 @@ def _run_event_payload(run) -> dict[str, object]:
     }
 
 
-def _event_stream_response(request: Request, stream: AsyncIterator[str]) -> StreamingResponse:
-    return StreamingResponse(
-        _guarded_stream(request, stream),
+def _event_stream_response(request: Request, stream: AsyncIterator[str]) -> ShutdownAwareStreamingResponse:
+    return ShutdownAwareStreamingResponse(
+        _guarded_stream(stream),
+        shutdown_signal=getattr(request.app.state, "shutdown_signal", None),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -1490,13 +1491,10 @@ async def _events_stream() -> AsyncIterator[str]:
 
 
 async def _guarded_stream(
-    request: _DisconnectAwareRequest,
     stream: AsyncIterator[str],
 ) -> AsyncIterator[str]:
     try:
         async for chunk in stream:
-            if await request.is_disconnected():
-                return
             yield chunk
     except asyncio.CancelledError:
         return
