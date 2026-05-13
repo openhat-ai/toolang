@@ -19,7 +19,7 @@ class LiveState:
     private_fingerprint: str
     updated_at: str
     loaded_at: str
-    enabled_loops: tuple[str, ...]
+    enabled_features: tuple[str, ...]
     program: LiveProgram
     cap_entries: tuple[PreparedEntry, ...]
     job_entries: tuple[PreparedEntry, ...]
@@ -42,7 +42,7 @@ class LiveState:
             "private_fingerprint": self.private_fingerprint,
             "updated_at": self.updated_at,
             "loaded_at": self.loaded_at,
-            "enabled_loops": list(self.enabled_loops),
+            "enabled_features": list(self.enabled_features),
             "program": self.program.to_snapshot(),
             "caps": list(self.caps),
             "jobs": list(self.jobs),
@@ -56,7 +56,7 @@ class LiveState:
 def load_live_state(
     prepared: PreparedState,
     *,
-    enabled_loops: tuple[str, ...],
+    enabled_features: tuple[str, ...],
 ) -> LiveState:
     """Load one live state from prepared locks."""
 
@@ -66,7 +66,7 @@ def load_live_state(
         private_fingerprint=prepared.private_lock.fingerprint,
         updated_at=prepared.updated_at,
         loaded_at=datetime.now(timezone.utc).isoformat(),
-        enabled_loops=enabled_loops,
+        enabled_features=enabled_features,
         program=load_live_program(prepared.program),
         cap_entries=effective_cap_entries(prepared.shared_lock, prepared.private_lock),
         job_entries=active_job_entries(prepared.private_lock),

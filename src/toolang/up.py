@@ -45,44 +45,44 @@ from .execution.execute import execute_run
 from .execution.runner import QueueRunner, RunRequest, RunSubmission, RunOutcome
 from .execution.db import ExecutionStore, execution_db_path
 from .execution.stream import RuntimeEventBus
-from .loops import chat, control, hook, inspect, poll, prepare, pulse, reload
+from .features import chat, hook, poll, pulse, watch
+from .features.control import create_router as create_control_router
+from .features.inspect import create_router as create_inspect_router
 from .progress import ProgressSink
 from .state.durable import scan_durable_state
 from .state.live import LiveState, load_live_state
 from .state.prepared import PreparedEntry
 
-LoopName = Literal[
-    "chat", "pulse", "poll", "hook", "control", "inspect", "prepare", "reload"
+FeatureName = Literal[
+    "chat", "pulse", "poll", "hook", "control", "inspect", "watch"
 ]
 
-ALL_LOOPS: tuple[LoopName, ...] = (
+ALL_FEATURES: tuple[FeatureName, ...] = (
     "chat",
     "pulse",
     "poll",
     "hook",
     "control",
     "inspect",
-    "prepare",
-    "reload",
+    "watch",
 )
-DEFAULT_ENABLED_LOOPS: tuple[LoopName, ...] = (
+DEFAULT_ENABLED_FEATURES: tuple[FeatureName, ...] = (
     "chat",
     "pulse",
     "control",
     "inspect",
-    "prepare",
-    "reload",
+    "watch",
 )
-RUN_LOOPS = frozenset({"chat", "pulse", "poll", "hook"})
-HTTP_LOOPS = frozenset({"chat", "hook", "control", "inspect"})
-BACKGROUND_LOOPS: tuple[LoopName, ...] = ("pulse", "poll", "prepare", "reload")
+RUN_FEATURES = frozenset({"chat", "pulse", "poll", "hook"})
+HTTP_FEATURES = frozenset({"chat", "hook", "control", "inspect"})
+BACKGROUND_FEATURES: tuple[FeatureName, ...] = ("pulse", "poll", "watch")
 
-DEFAULT_LOOP_INTERVAL_MS: dict[str, float] = {
+DEFAULT_FEATURE_INTERVAL_MS: dict[str, float] = {
     "pulse": pulse.DEFAULT_INTERVAL_MS,
     "poll": poll.DEFAULT_INTERVAL_MS,
-    "prepare": prepare.DEFAULT_INTERVAL_MS,
+    "watch": watch.DEFAULT_INTERVAL_MS,
 }
-DEFAULT_RELOAD_DEBOUNCE_MS = reload.DEFAULT_DEBOUNCE_MS
+DEFAULT_WATCH_DEBOUNCE_MS = watch.DEFAULT_DEBOUNCE_MS
 RUNTIME_SHUTDOWN_TASK_TIMEOUT_SEC = 1.0
 UVICORN_GRACEFUL_SHUTDOWN_SEC = 1
 DEFAULT_CORS_ORIGINS = [
@@ -195,21 +195,21 @@ class UptimeContext:
 
     def enqueue_run(
         self,
-        loop_name: str,
+        feature_name: str,
         *,
         thunk: str,
         thread_id: str | None = None,
     ) -> int:
-        """Queue one run request for a run-producing loop."""
+        """Queue one run request for a run-producing feature."""
 
-        if loop_name not in RUN_LOOPS:
-            raise ValueError(f"loop does not produce runs: {loop_name}")
+        if feature_name not in RUN_FEATURES:
+            raise ValueError(f"feature does not produce runs: {feature_name}")
         from .execution.runner import RunRequest
 
         return self.runner.enqueue(
             RunRequest(
-                group=loop_name,
-                origin=loop_name,
+                group=feature_name,
+                origin=feature_name,
                 thread_id=thread_id,
                 thunk=thunk,
             )
@@ -217,14 +217,14 @@ class UptimeContext:
 
     def enqueue_delivery(
         self,
-        loop_name: str,
+        feature_name: str,
         binding_name: str,
         delivery: InboundDelivery,
     ) -> int:
         """Queue one run request produced by one channel delivery."""
 
-        if loop_name not in RUN_LOOPS:
-            raise ValueError(f"loop does not produce runs: {loop_name}")
+        if feature_name not in RUN_FEATURES:
+            raise ValueError(f"feature does not produce runs: {feature_name}")
         from .execution.runner import RunRequest
 
         bound = bind_delivery(binding_name, delivery)
@@ -233,7 +233,7 @@ class UptimeContext:
         metadata["sender"] = bound.sender
         return self.runner.enqueue(
             RunRequest(
-                group=loop_name,
+                group=feature_name,
                 origin=bound.origin,
                 thread_id=bound.thread_id,
                 thunk=bound.text,
@@ -388,7 +388,7 @@ class StartupSpec:
     host: str
     endpoint_host: str
     port: int
-    enabled_loops: tuple[LoopName, ...]
+    enabled_features: tuple[FeatureName, ...]
     sandbox_plugin: SandboxPlugin
     selector: SandboxSelector
     sandbox_config: dict[str, object]
@@ -430,9 +430,9 @@ def create_app(
     lifespan: Callable[[FastAPI], AbstractAsyncContextManager[None]] | None = None,
     shutdown_signal: threading.Event | None = None,
 ) -> FastAPI:
-    """Create one FastAPI app for an existing loop context."""
+    """Create one FastAPI app for an existing feature context."""
 
-    enabled_loops = cast(tuple[str, ...], context.config.require("loops.enabled"))
+    enabled_features = cast(tuple[str, ...], context.config.require("features.enabled"))
     raw_cors_origins = context.config.get("web.cors_allowed_origins")
     cors_origins = (
         [item for item in raw_cors_origins if isinstance(item, str) and item.strip()]
@@ -449,21 +449,21 @@ def create_app(
         allow_origins=cors_origins or None,
     )
     app.state.runtime = context
-    app.state.enabled_loops = enabled_loops
+    app.state.enabled_features = enabled_features
     app.state.shutdown_signal = shutdown_signal
 
     @app.get("/healthz", tags=["agent"], summary="Health Check")
     def healthz() -> dict[str, object]:
-        return {"ok": True, "enabled_loops": list(enabled_loops)}
+        return {"ok": True, "enabled_features": list(enabled_features)}
 
-    if "chat" in enabled_loops:
+    if "chat" in enabled_features:
         app.include_router(chat.create_router())
-    if "hook" in enabled_loops:
+    if "hook" in enabled_features:
         app.include_router(hook.create_router())
-    if "control" in enabled_loops:
-        app.include_router(control.create_router())
-    if "inspect" in enabled_loops:
-        app.include_router(inspect.create_router())
+    if "control" in enabled_features:
+        app.include_router(create_control_router())
+    if "inspect" in enabled_features:
+        app.include_router(create_inspect_router())
     return app
 
 
@@ -478,7 +478,7 @@ def up(
     models: Sequence[str] | None = None,
     dev: Path | None = None,
     sandbox_child: bool = False,
-    loop_names: Sequence[str] | None = None,
+    feature_names: Sequence[str] | None = None,
     log_spec: str | None = None,
     environ: Mapping[str, str],
     progress: ProgressSink | None = None,
@@ -495,7 +495,7 @@ def up(
         sandbox=sandbox,
         models=models,
         dev=dev,
-        loop_names=loop_names,
+        feature_names=feature_names,
         log_spec=log_spec,
         environ=environ,
     )
@@ -509,7 +509,7 @@ def up(
             host=spec.host,
             endpoint_host=spec.endpoint_host,
             port=spec.port,
-            enabled_loops=spec.enabled_loops,
+            enabled_features=spec.enabled_features,
             environ=environ,
             dev_artifact=spec.dev_artifact,
             model_selectors=spec.model_selectors,
@@ -520,7 +520,7 @@ def up(
         host=spec.host,
         endpoint_host=spec.endpoint_host,
         port=spec.port,
-        enabled_loops=spec.enabled_loops,
+        enabled_features=spec.enabled_features,
         environ=environ,
         sandbox_child=sandbox_child,
         model_selectors=spec.model_selectors,
@@ -558,7 +558,7 @@ def invoke(
     context = _load_runtime_context(
         toolang_root=toolang_root,
         agent_name=agent_name,
-        enabled_loops=(),
+        enabled_features=(),
         environ=environ,
         model_selectors=_normalize_model_selectors(models),
     )
@@ -593,7 +593,7 @@ def prepare_runtime(
     """Prepare one agent runtime without starting it."""
 
     durable = scan_durable_state(toolang_root, agent_name)
-    prepare.build_prepared_state(durable, progress=progress)
+    watch.build_prepared_state(durable, progress=progress)
 
 
 def resolve_startup(
@@ -606,13 +606,13 @@ def resolve_startup(
     sandbox: str | None = None,
     models: Sequence[str] | None = None,
     dev: Path | None = None,
-    loop_names: Sequence[str] | None = None,
+    feature_names: Sequence[str] | None = None,
     log_spec: str | None = None,
     environ: Mapping[str, str],
 ) -> StartupSpec:
     """Resolve one explicit startup request into stable runtime inputs."""
 
-    enabled_loops = normalize_loop_names(loop_names or DEFAULT_ENABLED_LOOPS)
+    enabled_features = normalize_feature_names(feature_names or DEFAULT_ENABLED_FEATURES)
     endpoint_host = endpoint_host or _default_endpoint_host(host)
     resolved_port = resolve_runtime_port(
         host=host,
@@ -658,7 +658,7 @@ def resolve_startup(
         host=host,
         endpoint_host=endpoint_host,
         port=resolved_port,
-        enabled_loops=enabled_loops,
+        enabled_features=enabled_features,
         sandbox_plugin=sandbox_plugin,
         selector=selector,
         sandbox_config=sandbox_config,
@@ -704,8 +704,8 @@ def build_run_argv(
         command.extend(["--dev", str(spec.dev_artifact)])
     if sandbox_child:
         command.append("--sandbox-child")
-    for loop_name in spec.enabled_loops:
-        command.extend(["--loop", loop_name])
+    for feature_name in spec.enabled_features:
+        command.extend(["--feature", feature_name])
     return tuple(command)
 
 
@@ -722,17 +722,17 @@ def _up_local(
     host: str,
     endpoint_host: str,
     port: int,
-    enabled_loops: tuple[LoopName, ...],
+    enabled_features: tuple[FeatureName, ...],
     environ: Mapping[str, str],
     sandbox_child: bool,
     model_selectors: tuple[str, ...],
     log_spec: str | None,
     progress: ProgressSink | None = None,
 ) -> int:
-    loop_intervals_ms = dict(DEFAULT_LOOP_INTERVAL_MS)
-    for loop_name in BACKGROUND_LOOPS:
-        if loop_name in loop_intervals_ms and loop_intervals_ms[loop_name] <= 0:
-            raise ValueError(f"loop interval must be positive: {loop_name}")
+    loop_intervals_ms = dict(DEFAULT_FEATURE_INTERVAL_MS)
+    for feature_name in BACKGROUND_FEATURES:
+        if feature_name in loop_intervals_ms and loop_intervals_ms[feature_name] <= 0:
+            raise ValueError(f"feature interval must be positive: {feature_name}")
     cors_allowed_origins = resolve_cors_allowed_origins(
         toolang_root,
         environ=environ,
@@ -741,7 +741,7 @@ def _up_local(
     context = _load_runtime_context(
         toolang_root=toolang_root,
         agent_name=agent_name,
-        enabled_loops=enabled_loops,
+        enabled_features=enabled_features,
         environ=environ,
         model_selectors=model_selectors,
         host=host,
@@ -753,7 +753,7 @@ def _up_local(
     context.store.append_update(
         kind="started",
         payload={
-            "loops": list(enabled_loops),
+            "features": list(enabled_features),
             "live_fingerprint": live.fingerprint,
         },
         created_at=started_at,
@@ -764,7 +764,7 @@ def _up_local(
         type="agent_start",
         payload={
             "agent": context.name,
-            "loops": list(enabled_loops),
+            "features": list(enabled_features),
             "live_fingerprint": live.fingerprint,
             "started_at": started_at,
         },
@@ -775,7 +775,6 @@ def _up_local(
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         stop_signal = asyncio.Event()
-        reload_signal = asyncio.Event()
         try:
             if not sandbox_child:
                 agents.write_runtime_state(
@@ -784,29 +783,27 @@ def _up_local(
                     endpoint=endpoint,
                     started_at=started_at,
                     pid=os.getpid(),
-                    loops=enabled_loops,
+                    features=enabled_features,
                     models=model_selectors,
                 )
             bg_tasks: list[asyncio.Task[None]] = []
-            if "pulse" in enabled_loops:
+            if "pulse" in enabled_features:
                 bg_tasks.append(pulse.spawn(context, stop_signal=stop_signal))
-            if "poll" in enabled_loops:
+            if "poll" in enabled_features:
                 bg_tasks.append(poll.spawn(context, stop_signal=stop_signal))
-            if "prepare" in enabled_loops:
-                bg_tasks.append(prepare.spawn(context, stop_signal=stop_signal, reload_signal=reload_signal))
-            if "reload" in enabled_loops:
-                bg_tasks.append(reload.spawn(context, stop_signal=stop_signal, reload_signal=reload_signal))
+            if "watch" in enabled_features:
+                bg_tasks.append(watch.spawn(context, stop_signal=stop_signal))
 
             runner_task = None
-            if any(loop in RUN_LOOPS for loop in enabled_loops):
+            if any(feature in RUN_FEATURES for feature in enabled_features):
                 runner_task = context.runner.spawn(context)
             await asyncio.sleep(0)
             logger.info(
-                "runtime ready agent=%s addr=http://%s:%s loops=%s live=%s",
+                "runtime ready agent=%s addr=http://%s:%s features=%s live=%s",
                 context.name,
                 endpoint_host,
                 port,
-                ",".join(enabled_loops),
+                ",".join(enabled_features),
                 context.live.fingerprint[:12],
             )
             yield
@@ -917,7 +914,7 @@ def _load_runtime_context(
     *,
     toolang_root: Path,
     agent_name: str,
-    enabled_loops: tuple[LoopName, ...],
+    enabled_features: tuple[FeatureName, ...],
     environ: Mapping[str, str],
     model_selectors: Sequence[str] = (),
     host: str = "127.0.0.1",
@@ -932,8 +929,8 @@ def _load_runtime_context(
     )
     runtime_state = agents.load_runtime_state(toolang_root, agent_name) or {}
     durable = scan_durable_state(toolang_root, agent_name)
-    prepared_state = prepare.build_prepared_state(durable, progress=progress)
-    live = load_live_state(prepared_state, enabled_loops=enabled_loops)
+    prepared_state = watch.build_prepared_state(durable, progress=progress)
+    live = load_live_state(prepared_state, enabled_features=enabled_features)
     normalized_model_selectors = _normalize_model_selectors(model_selectors)
     default_model_selector = normalized_model_selectors[0] if normalized_model_selectors else None
     config = UptimeConfig(
@@ -941,11 +938,11 @@ def _load_runtime_context(
             "server.host": host,
             "server.port": port,
             "server.endpoint": _runtime_endpoint_value(host=host, port=port, runtime_state=runtime_state),
-            "loops.enabled": tuple(enabled_loops),
-            "loops.pulse.interval_ms": DEFAULT_LOOP_INTERVAL_MS["pulse"],
-            "loops.poll.interval_ms": DEFAULT_LOOP_INTERVAL_MS["poll"],
-            "loops.prepare.interval_ms": DEFAULT_LOOP_INTERVAL_MS["prepare"],
-            "loops.reload.debounce_ms": DEFAULT_RELOAD_DEBOUNCE_MS,
+            "features.enabled": tuple(enabled_features),
+            "features.pulse.interval_ms": DEFAULT_FEATURE_INTERVAL_MS["pulse"],
+            "features.poll.interval_ms": DEFAULT_FEATURE_INTERVAL_MS["poll"],
+            "features.watch.interval_ms": DEFAULT_FEATURE_INTERVAL_MS["watch"],
+            "features.watch.debounce_ms": DEFAULT_WATCH_DEBOUNCE_MS,
             "web.cors_allowed_origins": list(cors_allowed_origins),
             "models.default_selector": default_model_selector,
             "models.allowed_selectors": normalized_model_selectors,
@@ -1104,7 +1101,7 @@ def _up_managed_sandbox(
     host: str,
     endpoint_host: str,
     port: int,
-    enabled_loops: tuple[LoopName, ...],
+    enabled_features: tuple[FeatureName, ...],
     environ: Mapping[str, str],
     dev_artifact: Path | None,
     model_selectors: tuple[str, ...],
@@ -1118,7 +1115,7 @@ def _up_managed_sandbox(
         host=host,
         endpoint_host=endpoint_host,
         port=port,
-        enabled_loops=enabled_loops,
+        enabled_features=enabled_features,
         sandbox_plugin=plugin,
         selector=selector,
         sandbox_config=dict(sandbox_config),
@@ -1132,7 +1129,7 @@ def _up_managed_sandbox(
         started_at=started_at,
         pid=os.getpid(),
         sandbox=initial_sandbox_state,
-        loops=enabled_loops,
+        features=enabled_features,
         models=model_selectors,
         status="preparing",
     )
@@ -1157,7 +1154,7 @@ def _up_managed_sandbox(
         endpoint_host=endpoint_host,
         port=port,
         endpoint=endpoint,
-        loop_names=enabled_loops,
+        feature_names=enabled_features,
         run_command=(
             "toolang",
             *build_run_argv(
@@ -1182,7 +1179,7 @@ def _up_managed_sandbox(
             started_at=started_at,
             pid=os.getpid(),
             sandbox=plan.state.to_data() if plan.state is not None else initial_sandbox_state,
-            loops=enabled_loops,
+            features=enabled_features,
             models=model_selectors,
             status="starting",
         )
@@ -1209,7 +1206,7 @@ def _up_managed_sandbox(
             started_at=started_at,
             pid=os.getpid(),
             sandbox=failed_sandbox_state,
-            loops=enabled_loops,
+            features=enabled_features,
             models=model_selectors,
             status="failed",
             message=str(exc),
@@ -1222,7 +1219,7 @@ def _up_managed_sandbox(
         started_at=started_at,
         pid=None,
         sandbox=start.state.to_data(),
-        loops=enabled_loops,
+        features=enabled_features,
         models=model_selectors,
         status="running",
     )
@@ -1253,14 +1250,14 @@ def _normalize_model_selectors(models: Sequence[str] | None) -> tuple[str, ...]:
     return tuple(result)
 
 
-def normalize_loop_names(loop_names: Sequence[str]) -> tuple[LoopName, ...]:
-    """Validate and de-duplicate loop names while preserving order."""
+def normalize_feature_names(feature_names: Sequence[str]) -> tuple[FeatureName, ...]:
+    """Validate and de-duplicate feature names while preserving order."""
 
-    enabled: list[LoopName] = []
-    for loop_name in loop_names:
-        if loop_name not in ALL_LOOPS:
-            raise ValueError(f"unknown loop: {loop_name}")
-        typed_name = cast(LoopName, loop_name)
+    enabled: list[FeatureName] = []
+    for feature_name in feature_names:
+        if feature_name not in ALL_FEATURES:
+            raise ValueError(f"unknown feature: {feature_name}")
+        typed_name = cast(FeatureName, feature_name)
         if typed_name not in enabled:
             enabled.append(typed_name)
     return tuple(enabled)

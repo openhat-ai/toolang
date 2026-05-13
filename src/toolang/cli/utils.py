@@ -382,8 +382,8 @@ def _runtime_value(value: object) -> str:
     return value
 
 
-def _runtime_loops(runtime_state: dict[str, object]) -> str | None:
-    raw = runtime_state.get("loops")
+def _runtime_features(runtime_state: dict[str, object]) -> str | None:
+    raw = runtime_state.get("features")
     if not isinstance(raw, list):
         return None
     values = [str(item).strip() for item in raw if str(item).strip()]
@@ -416,15 +416,15 @@ def _format_runtime_row(status: agents.AgentStatus) -> str:
     return f"{status.name}\t{status.status}\t{status.api_url or '-'}\t{status.webui_url or '-'}"
 
 
-def _normalize_loop_option(loops: list[str] | None) -> list[str] | None:
-    if loops is None:
+def _normalize_feature_option(features: list[str] | None) -> list[str] | None:
+    if features is None:
         return None
     normalized: list[str] = []
-    for item in loops:
+    for item in features:
         for value in item.split(","):
-            loop_name = value.strip()
-            if loop_name:
-                normalized.append(loop_name)
+            feature_name = value.strip()
+            if feature_name:
+                normalized.append(feature_name)
     return normalized
 
 

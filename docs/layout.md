@@ -72,7 +72,7 @@ Key paths:
 
 | Path           | Purpose                                                      |
 | -------------- | ------------------------------------------------------------ |
-| `runtime.json` | Runtime status, endpoint, sandbox summary, and enabled loops |
+| `runtime.json` | Runtime status, endpoint, sandbox summary, and enabled features |
 | `agent.log`    | Runtime log                                                  |
 | `execution.db` | Runs, steps, updates, and instruction blobs                  |
 | `ids.json`     | Local id allocator state                                     |

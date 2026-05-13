@@ -1,4 +1,4 @@
-"""Streaming response helpers for agent HTTP loops."""
+"""Streaming response helpers for agent HTTP features."""
 
 from __future__ import annotations
 
