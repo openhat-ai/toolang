@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import asdict
-from typing import TYPE_CHECKING
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from toolang.base.error import ToolangError
@@ -19,6 +19,7 @@ from ..execution.records import ThreadPeer
 from ..execution.response import BufferedResponseSink, SseResponseSink
 from ..execution.runner import RunRequest
 from ..execution.runner import RunOutcome
+from .streaming import ShutdownAwareStreamingResponse
 
 if TYPE_CHECKING:
     from ..up import UptimeContext
@@ -116,11 +117,12 @@ def create_router() -> APIRouter:
         }
 
     @router.post("/chat/stream", summary="Submit Chat Stream")
-    async def submit_chat_stream(request: Request, payload: ChatRequest) -> StreamingResponse:
+    async def submit_chat_stream(request: Request, payload: ChatRequest) -> ShutdownAwareStreamingResponse:
         context = request.app.state.runtime
         thread_id = _chat_thread_id_or_404(context, payload)
-        return StreamingResponse(
-            _stream_chat_run(context, payload, thread_id=thread_id),
+        return ShutdownAwareStreamingResponse(
+            _guarded_stream(_stream_chat_run(context, payload, thread_id=thread_id)),
+            shutdown_signal=getattr(request.app.state, "shutdown_signal", None),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -180,6 +182,20 @@ async def _stream_chat_run(
     )
     async for chunk in response.stream():
         yield chunk
+
+
+async def _guarded_stream(
+    stream: AsyncIterator[str],
+) -> AsyncIterator[str]:
+    try:
+        async for chunk in stream:
+            yield chunk
+    except asyncio.CancelledError:
+        return
+    finally:
+        aclose = getattr(stream, "aclose", None)
+        if callable(aclose):
+            await cast(Any, aclose)()
 
 
 def _chat_thread_id_or_404(context: UptimeContext, payload: ChatRequest) -> str | None:
