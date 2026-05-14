@@ -48,7 +48,6 @@ from .utils import (
     _created_time,
     _echo_pairs_table,
     _echo_table,
-    _format_runtime_row,
     _normalize_feature_option,
     _parse_utc_timestamp,
     _required_prefix_agent,
@@ -151,19 +150,21 @@ def new_agent(
         typer.Option("--template", "-t", help="Template name."),
     ] = "default",
 ) -> None:
-    program_path = _wrap_user_error(
-        agents.create_agent,
-        _context_root(ctx),
-        agent,
-        template_name=template,
-    )
+    try:
+        program_path = agents.create_agent(
+            _context_root(ctx),
+            agent,
+            template_name=template,
+        )
+    except FileExistsError as exc:
+        raise click.ClickException(f"Agent {agent} already exists") from exc
     _append_agent_update(
         _context_root(ctx),
         agent,
         "created",
         {"path": str(program_path)},
     )
-    typer.echo(str(program_path))
+    typer.echo(f"Created agent {agent}: {program_path}")
 
 
 @app.command("clone", help="Clone an agent.", no_args_is_help=True, rich_help_panel=AGENT_COMMAND_PANEL)
@@ -172,7 +173,15 @@ def clone_agent(
     source: Annotated[str, typer.Argument(help="Agent source selector.")],
     target: Annotated[str | None, typer.Argument(help="New local agent name.")] = None,
 ) -> None:
-    program_path = _wrap_user_error(agents.clone_agent, _context_root(ctx), source, target)
+    try:
+        program_path = agents.clone_agent(_context_root(ctx), source, target)
+    except FileExistsError as exc:
+        target_name = target or Path(source).stem
+        raise click.ClickException(f"Agent {target_name} already exists") from exc
+    except FileNotFoundError as exc:
+        raise click.ClickException(f"Agent {source} not found") from exc
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
     target_name = program_path.stem
     _append_agent_update(
         _context_root(ctx),
@@ -180,7 +189,7 @@ def clone_agent(
         "created",
         {"path": str(program_path), "source": source},
     )
-    typer.echo(str(program_path))
+    typer.echo(f"Cloned agent {target_name}: {program_path}")
 
 
 @app.command("remove", help="Remove an agent.", no_args_is_help=True, rich_help_panel=AGENT_COMMAND_PANEL)
@@ -188,8 +197,17 @@ def remove_agent(
     ctx: typer.Context,
     agent: Annotated[str, typer.Argument(help="Agent name")],
 ) -> None:
-    _wrap_user_error(agents.remove_agent, _context_root(ctx), agent)
-    typer.echo(f"{agent}\tremoved")
+    root = _context_root(ctx)
+    try:
+        agents.remove_agent(root, agent)
+    except FileNotFoundError as exc:
+        raise click.ClickException(f"Agent {agent} not found") from exc
+    except ValueError as exc:
+        status = agents.get_agent_status(root, agent, ui_base_url=_ui_base_url())
+        if status is not None and status.status in {"running", "preparing", "starting"}:
+            raise click.ClickException(_active_run_error(status)) from exc
+        raise click.ClickException(f"Agent {agent} already running") from exc
+    typer.echo(f"Removed agent {agent}")
 
 
 @app.command("list", help="Show agents and their status.", rich_help_panel=AGENT_COMMAND_PANEL)
@@ -234,7 +252,7 @@ def info_agent(
         ui_base_url=_ui_base_url(),
     )
     if status is None:
-        raise click.ClickException(f"agent not found: {agent_name}")
+        raise click.ClickException(f"Agent {agent_name} not found")
     runtime_state = agents.load_runtime_state(root, agent_name) or {}
     created_at = _created_time(agents.agent_home(root, agent_name))
     started_at = _runtime_value(runtime_state.get("started_at"))
@@ -326,10 +344,14 @@ def run_agent(
     normalized_features = _normalize_feature_option(features)
     root = _context_root(ctx)
     progress = make_cli_progress()
+    progress_finished = False
     try:
         with agents.resolved_run_target(root, selector, progress=as_progress_sink(progress)) as target:
             run_root = target.toolang_root
             agent_name = target.agent_name
+            existing = agents.get_agent_status(run_root, agent_name, ui_base_url=_ui_base_url())
+            if existing is not None and existing.status in {"running", "preparing", "starting"}:
+                raise click.ClickException(_active_run_error(existing))
             environ = _runtime_environ_for_agent(ctx, agent_name, toolang_root=run_root)
             effective_log_spec = _configure_foreground_runtime_logging(ctx, environ)
             _wrap_user_error(
@@ -339,6 +361,7 @@ def run_agent(
                 progress=as_progress_sink(progress),
             )
             progress.finish(details=False)
+            progress_finished = True
             effective_port = port
             if effective_port is None and target.kind == "visiting":
                 effective_port = _wrap_user_error(
@@ -367,8 +390,20 @@ def run_agent(
                     progress=None,
                 )
             )
-    except (FileExistsError, FileNotFoundError, ValueError) as exc:
+    except (FileExistsError, FileNotFoundError, ValueError, click.ClickException) as exc:
+        if not progress_finished:
+            progress.finish(details=False)
+        if isinstance(exc, click.ClickException):
+            raise
         raise click.ClickException(str(exc)) from exc
+
+
+def _active_run_error(status: agents.AgentStatus) -> str:
+    message = f"Agent {status.name} already {status.status}"
+    detail = (status.webui_url or status.api_url) if status.status == "running" else None
+    if detail:
+        return f"{message}: {detail}"
+    return message
 
 
 @app.command(
@@ -420,7 +455,7 @@ def start_agent(
     progress = make_cli_progress()
     existing = agents.get_agent_status(root, agent_name, ui_base_url=_ui_base_url())
     if existing is not None and existing.status in {"running", "preparing", "starting"}:
-        raise click.ClickException(f"agent is already active: {agent_name}")
+        raise click.ClickException(_active_run_error(existing))
 
     environ = _runtime_environ_for_agent(ctx, agent_name)
     environ["TOOLANG_ROOT"] = str(root)
@@ -449,8 +484,12 @@ def start_agent(
         status="running",
         detail=agent_name,
     )
-    durable = _wrap_user_error(scan_durable_state, root, agent_name)
-    _wrap_user_error(watch_feature.build_prepared_state, durable, progress=as_progress_sink(progress))
+    try:
+        durable = _wrap_user_error(scan_durable_state, root, agent_name)
+        _wrap_user_error(watch_feature.build_prepared_state, durable, progress=as_progress_sink(progress))
+    except click.ClickException:
+        progress.finish(details=False)
+        raise
     emit_progress(
         as_progress_sink(progress),
         id="startup.prepare",
@@ -489,11 +528,11 @@ def start_agent(
     )
     if status is None:
         if process.poll() is not None:
-            raise click.ClickException(f"agent failed during startup: {agent_name} (see {log_path})")
-        raise click.ClickException(f"agent start timed out: {agent_name} (see {log_path})")
+            raise click.ClickException(f"Agent {agent_name} failed to start: {log_path}")
+        raise click.ClickException(f"Agent {agent_name} start timed out: {log_path}")
     if status.status == "failed":
-        raise click.ClickException(f"{agent_name}\tfailed\t{status.endpoint or '-'}\t{log_path}")
-    typer.echo(_format_runtime_row(status))
+        raise click.ClickException(f"Agent {agent_name} failed to start: {log_path}")
+    typer.echo(f"Started agent {agent_name}: {status.webui_url or status.api_url or status.endpoint or '-'}")
 
 
 @app.command(
@@ -516,7 +555,7 @@ def stop_agent(
     runtime_state = agents.load_runtime_state(root, agent_name)
     runtime_pids = () if runtime_state is not None else agents.agent_runtime_process_pids(root, agent_name)
     if runtime_state is None and not runtime_pids:
-        raise click.ClickException(f"Agent is not running: {agent_name}")
+        raise click.ClickException(f"Agent {agent_name} not running")
 
     sandbox_plugin = None
     sandbox = runtime_state.get("sandbox") if runtime_state is not None else None
@@ -538,7 +577,7 @@ def stop_agent(
         sandbox_plugin=sandbox_plugin,
         force=force,
     )
-    typer.echo(f"{agent_name}\tstopped" if stopped else f"{agent_name}\talready-stopped")
+    typer.echo(f"Stopped agent {agent_name}" if stopped else f"Agent {agent_name} not running")
 
 
 def _configure_foreground_runtime_logging(

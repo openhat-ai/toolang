@@ -2189,7 +2189,7 @@ def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
         lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
     )
 
-    def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal) -> None:
+    def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal, on_started=None, on_stopped=None) -> None:
         captured["app"] = app
         captured["host"] = host
         captured["port"] = port
@@ -2212,6 +2212,51 @@ def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
     assert isinstance(captured["shutdown_signal"], threading.Event)
 
 
+def test_up_logs_runtime_urls_after_start_and_stop(tmp_path: Path, monkeypatch, caplog) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "config.toml", '[web]\nui_base_url = "https://agents.example.test"\n')
+
+    def fake_run_uvicorn_app(
+        app,
+        *,
+        host: str,
+        port: int,
+        log_config,
+        shutdown_signal,
+        on_started=None,
+        on_stopped=None,
+    ) -> None:
+        del app, host, port, log_config, shutdown_signal
+        if on_started is not None:
+            on_started()
+        if on_stopped is not None:
+            on_stopped()
+
+    monkeypatch.setattr("toolang.up._run_uvicorn_app", fake_run_uvicorn_app)
+    caplog.set_level(logging.INFO, logger="toolang.runtime")
+
+    result = run_experiments_up(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        host="127.0.0.1",
+        port=8765,
+        feature_names=("inspect",),
+        environ={},
+    )
+
+    assert result == 0
+    messages = [record.getMessage() for record in caplog.records if record.name == "toolang.runtime"]
+    assert any(
+        message.startswith(
+            f"Agent started name=alice root={toolang_root} state="
+        )
+        and " features=inspect port=8765 webui=https://agents.example.test/8765" in message
+        for message in messages
+    )
+    assert "Agent stopped name=alice" in messages
+
+
 def test_up_reuses_previous_agent_port_when_unspecified(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
@@ -2229,7 +2274,7 @@ def test_up_reuses_previous_agent_port_when_unspecified(tmp_path: Path, monkeypa
         lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
     )
 
-    def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal) -> None:
+    def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal, on_started=None, on_stopped=None) -> None:
         captured["app"] = app
         captured["host"] = host
         captured["port"] = port
@@ -2275,7 +2320,7 @@ def test_up_falls_back_when_previous_agent_port_is_unavailable(
             lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
         )
 
-        def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal) -> None:
+        def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal, on_started=None, on_stopped=None) -> None:
             captured["app"] = app
             captured["host"] = host
             captured["port"] = port
@@ -2326,7 +2371,7 @@ def test_up_falls_back_when_stopped_agent_port_is_unavailable(tmp_path: Path, mo
         lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
     )
 
-    def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal) -> None:
+    def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal, on_started=None, on_stopped=None) -> None:
         captured["host"] = host
         captured["port"] = port
         captured["shutdown_signal"] = shutdown_signal
@@ -2483,7 +2528,7 @@ def test_up_uses_cors_origins_from_root_config(tmp_path: Path, monkeypatch) -> N
     )
     captured: dict[str, object] = {}
 
-    def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal) -> None:
+    def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal, on_started=None, on_stopped=None) -> None:
         captured["app"] = app
         captured["host"] = host
         captured["port"] = port
@@ -3085,7 +3130,7 @@ def test_up_reads_web_config_without_validating_experiments_caps(tmp_path: Path,
     )
     captured: dict[str, object] = {}
 
-    def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal) -> None:
+    def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal, on_started=None, on_stopped=None) -> None:
         captured["app"] = app
         captured["shutdown_signal"] = shutdown_signal
 
@@ -3892,6 +3937,69 @@ def test_prepare_rewrites_legacy_private_lock_missing_program(tmp_path: Path) ->
 
     assert prepared.private_lock.program is not None
     assert prepared.private_lock.program.agent_name == "alice"
+
+
+def test_prepare_fetches_remote_caps_with_bounded_concurrency(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "config.toml",
+        '[psyches]\n'
+        'alpha = { ref = "github://acme/agents/psyches/alpha.md@main" }\n'
+        'bravo = { ref = "github://acme/agents/psyches/bravo.md@main" }\n',
+    )
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    active = 0
+    max_active = 0
+    started = threading.Event()
+    release = threading.Event()
+    lock = threading.Lock()
+
+    def fake_fetch(ref) -> bytes:
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+            if active == 2:
+                started.set()
+        assert started.wait(timeout=1.0)
+        release.set()
+        assert release.wait(timeout=1.0)
+        with lock:
+            active -= 1
+        return f"---\ndescription: {ref.path}\n---\nBody\n".encode("utf-8")
+
+    monkeypatch.setattr(caps, "_fetch_github_file", fake_fetch)
+
+    durable = scan_durable_state(toolang_root, "alice")
+    lock_record, files = build_visibility_lock(durable, visibility="shared")
+
+    assert max_active == 2
+    assert [entry.name for entry in lock_record.entries] == ["alpha", "bravo"]
+    assert sorted(files) == [
+        ".prepared/remote/psyches/alpha.md",
+        ".prepared/remote/psyches/bravo.md",
+    ]
+
+
+def test_remote_shorthand_falls_back_to_main_when_default_branch_lookup_fails(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        caps,
+        "_github_repo_default_branch",
+        lambda owner, repo: (_ for _ in ()).throw(ValueError("rate limited")),
+    )
+    monkeypatch.setattr(
+        caps,
+        "_github_remote_exists",
+        lambda kind, ref: kind == "psyche"
+        and ref == "github://briceyan/agents/psyches/senior-engineer.md@main",
+    )
+
+    assert (
+        caps._resolve_remote_ref("psyche", "briceyan/senior-engineer")
+        == "github://briceyan/agents/psyches/senior-engineer.md@main"
+    )
 
 
 def test_caps_list_and_remove_remote_entries(tmp_path: Path, monkeypatch) -> None:
