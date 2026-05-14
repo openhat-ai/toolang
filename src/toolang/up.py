@@ -836,7 +836,7 @@ def _up_local(
         log_config=build_uvicorn_log_config(level=log_spec or DEFAULT_LOG_LEVEL),
         shutdown_signal=shutdown_signal,
         on_started=lambda: logger.info(
-            "Agent started name=%s root=%s state=%s features=%s port=%s webui=%s",
+            "Agent %s started: root=%s state=%s features=%s port=%s webui=%s",
             context.name,
             toolang_root,
             context.live.fingerprint[:12],
@@ -844,7 +844,7 @@ def _up_local(
             port,
             webui_url,
         ),
-        on_stopped=lambda: logger.info("Agent stopped name=%s", context.name),
+        on_stopped=lambda: logger.info("Agent %s stopped", context.name),
     )
     return 0
 

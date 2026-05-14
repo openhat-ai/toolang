@@ -2249,12 +2249,12 @@ def test_up_logs_runtime_urls_after_start_and_stop(tmp_path: Path, monkeypatch, 
     messages = [record.getMessage() for record in caplog.records if record.name == "toolang.runtime"]
     assert any(
         message.startswith(
-            f"Agent started name=alice root={toolang_root} state="
+            f"Agent alice started: root={toolang_root} state="
         )
         and " features=inspect port=8765 webui=https://agents.example.test/8765" in message
         for message in messages
     )
-    assert "Agent stopped name=alice" in messages
+    assert "Agent alice stopped" in messages
 
 
 def test_up_reuses_previous_agent_port_when_unspecified(tmp_path: Path, monkeypatch) -> None:
