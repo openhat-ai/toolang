@@ -743,6 +743,25 @@ def test_cli_run_rejects_active_resident_agent(tmp_path: Path, monkeypatch) -> N
     assert "Stop:" not in result.stderr
 
 
+def test_cli_run_rejects_missing_resident_agent(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(
+        cli.agent_up,
+        "prepare_runtime",
+        lambda **_kwargs: pytest.fail("missing agents should be rejected before prepare"),
+    )
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(toolang_root), "run", "missing"],
+        env={},
+    )
+
+    assert result.exit_code == 1
+    assert "Agent missing not found" in result.stderr
+    assert not agents.agent_home(toolang_root, "missing").exists()
+
+
 def test_cli_run_rejects_active_visiting_agent(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     ref = agents.HttpAgentRef(url="https://toolang.ai/demo/researcher.too")
@@ -1176,6 +1195,25 @@ def test_cli_start_rejects_remote_selector(tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert "start only supports local agent names; clone the remote source first" in result.stderr
+
+
+def test_cli_start_rejects_missing_agent(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(
+        cli.agent_up,
+        "resolve_startup",
+        lambda **_kwargs: pytest.fail("missing agents should be rejected before startup resolution"),
+    )
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(toolang_root), "start", "missing"],
+        env={},
+    )
+
+    assert result.exit_code == 1
+    assert "Agent missing not found" in result.stderr
+    assert not agents.agent_home(toolang_root, "missing").exists()
 
 
 def test_cli_remove_deletes_stopped_agent(tmp_path: Path) -> None:
@@ -1738,6 +1776,7 @@ def test_cli_model_list_shows_discovered_models(monkeypatch) -> None:
 
 def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
     captured: dict[str, object] = {}
 
     def fake_up(
@@ -1809,6 +1848,7 @@ def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
 
 def test_cli_run_omits_port_when_unspecified(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
     captured: dict[str, object] = {}
 
     def fake_up(
@@ -1868,6 +1908,7 @@ def test_cli_run_omits_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
 
 def test_cli_run_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
     captured: dict[str, object] = {}
 
     def fake_up(
@@ -1905,6 +1946,7 @@ def test_cli_run_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
 
 def test_cli_run_passes_model_selectors_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
     captured: dict[str, object] = {}
 
     def fake_up(
@@ -1942,6 +1984,7 @@ def test_cli_run_passes_model_selectors_to_agent_up(tmp_path: Path, monkeypatch)
 
 def test_cli_run_does_not_override_explicit_log_spec(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
     captured: dict[str, object] = {}
 
     def fake_up(
