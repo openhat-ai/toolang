@@ -2381,6 +2381,59 @@ def test_resolve_runtime_port_does_not_wait_for_stopped_preferred_port(
     assert resolved == 43210
 
 
+def test_resolve_runtime_port_uses_temporary_picker_for_visiting_agents(
+    tmp_path: Path, monkeypatch
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+
+    monkeypatch.setattr(
+        "toolang.up._pick_runtime_port",
+        lambda *_args, **_kwargs: pytest.fail("visiting agents should not use the resident port range"),
+    )
+    monkeypatch.setattr("toolang.up._pick_temporary_runtime_port", lambda host: 45678)
+
+    resolved = up_module.resolve_runtime_port(
+        host="127.0.0.1",
+        explicit_port=None,
+        toolang_root=toolang_root,
+        agent_name="alice",
+        temporary=True,
+    )
+
+    assert resolved == 45678
+
+
+def test_resolve_runtime_port_reuses_visiting_agent_previous_port(
+    tmp_path: Path, monkeypatch
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    agents.write_runtime_state(
+        toolang_root,
+        "alice",
+        endpoint="http://127.0.0.1:45679",
+        started_at="2026-04-07T11:00:00Z",
+        pid=None,
+        status="stopped",
+    )
+    monkeypatch.setattr("toolang.up._port_is_available", lambda host, port: port == 45679)
+    monkeypatch.setattr(
+        "toolang.up._pick_temporary_runtime_port",
+        lambda *_args: pytest.fail("available preferred visiting port should be reused"),
+    )
+
+    resolved = up_module.resolve_runtime_port(
+        host="127.0.0.1",
+        explicit_port=None,
+        toolang_root=toolang_root,
+        agent_name="alice",
+        temporary=True,
+    )
+
+    assert resolved == 45679
+
+
 def test_pick_runtime_port_uses_first_available_auto_port(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "bob" / "bob.too", "agent bob\n")

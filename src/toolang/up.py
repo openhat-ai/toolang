@@ -1293,6 +1293,7 @@ def resolve_runtime_port(
     explicit_port: int | None,
     toolang_root: Path,
     agent_name: str,
+    temporary: bool = False,
 ) -> int:
     if explicit_port is not None:
         return explicit_port
@@ -1300,12 +1301,20 @@ def resolve_runtime_port(
     if preferred_port is not None:
         if _port_is_available(host, preferred_port):
             return preferred_port
+    if temporary:
+        return _pick_temporary_runtime_port(host)
     return _pick_runtime_port(
         host,
         toolang_root=toolang_root,
         agent_name=agent_name,
         preferred_port=preferred_port,
     )
+
+
+def _pick_temporary_runtime_port(host: str) -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind((host, 0))
+        return int(sock.getsockname()[1])
 
 
 def _port_is_available(host: str, port: int) -> bool:

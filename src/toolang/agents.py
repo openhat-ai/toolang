@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -12,7 +13,6 @@ import shlex
 import signal
 import shutil
 import subprocess
-import tempfile
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
@@ -40,6 +40,7 @@ class AgentStatus:
 
 
 AgentSelectorForm = Literal["name", "shorthand", "ref"]
+RunTargetKind = Literal["resident", "visiting"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +98,15 @@ class AgentSelector:
         if self.name is not None:
             return self.name
         return self.resolved_ref().default_name()
+
+
+@dataclass(frozen=True, slots=True)
+class MaterializedRunTarget:
+    """One local runtime target prepared from a resident or visiting selector."""
+
+    toolang_root: Path
+    agent_name: str
+    kind: RunTargetKind
 
 
 def agent_home(toolang_root: Path, agent_name: str) -> Path:
@@ -342,6 +352,15 @@ def roaming_root(source_path: Path) -> Path:
     return source_path.resolve().parent / ".toolang"
 
 
+def visiting_root(toolang_root: Path, ref: AgentRef) -> Path:
+    """Return the stable local root for one visiting remote agent ref."""
+
+    label = _safe_visiting_root_label(ref.default_name())
+    root_digest = hashlib.sha256(str(toolang_root.expanduser().resolve()).encode("utf-8")).hexdigest()[:8]
+    ref_digest = hashlib.sha256(ref.render().encode("utf-8")).hexdigest()[:12]
+    return Path("/tmp") / "toolang-visiting" / f"{label}-{root_digest}-{ref_digest}"
+
+
 def materialize_roaming_program(source_path: Path) -> tuple[Path, str]:
     """Materialize one local .too source into its fixed roaming root."""
 
@@ -360,6 +379,67 @@ def materialize_roaming_program(source_path: Path) -> tuple[Path, str]:
     return toolang_root, agent_name
 
 
+def materialize_visiting_program(
+    toolang_root: Path,
+    ref: AgentRef,
+    source_text: str,
+) -> tuple[Path, str]:
+    """Materialize one remote agent into its stable visiting root."""
+
+    root = visiting_root(toolang_root, ref)
+    agent_name = ref.default_name()
+    home = agent_home(root, agent_name)
+    home.mkdir(parents=True, exist_ok=True)
+    program_path = agent_program_path(root, agent_name)
+    program_path.write_text(_rewrite_program_source(source_text, agent_name), encoding="utf-8")
+    return root, agent_name
+
+
+@contextmanager
+def resolved_run_target(
+    toolang_root: Path,
+    selector_text: str,
+    *,
+    progress: ProgressSink | None = None,
+) -> Iterator[MaterializedRunTarget]:
+    """Yield one runnable local target for one selector."""
+
+    selector = parse_agent_selector(selector_text)
+    if selector.form == "name":
+        yield MaterializedRunTarget(
+            toolang_root=toolang_root,
+            agent_name=selector.name or "",
+            kind="resident",
+        )
+        return
+
+    resolved_ref = resolve_agent_selector_ref(selector, progress=progress)
+    agent_name = resolved_ref.default_name()
+    source_text = fetch_agent_ref(resolved_ref, progress=progress)
+    emit_progress(
+        progress,
+        id=f"agent.materialize:{resolved_ref.render()}",
+        phase="agent.materialize",
+        label="Materialize agent",
+        status="running",
+        detail=agent_name,
+    )
+    run_root, run_agent_name = materialize_visiting_program(toolang_root, resolved_ref, source_text)
+    emit_progress(
+        progress,
+        id=f"agent.materialize:{resolved_ref.render()}",
+        phase="agent.materialize",
+        label="Materialize agent",
+        status="ok",
+        detail=agent_name,
+    )
+    yield MaterializedRunTarget(
+        toolang_root=run_root,
+        agent_name=run_agent_name,
+        kind="visiting",
+    )
+
+
 @contextmanager
 def materialized_run_target(
     toolang_root: Path,
@@ -369,33 +449,8 @@ def materialized_run_target(
 ) -> Iterator[tuple[Path, str]]:
     """Yield one runnable local target for one selector."""
 
-    selector = parse_agent_selector(selector_text)
-    if selector.form == "name":
-        yield toolang_root, selector.name or ""
-        return
-    with tempfile.TemporaryDirectory(prefix="toolang-run-") as temp_dir:
-        temp_root = Path(temp_dir)
-        agent_name = selector.default_name()
-        resolved_ref = resolve_agent_selector_ref(selector, progress=progress)
-        source_text = fetch_agent_ref(resolved_ref, progress=progress)
-        emit_progress(
-            progress,
-            id=f"agent.materialize:{resolved_ref.render()}",
-            phase="agent.materialize",
-            label="Materialize agent",
-            status="running",
-            detail=agent_name,
-        )
-        write_agent_program(temp_root, agent_name, source_text)
-        emit_progress(
-            progress,
-            id=f"agent.materialize:{resolved_ref.render()}",
-            phase="agent.materialize",
-            label="Materialize agent",
-            status="ok",
-            detail=agent_name,
-        )
-        yield temp_root, agent_name
+    with resolved_run_target(toolang_root, selector_text, progress=progress) as target:
+        yield target.toolang_root, target.agent_name
 
 
 def remove_agent(toolang_root: Path, agent_name: str) -> Path:
@@ -572,6 +627,11 @@ def _github_repo_default_branch(owner: str, repo: str) -> str:
 def _require_too_path(path_text: str, text: str) -> None:
     if Path(path_text).suffix != ".too":
         raise ValueError(f"agent ref must point to a .too program: {text}")
+
+
+def _safe_visiting_root_label(name: str) -> str:
+    label = "".join(char.lower() if char.isalnum() or char in {"-", "_"} else "-" for char in name)
+    return label.strip("-_") or "agent"
 
 
 def _fetch_http_text(url: str) -> str:
