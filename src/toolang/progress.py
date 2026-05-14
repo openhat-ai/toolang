@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 
-ProgressStatus = Literal["running", "ok", "failed", "skipped"]
+ProgressStatus = Literal["pending", "running", "ok", "failed", "skipped"]
 ProgressSink = Callable[["ProgressEvent"], None]
 
 

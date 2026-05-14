@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -80,6 +81,7 @@ CONFIG_SECTION_ORDER = {
     "tasks": 4,
     "chores": 5,
 }
+REMOTE_CAP_MATERIALIZE_WORKERS = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +93,18 @@ class _GitHubRemoteRef:
 
     def render(self) -> str:
         return f"github://{self.owner}/{self.repo}/{self.path}@{self.rev}"
+
+
+@dataclass(frozen=True, slots=True)
+class _RemoteEntryRequest:
+    visibility: PreparedVisibility
+    kind: EntryKind
+    ref: str
+    name: str | None
+    relative_config_path: Path
+    config_path: Path
+    inclusion: Literal["configured", "referenced"]
+    source_line: int | None = None
 
 
 def list_entries(
@@ -935,9 +949,30 @@ def _collect_remote_entries(
     materialize: bool = False,
     progress: ProgressSink | None = None,
 ) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
+    requests = _collect_remote_entry_requests(
+        toolang_root,
+        agent_name,
+        visibility=visibility,
+        kinds=kinds,
+    )
+    return _materialize_remote_entry_requests(
+        toolang_root,
+        agent_name,
+        requests,
+        materialize=materialize,
+        progress=progress,
+    )
+
+
+def _collect_remote_entry_requests(
+    toolang_root: Path,
+    agent_name: str,
+    *,
+    visibility: PreparedVisibility | None,
+    kinds: set[EntryKind] | None,
+) -> tuple[_RemoteEntryRequest, ...]:
     visibilities = ("shared", "private") if visibility is None else (visibility,)
-    entries: list[PreparedEntry] = []
-    files: dict[str, bytes] = {}
+    requests: list[_RemoteEntryRequest] = []
     for item_visibility in visibilities:
         config_path = _config_path(toolang_root, agent_name, visibility=item_visibility)
         if not config_path.is_file():
@@ -954,23 +989,18 @@ def _collect_remote_entries(
             if kind_table is None:
                 continue
             for name, item in sorted(kind_table.items()):
-                ref = _config_ref(item)
-                entry, entry_files = _remote_entry_from_ref(
-                    toolang_root,
-                    agent_name,
-                    visibility=item_visibility,
-                    kind=kind,
-                    ref=ref,
-                    name=name,
-                    relative_config_path=relative_config_path,
-                    config_path=config_path,
-                    inclusion="configured",
-                    materialize=materialize,
-                    progress=progress,
+                requests.append(
+                    _RemoteEntryRequest(
+                        visibility=item_visibility,
+                        kind=kind,
+                        ref=_config_ref(item),
+                        name=name,
+                        relative_config_path=relative_config_path,
+                        config_path=config_path,
+                        inclusion="configured",
+                    )
                 )
-                entries.append(entry)
-                files.update(entry_files)
-    return tuple(sorted(entries, key=_entry_sort_key)), files
+    return tuple(requests)
 
 
 def _collect_program_use_entries(
@@ -991,37 +1021,32 @@ def _collect_program_use_entries(
         source_text=prepared_program.source_text,
         body_text=prepared_program.body_text,
     )
-    entries: list[PreparedEntry] = []
-    files: dict[str, bytes] = {}
+    requests: list[_RemoteEntryRequest] = []
     for use in live_program.parsed.uses:
         kind = cast(EntryKind, use.kind)
         if kind not in CAP_KINDS:
             continue
         if kinds is not None and kind not in kinds:
             continue
-        canonical_ref = (
-            _resolve_remote_ref(kind, use.reference, progress=progress)
-            if materialize
-            else _canonicalize_remote_ref(kind, use.reference)
+        requests.append(
+            _RemoteEntryRequest(
+                visibility="private",
+                kind=kind,
+                ref=use.reference,
+                name=None,
+                relative_config_path=relative_program_path,
+                config_path=program_path,
+                inclusion="referenced",
+                source_line=use.span.line + line_offset,
+            )
         )
-        name = _remote_name(kind, canonical_ref)
-        entry, entry_files = _remote_entry_from_ref(
-            durable.toolang_root,
-            durable.agent_name,
-            visibility="private",
-            kind=kind,
-            ref=canonical_ref,
-            name=name,
-            relative_config_path=relative_program_path,
-            config_path=program_path,
-            inclusion="referenced",
-            source_line=use.span.line + line_offset,
-            materialize=materialize,
-            progress=progress,
-        )
-        entries.append(entry)
-        files.update(entry_files)
-    return tuple(sorted(entries, key=_entry_sort_key)), files
+    return _materialize_remote_entry_requests(
+        durable.toolang_root,
+        durable.agent_name,
+        tuple(requests),
+        materialize=materialize,
+        progress=progress,
+    )
 
 
 def _collect_program_embedded_entries(
@@ -1148,7 +1173,7 @@ def _remote_entry_from_ref(
     visibility: PreparedVisibility,
     kind: EntryKind,
     ref: str,
-    name: str,
+    name: str | None,
     relative_config_path: Path,
     config_path: Path,
     inclusion: Literal["configured", "referenced"],
@@ -1160,6 +1185,8 @@ def _remote_entry_from_ref(
         canonical_ref = _resolve_remote_ref(kind, ref, progress=progress)
     else:
         canonical_ref = _canonicalize_remote_ref(kind, ref)
+    if name is None:
+        name = _remote_name(kind, canonical_ref)
     relative_entry_path = _relative_remote_entry_path(agent_name, visibility=visibility, kind=kind, name=name)
     if materialize and progress is not None:
         entry_files = _remote_materialized_files(
@@ -1203,6 +1230,136 @@ def _remote_entry_from_ref(
             meta=_load_meta_text(entry_content.decode("utf-8")),
         ),
         entry_files,
+    )
+
+
+def _materialize_remote_entry_requests(
+    toolang_root: Path,
+    agent_name: str,
+    requests: tuple[_RemoteEntryRequest, ...],
+    *,
+    materialize: bool,
+    progress: ProgressSink | None,
+) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
+    if not requests:
+        return (), {}
+    if not materialize:
+        return _materialize_remote_entry_requests_serial(
+            toolang_root,
+            agent_name,
+            requests,
+            materialize=materialize,
+            progress=progress,
+        )
+    for request in requests:
+        _emit_remote_entry_pending(request, progress=progress)
+    entries: list[PreparedEntry] = []
+    files: dict[str, bytes] = {}
+    results: list[tuple[PreparedEntry, dict[str, bytes]] | None] = [None] * len(requests)
+    first_error: BaseException | None = None
+    with ThreadPoolExecutor(max_workers=REMOTE_CAP_MATERIALIZE_WORKERS) as executor:
+        futures = {
+            executor.submit(
+                _remote_entry_from_request,
+                toolang_root,
+                agent_name,
+                request,
+                materialize=materialize,
+                progress=progress,
+            ): index
+            for index, request in enumerate(requests)
+        }
+        for future in as_completed(futures):
+            try:
+                results[futures[future]] = future.result()
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+    if first_error is not None:
+        raise first_error
+    for result in results:
+        if result is None:
+            continue
+        entry, entry_files = result
+        entries.append(entry)
+        files.update(entry_files)
+    return tuple(sorted(entries, key=_entry_sort_key)), files
+
+
+def _materialize_remote_entry_requests_serial(
+    toolang_root: Path,
+    agent_name: str,
+    requests: tuple[_RemoteEntryRequest, ...],
+    *,
+    materialize: bool,
+    progress: ProgressSink | None,
+) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
+    entries: list[PreparedEntry] = []
+    files: dict[str, bytes] = {}
+    for request in requests:
+        entry, entry_files = _remote_entry_from_request(
+            toolang_root,
+            agent_name,
+            request,
+            materialize=materialize,
+            progress=progress,
+        )
+        entries.append(entry)
+        files.update(entry_files)
+    return tuple(sorted(entries, key=_entry_sort_key)), files
+
+
+def _remote_entry_from_request(
+    toolang_root: Path,
+    agent_name: str,
+    request: _RemoteEntryRequest,
+    *,
+    materialize: bool,
+    progress: ProgressSink | None,
+) -> tuple[PreparedEntry, dict[str, bytes]]:
+    return _remote_entry_from_ref(
+        toolang_root,
+        agent_name,
+        visibility=request.visibility,
+        kind=request.kind,
+        ref=request.ref,
+        name=request.name,
+        relative_config_path=request.relative_config_path,
+        config_path=request.config_path,
+        inclusion=request.inclusion,
+        source_line=request.source_line,
+        materialize=materialize,
+        progress=progress,
+    )
+
+
+def _emit_remote_entry_pending(
+    request: _RemoteEntryRequest,
+    *,
+    progress: ProgressSink | None,
+) -> None:
+    ref = request.ref.strip()
+    if "://" in ref:
+        try:
+            ref = _canonicalize_remote_ref(request.kind, ref)
+        except ValueError:
+            pass
+        emit_progress(
+            progress,
+            id=f"cap.fetch:{request.kind}:{ref}",
+            phase="cap.fetch",
+            label=f"Fetch {request.kind}",
+            status="pending",
+            detail=ref,
+        )
+        return
+    emit_progress(
+        progress,
+        id=f"cap.resolve:{request.kind}:{ref}",
+        phase="cap.resolve",
+        label=f"Resolve {request.kind}",
+        status="pending",
+        detail=ref,
     )
 
 
@@ -1473,7 +1630,7 @@ def _github_remote_ref_with_default_branch(owner: str, repo: str, path: str) -> 
     try:
         rev = _github_repo_default_branch(owner, repo)
     except ValueError:
-        return None
+        rev = "main"
     return _GitHubRemoteRef(owner=owner, repo=repo, path=path, rev=rev).render()
 
 

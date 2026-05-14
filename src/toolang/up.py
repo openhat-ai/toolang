@@ -19,6 +19,7 @@ import threading
 import tomllib
 from types import FrameType
 from typing import Any, Literal, TypeVar, cast
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -39,7 +40,7 @@ from toolang.base.utils.channels import bind_delivery
 from toolang.base.utils.tools import join_tool_name
 from .config.log import DEFAULT_LOG_LEVEL, build_uvicorn_log_config
 from .config.plugins import ChannelBinding, load_channel_bindings, load_sandbox_binding, load_tool_plugin_config
-from .config.web import resolve_cors_allowed_origins
+from .config.web import resolve_cors_allowed_origins, resolve_ui_base_url
 from .execution.response import build_channel_response_sink
 from .execution.execute import execute_run
 from .execution.runner import QueueRunner, RunRequest, RunSubmission, RunOutcome
@@ -797,15 +798,6 @@ def _up_local(
             runner_task = None
             if any(feature in RUN_FEATURES for feature in enabled_features):
                 runner_task = context.runner.spawn(context)
-            await asyncio.sleep(0)
-            logger.info(
-                "runtime ready agent=%s addr=http://%s:%s features=%s live=%s",
-                context.name,
-                endpoint_host,
-                port,
-                ",".join(enabled_features),
-                context.live.fingerprint[:12],
-            )
             yield
         finally:
             if not sandbox_child:
@@ -836,12 +828,23 @@ def _up_local(
             context.store.close()
 
     app = create_app(context, lifespan=lifespan, shutdown_signal=shutdown_signal)
+    webui_url = _runtime_webui_url(endpoint, toolang_root=toolang_root, environ=environ)
     _run_uvicorn_app(
         app,
         host=host,
         port=port,
         log_config=build_uvicorn_log_config(level=log_spec or DEFAULT_LOG_LEVEL),
         shutdown_signal=shutdown_signal,
+        on_started=lambda: logger.info(
+            "Agent %s started: root=%s state=%s features=%s port=%s webui=%s",
+            context.name,
+            toolang_root,
+            context.live.fingerprint[:12],
+            ",".join(enabled_features),
+            port,
+            webui_url,
+        ),
+        on_stopped=lambda: logger.info("Agent %s stopped", context.name),
     )
     return 0
 
@@ -849,9 +852,22 @@ def _up_local(
 class _ToolangServer(uvicorn.Server):
     """Uvicorn server with one runtime-visible shutdown signal."""
 
-    def __init__(self, config: uvicorn.Config, *, shutdown_signal: threading.Event) -> None:
+    def __init__(
+        self,
+        config: uvicorn.Config,
+        *,
+        shutdown_signal: threading.Event,
+        on_started: Callable[[], None] | None = None,
+    ) -> None:
         super().__init__(config=config)
         self._shutdown_signal = shutdown_signal
+        self._on_started = on_started
+
+    async def startup(self, sockets: Any | None = None) -> None:
+        await super().startup(sockets=sockets)
+        if self.started and self._on_started is not None:
+            self._on_started()
+            self._on_started = None
 
     def handle_exit(self, sig: int, frame: FrameType | None) -> None:
         self._shutdown_signal.set()
@@ -865,6 +881,8 @@ def _run_uvicorn_app(
     port: int,
     log_config: dict[str, object],
     shutdown_signal: threading.Event,
+    on_started: Callable[[], None] | None = None,
+    on_stopped: Callable[[], None] | None = None,
 ) -> None:
     """Run one FastAPI app with signal-aware shutdown for long-lived streams."""
 
@@ -875,13 +893,15 @@ def _run_uvicorn_app(
         log_config=log_config,
         timeout_graceful_shutdown=UVICORN_GRACEFUL_SHUTDOWN_SEC,
     )
-    server = _ToolangServer(config=config, shutdown_signal=shutdown_signal)
+    server = _ToolangServer(config=config, shutdown_signal=shutdown_signal, on_started=on_started)
     try:
         server.run()
     except KeyboardInterrupt:
         pass
     if not server.started:
         raise SystemExit(STARTUP_FAILURE)
+    if on_stopped is not None:
+        on_stopped()
 
 
 async def _finish_runtime_tasks(
@@ -1089,6 +1109,22 @@ def _runtime_sandbox_value(runtime_state: Mapping[str, object]) -> str:
                     return f"{driver.strip()}:{target.strip()}"
                 return driver.strip()
     return "none"
+
+
+def _runtime_webui_url(
+    endpoint: str,
+    *,
+    toolang_root: Path,
+    environ: Mapping[str, str],
+) -> str:
+    try:
+        endpoint_port = urlsplit(endpoint).port
+    except ValueError:
+        endpoint_port = None
+    base_url = resolve_ui_base_url(toolang_root, environ=environ).rstrip("/")
+    if endpoint_port is None:
+        return base_url
+    return f"{base_url}/{endpoint_port}"
 
 
 def _up_managed_sandbox(

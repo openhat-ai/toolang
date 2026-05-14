@@ -178,12 +178,21 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     ) -> None:
         visibility, agent_name = _target_visibility(ctx)
         selected_agent = _context_agent(ctx)
+        if _entry_exists(
+            _context_root(ctx),
+            agent_name,
+            visibility=visibility,
+            kind=cast(EntryKind, kind),
+            name=name,
+        ):
+            raise click.ClickException(f"{title} {name} already exists")
         text = click.edit(
             templates.render_template(kind, template, name=name, agent_name=agent_name),
             extension=".md",
             require_save=True,
         )
         if text is None:
+            typer.echo("No changes")
             raise typer.Exit()
         path = _wrap_user_error(
             cap_store.put_local_entry_text,
@@ -202,7 +211,7 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 name=name,
                 visibility=visibility,
             )
-        typer.echo(str(path))
+        typer.echo(f"Created {kind} {name}: {path}")
 
     return new_cap
 
@@ -214,20 +223,23 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     ) -> None:
         visibility, agent_name = _target_visibility(ctx)
         selected_agent = _context_agent(ctx)
-        text = _wrap_user_error(
-            cap_store.load_local_entry_text,
-            _context_root(ctx),
-            agent_name,
-            visibility=visibility,
-            kind=cast(EntryKind, kind),
-            name=name,
-        )
+        try:
+            text = cap_store.load_local_entry_text(
+                _context_root(ctx),
+                agent_name,
+                visibility=visibility,
+                kind=cast(EntryKind, kind),
+                name=name,
+            )
+        except FileNotFoundError as exc:
+            raise click.ClickException(f"{title} {name} not found") from exc
         updated_text = click.edit(
             text,
             extension=".md",
             require_save=True,
         )
-        if updated_text is None:
+        if updated_text is None or updated_text == text:
+            typer.echo("No changes")
             raise typer.Exit()
         path = _wrap_user_error(
             cap_store.put_local_entry_text,
@@ -246,7 +258,7 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 name=name,
                 visibility=visibility,
             )
-        typer.echo(str(path))
+        typer.echo(f"Updated {kind} {name}: {path}")
 
     return edit_cap
 
@@ -259,26 +271,43 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         visibility, agent_name = _target_visibility(ctx)
         selected_agent = _context_agent(ctx)
         progress = make_cli_progress(live=False)
-        path = _wrap_user_error(
-            cap_store.add_remote_entry,
+        try:
+            cap_store.add_remote_entry(
+                _context_root(ctx),
+                agent_name,
+                visibility=visibility,
+                kind=cast(EntryKind, kind),
+                ref=ref,
+                progress=as_progress_sink(progress),
+            )
+        except ValueError as exc:
+            progress.finish(details=False)
+            message = str(exc)
+            if "conflicting entries" in message:
+                raise click.ClickException(
+                    f"{title} {cap_store.remote_entry_name(cast(EntryKind, kind), ref)} already exists"
+                ) from exc
+            raise click.ClickException(f"Remote {kind} {ref} not found") from exc
+        entry = _named_entry(
             _context_root(ctx),
             agent_name,
             visibility=visibility,
             kind=cast(EntryKind, kind),
-            ref=ref,
-            progress=as_progress_sink(progress),
+            name=cap_store.remote_entry_name(cast(EntryKind, kind), ref),
+            source_origin="remote",
+            source_inclusion="configured",
         )
         if selected_agent:
             _refresh_and_append_cap_update(
                 _context_root(ctx),
                 selected_agent,
                 kind=kind,
-                name=cap_store.remote_entry_name(cast(EntryKind, kind), ref),
+                name=entry.name,
                 visibility=visibility,
                 progress=as_progress_sink(progress),
             )
         progress.finish(details=False)
-        typer.echo(str(path))
+        typer.echo(f"Added {kind} {entry.name}: {entry.ref}")
 
     return add_cap
 
@@ -309,7 +338,7 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             name=name,
         )
         if not removed:
-            raise click.ClickException(f"remote {kind} not found: {name}")
+            raise click.ClickException(f"{title} {name} not found")
         if selected_agent:
             _refresh_and_append_cap_update(
                 _context_root(ctx),
@@ -320,7 +349,7 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 progress=as_progress_sink(progress),
             )
         progress.finish(details=False)
-        typer.echo(f"Removed remote {kind} {name} from {entry.ref}")
+        typer.echo(f"Removed {kind} {name}: {entry.ref}")
 
     return remove_cap
 
@@ -352,7 +381,7 @@ def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             name=name,
         )
         if not removed:
-            raise click.ClickException(f"local {kind} not found: {name}")
+            raise click.ClickException(f"{title} {name} not found")
         if selected_agent:
             _refresh_and_append_cap_update(
                 _context_root(ctx),
@@ -361,7 +390,7 @@ def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 name=name,
                 visibility=visibility,
             )
-        typer.echo(f"Deleted local {kind} {name} from {deleted_path}")
+        typer.echo(f"Deleted {kind} {name}: {deleted_path}")
 
     return delete_cap
 
@@ -428,8 +457,26 @@ def _named_entry(
         if source_inclusion is not None and entry.source.inclusion != source_inclusion:
             continue
         return entry
-    qualifier = f"{source_origin} " if source_origin is not None else ""
-    raise click.ClickException(f"{qualifier}{kind} not found: {name}")
+    raise click.ClickException(f"{kind.title()} {name} not found")
+
+
+def _entry_exists(
+    toolang_root: Path,
+    agent_name: str,
+    *,
+    visibility: PreparedVisibility,
+    kind: EntryKind,
+    name: str,
+) -> bool:
+    return any(
+        entry.name == name
+        for entry in cap_store.list_entries(
+            toolang_root,
+            agent_name,
+            visibility=visibility,
+            kinds={kind},
+        )
+    )
 
 
 def _append_cap_update(

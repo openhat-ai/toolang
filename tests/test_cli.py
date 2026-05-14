@@ -5,6 +5,7 @@ from pathlib import Path
 import os
 from datetime import datetime, timezone
 from typing import cast
+import pytest
 from typer.testing import CliRunner
 
 from toolang import agents
@@ -253,7 +254,7 @@ def test_cli_new_creates_agent(tmp_path: Path) -> None:
 
     assert result.exit_code in {0, 2}
     program_path = toolang_root / "agents" / "alice" / "alice.too"
-    assert result.stdout.strip() == str(program_path)
+    assert result.stdout.strip() == f"Created agent alice: {program_path}"
     assert program_path.read_text(encoding="utf-8") == "agent alice\n"
 
 
@@ -320,7 +321,7 @@ def test_cli_clone_copies_agent_without_prepared(tmp_path: Path) -> None:
 
     assert result.exit_code in {0, 2}
     target_program = toolang_root / "agents" / "bob" / "bob.too"
-    assert result.stdout.strip() == str(target_program)
+    assert result.stdout.strip() == f"Cloned agent bob: {target_program}"
     assert target_program.read_text(encoding="utf-8") == "agent bob\n"
     assert (toolang_root / "agents" / "bob" / "skills" / "reviewer" / "SKILL.md").is_file()
     assert not (toolang_root / "agents" / "bob" / ".prepared").exists()
@@ -385,7 +386,7 @@ def test_cli_clone_remote_shorthand_defaults_target_name(tmp_path: Path, monkeyp
 
     assert result.exit_code in {0, 2}
     program_path = toolang_root / "agents" / "alice" / "alice.too"
-    assert result.stdout.strip() == str(program_path)
+    assert result.stdout.strip() == f"Cloned agent alice: {program_path}"
     assert program_path.read_text(encoding="utf-8") == "agent alice\n"
     assert probes == [
         "github://brice/agents/agents/alice.too@main",
@@ -439,7 +440,7 @@ def test_cli_clone_remote_url_supports_explicit_target(tmp_path: Path, monkeypat
 
     assert result.exit_code in {0, 2}
     program_path = toolang_root / "agents" / "researcher" / "researcher.too"
-    assert result.stdout.strip() == str(program_path)
+    assert result.stdout.strip() == f"Cloned agent researcher: {program_path}"
     assert program_path.read_text(encoding="utf-8") == "agent researcher\n"
 
 
@@ -460,6 +461,7 @@ def test_cli_clone_local_source_requires_target_name(tmp_path: Path) -> None:
 def test_cli_progress_groups_agent_and_cap_steps() -> None:
     stream = io.StringIO()
     progress = CliProgress(stream=stream)
+    progress._started_at -= 1.2
 
     progress(
         ProgressEvent(
@@ -520,9 +522,8 @@ def test_cli_progress_groups_agent_and_cap_steps() -> None:
     progress.finish()
 
     assert stream.getvalue().splitlines() == [
-        "ok Agent dev resolve, fetch, materialize",
         "ok Psyche concise resolve, fetch (1 file)",
-        "Progress: 1 agent, 1 caps, prepare ok",
+        "Agent dev prepared: 1 caps, 1.2 secs",
     ]
 
 
@@ -541,7 +542,67 @@ def test_cli_progress_can_finish_with_summary_only() -> None:
     )
     progress.finish(details=False)
 
-    assert stream.getvalue().splitlines() == ["Progress: 0 agent, 0 caps, prepare ok"]
+    assert stream.getvalue() == ""
+
+
+def test_cli_progress_summarizes_zero_caps_when_prepare_runs() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream)
+    progress._started_at -= 0.2
+
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="running",
+            detail="alice",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="ok",
+            detail="abc123",
+        )
+    )
+    progress.finish(details=False)
+
+    assert stream.getvalue().splitlines() == ["Agent alice prepared: 0 caps, 0.2 secs"]
+
+
+def test_cli_progress_can_list_pending_items_before_updates() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream)
+    progress._started_at -= 0.4
+
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="running",
+            detail="dev",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="cap.resolve:skill:by3gus/pdf-processing",
+            phase="cap.resolve",
+            label="Resolve skill",
+            status="pending",
+            detail="by3gus/pdf-processing",
+        )
+    )
+
+    progress.finish()
+
+    assert stream.getvalue().splitlines() == [
+        "pending Skill pdf-processing",
+        "Agent dev preparing: 1 caps, 1 pending, 0.4 secs",
+    ]
 
 
 def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
@@ -651,6 +712,87 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
         agents.HttpAgentRef(url="https://toolang.ai/demo/researcher.too"),
     )
     assert captured["port"] == 45124
+
+
+def test_cli_run_rejects_active_resident_agent(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    agents.write_runtime_state(
+        toolang_root,
+        "alice",
+        endpoint="http://localhost:7001",
+        started_at="2026-04-07T11:00:00Z",
+        pid=os.getpid(),
+    )
+    monkeypatch.setattr(
+        cli.agent_up,
+        "prepare_runtime",
+        lambda **_kwargs: pytest.fail("active agents should be rejected before prepare"),
+    )
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(toolang_root), "run", "alice"],
+        env={},
+    )
+
+    assert result.exit_code == 1
+    assert "Agent alice already running: https://too.run/7001" in result.stderr
+    assert "API:" not in result.stderr
+    assert "Stop:" not in result.stderr
+
+
+def test_cli_run_rejects_active_visiting_agent(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    ref = agents.HttpAgentRef(url="https://toolang.ai/demo/researcher.too")
+    visiting_root = agents.visiting_root(toolang_root, ref)
+    (visiting_root / "agents" / "researcher").mkdir(parents=True)
+    agents.write_runtime_state(
+        visiting_root,
+        "researcher",
+        endpoint="http://localhost:45124",
+        started_at="2026-04-07T11:00:00Z",
+        pid=os.getpid(),
+    )
+    monkeypatch.setattr(agents, "fetch_agent_ref", lambda *_args, **_kwargs: "agent researcher\n")
+    monkeypatch.setattr(
+        cli.agent_up,
+        "prepare_runtime",
+        lambda **_kwargs: pytest.fail("active visiting agents should be rejected before prepare"),
+    )
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(toolang_root), "run", ref.render()],
+        env={},
+    )
+
+    assert result.exit_code == 1
+    assert "Agent researcher already running: https://too.run/45124" in result.stderr
+    assert "API:" not in result.stderr
+    assert "Stop:" not in result.stderr
+
+
+def test_active_run_error_omits_urls_for_transient_states() -> None:
+    preparing = agents.AgentStatus(
+        name="alice",
+        status="preparing",
+        endpoint="http://localhost:7001",
+        api_url="http://localhost:7001/docs",
+        webui_url=None,
+        sandbox=None,
+    )
+    starting = agents.AgentStatus(
+        name="alice",
+        status="starting",
+        endpoint="http://localhost:7001",
+        api_url="http://localhost:7001/docs",
+        webui_url=None,
+        sandbox=None,
+    )
+
+    assert cli._active_run_error(preparing) == "Agent alice already preparing"
+    assert cli._active_run_error(starting) == "Agent alice already starting"
 
 
 def test_visiting_run_target_uses_stable_root_and_updates_program(
@@ -1046,7 +1188,7 @@ def test_cli_remove_deletes_stopped_agent(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 0
-    assert result.stdout.strip() == "alice\tremoved"
+    assert result.stdout.strip() == "Removed agent alice"
     assert not (toolang_root / "agents" / "alice").exists()
 
 
@@ -1068,7 +1210,7 @@ def test_cli_remove_rejects_active_agent(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 1
-    assert "agent is still active: alice" in result.stderr
+    assert "Agent alice already running: https://too.run/8765" in result.stderr
 
 
 def test_cli_remove_rejects_orphan_runtime_process(tmp_path: Path, monkeypatch) -> None:
@@ -1083,7 +1225,7 @@ def test_cli_remove_rejects_orphan_runtime_process(tmp_path: Path, monkeypatch) 
     )
 
     assert result.exit_code == 1
-    assert "agent is still active: alice" in result.stderr
+    assert "Agent alice already running" in result.stderr
     assert (toolang_root / "agents" / "alice").is_dir()
 
 
@@ -1105,7 +1247,7 @@ def test_cli_stop_stops_orphan_runtime_process_without_state(tmp_path: Path, mon
     )
 
     assert result.exit_code == 0
-    assert result.stdout.strip() == "alice\tstopped"
+    assert result.stdout.strip() == "Stopped agent alice"
     assert stopped == [(12345, False)]
 
 
@@ -1959,7 +2101,7 @@ def test_cli_start_spawns_background_run_and_reports_status(tmp_path: Path, monk
     )
 
     assert result.exit_code == 0
-    assert result.stdout.strip() == "alice\trunning\thttp://localhost:8765/docs\thttps://too.run/8765"
+    assert result.stdout.strip() == "Started agent alice: https://too.run/8765"
     assert captured["command"] == [
         cli.sys.executable,
         "-m",
@@ -2073,7 +2215,9 @@ def test_cli_start_rejects_active_agent(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 1
-    assert "agent is already active: alice" in result.stderr
+    assert "Agent alice already running: https://too.run/8765" in result.stderr
+    assert "API:" not in result.stderr
+    assert "Stop:" not in result.stderr
 
 
 def test_cli_start_allows_restart_after_stale_preparing_state(tmp_path: Path, monkeypatch) -> None:
@@ -2132,7 +2276,7 @@ def test_cli_start_allows_restart_after_stale_preparing_state(tmp_path: Path, mo
     )
 
     assert result.exit_code == 0
-    assert "agent is already active: alice" not in result.stderr
+    assert "Agent alice already running" not in result.stderr
 
 
 def test_cli_start_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
@@ -2401,7 +2545,7 @@ def test_cli_start_reports_failed_when_process_exits_before_state(tmp_path: Path
     )
 
     assert result.exit_code == 1
-    assert "agent failed during startup: alice" in result.stderr
+    assert "Agent alice failed to start:" in result.stderr
 
 
 def test_cli_start_requires_agent(tmp_path: Path) -> None:
@@ -2457,7 +2601,7 @@ def test_cli_stop_stops_sandboxed_agent(tmp_path: Path, monkeypatch) -> None:
     )
 
     assert result.exit_code == 0
-    assert result.stdout.strip() == "alice\tstopped"
+    assert result.stdout.strip() == "Stopped agent alice"
     assert captured["runtime_id"] == "sandbox-alice"
     assert captured["force"] is False
 
@@ -2480,7 +2624,7 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
         prefix_agent="alice",
     )
     assert add_result.exit_code == 0
-    assert add_result.stdout.strip() == str(toolang_root / "agents" / "alice" / "config.toml")
+    assert add_result.stdout.strip() == "Added skill reviewer: github://acme/agents/skills/reviewer@main"
 
     config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(encoding="utf-8")
     assert "[skills]" in config_text
@@ -2513,10 +2657,7 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
         prefix_agent="alice",
     )
     assert remove_result.exit_code == 0
-    assert (
-        remove_result.stdout.strip()
-        == "Removed remote skill reviewer from github://acme/agents/skills/reviewer@main"
-    )
+    assert remove_result.stdout.strip() == "Removed skill reviewer: github://acme/agents/skills/reviewer@main"
 
     monkeypatch.setattr(
         cli.click,
@@ -2536,8 +2677,8 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
         prefix_agent="alice",
     )
     assert add_result.exit_code == 0
-    assert add_result.stdout.strip() == str(
-        toolang_root / "agents" / "alice" / "skills" / "reviewer" / "SKILL.md"
+    assert add_result.stdout.strip() == (
+        f"Created skill reviewer: {toolang_root / 'agents' / 'alice' / 'skills' / 'reviewer' / 'SKILL.md'}"
     )
 
     list_result = _invoke_app(
@@ -2578,8 +2719,8 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     )
 
     assert new_result.exit_code == 0
-    assert new_result.stdout.strip() == str(
-        toolang_root / "agents" / "alice" / "skills" / "reviewer" / "SKILL.md"
+    assert new_result.stdout.strip() == (
+        f"Created skill reviewer: {toolang_root / 'agents' / 'alice' / 'skills' / 'reviewer' / 'SKILL.md'}"
     )
     assert (
         toolang_root / "agents" / "alice" / "skills" / "reviewer" / "SKILL.md"
@@ -2617,12 +2758,29 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
         prefix_agent="alice",
     )
     assert edit_result.exit_code == 0
-    assert edit_result.stdout.strip() == str(
-        toolang_root / "agents" / "alice" / "skills" / "reviewer" / "SKILL.md"
+    assert edit_result.stdout.strip() == (
+        f"Updated skill reviewer: {toolang_root / 'agents' / 'alice' / 'skills' / 'reviewer' / 'SKILL.md'}"
     )
     assert (
         toolang_root / "agents" / "alice" / "skills" / "reviewer" / "SKILL.md"
     ).read_text(encoding="utf-8") == edited_text
+
+    monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
+    no_changes_result = _invoke_app(
+        ["skill", "edit", "reviewer"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    assert no_changes_result.exit_code == 0
+    assert no_changes_result.stdout.strip() == "No changes"
+
+    duplicate_result = _invoke_app(
+        ["skill", "new", "reviewer"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    assert duplicate_result.exit_code == 1
+    assert "Skill reviewer already exists" in duplicate_result.stderr
 
     delete_result = _invoke_app(
         ["skill", "delete", "reviewer"],
@@ -2631,9 +2789,32 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     )
     assert delete_result.exit_code == 0
     assert delete_result.stdout.strip() == (
-        f"Deleted local skill reviewer from {toolang_root / 'agents' / 'alice' / 'skills' / 'reviewer'}"
+        f"Deleted skill reviewer: {toolang_root / 'agents' / 'alice' / 'skills' / 'reviewer'}"
     )
     assert not (toolang_root / "agents" / "alice" / "skills" / "reviewer").exists()
+
+    missing_result = _invoke_app(
+        ["skill", "delete", "reviewer"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    assert missing_result.exit_code == 1
+    assert "Skill reviewer not found" in missing_result.stderr
+
+
+def test_cli_cap_remote_add_reports_not_found(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: False)
+
+    result = _invoke_app(
+        ["skill", "add", "acme/missing"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert result.exit_code == 1
+    assert "Remote skill acme/missing not found" in result.stderr
 
 
 def test_cli_cap_add_preserves_unrelated_config_sections(tmp_path: Path, monkeypatch) -> None:
@@ -2683,7 +2864,7 @@ def test_cli_cap_new_cancel_does_not_create(tmp_path: Path, monkeypatch) -> None
     )
 
     assert result.exit_code == 0
-    assert result.stdout == ""
+    assert result.stdout == "No changes\n"
     assert captured["require_save"] is True
     assert captured["extension"] == ".md"
     assert not (toolang_root / "prompts" / "rewrite.md").exists()
@@ -2700,7 +2881,7 @@ def test_cli_cap_new_unchanged_template_does_not_create(tmp_path: Path, monkeypa
     )
 
     assert result.exit_code == 0
-    assert result.stdout == ""
+    assert result.stdout == "No changes\n"
     assert not (toolang_root / "prompts" / "rewrite.md").exists()
 
 
@@ -3087,7 +3268,7 @@ def test_cli_cap_commands_cover_file_backed_kinds(tmp_path: Path, monkeypatch) -
             env={"TOOLANG_ROOT": str(toolang_root)},
         )
         assert add_result.exit_code == 0
-        assert add_result.stdout.strip() == str(path)
+        assert add_result.stdout.strip() == f"Created {kind} {name}: {path}"
 
         list_result = runner.invoke(
             cli.app,
@@ -3110,7 +3291,7 @@ def test_cli_cap_commands_cover_file_backed_kinds(tmp_path: Path, monkeypatch) -
             env={"TOOLANG_ROOT": str(toolang_root)},
         )
         assert delete_result.exit_code == 0
-        assert delete_result.stdout.strip() == f"Deleted local {kind} {name} from {path}"
+        assert delete_result.stdout.strip() == f"Deleted {kind} {name}: {path}"
         assert not path.exists()
 
 
