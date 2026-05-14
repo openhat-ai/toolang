@@ -19,6 +19,7 @@ from toolang.progress import ProgressEvent
 from toolang import work
 from toolang.execution.db import ExecutionStore, execution_db_path
 runner = CliRunner()
+DEFAULT_AGENT_SOURCE = "# Customize this agent here.\n# Docs: https://toolang.ai/docs\n"
 
 
 def _invoke_app(
@@ -255,7 +256,7 @@ def test_cli_new_creates_agent(tmp_path: Path) -> None:
     assert result.exit_code in {0, 2}
     program_path = toolang_root / "agents" / "alice" / "alice.too"
     assert result.stdout.strip() == f"Created agent alice: {program_path}"
-    assert program_path.read_text(encoding="utf-8") == "agent alice\n"
+    assert program_path.read_text(encoding="utf-8") == DEFAULT_AGENT_SOURCE
 
 
 def test_cli_new_uses_named_template(tmp_path: Path) -> None:
@@ -268,7 +269,7 @@ def test_cli_new_uses_named_template(tmp_path: Path) -> None:
     )
 
     assert result.exit_code in {0, 2}
-    assert (toolang_root / "agents" / "alice" / "alice.too").read_text(encoding="utf-8") == "agent alice\n"
+    assert (toolang_root / "agents" / "alice" / "alice.too").read_text(encoding="utf-8") == DEFAULT_AGENT_SOURCE
 
 
 def test_cli_callback_configures_logging_for_standard_commands(monkeypatch, tmp_path: Path) -> None:
@@ -301,7 +302,7 @@ def test_cli_new_supports_template_alias(tmp_path: Path) -> None:
     )
 
     assert result.exit_code in {0, 2}
-    assert (toolang_root / "agents" / "alice" / "alice.too").read_text(encoding="utf-8") == "agent alice\n"
+    assert (toolang_root / "agents" / "alice" / "alice.too").read_text(encoding="utf-8") == DEFAULT_AGENT_SOURCE
 
 
 def test_cli_clone_copies_agent_without_prepared(tmp_path: Path) -> None:
