@@ -327,7 +327,9 @@ def run_agent(
     root = _context_root(ctx)
     progress = make_cli_progress()
     try:
-        with agents.materialized_run_target(root, selector, progress=as_progress_sink(progress)) as (run_root, agent_name):
+        with agents.resolved_run_target(root, selector, progress=as_progress_sink(progress)) as target:
+            run_root = target.toolang_root
+            agent_name = target.agent_name
             environ = _runtime_environ_for_agent(ctx, agent_name, toolang_root=run_root)
             effective_log_spec = _configure_foreground_runtime_logging(ctx, environ)
             _wrap_user_error(
@@ -337,6 +339,16 @@ def run_agent(
                 progress=as_progress_sink(progress),
             )
             progress.finish(details=False)
+            effective_port = port
+            if effective_port is None and target.kind == "visiting":
+                effective_port = _wrap_user_error(
+                    agent_up.resolve_runtime_port,
+                    host=host,
+                    explicit_port=None,
+                    toolang_root=run_root,
+                    agent_name=agent_name,
+                    temporary=True,
+                )
             raise typer.Exit(
                 _wrap_user_error(
                     agent_up.up,
@@ -344,7 +356,7 @@ def run_agent(
                     agent_name=agent_name,
                     host=host,
                     endpoint_host=endpoint_host,
-                    port=port,
+                    port=effective_port,
                     sandbox=sandbox,
                     models=models,
                     dev=dev,

@@ -569,9 +569,10 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
         environ: dict[str, str],
         progress=None,
     ) -> int:
-        del host, endpoint_host, port, sandbox, models, dev, sandbox_child, feature_names, log_spec, environ, progress
+        del host, endpoint_host, sandbox, models, dev, sandbox_child, feature_names, log_spec, environ, progress
         captured["toolang_root"] = toolang_root
         captured["agent_name"] = agent_name
+        captured["port"] = port
         program_path = toolang_root / "agents" / agent_name / f"{agent_name}.too"
         captured["program_exists"] = program_path.is_file()
         captured["program_text"] = program_path.read_text(encoding="utf-8")
@@ -582,6 +583,7 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
     monkeypatch.setattr(cli.agent_up, "up", fake_up)
     monkeypatch.setattr(cli.agent_up, "prepare_runtime", lambda **_kwargs: None)
+    monkeypatch.setattr(cli.agent_up, "resolve_runtime_port", lambda **_kwargs: 45123)
 
     result = runner.invoke(
         cli.app,
@@ -593,7 +595,11 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
     assert captured["agent_name"] == "alice"
     assert captured["program_exists"] is True
     assert captured["program_text"] == "agent alice\n"
-    assert Path(cast(Path, captured["toolang_root"])).name.startswith("toolang-run-")
+    assert captured["toolang_root"] == agents.visiting_root(
+        toolang_root,
+        agents.GitHubAgentRef(owner="brice", repo="agents", path="agents/alice.too", rev="main"),
+    )
+    assert captured["port"] == 45123
 
 
 def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> None:
@@ -621,14 +627,16 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
         environ: dict[str, str],
         progress=None,
     ) -> int:
-        del host, endpoint_host, port, sandbox, models, dev, sandbox_child, feature_names, log_spec, environ, progress
+        del host, endpoint_host, sandbox, models, dev, sandbox_child, feature_names, log_spec, environ, progress
         captured["toolang_root"] = toolang_root
         captured["agent_name"] = agent_name
+        captured["port"] = port
         return 0
 
     monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
     monkeypatch.setattr(cli.agent_up, "up", fake_up)
     monkeypatch.setattr(cli.agent_up, "prepare_runtime", lambda **_kwargs: None)
+    monkeypatch.setattr(cli.agent_up, "resolve_runtime_port", lambda **_kwargs: 45124)
 
     result = runner.invoke(
         cli.app,
@@ -638,7 +646,44 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
 
     assert result.exit_code == 0
     assert captured["agent_name"] == "researcher"
-    assert Path(cast(Path, captured["toolang_root"])).name.startswith("toolang-run-")
+    assert captured["toolang_root"] == agents.visiting_root(
+        toolang_root,
+        agents.HttpAgentRef(url="https://toolang.ai/demo/researcher.too"),
+    )
+    assert captured["port"] == 45124
+
+
+def test_visiting_run_target_uses_stable_root_and_updates_program(
+    tmp_path: Path, monkeypatch
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    ref = agents.HttpAgentRef(url="https://toolang.ai/demo/researcher.too")
+    sources = iter(["agent old-name\n", "agent newer-name\n"])
+    monkeypatch.setattr(agents, "fetch_agent_ref", lambda *_args, **_kwargs: next(sources))
+
+    with agents.resolved_run_target(toolang_root, ref.render()) as first:
+        agents.write_runtime_state(
+            first.toolang_root,
+            first.agent_name,
+            endpoint="http://127.0.0.1:45678",
+            started_at="2026-04-07T11:00:00Z",
+            pid=None,
+            status="stopped",
+        )
+        first_program = first.toolang_root / "agents" / first.agent_name / f"{first.agent_name}.too"
+
+    with agents.resolved_run_target(toolang_root, ref.render()) as second:
+        second_program = second.toolang_root / "agents" / second.agent_name / f"{second.agent_name}.too"
+
+    assert first.toolang_root == agents.visiting_root(toolang_root, ref)
+    assert second.toolang_root == first.toolang_root
+    assert second.toolang_root.parent == Path("/tmp") / "toolang-visiting"
+    assert not second.toolang_root.is_relative_to(toolang_root)
+    assert second.kind == "visiting"
+    assert second.agent_name == "researcher"
+    assert second_program == first_program
+    assert second_program.read_text(encoding="utf-8") == "agent researcher\n"
+    assert agents.preferred_runtime_port(second.toolang_root, second.agent_name) == 45678
 
 
 def test_cli_roaming_program_help_lists_available_thunks(capsys, tmp_path: Path) -> None:

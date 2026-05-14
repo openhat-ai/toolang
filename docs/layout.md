@@ -44,9 +44,21 @@ ${TOOLANG_ROOT}/
 
 ## Agent Home
 
-Each agent lives under:
+Each resident agent lives under:
 
 - `${TOOLANG_ROOT}/agents/<agent>/`
+
+Visiting agents fetched by `toolang run <remote>` are materialized under a
+stable system temporary root derived from `TOOLANG_ROOT` and the canonical
+remote ref:
+
+- `/tmp/toolang-visiting/<agent>-<root-hash>-<ref-hash>/`
+
+The stable visiting root lets prepared state and the last runtime port be
+reused across repeated foreground runs of the same remote agent ref while
+remaining disposable across machine restarts or normal temporary-directory
+cleanup. Roaming `.too` file invocation uses the source file's sibling
+`.toolang` directory and does not start a long-lived HTTP runtime.
 
 Key paths:
 

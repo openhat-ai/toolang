@@ -97,6 +97,14 @@ GitHub refs must include one revision suffix:
 `rev` is one git revision token. Toolang does not distinguish branch, tag, and
 commit in selector syntax.
 
+Foreground runtime port selection depends on the agent mode:
+
+| Mode | Selector | Default port behavior |
+| --- | --- | --- |
+| Resident | Local managed name such as `alice` | Reuse the agent's last port when available, otherwise choose from `7001-7999` |
+| Visiting | Remote selector such as `brice/alice` or `https://toolang.ai/alice.too` | Reuse the visiting root's last port when available, otherwise choose an OS temporary port |
+| Roaming | Local `.too` path invocation | No HTTP runtime port; the thunk is invoked directly |
+
 
 ## Invoke Surface
 
@@ -141,7 +149,7 @@ Behavior:
 
 | Command | Behavior |
 | --- | --- |
-| `toolang run` | Runs a local agent, or fetches one remote agent program into a temporary local home and runs it in the foreground |
+| `toolang run` | Runs a local agent, or fetches one remote agent program into a stable visiting root and runs it in the foreground |
 | `toolang clone` | Clones one local agent, or fetches one remote agent program into a new local managed agent |
 | `toolang start` | Starts one local managed agent only. Remote selectors must be cloned first |
 
