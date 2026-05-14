@@ -349,6 +349,8 @@ def run_agent(
         with agents.resolved_run_target(root, selector, progress=as_progress_sink(progress)) as target:
             run_root = target.toolang_root
             agent_name = target.agent_name
+            if target.kind == "resident" and not agents.agent_home(run_root, agent_name).is_dir():
+                raise click.ClickException(f"Agent {agent_name} not found")
             existing = agents.get_agent_status(run_root, agent_name, ui_base_url=_ui_base_url())
             if existing is not None and existing.status in {"running", "preparing", "starting"}:
                 raise click.ClickException(_active_run_error(existing))
@@ -453,6 +455,8 @@ def start_agent(
     root = _context_root(ctx)
     normalized_features = _normalize_feature_option(features)
     progress = make_cli_progress()
+    if not agents.agent_home(root, agent_name).is_dir():
+        raise click.ClickException(f"Agent {agent_name} not found")
     existing = agents.get_agent_status(root, agent_name, ui_base_url=_ui_base_url())
     if existing is not None and existing.status in {"running", "preparing", "starting"}:
         raise click.ClickException(_active_run_error(existing))
