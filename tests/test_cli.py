@@ -125,7 +125,7 @@ def test_cli_main_intercepts_local_too_program_before_typer(monkeypatch, tmp_pat
     assert captured["prog_name"] == "toolang"
 
 
-def test_cli_main_configures_logging_for_roaming_invoke(monkeypatch, tmp_path: Path) -> None:
+def test_cli_main_configures_logging_for_roaming_invoke_from_py_log(monkeypatch, tmp_path: Path) -> None:
     program_path = tmp_path / "demo.too"
     program_path.write_text("thunk:\n  Reply directly.\n", encoding="utf-8")
     captured: dict[str, object] = {}
@@ -143,12 +143,14 @@ def test_cli_main_configures_logging_for_roaming_invoke(monkeypatch, tmp_path: P
     monkeypatch.setattr(cli, "configure_logging", fake_configure_logging)
     monkeypatch.setattr(cli.cli_invoke, "handle_roaming_invoke", fake_handle)
     monkeypatch.setattr(cli.sys, "argv", ["toolang"])
+    monkeypatch.setenv(PY_LOG_ENV_VAR, "toolang.run=debug")
 
-    result = cli.main(["--log", "toolang.run=debug", str(program_path), "--help"])
+    result = cli.main([str(program_path), "--help"])
 
     assert result == 0
-    assert captured["spec"] == "toolang.run=debug"
-    assert captured["global_args"] == ["--log", "toolang.run=debug"]
+    assert captured["spec"] is None
+    assert cast(dict[str, str], captured["environ"])[PY_LOG_ENV_VAR] == "toolang.run=debug"
+    assert captured["global_args"] == []
     assert captured["body"] == [str(program_path), "--help"]
     assert captured["prog_name"] == "toolang"
 
@@ -273,7 +275,7 @@ def test_cli_new_uses_named_template(tmp_path: Path) -> None:
     assert (toolang_root / "agents" / "alice" / "alice.too").read_text(encoding="utf-8") == DEFAULT_AGENT_SOURCE
 
 
-def test_cli_callback_configures_logging_for_standard_commands(monkeypatch, tmp_path: Path) -> None:
+def test_cli_callback_configures_logging_for_standard_commands_from_py_log(monkeypatch, tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     calls: list[tuple[str | None, dict[str, str]]] = []
 
@@ -284,13 +286,14 @@ def test_cli_callback_configures_logging_for_standard_commands(monkeypatch, tmp_
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(toolang_root), "--log", "toolang.run=debug", "list"],
-        env={},
+        ["--root", str(toolang_root), "list"],
+        env={PY_LOG_ENV_VAR: "toolang.run=debug"},
     )
 
     assert result.exit_code == 0
     assert len(calls) == 1
-    assert calls[0][0] == "toolang.run=debug"
+    assert calls[0][0] is None
+    assert calls[0][1][PY_LOG_ENV_VAR] == "toolang.run=debug"
 
 
 def test_cli_new_supports_template_alias(tmp_path: Path) -> None:
@@ -2395,7 +2398,7 @@ def test_cli_run_passes_model_selectors_to_agent_up(tmp_path: Path, monkeypatch)
     assert captured["models"] == ["openai/gpt-5@openai", "o3"]
 
 
-def test_cli_run_does_not_override_explicit_log_spec(tmp_path: Path, monkeypatch) -> None:
+def test_cli_run_uses_py_log_spec(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     captured: dict[str, object] = {}
@@ -2426,13 +2429,13 @@ def test_cli_run_does_not_override_explicit_log_spec(tmp_path: Path, monkeypatch
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(toolang_root), "--log", "toolang.run=debug", "run", "alice"],
-        env={},
+        ["--root", str(toolang_root), "run", "alice"],
+        env={PY_LOG_ENV_VAR: "toolang.run=debug"},
     )
 
     assert result.exit_code == 0
     assert captured["log_spec"] == "toolang.run=debug"
-    assert PY_LOG_ENV_VAR not in cast(dict[str, str], captured["environ"])
+    assert cast(dict[str, str], captured["environ"])[PY_LOG_ENV_VAR] == "toolang.run=debug"
 
 
 def test_cli_run_requires_agent(tmp_path: Path) -> None:
@@ -2586,7 +2589,7 @@ def test_cli_start_spawns_background_run_and_reports_status(tmp_path: Path, monk
     assert agents.agent_runtime_log_path(toolang_root, "alice").read_text(encoding="utf-8") == "launcher\n"
 
 
-def test_cli_start_propagates_explicit_log_spec_to_agent_process(tmp_path: Path, monkeypatch) -> None:
+def test_cli_start_propagates_py_log_to_agent_process(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     captured: dict[str, object] = {}
@@ -2630,28 +2633,24 @@ def test_cli_start_propagates_explicit_log_spec_to_agent_process(tmp_path: Path,
         [
             "--root",
             str(toolang_root),
-            "--log",
-            "toolang.run=debug,httpx=off",
             "start",
             "alice",
             "--sandbox",
             "none",
         ],
-        env={},
+        env={PY_LOG_ENV_VAR: "toolang.run=debug,httpx=off"},
     )
 
     assert result.exit_code == 0
     command = cast(list[str], captured["command"])
-    assert command[0:7] == [
+    assert command[0:5] == [
         cli.sys.executable,
         "-m",
         "toolang.cli.main",
-        "--log",
-        "toolang.run=debug,httpx=off",
         "--root",
         str(toolang_root),
     ]
-    assert PY_LOG_ENV_VAR not in cast(dict[str, str], captured["env"])
+    assert cast(dict[str, str], captured["env"])[PY_LOG_ENV_VAR] == "toolang.run=debug,httpx=off"
 
 
 def test_cli_start_rejects_active_agent(tmp_path: Path) -> None:
@@ -3968,6 +3967,18 @@ def test_cli_cap_list_rejects_private_visibility_without_agent(tmp_path: Path) -
     assert "an agent prefix is required when --visibility is private" in result.stderr
 
 
+def test_cli_version_option_exits_before_other_parsing(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "package_version", lambda _name: "0.1.2")
+
+    result = runner.invoke(cli.app, ["--version", "list"])
+    short_result = runner.invoke(cli.app, ["-V", "list"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "toolang 0.1.2"
+    assert short_result.exit_code == 0
+    assert short_result.stdout.strip() == "toolang 0.1.2"
+
+
 def test_cli_help_orders_cap_groups() -> None:
     result = runner.invoke(cli.app, ["--help"])
 
@@ -3975,8 +3986,10 @@ def test_cli_help_orders_cap_groups() -> None:
     assert "Run and manage Toolang agents." in result.stdout
     assert "--root" in result.stdout
     assert "Root directory for all agents." in result.stdout
-    assert "--log" in result.stdout
-    assert "Set logging directives. Uses PY_LOG when omitted." in result.stdout
+    assert "--version" in result.stdout
+    assert "-V" in result.stdout
+    assert "Show current version and exit." in result.stdout
+    assert "--log" not in result.stdout
     assert "Create an agent." in result.stdout
     assert "Clone an agent." in result.stdout
     assert "Remove an agent." in result.stdout

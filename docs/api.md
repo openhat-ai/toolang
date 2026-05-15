@@ -32,7 +32,7 @@ Top-level commands are:
 Global options:
 
 - `--root`
-- `--log`
+- `--version`
 
 Cap commands:
 
@@ -54,7 +54,7 @@ Typical usage:
 ```bash
 toolang new alice
 toolang list
-toolang --log toolang.run=info ./examples/invoke-playground.too summarize "Summarize this workspace"
+PY_LOG=toolang.run=info toolang ./examples/invoke-playground.too summarize "Summarize this workspace"
 toolang ./examples/invoke-playground.too --help
 toolang ./examples/invoke-playground.too summarize "Summarize this workspace"
 toolang run alice
@@ -117,8 +117,8 @@ toolang path/to/agent.too THUNK [OPTIONS] [PARAMS] [PARTS]
 Behavior:
 
 - one local `.too` path enters roaming invoke mode
-- `toolang --log toolang.run=info a.too thunk ...` shows runtime logs during invoke
-- `toolang --log debug a.too thunk ...` also shows lower-level provider and HTTP logs
+- `PY_LOG=toolang.run=info toolang a.too thunk ...` shows runtime logs during invoke
+- `PY_LOG=debug toolang a.too thunk ...` also shows lower-level provider and HTTP logs
 - `toolang a.too --help` lists invokable thunks
 - `toolang a.too thunk --help` prints thunk-specific dynamic usage
 - `toolang a.too` shows usage instead of invoking a default thunk
@@ -133,8 +133,8 @@ Behavior:
   - all other path extensions infer generic file parts
 - `--` ends option parsing so later arguments stay message parts
 - `--option` is reserved for Toolang runtime options
-- `PY_LOG` uses the same env_logger-style directive format as `--log`
-- when neither `--log` nor `PY_LOG` is set, Toolang logs only `error` and above by default
+- `PY_LOG` uses env_logger-style directive formatting
+- when `PY_LOG` is not set, Toolang logs only `error` and above by default
 
 
 ## Runtime Commands
