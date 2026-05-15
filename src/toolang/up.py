@@ -837,23 +837,23 @@ def _up_local(
         log_config=build_uvicorn_log_config(level=log_spec or DEFAULT_LOG_LEVEL),
         shutdown_signal=shutdown_signal,
         on_starting=lambda: logger.info(
-            "Agent %s started root=%s features=%s",
+            "Agent %s starting root=%s features=%s",
             context.name,
             toolang_root,
             ",".join(enabled_features),
             extra={
-                "color_message": "Agent %s started root="
+                "color_message": "Agent %s starting root="
                 + click.style("%s", bold=True)
                 + " features="
                 + click.style("%s", bold=True)
             },
         ),
         on_running=lambda: logger.info(
-            "Agent %s webui=%s",
+            "Agent %s started webui=%s",
             context.name,
             webui_url,
             extra={
-                "color_message": "Agent %s webui=" + click.style("%s", bold=True)
+                "color_message": "Agent %s started webui=" + click.style("%s", bold=True)
             },
         ),
         on_stopping=lambda: logger.info("Agent %s stopping", context.name),
