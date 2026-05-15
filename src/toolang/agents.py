@@ -356,9 +356,9 @@ def visiting_root(toolang_root: Path, ref: AgentRef) -> Path:
     """Return the stable local root for one visiting remote agent ref."""
 
     label = _safe_visiting_root_label(ref.default_name())
-    root_digest = hashlib.sha256(str(toolang_root.expanduser().resolve()).encode("utf-8")).hexdigest()[:6]
-    ref_digest = hashlib.sha256(ref.render().encode("utf-8")).hexdigest()[:8]
-    return Path("/tmp") / "toolang-visiting" / f"{label}-{root_digest}-{ref_digest}"
+    source_key = f"{toolang_root.expanduser().resolve()}\n{ref.render()}"
+    source_digest = hashlib.sha256(source_key.encode("utf-8")).hexdigest()[:8]
+    return Path("/tmp") / "toolang-visiting" / f"{label}-{source_digest}"
 
 
 def materialize_roaming_program(source_path: Path) -> tuple[Path, str]:

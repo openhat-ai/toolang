@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 from pathlib import Path
 import os
@@ -1244,8 +1245,8 @@ def test_visiting_run_target_uses_stable_root_and_updates_program(
     assert first.toolang_root == agents.visiting_root(toolang_root, ref)
     assert second.toolang_root == first.toolang_root
     assert second.toolang_root.parent == Path("/tmp") / "toolang-visiting"
-    assert second.toolang_root.name.startswith("researcher-")
-    assert [len(part) for part in second.toolang_root.name.split("-")[-2:]] == [6, 8]
+    expected_digest = hashlib.sha256(f"{toolang_root.resolve()}\n{ref.render()}".encode("utf-8")).hexdigest()[:8]
+    assert second.toolang_root.name == f"researcher-{expected_digest}"
     assert not second.toolang_root.is_relative_to(toolang_root)
     assert second.kind == "visiting"
     assert second.agent_name == "researcher"

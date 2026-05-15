@@ -2267,7 +2267,7 @@ def test_up_logs_runtime_urls_after_start_and_stop(tmp_path: Path, monkeypatch, 
     messages = [record.getMessage() for record in caplog.records if record.name == "toolang.runtime"]
     assert len(messages) == 4
     assert messages[0] == f"Agent alice started root={toolang_root} features=inspect"
-    assert messages[1] == "Agent alice running on https://agents.example.test/8765"
+    assert messages[1] == "Agent alice webui=https://agents.example.test/8765"
     assert messages[2] == "Agent alice stopping"
     assert messages[3] == "Agent alice stopped"
     color_messages = [
@@ -2278,7 +2278,7 @@ def test_up_logs_runtime_urls_after_start_and_stop(tmp_path: Path, monkeypatch, 
     assert color_messages[0] == (
         "Agent %s started root=\x1b[1m%s\x1b[0m features=\x1b[1m%s\x1b[0m"
     )
-    assert color_messages[1] == "Agent %s running on \x1b[1m%s\x1b[0m"
+    assert color_messages[1] == "Agent %s webui=\x1b[1m%s\x1b[0m"
 
 
 def test_up_reuses_previous_agent_port_when_unspecified(tmp_path: Path, monkeypatch) -> None:

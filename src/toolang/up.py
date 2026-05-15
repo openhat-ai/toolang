@@ -849,11 +849,11 @@ def _up_local(
             },
         ),
         on_running=lambda: logger.info(
-            "Agent %s running on %s",
+            "Agent %s webui=%s",
             context.name,
             webui_url,
             extra={
-                "color_message": "Agent %s running on " + click.style("%s", bold=True)
+                "color_message": "Agent %s webui=" + click.style("%s", bold=True)
             },
         ),
         on_stopping=lambda: logger.info("Agent %s stopping", context.name),
