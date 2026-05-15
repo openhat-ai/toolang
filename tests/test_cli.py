@@ -642,6 +642,32 @@ def test_cli_progress_shows_live_summary_first() -> None:
     progress.finish(details=False)
 
 
+def test_cli_progress_mutes_agent_live_lines() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream, live=True)
+    progress._started_at -= 0.2
+
+    progress(
+        ProgressEvent(
+            id="agent.resolve:briceyan/dev",
+            phase="agent.resolve",
+            label="Resolve agent",
+            status="running",
+            detail="briceyan/dev",
+        )
+    )
+
+    text = progress._live_text()
+
+    assert text.plain.splitlines() == [
+        "Fetching 1 agent: 0.2s",
+        " * agent briceyan/dev resolving",
+    ]
+    assert text.spans[0].style == "dim"
+    assert text.spans[1].style == "dim"
+    progress.finish(details=False)
+
+
 def test_cli_progress_failed_summary_omits_elapsed_time() -> None:
     stream = io.StringIO()
     progress = CliProgress(stream=stream)

@@ -227,9 +227,7 @@ class CliProgress:
             text.append(f"{summary}\n", style="dim")
         for group in self._item_groups():
             for item in group:
-                style = "dim" if item.kind != "agent" else ""
-                prefix = " * " if item.kind != "agent" else ""
-                text.append(f"{prefix}{_format_item(item)}\n", style=style)
+                text.append(f" * {_format_item(item)}\n", style="dim")
         return text
 
     def _has_visible_items(self) -> bool:
