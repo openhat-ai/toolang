@@ -222,6 +222,11 @@ class CliProgress:
 
     def _live_text(self) -> Text:
         text = Text()
+        agent_items = [item for item in self._items.values() if item.kind == "agent"]
+        cap_items = [item for item in self._items.values() if item.kind != "agent"]
+        if agent_items and not cap_items and not self._prepare and not self._agent_stage_uses_summary(agent_items[0]):
+            text.append(f"{_format_item(agent_items[0])}\n", style="dim")
+            return text
         summary = self._summary_line()
         if summary:
             text.append(f"{summary}\n", style="dim")
@@ -231,6 +236,11 @@ class CliProgress:
                     continue
                 text.append(f" * {_format_item(item)}\n", style="dim")
         return text
+
+    def _agent_stage_uses_summary(self, item: _ProgressItem) -> bool:
+        if self._interrupted or _item_status(item) == "failed":
+            return True
+        return item.steps.get("fetch") == "ok" or item.steps.get("materialize") == "ok"
 
     def _has_visible_items(self) -> bool:
         return bool(self._items)
@@ -292,7 +302,7 @@ class _ProgressItem:
 def _format_item(item: _ProgressItem) -> str:
     name = item.name or item.ref or item.title
     status, info = _item_state(item)
-    if info == name or info == item.ref:
+    if info == name or (item.kind != "agent" and info == item.ref):
         info = ""
     suffix = f": {info}" if info else ""
     return f"{item.kind} {name} {status}{suffix}"
