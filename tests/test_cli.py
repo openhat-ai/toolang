@@ -591,6 +591,35 @@ def test_cli_progress_shows_live_summary_first() -> None:
     progress.finish(details=False)
 
 
+def test_cli_progress_failed_summary_omits_elapsed_time() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream)
+    progress._started_at -= 0.6
+
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="running",
+            detail="dev",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="cap.resolve:skill:briceyan/pdf",
+            phase="cap.resolve",
+            label="Resolve skill",
+            status="failed",
+            detail="not found",
+        )
+    )
+
+    progress.finish(details=False)
+
+    assert stream.getvalue().splitlines() == ["Failed 1/1 caps"]
+
+
 def test_cli_progress_formats_agent_source_stage() -> None:
     stream = io.StringIO()
     progress = CliProgress(stream=stream)
@@ -751,7 +780,7 @@ def test_cli_progress_reports_interrupted_stage_once() -> None:
     progress.interrupt()
     progress.finish(details=False)
 
-    assert stream.getvalue().splitlines() == ["Fetch agent interrupted in 0.3s"]
+    assert stream.getvalue().splitlines() == ["Fetch agent interrupted"]
 
 
 def test_cli_progress_ignores_events_after_interrupt() -> None:
@@ -779,7 +808,7 @@ def test_cli_progress_ignores_events_after_interrupt() -> None:
     )
     progress.finish()
 
-    assert stream.getvalue().splitlines() == ["Prepare caps interrupted in 0.0s"]
+    assert stream.getvalue().splitlines() == ["Prepare caps interrupted"]
 
 
 def test_cli_progress_can_list_pending_items_before_updates() -> None:

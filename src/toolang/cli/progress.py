@@ -172,14 +172,14 @@ class CliProgress:
         prepare_status = _aggregate_status(tuple(self._prepare.values())) if self._prepare else "skipped"
         if self._interrupted:
             if cap_items or self._prepare:
-                return f"Prepare caps interrupted in {elapsed}"
+                return "Prepare caps interrupted"
             if agent_items:
-                return f"Fetch agent interrupted in {elapsed}"
+                return "Fetch agent interrupted"
             return ""
         if self._prepare:
             total = len(cap_items)
             if failed:
-                return f"Failed {failed}/{total} caps in {elapsed}"
+                return f"Failed {failed}/{total} caps"
             if running:
                 return f"Preparing {total} caps: {running} running, {elapsed}"
             if pending:
@@ -199,7 +199,7 @@ class CliProgress:
                 return f"Fetching 1 agent: {elapsed}"
             return f"Fetched 1 agent in {elapsed}"
         if failed:
-            return f"Failed {failed}/{len(cap_items)} caps in {elapsed}"
+            return f"Failed {failed}/{len(cap_items)} caps"
         if running:
             return f"Preparing {len(cap_items)} caps: {running} running, {elapsed}"
         if pending:
