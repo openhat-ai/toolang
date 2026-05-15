@@ -6,20 +6,48 @@ Tool calling turned LLMs from chatbots into agents. Toolang makes agents easy to
 
 ## Get Started
 
-### Zero setup
+### Run a shared agent
+
+Run an agent directly from a URL:
 
 ```bash
 uvx toolang run https://toolang.ai/dev.too
 ```
+Or run one from a shared reference:
 
-### Installed CLI
+```bash
+uvx toolang run briceyan/dev
+```
+
+### Create your own agent
+
+Install Toolang:
 
 ```bash
 uv tool install toolang
-toolang new alice
-toolang run alice
-toolang start alice
 ```
+
+Create a new agent:
+
+```bash
+toolang new alice
+toolang clone briceyan/dev bob
+```
+
+Run it in the foreground:
+
+```bash
+toolang run alice
+```
+
+Or keep it running in the background:
+
+```bash
+toolang start alice
+toolang stop alice
+```
+
+`run` and `start` print a WebUI URL for the agent.
 
 ## Links
 
