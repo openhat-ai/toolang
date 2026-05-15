@@ -683,8 +683,6 @@ def build_run_argv(
     """Build one explicit argv for the hidden managed-runtime run path."""
 
     command: list[str] = []
-    if spec.log_spec is not None:
-        command.extend(["--log", spec.log_spec])
     command.extend([
         "--root",
         str(root or spec.toolang_root),

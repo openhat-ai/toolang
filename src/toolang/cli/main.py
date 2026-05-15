@@ -5,11 +5,14 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 from pathlib import Path
 import os
 import subprocess
 import sys
 import time
+import tomllib
 from typing import Annotated, Literal, cast
 
 import click
@@ -103,6 +106,30 @@ def _human_uptime_since(timestamp_text: str) -> str | None:
 
     return f"up {humanize.naturaldelta(total_seconds)}"
 
+
+def _toolang_version() -> str:
+    try:
+        return package_version("toolang")
+    except PackageNotFoundError:
+        pyproject_path = Path(__file__).resolve().parents[3] / "pyproject.toml"
+        try:
+            data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError):
+            return "unknown"
+        project = data.get("project")
+        if not isinstance(project, dict):
+            return "unknown"
+        version = project.get("version")
+        return version if isinstance(version, str) else "unknown"
+
+
+def _version_callback(value: bool) -> None:
+    if not value:
+        return
+    typer.echo(f"toolang {_toolang_version()}")
+    raise typer.Exit()
+
+
 app = typer.Typer(
     help="Run and manage Toolang agents.",
     add_completion=False,
@@ -120,24 +147,27 @@ def callback(
         Path | None,
         typer.Option("--root", "-r", help="Root directory for all agents."),
     ] = None,
-    log: Annotated[
-        str | None,
+    version: Annotated[
+        bool,
         typer.Option(
-            "--log",
-            help="Set logging directives. Uses PY_LOG when omitted.",
+            "--version",
+            "-V",
+            callback=_version_callback,
+            help="Show current version and exit.",
+            is_eager=True,
         ),
-    ] = None,
+    ] = False,
 ) -> None:
     """Toolang CLI."""
 
+    del version
     try:
-        configure_logging(spec=log, environ=os.environ)
+        configure_logging(spec=None, environ=os.environ)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
     ctx.obj = {
         "toolang_root": _toolang_root(toolang_root),
         "agent": _CLI_PREFIX_AGENT,
-        "log": log,
     }
 
 
@@ -355,7 +385,7 @@ def run_agent(
             if existing is not None and existing.status in {"running", "preparing", "starting"}:
                 raise click.ClickException(_active_run_error(existing))
             environ = _runtime_environ_for_agent(ctx, agent_name, toolang_root=run_root)
-            effective_log_spec = _configure_foreground_runtime_logging(ctx, environ)
+            effective_log_spec = _configure_foreground_runtime_logging(environ)
             _wrap_user_error(
                 agent_up.prepare_runtime,
                 toolang_root=run_root,
@@ -467,8 +497,7 @@ def start_agent(
 
     environ = _runtime_environ_for_agent(ctx, agent_name)
     environ["TOOLANG_ROOT"] = str(root)
-    explicit_log_spec = cast(str | None, ctx.obj.get("log"))
-    if explicit_log_spec is None and not environ.get(PY_LOG_ENV_VAR, "").strip():
+    if not environ.get(PY_LOG_ENV_VAR, "").strip():
         environ[PY_LOG_ENV_VAR] = DEFAULT_AGENT_LOG_SPEC
     startup = _wrap_user_error(
         agent_up.resolve_startup,
@@ -481,7 +510,7 @@ def start_agent(
         models=models,
         dev=dev,
         feature_names=normalized_features,
-        log_spec=explicit_log_spec,
+        log_spec=environ.get(PY_LOG_ENV_VAR),
         environ=environ,
     )
     emit_progress(
@@ -591,13 +620,7 @@ def stop_agent(
     typer.echo(f"Stopped agent {agent_name}" if stopped else f"Agent {agent_name} not running")
 
 
-def _configure_foreground_runtime_logging(
-    ctx: typer.Context,
-    environ: dict[str, str],
-) -> str | None:
-    explicit_log_spec = cast(str | None, ctx.obj.get("log"))
-    if explicit_log_spec is not None:
-        return explicit_log_spec
+def _configure_foreground_runtime_logging(environ: dict[str, str]) -> str:
     runtime_log_spec = environ.get(PY_LOG_ENV_VAR, "").strip()
     if runtime_log_spec:
         configure_logging(spec=runtime_log_spec, environ=environ)
@@ -1172,9 +1195,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if body:
         roaming_source = cli_invoke.roaming_source_path(body[0])
         if roaming_source is not None:
-            log_spec = _global_log_spec(global_args)
             try:
-                configure_logging(spec=log_spec, environ=os.environ)
+                configure_logging(spec=None, environ=os.environ)
             except ValueError as exc:
                 typer.echo(f"toolang error: {exc}", err=True)
                 return 1
@@ -1237,31 +1259,7 @@ def _consume_global_arg(token: str, argv: list[str], index: int) -> tuple[list[s
         return ([token, argv[index + 1]], 2)
     if token.startswith("--root="):
         return (["--root", token.removeprefix("--root=")], 1)
-    if token == "--log":
-        if index + 1 >= len(argv):
-            return ([token], 1)
-        return ([token, argv[index + 1]], 2)
-    if token.startswith("--log="):
-        return (["--log", token.removeprefix("--log=")], 1)
     return None
-
-
-def _global_log_spec(global_args: list[str]) -> str | None:
-    index = 0
-    value: str | None = None
-    while index < len(global_args):
-        token = global_args[index]
-        if token == "--log":
-            if index + 1 >= len(global_args):
-                return None
-            value = global_args[index + 1]
-            index += 2
-            continue
-        if token == "--root":
-            index += 2
-            continue
-        index += 1
-    return value
 
 
 def _rewrite_agent_shortcuts(body: list[str]) -> tuple[list[str], str | None]:
