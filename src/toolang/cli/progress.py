@@ -227,6 +227,8 @@ class CliProgress:
             text.append(f"{summary}\n", style="dim")
         for group in self._item_groups():
             for item in group:
+                if item.kind == "agent":
+                    continue
                 text.append(f" * {_format_item(item)}\n", style="dim")
         return text
 
