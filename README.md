@@ -9,14 +9,13 @@ Tool calling turned LLMs from chatbots into agents. Toolang makes agents easy to
 ### Zero setup
 
 ```bash
-uvx toolang new alice
-uvx toolang run alice
+uvx toolang run https://toolang.ai/dev.too
 ```
 
 ### Installed CLI
 
 ```bash
-pip install toolang
+uv tool install toolang
 toolang new alice
 toolang run alice
 toolang start alice
