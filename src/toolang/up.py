@@ -837,10 +837,7 @@ def _up_local(
         log_config=build_uvicorn_log_config(level=log_spec or DEFAULT_LOG_LEVEL),
         shutdown_signal=shutdown_signal,
         on_starting=lambda: logger.info(
-            "Agent %s started root=%s features=%s",
-            context.name,
-            toolang_root,
-            ",".join(enabled_features),
+            f"Agent {context.name} started root={toolang_root} features={','.join(enabled_features)}",
             extra={
                 "color_message": "Agent %s started root=%s features=%s"
                 % (
@@ -851,9 +848,7 @@ def _up_local(
             },
         ),
         on_running=lambda: logger.info(
-            "Agent %s running on %s",
-            context.name,
-            webui_url,
+            f"Agent {context.name} running on {webui_url}",
             extra={
                 "color_message": "Agent %s running on %s"
                 % (context.name, click.style(webui_url, fg="cyan", underline=True))
