@@ -234,7 +234,7 @@ class CliProgress:
             for item in group:
                 if item.kind == "agent":
                     continue
-                text.append(f" * {_format_item(item)}\n", style="dim")
+                text.append(f"+ {_format_item(item)}\n", style="dim")
         return text
 
     def _agent_stage_uses_summary(self, item: _ProgressItem) -> bool:
