@@ -21,6 +21,7 @@ from types import FrameType
 from typing import Any, Literal, TypeVar, cast
 from urllib.parse import urlsplit
 
+import click
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -840,11 +841,23 @@ def _up_local(
             context.name,
             toolang_root,
             ",".join(enabled_features),
+            extra={
+                "color_message": "Agent %s started root=%s features=%s"
+                % (
+                    context.name,
+                    click.style(str(toolang_root), fg="cyan", bold=True),
+                    ",".join(enabled_features),
+                )
+            },
         ),
         on_running=lambda: logger.info(
             "Agent %s running on %s",
             context.name,
             webui_url,
+            extra={
+                "color_message": "Agent %s running on %s"
+                % (context.name, click.style(webui_url, fg="cyan", underline=True))
+            },
         ),
         on_stopping=lambda: logger.info("Agent %s stopping", context.name),
         on_stopped=lambda: logger.info("Agent %s stopped", context.name),

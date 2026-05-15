@@ -217,8 +217,10 @@ class CliProgress:
 
     def _live_text(self) -> Text:
         text = Text()
-        for line in self._lines():
-            text.append(f"{line}\n")
+        for group in self._item_groups():
+            for item in group:
+                style = "dim" if item.kind != "agent" else ""
+                text.append(f"{_format_item(item)}\n", style=style)
         text.append(self._summary_line(), style="dim")
         return text
 

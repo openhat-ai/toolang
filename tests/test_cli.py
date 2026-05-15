@@ -536,6 +536,27 @@ def test_cli_progress_groups_agent_and_cap_steps() -> None:
     ]
 
 
+def test_cli_progress_mutes_cap_live_lines() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream, live=True)
+
+    progress(
+        ProgressEvent(
+            id="cap.resolve:skill:briceyan/pdf",
+            phase="cap.resolve",
+            label="Resolve skill",
+            status="running",
+            detail="briceyan/pdf",
+        )
+    )
+
+    text = progress._live_text()
+
+    assert text.plain.splitlines()[0] == "skill briceyan/pdf resolving"
+    assert any(span.style == "dim" for span in text.spans)
+    progress.finish(details=False)
+
+
 def test_cli_progress_formats_agent_source_stage() -> None:
     stream = io.StringIO()
     progress = CliProgress(stream=stream)
