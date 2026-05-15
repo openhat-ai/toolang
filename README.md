@@ -47,7 +47,13 @@ toolang start alice
 toolang stop alice
 ```
 
-`run` and `start` print a WebUI URL for the agent.
+### Open the WebUI
+
+`run` and `start` print a WebUI URL:
+
+```text
+Agent alice webui=https://too.run/7001
+```
 
 ## Links
 
