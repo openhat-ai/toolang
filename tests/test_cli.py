@@ -424,6 +424,57 @@ def test_cli_clone_remote_repo_shorthand_uses_named_repo(tmp_path: Path, monkeyp
     ]
 
 
+def test_agent_shorthand_falls_back_to_main_when_default_branch_probe_fails(monkeypatch) -> None:
+    probes: list[str] = []
+
+    def fail_default_branch(owner: str, repo: str) -> str:
+        del owner, repo
+        raise ValueError("rate limited")
+
+    def fake_exists(ref: agents.GitHubAgentRef) -> bool:
+        probes.append(ref.render())
+        return ref.path == "dev.too"
+
+    monkeypatch.setattr(agents, "_github_repo_default_branch", fail_default_branch)
+    monkeypatch.setattr(agents, "_github_agent_ref_exists", fake_exists)
+
+    selector = agents.parse_agent_selector("briceyan/dev")
+    ref = agents.resolve_agent_selector_ref(selector)
+
+    assert ref.render() == "github://briceyan/agents/dev.too@main"
+    assert probes == [
+        "github://briceyan/agents/agents/dev.too@main",
+        "github://briceyan/agents/dev.too@main",
+    ]
+
+
+def test_agent_shorthand_error_uses_input_shape(monkeypatch) -> None:
+    monkeypatch.setattr(agents, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(agents, "_github_agent_ref_exists", lambda ref: False)
+
+    selector = agents.parse_agent_selector("briceyan/dev")
+
+    with pytest.raises(ValueError, match="could not resolve agent shorthand: briceyan/dev"):
+        agents.resolve_agent_selector_ref(selector)
+
+
+def test_github_agent_fetch_uses_raw_url(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+
+    def fake_fetch(url: str) -> str:
+        captured["url"] = url
+        return "agent dev\n"
+
+    monkeypatch.setattr(agents, "_fetch_http_text", fake_fetch)
+
+    text = agents._fetch_github_text(
+        agents.GitHubAgentRef(owner="briceyan", repo="agents", path="dev.too", rev="main")
+    )
+
+    assert text == "agent dev\n"
+    assert captured["url"] == "https://raw.githubusercontent.com/briceyan/agents/main/dev.too"
+
+
 def test_cli_clone_remote_url_supports_explicit_target(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
 
@@ -618,6 +669,27 @@ def test_cli_progress_failed_summary_omits_elapsed_time() -> None:
     progress.finish(details=False)
 
     assert stream.getvalue().splitlines() == ["Failed 1/1 caps"]
+
+
+def test_cli_progress_reports_agent_resolve_failure() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream)
+
+    progress(
+        ProgressEvent(
+            id="agent.resolve:briceyan/dev",
+            phase="agent.resolve",
+            label="Resolve agent",
+            status="failed",
+            detail="could not resolve agent shorthand: briceyan/dev",
+        )
+    )
+
+    progress.finish(details=False)
+
+    assert stream.getvalue().splitlines() == [
+        "Resolve agent failed: could not resolve agent shorthand: briceyan/dev"
+    ]
 
 
 def test_cli_progress_formats_agent_source_stage() -> None:

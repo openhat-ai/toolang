@@ -574,18 +574,24 @@ def _resolve_github_agent_shorthand(owner: str, name: str, *, repo: str) -> GitH
     for candidate in _github_agent_shorthand_candidates(owner, repo, name):
         if _github_agent_ref_exists(candidate):
             return candidate
-    raise ValueError(f"could not resolve agent shorthand: {owner}/{repo}/{name}")
+    raise ValueError(f"could not resolve agent shorthand: {_agent_shorthand_label(owner, repo, name)}")
 
 
 def _github_agent_shorthand_candidates(owner: str, repo: str, name: str) -> tuple[GitHubAgentRef, ...]:
     try:
         rev = _github_repo_default_branch(owner, repo)
     except ValueError:
-        return ()
+        rev = "main"
     return (
         GitHubAgentRef(owner=owner, repo=repo, path=f"agents/{name}.too", rev=rev),
         GitHubAgentRef(owner=owner, repo=repo, path=f"{name}.too", rev=rev),
     )
+
+
+def _agent_shorthand_label(owner: str, repo: str, name: str) -> str:
+    if repo == "agents":
+        return f"{owner}/{name}"
+    return f"{owner}/{repo}/{name}"
 
 
 def _github_agent_ref_exists(ref: GitHubAgentRef) -> bool:
@@ -644,22 +650,7 @@ def _fetch_http_text(url: str) -> str:
 
 
 def _fetch_github_text(ref: GitHubAgentRef) -> str:
-    path = quote(ref.path.lstrip("/"), safe="/")
-    api_url = f"https://api.github.com/repos/{ref.owner}/{ref.repo}/contents/{path}"
-    api_url = f"{api_url}?ref={quote(ref.rev, safe='')}"
-    request = Request(
-        api_url,
-        headers={
-            "Accept": "application/vnd.github.raw",
-            "User-Agent": "toolang/0.1",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-    )
-    try:
-        with urlopen(request, timeout=30) as response:
-            return response.read().decode("utf-8")
-    except (HTTPError, URLError) as exc:
-        raise ValueError(f"could not fetch agent program: {ref.render()}") from exc
+    return _fetch_http_text(_github_raw_agent_url(ref))
 
 
 def load_runtime_state(toolang_root: Path, agent_name: str) -> dict[str, object] | None:

@@ -192,8 +192,11 @@ class CliProgress:
         if not cap_items and agent_items:
             agent_status = _aggregate_status(tuple(_item_status(item) for item in agent_items))
             if agent_status == "failed":
-                detail = _failed_detail(agent_items[0])
+                item = agent_items[0]
+                detail = _failed_detail(item)
                 suffix = f": {detail}" if detail else ""
+                if _first_step_with_status(item, "failed") == "resolve":
+                    return f"Resolve agent failed{suffix}"
                 return f"Fetch agent failed{suffix}"
             if agent_status in {"running", "pending"}:
                 return f"Fetching 1 agent: {elapsed}"
