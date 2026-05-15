@@ -415,6 +415,14 @@ def resolved_run_target(
 
     resolved_ref = resolve_agent_selector_ref(selector, progress=progress)
     agent_name = resolved_ref.default_name()
+    run_root = visiting_root(toolang_root, resolved_ref)
+    if agent_program_path(run_root, agent_name).is_file():
+        yield MaterializedRunTarget(
+            toolang_root=run_root,
+            agent_name=agent_name,
+            kind="visiting",
+        )
+        return
     source_text = fetch_agent_ref(resolved_ref, progress=progress)
     emit_progress(
         progress,

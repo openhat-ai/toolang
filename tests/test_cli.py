@@ -1220,13 +1220,18 @@ def test_active_run_error_omits_urls_for_transient_states() -> None:
     assert cli._active_run_error(starting) == "Agent alice already starting"
 
 
-def test_visiting_run_target_uses_stable_root_and_updates_program(
+def test_visiting_run_target_reuses_stable_root_and_program(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
     ref = agents.HttpAgentRef(url="https://toolang.ai/demo/researcher.too")
-    sources = iter(["agent old-name\n", "agent newer-name\n"])
-    monkeypatch.setattr(agents, "fetch_agent_ref", lambda *_args, **_kwargs: next(sources))
+    fetches: list[agents.AgentRef] = []
+
+    def fake_fetch(fetch_ref: agents.AgentRef, **_kwargs) -> str:
+        fetches.append(fetch_ref)
+        return "agent old-name\n"
+
+    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
 
     with agents.resolved_run_target(toolang_root, ref.render()) as first:
         agents.write_runtime_state(
@@ -1252,6 +1257,7 @@ def test_visiting_run_target_uses_stable_root_and_updates_program(
     assert second.agent_name == "researcher"
     assert second_program == first_program
     assert second_program.read_text(encoding="utf-8") == "agent researcher\n"
+    assert fetches == [ref]
     assert agents.preferred_runtime_port(second.toolang_root, second.agent_name) == 45678
 
 
