@@ -24,11 +24,13 @@ class CliProgress:
         self._items: dict[str, _ProgressItem] = {}
         self._aliases: dict[str, str] = {}
         self._prepare: dict[str, str] = {}
+        self._prepare_details: dict[str, str] = {}
         self._agent_name: str | None = None
         self._live = bool(getattr(self._stream, "isatty", lambda: False)()) if live is None else live
         self._live_display: Live | None = None
         self._printed = False
         self._finished = False
+        self._interrupted = False
         self._started_at = time.monotonic()
         self._lock = RLock()
 
@@ -56,6 +58,11 @@ class CliProgress:
                     print(line, file=self._stream)
             self._print_summary()
 
+    def interrupt(self) -> None:
+        with self._lock:
+            self._interrupted = True
+            self.finish(details=False)
+
     def _render_live(self) -> None:
         if not self._has_visible_items():
             return
@@ -82,7 +89,10 @@ class CliProgress:
             self._record_prepare(event)
 
     def _record_prepare(self, event: ProgressEvent) -> None:
-        self._prepare[event.phase] = event.status
+        key = event.id if event.phase == "prepare.visibility" else event.phase
+        self._prepare[key] = event.status
+        if event.detail:
+            self._prepare_details[key] = event.detail
         if event.status == "running" and event.detail:
             self._agent_name = event.detail
 
@@ -151,11 +161,19 @@ class CliProgress:
     def _summary_line(self) -> str:
         agent_items = [item for item in self._items.values() if item.kind == "agent"]
         cap_items = [item for item in self._items.values() if item.kind != "agent"]
+        if not cap_items and self._prepare_is_cached():
+            return ""
         failed = sum(1 for item in cap_items if _item_status(item) == "failed")
         running = sum(1 for item in cap_items if _item_status(item) == "running")
         pending = sum(1 for item in cap_items if _item_status(item) == "pending")
         elapsed = _format_elapsed(time.monotonic() - self._started_at)
         prepare_status = _aggregate_status(tuple(self._prepare.values())) if self._prepare else "skipped"
+        if self._interrupted:
+            if cap_items or self._prepare:
+                return f"Prepare caps interrupted in {elapsed}"
+            if agent_items:
+                return f"Fetch agent interrupted in {elapsed}"
+            return ""
         if self._prepare:
             total = len(cap_items)
             if failed:
@@ -190,6 +208,8 @@ class CliProgress:
 
     def _print_summary(self) -> None:
         summary = self._summary_line()
+        if not summary:
+            return
         if self._live:
             self._console.print(Text(summary, style="dim"))
             return
@@ -207,6 +227,15 @@ class CliProgress:
 
     def _has_output(self) -> bool:
         return self._has_visible_items() or self._agent_name is not None
+
+    def _prepare_is_cached(self) -> bool:
+        visibility_phases = tuple(
+            phase for phase in self._prepare if phase.startswith("prepare.visibility:")
+        )
+        return bool(visibility_phases) and all(
+            self._prepare.get(phase) == "ok" and self._prepare_details.get(phase) == "cached"
+            for phase in visibility_phases
+        )
 
     def _item_groups(self) -> tuple[tuple[_ProgressItem, ...], ...]:
         cap_items = tuple(
@@ -336,7 +365,6 @@ def _parse_cap_event(event: ProgressEvent) -> tuple[str, str] | None:
     if len(parts) != 3:
         return None
     prefix, kind, ref = parts
-    if prefix not in {"cap.resolve", "cap.fetch", "cap.config"}:
+    if prefix not in {"cap.resolve", "cap.fetch", "cap.materialize", "cap.config"}:
         return None
     return kind, ref
-

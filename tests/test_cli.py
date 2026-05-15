@@ -511,6 +511,14 @@ def test_cli_progress_groups_agent_and_cap_steps() -> None:
     )
     progress(
         ProgressEvent(
+            id="cap.materialize:psyche:github://briceyan/agents/psyches/concise.md@main",
+            phase="cap.materialize",
+            label="Materialize psyche",
+            status="ok",
+        )
+    )
+    progress(
+        ProgressEvent(
             id="prepare.state",
             phase="prepare.state",
             label="Prepare agent state",
@@ -523,7 +531,7 @@ def test_cli_progress_groups_agent_and_cap_steps() -> None:
     progress.finish()
 
     assert stream.getvalue().splitlines() == [
-        "psyche briceyan/concise fetched: 1 file",
+        "psyche briceyan/concise prepared",
         "Prepared 1 caps in 1.2s",
     ]
 
@@ -605,6 +613,52 @@ def test_cli_progress_summarizes_zero_caps_when_prepare_runs() -> None:
     assert stream.getvalue().splitlines() == ["Prepared 0 caps in 0.2s"]
 
 
+def test_cli_progress_skips_output_when_prepared_state_is_cached() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream)
+
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="running",
+            detail="alice",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="prepare.visibility:shared",
+            phase="prepare.visibility",
+            label="Prepare shared caps",
+            status="ok",
+            detail="cached",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="prepare.visibility:private",
+            phase="prepare.visibility",
+            label="Prepare private caps",
+            status="ok",
+            detail="cached",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="ok",
+            detail="abc123",
+        )
+    )
+
+    progress.finish(details=False)
+
+    assert stream.getvalue() == ""
+
+
 def test_cli_progress_finish_is_idempotent() -> None:
     stream = io.StringIO()
     progress = CliProgress(stream=stream)
@@ -623,6 +677,26 @@ def test_cli_progress_finish_is_idempotent() -> None:
     progress.finish(details=False)
 
     assert stream.getvalue().splitlines() == ["Preparing 0 caps: 0.2s"]
+
+
+def test_cli_progress_reports_interrupted_stage_once() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream)
+    progress._started_at -= 0.3
+
+    progress(
+        ProgressEvent(
+            id="agent.resolve:briceyan/dev",
+            phase="agent.resolve",
+            label="Resolve agent",
+            status="running",
+            detail="briceyan/dev",
+        )
+    )
+    progress.interrupt()
+    progress.finish(details=False)
+
+    assert stream.getvalue().splitlines() == ["Fetch agent interrupted in 0.3s"]
 
 
 def test_cli_progress_can_list_pending_items_before_updates() -> None:

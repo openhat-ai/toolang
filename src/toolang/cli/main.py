@@ -392,6 +392,10 @@ def run_agent(
                     progress=None,
                 )
             )
+    except KeyboardInterrupt:
+        if not progress_finished:
+            progress.interrupt()
+        raise
     except (FileExistsError, FileNotFoundError, ValueError, click.ClickException) as exc:
         if not progress_finished:
             progress.finish(details=False)
@@ -491,6 +495,9 @@ def start_agent(
     try:
         durable = _wrap_user_error(scan_durable_state, root, agent_name)
         _wrap_user_error(watch_feature.build_prepared_state, durable, progress=as_progress_sink(progress))
+    except KeyboardInterrupt:
+        progress.interrupt()
+        raise
     except click.ClickException:
         progress.finish(details=False)
         raise

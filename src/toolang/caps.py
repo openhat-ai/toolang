@@ -1211,9 +1211,18 @@ def _remote_entry_from_ref(
                 ref=canonical_ref,
             )
         }
-    entry_content = entry_files[str(relative_entry_path)]
-    return (
-        PreparedEntry(
+    if materialize:
+        emit_progress(
+            progress,
+            id=f"cap.materialize:{kind}:{canonical_ref}",
+            phase="cap.materialize",
+            label=f"Materialize {kind}",
+            status="running",
+            detail=str(relative_entry_path),
+        )
+    try:
+        entry_content = entry_files[str(relative_entry_path)]
+        entry = PreparedEntry(
             kind=kind,
             name=name,
             shape="dir" if kind == "skill" else "file",
@@ -1228,9 +1237,27 @@ def _remote_entry_from_ref(
                 line=source_line,
             ),
             meta=_load_meta_text(entry_content.decode("utf-8")),
-        ),
-        entry_files,
-    )
+        )
+    except Exception as exc:
+        if materialize:
+            emit_progress(
+                progress,
+                id=f"cap.materialize:{kind}:{canonical_ref}",
+                phase="cap.materialize",
+                label=f"Materialize {kind}",
+                status="failed",
+                detail=str(exc),
+            )
+        raise
+    if materialize:
+        emit_progress(
+            progress,
+            id=f"cap.materialize:{kind}:{canonical_ref}",
+            phase="cap.materialize",
+            label=f"Materialize {kind}",
+            status="ok",
+        )
+    return entry, entry_files
 
 
 def _materialize_remote_entry_requests(
