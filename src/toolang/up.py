@@ -836,12 +836,10 @@ def _up_local(
         log_config=build_uvicorn_log_config(level=log_spec or DEFAULT_LOG_LEVEL),
         shutdown_signal=shutdown_signal,
         on_starting=lambda: logger.info(
-            "Agent %s started root=%s state=%s features=%s port=%s",
+            "Agent %s started root=%s features=%s",
             context.name,
             toolang_root,
-            context.live.fingerprint[:12],
             ",".join(enabled_features),
-            port,
         ),
         on_running=lambda: logger.info(
             "Agent %s running on %s",

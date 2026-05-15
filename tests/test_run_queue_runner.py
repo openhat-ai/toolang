@@ -2266,8 +2266,7 @@ def test_up_logs_runtime_urls_after_start_and_stop(tmp_path: Path, monkeypatch, 
     assert result == 0
     messages = [record.getMessage() for record in caplog.records if record.name == "toolang.runtime"]
     assert len(messages) == 4
-    assert messages[0].startswith(f"Agent alice started root={toolang_root} state=")
-    assert " features=inspect port=8765" in messages[0]
+    assert messages[0] == f"Agent alice started root={toolang_root} features=inspect"
     assert messages[1] == "Agent alice running on https://agents.example.test/8765"
     assert messages[2] == "Agent alice stopping"
     assert messages[3] == "Agent alice stopped"

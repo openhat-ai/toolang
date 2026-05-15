@@ -52,7 +52,7 @@ Visiting agents fetched by `toolang run <remote>` are materialized under a
 stable system temporary root derived from `TOOLANG_ROOT` and the canonical
 remote ref:
 
-- `/tmp/toolang-visiting/<agent>-<root-hash>-<ref-hash>/`
+- `/tmp/toolang-visiting/<agent>-<root-hash:6>-<ref-hash:8>/`
 
 The stable visiting root lets prepared state and the last runtime port be
 reused across repeated foreground runs of the same remote agent ref while
