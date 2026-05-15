@@ -552,8 +552,42 @@ def test_cli_progress_mutes_cap_live_lines() -> None:
 
     text = progress._live_text()
 
-    assert text.plain.splitlines()[0] == "skill briceyan/pdf resolving"
+    assert text.plain.splitlines()[1] == "skill briceyan/pdf resolving"
     assert any(span.style == "dim" for span in text.spans)
+    progress.finish(details=False)
+
+
+def test_cli_progress_shows_live_summary_first() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream, live=True)
+    progress._started_at -= 7.6
+
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="running",
+            detail="dev",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="cap.resolve:skill:briceyan/pdf",
+            phase="cap.resolve",
+            label="Resolve skill",
+            status="running",
+            detail="briceyan/pdf",
+        )
+    )
+
+    text = progress._live_text()
+
+    assert text.plain.splitlines() == [
+        "Preparing 1 caps: 1 running, 7.6s",
+        "skill briceyan/pdf resolving",
+    ]
+    assert text.spans[0].style == "dim"
     progress.finish(details=False)
 
 
