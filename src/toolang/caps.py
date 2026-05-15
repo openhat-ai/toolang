@@ -1415,14 +1415,14 @@ def _remote_materialized_files(
     if kind == "skill":
         try:
             files = _fetch_github_directory(github_ref)
-        except Exception:
+        except Exception as exc:
             emit_progress(
                 progress,
                 id=f"cap.fetch:{kind}:{ref}",
                 phase="cap.fetch",
                 label=f"Fetch {kind}",
                 status="failed",
-                detail=ref,
+                detail=str(exc),
             )
             raise
         if "SKILL.md" not in files:
@@ -1432,7 +1432,7 @@ def _remote_materialized_files(
                 phase="cap.fetch",
                 label=f"Fetch {kind}",
                 status="failed",
-                detail=ref,
+                detail=f"remote skill is missing SKILL.md: {ref}",
             )
             raise ValueError(f"remote skill is missing SKILL.md: {ref}")
         root = relative_entry_path.parent
@@ -1440,14 +1440,14 @@ def _remote_materialized_files(
     else:
         try:
             materialized = {str(relative_entry_path): _fetch_github_file(github_ref)}
-        except Exception:
+        except Exception as exc:
             emit_progress(
                 progress,
                 id=f"cap.fetch:{kind}:{ref}",
                 phase="cap.fetch",
                 label=f"Fetch {kind}",
                 status="failed",
-                detail=ref,
+                detail=str(exc),
             )
             raise
     emit_progress(
@@ -1476,14 +1476,14 @@ def _resolve_remote_ref(kind: EntryKind, ref: str, *, progress: ProgressSink | N
             canonical_ref = _canonicalize_remote_ref(kind, text)
             if canonical_ref.startswith("github://") and not _github_remote_exists(kind, canonical_ref):
                 raise ValueError(f"remote {kind} not found or missing entry file: {ref}")
-        except Exception:
+        except Exception as exc:
             emit_progress(
                 progress,
                 id=f"cap.resolve:{kind}:{text}",
                 phase="cap.resolve",
                 label=f"Resolve {kind}",
                 status="failed",
-                detail=text,
+                detail=str(exc),
             )
             raise
         emit_progress(
@@ -1503,7 +1503,7 @@ def _resolve_remote_ref(kind: EntryKind, ref: str, *, progress: ProgressSink | N
             phase="cap.resolve",
             label=f"Resolve {kind}",
             status="failed",
-            detail=text,
+            detail=f"invalid remote ref: {ref}",
         )
         raise ValueError(f"invalid remote ref: {ref}")
     for candidate in candidates:
@@ -1523,7 +1523,7 @@ def _resolve_remote_ref(kind: EntryKind, ref: str, *, progress: ProgressSink | N
         phase="cap.resolve",
         label=f"Resolve {kind}",
         status="failed",
-        detail=text,
+        detail=f"could not resolve remote {kind} shorthand: {ref}",
     )
     raise ValueError(f"could not resolve remote {kind} shorthand: {ref}")
 

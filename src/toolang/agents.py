@@ -242,27 +242,28 @@ def fetch_agent_ref(ref: AgentRef, *, progress: ProgressSink | None = None) -> s
 
     label = "Fetch agent"
     detail = ref.render()
+    fetch_url = ref.url if isinstance(ref, HttpAgentRef) else _github_raw_agent_url(ref)
     emit_progress(
         progress,
         id=f"agent.fetch:{detail}",
         phase="agent.fetch",
         label=label,
         status="running",
-        detail=detail,
+        detail=fetch_url,
     )
     try:
         if isinstance(ref, HttpAgentRef):
             source = _fetch_http_text(ref.url)
         else:
             source = _fetch_github_text(ref)
-    except Exception:
+    except Exception as exc:
         emit_progress(
             progress,
             id=f"agent.fetch:{detail}",
             phase="agent.fetch",
             label=label,
             status="failed",
-            detail=detail,
+            detail=str(exc),
         )
         raise
     emit_progress(
@@ -271,7 +272,6 @@ def fetch_agent_ref(ref: AgentRef, *, progress: ProgressSink | None = None) -> s
         phase="agent.fetch",
         label=label,
         status="ok",
-        detail=detail,
     )
     return source
 
@@ -312,14 +312,14 @@ def resolve_agent_selector_ref(selector: AgentSelector, *, progress: ProgressSin
                 selector.name,
                 repo=selector.github_repo or "agents",
             )
-        except Exception:
+        except Exception as exc:
             emit_progress(
                 progress,
                 id=f"agent.resolve:{detail}",
                 phase="agent.resolve",
                 label=label,
                 status="failed",
-                detail=detail,
+                detail=str(exc),
             )
             raise
         emit_progress(

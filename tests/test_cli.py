@@ -523,8 +523,39 @@ def test_cli_progress_groups_agent_and_cap_steps() -> None:
     progress.finish()
 
     assert stream.getvalue().splitlines() == [
-        "ok Psyche concise resolve, fetch (1 file)",
+        "psyche briceyan/concise fetched: 1 file",
         "Prepared 1 caps in 1.2s",
+    ]
+
+
+def test_cli_progress_formats_agent_source_stage() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream)
+    progress._started_at -= 0.4
+
+    progress(
+        ProgressEvent(
+            id="agent.resolve:briceyan/dev",
+            phase="agent.resolve",
+            label="Resolve agent",
+            status="ok",
+            detail="github://briceyan/agents/dev.too@main",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="agent.fetch:github://briceyan/agents/dev.too@main",
+            phase="agent.fetch",
+            label="Fetch agent",
+            status="ok",
+        )
+    )
+
+    progress.finish()
+
+    assert stream.getvalue().splitlines() == [
+        "agent briceyan/dev fetched",
+        "Fetched 1 agent in 0.4s",
     ]
 
 
@@ -621,7 +652,7 @@ def test_cli_progress_can_list_pending_items_before_updates() -> None:
     progress.finish()
 
     assert stream.getvalue().splitlines() == [
-        "pending Skill pdf-processing",
+        "skill by3gus/pdf-processing pending",
         "Preparing 1 caps: 1 pending, 0.4s",
     ]
 

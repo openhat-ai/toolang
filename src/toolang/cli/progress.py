@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 import sys
 from threading import RLock
 import time
 from typing import TextIO
 
-from rich import box
 from rich.console import Console
 from rich.live import Live
-from rich.table import Table
 from rich.text import Text
 
 from ..progress import ProgressEvent, ProgressSink
@@ -62,17 +59,17 @@ class CliProgress:
     def _render_live(self) -> None:
         if not self._has_visible_items():
             return
-        table = self._table()
+        renderable = self._live_text()
         if self._live_display is None:
             self._live_display = Live(
-                table,
+                renderable,
                 console=self._console,
                 refresh_per_second=10,
                 transient=True,
             )
             self._live_display.start(refresh=True)
             return
-        self._live_display.update(table, refresh=True)
+        self._live_display.update(renderable, refresh=True)
 
     def _record(self, event: ProgressEvent) -> None:
         if event.phase.startswith("agent."):
@@ -98,13 +95,13 @@ class CliProgress:
                 kind="agent",
                 title="Agent",
                 sort_key=("0", "agent"),
-                name=_display_name(event_ref or "agent"),
+                name=event_ref or "agent",
             ),
         )
         item.steps[step] = event.status
-        if step == "materialize" and event.detail:
-            item.name = event.detail
-        elif event.detail and item.ref is None:
+        if event.detail:
+            item.step_details[step] = event.detail
+        if event.detail and item.ref is None:
             item.ref = event.detail
 
     def _record_cap(self, event: ProgressEvent) -> None:
@@ -123,23 +120,27 @@ class CliProgress:
             if existing is not None and canonical_key not in self._items:
                 self._items[canonical_key] = existing
             key = canonical_key
-            ref = event.detail
         item = self._items.setdefault(
             key,
             _ProgressItem(
                 kind=kind,
                 title=kind.capitalize(),
-                sort_key=("1", kind, _display_name(ref), ref),
+                name=ref,
+                sort_key=("1", kind, ref),
             ),
         )
         item.kind = kind
         item.title = kind.capitalize()
-        item.ref = ref
-        item.name = _display_name(ref)
-        item.sort_key = ("1", kind, item.name or "", ref)
+        if item.ref is None:
+            item.ref = ref
+        if item.name is None:
+            item.name = ref
+        item.sort_key = ("1", kind, item.name or "", item.ref or "")
         item.steps[step] = event.status
-        if step == "fetch" and event.detail:
-            item.detail = event.detail
+        if event.detail:
+            item.step_details[step] = event.detail
+            if step == "fetch" and event.status == "ok":
+                item.detail = event.detail
 
     def _lines(self) -> tuple[str, ...]:
         lines: list[str] = []
@@ -154,7 +155,6 @@ class CliProgress:
         running = sum(1 for item in cap_items if _item_status(item) == "running")
         pending = sum(1 for item in cap_items if _item_status(item) == "pending")
         elapsed = _format_elapsed(time.monotonic() - self._started_at)
-        agent_name = self._display_agent_name()
         prepare_status = _aggregate_status(tuple(self._prepare.values())) if self._prepare else "skipped"
         if self._prepare:
             total = len(cap_items)
@@ -172,10 +172,12 @@ class CliProgress:
         if not cap_items and agent_items:
             agent_status = _aggregate_status(tuple(_item_status(item) for item in agent_items))
             if agent_status == "failed":
-                return f"Agent {agent_name} failed: {elapsed}"
+                detail = _failed_detail(agent_items[0])
+                suffix = f": {detail}" if detail else ""
+                return f"Fetch agent failed{suffix}"
             if agent_status in {"running", "pending"}:
-                return f"Agent {agent_name} preparing: {elapsed}"
-            return f"Agent {agent_name} ready: {elapsed}"
+                return f"Fetching 1 agent: {elapsed}"
+            return f"Fetched 1 agent in {elapsed}"
         if failed:
             return f"Failed {failed}/{len(cap_items)} caps in {elapsed}"
         if running:
@@ -193,45 +195,18 @@ class CliProgress:
             return
         print(summary, file=self._stream, flush=True)
 
-    def _table(self) -> Table:
-        table = Table(
-            box=box.SIMPLE,
-            expand=False,
-            show_edge=False,
-            padding=(0, 1),
-        )
-        table.add_column("Status", no_wrap=True)
-        table.add_column("Kind", no_wrap=True)
-        table.add_column("Name", no_wrap=True)
-        table.add_column("Info", overflow="fold")
-        groups = self._item_groups()
-        for group_index, group in enumerate(groups):
-            if group_index:
-                table.add_section()
-            for item in group:
-                table.add_row(
-                    _status_text(_item_status(item)),
-                    item.title,
-                    item.name or _display_name(item.ref or item.title),
-                    _item_info(item),
-                )
-        table.add_section()
-        table.add_row("", Text("Summary", style="dim"), "", Text(self._summary_line(), style="dim"))
-        return table
+    def _live_text(self) -> Text:
+        text = Text()
+        for line in self._lines():
+            text.append(f"{line}\n")
+        text.append(self._summary_line(), style="dim")
+        return text
 
     def _has_visible_items(self) -> bool:
         return bool(self._items)
 
     def _has_output(self) -> bool:
         return self._has_visible_items() or self._agent_name is not None
-
-    def _display_agent_name(self) -> str:
-        if self._agent_name:
-            return self._agent_name
-        agent_item = self._items.get("agent")
-        if agent_item is not None and agent_item.name:
-            return agent_item.name
-        return "agent"
 
     def _item_groups(self) -> tuple[tuple[_ProgressItem, ...], ...]:
         cap_items = tuple(
@@ -272,26 +247,64 @@ class _ProgressItem:
     ref: str | None = None
     detail: str | None = None
     steps: dict[str, str] = field(default_factory=dict)
+    step_details: dict[str, str] = field(default_factory=dict)
 
 
 def _format_item(item: _ProgressItem) -> str:
-    marker = _status_marker(_item_status(item))
-    name = item.name or _display_name(item.ref or item.title)
-    info = _item_info(item)
-    suffix = f" {info}" if info else ""
-    return f"{marker} {item.title} {name}{suffix}"
+    name = item.name or item.ref or item.title
+    status, info = _item_state(item)
+    if info == name or info == item.ref:
+        info = ""
+    suffix = f": {info}" if info else ""
+    return f"{item.kind} {name} {status}{suffix}"
 
 
-def _item_info(item: _ProgressItem) -> str:
-    steps = ", ".join(_completed_step_names(item))
-    if item.detail:
-        return f"{steps} ({item.detail})" if steps else f"({item.detail})"
-    return steps
+def _item_state(item: _ProgressItem) -> tuple[str, str]:
+    failed_step = _first_step_with_status(item, "failed")
+    if failed_step is not None:
+        return "failed", item.step_details.get(failed_step, "")
+    running_step = _first_step_with_status(item, "running")
+    if running_step is not None:
+        return _running_word(running_step), item.step_details.get(running_step, "")
+    pending_step = _first_step_with_status(item, "pending")
+    if pending_step is not None:
+        return "pending", item.step_details.get(pending_step, "")
+    if item.kind == "agent":
+        if item.steps.get("materialize") == "ok" or item.steps.get("fetch") == "ok":
+            return "fetched", ""
+        if item.steps.get("resolve") == "ok":
+            return "resolved", item.step_details.get("resolve", "")
+    if item.steps.get("materialize") == "ok":
+        return "prepared", ""
+    if item.steps.get("fetch") == "ok":
+        return "fetched", item.detail or ""
+    if item.steps.get("resolve") == "ok":
+        return "resolved", item.step_details.get("resolve", "")
+    if item.steps:
+        return _item_status(item), ""
+    return "pending", ""
 
 
-def _completed_step_names(item: _ProgressItem) -> tuple[str, ...]:
-    ordered_steps = ("resolve", "fetch", "materialize")
-    return tuple(step for step in ordered_steps if item.steps.get(step) == "ok")
+def _first_step_with_status(item: _ProgressItem, status: str) -> str | None:
+    for step in ("resolve", "fetch", "materialize"):
+        if item.steps.get(step) == status:
+            return step
+    return None
+
+
+def _running_word(step: str) -> str:
+    return {
+        "resolve": "resolving",
+        "fetch": "fetching",
+        "materialize": "materializing",
+    }.get(step, "running")
+
+
+def _failed_detail(item: _ProgressItem) -> str:
+    failed_step = _first_step_with_status(item, "failed")
+    if failed_step is None:
+        return ""
+    return item.step_details.get(failed_step, "")
 
 
 def _item_status(item: _ProgressItem) -> str:
@@ -312,29 +325,6 @@ def _aggregate_status(statuses: tuple[str, ...]) -> str:
     return "ok"
 
 
-def _status_marker(status: str) -> str:
-    marker = {
-        "pending": "pending",
-        "running": "...",
-        "ok": "ok",
-        "failed": "failed",
-        "skipped": "skipped",
-    }[status]
-    return marker
-
-
-def _status_text(status: str) -> Text:
-    marker = _status_marker(status)
-    style = {
-        "pending": "dim",
-        "running": "cyan",
-        "ok": "green",
-        "failed": "red",
-        "skipped": "dim",
-    }[status]
-    return Text(marker, style=style)
-
-
 def _format_elapsed(seconds: float) -> str:
     if seconds < 10:
         return f"{seconds:.1f}s"
@@ -350,10 +340,3 @@ def _parse_cap_event(event: ProgressEvent) -> tuple[str, str] | None:
         return None
     return kind, ref
 
-
-def _display_name(ref: str) -> str:
-    if ref.startswith("github://"):
-        path = ref.split("://", 1)[1].split("/", 2)[-1]
-        path = path.rsplit("@", 1)[0]
-        return Path(path).stem
-    return Path(ref).stem or ref
