@@ -2189,7 +2189,19 @@ def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
         lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
     )
 
-    def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal, on_started=None, on_stopped=None) -> None:
+    def fake_run_uvicorn_app(
+        app,
+        *,
+        host: str,
+        port: int,
+        log_config,
+        shutdown_signal,
+        on_starting=None,
+        on_running=None,
+        on_stopping=None,
+        on_stopped=None,
+    ) -> None:
+        del on_starting, on_running, on_stopping, on_stopped
         captured["app"] = app
         captured["host"] = host
         captured["port"] = port
@@ -2224,12 +2236,18 @@ def test_up_logs_runtime_urls_after_start_and_stop(tmp_path: Path, monkeypatch, 
         port: int,
         log_config,
         shutdown_signal,
-        on_started=None,
+        on_starting=None,
+        on_running=None,
+        on_stopping=None,
         on_stopped=None,
     ) -> None:
         del app, host, port, log_config, shutdown_signal
-        if on_started is not None:
-            on_started()
+        if on_starting is not None:
+            on_starting()
+        if on_running is not None:
+            on_running()
+        if on_stopping is not None:
+            on_stopping()
         if on_stopped is not None:
             on_stopped()
 
@@ -2247,14 +2265,20 @@ def test_up_logs_runtime_urls_after_start_and_stop(tmp_path: Path, monkeypatch, 
 
     assert result == 0
     messages = [record.getMessage() for record in caplog.records if record.name == "toolang.runtime"]
-    assert any(
-        message.startswith(
-            f"Agent alice started: root={toolang_root} state="
-        )
-        and " features=inspect port=8765 webui=https://agents.example.test/8765" in message
-        for message in messages
+    assert len(messages) == 4
+    assert messages[0] == f"Agent alice starting root={toolang_root} features=inspect"
+    assert messages[1] == "Agent alice started webui=https://agents.example.test/8765"
+    assert messages[2] == "Agent alice stopping"
+    assert messages[3] == "Agent alice stopped"
+    color_messages = [
+        record.__dict__.get("color_message")
+        for record in caplog.records
+        if record.name == "toolang.runtime"
+    ]
+    assert color_messages[0] == (
+        "Agent %s starting root=\x1b[1m%s\x1b[0m features=\x1b[1m%s\x1b[0m"
     )
-    assert "Agent alice stopped" in messages
+    assert color_messages[1] == "Agent %s started webui=\x1b[1m%s\x1b[0m"
 
 
 def test_up_reuses_previous_agent_port_when_unspecified(tmp_path: Path, monkeypatch) -> None:
@@ -2274,7 +2298,19 @@ def test_up_reuses_previous_agent_port_when_unspecified(tmp_path: Path, monkeypa
         lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
     )
 
-    def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal, on_started=None, on_stopped=None) -> None:
+    def fake_run_uvicorn_app(
+        app,
+        *,
+        host: str,
+        port: int,
+        log_config,
+        shutdown_signal,
+        on_starting=None,
+        on_running=None,
+        on_stopping=None,
+        on_stopped=None,
+    ) -> None:
+        del on_starting, on_running, on_stopping, on_stopped
         captured["app"] = app
         captured["host"] = host
         captured["port"] = port
@@ -2320,7 +2356,19 @@ def test_up_falls_back_when_previous_agent_port_is_unavailable(
             lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
         )
 
-        def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal, on_started=None, on_stopped=None) -> None:
+        def fake_run_uvicorn_app(
+            app,
+            *,
+            host: str,
+            port: int,
+            log_config,
+            shutdown_signal,
+            on_starting=None,
+            on_running=None,
+            on_stopping=None,
+            on_stopped=None,
+        ) -> None:
+            del on_starting, on_running, on_stopping, on_stopped
             captured["app"] = app
             captured["host"] = host
             captured["port"] = port
@@ -2371,7 +2419,19 @@ def test_up_falls_back_when_stopped_agent_port_is_unavailable(tmp_path: Path, mo
         lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
     )
 
-    def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal, on_started=None, on_stopped=None) -> None:
+    def fake_run_uvicorn_app(
+        app,
+        *,
+        host: str,
+        port: int,
+        log_config,
+        shutdown_signal,
+        on_starting=None,
+        on_running=None,
+        on_stopping=None,
+        on_stopped=None,
+    ) -> None:
+        del app, log_config, on_starting, on_running, on_stopping, on_stopped
         captured["host"] = host
         captured["port"] = port
         captured["shutdown_signal"] = shutdown_signal
@@ -2528,7 +2588,19 @@ def test_up_uses_cors_origins_from_root_config(tmp_path: Path, monkeypatch) -> N
     )
     captured: dict[str, object] = {}
 
-    def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal, on_started=None, on_stopped=None) -> None:
+    def fake_run_uvicorn_app(
+        app,
+        *,
+        host: str,
+        port: int,
+        log_config,
+        shutdown_signal,
+        on_starting=None,
+        on_running=None,
+        on_stopping=None,
+        on_stopped=None,
+    ) -> None:
+        del on_starting, on_running, on_stopping, on_stopped
         captured["app"] = app
         captured["host"] = host
         captured["port"] = port
@@ -3130,7 +3202,19 @@ def test_up_reads_web_config_without_validating_experiments_caps(tmp_path: Path,
     )
     captured: dict[str, object] = {}
 
-    def fake_run_uvicorn_app(app, *, host: str, port: int, log_config, shutdown_signal, on_started=None, on_stopped=None) -> None:
+    def fake_run_uvicorn_app(
+        app,
+        *,
+        host: str,
+        port: int,
+        log_config,
+        shutdown_signal,
+        on_starting=None,
+        on_running=None,
+        on_stopping=None,
+        on_stopped=None,
+    ) -> None:
+        del host, port, log_config, on_starting, on_running, on_stopping, on_stopped
         captured["app"] = app
         captured["shutdown_signal"] = shutdown_signal
 

@@ -1211,9 +1211,18 @@ def _remote_entry_from_ref(
                 ref=canonical_ref,
             )
         }
-    entry_content = entry_files[str(relative_entry_path)]
-    return (
-        PreparedEntry(
+    if materialize:
+        emit_progress(
+            progress,
+            id=f"cap.materialize:{kind}:{canonical_ref}",
+            phase="cap.materialize",
+            label=f"Materialize {kind}",
+            status="running",
+            detail=str(relative_entry_path),
+        )
+    try:
+        entry_content = entry_files[str(relative_entry_path)]
+        entry = PreparedEntry(
             kind=kind,
             name=name,
             shape="dir" if kind == "skill" else "file",
@@ -1228,9 +1237,27 @@ def _remote_entry_from_ref(
                 line=source_line,
             ),
             meta=_load_meta_text(entry_content.decode("utf-8")),
-        ),
-        entry_files,
-    )
+        )
+    except Exception as exc:
+        if materialize:
+            emit_progress(
+                progress,
+                id=f"cap.materialize:{kind}:{canonical_ref}",
+                phase="cap.materialize",
+                label=f"Materialize {kind}",
+                status="failed",
+                detail=str(exc),
+            )
+        raise
+    if materialize:
+        emit_progress(
+            progress,
+            id=f"cap.materialize:{kind}:{canonical_ref}",
+            phase="cap.materialize",
+            label=f"Materialize {kind}",
+            status="ok",
+        )
+    return entry, entry_files
 
 
 def _materialize_remote_entry_requests(
@@ -1257,7 +1284,8 @@ def _materialize_remote_entry_requests(
     files: dict[str, bytes] = {}
     results: list[tuple[PreparedEntry, dict[str, bytes]] | None] = [None] * len(requests)
     first_error: BaseException | None = None
-    with ThreadPoolExecutor(max_workers=REMOTE_CAP_MATERIALIZE_WORKERS) as executor:
+    executor = ThreadPoolExecutor(max_workers=REMOTE_CAP_MATERIALIZE_WORKERS)
+    try:
         futures = {
             executor.submit(
                 _remote_entry_from_request,
@@ -1269,12 +1297,19 @@ def _materialize_remote_entry_requests(
             ): index
             for index, request in enumerate(requests)
         }
-        for future in as_completed(futures):
-            try:
-                results[futures[future]] = future.result()
-            except BaseException as exc:
-                if first_error is None:
-                    first_error = exc
+        try:
+            for future in as_completed(futures):
+                try:
+                    results[futures[future]] = future.result()
+                except BaseException as exc:
+                    if first_error is None:
+                        first_error = exc
+        except BaseException:
+            for future in futures:
+                future.cancel()
+            raise
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
     if first_error is not None:
         raise first_error
     for result in results:
@@ -1415,14 +1450,14 @@ def _remote_materialized_files(
     if kind == "skill":
         try:
             files = _fetch_github_directory(github_ref)
-        except Exception:
+        except Exception as exc:
             emit_progress(
                 progress,
                 id=f"cap.fetch:{kind}:{ref}",
                 phase="cap.fetch",
                 label=f"Fetch {kind}",
                 status="failed",
-                detail=ref,
+                detail=str(exc),
             )
             raise
         if "SKILL.md" not in files:
@@ -1432,7 +1467,7 @@ def _remote_materialized_files(
                 phase="cap.fetch",
                 label=f"Fetch {kind}",
                 status="failed",
-                detail=ref,
+                detail=f"remote skill is missing SKILL.md: {ref}",
             )
             raise ValueError(f"remote skill is missing SKILL.md: {ref}")
         root = relative_entry_path.parent
@@ -1440,14 +1475,14 @@ def _remote_materialized_files(
     else:
         try:
             materialized = {str(relative_entry_path): _fetch_github_file(github_ref)}
-        except Exception:
+        except Exception as exc:
             emit_progress(
                 progress,
                 id=f"cap.fetch:{kind}:{ref}",
                 phase="cap.fetch",
                 label=f"Fetch {kind}",
                 status="failed",
-                detail=ref,
+                detail=str(exc),
             )
             raise
     emit_progress(
@@ -1476,14 +1511,14 @@ def _resolve_remote_ref(kind: EntryKind, ref: str, *, progress: ProgressSink | N
             canonical_ref = _canonicalize_remote_ref(kind, text)
             if canonical_ref.startswith("github://") and not _github_remote_exists(kind, canonical_ref):
                 raise ValueError(f"remote {kind} not found or missing entry file: {ref}")
-        except Exception:
+        except Exception as exc:
             emit_progress(
                 progress,
                 id=f"cap.resolve:{kind}:{text}",
                 phase="cap.resolve",
                 label=f"Resolve {kind}",
                 status="failed",
-                detail=text,
+                detail=str(exc),
             )
             raise
         emit_progress(
@@ -1503,7 +1538,7 @@ def _resolve_remote_ref(kind: EntryKind, ref: str, *, progress: ProgressSink | N
             phase="cap.resolve",
             label=f"Resolve {kind}",
             status="failed",
-            detail=text,
+            detail=f"invalid remote ref: {ref}",
         )
         raise ValueError(f"invalid remote ref: {ref}")
     for candidate in candidates:
@@ -1523,7 +1558,7 @@ def _resolve_remote_ref(kind: EntryKind, ref: str, *, progress: ProgressSink | N
         phase="cap.resolve",
         label=f"Resolve {kind}",
         status="failed",
-        detail=text,
+        detail=f"could not resolve remote {kind} shorthand: {ref}",
     )
     raise ValueError(f"could not resolve remote {kind} shorthand: {ref}")
 

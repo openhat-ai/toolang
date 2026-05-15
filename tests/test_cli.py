@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 from pathlib import Path
 import os
@@ -424,6 +425,57 @@ def test_cli_clone_remote_repo_shorthand_uses_named_repo(tmp_path: Path, monkeyp
     ]
 
 
+def test_agent_shorthand_falls_back_to_main_when_default_branch_probe_fails(monkeypatch) -> None:
+    probes: list[str] = []
+
+    def fail_default_branch(owner: str, repo: str) -> str:
+        del owner, repo
+        raise ValueError("rate limited")
+
+    def fake_exists(ref: agents.GitHubAgentRef) -> bool:
+        probes.append(ref.render())
+        return ref.path == "dev.too"
+
+    monkeypatch.setattr(agents, "_github_repo_default_branch", fail_default_branch)
+    monkeypatch.setattr(agents, "_github_agent_ref_exists", fake_exists)
+
+    selector = agents.parse_agent_selector("briceyan/dev")
+    ref = agents.resolve_agent_selector_ref(selector)
+
+    assert ref.render() == "github://briceyan/agents/dev.too@main"
+    assert probes == [
+        "github://briceyan/agents/agents/dev.too@main",
+        "github://briceyan/agents/dev.too@main",
+    ]
+
+
+def test_agent_shorthand_error_uses_input_shape(monkeypatch) -> None:
+    monkeypatch.setattr(agents, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(agents, "_github_agent_ref_exists", lambda ref: False)
+
+    selector = agents.parse_agent_selector("briceyan/dev")
+
+    with pytest.raises(ValueError, match="could not resolve agent shorthand: briceyan/dev"):
+        agents.resolve_agent_selector_ref(selector)
+
+
+def test_github_agent_fetch_uses_raw_url(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+
+    def fake_fetch(url: str) -> str:
+        captured["url"] = url
+        return "agent dev\n"
+
+    monkeypatch.setattr(agents, "_fetch_http_text", fake_fetch)
+
+    text = agents._fetch_github_text(
+        agents.GitHubAgentRef(owner="briceyan", repo="agents", path="dev.too", rev="main")
+    )
+
+    assert text == "agent dev\n"
+    assert captured["url"] == "https://raw.githubusercontent.com/briceyan/agents/main/dev.too"
+
+
 def test_cli_clone_remote_url_supports_explicit_target(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
 
@@ -511,6 +563,14 @@ def test_cli_progress_groups_agent_and_cap_steps() -> None:
     )
     progress(
         ProgressEvent(
+            id="cap.materialize:psyche:github://briceyan/agents/psyches/concise.md@main",
+            phase="cap.materialize",
+            label="Materialize psyche",
+            status="ok",
+        )
+    )
+    progress(
+        ProgressEvent(
             id="prepare.state",
             phase="prepare.state",
             label="Prepare agent state",
@@ -523,8 +583,211 @@ def test_cli_progress_groups_agent_and_cap_steps() -> None:
     progress.finish()
 
     assert stream.getvalue().splitlines() == [
-        "ok Psyche concise resolve, fetch (1 file)",
-        "Agent dev prepared: 1 caps, 1.2 secs",
+        "psyche briceyan/concise prepared",
+        "Prepared 1 caps in 1.2s",
+    ]
+
+
+def test_cli_progress_mutes_cap_live_lines() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream, live=True)
+
+    progress(
+        ProgressEvent(
+            id="cap.resolve:skill:briceyan/pdf",
+            phase="cap.resolve",
+            label="Resolve skill",
+            status="running",
+            detail="briceyan/pdf",
+        )
+    )
+
+    text = progress._live_text()
+
+    assert text.plain.splitlines()[1] == "+ skill briceyan/pdf resolving"
+    assert any(span.style == "dim" for span in text.spans)
+    progress.finish(details=False)
+
+
+def test_cli_progress_shows_live_summary_first() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream, live=True)
+    progress._started_at -= 7.6
+
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="running",
+            detail="dev",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="cap.resolve:skill:briceyan/pdf",
+            phase="cap.resolve",
+            label="Resolve skill",
+            status="running",
+            detail="briceyan/pdf",
+        )
+    )
+
+    text = progress._live_text()
+
+    assert text.plain.splitlines() == [
+        "Preparing 1 caps: 1 running, 7.6s",
+        "+ skill briceyan/pdf resolving",
+    ]
+    assert text.spans[0].style == "dim"
+    progress.finish(details=False)
+
+
+def test_cli_progress_shows_agent_live_detail_only() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream, live=True)
+    progress._started_at -= 0.2
+
+    progress(
+        ProgressEvent(
+            id="agent.resolve:briceyan/dev",
+            phase="agent.resolve",
+            label="Resolve agent",
+            status="running",
+            detail="briceyan/dev",
+        )
+    )
+
+    text = progress._live_text()
+
+    assert text.plain.splitlines() == ["agent briceyan/dev resolving"]
+    assert text.spans[0].style == "dim"
+    progress.finish(details=False)
+
+
+def test_cli_progress_updates_agent_live_summary_by_phase() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream, live=True)
+    progress._started_at -= 0.3
+
+    progress(
+        ProgressEvent(
+            id="agent.resolve:briceyan/dev",
+            phase="agent.resolve",
+            label="Resolve agent",
+            status="ok",
+            detail="github://briceyan/agents/dev.too@main",
+        )
+    )
+    assert progress._live_text().plain.splitlines() == [
+        "agent briceyan/dev resolved: github://briceyan/agents/dev.too@main"
+    ]
+
+    progress(
+        ProgressEvent(
+            id="agent.fetch:github://briceyan/agents/dev.too@main",
+            phase="agent.fetch",
+            label="Fetch agent",
+            status="running",
+            detail="https://raw.githubusercontent.com/briceyan/agents/main/dev.too",
+        )
+    )
+
+    assert progress._live_text().plain.splitlines() == [
+        "agent briceyan/dev fetching: https://raw.githubusercontent.com/briceyan/agents/main/dev.too"
+    ]
+
+    progress(
+        ProgressEvent(
+            id="agent.fetch:github://briceyan/agents/dev.too@main",
+            phase="agent.fetch",
+            label="Fetch agent",
+            status="ok",
+        )
+    )
+
+    assert progress._live_text().plain.splitlines() == ["Fetched 1 agent in 0.3s"]
+    progress.finish(details=False)
+
+
+def test_cli_progress_failed_summary_omits_elapsed_time() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream)
+    progress._started_at -= 0.6
+
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="running",
+            detail="dev",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="cap.resolve:skill:briceyan/pdf",
+            phase="cap.resolve",
+            label="Resolve skill",
+            status="failed",
+            detail="not found",
+        )
+    )
+
+    progress.finish(details=False)
+
+    assert stream.getvalue().splitlines() == ["Failed 1/1 caps"]
+
+
+def test_cli_progress_reports_agent_resolve_failure() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream)
+
+    progress(
+        ProgressEvent(
+            id="agent.resolve:briceyan/dev",
+            phase="agent.resolve",
+            label="Resolve agent",
+            status="failed",
+            detail="could not resolve agent shorthand: briceyan/dev",
+        )
+    )
+
+    progress.finish(details=False)
+
+    assert stream.getvalue().splitlines() == [
+        "Resolve agent failed: could not resolve agent shorthand: briceyan/dev"
+    ]
+
+
+def test_cli_progress_formats_agent_source_stage() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream)
+    progress._started_at -= 0.4
+
+    progress(
+        ProgressEvent(
+            id="agent.resolve:briceyan/dev",
+            phase="agent.resolve",
+            label="Resolve agent",
+            status="ok",
+            detail="github://briceyan/agents/dev.too@main",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="agent.fetch:github://briceyan/agents/dev.too@main",
+            phase="agent.fetch",
+            label="Fetch agent",
+            status="ok",
+        )
+    )
+
+    progress.finish()
+
+    assert stream.getvalue().splitlines() == [
+        "agent briceyan/dev fetched",
+        "Fetched 1 agent in 0.4s",
     ]
 
 
@@ -571,7 +834,121 @@ def test_cli_progress_summarizes_zero_caps_when_prepare_runs() -> None:
     )
     progress.finish(details=False)
 
-    assert stream.getvalue().splitlines() == ["Agent alice prepared: 0 caps, 0.2 secs"]
+    assert stream.getvalue().splitlines() == ["Prepared 0 caps in 0.2s"]
+
+
+def test_cli_progress_skips_output_when_prepared_state_is_cached() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream)
+
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="running",
+            detail="alice",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="prepare.visibility:shared",
+            phase="prepare.visibility",
+            label="Prepare shared caps",
+            status="ok",
+            detail="cached",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="prepare.visibility:private",
+            phase="prepare.visibility",
+            label="Prepare private caps",
+            status="ok",
+            detail="cached",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="ok",
+            detail="abc123",
+        )
+    )
+
+    progress.finish(details=False)
+
+    assert stream.getvalue() == ""
+
+
+def test_cli_progress_finish_is_idempotent() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream)
+    progress._started_at -= 0.2
+
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="running",
+            detail="alice",
+        )
+    )
+    progress.finish(details=False)
+    progress.finish(details=False)
+
+    assert stream.getvalue().splitlines() == ["Preparing 0 caps: 0.2s"]
+
+
+def test_cli_progress_reports_interrupted_stage_once() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream)
+    progress._started_at -= 0.3
+
+    progress(
+        ProgressEvent(
+            id="agent.resolve:briceyan/dev",
+            phase="agent.resolve",
+            label="Resolve agent",
+            status="running",
+            detail="briceyan/dev",
+        )
+    )
+    progress.interrupt()
+    progress.finish(details=False)
+
+    assert stream.getvalue().splitlines() == ["Fetch agent interrupted"]
+
+
+def test_cli_progress_ignores_events_after_interrupt() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream)
+
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="running",
+            detail="dev",
+        )
+    )
+    progress.interrupt()
+    progress(
+        ProgressEvent(
+            id="cap.resolve:skill:briceyan/pdf",
+            phase="cap.resolve",
+            label="Resolve skill",
+            status="running",
+            detail="briceyan/pdf",
+        )
+    )
+    progress.finish()
+
+    assert stream.getvalue().splitlines() == ["Prepare caps interrupted"]
 
 
 def test_cli_progress_can_list_pending_items_before_updates() -> None:
@@ -601,8 +978,8 @@ def test_cli_progress_can_list_pending_items_before_updates() -> None:
     progress.finish()
 
     assert stream.getvalue().splitlines() == [
-        "pending Skill pdf-processing",
-        "Agent dev preparing: 1 caps, 1 pending, 0.4 secs",
+        "skill by3gus/pdf-processing pending",
+        "Preparing 1 caps: 1 pending, 0.4s",
     ]
 
 
@@ -762,6 +1139,34 @@ def test_cli_run_rejects_missing_resident_agent(tmp_path: Path, monkeypatch) -> 
     assert not agents.agent_home(toolang_root, "missing").exists()
 
 
+def test_cli_run_interrupts_prepare_once(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+
+    def interrupt_prepare(*, progress, **_kwargs) -> None:
+        progress(
+            ProgressEvent(
+                id="prepare.state",
+                phase="prepare.state",
+                label="Prepare agent state",
+                status="running",
+                detail="alice",
+            )
+        )
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.agent_up, "prepare_runtime", interrupt_prepare)
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(toolang_root), "run", "alice"],
+        env={},
+    )
+
+    assert result.exit_code == 130
+    assert result.stderr.count("Prepare caps interrupted") == 1
+
+
 def test_cli_run_rejects_active_visiting_agent(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     ref = agents.HttpAgentRef(url="https://toolang.ai/demo/researcher.too")
@@ -815,13 +1220,18 @@ def test_active_run_error_omits_urls_for_transient_states() -> None:
     assert cli._active_run_error(starting) == "Agent alice already starting"
 
 
-def test_visiting_run_target_uses_stable_root_and_updates_program(
+def test_visiting_run_target_reuses_stable_root_and_program(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
     ref = agents.HttpAgentRef(url="https://toolang.ai/demo/researcher.too")
-    sources = iter(["agent old-name\n", "agent newer-name\n"])
-    monkeypatch.setattr(agents, "fetch_agent_ref", lambda *_args, **_kwargs: next(sources))
+    fetches: list[agents.AgentRef] = []
+
+    def fake_fetch(fetch_ref: agents.AgentRef, **_kwargs) -> str:
+        fetches.append(fetch_ref)
+        return "agent old-name\n"
+
+    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
 
     with agents.resolved_run_target(toolang_root, ref.render()) as first:
         agents.write_runtime_state(
@@ -839,12 +1249,15 @@ def test_visiting_run_target_uses_stable_root_and_updates_program(
 
     assert first.toolang_root == agents.visiting_root(toolang_root, ref)
     assert second.toolang_root == first.toolang_root
-    assert second.toolang_root.parent == Path("/tmp") / "toolang-visiting"
+    assert second.toolang_root.parent == Path("/tmp") / "toolang-run"
+    expected_digest = hashlib.sha256(f"{toolang_root.resolve()}\n{ref.render()}".encode("utf-8")).hexdigest()[:8]
+    assert second.toolang_root.name == f"researcher-{expected_digest}"
     assert not second.toolang_root.is_relative_to(toolang_root)
     assert second.kind == "visiting"
     assert second.agent_name == "researcher"
     assert second_program == first_program
     assert second_program.read_text(encoding="utf-8") == "agent researcher\n"
+    assert fetches == [ref]
     assert agents.preferred_runtime_port(second.toolang_root, second.agent_name) == 45678
 
 

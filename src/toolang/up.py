@@ -21,6 +21,7 @@ from types import FrameType
 from typing import Any, Literal, TypeVar, cast
 from urllib.parse import urlsplit
 
+import click
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -835,15 +836,27 @@ def _up_local(
         port=port,
         log_config=build_uvicorn_log_config(level=log_spec or DEFAULT_LOG_LEVEL),
         shutdown_signal=shutdown_signal,
-        on_started=lambda: logger.info(
-            "Agent %s started: root=%s state=%s features=%s port=%s webui=%s",
+        on_starting=lambda: logger.info(
+            "Agent %s starting root=%s features=%s",
             context.name,
             toolang_root,
-            context.live.fingerprint[:12],
             ",".join(enabled_features),
-            port,
-            webui_url,
+            extra={
+                "color_message": "Agent %s starting root="
+                + click.style("%s", bold=True)
+                + " features="
+                + click.style("%s", bold=True)
+            },
         ),
+        on_running=lambda: logger.info(
+            "Agent %s started webui=%s",
+            context.name,
+            webui_url,
+            extra={
+                "color_message": "Agent %s started webui=" + click.style("%s", bold=True)
+            },
+        ),
+        on_stopping=lambda: logger.info("Agent %s stopping", context.name),
         on_stopped=lambda: logger.info("Agent %s stopped", context.name),
     )
     return 0
@@ -857,17 +870,25 @@ class _ToolangServer(uvicorn.Server):
         config: uvicorn.Config,
         *,
         shutdown_signal: threading.Event,
-        on_started: Callable[[], None] | None = None,
+        on_running: Callable[[], None] | None = None,
+        on_stopping: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(config=config)
         self._shutdown_signal = shutdown_signal
-        self._on_started = on_started
+        self._on_running = on_running
+        self._on_stopping = on_stopping
 
     async def startup(self, sockets: Any | None = None) -> None:
         await super().startup(sockets=sockets)
-        if self.started and self._on_started is not None:
-            self._on_started()
-            self._on_started = None
+        if self.started and self._on_running is not None:
+            self._on_running()
+            self._on_running = None
+
+    async def shutdown(self, sockets: Any | None = None) -> None:
+        if self._on_stopping is not None:
+            self._on_stopping()
+            self._on_stopping = None
+        await super().shutdown(sockets=sockets)
 
     def handle_exit(self, sig: int, frame: FrameType | None) -> None:
         self._shutdown_signal.set()
@@ -881,7 +902,9 @@ def _run_uvicorn_app(
     port: int,
     log_config: dict[str, object],
     shutdown_signal: threading.Event,
-    on_started: Callable[[], None] | None = None,
+    on_starting: Callable[[], None] | None = None,
+    on_running: Callable[[], None] | None = None,
+    on_stopping: Callable[[], None] | None = None,
     on_stopped: Callable[[], None] | None = None,
 ) -> None:
     """Run one FastAPI app with signal-aware shutdown for long-lived streams."""
@@ -893,7 +916,14 @@ def _run_uvicorn_app(
         log_config=log_config,
         timeout_graceful_shutdown=UVICORN_GRACEFUL_SHUTDOWN_SEC,
     )
-    server = _ToolangServer(config=config, shutdown_signal=shutdown_signal, on_started=on_started)
+    server = _ToolangServer(
+        config=config,
+        shutdown_signal=shutdown_signal,
+        on_running=on_running,
+        on_stopping=on_stopping,
+    )
+    if on_starting is not None:
+        on_starting()
     try:
         server.run()
     except KeyboardInterrupt:

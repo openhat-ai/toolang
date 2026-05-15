@@ -242,27 +242,28 @@ def fetch_agent_ref(ref: AgentRef, *, progress: ProgressSink | None = None) -> s
 
     label = "Fetch agent"
     detail = ref.render()
+    fetch_url = ref.url if isinstance(ref, HttpAgentRef) else _github_raw_agent_url(ref)
     emit_progress(
         progress,
         id=f"agent.fetch:{detail}",
         phase="agent.fetch",
         label=label,
         status="running",
-        detail=detail,
+        detail=fetch_url,
     )
     try:
         if isinstance(ref, HttpAgentRef):
             source = _fetch_http_text(ref.url)
         else:
             source = _fetch_github_text(ref)
-    except Exception:
+    except Exception as exc:
         emit_progress(
             progress,
             id=f"agent.fetch:{detail}",
             phase="agent.fetch",
             label=label,
             status="failed",
-            detail=detail,
+            detail=str(exc),
         )
         raise
     emit_progress(
@@ -271,7 +272,6 @@ def fetch_agent_ref(ref: AgentRef, *, progress: ProgressSink | None = None) -> s
         phase="agent.fetch",
         label=label,
         status="ok",
-        detail=detail,
     )
     return source
 
@@ -312,14 +312,14 @@ def resolve_agent_selector_ref(selector: AgentSelector, *, progress: ProgressSin
                 selector.name,
                 repo=selector.github_repo or "agents",
             )
-        except Exception:
+        except Exception as exc:
             emit_progress(
                 progress,
                 id=f"agent.resolve:{detail}",
                 phase="agent.resolve",
                 label=label,
                 status="failed",
-                detail=detail,
+                detail=str(exc),
             )
             raise
         emit_progress(
@@ -356,9 +356,9 @@ def visiting_root(toolang_root: Path, ref: AgentRef) -> Path:
     """Return the stable local root for one visiting remote agent ref."""
 
     label = _safe_visiting_root_label(ref.default_name())
-    root_digest = hashlib.sha256(str(toolang_root.expanduser().resolve()).encode("utf-8")).hexdigest()[:8]
-    ref_digest = hashlib.sha256(ref.render().encode("utf-8")).hexdigest()[:12]
-    return Path("/tmp") / "toolang-visiting" / f"{label}-{root_digest}-{ref_digest}"
+    source_key = f"{toolang_root.expanduser().resolve()}\n{ref.render()}"
+    source_digest = hashlib.sha256(source_key.encode("utf-8")).hexdigest()[:8]
+    return Path("/tmp") / "toolang-run" / f"{label}-{source_digest}"
 
 
 def materialize_roaming_program(source_path: Path) -> tuple[Path, str]:
@@ -415,6 +415,14 @@ def resolved_run_target(
 
     resolved_ref = resolve_agent_selector_ref(selector, progress=progress)
     agent_name = resolved_ref.default_name()
+    run_root = visiting_root(toolang_root, resolved_ref)
+    if agent_program_path(run_root, agent_name).is_file():
+        yield MaterializedRunTarget(
+            toolang_root=run_root,
+            agent_name=agent_name,
+            kind="visiting",
+        )
+        return
     source_text = fetch_agent_ref(resolved_ref, progress=progress)
     emit_progress(
         progress,
@@ -574,18 +582,24 @@ def _resolve_github_agent_shorthand(owner: str, name: str, *, repo: str) -> GitH
     for candidate in _github_agent_shorthand_candidates(owner, repo, name):
         if _github_agent_ref_exists(candidate):
             return candidate
-    raise ValueError(f"could not resolve agent shorthand: {owner}/{repo}/{name}")
+    raise ValueError(f"could not resolve agent shorthand: {_agent_shorthand_label(owner, repo, name)}")
 
 
 def _github_agent_shorthand_candidates(owner: str, repo: str, name: str) -> tuple[GitHubAgentRef, ...]:
     try:
         rev = _github_repo_default_branch(owner, repo)
     except ValueError:
-        return ()
+        rev = "main"
     return (
         GitHubAgentRef(owner=owner, repo=repo, path=f"agents/{name}.too", rev=rev),
         GitHubAgentRef(owner=owner, repo=repo, path=f"{name}.too", rev=rev),
     )
+
+
+def _agent_shorthand_label(owner: str, repo: str, name: str) -> str:
+    if repo == "agents":
+        return f"{owner}/{name}"
+    return f"{owner}/{repo}/{name}"
 
 
 def _github_agent_ref_exists(ref: GitHubAgentRef) -> bool:
@@ -644,22 +658,7 @@ def _fetch_http_text(url: str) -> str:
 
 
 def _fetch_github_text(ref: GitHubAgentRef) -> str:
-    path = quote(ref.path.lstrip("/"), safe="/")
-    api_url = f"https://api.github.com/repos/{ref.owner}/{ref.repo}/contents/{path}"
-    api_url = f"{api_url}?ref={quote(ref.rev, safe='')}"
-    request = Request(
-        api_url,
-        headers={
-            "Accept": "application/vnd.github.raw",
-            "User-Agent": "toolang/0.1",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-    )
-    try:
-        with urlopen(request, timeout=30) as response:
-            return response.read().decode("utf-8")
-    except (HTTPError, URLError) as exc:
-        raise ValueError(f"could not fetch agent program: {ref.render()}") from exc
+    return _fetch_http_text(_github_raw_agent_url(ref))
 
 
 def load_runtime_state(toolang_root: Path, agent_name: str) -> dict[str, object] | None:
