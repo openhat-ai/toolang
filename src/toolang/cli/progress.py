@@ -36,6 +36,8 @@ class CliProgress:
 
     def __call__(self, event: ProgressEvent) -> None:
         with self._lock:
+            if self._finished:
+                return
             self._record(event)
             if self._live:
                 self._render_live()

@@ -754,6 +754,34 @@ def test_cli_progress_reports_interrupted_stage_once() -> None:
     assert stream.getvalue().splitlines() == ["Fetch agent interrupted in 0.3s"]
 
 
+def test_cli_progress_ignores_events_after_interrupt() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream)
+
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="running",
+            detail="dev",
+        )
+    )
+    progress.interrupt()
+    progress(
+        ProgressEvent(
+            id="cap.resolve:skill:briceyan/pdf",
+            phase="cap.resolve",
+            label="Resolve skill",
+            status="running",
+            detail="briceyan/pdf",
+        )
+    )
+    progress.finish()
+
+    assert stream.getvalue().splitlines() == ["Prepare caps interrupted in 0.0s"]
+
+
 def test_cli_progress_can_list_pending_items_before_updates() -> None:
     stream = io.StringIO()
     progress = CliProgress(stream=stream)
