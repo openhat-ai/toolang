@@ -228,7 +228,7 @@ class CliProgress:
         for group in self._item_groups():
             for item in group:
                 style = "dim" if item.kind != "agent" else ""
-                prefix = "  * " if item.kind != "agent" else ""
+                prefix = " * " if item.kind != "agent" else ""
                 text.append(f"{prefix}{_format_item(item)}\n", style=style)
         return text
 
