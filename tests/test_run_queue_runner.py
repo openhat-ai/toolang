@@ -2276,7 +2276,7 @@ def test_up_logs_runtime_urls_after_start_and_stop(tmp_path: Path, monkeypatch, 
         if record.name == "toolang.runtime"
     ]
     assert color_messages[0] == (
-        "Agent %s started root=\x1b[1m%s\x1b[0m features=%s"
+        "Agent %s started root=\x1b[1m%s\x1b[0m features=\x1b[1m%s\x1b[0m"
     )
     assert color_messages[1] == "Agent %s running on \x1b[1m%s\x1b[0m"
 

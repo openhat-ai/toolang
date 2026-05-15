@@ -844,7 +844,8 @@ def _up_local(
             extra={
                 "color_message": "Agent %s started root="
                 + click.style("%s", bold=True)
-                + " features=%s"
+                + " features="
+                + click.style("%s", bold=True)
             },
         ),
         on_running=lambda: logger.info(
