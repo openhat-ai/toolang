@@ -31,6 +31,7 @@ class CliProgress:
         self._live = bool(getattr(self._stream, "isatty", lambda: False)()) if live is None else live
         self._live_display: Live | None = None
         self._printed = False
+        self._finished = False
         self._started_at = time.monotonic()
         self._lock = RLock()
 
@@ -43,6 +44,9 @@ class CliProgress:
 
     def finish(self, *, details: bool = True) -> None:
         with self._lock:
+            if self._finished:
+                return
+            self._finished = True
             if not self._printed:
                 return
             if self._live_display is not None:
@@ -151,6 +155,20 @@ class CliProgress:
         pending = sum(1 for item in cap_items if _item_status(item) == "pending")
         elapsed = _format_elapsed(time.monotonic() - self._started_at)
         agent_name = self._display_agent_name()
+        prepare_status = _aggregate_status(tuple(self._prepare.values())) if self._prepare else "skipped"
+        if self._prepare:
+            total = len(cap_items)
+            if failed:
+                return f"Failed {failed}/{total} caps in {elapsed}"
+            if running:
+                return f"Preparing {total} caps: {running} running, {elapsed}"
+            if pending:
+                return f"Preparing {total} caps: {pending} pending, {elapsed}"
+            if prepare_status in {"ok", "skipped"}:
+                return f"Prepared {total} caps in {elapsed}"
+            if prepare_status in {"running", "pending"}:
+                return f"Preparing {total} caps: {elapsed}"
+            return f"Prepared {total} caps in {elapsed}"
         if not cap_items and agent_items:
             agent_status = _aggregate_status(tuple(_item_status(item) for item in agent_items))
             if agent_status == "failed":
@@ -158,16 +176,15 @@ class CliProgress:
             if agent_status in {"running", "pending"}:
                 return f"Agent {agent_name} preparing: {elapsed}"
             return f"Agent {agent_name} ready: {elapsed}"
-        prepare_status = _aggregate_status(tuple(self._prepare.values())) if self._prepare else "skipped"
         if failed:
-            return f"Agent {agent_name} prepare failed: {failed}/{len(cap_items)} caps, {elapsed}"
+            return f"Failed {failed}/{len(cap_items)} caps in {elapsed}"
         if running:
-            return f"Agent {agent_name} preparing: {len(cap_items)} caps, {running} running, {elapsed}"
+            return f"Preparing {len(cap_items)} caps: {running} running, {elapsed}"
         if pending:
-            return f"Agent {agent_name} preparing: {len(cap_items)} caps, {pending} pending, {elapsed}"
+            return f"Preparing {len(cap_items)} caps: {pending} pending, {elapsed}"
         if prepare_status in {"ok", "skipped"}:
-            return f"Agent {agent_name} prepared: {len(cap_items)} caps, {elapsed}"
-        return f"Agent {agent_name} prepared: {len(cap_items)} caps, {prepare_status}, {elapsed}"
+            return f"Prepared {len(cap_items)} caps in {elapsed}"
+        return f"Prepared {len(cap_items)} caps in {elapsed}"
 
     def _print_summary(self) -> None:
         summary = self._summary_line()
@@ -320,8 +337,8 @@ def _status_text(status: str) -> Text:
 
 def _format_elapsed(seconds: float) -> str:
     if seconds < 10:
-        return f"{seconds:.1f} secs"
-    return f"{seconds:.0f} secs"
+        return f"{seconds:.1f}s"
+    return f"{seconds:.0f}s"
 
 
 def _parse_cap_event(event: ProgressEvent) -> tuple[str, str] | None:

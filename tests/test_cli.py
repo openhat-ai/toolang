@@ -524,7 +524,7 @@ def test_cli_progress_groups_agent_and_cap_steps() -> None:
 
     assert stream.getvalue().splitlines() == [
         "ok Psyche concise resolve, fetch (1 file)",
-        "Agent dev prepared: 1 caps, 1.2 secs",
+        "Prepared 1 caps in 1.2s",
     ]
 
 
@@ -571,7 +571,27 @@ def test_cli_progress_summarizes_zero_caps_when_prepare_runs() -> None:
     )
     progress.finish(details=False)
 
-    assert stream.getvalue().splitlines() == ["Agent alice prepared: 0 caps, 0.2 secs"]
+    assert stream.getvalue().splitlines() == ["Prepared 0 caps in 0.2s"]
+
+
+def test_cli_progress_finish_is_idempotent() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream)
+    progress._started_at -= 0.2
+
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="running",
+            detail="alice",
+        )
+    )
+    progress.finish(details=False)
+    progress.finish(details=False)
+
+    assert stream.getvalue().splitlines() == ["Preparing 0 caps: 0.2s"]
 
 
 def test_cli_progress_can_list_pending_items_before_updates() -> None:
@@ -602,7 +622,7 @@ def test_cli_progress_can_list_pending_items_before_updates() -> None:
 
     assert stream.getvalue().splitlines() == [
         "pending Skill pdf-processing",
-        "Agent dev preparing: 1 caps, 1 pending, 0.4 secs",
+        "Preparing 1 caps: 1 pending, 0.4s",
     ]
 
 
