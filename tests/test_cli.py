@@ -659,8 +659,47 @@ def test_cli_progress_shows_agent_live_summary_only() -> None:
 
     text = progress._live_text()
 
-    assert text.plain.splitlines() == ["Fetching 1 agent: 0.2s"]
+    assert text.plain.splitlines() == ["Fetching 1 agent: resolving, 0.2s"]
     assert text.spans[0].style == "dim"
+    progress.finish(details=False)
+
+
+def test_cli_progress_updates_agent_live_summary_by_phase() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream, live=True)
+    progress._started_at -= 0.3
+
+    progress(
+        ProgressEvent(
+            id="agent.resolve:briceyan/dev",
+            phase="agent.resolve",
+            label="Resolve agent",
+            status="ok",
+            detail="github://briceyan/agents/dev.too@main",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="agent.fetch:github://briceyan/agents/dev.too@main",
+            phase="agent.fetch",
+            label="Fetch agent",
+            status="running",
+            detail="https://raw.githubusercontent.com/briceyan/agents/main/dev.too",
+        )
+    )
+
+    assert progress._live_text().plain.splitlines() == ["Fetching 1 agent: fetching, 0.3s"]
+
+    progress(
+        ProgressEvent(
+            id="agent.fetch:github://briceyan/agents/dev.too@main",
+            phase="agent.fetch",
+            label="Fetch agent",
+            status="ok",
+        )
+    )
+
+    assert progress._live_text().plain.splitlines() == ["Fetched 1 agent in 0.3s"]
     progress.finish(details=False)
 
 

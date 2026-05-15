@@ -190,16 +190,16 @@ class CliProgress:
                 return f"Preparing {total} caps: {elapsed}"
             return f"Prepared {total} caps in {elapsed}"
         if not cap_items and agent_items:
+            item = agent_items[0]
             agent_status = _aggregate_status(tuple(_item_status(item) for item in agent_items))
             if agent_status == "failed":
-                item = agent_items[0]
                 detail = _failed_detail(item)
                 suffix = f": {detail}" if detail else ""
                 if _first_step_with_status(item, "failed") == "resolve":
                     return f"Resolve agent failed{suffix}"
                 return f"Fetch agent failed{suffix}"
             if agent_status in {"running", "pending"}:
-                return f"Fetching 1 agent: {elapsed}"
+                return f"Fetching 1 agent: {_agent_progress_word(item)}, {elapsed}"
             return f"Fetched 1 agent in {elapsed}"
         if failed:
             return f"Failed {failed}/{len(cap_items)} caps"
@@ -337,6 +337,20 @@ def _running_word(step: str) -> str:
         "fetch": "fetching",
         "materialize": "materializing",
     }.get(step, "running")
+
+
+def _agent_progress_word(item: _ProgressItem) -> str:
+    running_step = _first_step_with_status(item, "running")
+    if running_step == "resolve":
+        return "resolving"
+    if running_step == "fetch":
+        return "fetching"
+    if running_step == "materialize":
+        return "materializing"
+    pending_step = _first_step_with_status(item, "pending")
+    if pending_step is not None:
+        return "pending"
+    return "running"
 
 
 def _failed_detail(item: _ProgressItem) -> str:
