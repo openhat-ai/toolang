@@ -942,6 +942,34 @@ def test_cli_run_rejects_missing_resident_agent(tmp_path: Path, monkeypatch) -> 
     assert not agents.agent_home(toolang_root, "missing").exists()
 
 
+def test_cli_run_interrupts_prepare_once(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+
+    def interrupt_prepare(*, progress, **_kwargs) -> None:
+        progress(
+            ProgressEvent(
+                id="prepare.state",
+                phase="prepare.state",
+                label="Prepare agent state",
+                status="running",
+                detail="alice",
+            )
+        )
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.agent_up, "prepare_runtime", interrupt_prepare)
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(toolang_root), "run", "alice"],
+        env={},
+    )
+
+    assert result.exit_code == 130
+    assert result.stderr.count("Prepare caps interrupted") == 1
+
+
 def test_cli_run_rejects_active_visiting_agent(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     ref = agents.HttpAgentRef(url="https://toolang.ai/demo/researcher.too")

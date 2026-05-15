@@ -1284,7 +1284,8 @@ def _materialize_remote_entry_requests(
     files: dict[str, bytes] = {}
     results: list[tuple[PreparedEntry, dict[str, bytes]] | None] = [None] * len(requests)
     first_error: BaseException | None = None
-    with ThreadPoolExecutor(max_workers=REMOTE_CAP_MATERIALIZE_WORKERS) as executor:
+    executor = ThreadPoolExecutor(max_workers=REMOTE_CAP_MATERIALIZE_WORKERS)
+    try:
         futures = {
             executor.submit(
                 _remote_entry_from_request,
@@ -1296,12 +1297,19 @@ def _materialize_remote_entry_requests(
             ): index
             for index, request in enumerate(requests)
         }
-        for future in as_completed(futures):
-            try:
-                results[futures[future]] = future.result()
-            except BaseException as exc:
-                if first_error is None:
-                    first_error = exc
+        try:
+            for future in as_completed(futures):
+                try:
+                    results[futures[future]] = future.result()
+                except BaseException as exc:
+                    if first_error is None:
+                        first_error = exc
+        except BaseException:
+            for future in futures:
+                future.cancel()
+            raise
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
     if first_error is not None:
         raise first_error
     for result in results:
