@@ -603,7 +603,7 @@ def test_cli_progress_mutes_cap_live_lines() -> None:
 
     text = progress._live_text()
 
-    assert text.plain.splitlines()[1] == "skill briceyan/pdf resolving"
+    assert text.plain.splitlines()[1] == "  * skill briceyan/pdf resolving"
     assert any(span.style == "dim" for span in text.spans)
     progress.finish(details=False)
 
@@ -636,7 +636,7 @@ def test_cli_progress_shows_live_summary_first() -> None:
 
     assert text.plain.splitlines() == [
         "Preparing 1 caps: 1 running, 7.6s",
-        "skill briceyan/pdf resolving",
+        "  * skill briceyan/pdf resolving",
     ]
     assert text.spans[0].style == "dim"
     progress.finish(details=False)
