@@ -41,6 +41,7 @@ class AgentStatus:
 
 AgentSelectorForm = Literal["name", "shorthand", "ref"]
 RunTargetKind = Literal["resident", "visiting"]
+VISITING_PROGRAM_CACHE_TTL_SEC = 3600
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,19 +119,19 @@ def agent_home(toolang_root: Path, agent_name: str) -> Path:
 def agent_program_path(toolang_root: Path, agent_name: str) -> Path:
     """Return one agent program path."""
 
-    return agent_home(toolang_root, agent_name) / f"{agent_name}.too"
+    return agent_home(toolang_root, agent_name) / "agent.too"
 
 
 def agent_room(toolang_root: Path, agent_name: str) -> Path:
     """Return one agent room path."""
 
-    return agent_home(toolang_root, agent_name) / ".runtime"
+    return agent_home(toolang_root, agent_name) / ".state"
 
 
 def agent_runtime_state_path(toolang_root: Path, agent_name: str) -> Path:
     """Return one agent runtime state path."""
 
-    return agent_room(toolang_root, agent_name) / "runtime.json"
+    return agent_room(toolang_root, agent_name) / "status.json"
 
 
 def agent_runtime_log_path(toolang_root: Path, agent_name: str) -> Path:
@@ -355,10 +356,16 @@ def roaming_root(source_path: Path) -> Path:
 def visiting_root(toolang_root: Path, ref: AgentRef) -> Path:
     """Return the stable local root for one visiting remote agent ref."""
 
-    label = _safe_visiting_root_label(ref.default_name())
-    source_key = f"{toolang_root.expanduser().resolve()}\n{ref.render()}"
-    source_digest = hashlib.sha256(source_key.encode("utf-8")).hexdigest()[:8]
-    return Path("/tmp") / "toolang-run" / f"{label}-{source_digest}"
+    return visiting_source_root(toolang_root, source=ref.render(), agent_name=ref.default_name())
+
+
+def visiting_source_root(toolang_root: Path, *, source: str, agent_name: str) -> Path:
+    """Return the stable local root for one visiting source selector."""
+
+    del toolang_root
+    label = _safe_visiting_root_label(agent_name)
+    source_digest = hashlib.sha256(source.encode("utf-8")).hexdigest()[:8]
+    return Path("/tmp") / f"toolang-{label}-{source_digest}"
 
 
 def materialize_roaming_program(source_path: Path) -> tuple[Path, str]:
@@ -373,21 +380,45 @@ def materialize_roaming_program(source_path: Path) -> tuple[Path, str]:
     agent_name = resolved_source.stem
     home = agent_home(toolang_root, agent_name)
     home.mkdir(parents=True, exist_ok=True)
-    program_path = agent_program_path(toolang_root, agent_name)
-    source_text = resolved_source.read_text(encoding="utf-8")
-    program_path.write_text(_rewrite_program_source(source_text, agent_name), encoding="utf-8")
+    _replace_relative_symlink(
+        agent_program_path(toolang_root, agent_name),
+        resolved_source,
+    )
+    _sync_roaming_config_link(home, resolved_source.parent / "toolang.toml")
     return toolang_root, agent_name
+
+
+def _sync_roaming_config_link(home: Path, source_config: Path) -> None:
+    target = home / "config.toml"
+    if source_config.is_file():
+        _replace_relative_symlink(target, source_config, replace_regular_file=False)
+    elif target.is_symlink():
+        target.unlink()
+
+
+def _replace_relative_symlink(link_path: Path, target_path: Path, *, replace_regular_file: bool = True) -> None:
+    if link_path.exists() or link_path.is_symlink():
+        if not link_path.is_symlink() and not replace_regular_file:
+            return
+        if link_path.is_dir() and not link_path.is_symlink():
+            raise IsADirectoryError(f"cannot replace directory with symlink: {link_path}")
+        link_path.unlink()
+    link_path.parent.mkdir(parents=True, exist_ok=True)
+    relative_target = os.path.relpath(target_path, start=link_path.parent)
+    link_path.symlink_to(relative_target)
 
 
 def materialize_visiting_program(
     toolang_root: Path,
     ref: AgentRef,
     source_text: str,
+    *,
+    source: str | None = None,
 ) -> tuple[Path, str]:
     """Materialize one remote agent into its stable visiting root."""
 
-    root = visiting_root(toolang_root, ref)
     agent_name = ref.default_name()
+    root = visiting_source_root(toolang_root, source=source or ref.render(), agent_name=agent_name)
     home = agent_home(root, agent_name)
     home.mkdir(parents=True, exist_ok=True)
     program_path = agent_program_path(root, agent_name)
@@ -413,16 +444,16 @@ def resolved_run_target(
         )
         return
 
-    resolved_ref = resolve_agent_selector_ref(selector, progress=progress)
-    agent_name = resolved_ref.default_name()
-    run_root = visiting_root(toolang_root, resolved_ref)
-    if agent_program_path(run_root, agent_name).is_file():
+    agent_name = selector.default_name()
+    run_root = visiting_source_root(toolang_root, source=selector.text, agent_name=agent_name)
+    if _visiting_program_cache_fresh(agent_program_path(run_root, agent_name)):
         yield MaterializedRunTarget(
             toolang_root=run_root,
             agent_name=agent_name,
             kind="visiting",
         )
         return
+    resolved_ref = resolve_agent_selector_ref(selector, progress=progress)
     source_text = fetch_agent_ref(resolved_ref, progress=progress)
     emit_progress(
         progress,
@@ -432,7 +463,12 @@ def resolved_run_target(
         status="running",
         detail=agent_name,
     )
-    run_root, run_agent_name = materialize_visiting_program(toolang_root, resolved_ref, source_text)
+    run_root, run_agent_name = materialize_visiting_program(
+        toolang_root,
+        resolved_ref,
+        source_text,
+        source=selector.text,
+    )
     emit_progress(
         progress,
         id=f"agent.materialize:{resolved_ref.render()}",
@@ -446,6 +482,12 @@ def resolved_run_target(
         agent_name=run_agent_name,
         kind="visiting",
     )
+
+
+def _visiting_program_cache_fresh(program_path: Path) -> bool:
+    if not program_path.is_file():
+        return False
+    return time.time() - program_path.stat().st_mtime <= VISITING_PROGRAM_CACHE_TTL_SEC
 
 
 @contextmanager
@@ -488,13 +530,12 @@ def _clone_local_agent(toolang_root: Path, source_name: str, target_name: str) -
     if target_home.exists():
         raise FileExistsError(f"target agent already exists: {target_home}")
 
-    shutil.copytree(source_home, target_home, ignore=shutil.ignore_patterns(".prepared"))
+    shutil.copytree(source_home, target_home, ignore=shutil.ignore_patterns(".caps"))
 
-    copied_source_program = target_home / f"{source_name}.too"
-    target_program = target_home / f"{target_name}.too"
+    copied_source_program = target_home / "agent.too"
+    target_program = target_home / "agent.too"
     if copied_source_program.is_file():
         source_text = copied_source_program.read_text(encoding="utf-8")
-        copied_source_program.unlink()
     else:
         source_text = _default_program_source(target_name, template_name="default")
     target_program.write_text(_rewrite_program_source(source_text, target_name), encoding="utf-8")

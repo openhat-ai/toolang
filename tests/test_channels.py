@@ -19,7 +19,7 @@ from toolang.up import create_channel_plugin
 def _channel_context(home: Path, binding_name: str) -> ChannelContext:
     return ChannelContext(
         home=home,
-        room=home / ".runtime" / "channels" / binding_name,
+        room=home / ".state" / "channels" / binding_name,
     )
 
 

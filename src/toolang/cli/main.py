@@ -108,6 +108,10 @@ def _human_uptime_since(timestamp_text: str) -> str | None:
 
 
 def _toolang_version() -> str:
+    return f"{_base_toolang_version()}{_source_state_suffix()}"
+
+
+def _base_toolang_version() -> str:
     try:
         return package_version("toolang")
     except PackageNotFoundError:
@@ -121,6 +125,46 @@ def _toolang_version() -> str:
             return "unknown"
         version = project.get("version")
         return version if isinstance(version, str) else "unknown"
+
+
+def _source_state_suffix() -> str:
+    source_root = _source_tree_root()
+    if source_root is None:
+        return ""
+    short_sha = _git_output(source_root, "rev-parse", "--short", "HEAD")
+    if short_sha is None:
+        return ""
+    dirty = _git_output(source_root, "status", "--short")
+    if dirty is None:
+        return f"+{short_sha}"
+    dirty_suffix = "*" if dirty else ""
+    return f"+{short_sha}{dirty_suffix}"
+
+
+def _git_output(source_root: Path, *args: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=source_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def _source_tree_root() -> Path | None:
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        if (parent / ".git").exists():
+            return parent
+    return None
 
 
 def _version_callback(value: bool) -> None:
@@ -212,7 +256,7 @@ def clone_agent(
         raise click.ClickException(f"Agent {source} not found") from exc
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
-    target_name = program_path.stem
+    target_name = program_path.parent.name
     _append_agent_update(
         _context_root(ctx),
         target_name,

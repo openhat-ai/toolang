@@ -1,4 +1,4 @@
-"""Prepared lock models and `.prepared` layout helpers."""
+"""Prepared lock models and `.caps` layout helpers."""
 
 from __future__ import annotations
 
@@ -17,6 +17,9 @@ EntryKind = Literal["psyche", "skill", "service", "prompt", "task", "chore"]
 EntryShape = Literal["file", "dir"]
 SourceOrigin = Literal["local", "remote", "inline"]
 SourceInclusion = Literal["authored", "configured", "referenced", "embedded"]
+
+_EMPTY_INPUT_FINGERPRINT = sha256().hexdigest()
+_EMPTY_LOCK_FINGERPRINT = sha256(b"[]").hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,15 +167,15 @@ class PreparedState:
 
 
 def shared_prepared_dir(toolang_root: Path) -> Path:
-    """Return the shared `.prepared` root."""
+    """Return the shared `.caps` root."""
 
-    return toolang_root / ".prepared"
+    return toolang_root / ".caps"
 
 
 def private_prepared_dir(toolang_root: Path, agent_name: str) -> Path:
-    """Return the private `.prepared` root for one agent."""
+    """Return the private `.caps` root for one agent."""
 
-    return toolang_root / "agents" / agent_name / ".prepared"
+    return toolang_root / "agents" / agent_name / ".caps"
 
 
 def shared_lock_path(toolang_root: Path) -> Path:
@@ -190,7 +193,10 @@ def private_lock_path(toolang_root: Path, agent_name: str) -> Path:
 def load_shared_lock(toolang_root: Path) -> PreparedLock:
     """Load the shared prepared lock."""
 
-    return _load_lock(shared_lock_path(toolang_root), visibility="shared")
+    lock_path = shared_lock_path(toolang_root)
+    if not lock_path.is_file():
+        return _empty_shared_lock(toolang_root)
+    return _load_lock(lock_path, visibility="shared")
 
 
 def load_private_lock(toolang_root: Path, agent_name: str) -> PreparedLock:
@@ -255,6 +261,21 @@ def _load_lock(lock_path: Path, *, visibility: PreparedVisibility) -> PreparedLo
         prepared_dir=lock_path.parent,
         lock_path=lock_path,
         lock_mtime_ns=lock_path.stat().st_mtime_ns,
+    )
+
+
+def _empty_shared_lock(toolang_root: Path) -> PreparedLock:
+    lock_path = shared_lock_path(toolang_root)
+    return PreparedLock(
+        visibility="shared",
+        updated_at="",
+        fingerprint=_EMPTY_LOCK_FINGERPRINT,
+        input_fingerprint=_EMPTY_INPUT_FINGERPRINT,
+        entries=(),
+        program=None,
+        prepared_dir=lock_path.parent,
+        lock_path=lock_path,
+        lock_mtime_ns=0,
     )
 
 

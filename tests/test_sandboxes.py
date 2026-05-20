@@ -90,18 +90,18 @@ def test_create_docker_sandbox_plugin_prepares_and_starts(monkeypatch, tmp_path:
     mounted_pairs = {(item.local_path, item.sandbox_path) for item in plan.mounts}
     assert (root, Path("/root/.toolang")) not in mounted_pairs
     assert (root / "config.toml", Path("/root/.toolang/config.toml")) in mounted_pairs
-    assert (root / ".prepared", Path("/root/.toolang/.prepared")) in mounted_pairs
+    assert (root / ".caps", Path("/root/.toolang/.caps")) in mounted_pairs
     assert (root / "psyches", Path("/root/.toolang/psyches")) in mounted_pairs
     assert (root / "skills", Path("/root/.toolang/skills")) in mounted_pairs
     assert (root / "services", Path("/root/.toolang/services")) in mounted_pairs
     assert (root / "prompts", Path("/root/.toolang/prompts")) in mounted_pairs
     assert (home, Path("/root/.toolang/agents/alice")) in mounted_pairs
     assert any(
-        item.sandbox_path == Path("/root/.toolang/agents/alice/.runtime/sandbox")
+        item.sandbox_path == Path("/root/.toolang/agents/alice/.state/sandbox")
         for item in plan.mounts
     )
     assert (root / "config.toml").is_file()
-    assert (root / ".prepared").is_dir()
+    assert (root / ".caps").is_dir()
     assert (root / ".sandbox" / "alice" / "start.json").is_file()
     assert (root / ".sandbox" / "alice" / "start.sh").is_file()
     script_text = (root / ".sandbox" / "alice" / "start.sh").read_text(encoding="utf-8")
@@ -109,7 +109,7 @@ def test_create_docker_sandbox_plugin_prepares_and_starts(monkeypatch, tmp_path:
     assert "ensure_uv" in script_text
     assert "uv tool run --from" in script_text
     assert " too run alice --port 8123" in script_text
-    assert plan.sandbox_dev_artifact == Path("/root/.toolang/agents/alice/.runtime/sandbox") / dev_artifact.name
+    assert plan.sandbox_dev_artifact == Path("/root/.toolang/agents/alice/.state/sandbox") / dev_artifact.name
 
     start = plugin.start(plan)
 

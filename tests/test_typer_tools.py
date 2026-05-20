@@ -48,7 +48,7 @@ def _tool_context(home: Path) -> ToolContext:
     return ToolContext(
         run_id="run-1",
         home=home,
-        room=home / ".runtime" / "tools" / "test",
+        room=home / ".state" / "tools" / "test",
         wd=home,
     )
 

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+import hashlib
 import logging
 from pathlib import Path
+import shutil
 from typing import TYPE_CHECKING, cast
 
 from watchfiles import Change, awatch
@@ -36,6 +38,7 @@ if TYPE_CHECKING:
 DEFAULT_INTERVAL_MS = 1_000.0
 DEFAULT_DEBOUNCE_MS = 500.0
 logger = logging.getLogger("toolang.feature.watch")
+_EMPTY_INPUT_FINGERPRINT = hashlib.sha256().hexdigest()
 
 
 def spawn(
@@ -257,6 +260,9 @@ def _write_visibility_if_changed(
     *,
     force: bool = False,
 ) -> PreparedLock:
+    if _is_empty_shared_lock(lock, files):
+        _remove_shared_prepared_dir(lock)
+        return lock
     current = _load_lock_optional(lock)
     if (
         not force
@@ -266,6 +272,20 @@ def _write_visibility_if_changed(
     ):
         return current
     return write_prepared_lock(toolang_root, lock, files=files)
+
+
+def _is_empty_shared_lock(lock: PreparedLock, files: dict[str, bytes]) -> bool:
+    return (
+        lock.visibility == "shared"
+        and not lock.entries
+        and not files
+        and lock.input_fingerprint == _EMPTY_INPUT_FINGERPRINT
+    )
+
+
+def _remove_shared_prepared_dir(lock: PreparedLock) -> None:
+    if lock.prepared_dir.name == ".caps" and lock.prepared_dir.exists():
+        shutil.rmtree(lock.prepared_dir)
 
 
 def _load_lock_optional(lock: PreparedLock) -> PreparedLock | None:

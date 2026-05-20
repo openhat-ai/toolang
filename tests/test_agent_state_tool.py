@@ -15,7 +15,7 @@ def _tool_context(toolang_root: Path, agent_name: str = "alice") -> ToolContext:
     return ToolContext(
         run_id="run-1",
         home=home,
-        room=home / ".runtime" / "tools" / "agent_state",
+        room=home / ".state" / "tools" / "agent_state",
         wd=home,
     )
 
@@ -185,7 +185,7 @@ def test_agent_state_tool_rejects_non_agent_home(tmp_path: Path) -> None:
     context = ToolContext(
         run_id="run-1",
         home=tmp_path / "alice",
-        room=tmp_path / "alice" / ".runtime" / "tools" / "agent_state",
+        room=tmp_path / "alice" / ".state" / "tools" / "agent_state",
         wd=tmp_path / "alice",
     )
     tool = create_agent_state_tool({}).tools()["task_list"]

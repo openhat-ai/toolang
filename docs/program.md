@@ -41,7 +41,7 @@ thunk pay:
 
 Program-level `psyche`, `service`, and `prompt` declarations are embedded inline caps.
 During prepare, Toolang materializes them into the agent's private prepared cap
-set under `.prepared/inline`, preserving the `.too` file as the definition
+set under `.caps/inline`, preserving the `.too` file as the definition
 source. This makes embedded declarations visible through cap APIs and WebUI
 surfaces before any thunk selects them. The prepared cap has `origin=inline`
 and `inclusion=embedded`.

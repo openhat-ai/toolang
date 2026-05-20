@@ -106,7 +106,7 @@
 
 ## Agent Identity
 
-- Canonical resident agent URI: `agent://<home>/<agent>.too`
+- Canonical resident agent URI: `agent://<home>/agent.too`
 - Canonical roaming agent URI: `file:///absolute/path/to/<agent>.too`
 - Canonical visiting agent URI: `https://<host>/<path>`
 - `alice` and `agent:alice` are resident selectors, not canonical URIs.
@@ -132,7 +132,7 @@
 - Keep file-shape logic in dedicated modules.
 - Keep path/layout logic in dedicated modules.
 - Keep runtime execution logic separate from file parsing and path resolution.
-- `execution.db` owns runtime transcript messages as well as activation,
+- `runs.db` owns runtime transcript messages as well as activation,
   thread, run, and step truth. Do not add a separate durable chat-store layer.
 - Synced state should be reusable without reparsing unchanged source files.
 

@@ -8,7 +8,7 @@ from toolang.state.prepared import load_shared_lock
 
 def test_load_shared_lock_accepts_legacy_locator_entries(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    prepared_dir = toolang_root / ".prepared"
+    prepared_dir = toolang_root / ".caps"
     prepared_dir.mkdir(parents=True, exist_ok=True)
     (prepared_dir / "lock.json").write_text(
         json.dumps(
@@ -23,7 +23,7 @@ def test_load_shared_lock_accepts_legacy_locator_entries(tmp_path: Path) -> None
                         "name": "pdf-processing",
                         "shape": "dir",
                         "locator": "github://by3gus/agents/skills/pdf-processing@main",
-                        "path": ".prepared/remote/skills/pdf-processing/SKILL.md",
+                        "path": ".caps/remote/skills/pdf-processing/SKILL.md",
                         "source": {
                             "origin": "remote",
                             "inclusion": "configured",

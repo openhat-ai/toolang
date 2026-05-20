@@ -27,9 +27,9 @@ archive/
   chores/
     <YYYYMMDDTHHZ>/
       <id>.md
-.runtime/
+.state/
   ids.json
-  execution.db
+  runs.db
 ```
 
 Rules:
@@ -37,8 +37,8 @@ Rules:
 - `tasks/` contains active or inactive one-shot work.
 - `chores/` contains active or inactive recurring work.
 - `archive/tasks/` and `archive/chores/` contain retired jobs.
-- `.runtime/ids.json` owns local id allocation state.
-- `.runtime/execution.db` owns run, thread, scheduler, and projection state.
+- `.state/ids.json` owns local id allocation state.
+- `.state/runs.db` owns run, thread, scheduler, and projection state.
 
 The archive bucket directory is derived from the decoded id tick bucket and is
 rendered as one UTC hour in `YYYYMMDDTHHZ` form, for example
@@ -173,7 +173,7 @@ Rules:
 
 - only `state: active` chores participate in scheduling
 - `state: inactive` chores remain authored but are skipped
-- runtime `last_run`, `active_run`, and `next_run` live in `.runtime/execution.db`
+- runtime `last_run`, `active_run`, and `next_run` live in `.state/runs.db`
 - retiring a chore writes `state: archived` and moves it under `archive/chores/`
 
 The chore body is authored recurring work input. It is not rewritten by run
