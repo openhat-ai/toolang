@@ -1144,7 +1144,7 @@ def _relative_embedded_entry_path(
     kind: EntryKind,
     name: str,
 ) -> Path:
-    return Path("agents") / agent_name / ".prepared" / "inline" / DIR_NAME_BY_KIND[kind] / f"{name}.md"
+    return Path("agents") / agent_name / ".caps" / "inline" / DIR_NAME_BY_KIND[kind] / f"{name}.md"
 
 
 def _embedded_materialized_content(decl: DeclBlock) -> bytes:
@@ -1405,7 +1405,7 @@ def _relative_remote_entry_path(
     kind: EntryKind,
     name: str,
 ) -> Path:
-    prefix = Path(".prepared") if visibility == "shared" else Path("agents") / agent_name / ".prepared"
+    prefix = Path(".caps") if visibility == "shared" else Path("agents") / agent_name / ".caps"
     root = prefix / "remote" / DIR_NAME_BY_KIND[kind] / name
     if kind == "skill":
         return root / "SKILL.md"

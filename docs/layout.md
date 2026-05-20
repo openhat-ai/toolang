@@ -24,11 +24,11 @@ ${TOOLANG_ROOT}/
   skills/
   services/
   prompts/
-  .prepared/
+  .caps/
   .sandbox/
   agents/
     <agent>/
-      <agent>.too
+      agent.too
       config.toml
       psyches/
       skills/
@@ -37,8 +37,8 @@ ${TOOLANG_ROOT}/
       tasks/
       chores/
       archive/
-      .prepared/
-      .runtime/
+      .caps/
+      .state/
 ```
 
 
@@ -49,45 +49,45 @@ Each resident agent lives under:
 - `${TOOLANG_ROOT}/agents/<agent>/`
 
 Visiting agents fetched by `toolang run <remote>` are materialized under a
-stable system temporary root derived from `TOOLANG_ROOT` and the canonical
-remote ref:
+stable system temporary root derived from the canonical remote ref:
 
-- `/tmp/toolang-run/<agent>-<hash:8>/`
+- `/tmp/toolang-<agent>-<hash:8>/`
 
-The hash is derived from `<toolang-root>\n<agent-source>`. The stable visiting
-root lets prepared state and the last runtime port be reused across repeated
-foreground runs of the same remote agent ref while remaining disposable across
-machine restarts or normal temporary-directory cleanup. Roaming `.too` file
-invocation uses the source file's sibling
+The hash is derived from `<agent-source>`. The stable visiting root lets
+prepared state and the last runtime port be reused across repeated foreground
+runs of the same remote agent ref, independent of the local `TOOLANG_ROOT`,
+while remaining disposable across machine restarts or normal
+temporary-directory cleanup. The cached remote `agent.too` is refetched after
+one hour. Roaming `.too` file invocation uses the source file's sibling
 `.toolang` directory and does not start a long-lived HTTP runtime.
 
 Key paths:
 
 | Path | Purpose |
 | --- | --- |
-| `<agent>.too` | Agent program |
+| `agent.too` | Agent program |
 | `config.toml` | Agent-local configuration |
 | `psyches/`, `skills/`, `services/`, `prompts/` | Agent-local cap definitions |
 | `tasks/` | Task documents |
 | `chores/` | Chore documents |
 | `archive/` | Retired task and chore documents |
-| `.prepared/` | Prepared runtime artifacts |
-| `.runtime/` | Live runtime state |
+| `.caps/` | Prepared runtime artifacts |
+| `.state/` | Live runtime state |
 
 
 ## Runtime Room
 
 Each agent runtime stores operational state under:
 
-- `${TOOLANG_ROOT}/agents/<agent>/.runtime/`
+- `${TOOLANG_ROOT}/agents/<agent>/.state/`
 
 Key paths:
 
 | Path           | Purpose                                                      |
 | -------------- | ------------------------------------------------------------ |
-| `runtime.json` | Runtime status, endpoint, sandbox summary, and enabled features |
+| `status.json` | Runtime status, endpoint, sandbox summary, and enabled features |
 | `agent.log`    | Runtime log                                                  |
-| `execution.db` | Runs, steps, updates, and instruction blobs                  |
+| `runs.db` | Runs, steps, updates, and instruction blobs                  |
 | `ids.json`     | Local id allocator state                                     |
 | `pulse.json`   | Pulse loop state                                             |
 | `tools/`       | Per-tool plugin working directories                          |
@@ -102,8 +102,8 @@ Prepared directories:
 
 | Scope | Directory |
 | --- | --- |
-| Global | `${TOOLANG_ROOT}/.prepared/` |
-| Per-agent | `${TOOLANG_ROOT}/agents/<agent>/.prepared/` |
+| Global | `${TOOLANG_ROOT}/.caps/` |
+| Per-agent | `${TOOLANG_ROOT}/agents/<agent>/.caps/` |
 
 Each prepared directory stores a `lock.json` and materialized files.
 
@@ -122,4 +122,4 @@ Durable authored state lives in:
 - agent `archive/`
 
 Durable execution state does not live in authored files. It lives in
-`execution.db`.
+`runs.db`.

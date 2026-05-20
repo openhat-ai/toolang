@@ -128,7 +128,7 @@ def test_runner_queue_is_fifo() -> None:
 def test_runner_pending_requests_include_group_waiters(tmp_path: Path) -> None:
     async def run_test() -> None:
         toolang_root = tmp_path / "toolang"
-        _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+        _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
         context = _build_context(
             toolang_root=toolang_root,
             agent_name="alice",
@@ -176,7 +176,7 @@ def test_runner_pending_requests_include_group_waiters(tmp_path: Path) -> None:
 def test_queue_runner_drains_requests_in_order(tmp_path: Path, caplog) -> None:
     async def run_test() -> None:
         toolang_root = tmp_path / "toolang"
-        _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+        _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
         context = _build_context(
             toolang_root=toolang_root,
             agent_name="alice",
@@ -253,7 +253,7 @@ def test_queue_runner_drains_requests_in_order(tmp_path: Path, caplog) -> None:
 
 def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -344,7 +344,7 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
                 "hash": instructions_hash,
                 "body": "You are a helpful assistant.",
             }
-            assert definitions["program_source"] == "agents/alice/alice.too"
+            assert definitions["program_source"] == "agents/alice/agent.too"
             assert definitions["private_entries"] == []
             assert prepared_fingerprint == live["fingerprint"]
             assert operational_facts["completed_runs"] == 1
@@ -355,7 +355,7 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
 
 def test_threads_api_reports_full_run_count_independent_of_recent_run_limit(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -414,7 +414,7 @@ def test_threads_api_reports_full_run_count_independent_of_recent_run_limit(tmp_
 
 def test_threads_api_reports_active_run(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -450,7 +450,7 @@ def test_threads_api_reports_active_run(tmp_path: Path) -> None:
 
 def test_run_events_api_returns_resource_scoped_events(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -488,7 +488,7 @@ def test_run_events_api_returns_resource_scoped_events(tmp_path: Path) -> None:
 
 def test_agent_events_include_thread_updates_for_run_lifecycle(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -527,7 +527,7 @@ def test_agent_events_include_thread_updates_for_run_lifecycle(tmp_path: Path) -
 
 def test_run_start_trace_emits_run_input_after_run_start(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -564,7 +564,7 @@ def test_run_start_trace_emits_run_input_after_run_start(tmp_path: Path) -> None
 
 def test_steer_run_appends_run_input_event(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -606,7 +606,7 @@ def test_steer_run_appends_run_input_event(tmp_path: Path) -> None:
 
 def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -657,7 +657,7 @@ def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
 
 def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -739,7 +739,7 @@ def test_basic_strategy_continues_when_steer_arrives_before_finish() -> None:
 
 def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -844,7 +844,7 @@ def test_runtime_shutdown_cancels_stuck_tasks() -> None:
 
 def test_agent_events_include_cap_updates(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -870,7 +870,7 @@ def test_agent_events_include_cap_updates(tmp_path: Path) -> None:
 
 def test_chat_api_allocates_new_threads_and_rejects_unknown_thread_ids(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -906,7 +906,7 @@ def test_chat_api_allocates_new_threads_and_rejects_unknown_thread_ids(tmp_path:
 
 def test_chat_restart_supersedes_previous_run_in_thread_projection(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -948,7 +948,7 @@ def test_chat_restart_supersedes_previous_run_in_thread_projection(tmp_path: Pat
 
 def test_chat_restart_cancels_running_run_before_superseding(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -988,7 +988,7 @@ def test_chat_restart_cancels_running_run_before_superseding(tmp_path: Path) -> 
 
 def test_chat_api_records_peer_for_new_thread_and_rejects_mismatch(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "bob" / "bob.too", "agent bob\n")
+    _write_text(toolang_root / "agents" / "bob" / "agent.too", "agent bob\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="bob",
@@ -1035,7 +1035,7 @@ def test_chat_api_records_peer_for_new_thread_and_rejects_mismatch(tmp_path: Pat
 def test_chat_models_lists_effective_selectors_for_chat_thunk(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
-        toolang_root / "agents" / "alice" / "alice.too",
+        toolang_root / "agents" / "alice" / "agent.too",
         "agent alice\n\nthunk chat:\n  models = openai/gpt-5, openai/o3\n\n  Reply directly.\n",
     )
     context = _build_context(
@@ -1081,7 +1081,7 @@ def test_chat_models_lists_effective_selectors_for_chat_thunk(tmp_path: Path) ->
 
 def test_chat_models_returns_all_discoverable_when_unrestricted(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -1124,7 +1124,7 @@ def test_chat_models_returns_all_discoverable_when_unrestricted(tmp_path: Path) 
 
 def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -1240,7 +1240,7 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
 
 def test_create_app_allows_webui_cors_origin(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -1260,7 +1260,7 @@ def test_create_app_allows_webui_cors_origin(tmp_path: Path) -> None:
 
 def test_chat_returns_failed_run_as_assistant_message(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -1310,7 +1310,7 @@ def test_chat_returns_failed_run_as_assistant_message(tmp_path: Path) -> None:
 
 def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -1390,7 +1390,7 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
 
 def test_chat_projects_tool_parts_from_tool_call_steps(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -1413,7 +1413,7 @@ def test_chat_projects_tool_parts_from_tool_call_steps(tmp_path: Path) -> None:
 
 def test_chat_stream_emits_tool_and_text_chunks(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -1452,7 +1452,7 @@ def test_chat_stream_emits_tool_and_text_chunks(tmp_path: Path) -> None:
 def test_chat_stream_emits_before_run_completion(tmp_path: Path) -> None:
     async def run_test() -> None:
         toolang_root = tmp_path / "toolang"
-        _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+        _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
         context = _build_context(
             toolang_root=toolang_root,
             agent_name="alice",
@@ -1543,7 +1543,7 @@ def test_shutdown_aware_streaming_response_stops_when_shutdown_starts() -> None:
 
 def test_chat_stream_allows_tool_only_turns(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -1585,7 +1585,7 @@ def test_create_app_is_pure_route_assembly(tmp_path: Path) -> None:
 
 def test_hook_routes_enqueue_runs(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -1647,7 +1647,7 @@ def test_poll_loop_queues_channel_deliveries_and_delivers_reply(tmp_path: Path) 
             return PluginHealth(ok=True)
 
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     plugin = FakeTelegramPlugin()
     context = _build_context(
         toolang_root=toolang_root,
@@ -1714,7 +1714,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
             return PluginHealth(ok=True)
 
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     plugin = FakeTelegramPlugin()
     context = _build_context(
         toolang_root=toolang_root,
@@ -1893,7 +1893,7 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
             return PluginHealth(ok=True)
 
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     plugin = FakeTelegramPlugin()
     context = _build_context(
         toolang_root=toolang_root,
@@ -2007,7 +2007,7 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -2066,7 +2066,7 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
 
 def test_cap_template_api_lists_and_reads_templates(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -2097,7 +2097,7 @@ def test_cap_template_api_lists_and_reads_templates(tmp_path: Path) -> None:
 def test_background_features_enqueue_runs(tmp_path: Path) -> None:
     async def run_test() -> None:
         toolang_root = tmp_path / "toolang"
-        _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+        _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
         _write_text(
             toolang_root / "agents" / "alice" / "tasks" / "review.md",
             "---\ntitle: Review\n---\nReview the current plan.\n",
@@ -2135,7 +2135,7 @@ def test_background_features_enqueue_runs(tmp_path: Path) -> None:
 
 def test_pulse_collects_due_chores_before_claimable_tasks(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     _write_text(
         toolang_root / "agents" / "alice" / "chores" / "sync.md",
         "---\ntitle: Sync\nschedule: FREQ=MINUTELY;INTERVAL=1\n---\nSync remote tasks.\n",
@@ -2162,7 +2162,7 @@ def test_pulse_collects_due_chores_before_claimable_tasks(tmp_path: Path) -> Non
 
 def test_bind_run_request_allocates_normalized_local_ids(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -2176,12 +2176,12 @@ def test_bind_run_request_allocates_normalized_local_ids(tmp_path: Path) -> None
 
     assert bound.run_id.startswith("run_")
     assert bound.thread_id.startswith("chat_")
-    assert (toolang_root / "agents" / "alice" / ".runtime" / "ids.json").is_file()
+    assert (toolang_root / "agents" / "alice" / ".state" / "ids.json").is_file()
 
 
 def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
@@ -2226,7 +2226,7 @@ def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
 
 def test_up_logs_runtime_urls_after_start_and_stop(tmp_path: Path, monkeypatch, caplog) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     _write_text(toolang_root / "config.toml", '[web]\nui_base_url = "https://agents.example.test"\n')
 
     def fake_run_uvicorn_app(
@@ -2283,7 +2283,7 @@ def test_up_logs_runtime_urls_after_start_and_stop(tmp_path: Path, monkeypatch, 
 
 def test_up_reuses_previous_agent_port_when_unspecified(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -2337,7 +2337,7 @@ def test_up_falls_back_when_previous_agent_port_is_unavailable(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     captured: dict[str, object] = {}
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as blocker:
@@ -2393,7 +2393,7 @@ def test_up_falls_back_when_previous_agent_port_is_unavailable(
 
 def test_up_falls_back_when_stopped_agent_port_is_unavailable(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -2456,7 +2456,7 @@ def test_resolve_runtime_port_does_not_wait_for_stopped_preferred_port(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -2490,7 +2490,7 @@ def test_resolve_runtime_port_uses_temporary_picker_for_visiting_agents(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
 
     monkeypatch.setattr(
         "toolang.up._pick_runtime_port",
@@ -2513,7 +2513,7 @@ def test_resolve_runtime_port_reuses_visiting_agent_previous_port(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -2541,8 +2541,8 @@ def test_resolve_runtime_port_reuses_visiting_agent_previous_port(
 
 def test_pick_runtime_port_uses_first_available_auto_port(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "bob" / "bob.too", "agent bob\n")
-    _write_text(toolang_root / "agents" / "carol" / "carol.too", "agent carol\n")
+    _write_text(toolang_root / "agents" / "bob" / "agent.too", "agent bob\n")
+    _write_text(toolang_root / "agents" / "carol" / "agent.too", "agent carol\n")
     agents.write_runtime_state(
         toolang_root,
         "bob",
@@ -2580,7 +2580,7 @@ def test_pick_runtime_port_uses_first_available_auto_port(tmp_path: Path, monkey
 
 def test_up_uses_cors_origins_from_root_config(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     _write_text(
         toolang_root / "config.toml",
         '[web]\n'
@@ -2632,7 +2632,7 @@ def test_up_uses_cors_origins_from_root_config(tmp_path: Path, monkeypatch) -> N
 
 def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     captured: dict[str, object] = {}
 
     class FakeSandbox:
@@ -2727,7 +2727,7 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
 
 def test_up_defaults_docker_target_when_selector_omits_one(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     captured: dict[str, object] = {}
 
     class FakeSandbox:
@@ -2790,7 +2790,7 @@ def test_up_defaults_docker_target_when_selector_omits_one(tmp_path: Path, monke
 
 def test_up_marks_managed_sandbox_failed_when_ready_check_fails(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
 
     class FakeSandbox:
         name = "docker"
@@ -2856,7 +2856,7 @@ def test_up_marks_managed_sandbox_failed_when_ready_check_fails(tmp_path: Path, 
 
 def test_up_marks_managed_sandbox_failed_when_prepare_fails(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
 
     class FakeSandbox:
         name = "docker"
@@ -3070,7 +3070,7 @@ def test_stop_agent_marks_state_stopped_without_waiting_for_endpoint_release(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -3191,7 +3191,7 @@ def test_stop_agent_stops_managed_sandbox_and_marks_state_stopped(tmp_path: Path
 
 def test_up_reads_web_config_without_validating_experiments_caps(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     (toolang_root / "config.toml").write_text(
         '[web]\n'
         'cors_allowed_origins = ["http://localhost:3000", "https://too.run"]\n'
@@ -3262,7 +3262,8 @@ def test_prepare_reload_refreshes_prepared_and_live(tmp_path: Path) -> None:
             refreshed = await _wait_for_fingerprint_change(context, initial_fingerprint)
             assert refreshed
             prepared = load_prepared_state(context.root, context.name)
-            assert prepared.shared_lock.lock_path.is_file()
+            assert prepared.shared_lock.entries == ()
+            assert not prepared.shared_lock.lock_path.is_file()
             assert prepared.private_lock.lock_path.is_file()
             assert context.live.fingerprint == prepared.fingerprint
             assert any(
@@ -3276,7 +3277,7 @@ def test_prepare_reload_refreshes_prepared_and_live(tmp_path: Path) -> None:
 def test_prepare_reload_refreshes_service_use_visible_services(tmp_path: Path) -> None:
     async def run_test() -> None:
         toolang_root = tmp_path / "toolang"
-        _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+        _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
         context = _build_context(
             toolang_root=toolang_root,
             agent_name="alice",
@@ -3315,7 +3316,7 @@ def test_prepare_reload_refreshes_service_use_visible_services(tmp_path: Path) -
 
 def test_runtime_tool_plugin_config_maps_service_caps_to_service_use(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     _write_text(
         toolang_root / "agents" / "alice" / "services" / "linear.md",
         "---\n"
@@ -3462,12 +3463,12 @@ def test_prepare_materializes_remote_entries_from_config(tmp_path: Path, monkeyp
     prepared = watch.build_prepared_state(durable)
     live = load_live_state(prepared, enabled_features=("watch",))
 
-    assert (toolang_root / ".prepared" / "remote" / "prompts" / "rewrite.md").is_file()
+    assert (toolang_root / ".caps" / "remote" / "prompts" / "rewrite.md").is_file()
     assert [entry.source.origin for entry in prepared.shared_lock.entries] == ["remote"]
     assert [entry.source.inclusion for entry in prepared.shared_lock.entries] == ["configured"]
-    assert prepared.shared_lock.entries[0].path == ".prepared/remote/prompts/rewrite.md"
+    assert prepared.shared_lock.entries[0].path == ".caps/remote/prompts/rewrite.md"
     assert prepared.shared_lock.entries[0].ref == "github://acme/agents/prompts/rewrite.md@main"
-    assert live.caps == (".prepared/remote/prompts/rewrite.md",)
+    assert live.caps == (".caps/remote/prompts/rewrite.md",)
 
 
 def test_remote_skill_shorthand_probes_agent_skills_and_skills_repos(
@@ -3557,7 +3558,7 @@ def test_remote_skill_add_canonicalizes_github_tree_url(tmp_path: Path, monkeypa
     assert 'answers = { ref = "github://brave/brave-search-skills/skills/answers@main" }' in config_text
     assert prepared.private_lock.entries[0].ref == "github://brave/brave-search-skills/skills/answers@main"
     assert (
-        toolang_root / "agents" / "alice" / ".prepared" / "remote" / "skills" / "answers" / "SKILL.md"
+        toolang_root / "agents" / "alice" / ".caps" / "remote" / "skills" / "answers" / "SKILL.md"
     ).is_file()
 
 
@@ -3761,7 +3762,7 @@ def test_prepare_refetches_remote_caps_when_prepared_output_does_not_match_lock(
         ref="acme/pdf",
     )
     watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
-    prepared_file = toolang_root / "agents" / "alice" / ".prepared" / "remote" / "skills" / "pdf" / "SKILL.md"
+    prepared_file = toolang_root / "agents" / "alice" / ".caps" / "remote" / "skills" / "pdf" / "SKILL.md"
     prepared_file.write_text("---\ndescription: Corrupt\n---\n# Corrupt\n", encoding="utf-8")
 
     watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
@@ -3809,10 +3810,10 @@ def test_prepare_materializes_remote_skill_directory(tmp_path: Path, monkeypatch
     prepared = watch.build_prepared_state(durable)
 
     assert (
-        toolang_root / "agents" / "alice" / ".prepared" / "remote" / "skills" / "pdf" / "SKILL.md"
+        toolang_root / "agents" / "alice" / ".caps" / "remote" / "skills" / "pdf" / "SKILL.md"
     ).read_text(encoding="utf-8") == "---\ndescription: PDF work\n---\n# PDF\n"
     assert (
-        toolang_root / "agents" / "alice" / ".prepared" / "remote" / "skills" / "pdf" / "REFERENCE.md"
+        toolang_root / "agents" / "alice" / ".caps" / "remote" / "skills" / "pdf" / "REFERENCE.md"
     ).read_text(encoding="utf-8") == "# Reference\n"
     assert prepared.private_lock.entries[0].meta["description"] == "PDF work"
     assert prepared.private_lock.entries[0].source.inclusion == "configured"
@@ -3821,7 +3822,7 @@ def test_prepare_materializes_remote_skill_directory(tmp_path: Path, monkeypatch
 def test_prepare_materializes_remote_skill_from_program_use(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
-        toolang_root / "agents" / "alice" / "alice.too",
+        toolang_root / "agents" / "alice" / "agent.too",
         "agent alice\n\nuse skill https://github.com/coinbase/agentic-wallet-skills/tree/main/skills/fund\n",
     )
 
@@ -3836,22 +3837,22 @@ def test_prepare_materializes_remote_skill_from_program_use(tmp_path: Path, monk
     prepared = watch.build_prepared_state(durable)
     live = load_live_state(prepared, enabled_features=("watch",))
 
-    skill_path = toolang_root / "agents" / "alice" / ".prepared" / "remote" / "skills" / "fund" / "SKILL.md"
+    skill_path = toolang_root / "agents" / "alice" / ".caps" / "remote" / "skills" / "fund" / "SKILL.md"
     assert skill_path.read_text(encoding="utf-8").startswith("---\ndescription: github://coinbase/")
     entry = prepared.private_lock.entries[0]
     assert entry.name == "fund"
     assert entry.ref == "github://coinbase/agentic-wallet-skills/skills/fund@main"
     assert entry.source.origin == "remote"
     assert entry.source.inclusion == "referenced"
-    assert entry.source.path == "agents/alice/alice.too"
+    assert entry.source.path == "agents/alice/agent.too"
     assert entry.source.line == 3
-    assert live.caps == ("agents/alice/.prepared/remote/skills/fund/SKILL.md",)
+    assert live.caps == ("agents/alice/.caps/remote/skills/fund/SKILL.md",)
 
 
 def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
-        toolang_root / "agents" / "alice" / "alice.too",
+        toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
             "psyche reviewer: ```md\n"
@@ -3879,13 +3880,13 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
     prepared = watch.build_prepared_state(durable)
     live = load_live_state(prepared, enabled_features=("inspect",))
 
-    psyche_path = toolang_root / "agents" / "alice" / ".prepared" / "inline" / "psyches" / "reviewer.md"
+    psyche_path = toolang_root / "agents" / "alice" / ".caps" / "inline" / "psyches" / "reviewer.md"
     assert psyche_path.read_text(encoding="utf-8") == "Prefer concrete findings."
-    service_path = toolang_root / "agents" / "alice" / ".prepared" / "inline" / "services" / "github.md"
+    service_path = toolang_root / "agents" / "alice" / ".caps" / "inline" / "services" / "github.md"
     service_content = service_path.read_text(encoding="utf-8")
     assert "description: Use when the agent needs GitHub MCP access." in service_content
     assert "Use this service when the agent needs GitHub access." in service_content
-    prompt_path = toolang_root / "agents" / "alice" / ".prepared" / "inline" / "prompts" / "summarize.md"
+    prompt_path = toolang_root / "agents" / "alice" / ".caps" / "inline" / "prompts" / "summarize.md"
     prompt_content = prompt_path.read_text(encoding="utf-8")
     assert prompt_content == (
         "---\n"
@@ -3908,12 +3909,12 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
     assert entries_by_kind["prompt"].ref == "inline://prompts/summarize"
     assert entries_by_kind["prompt"].source.origin == "inline"
     assert entries_by_kind["prompt"].source.inclusion == "embedded"
-    assert entries_by_kind["prompt"].source.path == "agents/alice/alice.too"
+    assert entries_by_kind["prompt"].source.path == "agents/alice/agent.too"
     assert entries_by_kind["prompt"].source.line == 17
     assert live.caps == (
-        "agents/alice/.prepared/inline/prompts/summarize.md",
-        "agents/alice/.prepared/inline/psyches/reviewer.md",
-        "agents/alice/.prepared/inline/services/github.md",
+        "agents/alice/.caps/inline/prompts/summarize.md",
+        "agents/alice/.caps/inline/psyches/reviewer.md",
+        "agents/alice/.caps/inline/services/github.md",
     )
 
     context = _build_context(
@@ -3928,7 +3929,7 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
         psyche_detail = psyche_response.json()["item"]
         assert psyche_detail["origin"] == "inline"
         assert psyche_detail["inclusion"] == "embedded"
-        assert psyche_detail["definition_file"] == "agents/alice/alice.too"
+        assert psyche_detail["definition_file"] == "agents/alice/agent.too"
         assert psyche_detail["line"] == 3
         assert psyche_detail["content"] == "Prefer concrete findings."
 
@@ -3938,7 +3939,7 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
         assert service_detail["description"] == "Use when the agent needs GitHub MCP access."
         assert service_detail["origin"] == "inline"
         assert service_detail["inclusion"] == "embedded"
-        assert service_detail["definition_file"] == "agents/alice/alice.too"
+        assert service_detail["definition_file"] == "agents/alice/agent.too"
         assert service_detail["line"] == 7
         assert service_detail["content"] == service_content
 
@@ -3952,7 +3953,7 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
                 "origin": "inline",
                 "inclusion": "embedded",
                 "ref": "inline://prompts/summarize",
-                "definition_file": "agents/alice/alice.too",
+                "definition_file": "agents/alice/agent.too",
                 "editable": False,
                 "line": 17,
             }
@@ -3969,7 +3970,7 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
 def test_prepare_rejects_duplicate_embedded_cap_names(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
-        toolang_root / "agents" / "alice" / "alice.too",
+        toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
             "prompt summarize: ```md\n"
@@ -3986,19 +3987,19 @@ def test_prepare_rejects_duplicate_embedded_cap_names(tmp_path: Path) -> None:
         watch.build_prepared_state(durable)
 
     assert not (
-        toolang_root / "agents" / "alice" / ".prepared" / "inline" / "prompts" / "summarize.md"
+        toolang_root / "agents" / "alice" / ".caps" / "inline" / "prompts" / "summarize.md"
     ).exists()
 
 
 def test_prepare_builds_program_into_private_lock(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
 
     durable = scan_durable_state(toolang_root, "alice")
     prepared = watch.build_prepared_state(durable)
 
     assert prepared.program.agent_name == "alice"
-    assert prepared.program.source_path == "agents/alice/alice.too"
+    assert prepared.program.source_path == "agents/alice/agent.too"
     program_snapshot = prepared.program.to_snapshot()
     thunks = cast(list[dict[str, object]], program_snapshot["thunks"])
     assert len(thunks) == 1
@@ -4007,9 +4008,22 @@ def test_prepare_builds_program_into_private_lock(tmp_path: Path) -> None:
     assert program_snapshot["agent_name"] == "alice"
 
 
+def test_prepare_skips_shared_caps_dir_without_root_inputs(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
+
+    durable = scan_durable_state(toolang_root, "alice")
+    prepared = watch.build_prepared_state(durable)
+
+    assert not (toolang_root / ".caps").exists()
+    assert (toolang_root / "agents" / "alice" / ".caps" / "lock.json").is_file()
+    assert prepared.shared_lock.entries == ()
+    assert prepared.private_lock.program is not None
+
+
 def test_prepare_rewrites_legacy_private_lock_missing_program(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
 
     durable = scan_durable_state(toolang_root, "alice")
     shared_lock, shared_files = build_visibility_lock(durable, visibility="shared")
@@ -4031,7 +4045,7 @@ def test_prepare_fetches_remote_caps_with_bounded_concurrency(tmp_path: Path, mo
         'alpha = { ref = "github://acme/agents/psyches/alpha.md@main" }\n'
         'bravo = { ref = "github://acme/agents/psyches/bravo.md@main" }\n',
     )
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     active = 0
     max_active = 0
     started = threading.Event()
@@ -4060,8 +4074,8 @@ def test_prepare_fetches_remote_caps_with_bounded_concurrency(tmp_path: Path, mo
     assert max_active == 2
     assert [entry.name for entry in lock_record.entries] == ["alpha", "bravo"]
     assert sorted(files) == [
-        ".prepared/remote/psyches/alpha.md",
-        ".prepared/remote/psyches/bravo.md",
+        ".caps/remote/psyches/alpha.md",
+        ".caps/remote/psyches/bravo.md",
     ]
 
 
@@ -4102,7 +4116,7 @@ def test_caps_list_and_remove_remote_entries(tmp_path: Path, monkeypatch) -> Non
     entries = list_entries(toolang_root, "alice", visibility="private", kinds={"skill"})
 
     assert [(entry.source.origin, entry.path) for entry in entries] == [
-        ("remote", "agents/alice/.prepared/remote/skills/reviewer/SKILL.md")
+        ("remote", "agents/alice/.caps/remote/skills/reviewer/SKILL.md")
     ]
     assert remove_remote_entry(toolang_root, "alice", visibility="private", kind="skill", name="reviewer") is True
     assert list_entries(toolang_root, "alice", visibility="private", kinds={"skill"}) == ()
@@ -4164,7 +4178,7 @@ def test_runs_bind_latest_live_snapshot(tmp_path: Path) -> None:
 
 def test_new_task_reloads_into_live_state_and_tasks_endpoint(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -4215,7 +4229,7 @@ def test_new_task_reloads_into_live_state_and_tasks_endpoint(tmp_path: Path) -> 
 
 def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -4321,7 +4335,7 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
 
 def test_jobs_api_projects_active_run_tasks_as_running(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     _write_text(
         toolang_root / "agents" / "alice" / "tasks" / "remote.md",
         "---\ntitle: XBY-26 - test\n---\n"
@@ -4355,7 +4369,7 @@ def test_jobs_api_projects_active_run_tasks_as_running(tmp_path: Path) -> None:
 
 def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -4459,7 +4473,7 @@ def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
 
 def test_new_task_reloads_and_pulse_runs_it(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -4498,7 +4512,7 @@ def test_new_task_reloads_and_pulse_runs_it(tmp_path: Path) -> None:
 
 def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     _write_text(
         toolang_root / "agents" / "alice" / "services" / "linear.md",
         "---\n"
@@ -4570,7 +4584,7 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
 
 def test_chore_run_includes_remote_task_sync_protocol_in_prompt_bundle(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     _write_text(
         toolang_root / "agents" / "alice" / "chores" / "sync.md",
         "---\ntitle: Sync remote tasks\nschedule: FREQ=MINUTELY;INTERVAL=1\n---\n"
@@ -4609,7 +4623,7 @@ def test_chore_run_includes_remote_task_sync_protocol_in_prompt_bundle(tmp_path:
 
 def test_pulse_marks_task_failed_when_finished_run_leaves_task_incomplete(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     _write_text(
         toolang_root / "agents" / "alice" / "tasks" / "review.md",
         "---\ntitle: Review\n---\nReview the current plan.\n",
@@ -4689,7 +4703,7 @@ def test_pulse_marks_task_failed_when_finished_run_leaves_task_incomplete(tmp_pa
 
 def test_pulse_leaves_done_task_active_until_manual_archive(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     _write_text(
         toolang_root / "agents" / "alice" / "tasks" / "review.md",
         "---\ntitle: Review\n---\nReview the current plan.\n",
@@ -4762,7 +4776,7 @@ def test_pulse_leaves_done_task_active_until_manual_archive(tmp_path: Path) -> N
 
 def test_pulse_reopens_done_mirror_task_when_remote_status_is_active(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     _write_text(
         toolang_root / "agents" / "alice" / "tasks" / "review.md",
         "---\ntitle: Review\n---\nLink: https://linear.app/xby/issue/XBY-35/example\n"
@@ -4817,7 +4831,7 @@ def test_pulse_reopens_done_mirror_task_when_remote_status_is_active(tmp_path: P
 def test_assemble_run_input_prefers_thunk_model_over_activation_default(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
-        toolang_root / "agents" / "alice" / "alice.too",
+        toolang_root / "agents" / "alice" / "agent.too",
         "agent alice\n\nthunk chat:\n  models = openai/gpt-5\n\n  Reply directly.\n",
     )
     context = _build_context(
@@ -4841,7 +4855,7 @@ def test_assemble_run_input_prefers_thunk_model_over_activation_default(tmp_path
 def test_assemble_run_input_accepts_explicit_run_model_within_allowed_set(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
-        toolang_root / "agents" / "alice" / "alice.too",
+        toolang_root / "agents" / "alice" / "agent.too",
         "agent alice\n\nthunk chat:\n  models = openai/gpt-5, openai/o3\n\n  Reply directly.\n",
     )
     context = _build_context(
@@ -4871,7 +4885,7 @@ def test_assemble_run_input_accepts_explicit_run_model_within_allowed_set(tmp_pa
 def test_assemble_run_input_uses_activation_default_when_thunk_omits_one(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
-        toolang_root / "agents" / "alice" / "alice.too",
+        toolang_root / "agents" / "alice" / "agent.too",
         "agent alice\n\nthunk chat:\n  Reply directly.\n",
     )
     context = _build_context(
@@ -4894,7 +4908,7 @@ def test_assemble_run_input_uses_activation_default_when_thunk_omits_one(tmp_pat
 def test_assemble_run_input_hides_tools_for_invoke_runs(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
-        toolang_root / "agents" / "alice" / "alice.too",
+        toolang_root / "agents" / "alice" / "agent.too",
         "agent alice\n\nthunk summarize(_):\n  Reply directly.\n",
     )
     context = _build_context(
@@ -4938,7 +4952,7 @@ def test_assemble_run_input_hides_tools_for_invoke_runs(tmp_path: Path) -> None:
 def test_assemble_run_input_uses_thunk_user_message_for_script_runs(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
-        toolang_root / "agents" / "alice" / "alice.too",
+        toolang_root / "agents" / "alice" / "agent.too",
         "agent alice\n\nthunk rewrite(_):\n  Rewrite the input for a technical audience.\n",
     )
     context = _build_context(
@@ -4974,7 +4988,7 @@ def test_assemble_run_input_uses_thunk_user_message_for_script_runs(tmp_path: Pa
 def test_assemble_run_input_keeps_thread_messages_out_of_system_instructions(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
-        toolang_root / "agents" / "alice" / "alice.too",
+        toolang_root / "agents" / "alice" / "agent.too",
         "agent alice\n\nthunk chat:\n  Reply directly.\n",
     )
     context = _build_context(
@@ -5003,7 +5017,7 @@ def test_assemble_run_input_keeps_thread_messages_out_of_system_instructions(tmp
 def test_assemble_run_input_expands_embedded_prompt_for_chat_message(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
-        toolang_root / "agents" / "alice" / "alice.too",
+        toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
             "prompt summarize: ```md\n"
@@ -5051,7 +5065,7 @@ def test_assemble_run_input_expands_embedded_prompt_for_chat_message(tmp_path: P
 def test_chat_run_prefers_named_chat_thunk_over_main(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
-        toolang_root / "agents" / "alice" / "alice.too",
+        toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
             "thunk:\n"
@@ -5079,7 +5093,7 @@ def test_chat_run_prefers_named_chat_thunk_over_main(tmp_path: Path) -> None:
 def test_chat_run_uses_default_template_when_chat_thunk_is_missing(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
-        toolang_root / "agents" / "alice" / "alice.too",
+        toolang_root / "agents" / "alice" / "agent.too",
         "agent alice\n\nthunk:\n  Script default.\n",
     )
     _write_text(
@@ -5132,7 +5146,7 @@ def test_chat_run_uses_default_template_when_chat_thunk_is_missing(tmp_path: Pat
 def test_execute_run_rejects_thunk_model_outside_activation_allowlist(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
-        toolang_root / "agents" / "alice" / "alice.too",
+        toolang_root / "agents" / "alice" / "agent.too",
         "agent alice\n\nthunk chat:\n  models = openai/gpt-5\n\n  Reply directly.\n",
     )
     context = _build_context(
@@ -5164,7 +5178,7 @@ def test_execute_run_rejects_thunk_model_outside_activation_allowlist(tmp_path: 
 def test_execute_run_pre_start_failure_does_not_emit_persist_sink_error(tmp_path: Path, caplog) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
-        toolang_root / "agents" / "alice" / "alice.too",
+        toolang_root / "agents" / "alice" / "agent.too",
         "agent alice\n\nthunk chat:\n  Reply directly.\n",
     )
     context = _build_context(
@@ -5199,7 +5213,7 @@ def test_execution_store_records_runs_steps_and_messages(tmp_path: Path) -> None
     try:
         created = store.append_update(
             kind="created",
-            payload={"path": str(toolang_root / "agents" / "alice" / "alice.too")},
+            payload={"path": str(toolang_root / "agents" / "alice" / "agent.too")},
         )
         run = store.start_run(
             run_id="run-1",
@@ -5231,14 +5245,14 @@ def test_execution_store_records_runs_steps_and_messages(tmp_path: Path) -> None
             {"role": "assistant", "parts": [{"type": "text", "text": "assistant:hello"}]},
         ]
         assert [item.kind for item in store.list_updates(limit=10)] == ["created"]
-        assert created.payload["path"] == str(toolang_root / "agents" / "alice" / "alice.too")
+        assert created.payload["path"] == str(toolang_root / "agents" / "alice" / "agent.too")
     finally:
         store.close()
 
 
 def test_chat_accepts_structured_message_parts_and_model_selector(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -5377,7 +5391,7 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
 
 def test_run_input_uses_text_history_and_prior_tool_context(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "alice.too", "agent alice\n")
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",

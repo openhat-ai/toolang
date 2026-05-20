@@ -67,7 +67,7 @@ class DockerSandbox:
         stage_dir = request.local_root / ".sandbox" / request.agent_name
         start_path = stage_dir / "start.json"
         script_path = stage_dir / "start.sh"
-        runtime_sandbox_dir = request.sandbox_home / ".runtime" / "sandbox"
+        runtime_sandbox_dir = request.sandbox_home / ".state" / "sandbox"
         stage_dir.mkdir(parents=True, exist_ok=True)
 
         sandbox_dev_artifact: Path | None = None
@@ -127,7 +127,7 @@ class DockerSandbox:
             run_command=request.run_command,
             run_shell_command=request.run_shell_command,
             sandbox_dev_artifact=sandbox_dev_artifact,
-            runtime_state_path=request.sandbox_home / ".runtime" / "runtime.json",
+            runtime_state_path=request.sandbox_home / ".state" / "status.json",
         )
 
         mounts = _root_mounts(request)
@@ -333,12 +333,12 @@ def _root_mounts(request: SandboxStartRequest) -> list[SandboxMount]:
         )
     )
 
-    prepared_dir = request.local_root / ".prepared"
+    prepared_dir = request.local_root / ".caps"
     prepared_dir.mkdir(parents=True, exist_ok=True)
     mounts.append(
         SandboxMount(
             local_path=prepared_dir,
-            sandbox_path=request.sandbox_root / ".prepared",
+            sandbox_path=request.sandbox_root / ".caps",
         )
     )
 

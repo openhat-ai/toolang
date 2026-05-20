@@ -336,7 +336,7 @@ def test_build_prepared_program_strips_shebang_before_agent_header(tmp_path: Pat
     root = tmp_path / "toolang"
     agent_dir = root / "agents" / "alice"
     agent_dir.mkdir(parents=True, exist_ok=True)
-    (agent_dir / "alice.too").write_text(
+    (agent_dir / "agent.too").write_text(
         "#!/usr/bin/env toolang\n\nagent alice\n\nthunk:\n  Reply directly.\n",
         encoding="utf-8",
     )
@@ -401,7 +401,7 @@ def _write_program(tmp_path: Path, body_text: str) -> Path:
     root = tmp_path / "toolang"
     agent_dir = root / "agents" / "alice"
     agent_dir.mkdir(parents=True, exist_ok=True)
-    (agent_dir / "alice.too").write_text(
+    (agent_dir / "agent.too").write_text(
         f"agent alice\n\n{body_text}\n",
         encoding="utf-8",
     )

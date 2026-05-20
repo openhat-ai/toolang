@@ -4,8 +4,10 @@ import hashlib
 import io
 from pathlib import Path
 import os
+import time
 from datetime import datetime, timezone
 from typing import cast
+from uuid import uuid4
 import pytest
 from typer.testing import CliRunner
 
@@ -257,7 +259,7 @@ def test_cli_new_creates_agent(tmp_path: Path) -> None:
     result = runner.invoke(cli.app, ["new", "alice"], env={"TOOLANG_ROOT": str(toolang_root)})
 
     assert result.exit_code in {0, 2}
-    program_path = toolang_root / "agents" / "alice" / "alice.too"
+    program_path = toolang_root / "agents" / "alice" / "agent.too"
     assert result.stdout.strip() == f"Created agent alice: {program_path}"
     assert program_path.read_text(encoding="utf-8") == DEFAULT_AGENT_SOURCE
 
@@ -272,7 +274,7 @@ def test_cli_new_uses_named_template(tmp_path: Path) -> None:
     )
 
     assert result.exit_code in {0, 2}
-    assert (toolang_root / "agents" / "alice" / "alice.too").read_text(encoding="utf-8") == DEFAULT_AGENT_SOURCE
+    assert (toolang_root / "agents" / "alice" / "agent.too").read_text(encoding="utf-8") == DEFAULT_AGENT_SOURCE
 
 
 def test_cli_callback_configures_logging_for_standard_commands_from_py_log(monkeypatch, tmp_path: Path) -> None:
@@ -306,17 +308,17 @@ def test_cli_new_supports_template_alias(tmp_path: Path) -> None:
     )
 
     assert result.exit_code in {0, 2}
-    assert (toolang_root / "agents" / "alice" / "alice.too").read_text(encoding="utf-8") == DEFAULT_AGENT_SOURCE
+    assert (toolang_root / "agents" / "alice" / "agent.too").read_text(encoding="utf-8") == DEFAULT_AGENT_SOURCE
 
 
-def test_cli_clone_copies_agent_without_prepared(tmp_path: Path) -> None:
+def test_cli_clone_copies_agent_without_caps(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     source_home = toolang_root / "agents" / "alice"
     (source_home / "skills" / "reviewer").mkdir(parents=True, exist_ok=True)
-    (source_home / ".prepared").mkdir(parents=True, exist_ok=True)
-    (source_home / "alice.too").write_text("agent alice\n", encoding="utf-8")
+    (source_home / ".caps").mkdir(parents=True, exist_ok=True)
+    (source_home / "agent.too").write_text("agent alice\n", encoding="utf-8")
     (source_home / "skills" / "reviewer" / "SKILL.md").write_text("# Reviewer\n", encoding="utf-8")
-    (source_home / ".prepared" / "lock.json").write_text("{}", encoding="utf-8")
+    (source_home / ".caps" / "lock.json").write_text("{}", encoding="utf-8")
 
     result = runner.invoke(
         cli.app,
@@ -325,11 +327,11 @@ def test_cli_clone_copies_agent_without_prepared(tmp_path: Path) -> None:
     )
 
     assert result.exit_code in {0, 2}
-    target_program = toolang_root / "agents" / "bob" / "bob.too"
+    target_program = toolang_root / "agents" / "bob" / "agent.too"
     assert result.stdout.strip() == f"Cloned agent bob: {target_program}"
     assert target_program.read_text(encoding="utf-8") == "agent bob\n"
     assert (toolang_root / "agents" / "bob" / "skills" / "reviewer" / "SKILL.md").is_file()
-    assert not (toolang_root / "agents" / "bob" / ".prepared").exists()
+    assert not (toolang_root / "agents" / "bob" / ".caps").exists()
 
 
 def test_agent_selector_parsing_supports_name_shorthand_and_ref() -> None:
@@ -390,7 +392,7 @@ def test_cli_clone_remote_shorthand_defaults_target_name(tmp_path: Path, monkeyp
     )
 
     assert result.exit_code in {0, 2}
-    program_path = toolang_root / "agents" / "alice" / "alice.too"
+    program_path = toolang_root / "agents" / "alice" / "agent.too"
     assert result.stdout.strip() == f"Cloned agent alice: {program_path}"
     assert program_path.read_text(encoding="utf-8") == "agent alice\n"
     assert probes == [
@@ -421,7 +423,7 @@ def test_cli_clone_remote_repo_shorthand_uses_named_repo(tmp_path: Path, monkeyp
     )
 
     assert result.exit_code in {0, 2}
-    assert (toolang_root / "agents" / "alice" / "alice.too").read_text(encoding="utf-8") == "agent alice\n"
+    assert (toolang_root / "agents" / "alice" / "agent.too").read_text(encoding="utf-8") == "agent alice\n"
     assert probes == [
         "github://brice/project/agents/alice.too@trunk",
         "github://brice/project/alice.too@trunk",
@@ -495,7 +497,7 @@ def test_cli_clone_remote_url_supports_explicit_target(tmp_path: Path, monkeypat
     )
 
     assert result.exit_code in {0, 2}
-    program_path = toolang_root / "agents" / "researcher" / "researcher.too"
+    program_path = toolang_root / "agents" / "researcher" / "agent.too"
     assert result.stdout.strip() == f"Cloned agent researcher: {program_path}"
     assert program_path.read_text(encoding="utf-8") == "agent researcher\n"
 
@@ -1015,7 +1017,7 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
         captured["toolang_root"] = toolang_root
         captured["agent_name"] = agent_name
         captured["port"] = port
-        program_path = toolang_root / "agents" / agent_name / f"{agent_name}.too"
+        program_path = toolang_root / "agents" / agent_name / "agent.too"
         captured["program_exists"] = program_path.is_file()
         captured["program_text"] = program_path.read_text(encoding="utf-8")
         return 0
@@ -1037,9 +1039,10 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
     assert captured["agent_name"] == "alice"
     assert captured["program_exists"] is True
     assert captured["program_text"] == "agent alice\n"
-    assert captured["toolang_root"] == agents.visiting_root(
+    assert captured["toolang_root"] == agents.visiting_source_root(
         toolang_root,
-        agents.GitHubAgentRef(owner="brice", repo="agents", path="agents/alice.too", rev="main"),
+        source="brice/alice",
+        agent_name="alice",
     )
     assert captured["port"] == 45123
 
@@ -1174,7 +1177,7 @@ def test_cli_run_rejects_active_visiting_agent(tmp_path: Path, monkeypatch) -> N
     toolang_root = tmp_path / "toolang"
     ref = agents.HttpAgentRef(url="https://toolang.ai/demo/researcher.too")
     visiting_root = agents.visiting_root(toolang_root, ref)
-    (visiting_root / "agents" / "researcher").mkdir(parents=True)
+    (visiting_root / "agents" / "researcher").mkdir(parents=True, exist_ok=True)
     agents.write_runtime_state(
         visiting_root,
         "researcher",
@@ -1227,7 +1230,7 @@ def test_visiting_run_target_reuses_stable_root_and_program(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    ref = agents.HttpAgentRef(url="https://toolang.ai/demo/researcher.too")
+    ref = agents.HttpAgentRef(url=f"https://toolang.ai/demo/{uuid4().hex}/researcher.too")
     fetches: list[agents.AgentRef] = []
 
     def fake_fetch(fetch_ref: agents.AgentRef, **_kwargs) -> str:
@@ -1245,16 +1248,16 @@ def test_visiting_run_target_reuses_stable_root_and_program(
             pid=None,
             status="stopped",
         )
-        first_program = first.toolang_root / "agents" / first.agent_name / f"{first.agent_name}.too"
+        first_program = first.toolang_root / "agents" / first.agent_name / "agent.too"
 
     with agents.resolved_run_target(toolang_root, ref.render()) as second:
-        second_program = second.toolang_root / "agents" / second.agent_name / f"{second.agent_name}.too"
+        second_program = second.toolang_root / "agents" / second.agent_name / "agent.too"
 
     assert first.toolang_root == agents.visiting_root(toolang_root, ref)
     assert second.toolang_root == first.toolang_root
-    assert second.toolang_root.parent == Path("/tmp") / "toolang-run"
-    expected_digest = hashlib.sha256(f"{toolang_root.resolve()}\n{ref.render()}".encode("utf-8")).hexdigest()[:8]
-    assert second.toolang_root.name == f"researcher-{expected_digest}"
+    assert second.toolang_root.parent == Path("/tmp")
+    expected_digest = hashlib.sha256(ref.render().encode("utf-8")).hexdigest()[:8]
+    assert second.toolang_root.name == f"toolang-researcher-{expected_digest}"
     assert not second.toolang_root.is_relative_to(toolang_root)
     assert second.kind == "visiting"
     assert second.agent_name == "researcher"
@@ -1262,6 +1265,94 @@ def test_visiting_run_target_reuses_stable_root_and_program(
     assert second_program.read_text(encoding="utf-8") == "agent researcher\n"
     assert fetches == [ref]
     assert agents.preferred_runtime_port(second.toolang_root, second.agent_name) == 45678
+
+
+def test_visiting_root_ignores_local_toolang_root(tmp_path: Path) -> None:
+    ref = agents.HttpAgentRef(url="https://toolang.ai/demo/researcher.too")
+
+    assert agents.visiting_root(tmp_path / "one", ref) == agents.visiting_root(tmp_path / "two", ref)
+
+
+def test_visiting_run_target_reuses_shorthand_cache_without_resolving(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    selector_text = f"briceyan/{uuid4().hex}"
+    agent_name = selector_text.split("/", 1)[1]
+    run_root = agents.visiting_source_root(toolang_root, source=selector_text, agent_name=agent_name)
+    program_path = run_root / "agents" / agent_name / "agent.too"
+    program_path.parent.mkdir(parents=True, exist_ok=True)
+    program_path.write_text(f"agent {agent_name}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        agents,
+        "resolve_agent_selector_ref",
+        lambda *_args, **_kwargs: pytest.fail("fresh visiting cache should not resolve"),
+    )
+
+    with agents.resolved_run_target(toolang_root, selector_text) as target:
+        assert target.toolang_root == run_root
+        assert target.agent_name == agent_name
+        assert target.kind == "visiting"
+
+
+def test_visiting_run_target_refetches_stale_program_cache(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    ref = agents.HttpAgentRef(url=f"https://toolang.ai/demo/{uuid4().hex}/researcher.too")
+    fetched_sources = iter(("agent old-name\n", "agent newer-name\n"))
+    fetches: list[agents.AgentRef] = []
+
+    def fake_fetch(fetch_ref: agents.AgentRef, **_kwargs) -> str:
+        fetches.append(fetch_ref)
+        return next(fetched_sources)
+
+    monkeypatch.setattr(agents, "VISITING_PROGRAM_CACHE_TTL_SEC", 60)
+    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
+
+    with agents.resolved_run_target(toolang_root, ref.render()) as first:
+        program_path = first.toolang_root / "agents" / first.agent_name / "agent.too"
+
+    stale_time = time.time() - 120
+    os.utime(program_path, (stale_time, stale_time))
+
+    with agents.resolved_run_target(toolang_root, ref.render()) as second:
+        refreshed_program = second.toolang_root / "agents" / second.agent_name / "agent.too"
+
+    assert refreshed_program == program_path
+    assert refreshed_program.read_text(encoding="utf-8") == "agent researcher\n"
+    assert fetches == [ref, ref]
+
+
+def test_roaming_materialize_links_source_and_toolang_config(tmp_path: Path) -> None:
+    program_path = _write_roaming_program(tmp_path, "agent demo\n\nthunk:\n  First")
+    (tmp_path / "toolang.toml").write_text("[models]\ndefault = \"test/model\"\n", encoding="utf-8")
+
+    toolang_root, agent_name = agents.materialize_roaming_program(program_path)
+
+    assert agent_name == "demo"
+    agent_home = toolang_root / "agents" / "demo"
+    materialized_program = agent_home / "agent.too"
+    materialized_config = agent_home / "config.toml"
+    assert materialized_program.is_symlink()
+    assert materialized_config.is_symlink()
+    assert (materialized_program.parent / os.readlink(materialized_program)).resolve() == program_path.resolve()
+    assert (materialized_config.parent / os.readlink(materialized_config)).resolve() == (tmp_path / "toolang.toml").resolve()
+
+    program_path.write_text("agent demo\n\nthunk:\n  Second\n", encoding="utf-8")
+    assert "Second" in materialized_program.read_text(encoding="utf-8")
+
+
+def test_roaming_materialize_removes_stale_config_symlink(tmp_path: Path) -> None:
+    program_path = _write_roaming_program(tmp_path, "agent demo")
+    config_path = tmp_path / "toolang.toml"
+    config_path.write_text("[models]\ndefault = \"test/model\"\n", encoding="utf-8")
+
+    toolang_root, _agent_name = agents.materialize_roaming_program(program_path)
+    config_link = toolang_root / "agents" / "demo" / "config.toml"
+    assert config_link.is_symlink()
+
+    config_path.unlink()
+    agents.materialize_roaming_program(program_path)
+
+    assert not config_link.exists()
+    assert not config_link.is_symlink()
 
 
 def test_cli_roaming_program_help_lists_available_thunks(capsys, tmp_path: Path) -> None:
@@ -3086,7 +3177,7 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     assert "[skills]" in config_text
     assert 'reviewer = { ref = "github://acme/agents/skills/reviewer@main" }' in config_text
     assert (
-        toolang_root / "agents" / "alice" / ".prepared" / "remote" / "skills" / "reviewer" / "SKILL.md"
+        toolang_root / "agents" / "alice" / ".caps" / "remote" / "skills" / "reviewer" / "SKILL.md"
     ).read_text(encoding="utf-8") == "---\ndescription: Review code\n---\n# Reviewer\n"
 
     list_remote_result = _invoke_app(
@@ -3969,6 +4060,7 @@ def test_cli_cap_list_rejects_private_visibility_without_agent(tmp_path: Path) -
 
 def test_cli_version_option_exits_before_other_parsing(monkeypatch) -> None:
     monkeypatch.setattr(cli, "package_version", lambda _name: "0.1.2")
+    monkeypatch.setattr(cli, "_source_state_suffix", lambda: "")
 
     result = runner.invoke(cli.app, ["--version", "list"])
     short_result = runner.invoke(cli.app, ["-V", "list"])
@@ -3977,6 +4069,16 @@ def test_cli_version_option_exits_before_other_parsing(monkeypatch) -> None:
     assert result.stdout.strip() == "toolang 0.1.2"
     assert short_result.exit_code == 0
     assert short_result.stdout.strip() == "toolang 0.1.2"
+
+
+def test_cli_version_includes_source_revision_suffix(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "package_version", lambda _name: "0.1.2")
+    monkeypatch.setattr(cli, "_source_state_suffix", lambda: "+abc1234*")
+
+    result = runner.invoke(cli.app, ["--version"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "toolang 0.1.2+abc1234*"
 
 
 def test_cli_help_orders_cap_groups() -> None:

@@ -940,7 +940,7 @@ def _as_utc(value: datetime) -> datetime:
 
 
 def _id_state_path(toolang_root: Path, agent_name: str) -> Path:
-    return toolang_root / "agents" / agent_name / ".runtime" / "ids.json"
+    return toolang_root / "agents" / agent_name / ".state" / "ids.json"
 
 
 def allocate_job_id(toolang_root: Path, agent_name: str) -> str:

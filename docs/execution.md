@@ -18,7 +18,7 @@ One run is bound to one prepared snapshot for its full lifetime.
 
 ## Durable Store
 
-`execution.db` is the durable store for runtime truth.
+`runs.db` is the durable store for runtime truth.
 
 It stores:
 

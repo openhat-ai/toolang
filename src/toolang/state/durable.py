@@ -73,7 +73,7 @@ def is_durable_path(toolang_root: Path, agent_name: str, path: Path) -> bool:
     if relative_path.parts[:2] != ("agents", agent_name):
         return False
     agent_relative = Path(*relative_path.parts[2:])
-    if agent_relative in {Path("config.toml"), Path(f"{agent_name}.too")}:
+    if agent_relative in {Path("config.toml"), Path("agent.too")}:
         return True
     if not agent_relative.parts:
         return False
@@ -90,7 +90,7 @@ def _durable_files(toolang_root: Path, agent_name: str) -> list[DurableFile]:
     files.extend(
         _collect_file(
             toolang_root,
-            agent_dir / f"{agent_name}.too",
+            agent_dir / "agent.too",
             category="program",
             origin="agent",
         )
