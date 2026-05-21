@@ -82,7 +82,7 @@ class _HelpOnlyArgument(TyperArgument):
 
 
 class _RoamingInvokeHelpGroup(TyperGroup):
-    usage_tail = "THUNK [OPTIONS] [PARAM=VALUE]... [INPUT]..."
+    usage_tail = "THUNK [OPTIONS] [PARAMS] [INPUT]..."
 
     def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         if not HAS_RICH or self.rich_markup_mode is None:
@@ -98,7 +98,7 @@ class _RoamingInvokeHelpGroup(TyperGroup):
         formatter.write_usage(ctx.command_path, self.usage_tail)
 
     def get_params(self, ctx: click.Context) -> list[click.Parameter]:
-        return [*_help_arguments(show_params=True, show_parts=True), *super().get_params(ctx)]
+        return [*_help_arguments(show_thunk=True, show_params=True, show_parts=True), *super().get_params(ctx)]
 
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         rows: list[tuple[str, str]] = []
@@ -138,6 +138,7 @@ class _RoamingThunkHelpCommand(TyperCommand):
     def get_params(self, ctx: click.Context) -> list[click.Parameter]:
         return [
             *_help_arguments(
+                show_thunk=False,
                 show_params=self.show_params,
                 show_parts=self.show_parts,
                 thunk=self.help_thunk,
@@ -608,7 +609,7 @@ def _make_roaming_help_command() -> Callable[..., None]:
 def _roaming_thunk_usage_tail(thunk: Thunk) -> str:
     pieces = ["[OPTIONS]"]
     if thunk.params:
-        pieces.append("[PARAM=VALUE]...")
+        pieces.append("[PARAMS]")
     if thunk.input is not None:
         pieces.append("[INPUT]...")
     return " ".join(pieces)
@@ -637,23 +638,36 @@ def _thunk_summary(thunk: Thunk) -> str:
 
 def _help_arguments(
     *,
+    show_thunk: bool,
     show_params: bool,
     show_parts: bool,
     thunk: Thunk | None = None,
 ) -> list[click.Parameter]:
     args: list[click.Parameter] = []
+    if show_thunk:
+        args.append(
+            _HelpOnlyArgument(
+                param_decls=["thunk"],
+                metavar="THUNK",
+                required=False,
+                default=None,
+                expose_value=False,
+                help="Thunk to invoke.",
+                rich_help_panel="Arguments",
+            )
+        )
     if show_params:
         thunk_params = () if thunk is None else tuple(thunk.params)
         if not thunk_params:
             args.append(
                 _HelpOnlyArgument(
                     param_decls=["params"],
-                    metavar="PARAM=VALUE",
+                    metavar="PARAMS",
                     required=False,
                     default=None,
                     expose_value=False,
-                    help="One named thunk parameter. Repeat as needed.",
-                    rich_help_panel="Params",
+                    help="Named thunk parameters, written as NAME=VALUE.",
+                    rich_help_panel="Arguments",
                 )
             )
         else:
@@ -667,7 +681,7 @@ def _help_arguments(
                         default=None,
                         expose_value=False,
                         help=f"{param.type_name or 'string'}; {required}.",
-                        rich_help_panel="Params",
+                        rich_help_panel="Arguments",
                     )
                 )
     if show_parts:
@@ -680,7 +694,7 @@ def _help_arguments(
                     default=None,
                     expose_value=False,
                     help="Multimodal message input. Repeat to assemble one message.",
-                    rich_help_panel="Input",
+                    rich_help_panel="Arguments",
                 ),
                 _HelpOnlyArgument(
                     param_decls=["part_text"],
@@ -689,7 +703,7 @@ def _help_arguments(
                     default=None,
                     expose_value=False,
                     help="Plain text. Use @@TEXT for literal text starting with @.",
-                    rich_help_panel="Input",
+                    rich_help_panel="Arguments",
                 ),
                 _HelpOnlyArgument(
                     param_decls=["part_text_file"],
@@ -698,7 +712,7 @@ def _help_arguments(
                     default=None,
                     expose_value=False,
                     help="Text loaded from a .md file. Also supports .txt.",
-                    rich_help_panel="Input",
+                    rich_help_panel="Arguments",
                 ),
                 _HelpOnlyArgument(
                     param_decls=["part_image"],
@@ -707,7 +721,7 @@ def _help_arguments(
                     default=None,
                     expose_value=False,
                     help="Image loaded from a .png file. Also supports .jpg, .jpeg, .gif, .webp, .bmp, and .svg.",
-                    rich_help_panel="Input",
+                    rich_help_panel="Arguments",
                 ),
                 _HelpOnlyArgument(
                     param_decls=["part_audio"],
@@ -716,7 +730,7 @@ def _help_arguments(
                     default=None,
                     expose_value=False,
                     help="Audio loaded from a .mp3 file. Also supports .wav, .m4a, .aac, .ogg, and .flac.",
-                    rich_help_panel="Input",
+                    rich_help_panel="Arguments",
                 ),
                 _HelpOnlyArgument(
                     param_decls=["part_file"],
@@ -725,7 +739,7 @@ def _help_arguments(
                     default=None,
                     expose_value=False,
                     help="Generic file loaded from any other file type.",
-                    rich_help_panel="Input",
+                    rich_help_panel="Arguments",
                 ),
             ]
         )
@@ -760,8 +774,7 @@ def _rich_format_roaming_help(
         )
 
     options: list[click.Option] = []
-    params_args: list[click.Argument] = []
-    input_args: list[click.Argument] = []
+    argument_examples: list[click.Argument] = []
     for param in obj.get_params(ctx):
         if getattr(param, "hidden", False):
             continue
@@ -770,10 +783,16 @@ def _rich_format_roaming_help(
             continue
         if isinstance(param, click.Argument):
             panel_name = getattr(param, rich_utils._RICH_HELP_PANEL_NAME, None)
-            if panel_name == "Params":
-                params_args.append(param)
-            elif panel_name == "Input":
-                input_args.append(param)
+            if panel_name == "Arguments":
+                argument_examples.append(param)
+
+    _print_argument_examples_panel(
+        name="Arguments",
+        params=argument_examples,
+        ctx=ctx,
+        markup_mode=markup_mode,
+        console=console,
+    )
 
     rich_utils._print_options_panel(
         name=rich_utils.OPTIONS_PANEL_TITLE,
@@ -793,21 +812,6 @@ def _rich_format_roaming_help(
             console=console,
             cmd_len=max_cmd_len,
         )
-
-    _print_argument_examples_panel(
-        name="Params",
-        params=params_args,
-        ctx=ctx,
-        markup_mode=markup_mode,
-        console=console,
-    )
-    _print_argument_examples_panel(
-        name="Input",
-        params=input_args,
-        ctx=ctx,
-        markup_mode=markup_mode,
-        console=console,
-    )
 
     if obj.epilog:
         lines = obj.epilog.split("\n\n")

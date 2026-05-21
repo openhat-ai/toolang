@@ -1361,10 +1361,14 @@ thunk summarize(_, style?):
 
     assert result == 0
     assert "Usage: toolang" in captured.out
-    assert "SCRIPT.too THUNK [OPTIONS] [PARAM=VALUE]... [INPUT]..." in captured.out
+    assert "SCRIPT.too THUNK [OPTIONS] [PARAMS] [INPUT]..." in captured.out
+    assert "Arguments" in captured.out
+    assert "PARAMS" in captured.out
+    assert "NAME=VALUE" in captured.out
     assert "Thunks" in captured.out
     assert "main" in captured.out
     assert "summarize" in captured.out
+    assert captured.out.index("Arguments") < captured.out.index("Options") < captured.out.index("Thunks")
 
 
 def test_cli_roaming_thunk_help_is_dynamic(capsys, tmp_path: Path) -> None:
@@ -1389,11 +1393,11 @@ thunk summarize(_, style?, audience?):
     assert "SCRIPT.too summarize" in captured.out
     assert "summarize" in captured.out
     assert "[OPTIONS]" in captured.out
-    assert "[PARAM=VALUE]..." in captured.out
+    assert "[PARAMS]" in captured.out
     assert "style=TEXT" in captured.out
     assert "audience=TEXT" in captured.out
     assert "[INPUT]..." in captured.out
-    assert "Input" in captured.out
+    assert "Arguments" in captured.out
     assert "Multimodal message input" in captured.out
 
 
@@ -1759,7 +1763,7 @@ thunk:
     output = capsys.readouterr()
 
     assert result == 0
-    assert "SCRIPT.too THUNK [OPTIONS] [PARAM=VALUE]... [INPUT]..." in output.out
+    assert "SCRIPT.too THUNK [OPTIONS] [PARAMS] [INPUT]..." in output.out
     assert "Thunks" in output.out
 
 

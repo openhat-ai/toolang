@@ -111,8 +111,15 @@ Foreground runtime port selection depends on the agent mode:
 Roaming invoke uses one local `.too` source path directly:
 
 ```bash
-toolang SCRIPT.too THUNK [OPTIONS] [PARAM=VALUE]... [INPUT]...
+toolang SCRIPT.too THUNK [OPTIONS] [PARAMS] [INPUT]...
 ```
+
+Arguments:
+
+- `SCRIPT.too` is the local Toolang script or agent file
+- `THUNK` is the thunk to invoke
+- `PARAMS` are named thunk parameters, written as `NAME=VALUE`
+- `INPUT` values are assembled into one multimodal message
 
 Behavior:
 
@@ -126,7 +133,6 @@ Behavior:
 - `toolang a.too thunk --help` prints thunk-specific dynamic usage
 - `toolang a.too` shows usage instead of invoking a default thunk
 - roaming invoke exposes the agent's effective tools, subject to thunk tool directives
-- `INPUT` values are assembled into one multimodal message
 - `NAME=VALUE` sets one thunk named param when `NAME` matches the thunk signature
 - `INPUT` rules:
   - `TEXT` adds one text part; use `@@TEXT` for literal text beginning with `@`
