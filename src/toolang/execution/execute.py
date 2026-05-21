@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 import logging
+import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .context import RunContext
 from .db import PersistSink
@@ -74,7 +75,10 @@ async def execute_run(
             consume_inputs=lambda run_id: context.store.pending_inputs(run_id=run_id, action="steer"),
             stream=bool(response is not None and response.wants_stream),
         )
-        execution = await asyncio.to_thread(strategy.run, run_context)
+        if bound.origin == "script":
+            execution = await _run_script_strategy(strategy.run, run_context, run_id=bound.run_id)
+        else:
+            execution = await asyncio.to_thread(strategy.run, run_context)
     except Exception as exc:
         error = str(exc)
         if bound is not None and started:
@@ -165,6 +169,49 @@ def _event_handler(
         _emit_event(context, persist, response, event)
 
     return handler
+
+
+async def _run_script_strategy(
+    run: Callable[[RunContext], Any],
+    run_context: RunContext,
+    *,
+    run_id: str,
+) -> Any:
+    """Run a blocking script strategy without making Ctrl+C wait for threadpool shutdown."""
+
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[Any] = loop.create_future()
+
+    def set_result(result: Any) -> None:
+        if not future.done():
+            future.set_result(result)
+
+    def set_exception(exc: BaseException) -> None:
+        if not future.done():
+            future.set_exception(exc)
+
+    def complete(callback: Callable[[], None]) -> None:
+        try:
+            loop.call_soon_threadsafe(callback)
+        except RuntimeError:
+            return
+
+    def worker() -> None:
+        try:
+            result = run(run_context)
+        except BaseException as exc:
+            error = exc
+            complete(lambda: set_exception(error))
+            return
+        complete(lambda: set_result(result))
+
+    thread = threading.Thread(
+        target=worker,
+        name=f"toolang-script-run-{run_id[:12]}",
+        daemon=True,
+    )
+    thread.start()
+    return await future
 
 
 def _emit_event(

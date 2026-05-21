@@ -5209,6 +5209,37 @@ def test_execute_run_pre_start_failure_does_not_emit_persist_sink_error(tmp_path
     assert "persist sink event handling failed" not in caplog.text
 
 
+def test_script_strategy_cancel_does_not_wait_for_worker_thread() -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_run(_context) -> RunResult:
+        started.set()
+        release.wait(timeout=5.0)
+        return RunResult(output_text="late")
+
+    async def run_test() -> None:
+        task = asyncio.create_task(
+            run_execute_module._run_script_strategy(
+                blocking_run,
+                cast(Any, object()),
+                run_id="run_test",
+            )
+        )
+        while not started.is_set():
+            await asyncio.sleep(0.01)
+        started_at = time.monotonic()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=0.5)
+        assert time.monotonic() - started_at < 0.5
+
+    try:
+        asyncio.run(run_test())
+    finally:
+        release.set()
+
+
 def test_execution_store_records_runs_steps_and_messages(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     store = ExecutionStore(execution_db_path(toolang_root, "alice"))
