@@ -89,7 +89,7 @@ Use this service when the agent needs Linear access.
 
 
 def test_program_parse_rejects_service_env_map_syntax() -> None:
-    with pytest.raises(ToolangError, match="Syntax error at line 1"):
+    with pytest.raises(ToolangError, match="must list environment variable names"):
         parse(
             """
 service linear: ```md
@@ -134,7 +134,7 @@ thunk review(_, path: path, focus?) -> ReviewSummary:
     ]
 
 
-def test_build_prepared_program_rejects_missing_service_frontmatter_in_grammar(tmp_path: Path) -> None:
+def test_build_prepared_program_rejects_missing_service_frontmatter(tmp_path: Path) -> None:
     root = _write_program(
         tmp_path,
         """
@@ -145,7 +145,7 @@ Use this service when the agent needs GitHub access.
     )
 
     durable = scan_durable_state(root, "alice")
-    with pytest.raises(ToolangError, match="Syntax error at line 1"):
+    with pytest.raises(ToolangError, match="is missing frontmatter"):
         build_prepared_program(durable)
 
 
@@ -156,7 +156,7 @@ def test_build_prepared_program_rejects_empty_thunk_body(tmp_path: Path) -> None
     )
 
     durable = scan_durable_state(root, "alice")
-    with pytest.raises(ToolangError, match="Syntax error at line 1"):
+    with pytest.raises(ToolangError, match="missing body text"):
         build_prepared_program(durable)
 
 
