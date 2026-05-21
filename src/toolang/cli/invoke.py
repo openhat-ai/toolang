@@ -23,6 +23,7 @@ from .. import agents
 from .. import up as agent_up
 from ..base.error import ToolangError
 from ..config.env import load_runtime_environ
+from ..config.log_spec import PY_LOG_ENV_VAR
 from ..execution.events import RunEnd, RunStart, StepEnd, StepStart, TraceEvent
 from ..execution.runner import RunOutcome
 from ..program import ParamDecl, Thunk
@@ -175,6 +176,10 @@ def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name:
     quiet, normalized_remaining = _consume_roaming_control_options(remaining)
     prepare_progress = _prepare_progress(quiet=quiet, argv=remaining)
     script_progress: _ScriptProgressSink | None = None
+    request: RoamingInvokeRequest | None = None
+    runtime_environ: dict[str, str] | None = None
+    toolang_root: Path | None = None
+    agent_name: str | None = None
     try:
         toolang_root, agent_name, prepared, program = _load_roaming_live_program(
             source_path,
@@ -217,6 +222,13 @@ def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name:
             script_progress.interrupt()
         if prepare_progress is not None:
             prepare_progress.interrupt()
+        _emit_interrupt_message(
+            script_progress=script_progress,
+            toolang_root=toolang_root,
+            agent_name=agent_name,
+            thunk_name=request.thunk_name if request is not None else None,
+            environ=runtime_environ,
+        )
         return 130
     except (FileExistsError, FileNotFoundError, ValueError, ToolangError, click.ClickException) as exc:
         if prepare_progress is not None:
@@ -418,10 +430,33 @@ def _emit_invoke_outcome(outcome: RunOutcome) -> int:
     return 0
 
 
-def _script_progress_sink(*, thunk_name: str | None, quiet: bool) -> "_ScriptProgressSink | None":
-    if quiet or not sys.stderr.isatty():
-        return None
-    return _ScriptProgressSink(thunk_name=thunk_name or "main")
+def _script_progress_sink(*, thunk_name: str | None, quiet: bool) -> "_ScriptProgressSink":
+    return _ScriptProgressSink(
+        thunk_name=thunk_name or "main",
+        render=not quiet and sys.stderr.isatty(),
+    )
+
+
+def _emit_interrupt_message(
+    *,
+    script_progress: "_ScriptProgressSink | None",
+    toolang_root: Path | None,
+    agent_name: str | None,
+    thunk_name: str | None,
+    environ: dict[str, str] | None,
+) -> None:
+    typer.echo("toolang interrupted", err=True)
+    run_id = script_progress.run_id if script_progress is not None else None
+    if run_id:
+        typer.echo(f"Run: {run_id}", err=True)
+    if not run_id or toolang_root is None or agent_name is None:
+        return
+    if environ is None or not environ.get(PY_LOG_ENV_VAR, "").strip():
+        return
+    typer.echo(
+        f"Log: {agents.agent_script_run_log_path(toolang_root, agent_name, thunk_name=thunk_name, run_id=run_id)}",
+        err=True,
+    )
 
 
 class _ScriptProgressSink:
@@ -429,12 +464,17 @@ class _ScriptProgressSink:
 
     wants_stream = False
 
-    def __init__(self, *, thunk_name: str) -> None:
+    def __init__(self, *, thunk_name: str, render: bool) -> None:
         self._thunk_name = thunk_name
+        self._render_enabled = render
         self._run_id: str | None = None
         self._steps: dict[int, tuple[str, str]] = {}
         self._console = Console(file=sys.stderr, force_terminal=True, highlight=False)
         self._live: Live | None = None
+
+    @property
+    def run_id(self) -> str | None:
+        return self._run_id
 
     def on_event(self, event: TraceEvent) -> None:
         if isinstance(event, RunStart):
@@ -465,6 +505,8 @@ class _ScriptProgressSink:
         return f"{self._thunk_name} step {step_index} {kind}"
 
     def _render(self, message: str) -> None:
+        if not self._render_enabled:
+            return
         text = Text(message, style="dim")
         if self._live is None:
             self._live = Live(

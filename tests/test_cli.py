@@ -13,11 +13,13 @@ from typer.testing import CliRunner
 
 from toolang import agents
 from toolang import caps
+from toolang.base.types.message import Message
 from toolang.base.types.model import ModelInfo
 import toolang.cli.main as cli
 from toolang.cli.progress import CliProgress
 from toolang.config.log import DEFAULT_AGENT_LOG_SPEC
 from toolang.config.log_spec import PY_LOG_ENV_VAR
+from toolang.execution.events import RunStart
 from toolang.progress import ProgressEvent
 from toolang import work
 from toolang.execution.db import ExecutionStore, execution_db_path
@@ -1478,7 +1480,7 @@ thunk(_, tone?, retries?: number, dry_run?: boolean):
     }
 
 
-def test_cli_roaming_invoke_quiet_after_thunk_suppresses_progress_sink(
+def test_cli_roaming_invoke_quiet_after_thunk_suppresses_progress_output(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     program_path = _write_roaming_program(
@@ -1524,7 +1526,7 @@ thunk:
     assert result == 0
     assert output.out.strip() == "done"
     assert output.err == ""
-    assert captured["response"] is None
+    assert captured["response"] is not None
 
 
 def test_cli_roaming_invoke_uses_progress_sink_for_tty_stderr(
@@ -1714,15 +1716,31 @@ thunk:
         log_spec: str | None = None,
         prepared_state=None,
     ):
-        del toolang_root, agent_name, thunk_name, input_text, models, metadata, environ, response, log_spec, prepared_state
+        del toolang_root, agent_name, thunk_name, input_text, models, metadata, environ, log_spec, prepared_state
+        response.on_event(
+            RunStart(
+                run_id="run_test",
+                origin="script",
+                thread_id="script_test",
+                input=Message.user("hello"),
+                created_at="2026-05-21T00:00:00Z",
+                started_at="2026-05-21T00:00:00Z",
+            )
+        )
         raise KeyboardInterrupt
 
     monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+    monkeypatch.setenv(PY_LOG_ENV_VAR, "toolang.run=debug")
 
     result = cli.main([str(program_path), "main", "hello"])
     output = capsys.readouterr()
 
     assert result == 130
+    assert output.err.splitlines() == [
+        "toolang interrupted",
+        "Run: run_test",
+        f"Log: {agents.agent_script_run_log_path(program_path.parent / '.toolang', 'demo', thunk_name='main', run_id='run_test')}",
+    ]
     assert "Traceback" not in output.err
 
 
