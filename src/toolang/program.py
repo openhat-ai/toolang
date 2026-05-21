@@ -18,9 +18,41 @@ SERVICE_FIELDS = frozenset({"description", "transport", "target", "headers", "en
 PROMPT_FIELDS = frozenset({"params"})
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SIGNATURE_PARAM_RE = re.compile(r"^[A-Za-z_][\w-]*\??$")
+THUNK_HEADER_RE = re.compile(r"^(?P<indent>[ \t]*)thunk(?P<rest>.*):(?P<suffix>[ \t]*(?:#.*)?)$")
+STRUCT_HEADER_RE = re.compile(r"^(?P<indent>[ \t]*)struct(?P<rest>.*):(?P<suffix>[ \t]*(?:#.*)?)$")
+FIELD_RE = re.compile(
+    r"^(?P<indent>[ \t]+)(?P<name>[a-z][a-z0-9_-]*)(?P<optional>\?)?:"
+    r"(?P<space>[ \t]*)(?P<type>[A-Za-z][A-Za-z0-9]*(?:\[\])?)(?P<suffix>[ \t]*(?:#.*)?)$"
+)
+DIRECTIVE_RE = re.compile(
+    r"^(?P<indent>[ \t]*)(?P<key>model|models|tool|tools|skill|skills|service|services|"
+    r"psyche|psyches|handoffs|delegates)(?P<space>[ \t]*)(?P<op>=|\+=|-=)"
+)
+TOP_LEVEL_RE = re.compile(
+    r"^(use|struct|psyche|skill|service|prompt|instruct|thunk)\b"
+)
 OverlayKind = Literal["model", "tool", "psyche", "skill", "service"]
 OverlayOperator = Literal["set", "add", "remove"]
 MessageBlockKind = Literal["system", "user", "assistant", "tool"]
+TREE_SITTER_TYPE_ALIASES = {
+    "string": "Text",
+    "text": "Text",
+    "number": "Number",
+    "boolean": "Boolean",
+    "json": "Json",
+    "message": "Message",
+    "path": "Path",
+    "artifact": "Artifact",
+}
+AST_TYPE_ALIASES = {
+    "Text": "string",
+    "Number": "number",
+    "Boolean": "boolean",
+    "Json": "json",
+    "Message": "message",
+    "Path": "path",
+    "Artifact": "artifact",
+}
 
 
 @dataclass(slots=True)
@@ -134,57 +166,81 @@ class Program:
         return None
 
 
+@dataclass(frozen=True, slots=True)
+class _TreeSitterSource:
+    source: str
+    line_map: tuple[int | None, ...]
+    synthetic_message_rows: frozenset[int]
+
+    def original_line_index(self, row: int) -> int:
+        if 0 <= row < len(self.line_map):
+            original = self.line_map[row]
+            if original is not None:
+                return original
+        return row
+
+    def original_line_number(self, row: int) -> int:
+        return self.original_line_index(row) + 1
+
+
 def parse(source: str) -> Program:
     """Parse one Toolang program source string."""
 
     normalized_source = _source_without_shebang(source)
-    tree = Parser(_toolang_language()).parse(normalized_source.encode("utf-8"))
+    syntax_source = _tree_sitter_source(normalized_source)
+    tree = Parser(_toolang_language()).parse(syntax_source.source.encode("utf-8"))
     lines = normalized_source.splitlines()
     program = Program(_source_lines=lines)
 
     error_node = _first_error_node(tree.root_node)
     if error_node is not None:
-        _raise_syntax_error(lines, error_node)
+        _raise_syntax_error(lines, syntax_source, error_node)
 
     for child in tree.root_node.named_children:
-        if child.type in {"blank_line", "comment"}:
+        node = _item_node(child)
+        if node.type in {"blank_line", "comment", "comment_line"}:
             continue
-        if child.type == "use_statement":
-            program.uses.append(_use_from_node(child))
+        if node.type in {"use", "use_statement"}:
+            program.uses.append(_use_from_node(node, syntax_source))
             continue
-        if child.type == "fenced_declaration":
-            program.declarations.append(_decl_from_node(child))
+        if node.type in {"fenced_declaration", "psyche", "skill", "service", "prompt"}:
+            program.declarations.append(_decl_from_node(node, syntax_source))
             continue
-        if child.type == "struct_declaration":
-            program.structs.append(_struct_from_node(child))
+        if node.type in {"struct", "struct_declaration"}:
+            program.structs.append(_struct_from_node(node, lines, syntax_source))
             continue
-        if child.type == "thunk":
-            program.thunks.append(_thunk_from_node(child))
+        if node.type == "thunk":
+            program.thunks.append(_thunk_from_node(node, lines, syntax_source))
             continue
         raise ToolangError(
-            f"Unsupported statement at line {child.start_point.row + 1}: {_node_text(child)!r}"
+            f"Unsupported statement at line {syntax_source.original_line_number(node.start_point.row)}: "
+            f"{_node_text(node)!r}"
         )
 
     return program
 
 
-def _use_from_node(node: Node) -> UseDecl:
+def _use_from_node(node: Node, syntax_source: _TreeSitterSource) -> UseDecl:
     return UseDecl(
         kind=_required_text(node, "kind"),
         reference=_required_text(node, "reference"),
-        span=SourceSpan(node.start_point.row + 1),
+        span=SourceSpan(syntax_source.original_line_number(node.start_point.row)),
     )
 
 
-def _decl_from_node(node: Node) -> DeclBlock:
-    header = _required_child(node, "header")
+def _decl_from_node(node: Node, syntax_source: _TreeSitterSource) -> DeclBlock:
+    header = node.child_by_field_name("header")
     body_node = _required_child(node, "body")
-    kind = _required_text(header, "kind")
-    name = _required_text(header, "name")
-    language = _required_text(header, "language")
-    line_number = node.start_point.row + 1
-    raw_body = _fence_body_from_node(body_node)
-    frontmatter_present = body_node.child_by_field_name("frontmatter") is not None
+    kind = _required_text(header, "kind") if header is not None else _required_text(node, "kind")
+    name = _required_text(header, "name") if header is not None else _required_text(node, "name")
+    language = (
+        _required_text(header, "language")
+        if header is not None and header.child_by_field_name("language") is not None
+        else _cap_body_language(body_node)
+    )
+    line_number = syntax_source.original_line_number(node.start_point.row)
+    raw_body = _cap_body_text(body_node)
+    frontmatter_present = _descendant_of_type(body_node, "frontmatter") is not None
     meta, body, params = _declaration_semantics(
         kind=kind,
         raw_body=raw_body,
@@ -202,60 +258,96 @@ def _decl_from_node(node: Node) -> DeclBlock:
     )
 
 
-def _struct_from_node(node: Node) -> StructDecl:
+def _struct_from_node(
+    node: Node,
+    lines: list[str],
+    syntax_source: _TreeSitterSource,
+) -> StructDecl:
     header = next(
         (child for child in node.named_children if child.type == "struct_header"),
         None,
     )
     body = _required_child(node, "body")
-    if header is None:
+    if header is None and node.type == "struct_declaration":
         raise ToolangError(f"Missing struct header at line {node.start_point.row + 1}.")
     fields: list[StructFieldDecl] = []
-    for line in body.named_children:
-        field_node = line.child_by_field_name("field")
+    for child in body.named_children:
+        field_node = child.child_by_field_name("field") or (child if child.type == "field" else None)
         if field_node is None:
             continue
+        original_row = syntax_source.original_line_index(field_node.start_point.row)
+        parsed_field = _field_from_source_line(_line_text(lines, original_row))
         fields.append(
             StructFieldDecl(
-                name=_required_text(field_node, "name"),
-                type_name=_required_text(field_node, "type"),
-                span=SourceSpan(field_node.start_point.row + 1),
+                name=parsed_field[0] if parsed_field is not None else _required_text(field_node, "name"),
+                type_name=(
+                    parsed_field[1]
+                    if parsed_field is not None
+                    else _ast_type_name(_required_text(field_node, "type")) or ""
+                ),
+                span=SourceSpan(original_row + 1),
             )
         )
     return StructDecl(
-        name=_required_text(header, "name"),
+        name=_required_text(header, "name") if header is not None else _required_text(node, "name"),
         fields=fields,
-        span=SourceSpan(node.start_point.row + 1),
+        span=SourceSpan(syntax_source.original_line_number(node.start_point.row)),
     )
 
 
-def _thunk_from_node(node: Node) -> Thunk:
-    signature = _required_child(node, "signature")
+def _thunk_from_node(
+    node: Node,
+    lines: list[str],
+    syntax_source: _TreeSitterSource,
+) -> Thunk:
+    signature = node.child_by_field_name("signature")
     body = _required_child(node, "body")
-    params_node = signature.child_by_field_name("params")
-    implicit_input = params_node is None
-    input_param, params = _params_from_node(params_node)
+    original_row = syntax_source.original_line_index(node.start_point.row)
+    header = _parse_thunk_header(_line_text(lines, original_row), line_number=original_row + 1)
+    if header is None and signature is None:
+        raise ToolangError(f"Missing thunk signature at line {original_row + 1}.")
+    params_node = signature.child_by_field_name("params") if signature is not None else node.child_by_field_name("params")
+    implicit_input = (header[1] is None) if header is not None else params_node is None
+    input_param, params = (
+        _params_from_signature(header[1], line_number=original_row + 1)
+        if header is not None
+        else _params_from_node(params_node)
+    )
     overlays: list[ThunkOverlay] = []
     messages: list[MessageBlock] = []
+    if header is None:
+        signature_node = signature if signature is not None else _required_child(node, "signature")
+        thunk_name = _optional_text(signature_node.child_by_field_name("name"))
+        output = _ast_type_name(_optional_text(signature_node.child_by_field_name("output")))
+    else:
+        thunk_name = header[0]
+        output = header[2]
     thunk = Thunk(
-        name=_optional_text(signature.child_by_field_name("name")),
+        name=thunk_name,
         input=input_param,
         params=params,
-        output=_optional_text(signature.child_by_field_name("output")),
-        span=SourceSpan(node.start_point.row + 1),
+        output=output,
+        span=SourceSpan(original_row + 1),
     )
 
     for child in body.named_children:
-        if child.type == "overlay_line":
-            overlays.append(_overlay_from_node(child))
+        if child.type in {"overlay_line", "directive"}:
+            overlays.append(_overlay_from_node(child, syntax_source))
             continue
-        if child.type == "blank_line":
+        if child.type in {"blank_line", "comment_line"}:
             continue
-        if child.type == "message":
-            messages.append(_message_from_node(child, thunk_name=thunk.thunk_name()))
+        if child.type in {"message", "block"}:
+            messages.append(
+                _message_from_node(
+                    child,
+                    thunk_name=thunk.thunk_name(),
+                    syntax_source=syntax_source,
+                )
+            )
             continue
         raise ToolangError(
-            f"Unsupported thunk content at line {child.start_point.row + 1}: {child.type!r}"
+            f"Unsupported thunk content at line {syntax_source.original_line_number(child.start_point.row)}: "
+            f"{child.type!r}"
         )
 
     thunk.overlays = tuple(overlays)
@@ -281,21 +373,34 @@ def _params_from_node(node: Node | None) -> tuple[ParamDecl | None, list[ParamDe
     params: list[ParamDecl] = []
     for parameter in node.children_by_field_name("param"):
         name_node = _required_child(parameter, "name")
+        type_name = _ast_type_name(_optional_text(parameter.child_by_field_name("type")))
         param = ParamDecl(
             name=_node_text(name_node),
             optional=parameter.child_by_field_name("optional") is not None,
-            type_name=_optional_text(parameter.child_by_field_name("type")),
+            type_name=type_name,
         )
-        params.append(param)
+        if param.name == "input" and type_name == "message" and input_param is None and not params:
+            input_param = ParamDecl(name="_", optional=False, type_name=None)
+        else:
+            params.append(param)
     return input_param, params
 
 
-def _overlay_from_node(node: Node) -> ThunkOverlay:
-    overlay = _required_child(node, "overlay")
-    subject = _required_text(overlay, "subject").strip()
-    operator = _required_text(overlay, "operator").strip()
+def _overlay_from_node(node: Node, syntax_source: _TreeSitterSource) -> ThunkOverlay:
+    overlay = node.child_by_field_name("overlay") or node
+    subject = (
+        _required_text(overlay, "subject").strip()
+        if overlay.child_by_field_name("subject") is not None
+        else _required_text(overlay, "key").strip()
+    )
+    operator = (
+        _required_text(overlay, "operator").strip()
+        if overlay.child_by_field_name("operator") is not None
+        else _required_text(overlay, "operator").strip()
+    )
     raw_values = _optional_text(overlay.child_by_field_name("values")) or ""
-    kind = _overlay_kind(subject, line_number=node.start_point.row + 1)
+    line_number = syntax_source.original_line_number(node.start_point.row)
+    kind = _overlay_kind(subject, line_number=line_number)
     items = tuple(
         item
         for item in (part.strip() for part in raw_values.split(","))
@@ -303,9 +408,9 @@ def _overlay_from_node(node: Node) -> ThunkOverlay:
     )
     return ThunkOverlay(
         kind=kind,
-        op=_overlay_operator(operator, line_number=node.start_point.row + 1),
+        op=_overlay_operator(operator, line_number=line_number),
         items=items,
-        span=SourceSpan(node.start_point.row + 1),
+        span=SourceSpan(line_number),
     )
 
 
@@ -335,7 +440,15 @@ def _overlay_operator(operator: str, *, line_number: int) -> OverlayOperator:
     raise ToolangError(f"Unsupported thunk directive operator {operator!r} at line {line_number}.")
 
 
-def _message_from_node(node: Node, *, thunk_name: str) -> MessageBlock:
+def _message_from_node(
+    node: Node,
+    *,
+    thunk_name: str,
+    syntax_source: _TreeSitterSource,
+) -> MessageBlock:
+    if node.type == "block":
+        return _block_message_from_node(node, syntax_source=syntax_source)
+
     kind_node = node.child_by_field_name("kind")
     if kind_node is None:
         lines: list[tuple[int, str]] = []
@@ -349,7 +462,7 @@ def _message_from_node(node: Node, *, thunk_name: str) -> MessageBlock:
         return MessageBlock(
             kind=implicit_kind,
             text="\n".join(text for _, text in lines).strip(),
-            span=SourceSpan(node.start_point.row + 1),
+            span=SourceSpan(syntax_source.original_line_number(node.start_point.row)),
             explicit=False,
         )
 
@@ -366,12 +479,78 @@ def _message_from_node(node: Node, *, thunk_name: str) -> MessageBlock:
             inline_text=_optional_text(node.child_by_field_name("inline")) or "",
             continuation=continuation,
         ),
-        span=SourceSpan(node.start_point.row + 1),
+        span=SourceSpan(syntax_source.original_line_number(node.start_point.row)),
     )
 
 
-def _fence_body_from_node(node: Node) -> str:
+def _block_message_from_node(node: Node, *, syntax_source: _TreeSitterSource) -> MessageBlock:
+    kind_node = _required_child(node, "kind")
+    value_node = _required_child(node, "value")
+    kind = cast(MessageBlockKind, _node_text(kind_node).strip())
+    line_number = syntax_source.original_line_number(node.start_point.row)
+    explicit = node.start_point.row not in syntax_source.synthetic_message_rows
+    return MessageBlock(
+        kind=kind,
+        text=_block_value_text(value_node),
+        span=SourceSpan(line_number),
+        explicit=explicit,
+    )
+
+
+def _block_value_text(node: Node) -> str:
+    if node.type == "block_value" and node.named_child_count:
+        return _block_value_text(node.named_children[0])
+    if node.type == "block_inline":
+        content = node.child_by_field_name("content") or node.child_by_field_name("name")
+        return _node_text(content).strip()
+    if node.type == "block_indented":
+        lines: list[tuple[int, str]] = []
+        for child in node.named_children:
+            if child.type == "block_indented_content_line":
+                lines.append((child.start_point.row + 1, _required_text(child, "content").rstrip()))
+            elif child.type == "blank_line":
+                lines.append((child.start_point.row + 1, ""))
+        return "\n".join(text for _, text in _dedent_line_items(lines)).strip()
+    if node.type == "block_fenced":
+        return _fenced_node_inner_text(node)
+    return _node_text(node).strip()
+
+
+def _cap_body_text(node: Node) -> str:
+    if node.type == "cap_body" and node.named_child_count:
+        return _cap_body_text(node.named_children[0])
+    if node.type == "cap_markdown":
+        return _fenced_node_inner_text(node)
+    if node.type == "cap_indented":
+        lines: list[tuple[int, str]] = []
+        for child in node.named_children:
+            if child.type == "cap_indented_content_line":
+                lines.append((child.start_point.row + 1, _required_text(child, "content").rstrip()))
+            elif child.type == "property_eq":
+                lines.append((child.start_point.row + 1, _node_text(child).rstrip()))
+            elif child.type == "blank_line":
+                lines.append((child.start_point.row + 1, ""))
+        return "\n".join(text for _, text in _dedent_line_items(lines)).strip()
     return _node_text(node).rstrip("\r\n")
+
+
+def _cap_body_language(node: Node) -> str | None:
+    language = _descendant_field(node, "language")
+    return _node_text(language) or None
+
+
+def _fenced_node_inner_text(node: Node) -> str:
+    text = _node_text(node).rstrip("\r\n")
+    first_line_end = text.find("\n")
+    if first_line_end < 0:
+        return ""
+    body = text[first_line_end + 1 :]
+    close_index = body.rfind("\n```")
+    if close_index >= 0:
+        body = body[:close_index]
+    elif body.startswith("```"):
+        body = ""
+    return body.rstrip()
 
 
 def _declaration_semantics(
@@ -545,8 +724,299 @@ def _message_block_text(
     return inline_text.strip()
 
 
+def _tree_sitter_source(source: str) -> _TreeSitterSource:
+    original_lines = source.splitlines()
+    transformed: list[str] = []
+    line_map: list[int | None] = []
+    synthetic_message_rows: set[int] = set()
+    index = 0
+
+    while index < len(original_lines):
+        line = original_lines[index]
+        thunk_match = THUNK_HEADER_RE.match(line)
+        if thunk_match is None:
+            transformed.append(_transform_non_thunk_line(line))
+            line_map.append(index)
+            index += 1
+            continue
+
+        transformed.append(_transform_thunk_header(line))
+        line_map.append(index)
+        thunk_name = _thunk_name_from_header(line)
+        index += 1
+
+        while index < len(original_lines):
+            body_line = original_lines[index]
+            if TOP_LEVEL_RE.match(body_line):
+                break
+            explicit_block_match = re.match(r"^(?P<indent>[ \t]*)(system|user|instruct):", body_line)
+            if explicit_block_match is not None:
+                block_indent = len(explicit_block_match.group("indent"))
+                transformed.append(body_line)
+                line_map.append(index)
+                index += 1
+                while index < len(original_lines):
+                    continuation = original_lines[index]
+                    if TOP_LEVEL_RE.match(continuation):
+                        break
+                    if continuation.strip() and len(_leading_whitespace(continuation)) <= block_indent:
+                        break
+                    transformed.append(continuation)
+                    line_map.append(index)
+                    index += 1
+                continue
+            if _is_implicit_message_line(body_line):
+                synthetic_indent = _leading_whitespace(body_line)
+                synthetic_row = len(transformed)
+                transformed.append(f"{synthetic_indent}{_implicit_message_kind(thunk_name)}:")
+                line_map.append(None)
+                synthetic_message_rows.add(synthetic_row)
+                while index < len(original_lines):
+                    message_line = original_lines[index]
+                    if TOP_LEVEL_RE.match(message_line) or not _is_implicit_message_line(message_line):
+                        break
+                    transformed.append(_indent_message_line(message_line))
+                    line_map.append(index)
+                    index += 1
+                continue
+
+            transformed.append(_transform_non_thunk_line(body_line))
+            line_map.append(index)
+            index += 1
+
+    if source:
+        tree_source = "\n".join(transformed) + "\n"
+    else:
+        tree_source = ""
+    return _TreeSitterSource(
+        source=tree_source,
+        line_map=tuple(line_map),
+        synthetic_message_rows=frozenset(synthetic_message_rows),
+    )
+
+
+def _transform_non_thunk_line(line: str) -> str:
+    struct_match = STRUCT_HEADER_RE.match(line)
+    if struct_match is not None:
+        return line
+
+    field_match = FIELD_RE.match(line)
+    if field_match is not None:
+        return (
+            f"{field_match.group('indent')}{field_match.group('name')}"
+            f"{field_match.group('optional') or ''}:"
+            f"{field_match.group('space')}{_tree_sitter_type_name(field_match.group('type'))}"
+            f"{field_match.group('suffix')}"
+        )
+
+    return _transform_directive_line(line)
+
+
+def _transform_thunk_header(line: str) -> str:
+    match = THUNK_HEADER_RE.match(line)
+    if match is None:
+        return line
+    rest = match.group("rest")
+    output = ""
+    if "->" in rest:
+        rest, raw_output = rest.rsplit("->", 1)
+        output = f" -> {_tree_sitter_type_name(raw_output.strip())}"
+    name, params = _parse_thunk_rest(rest)
+    rendered_name = f" {name}" if name else ""
+    rendered_params = "" if params is None else f"({_tree_sitter_params(params)})"
+    return f"{match.group('indent')}thunk{rendered_name}{rendered_params}{output}:{match.group('suffix')}"
+
+
+def _transform_directive_line(line: str) -> str:
+    match = DIRECTIVE_RE.match(line)
+    if match is None:
+        return line
+    key = match.group("key")
+    normalized_key = "models" if key == "model" else key
+    return (
+        f"{match.group('indent')}{normalized_key}"
+        f"{match.group('space')}{match.group('op')}{line[match.end():]}"
+    )
+
+
+def _tree_sitter_params(raw: str) -> str:
+    if not raw.strip():
+        return ""
+    rendered: list[str] = []
+    for item in [part.strip() for part in raw.split(",")]:
+        if item == "_":
+            rendered.append("input: Message")
+            continue
+        match = re.fullmatch(
+            r"(?P<name>[A-Za-z_][\w-]*)(?P<optional>\?)?(?::\s*(?P<type>[A-Za-z][A-Za-z0-9]*(?:\[\])?))?",
+            item,
+        )
+        if match is None:
+            rendered.append(item)
+            continue
+        name = "input" if match.group("name") == "_" else match.group("name")
+        optional = match.group("optional") or ""
+        type_name = _tree_sitter_type_name(match.group("type") or "string")
+        rendered.append(f"{name}{optional}: {type_name}")
+    return ", ".join(rendered)
+
+
+def _tree_sitter_type_name(type_name: str | None) -> str:
+    if not type_name:
+        return ""
+    suffix = "[]" if type_name.endswith("[]") else ""
+    base = type_name[:-2] if suffix else type_name
+    return f"{TREE_SITTER_TYPE_ALIASES.get(base, base)}{suffix}"
+
+
+def _ast_type_name(type_name: str | None) -> str | None:
+    if not type_name:
+        return None
+    suffix = "[]" if type_name.endswith("[]") else ""
+    base = type_name[:-2] if suffix else type_name
+    return f"{AST_TYPE_ALIASES.get(base, base)}{suffix}"
+
+
+def _parse_thunk_header(line: str, *, line_number: int) -> tuple[str | None, str | None, str | None] | None:
+    match = THUNK_HEADER_RE.match(line)
+    if match is None:
+        return None
+    rest = match.group("rest").strip()
+    output: str | None = None
+    if "->" in rest:
+        rest, raw_output = rest.rsplit("->", 1)
+        output = raw_output.strip() or None
+    name, params = _parse_thunk_rest(rest)
+    if name == "main":
+        name = "main"
+    if params is not None:
+        _validate_signature_params(params, line_number=line_number)
+    return name, params, output
+
+
+def _parse_thunk_rest(rest: str) -> tuple[str | None, str | None]:
+    rest = rest.strip()
+    if not rest:
+        return None, None
+    params_start = rest.find("(")
+    if params_start < 0:
+        return rest.strip() or None, None
+    params_end = rest.rfind(")")
+    if params_end < params_start:
+        return rest.strip() or None, None
+    name = rest[:params_start].strip() or None
+    return name, rest[params_start + 1 : params_end]
+
+
+def _thunk_name_from_header(line: str) -> str:
+    parsed = _parse_thunk_header(line, line_number=1)
+    if parsed is None:
+        return "main"
+    return parsed[0] or "main"
+
+
+def _validate_signature_params(raw: str, *, line_number: int) -> None:
+    _params_from_signature(raw, line_number=line_number)
+
+
+def _params_from_signature(raw: str | None, *, line_number: int) -> tuple[ParamDecl | None, list[ParamDecl]]:
+    if raw is None:
+        return ParamDecl(name="_"), []
+    if not raw.strip():
+        return None, []
+
+    input_param: ParamDecl | None = None
+    params: list[ParamDecl] = []
+    for item in [part.strip() for part in raw.split(",")]:
+        if item == "_":
+            if input_param is not None:
+                raise ToolangError(f"Parameter signature at line {line_number} repeats input parameter.")
+            input_param = ParamDecl(name="_")
+            continue
+        match = re.fullmatch(
+            r"(?P<name>[A-Za-z_][\w-]*)(?P<optional>\?)?(?::\s*(?P<type>[A-Za-z][A-Za-z0-9]*(?:\[\])?))?",
+            item,
+        )
+        if match is None:
+            raise ToolangError(
+                f"Parameter signature at line {line_number} contains invalid parameter {item!r}."
+            )
+        name = match.group("name")
+        optional = match.group("optional") is not None
+        type_name = match.group("type")
+        if name == "input":
+            if input_param is not None:
+                raise ToolangError(f"Parameter signature at line {line_number} repeats input parameter.")
+            input_param = ParamDecl(name="_", optional=False, type_name=None)
+            continue
+        params.append(ParamDecl(name=name, optional=optional, type_name=type_name))
+    return input_param, params
+
+
+def _field_from_source_line(line: str) -> tuple[str, str] | None:
+    match = FIELD_RE.match(line)
+    if match is None:
+        return None
+    return match.group("name"), match.group("type")
+
+
+def _is_implicit_message_line(line: str) -> bool:
+    if not line.strip():
+        return False
+    stripped = line.lstrip(" \t")
+    if stripped.startswith("#"):
+        return False
+    if DIRECTIVE_RE.match(line):
+        return False
+    if re.match(r"^[ \t]*(system|user|instruct):", line):
+        return False
+    return line.startswith((" ", "\t"))
+
+
+def _implicit_message_kind(thunk_name: str) -> str:
+    return "system" if thunk_name in {"chat", "task", "chore"} else "user"
+
+
+def _leading_whitespace(line: str) -> str:
+    return line[: len(line) - len(line.lstrip(" \t"))]
+
+
+def _indent_message_line(line: str) -> str:
+    indent = _leading_whitespace(line)
+    return f"{indent}  {line[len(indent):]}"
+
+
+def _item_node(node: Node) -> Node:
+    if node.type == "item" and node.named_children:
+        return node.named_children[0]
+    return node
+
+
+def _descendant_of_type(node: Node, node_type: str) -> Node | None:
+    if node.type == node_type:
+        return node
+    for child in node.named_children:
+        found = _descendant_of_type(child, node_type)
+        if found is not None:
+            return found
+    return None
+
+
+def _descendant_field(node: Node, field_name: str) -> Node | None:
+    child = node.child_by_field_name(field_name)
+    if child is not None:
+        return child
+    for descendant in node.named_children:
+        found = _descendant_field(descendant, field_name)
+        if found is not None:
+            return found
+    return None
+
+
 def _first_error_node(node: Node) -> Node | None:
     if node.is_error or node.is_missing:
+        if _is_ignored_error_node(node):
+            return None
         return node
     for child in node.children:
         result = _first_error_node(child)
@@ -555,9 +1025,19 @@ def _first_error_node(node: Node) -> Node | None:
     return None
 
 
-def _raise_syntax_error(lines: list[str], node: Node) -> None:
-    line_number = node.start_point.row + 1
-    raw_line = _line_text(lines, node.start_point.row)
+def _is_ignored_error_node(node: Node) -> bool:
+    parent = node.parent
+    while parent is not None:
+        if parent.type == "frontmatter":
+            return True
+        parent = parent.parent
+    return False
+
+
+def _raise_syntax_error(lines: list[str], syntax_source: _TreeSitterSource, node: Node) -> None:
+    original_row = syntax_source.original_line_index(node.start_point.row)
+    line_number = original_row + 1
+    raw_line = _line_text(lines, original_row)
     if raw_line.startswith((" ", "\t")) and raw_line.strip():
         raise ToolangError(f"Unexpected indentation at line {line_number}.")
     raise ToolangError(f"Syntax error at line {line_number}.")
