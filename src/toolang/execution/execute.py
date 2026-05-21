@@ -9,12 +9,13 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from toolang.base.types.message import message_summary
 from .context import RunContext
 from .db import PersistSink
 from .events import RunEnd, RunStart, TraceEvent, TraceEventHandler
 from .input import RunInput, bind_run_request
 from .model import resolve_model
-from .runner import RunOutcome, RunSubmission
+from .runner import RunOutcome, RunOutcomeStatus, RunRequest, RunSubmission
 from ..strategies import load_run_strategy
 
 if TYPE_CHECKING:
@@ -43,6 +44,7 @@ async def execute_run(
     started = False
     try:
         bound = bind_run_request(context, request, live=submission.live)
+        _log_run_start(request=request, bound=bound)
         run_input = RunInput.from_binding(context, bound)
         _emit_event(
             context,
@@ -94,7 +96,7 @@ async def execute_run(
                     finished_at=_utc_now(),
                 ),
             )
-            return RunOutcome(
+            return _finish_outcome(
                 run_id=bound.run_id,
                 group=bound.group,
                 origin=bound.origin,
@@ -108,7 +110,7 @@ async def execute_run(
                 live_fingerprint=bound.live.fingerprint,
             )
         if bound is not None:
-            return RunOutcome(
+            return _finish_outcome(
                 run_id=bound.run_id,
                 group=bound.group,
                 origin=bound.origin,
@@ -138,7 +140,7 @@ async def execute_run(
             finished_at=_utc_now(),
         ),
     )
-    return RunOutcome(
+    return _finish_outcome(
         run_id=bound.run_id,
         group=bound.group,
         origin=bound.origin,
@@ -169,6 +171,57 @@ def _event_handler(
         _emit_event(context, persist, response, event)
 
     return handler
+
+
+def _log_run_start(*, request: RunRequest, bound: RunBinding) -> None:
+    input_summary = request.thunk
+    if request.message is not None:
+        input_summary = message_summary(request.message.parts) or input_summary
+    _LOGGER.info(
+        "starting run group=%s origin=%s thread_id=%s input=%r",
+        bound.group,
+        bound.origin,
+        bound.thread_id or "-",
+        input_summary,
+    )
+
+
+def _finish_outcome(
+    *,
+    run_id: str,
+    group: str,
+    origin: str,
+    input_text: str,
+    thunk_name: str | None,
+    thread_id: str | None,
+    delay_sec: float,
+    status: RunOutcomeStatus,
+    output_text: str = "",
+    error: str | None = None,
+    live_fingerprint: str | None = None,
+) -> RunOutcome:
+    outcome = RunOutcome(
+        run_id=run_id,
+        group=group,
+        origin=origin,
+        input_text=input_text,
+        thunk_name=thunk_name,
+        thread_id=thread_id,
+        delay_sec=delay_sec,
+        status=status,
+        output_text=output_text,
+        error=error,
+        live_fingerprint=live_fingerprint,
+    )
+    _LOGGER.info(
+        "finished run run_id=%s group=%s origin=%s thread_id=%s status=%s",
+        outcome.run_id[:12],
+        outcome.group,
+        outcome.origin,
+        outcome.thread_id or "-",
+        outcome.status,
+    )
+    return outcome
 
 
 async def _run_script_strategy(
