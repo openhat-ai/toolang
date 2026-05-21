@@ -1369,6 +1369,10 @@ thunk summarize(_, style?):
     assert "NAME=VALUE" in captured.out
     assert "Input" in captured.out
     assert "@PATH" in captured.out
+    assert "@PATH.md" not in captured.out
+    assert "@PATH.png" not in captured.out
+    assert "@PATH.mp3" not in captured.out
+    assert "Modality is inferred from the extension." in captured.out
     assert "Multimodal message input" not in captured.out
     assert "Thunks" in captured.out
     assert "main" in captured.out
@@ -1408,6 +1412,10 @@ thunk summarize(_, style?, audience?):
     assert "Input" in captured.out
     assert "Multimodal message input" not in captured.out
     assert "@PATH" in captured.out
+    assert "@PATH.md" not in captured.out
+    assert "@PATH.png" not in captured.out
+    assert "@PATH.mp3" not in captured.out
+    assert "Modality is inferred from the extension." in captured.out
     assert "Thunks" not in captured.out
     assert captured.out.index("Options") < captured.out.index("Params") < captured.out.index("Input")
 
