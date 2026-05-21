@@ -81,8 +81,12 @@ class _HelpOnlyArgument(TyperArgument):
         return None, args
 
 
+class _MissingInvokeInput(click.ClickException):
+    pass
+
+
 class _RoamingInvokeHelpGroup(TyperGroup):
-    usage_tail = "THUNK [OPTIONS] [PARAMS] [PARTS]"
+    usage_tail = "THUNK [OPTIONS] [PARAMS] [INPUT]..."
 
     def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         if not HAS_RICH or self.rich_markup_mode is None:
@@ -98,7 +102,15 @@ class _RoamingInvokeHelpGroup(TyperGroup):
         formatter.write_usage(ctx.command_path, self.usage_tail)
 
     def get_params(self, ctx: click.Context) -> list[click.Parameter]:
-        return [*_help_arguments(show_params=True, show_parts=True), *super().get_params(ctx)]
+        return [
+            *_help_arguments(
+                show_thunk=False,
+                show_params=True,
+                show_parts=True,
+                show_input_forms=True,
+            ),
+            *super().get_params(ctx),
+        ]
 
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         rows: list[tuple[str, str]] = []
@@ -138,8 +150,10 @@ class _RoamingThunkHelpCommand(TyperCommand):
     def get_params(self, ctx: click.Context) -> list[click.Parameter]:
         return [
             *_help_arguments(
+                show_thunk=False,
                 show_params=self.show_params,
                 show_parts=self.show_parts,
+                show_input_forms=True,
                 thunk=self.help_thunk,
             ),
             *super().get_params(ctx),
@@ -173,7 +187,7 @@ def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name:
         return 1
     source_label = body[0]
     remaining = body[1:]
-    quiet, normalized_remaining = _consume_roaming_control_options(remaining)
+    quiet, leading_models, normalized_remaining = _consume_roaming_control_options(remaining)
     prepare_progress = _prepare_progress(quiet=quiet, argv=remaining)
     script_progress: _ScriptProgressSink | None = None
     request: RoamingInvokeRequest | None = None
@@ -187,7 +201,7 @@ def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name:
         )
         if prepare_progress is not None:
             prepare_progress.finish(details=False)
-        if remaining and remaining[0] in HELP_FLAGS:
+        if normalized_remaining and normalized_remaining[0] in HELP_FLAGS:
             _show_roaming_help(source_label, program, thunk_name=None, prog_name=prog_name)
             return 0
         if not remaining:
@@ -200,7 +214,11 @@ def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name:
         if any(token in HELP_FLAGS for token in remainder):
             _show_roaming_help(source_label, program, thunk_name=_thunk_name(thunk), prog_name=prog_name)
             return 0
-        request = _parse_roaming_invoke_request(thunk, remainder)
+        try:
+            request = _parse_roaming_invoke_request(thunk, remainder, leading_models=leading_models)
+        except _MissingInvokeInput:
+            _show_roaming_help(source_label, program, thunk_name=_thunk_name(thunk), prog_name=prog_name)
+            return 0
         runtime_environ = load_runtime_environ(toolang_root, agent_name, base_environ=os.environ)
         script_progress = _script_progress_sink(thunk_name=request.thunk_name, quiet=quiet or request.quiet)
         outcome = agent_up.invoke(
@@ -243,8 +261,9 @@ def _unsupported_roaming_global_args(global_args: list[str]) -> bool:
     return bool(global_args)
 
 
-def _consume_roaming_control_options(argv: list[str]) -> tuple[bool, list[str]]:
+def _consume_roaming_control_options(argv: list[str]) -> tuple[bool, tuple[str, ...], list[str]]:
     quiet = False
+    models: list[str] = []
     remaining: list[str] = []
     index = 0
     while index < len(argv):
@@ -256,9 +275,21 @@ def _consume_roaming_control_options(argv: list[str]) -> tuple[bool, list[str]]:
             quiet = True
             index += 1
             continue
+        if token.startswith("--model="):
+            model = token.partition("=")[2].strip()
+            if model:
+                models.append(model)
+                index += 1
+                continue
+        if token == "--model" and index + 1 < len(argv):
+            model = argv[index + 1].strip()
+            if model:
+                models.append(model)
+                index += 2
+                continue
         remaining.append(token)
         index += 1
-    return quiet, remaining
+    return quiet, tuple(models), remaining
 
 
 def _prepare_progress(*, quiet: bool, argv: list[str]) -> "CliProgress | None":
@@ -290,12 +321,14 @@ def _select_roaming_thunk(
 def _parse_roaming_invoke_request(
     thunk: Thunk,
     argv: list[str],
+    *,
+    leading_models: tuple[str, ...] = (),
 ) -> RoamingInvokeRequest:
     thunk_params = tuple(thunk.params)
     param_index = {param.name: param for param in thunk_params}
     invoke_params: dict[str, object] = {}
     parts: list[str] = []
-    models: list[str] = []
+    models = list(leading_models)
     quiet = False
     index = 0
     while index < len(argv):
@@ -342,9 +375,9 @@ def _parse_roaming_invoke_request(
     thunk_name = _thunk_name(thunk)
     accepts_message = thunk.input is not None
     if accepts_message and not parts:
-        raise click.ClickException(f"thunk {thunk_name!r} requires at least one PART")
+        raise _MissingInvokeInput(f"thunk {thunk_name!r} requires at least one INPUT")
     if parts and not accepts_message:
-        raise click.ClickException(f"thunk {thunk_name!r} does not accept message input")
+        raise click.ClickException(f"thunk {thunk_name!r} does not accept INPUT")
     input_text, invoke_parts = _render_roaming_input(parts) if parts else (None, [])
     return RoamingInvokeRequest(
         thunk_name=thunk_name,
@@ -393,7 +426,7 @@ def _render_roaming_input(parts: list[str]) -> tuple[str, list[dict[str, str]]]:
         if part.startswith("@"):
             candidate = Path(part[1:]).expanduser().resolve()
             if not candidate.exists():
-                raise click.ClickException(f"invoke part not found: {candidate}")
+                raise click.ClickException(f"invoke input not found: {candidate}")
             ext = candidate.suffix.lower()
             if ext in _TEXT_PART_EXTENSIONS:
                 text = candidate.read_text(encoding="utf-8")
@@ -535,7 +568,7 @@ def _show_roaming_help(
     try:
         command.main(
             args=args,
-            prog_name=f"{prog_name} {source_label}",
+            prog_name=f"{prog_name} SCRIPT",
             standalone_mode=False,
         )
     except click.exceptions.Exit:
@@ -550,11 +583,16 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
         invoke_without_command=True,
         pretty_exceptions_enable=False,
         pretty_exceptions_show_locals=False,
-        help=f"Invoke thunks from: {source_label}",
+        help=f"Invoke a thunk from a Toolang script.\n\nScript: {source_label}",
     )
 
     @app.callback()
     def _callback(
+        model: list[str] | None = typer.Option(
+            None,
+            "--model",
+            help="Model selector. Repeat to allow multiple.",
+        ),
         quiet: bool = typer.Option(
             False,
             "--quiet",
@@ -562,17 +600,24 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
             help="Suppress progress messages.",
         ),
     ) -> None:
-        del quiet
+        del model, quiet
         return None
 
     for thunk in program.thunks:
         app.command(
             _thunk_name(thunk),
-            help=_thunk_summary(thunk),
+            help=_roaming_thunk_help_text(source_label, thunk),
+            short_help=_thunk_summary(thunk),
             cls=_make_roaming_thunk_help_command_class(thunk),
             rich_help_panel="Thunks",
         )(_make_roaming_help_command())
     return app
+
+
+def _roaming_thunk_help_text(source_label: str, thunk: Thunk) -> str:
+    summary = _thunk_summary(thunk)
+    intro = "Invoke a thunk from a Toolang script." if summary == "-" else summary
+    return f"{intro}\n\nScript: {source_label}\nThunk:  {_thunk_name(thunk)}"
 
 
 def _make_roaming_thunk_help_command_class(thunk: Thunk) -> type[_RoamingThunkHelpCommand]:
@@ -590,7 +635,7 @@ def _make_roaming_help_command() -> Callable[..., None]:
         model: list[str] | None = typer.Option(
             None,
             "--model",
-            help="Allow a model selector for this activation. Repeat to allow multiple; the first becomes default.",
+            help="Model selector. Repeat to allow multiple.",
         ),
         quiet: bool = typer.Option(
             False,
@@ -610,7 +655,7 @@ def _roaming_thunk_usage_tail(thunk: Thunk) -> str:
     if thunk.params:
         pieces.append("[PARAMS]")
     if thunk.input is not None:
-        pieces.append("PARTS")
+        pieces.append("[INPUT]...")
     return " ".join(pieces)
 
 
@@ -637,11 +682,25 @@ def _thunk_summary(thunk: Thunk) -> str:
 
 def _help_arguments(
     *,
+    show_thunk: bool,
     show_params: bool,
     show_parts: bool,
+    show_input_forms: bool,
     thunk: Thunk | None = None,
 ) -> list[click.Parameter]:
     args: list[click.Parameter] = []
+    if show_thunk:
+        args.append(
+            _HelpOnlyArgument(
+                param_decls=["thunk"],
+                metavar="THUNK",
+                required=False,
+                default=None,
+                expose_value=False,
+                help="Thunk to invoke.",
+                rich_help_panel="Arguments",
+            )
+        )
     if show_params:
         thunk_params = () if thunk is None else tuple(thunk.params)
         if not thunk_params:
@@ -652,7 +711,7 @@ def _help_arguments(
                     required=False,
                     default=None,
                     expose_value=False,
-                    help="One named thunk parameter. Repeat as needed.",
+                    help="Set one named thunk parameter. Repeat as needed.",
                     rich_help_panel="Params",
                 )
             )
@@ -671,55 +730,29 @@ def _help_arguments(
                     )
                 )
     if show_parts:
-        args.extend(
-            [
-                _HelpOnlyArgument(
-                    param_decls=["part_text"],
-                    metavar="TEXT",
-                    required=False,
-                    default=None,
-                    expose_value=False,
-                    help="Plain text. Use @@TEXT for literal text starting with @.",
-                    rich_help_panel="Parts",
-                ),
-                _HelpOnlyArgument(
-                    param_decls=["part_text_file"],
-                    metavar="@FILE.md",
-                    required=False,
-                    default=None,
-                    expose_value=False,
-                    help="Text loaded from a .md file. Also supports .txt.",
-                    rich_help_panel="Parts",
-                ),
-                _HelpOnlyArgument(
-                    param_decls=["part_image"],
-                    metavar="@FILE.png",
-                    required=False,
-                    default=None,
-                    expose_value=False,
-                    help="Image loaded from a .png file. Also supports .jpg, .jpeg, .gif, .webp, .bmp, and .svg.",
-                    rich_help_panel="Parts",
-                ),
-                _HelpOnlyArgument(
-                    param_decls=["part_audio"],
-                    metavar="@FILE.mp3",
-                    required=False,
-                    default=None,
-                    expose_value=False,
-                    help="Audio loaded from a .mp3 file. Also supports .wav, .m4a, .aac, .ogg, and .flac.",
-                    rich_help_panel="Parts",
-                ),
-                _HelpOnlyArgument(
-                    param_decls=["part_file"],
-                    metavar="@FILE",
-                    required=False,
-                    default=None,
-                    expose_value=False,
-                    help="Generic file loaded from any other file type.",
-                    rich_help_panel="Parts",
-                ),
-            ]
-        )
+        if show_input_forms:
+            args.extend(
+                [
+                    _HelpOnlyArgument(
+                        param_decls=["part_text"],
+                        metavar="TEXT",
+                        required=False,
+                        default=None,
+                        expose_value=False,
+                        help="Text part. Use @@TEXT for literal text starting with @.",
+                        rich_help_panel="Input",
+                    ),
+                    _HelpOnlyArgument(
+                        param_decls=["part_file"],
+                        metavar="@PATH",
+                        required=False,
+                        default=None,
+                        expose_value=False,
+                        help="File input. Modality is inferred from the extension.",
+                        rich_help_panel="Input",
+                    ),
+                ]
+            )
     return args
 
 
@@ -740,19 +773,11 @@ def _rich_format_roaming_help(
         style=rich_utils.STYLE_USAGE_COMMAND,
     )
     if obj.help:
-        console.print(
-            rich_utils.Padding(
-                rich_utils.Align(
-                    rich_utils._get_help_text(obj=obj, markup_mode=markup_mode),
-                    pad=False,
-                ),
-                (0, 1, 1, 1),
-            )
-        )
+        _print_roaming_help_text(obj=obj, markup_mode=markup_mode, console=console)
 
     options: list[click.Option] = []
     params_args: list[click.Argument] = []
-    parts_args: list[click.Argument] = []
+    input_args: list[click.Argument] = []
     for param in obj.get_params(ctx):
         if getattr(param, "hidden", False):
             continue
@@ -763,8 +788,8 @@ def _rich_format_roaming_help(
             panel_name = getattr(param, rich_utils._RICH_HELP_PANEL_NAME, None)
             if panel_name == "Params":
                 params_args.append(param)
-            elif panel_name == "Parts":
-                parts_args.append(param)
+            elif panel_name == "Input":
+                input_args.append(param)
 
     rich_utils._print_options_panel(
         name=rich_utils.OPTIONS_PANEL_TITLE,
@@ -793,8 +818,8 @@ def _rich_format_roaming_help(
         console=console,
     )
     _print_argument_examples_panel(
-        name="Parts",
-        params=parts_args,
+        name="Input",
+        params=input_args,
         ctx=ctx,
         markup_mode=markup_mode,
         console=console,
@@ -805,6 +830,44 @@ def _rich_format_roaming_help(
         epilogue = "\n".join([line.replace("\n", " ").strip() for line in lines])
         epilogue_text = rich_utils._make_rich_text(text=epilogue, markup_mode=markup_mode)
         console.print(rich_utils.Padding(rich_utils.Align(epilogue_text, pad=False), 1))
+
+
+def _print_roaming_help_text(
+    *,
+    obj: click.Command | click.Group,
+    markup_mode: MarkupMode,
+    console: Console,
+) -> None:
+    if not obj.help:
+        return
+    regular_lines: list[str] = []
+    context_lines: list[str] = []
+    for line in obj.help.splitlines():
+        if line.startswith(("Script:", "Thunk:")):
+            context_lines.append(line)
+            continue
+        regular_lines.append(line)
+
+    regular_text = "\n".join(regular_lines).strip()
+    if regular_text:
+        console.print(
+            rich_utils.Padding(
+                rich_utils.Align(
+                    rich_utils._make_rich_text(text=regular_text, markup_mode=markup_mode),
+                    pad=False,
+                ),
+                (0, 1, 1, 1),
+            )
+        )
+
+    if context_lines:
+        context_text = Text("\n".join(context_lines), style="dim")
+        console.print(
+            rich_utils.Padding(
+                rich_utils.Align(context_text, pad=False),
+                (0, 1, 1, 1),
+            )
+        )
 
 
 def _print_argument_examples_panel(

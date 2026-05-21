@@ -1361,10 +1361,27 @@ thunk summarize(_, style?):
 
     assert result == 0
     assert "Usage: toolang" in captured.out
-    assert "THUNK [OPTIONS] [PARAMS] [PARTS]" in captured.out
+    assert "SCRIPT THUNK [OPTIONS] [PARAMS] [INPUT]..." in captured.out
+    assert "Invoke a thunk from a Toolang script." in captured.out
+    assert "Script:" in captured.out
+    assert "* SCRIPT" not in captured.out
+    assert program_path.name in captured.out
+    assert "Options" in captured.out
+    assert "--model" in captured.out
+    assert "--quiet" in captured.out
+    assert "Params" in captured.out
+    assert "NAME=VALUE" in captured.out
+    assert "Input" in captured.out
+    assert "@PATH" in captured.out
+    assert "@PATH.md" not in captured.out
+    assert "@PATH.png" not in captured.out
+    assert "@PATH.mp3" not in captured.out
+    assert "Modality is inferred from the extension." in captured.out
+    assert "Multimodal message input" not in captured.out
     assert "Thunks" in captured.out
     assert "main" in captured.out
     assert "summarize" in captured.out
+    assert captured.out.index("Options") < captured.out.index("Thunks") < captured.out.index("Params") < captured.out.index("Input")
 
 
 def test_cli_roaming_thunk_help_is_dynamic(capsys, tmp_path: Path) -> None:
@@ -1386,12 +1403,30 @@ thunk summarize(_, style?, audience?):
 
     assert result == 0
     assert "Usage: toolang" in captured.out
+    assert "SCRIPT summarize" in captured.out
+    assert "Summarize the current workspace in a concise style." in captured.out
+    assert "Script:" in captured.out
+    assert program_path.name in captured.out
+    assert "Thunk:  summarize" in captured.out
+    assert "* THUNK" not in captured.out
     assert "summarize" in captured.out
     assert "[OPTIONS]" in captured.out
     assert "[PARAMS]" in captured.out
     assert "style=TEXT" in captured.out
     assert "audience=TEXT" in captured.out
-    assert "PARTS" in captured.out
+    assert "[INPUT]..." in captured.out
+    assert "--model" in captured.out
+    assert "--quiet" in captured.out
+    assert "Params" in captured.out
+    assert "Input" in captured.out
+    assert "Multimodal message input" not in captured.out
+    assert "@PATH" in captured.out
+    assert "@PATH.md" not in captured.out
+    assert "@PATH.png" not in captured.out
+    assert "@PATH.mp3" not in captured.out
+    assert "Modality is inferred from the extension." in captured.out
+    assert "Thunks" not in captured.out
+    assert captured.out.index("Options") < captured.out.index("Params") < captured.out.index("Input")
 
 
 def test_cli_roaming_invoke_passes_default_thunk_params_and_parts(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -1443,14 +1478,14 @@ thunk(_, tone?, retries?: number, dry_run?: boolean):
     result = cli.main(
         [
             str(program_path),
+            "--model",
+            "gpt-5",
             "main",
             "rewrite this",
             f"@{attachment}",
             "tone=concise",
             "retries=3",
             "dry_run=true",
-            "--model",
-            "gpt-5",
             "--model",
             "o3",
         ]
@@ -1756,7 +1791,7 @@ thunk:
     output = capsys.readouterr()
 
     assert result == 0
-    assert "THUNK [OPTIONS] [PARAMS] [PARTS]" in output.out
+    assert "SCRIPT THUNK [OPTIONS] [PARAMS] [INPUT]..." in output.out
     assert "Thunks" in output.out
 
 
@@ -1772,8 +1807,12 @@ thunk summarize(_):
     result = cli.main([str(program_path), "summarize"])
     output = capsys.readouterr()
 
-    assert result == 1
-    assert "requires at least one PART" in output.err
+    assert result == 0
+    assert "Usage:" in output.out
+    assert "SCRIPT summarize [OPTIONS] [INPUT]..." in output.out
+    assert "Summarize the current workspace in a concise style." in output.out
+    assert "Thunk:  summarize" in output.out
+    assert output.err == ""
 
 
 def test_cli_roaming_invoke_rejects_unknown_thunk_name(tmp_path: Path, capsys) -> None:
