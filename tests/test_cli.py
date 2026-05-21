@@ -1362,8 +1362,9 @@ thunk summarize(_, style?):
     assert result == 0
     assert "Usage: toolang" in captured.out
     assert "SCRIPT.too THUNK [OPTIONS] [PARAMS] [INPUT]..." in captured.out
-    assert "Invoke thunks from SCRIPT.too:" in captured.out
-    assert "* SCRIPT.too:" in captured.out
+    assert "Invoke a thunk from a Toolang script." in captured.out
+    assert "Script:" in captured.out
+    assert "* SCRIPT" not in captured.out
     assert program_path.name in captured.out
     assert "Options" in captured.out
     assert "--model" in captured.out
@@ -1403,10 +1404,11 @@ thunk summarize(_, style?, audience?):
     assert result == 0
     assert "Usage: toolang" in captured.out
     assert "SCRIPT.too summarize" in captured.out
-    assert "Invoke thunks from SCRIPT.too:" in captured.out
-    assert "* SCRIPT:" in captured.out
+    assert "Invoke a thunk from a Toolang script." in captured.out
+    assert "Script:" in captured.out
     assert program_path.name in captured.out
-    assert "* THUNK: summarize" in captured.out
+    assert "Thunk:  summarize" in captured.out
+    assert "* THUNK" not in captured.out
     assert "Summarize the current workspace in a concise style." not in captured.out
     assert "summarize" in captured.out
     assert "[OPTIONS]" in captured.out

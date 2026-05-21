@@ -575,7 +575,7 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
         invoke_without_command=True,
         pretty_exceptions_enable=False,
         pretty_exceptions_show_locals=False,
-        help=f"Invoke thunks from SCRIPT.too:\n\n* SCRIPT.too: {source_label}",
+        help=f"Invoke a thunk from a Toolang script.\n\nScript: {source_label}",
     )
 
     @app.callback()
@@ -598,7 +598,7 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
     for thunk in program.thunks:
         app.command(
             _thunk_name(thunk),
-            help=f"Invoke thunks from SCRIPT.too:\n\n* SCRIPT: {source_label}\n* THUNK: {_thunk_name(thunk)}",
+            help=f"Invoke a thunk from a Toolang script.\n\nScript: {source_label}\nThunk:  {_thunk_name(thunk)}",
             short_help=_thunk_summary(thunk),
             cls=_make_roaming_thunk_help_command_class(thunk),
             rich_help_panel="Thunks",
