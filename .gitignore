@@ -15,6 +15,7 @@ wheels/
 
 # Local secrets
 .env
+.toolang/
 
 .obsidian
 archive/
