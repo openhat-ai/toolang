@@ -773,15 +773,7 @@ def _rich_format_roaming_help(
         style=rich_utils.STYLE_USAGE_COMMAND,
     )
     if obj.help:
-        console.print(
-            rich_utils.Padding(
-                rich_utils.Align(
-                    rich_utils._get_help_text(obj=obj, markup_mode=markup_mode),
-                    pad=False,
-                ),
-                (0, 1, 1, 1),
-            )
-        )
+        _print_roaming_help_text(obj=obj, markup_mode=markup_mode, console=console)
 
     options: list[click.Option] = []
     params_args: list[click.Argument] = []
@@ -838,6 +830,44 @@ def _rich_format_roaming_help(
         epilogue = "\n".join([line.replace("\n", " ").strip() for line in lines])
         epilogue_text = rich_utils._make_rich_text(text=epilogue, markup_mode=markup_mode)
         console.print(rich_utils.Padding(rich_utils.Align(epilogue_text, pad=False), 1))
+
+
+def _print_roaming_help_text(
+    *,
+    obj: click.Command | click.Group,
+    markup_mode: MarkupMode,
+    console: Console,
+) -> None:
+    if not obj.help:
+        return
+    regular_lines: list[str] = []
+    context_lines: list[str] = []
+    for line in obj.help.splitlines():
+        if line.startswith(("Script:", "Thunk:")):
+            context_lines.append(line)
+            continue
+        regular_lines.append(line)
+
+    regular_text = "\n".join(regular_lines).strip()
+    if regular_text:
+        console.print(
+            rich_utils.Padding(
+                rich_utils.Align(
+                    rich_utils._make_rich_text(text=regular_text, markup_mode=markup_mode),
+                    pad=False,
+                ),
+                (0, 1, 1, 1),
+            )
+        )
+
+    if context_lines:
+        context_text = Text("\n".join(context_lines), style="dim")
+        console.print(
+            rich_utils.Padding(
+                rich_utils.Align(context_text, pad=False),
+                (0, 1, 1, 1),
+            )
+        )
 
 
 def _print_argument_examples_panel(
