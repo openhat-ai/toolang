@@ -255,6 +255,7 @@ def _parse_roaming_invoke_request(
     invoke_params: dict[str, object] = {}
     parts: list[str] = []
     models: list[str] = []
+    quiet = False
     index = 0
     while index < len(argv):
         token = argv[index]
@@ -278,6 +279,7 @@ def _parse_roaming_invoke_request(
             index += 2
             continue
         if token in {"--quiet", "-q"}:
+            quiet = True
             index += 1
             continue
         if token.startswith("--"):
@@ -309,7 +311,7 @@ def _parse_roaming_invoke_request(
         models=tuple(models),
         invoke_params=invoke_params,
         invoke_parts=invoke_parts,
-        quiet=False,
+        quiet=quiet,
     )
 
 
