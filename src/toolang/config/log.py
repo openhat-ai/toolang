@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 import logging
 import logging.config
+from pathlib import Path
 import re
+from typing import Any, Literal, cast
 
 from .log_spec import (
     LogSpec,
+    PY_LOG_ENV_VAR,
     directive_level_for,
     ensure_custom_levels,
     level_name,
@@ -23,6 +27,20 @@ DEFAULT_ACCESS_LOG_FORMAT = (
     '%(asctime)s %(levelprefix)s [%(name)s] %(client_addr)s - "%(request_line)s" %(status_code)s'
 )
 _TELEGRAM_BOT_URL_PATTERN = re.compile(r"(https://api\.telegram\.org/bot)[^/]+")
+LogMode = Literal["run", "start", "invoke"]
+LogDestination = Literal["stderr", "agent_log", "run_log", "none"]
+
+
+@dataclass(frozen=True, slots=True)
+class LoggingPlan:
+    """Resolved logging behavior for one agent entrypoint."""
+
+    spec: str | None
+    destination: LogDestination
+    path: Path | None
+    environ: dict[str, str]
+
+
 class HttpxLogFilter(logging.Filter):
     """Redact sensitive URL segments and demote noisy request logs to DEBUG."""
 
@@ -137,7 +155,12 @@ def build_uvicorn_log_config(*, spec: LogSpec | None = None, level: str = DEFAUL
     }
 
 
-def configure_logging(*, spec: str | None, environ: Mapping[str, str] | None = None) -> None:
+def configure_logging(
+    *,
+    spec: str | None,
+    environ: Mapping[str, str] | None = None,
+    log_path: Path | None = None,
+) -> None:
     """Install the shared Toolang logging config for one CLI/runtime process."""
 
     log_spec = resolve_log_spec(
@@ -145,10 +168,58 @@ def configure_logging(*, spec: str | None, environ: Mapping[str, str] | None = N
         environ={} if environ is None else environ,
         default=DEFAULT_LOG_LEVEL,
     )
-    logging.config.dictConfig(build_uvicorn_log_config(spec=log_spec))
+    config = build_uvicorn_log_config(spec=log_spec)
+    if log_path is not None:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        handlers = cast(dict[str, object], config.get("handlers", {}))
+        for value in handlers.values():
+            if isinstance(value, dict):
+                handler = cast(dict[str, Any], value)
+                handler.pop("stream", None)
+                handler["class"] = "logging.FileHandler"
+                handler["filename"] = str(log_path)
+                handler["encoding"] = "utf-8"
+    logging.config.dictConfig(config)
     if log_spec.message_filter is not None:
         _install_message_filter(MessageRegexFilter(log_spec.message_filter))
     _install_logger_overrides(log_spec)
+
+
+def resolve_agent_logging(
+    *,
+    mode: LogMode,
+    environ: Mapping[str, str],
+    agent_log_path: Path | None = None,
+    run_log_path: Path | None = None,
+) -> LoggingPlan:
+    """Resolve logging spec, destination, and environment for one agent entrypoint."""
+
+    resolved_environ = dict(environ)
+    spec = resolved_environ.get(PY_LOG_ENV_VAR, "").strip()
+    if mode in {"run", "start"}:
+        if not spec:
+            spec = DEFAULT_AGENT_LOG_SPEC
+            resolved_environ[PY_LOG_ENV_VAR] = spec
+        if mode == "run":
+            return LoggingPlan(spec=spec, destination="stderr", path=None, environ=resolved_environ)
+        if agent_log_path is None:
+            raise ValueError("agent_log path is required for start logging")
+        return LoggingPlan(spec=spec, destination="agent_log", path=agent_log_path, environ=resolved_environ)
+    if spec:
+        if run_log_path is None:
+            raise ValueError("run_log path is required for invoke logging")
+        return LoggingPlan(spec=spec, destination="run_log", path=run_log_path, environ=resolved_environ)
+    resolved_environ.pop(PY_LOG_ENV_VAR, None)
+    return LoggingPlan(spec=None, destination="none", path=None, environ=resolved_environ)
+
+
+def configure_logging_plan(plan: LoggingPlan) -> None:
+    """Install logging for one resolved logging plan in the current process."""
+
+    if plan.destination == "none":
+        return
+    log_path = plan.path if plan.destination in {"agent_log", "run_log"} else None
+    configure_logging(spec=plan.spec, environ=plan.environ, log_path=log_path)
 
 
 def _redact_httpx_arg(value: object) -> object:

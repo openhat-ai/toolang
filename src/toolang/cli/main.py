@@ -23,11 +23,9 @@ from .. import agents, caps as cap_store, templates, work
 from .. import up as agent_up
 from ..base.protocols.model import ModelProvider
 from ..base.types.model import ModelInfo
-from ..config.log import DEFAULT_AGENT_LOG_SPEC, configure_logging
-from ..config.log_spec import PY_LOG_ENV_VAR
+from ..config.log import LoggingPlan, configure_logging, configure_logging_plan, resolve_agent_logging
 from ..execution.model import DEFAULT_MODEL_SELECTOR
 from ..execution.records import UpdateKind
-from ..features import watch as watch_feature
 from ..models.discovery import (
     default_provider_api_key_env,
     default_provider_base_url,
@@ -35,11 +33,9 @@ from ..models.discovery import (
     model_infos,
     required_provider_env_vars,
 )
-from ..progress import emit_progress
-from ..state.durable import scan_durable_state
 from . import caps as caps_cli
 from . import invoke as cli_invoke
-from .progress import as_progress_sink, make_cli_progress
+from .progress import CliProgress, as_progress_sink, make_cli_progress
 from .utils import (
     _AGENT_AVATAR,
     _PrefixAgentWorkGroup,
@@ -88,6 +84,18 @@ TOP_LEVEL_COMMANDS = frozenset(
         "prompt",
     }
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _RuntimeStartup:
+    """Resolved and prepared inputs for one runtime launch."""
+
+    target: agents.MaterializedRunTarget
+    startup: agent_up.StartupSpec
+    environ: dict[str, str]
+    log_plan: LoggingPlan
+
+
 POSTFIX_AGENT_COMMANDS = frozenset({"run", "start", "stop", "info"})
 PREFIX_AGENT_COMMANDS = frozenset({"run", "start", "stop", "task", "chore", "skill", "psyche", "service", "prompt"})
 
@@ -421,48 +429,27 @@ def run_agent(
     progress_finished = False
     try:
         with agents.resolved_run_target(root, selector, progress=as_progress_sink(progress)) as target:
-            run_root = target.toolang_root
-            agent_name = target.agent_name
-            if target.kind == "resident" and not agents.agent_home(run_root, agent_name).is_dir():
-                raise click.ClickException(f"Agent {agent_name} not found")
-            existing = agents.get_agent_status(run_root, agent_name, ui_base_url=_ui_base_url())
-            if existing is not None and existing.status in {"running", "preparing", "starting"}:
-                raise click.ClickException(_active_run_error(existing))
-            environ = _runtime_environ_for_agent(ctx, agent_name, toolang_root=run_root)
-            effective_log_spec = _configure_foreground_runtime_logging(environ)
-            _wrap_user_error(
-                agent_up.prepare_runtime,
-                toolang_root=run_root,
-                agent_name=agent_name,
-                progress=as_progress_sink(progress),
+            launch = _resolve_runtime_startup(
+                ctx,
+                target,
+                sandbox=sandbox,
+                models=models,
+                features=normalized_features,
+                port=port,
+                host=host,
+                endpoint_host=endpoint_host,
+                dev=dev,
+                background=False,
+                progress=progress,
             )
             progress.finish(details=False)
             progress_finished = True
-            effective_port = port
-            if effective_port is None and target.kind == "visiting":
-                effective_port = _wrap_user_error(
-                    agent_up.resolve_runtime_port,
-                    host=host,
-                    explicit_port=None,
-                    toolang_root=run_root,
-                    agent_name=agent_name,
-                    temporary=True,
-                )
             raise typer.Exit(
                 _wrap_user_error(
-                    agent_up.up,
-                    toolang_root=run_root,
-                    agent_name=agent_name,
-                    host=host,
-                    endpoint_host=endpoint_host,
-                    port=effective_port,
-                    sandbox=sandbox,
-                    models=models,
-                    dev=dev,
+                    agent_up.start_runtime,
+                    launch.startup,
+                    environ=launch.environ,
                     sandbox_child=sandbox_child,
-                    feature_names=normalized_features,
-                    log_spec=effective_log_spec,
-                    environ=environ,
                     progress=None,
                 )
             )
@@ -484,6 +471,60 @@ def _active_run_error(status: agents.AgentStatus) -> str:
     if detail:
         return f"{message}: {detail}"
     return message
+
+
+def _resolve_runtime_startup(
+    ctx: typer.Context,
+    target: agents.MaterializedRunTarget,
+    *,
+    sandbox: str | None,
+    models: list[str] | None,
+    features: list[str] | None,
+    port: int | None,
+    host: str,
+    endpoint_host: str | None,
+    dev: Path | None,
+    background: bool,
+    progress: CliProgress | None,
+) -> _RuntimeStartup:
+    run_root = target.toolang_root
+    agent_name = target.agent_name
+    if target.kind == "resident" and not agents.agent_home(run_root, agent_name).is_dir():
+        raise click.ClickException(f"Agent {agent_name} not found")
+    existing = agents.get_agent_status(run_root, agent_name, ui_base_url=_ui_base_url())
+    if existing is not None and existing.status in {"running", "preparing", "starting"}:
+        raise click.ClickException(_active_run_error(existing))
+    environ = _runtime_environ_for_agent(ctx, agent_name, toolang_root=run_root)
+    environ["TOOLANG_ROOT"] = str(run_root)
+    log_plan = resolve_agent_logging(
+        mode="start" if background else "run",
+        environ=environ,
+        agent_log_path=agents.agent_runtime_log_path(run_root, agent_name),
+    )
+    if not background:
+        configure_logging_plan(log_plan)
+    startup = _wrap_user_error(
+        agent_up.resolve_startup,
+        toolang_root=run_root,
+        agent_name=agent_name,
+        host=host,
+        endpoint_host=endpoint_host,
+        port=port,
+        sandbox=sandbox,
+        models=models,
+        dev=dev,
+        feature_names=features,
+        log_spec=log_plan.spec,
+        temporary_port=target.kind == "visiting" and port is None,
+        environ=log_plan.environ,
+    )
+    _wrap_user_error(
+        agent_up.prepare_agent,
+        toolang_root=run_root,
+        agent_name=agent_name,
+        progress=as_progress_sink(progress),
+    )
+    return _RuntimeStartup(target=target, startup=startup, environ=log_plan.environ, log_plan=log_plan)
 
 
 @app.command(
@@ -529,68 +570,43 @@ def start_agent(
     parsed_selector = _wrap_user_error(agents.parse_agent_selector, selector)
     if parsed_selector.form != "name":
         raise click.ClickException("start only supports local agent names; clone the remote source first")
-    agent_name = parsed_selector.name or ""
     root = _context_root(ctx)
     normalized_features = _normalize_feature_option(features)
     progress = make_cli_progress()
-    if not agents.agent_home(root, agent_name).is_dir():
-        raise click.ClickException(f"Agent {agent_name} not found")
-    existing = agents.get_agent_status(root, agent_name, ui_base_url=_ui_base_url())
-    if existing is not None and existing.status in {"running", "preparing", "starting"}:
-        raise click.ClickException(_active_run_error(existing))
-
-    environ = _runtime_environ_for_agent(ctx, agent_name)
-    environ["TOOLANG_ROOT"] = str(root)
-    if not environ.get(PY_LOG_ENV_VAR, "").strip():
-        environ[PY_LOG_ENV_VAR] = DEFAULT_AGENT_LOG_SPEC
-    startup = _wrap_user_error(
-        agent_up.resolve_startup,
-        toolang_root=root,
-        agent_name=agent_name,
-        host=host,
-        endpoint_host=endpoint_host,
-        port=port,
-        sandbox=sandbox,
-        models=models,
-        dev=dev,
-        feature_names=normalized_features,
-        log_spec=environ.get(PY_LOG_ENV_VAR),
-        environ=environ,
-    )
-    emit_progress(
-        as_progress_sink(progress),
-        id="startup.prepare",
-        phase="startup.prepare",
-        label="Prepare startup state",
-        status="running",
-        detail=agent_name,
-    )
     try:
-        durable = _wrap_user_error(scan_durable_state, root, agent_name)
-        _wrap_user_error(watch_feature.build_prepared_state, durable, progress=as_progress_sink(progress))
+        with agents.resolved_run_target(root, selector, progress=as_progress_sink(progress)) as target:
+            launch = _resolve_runtime_startup(
+                ctx,
+                target,
+                sandbox=sandbox,
+                models=models,
+                features=normalized_features,
+                port=port,
+                host=host,
+                endpoint_host=endpoint_host,
+                dev=dev,
+                background=True,
+                progress=progress,
+            )
     except KeyboardInterrupt:
         progress.interrupt()
         raise typer.Exit(130) from None
     except click.ClickException:
         progress.finish(details=False)
         raise
-    emit_progress(
-        as_progress_sink(progress),
-        id="startup.prepare",
-        phase="startup.prepare",
-        label="Prepare startup state",
-        status="ok",
-        detail=agent_name,
-    )
+    agent_name = launch.target.agent_name
+    root = launch.target.toolang_root
     progress.finish(details=False)
-    log_path = agents.agent_runtime_log_path(root, agent_name)
+    if launch.log_plan.path is None:
+        raise click.ClickException("agent log path was not resolved")
+    log_path = launch.log_plan.path
     log_path.parent.mkdir(parents=True, exist_ok=True)
     launched_at = time.time()
     command = [
         sys.executable,
         "-m",
         "toolang.cli.main",
-        *agent_up.build_run_argv(startup),
+        *agent_up.build_run_argv(launch.startup),
     ]
     with log_path.open("ab") as stream:
         process = subprocess.Popen(
@@ -598,7 +614,7 @@ def start_agent(
             stdin=subprocess.DEVNULL,
             stdout=stream,
             stderr=stream,
-            env=environ,
+            env=launch.environ,
             cwd=str(Path.cwd()),
             start_new_session=True,
             close_fds=True,
@@ -662,16 +678,6 @@ def stop_agent(
         force=force,
     )
     typer.echo(f"Stopped agent {agent_name}" if stopped else f"Agent {agent_name} not running")
-
-
-def _configure_foreground_runtime_logging(environ: dict[str, str]) -> str:
-    runtime_log_spec = environ.get(PY_LOG_ENV_VAR, "").strip()
-    if runtime_log_spec:
-        configure_logging(spec=runtime_log_spec, environ=environ)
-        return runtime_log_spec
-    environ[PY_LOG_ENV_VAR] = DEFAULT_AGENT_LOG_SPEC
-    configure_logging(spec=DEFAULT_AGENT_LOG_SPEC, environ=environ)
-    return DEFAULT_AGENT_LOG_SPEC
 
 
 def _info_caps_summary(toolang_root: Path, agent_name: str) -> str:
@@ -1240,7 +1246,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         roaming_source = cli_invoke.roaming_source_path(body[0])
         if roaming_source is not None:
             try:
-                configure_logging(spec=None, environ=os.environ)
+                configure_logging(spec=None, environ={})
             except ValueError as exc:
                 typer.echo(f"toolang error: {exc}", err=True)
                 return 1
