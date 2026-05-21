@@ -1362,16 +1362,17 @@ thunk summarize(_, style?):
     assert result == 0
     assert "Usage: toolang" in captured.out
     assert "SCRIPT.too THUNK [OPTIONS] [PARAMS] [INPUT]..." in captured.out
-    assert "Arguments" in captured.out
-    assert "PARAMS" in captured.out
+    assert "Options" in captured.out
+    assert "--model" in captured.out
+    assert "--quiet" in captured.out
+    assert "Params" in captured.out
     assert "NAME=VALUE" in captured.out
+    assert "Input" in captured.out
+    assert "@FILE" in captured.out
     assert "Thunks" in captured.out
     assert "main" in captured.out
     assert "summarize" in captured.out
-    assert "@FILE" not in captured.out
-    assert "TEXT" not in captured.out
-    assert "--quiet" not in captured.out
-    assert captured.out.index("Options") < captured.out.index("Arguments") < captured.out.index("Thunks")
+    assert captured.out.index("Options") < captured.out.index("Thunks") < captured.out.index("Params") < captured.out.index("Input")
 
 
 def test_cli_roaming_thunk_help_is_dynamic(capsys, tmp_path: Path) -> None:
@@ -1402,11 +1403,12 @@ thunk summarize(_, style?, audience?):
     assert "[INPUT]..." in captured.out
     assert "--model" in captured.out
     assert "--quiet" in captured.out
-    assert "Arguments" in captured.out
+    assert "Params" in captured.out
+    assert "Input" in captured.out
     assert "Multimodal message input" in captured.out
     assert "@FILE" in captured.out
     assert "Thunks" not in captured.out
-    assert captured.out.index("Options") < captured.out.index("Arguments")
+    assert captured.out.index("Options") < captured.out.index("Params") < captured.out.index("Input")
 
 
 def test_cli_roaming_invoke_passes_default_thunk_params_and_parts(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -1458,14 +1460,14 @@ thunk(_, tone?, retries?: number, dry_run?: boolean):
     result = cli.main(
         [
             str(program_path),
+            "--model",
+            "gpt-5",
             "main",
             "rewrite this",
             f"@{attachment}",
             "tone=concise",
             "retries=3",
             "dry_run=true",
-            "--model",
-            "gpt-5",
             "--model",
             "o3",
         ]
