@@ -98,7 +98,15 @@ class _RoamingInvokeHelpGroup(TyperGroup):
         formatter.write_usage(ctx.command_path, self.usage_tail)
 
     def get_params(self, ctx: click.Context) -> list[click.Parameter]:
-        return [*_help_arguments(show_thunk=True, show_params=True, show_parts=True), *super().get_params(ctx)]
+        return [
+            *_help_arguments(
+                show_thunk=True,
+                show_params=True,
+                show_parts=True,
+                show_input_forms=False,
+            ),
+            *super().get_params(ctx),
+        ]
 
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         rows: list[tuple[str, str]] = []
@@ -141,6 +149,7 @@ class _RoamingThunkHelpCommand(TyperCommand):
                 show_thunk=False,
                 show_params=self.show_params,
                 show_parts=self.show_parts,
+                show_input_forms=True,
                 thunk=self.help_thunk,
             ),
             *super().get_params(ctx),
@@ -188,7 +197,7 @@ def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name:
         )
         if prepare_progress is not None:
             prepare_progress.finish(details=False)
-        if remaining and remaining[0] in HELP_FLAGS:
+        if normalized_remaining and normalized_remaining[0] in HELP_FLAGS:
             _show_roaming_help(source_label, program, thunk_name=None, prog_name=prog_name)
             return 0
         if not remaining:
@@ -555,15 +564,7 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
     )
 
     @app.callback()
-    def _callback(
-        quiet: bool = typer.Option(
-            False,
-            "--quiet",
-            "-q",
-            help="Suppress progress messages.",
-        ),
-    ) -> None:
-        del quiet
+    def _callback() -> None:
         return None
 
     for thunk in program.thunks:
@@ -641,6 +642,7 @@ def _help_arguments(
     show_thunk: bool,
     show_params: bool,
     show_parts: bool,
+    show_input_forms: bool,
     thunk: Thunk | None = None,
 ) -> list[click.Parameter]:
     args: list[click.Parameter] = []
@@ -685,64 +687,67 @@ def _help_arguments(
                     )
                 )
     if show_parts:
-        args.extend(
-            [
-                _HelpOnlyArgument(
-                    param_decls=["input"],
-                    metavar="INPUT",
-                    required=False,
-                    default=None,
-                    expose_value=False,
-                    help="Multimodal message input. Repeat to assemble one message.",
-                    rich_help_panel="Arguments",
-                ),
-                _HelpOnlyArgument(
-                    param_decls=["part_text"],
-                    metavar="TEXT",
-                    required=False,
-                    default=None,
-                    expose_value=False,
-                    help="Plain text. Use @@TEXT for literal text starting with @.",
-                    rich_help_panel="Arguments",
-                ),
-                _HelpOnlyArgument(
-                    param_decls=["part_text_file"],
-                    metavar="@FILE.md",
-                    required=False,
-                    default=None,
-                    expose_value=False,
-                    help="Text loaded from a .md file. Also supports .txt.",
-                    rich_help_panel="Arguments",
-                ),
-                _HelpOnlyArgument(
-                    param_decls=["part_image"],
-                    metavar="@FILE.png",
-                    required=False,
-                    default=None,
-                    expose_value=False,
-                    help="Image loaded from a .png file. Also supports .jpg, .jpeg, .gif, .webp, .bmp, and .svg.",
-                    rich_help_panel="Arguments",
-                ),
-                _HelpOnlyArgument(
-                    param_decls=["part_audio"],
-                    metavar="@FILE.mp3",
-                    required=False,
-                    default=None,
-                    expose_value=False,
-                    help="Audio loaded from a .mp3 file. Also supports .wav, .m4a, .aac, .ogg, and .flac.",
-                    rich_help_panel="Arguments",
-                ),
-                _HelpOnlyArgument(
-                    param_decls=["part_file"],
-                    metavar="@FILE",
-                    required=False,
-                    default=None,
-                    expose_value=False,
-                    help="Generic file loaded from any other file type.",
-                    rich_help_panel="Arguments",
-                ),
-            ]
+        args.append(
+            _HelpOnlyArgument(
+                param_decls=["input"],
+                metavar="INPUT",
+                required=False,
+                default=None,
+                expose_value=False,
+                help="Multimodal message input. Repeat to assemble one message.",
+                rich_help_panel="Arguments",
+            )
         )
+        if show_input_forms:
+            args.extend(
+                [
+                    _HelpOnlyArgument(
+                        param_decls=["part_text"],
+                        metavar="TEXT",
+                        required=False,
+                        default=None,
+                        expose_value=False,
+                        help="Plain text. Use @@TEXT for literal text starting with @.",
+                        rich_help_panel="Arguments",
+                    ),
+                    _HelpOnlyArgument(
+                        param_decls=["part_text_file"],
+                        metavar="@FILE.md",
+                        required=False,
+                        default=None,
+                        expose_value=False,
+                        help="Text loaded from a .md file. Also supports .txt.",
+                        rich_help_panel="Arguments",
+                    ),
+                    _HelpOnlyArgument(
+                        param_decls=["part_image"],
+                        metavar="@FILE.png",
+                        required=False,
+                        default=None,
+                        expose_value=False,
+                        help="Image loaded from a .png file. Also supports .jpg, .jpeg, .gif, .webp, .bmp, and .svg.",
+                        rich_help_panel="Arguments",
+                    ),
+                    _HelpOnlyArgument(
+                        param_decls=["part_audio"],
+                        metavar="@FILE.mp3",
+                        required=False,
+                        default=None,
+                        expose_value=False,
+                        help="Audio loaded from a .mp3 file. Also supports .wav, .m4a, .aac, .ogg, and .flac.",
+                        rich_help_panel="Arguments",
+                    ),
+                    _HelpOnlyArgument(
+                        param_decls=["part_file"],
+                        metavar="@FILE",
+                        required=False,
+                        default=None,
+                        expose_value=False,
+                        help="Generic file loaded from any other file type.",
+                        rich_help_panel="Arguments",
+                    ),
+                ]
+            )
     return args
 
 
@@ -786,17 +791,17 @@ def _rich_format_roaming_help(
             if panel_name == "Arguments":
                 argument_examples.append(param)
 
-    _print_argument_examples_panel(
-        name="Arguments",
-        params=argument_examples,
+    rich_utils._print_options_panel(
+        name=rich_utils.OPTIONS_PANEL_TITLE,
+        params=options,
         ctx=ctx,
         markup_mode=markup_mode,
         console=console,
     )
 
-    rich_utils._print_options_panel(
-        name=rich_utils.OPTIONS_PANEL_TITLE,
-        params=options,
+    _print_argument_examples_panel(
+        name="Arguments",
+        params=argument_examples,
         ctx=ctx,
         markup_mode=markup_mode,
         console=console,

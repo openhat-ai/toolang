@@ -1368,7 +1368,10 @@ thunk summarize(_, style?):
     assert "Thunks" in captured.out
     assert "main" in captured.out
     assert "summarize" in captured.out
-    assert captured.out.index("Arguments") < captured.out.index("Options") < captured.out.index("Thunks")
+    assert "@FILE" not in captured.out
+    assert "TEXT" not in captured.out
+    assert "--quiet" not in captured.out
+    assert captured.out.index("Options") < captured.out.index("Arguments") < captured.out.index("Thunks")
 
 
 def test_cli_roaming_thunk_help_is_dynamic(capsys, tmp_path: Path) -> None:
@@ -1397,8 +1400,13 @@ thunk summarize(_, style?, audience?):
     assert "style=TEXT" in captured.out
     assert "audience=TEXT" in captured.out
     assert "[INPUT]..." in captured.out
+    assert "--model" in captured.out
+    assert "--quiet" in captured.out
     assert "Arguments" in captured.out
     assert "Multimodal message input" in captured.out
+    assert "@FILE" in captured.out
+    assert "Thunks" not in captured.out
+    assert captured.out.index("Options") < captured.out.index("Arguments")
 
 
 def test_cli_roaming_invoke_passes_default_thunk_params_and_parts(tmp_path: Path, monkeypatch, capsys) -> None:
