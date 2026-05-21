@@ -13,6 +13,7 @@ from toolang.models.discovery import (
     default_provider_base_url,
     missing_provider_env_vars,
     model_infos,
+    required_provider_env_vars,
 )
 
 DEFAULT_MODEL_SELECTOR = "gpt-5"
@@ -429,16 +430,30 @@ def _resolve_one(
     raw_selector, explicit_provider = _split_provider_route(selector)
     if explicit_provider is not None:
         provider = _require_provider(providers, explicit_provider)
+        _require_provider_configured(provider, environ=environ)
         target = _resolve_provider_selector(raw_selector, provider=provider, environ=environ)
         if target is None:
             raise ToolangError(f"model selector is not supported by {explicit_provider}: {raw_selector}")
         return target
     matches: list[ModelTarget] = []
+    skipped: list[tuple[str, tuple[str, ...]]] = []
+    checked_models = False
     for provider in providers.values():
+        missing = _missing_target_env_vars(provider, route=None, environ=environ)
+        if missing:
+            skipped.append((provider.name, missing))
+            continue
         target = _resolve_provider_selector(raw_selector, provider=provider, environ=environ)
         if target is not None:
             matches.append(target)
+        elif model_infos(provider, environ=environ):
+            checked_models = True
     if not matches:
+        if skipped and not checked_models:
+            raise ToolangError(
+                f"model selector could not be resolved with the configured providers: {selector}; "
+                f"skipped unconfigured providers: {_format_missing_provider_env(skipped)}"
+            )
         raise ToolangError(f"model selector could not be resolved: {selector}")
     if len(matches) > 1:
         provider_names = ", ".join(sorted(item.provider for item in matches))
@@ -499,6 +514,7 @@ def _resolve_route(
     if route is None:
         raise ToolangError(f"model route not found: {name}")
     provider = _require_provider(providers, route.provider)
+    _require_provider_configured(provider, route=route, environ=environ)
     info = _find_model_info_by_ref(provider, route.ref, environ=environ)
     if info is not None:
         return _target_from_info(provider, info, environ=environ, route=route)
@@ -524,6 +540,7 @@ def _target_from_info(
     environ: Mapping[str, str],
     route: ModelRoute | None = None,
 ) -> ModelTarget:
+    _require_provider_configured(provider, route=route, environ=environ)
     api_key_env = route.api_key_env if route is not None and route.api_key_env is not None else default_provider_api_key_env(provider)
     api_key = environ.get(api_key_env) if api_key_env else None
     return ModelTarget(
@@ -552,6 +569,7 @@ def _target_from_route(
         raise ToolangError(
             f"model route {route.name!r} must declare adapter when ref {route.ref!r} is not exposed by provider {provider.name!r}"
         )
+    _require_provider_configured(provider, route=route, environ=environ)
     api_key_env = route.api_key_env if route.api_key_env is not None else default_provider_api_key_env(provider)
     api_key = environ.get(api_key_env) if api_key_env else None
     model_name = route.model or _model_name_from_ref(route.ref)
@@ -575,3 +593,60 @@ def _model_name_from_ref(ref: str) -> str:
     if sep:
         return tail.strip() or head.strip()
     return ref.strip()
+
+
+def _require_provider_configured(
+    provider: ModelProvider,
+    *,
+    route: ModelRoute | None = None,
+    environ: Mapping[str, str],
+) -> None:
+    missing = _missing_target_env_vars(provider, route=route, environ=environ)
+    if not missing:
+        return
+    joined = ", ".join(missing)
+    if route is not None:
+        raise ToolangError(
+            f"model route {route.name!r} for provider {provider.name!r} is missing required "
+            f"environment {'variable' if len(missing) == 1 else 'variables'}: {joined}; "
+            f"set {joined} or update model_routes.{route.name}.api_key_env"
+        )
+    raise ToolangError(
+        f"model provider {provider.name!r} is missing required environment "
+        f"{'variable' if len(missing) == 1 else 'variables'}: {joined}; "
+        f"set {joined} or choose another configured provider with --model"
+    )
+
+
+def _missing_target_env_vars(
+    provider: ModelProvider,
+    *,
+    route: ModelRoute | None,
+    environ: Mapping[str, str],
+) -> tuple[str, ...]:
+    required = list(required_provider_env_vars(provider))
+    default_api_key_env = default_provider_api_key_env(provider)
+    if route is not None and route.api_key_env is not None:
+        required = [
+            route.api_key_env if name == default_api_key_env else name
+            for name in required
+        ]
+        if default_api_key_env is None or route.api_key_env not in required:
+            required.append(route.api_key_env)
+    seen: set[str] = set()
+    missing: list[str] = []
+    for name in required:
+        env_name = name.strip()
+        if not env_name or env_name in seen:
+            continue
+        seen.add(env_name)
+        if not str(environ.get(env_name, "")).strip():
+            missing.append(env_name)
+    return tuple(missing)
+
+
+def _format_missing_provider_env(items: Sequence[tuple[str, tuple[str, ...]]]) -> str:
+    return ", ".join(
+        f"{provider} ({', '.join(missing)})"
+        for provider, missing in items
+    )

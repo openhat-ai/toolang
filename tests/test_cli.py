@@ -2919,7 +2919,7 @@ def test_cli_start_includes_model_selectors_in_background_command(tmp_path: Path
             "--model",
             "o3",
         ],
-        env={},
+        env={"OPENAI_API_KEY": "secret"},
     )
 
     assert result.exit_code == 0
@@ -2928,6 +2928,33 @@ def test_cli_start_includes_model_selectors_in_background_command(tmp_path: Path
     assert command[first_flag + 1] == "gpt-5"
     second_flag = command.index("--model", first_flag + 1)
     assert command[second_flag + 1] == "o3"
+
+
+def test_cli_start_rejects_unconfigured_model_selector(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    (toolang_root / "config.toml").write_text(
+        '[model_routes.gateway]\n'
+        'ref = "openai/gpt-5"\n'
+        'provider = "openai"\n'
+        'adapter = "responses"\n'
+        'api_key_env = "STARTUP_MISSING_API_KEY"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cli.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail("startup should exit before launching"),
+    )
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(toolang_root), "start", "alice", "--model", "gateway"],
+        env={},
+    )
+
+    assert result.exit_code == 1
+    assert "STARTUP_MISSING_API_KEY" in result.stderr
 
 
 def test_cli_start_preserves_host_endpoint_host_and_sandbox_in_background_command(

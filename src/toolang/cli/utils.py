@@ -20,6 +20,7 @@ from typer import rich_utils as typer_rich_utils
 from typer.core import TyperArgument, TyperCommand, TyperGroup
 
 from .. import agents, templates
+from ..base.error import ToolangError
 from ..config.env import load_runtime_environ
 from ..config.web import resolve_ui_base_url
 from ..execution.db import ExecutionStore, execution_db_path
@@ -245,7 +246,7 @@ def _required_runtime_agent(ctx: typer.Context, agent: str | None) -> str:
 def _wrap_user_error(function, *args, **kwargs):
     try:
         return function(*args, **kwargs)
-    except (FileExistsError, FileNotFoundError, ValueError) as exc:
+    except (FileExistsError, FileNotFoundError, ToolangError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
 

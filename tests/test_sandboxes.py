@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
+
 from toolang.base.protocols.sandbox import SandboxPlugin
 from toolang.base.types.sandbox import SandboxSelector, SandboxStartRequest
 from toolang.config.plugins import load_sandbox_binding
@@ -192,3 +194,23 @@ image = "python:3.13-slim"
         "image": "python:3.13-slim",
         "token": "secret",
     }
+
+
+def test_load_sandbox_binding_missing_env_error_names_config_key(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "config.toml").write_text(
+        """
+[sandbox]
+driver = "docker"
+
+[sandbox.config]
+token_env = "SANDBOX_TOKEN"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    (root / "agents" / "alice").mkdir(parents=True, exist_ok=True)
+
+    with pytest.raises(ValueError, match="sandbox.config.token_env.*SANDBOX_TOKEN"):
+        load_sandbox_binding(root, "alice", environ={})
