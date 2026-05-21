@@ -583,7 +583,7 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
         model: list[str] | None = typer.Option(
             None,
             "--model",
-            help="Allow a model selector for this activation. Repeat to allow multiple; the first becomes default.",
+            help="Model selector. Repeat to allow multiple.",
         ),
         quiet: bool = typer.Option(
             False,
@@ -620,7 +620,7 @@ def _make_roaming_help_command() -> Callable[..., None]:
         model: list[str] | None = typer.Option(
             None,
             "--model",
-            help="Allow a model selector for this activation. Repeat to allow multiple; the first becomes default.",
+            help="Model selector. Repeat to allow multiple.",
         ),
         quiet: bool = typer.Option(
             False,
