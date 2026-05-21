@@ -568,7 +568,7 @@ def _show_roaming_help(
     try:
         command.main(
             args=args,
-            prog_name=f"{prog_name} SCRIPT.too",
+            prog_name=f"{prog_name} SCRIPT",
             standalone_mode=False,
         )
     except click.exceptions.Exit:
