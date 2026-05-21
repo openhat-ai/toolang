@@ -81,6 +81,10 @@ class _HelpOnlyArgument(TyperArgument):
         return None, args
 
 
+class _MissingInvokeInput(click.ClickException):
+    pass
+
+
 class _RoamingInvokeHelpGroup(TyperGroup):
     usage_tail = "THUNK [OPTIONS] [PARAMS] [INPUT]..."
 
@@ -210,7 +214,11 @@ def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name:
         if any(token in HELP_FLAGS for token in remainder):
             _show_roaming_help(source_label, program, thunk_name=_thunk_name(thunk), prog_name=prog_name)
             return 0
-        request = _parse_roaming_invoke_request(thunk, remainder, leading_models=leading_models)
+        try:
+            request = _parse_roaming_invoke_request(thunk, remainder, leading_models=leading_models)
+        except _MissingInvokeInput:
+            _show_roaming_help(source_label, program, thunk_name=_thunk_name(thunk), prog_name=prog_name)
+            return 0
         runtime_environ = load_runtime_environ(toolang_root, agent_name, base_environ=os.environ)
         script_progress = _script_progress_sink(thunk_name=request.thunk_name, quiet=quiet or request.quiet)
         outcome = agent_up.invoke(
@@ -367,7 +375,7 @@ def _parse_roaming_invoke_request(
     thunk_name = _thunk_name(thunk)
     accepts_message = thunk.input is not None
     if accepts_message and not parts:
-        raise click.ClickException(f"thunk {thunk_name!r} requires at least one INPUT")
+        raise _MissingInvokeInput(f"thunk {thunk_name!r} requires at least one INPUT")
     if parts and not accepts_message:
         raise click.ClickException(f"thunk {thunk_name!r} does not accept INPUT")
     input_text, invoke_parts = _render_roaming_input(parts) if parts else (None, [])
@@ -598,12 +606,18 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
     for thunk in program.thunks:
         app.command(
             _thunk_name(thunk),
-            help=f"Invoke a thunk from a Toolang script.\n\nScript: {source_label}\nThunk:  {_thunk_name(thunk)}",
+            help=_roaming_thunk_help_text(source_label, thunk),
             short_help=_thunk_summary(thunk),
             cls=_make_roaming_thunk_help_command_class(thunk),
             rich_help_panel="Thunks",
         )(_make_roaming_help_command())
     return app
+
+
+def _roaming_thunk_help_text(source_label: str, thunk: Thunk) -> str:
+    summary = _thunk_summary(thunk)
+    intro = "Invoke a thunk from a Toolang script." if summary == "-" else summary
+    return f"{intro}\n\nScript: {source_label}\nThunk:  {_thunk_name(thunk)}"
 
 
 def _make_roaming_thunk_help_command_class(thunk: Thunk) -> type[_RoamingThunkHelpCommand]:
