@@ -13,11 +13,13 @@ from typer.testing import CliRunner
 
 from toolang import agents
 from toolang import caps
+from toolang.base.types.message import Message
 from toolang.base.types.model import ModelInfo
 import toolang.cli.main as cli
 from toolang.cli.progress import CliProgress
 from toolang.config.log import DEFAULT_AGENT_LOG_SPEC
 from toolang.config.log_spec import PY_LOG_ENV_VAR
+from toolang.execution.events import RunStart
 from toolang.progress import ProgressEvent
 from toolang import work
 from toolang.execution.db import ExecutionStore, execution_db_path
@@ -1476,6 +1478,270 @@ thunk(_, tone?, retries?: number, dry_run?: boolean):
             {"type": "image", "path": str(attachment.resolve())},
         ],
     }
+
+
+def test_cli_roaming_invoke_quiet_after_thunk_suppresses_progress_output(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+thunk:
+  Reply directly.
+""".strip(),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_invoke(
+        *,
+        toolang_root: Path,
+        agent_name: str,
+        thunk_name: str | None,
+        input_text: str | None,
+        models: tuple[str, ...],
+        metadata: dict[str, object] | None,
+        environ: dict[str, str],
+        response,
+        log_spec: str | None = None,
+        prepared_state=None,
+    ):
+        del toolang_root, agent_name, thunk_name, input_text, models, metadata, environ, log_spec, prepared_state
+        captured["response"] = response
+
+        class _Outcome:
+            run_id = "run_test"
+            status = "finished"
+            output_text = "done"
+            error = None
+            log_path = None
+
+        return _Outcome()
+
+    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+    monkeypatch.setattr(cli.cli_invoke.sys.stderr, "isatty", lambda: True)
+
+    result = cli.main([str(program_path), "main", "--quiet", "hello"])
+    output = capsys.readouterr()
+
+    assert result == 0
+    assert output.out.strip() == "done"
+    assert output.err == ""
+    assert captured["response"] is not None
+
+
+def test_cli_roaming_invoke_uses_progress_sink_for_tty_stderr(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+thunk:
+  Reply directly.
+""".strip(),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_invoke(
+        *,
+        toolang_root: Path,
+        agent_name: str,
+        thunk_name: str | None,
+        input_text: str | None,
+        models: tuple[str, ...],
+        metadata: dict[str, object] | None,
+        environ: dict[str, str],
+        response,
+        log_spec: str | None = None,
+        prepared_state=None,
+    ):
+        del toolang_root, agent_name, thunk_name, input_text, models, metadata, environ, log_spec, prepared_state
+        captured["response"] = response
+
+        class _Outcome:
+            run_id = "run_test"
+            status = "finished"
+            output_text = "done"
+            error = None
+            log_path = None
+
+        return _Outcome()
+
+    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+    monkeypatch.setattr(cli.cli_invoke.sys.stderr, "isatty", lambda: True)
+
+    result = cli.main([str(program_path), "main", "hello"])
+    output = capsys.readouterr()
+
+    assert result == 0
+    assert output.out.strip() == "done"
+    assert captured["response"] is not None
+
+
+def test_cli_roaming_invoke_passes_prepare_progress_for_tty_stderr(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+thunk:
+  Reply directly.
+""".strip(),
+    )
+    captured: dict[str, object] = {}
+    real_prepare_agent = cli.cli_invoke.agent_up.prepare_agent
+
+    def fake_prepare_agent(*, toolang_root: Path, agent_name: str, progress=None):
+        captured["prepare_progress"] = progress
+        return real_prepare_agent(
+            toolang_root=toolang_root,
+            agent_name=agent_name,
+            progress=progress,
+        )
+
+    def fake_invoke(
+        *,
+        toolang_root: Path,
+        agent_name: str,
+        thunk_name: str | None,
+        input_text: str | None,
+        models: tuple[str, ...],
+        metadata: dict[str, object] | None,
+        environ: dict[str, str],
+        response,
+        log_spec: str | None = None,
+        prepared_state=None,
+    ):
+        del toolang_root, agent_name, thunk_name, input_text, models, metadata, environ, response, log_spec, prepared_state
+
+        class _Outcome:
+            run_id = "run_test"
+            status = "finished"
+            output_text = "done"
+            error = None
+            log_path = None
+
+        return _Outcome()
+
+    monkeypatch.setattr(cli.cli_invoke.agent_up, "prepare_agent", fake_prepare_agent)
+    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+    monkeypatch.setattr(cli.cli_invoke.sys.stderr, "isatty", lambda: True)
+
+    result = cli.main([str(program_path), "main", "hello"])
+    output = capsys.readouterr()
+
+    assert result == 0
+    assert output.out.strip() == "done"
+    assert captured["prepare_progress"] is not None
+
+
+def test_cli_roaming_invoke_suppresses_prepare_progress_when_quiet(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+thunk:
+  Reply directly.
+""".strip(),
+    )
+    captured: dict[str, object] = {}
+    real_prepare_agent = cli.cli_invoke.agent_up.prepare_agent
+
+    def fake_prepare_agent(*, toolang_root: Path, agent_name: str, progress=None):
+        captured["prepare_progress"] = progress
+        return real_prepare_agent(
+            toolang_root=toolang_root,
+            agent_name=agent_name,
+            progress=progress,
+        )
+
+    def fake_invoke(
+        *,
+        toolang_root: Path,
+        agent_name: str,
+        thunk_name: str | None,
+        input_text: str | None,
+        models: tuple[str, ...],
+        metadata: dict[str, object] | None,
+        environ: dict[str, str],
+        response,
+        log_spec: str | None = None,
+        prepared_state=None,
+    ):
+        del toolang_root, agent_name, thunk_name, input_text, models, metadata, environ, response, log_spec, prepared_state
+
+        class _Outcome:
+            run_id = "run_test"
+            status = "finished"
+            output_text = "done"
+            error = None
+            log_path = None
+
+        return _Outcome()
+
+    monkeypatch.setattr(cli.cli_invoke.agent_up, "prepare_agent", fake_prepare_agent)
+    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+    monkeypatch.setattr(cli.cli_invoke.sys.stderr, "isatty", lambda: True)
+
+    result = cli.main([str(program_path), "main", "hello", "-q"])
+    output = capsys.readouterr()
+
+    assert result == 0
+    assert output.out.strip() == "done"
+    assert output.err == ""
+    assert captured["prepare_progress"] is None
+
+
+def test_cli_roaming_invoke_handles_keyboard_interrupt_without_traceback(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+thunk:
+  Reply directly.
+""".strip(),
+    )
+
+    def fake_invoke(
+        *,
+        toolang_root: Path,
+        agent_name: str,
+        thunk_name: str | None,
+        input_text: str | None,
+        models: tuple[str, ...],
+        metadata: dict[str, object] | None,
+        environ: dict[str, str],
+        response,
+        log_spec: str | None = None,
+        prepared_state=None,
+    ):
+        del toolang_root, agent_name, thunk_name, input_text, models, metadata, environ, log_spec, prepared_state
+        response.on_event(
+            RunStart(
+                run_id="run_test",
+                origin="script",
+                thread_id="script_test",
+                input=Message.user("hello"),
+                created_at="2026-05-21T00:00:00Z",
+                started_at="2026-05-21T00:00:00Z",
+            )
+        )
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+    monkeypatch.setenv(PY_LOG_ENV_VAR, "toolang.run=debug")
+
+    result = cli.main([str(program_path), "main", "hello"])
+    output = capsys.readouterr()
+
+    assert result == 130
+    assert output.err.splitlines() == [
+        "toolang interrupted",
+        "Run: run_test",
+        f"Log: {agents.agent_script_run_log_path(program_path.parent / '.toolang', 'demo', thunk_name='main', run_id='run_test')}",
+    ]
+    assert "Traceback" not in output.err
 
 
 def test_cli_roaming_invoke_requires_explicit_thunk_name(tmp_path: Path, capsys) -> None:

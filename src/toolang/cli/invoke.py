@@ -11,6 +11,8 @@ from typing import Literal
 
 import click
 from rich.console import Console
+from rich.live import Live
+from rich.text import Text
 import typer
 from typer import rich_utils
 from typer.core import HAS_RICH
@@ -21,11 +23,13 @@ from .. import agents
 from .. import up as agent_up
 from ..base.error import ToolangError
 from ..config.env import load_runtime_environ
+from ..config.log_spec import PY_LOG_ENV_VAR
 from ..execution.events import RunEnd, RunStart, StepEnd, StepStart, TraceEvent
 from ..execution.runner import RunOutcome
 from ..program import ParamDecl, Thunk
 from ..state.prepared import PreparedState
 from ..state.program import LiveProgram, load_live_program
+from .progress import CliProgress, as_progress_sink, make_cli_progress
 
 MarkupMode = Literal["markdown", "rich"]
 HELP_FLAGS = {"--help", "-h"}
@@ -168,25 +172,37 @@ def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name:
         typer.echo(f"toolang error: agent program not found: {body[0]}", err=True)
         return 1
     source_label = body[0]
+    remaining = body[1:]
+    quiet, normalized_remaining = _consume_roaming_control_options(remaining)
+    prepare_progress = _prepare_progress(quiet=quiet, argv=remaining)
+    script_progress: _ScriptProgressSink | None = None
+    request: RoamingInvokeRequest | None = None
+    runtime_environ: dict[str, str] | None = None
+    toolang_root: Path | None = None
+    agent_name: str | None = None
     try:
-        toolang_root, agent_name, prepared, program = _load_roaming_live_program(source_path)
-        remaining = body[1:]
+        toolang_root, agent_name, prepared, program = _load_roaming_live_program(
+            source_path,
+            progress=as_progress_sink(prepare_progress),
+        )
+        if prepare_progress is not None:
+            prepare_progress.finish(details=False)
         if remaining and remaining[0] in HELP_FLAGS:
             _show_roaming_help(source_label, program, thunk_name=None, prog_name=prog_name)
             return 0
         if not remaining:
             _show_roaming_help(source_label, program, thunk_name=None, prog_name=prog_name)
             return 0
-        quiet, remaining = _consume_roaming_control_options(remaining)
-        if not remaining:
+        if not normalized_remaining:
             _show_roaming_help(source_label, program, thunk_name=None, prog_name=prog_name)
             return 0
-        thunk, remainder = _select_roaming_thunk(program, remaining)
+        thunk, remainder = _select_roaming_thunk(program, normalized_remaining)
         if any(token in HELP_FLAGS for token in remainder):
             _show_roaming_help(source_label, program, thunk_name=_thunk_name(thunk), prog_name=prog_name)
             return 0
         request = _parse_roaming_invoke_request(thunk, remainder)
         runtime_environ = load_runtime_environ(toolang_root, agent_name, base_environ=os.environ)
+        script_progress = _script_progress_sink(thunk_name=request.thunk_name, quiet=quiet or request.quiet)
         outcome = agent_up.invoke(
             toolang_root=toolang_root,
             agent_name=agent_name,
@@ -198,10 +214,25 @@ def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name:
                 "invoke_parts": request.invoke_parts,
             },
             environ=runtime_environ,
-            response=_script_progress_sink(thunk_name=request.thunk_name, quiet=quiet or request.quiet),
+            response=script_progress,
             prepared_state=prepared,
         )
+    except KeyboardInterrupt:
+        if script_progress is not None:
+            script_progress.interrupt()
+        if prepare_progress is not None:
+            prepare_progress.interrupt()
+        _emit_interrupt_message(
+            script_progress=script_progress,
+            toolang_root=toolang_root,
+            agent_name=agent_name,
+            thunk_name=request.thunk_name if request is not None else None,
+            environ=runtime_environ,
+        )
+        return 130
     except (FileExistsError, FileNotFoundError, ValueError, ToolangError, click.ClickException) as exc:
+        if prepare_progress is not None:
+            prepare_progress.finish(details=False)
         message = exc.message if isinstance(exc, click.ClickException) else str(exc)
         typer.echo(f"toolang error: {message}", err=True)
         return 1
@@ -230,9 +261,19 @@ def _consume_roaming_control_options(argv: list[str]) -> tuple[bool, list[str]]:
     return quiet, remaining
 
 
-def _load_roaming_live_program(source_path: Path) -> tuple[Path, str, PreparedState, LiveProgram]:
+def _prepare_progress(*, quiet: bool, argv: list[str]) -> "CliProgress | None":
+    if quiet or not sys.stderr.isatty() or any(token in HELP_FLAGS for token in argv):
+        return None
+    return make_cli_progress()
+
+
+def _load_roaming_live_program(
+    source_path: Path,
+    *,
+    progress=None,
+) -> tuple[Path, str, PreparedState, LiveProgram]:
     toolang_root, agent_name = agents.materialize_roaming_program(source_path)
-    prepared = agent_up.prepare_agent(toolang_root=toolang_root, agent_name=agent_name)
+    prepared = agent_up.prepare_agent(toolang_root=toolang_root, agent_name=agent_name, progress=progress)
     return toolang_root, agent_name, prepared, load_live_program(prepared.program)
 
 
@@ -255,6 +296,7 @@ def _parse_roaming_invoke_request(
     invoke_params: dict[str, object] = {}
     parts: list[str] = []
     models: list[str] = []
+    quiet = False
     index = 0
     while index < len(argv):
         token = argv[index]
@@ -278,6 +320,7 @@ def _parse_roaming_invoke_request(
             index += 2
             continue
         if token in {"--quiet", "-q"}:
+            quiet = True
             index += 1
             continue
         if token.startswith("--"):
@@ -309,7 +352,7 @@ def _parse_roaming_invoke_request(
         models=tuple(models),
         invoke_params=invoke_params,
         invoke_parts=invoke_parts,
-        quiet=False,
+        quiet=quiet,
     )
 
 
@@ -387,10 +430,33 @@ def _emit_invoke_outcome(outcome: RunOutcome) -> int:
     return 0
 
 
-def _script_progress_sink(*, thunk_name: str | None, quiet: bool) -> "_ScriptProgressSink | None":
-    if quiet or not sys.stderr.isatty():
-        return None
-    return _ScriptProgressSink(thunk_name=thunk_name or "main")
+def _script_progress_sink(*, thunk_name: str | None, quiet: bool) -> "_ScriptProgressSink":
+    return _ScriptProgressSink(
+        thunk_name=thunk_name or "main",
+        render=not quiet and sys.stderr.isatty(),
+    )
+
+
+def _emit_interrupt_message(
+    *,
+    script_progress: "_ScriptProgressSink | None",
+    toolang_root: Path | None,
+    agent_name: str | None,
+    thunk_name: str | None,
+    environ: dict[str, str] | None,
+) -> None:
+    typer.echo("toolang interrupted", err=True)
+    run_id = script_progress.run_id if script_progress is not None else None
+    if run_id:
+        typer.echo(f"Run: {run_id}", err=True)
+    if not run_id or toolang_root is None or agent_name is None:
+        return
+    if environ is None or not environ.get(PY_LOG_ENV_VAR, "").strip():
+        return
+    typer.echo(
+        f"Log: {agents.agent_script_run_log_path(toolang_root, agent_name, thunk_name=thunk_name, run_id=run_id)}",
+        err=True,
+    )
 
 
 class _ScriptProgressSink:
@@ -398,32 +464,60 @@ class _ScriptProgressSink:
 
     wants_stream = False
 
-    def __init__(self, *, thunk_name: str) -> None:
+    def __init__(self, *, thunk_name: str, render: bool) -> None:
         self._thunk_name = thunk_name
+        self._render_enabled = render
         self._run_id: str | None = None
         self._steps: dict[int, tuple[str, str]] = {}
+        self._console = Console(file=sys.stderr, force_terminal=True, highlight=False)
+        self._live: Live | None = None
+
+    @property
+    def run_id(self) -> str | None:
+        return self._run_id
 
     def on_event(self, event: TraceEvent) -> None:
         if isinstance(event, RunStart):
             self._run_id = event.run_id
-            self._print(f"Running {self._thunk_name}: {event.run_id}")
+            self._render(f"Running {self._thunk_name}: {event.run_id}")
             return
         if isinstance(event, StepStart):
             self._steps[event.step_index] = (event.kind, "running")
-            self._print(f"{self._label(event.step_index, event.kind)} running")
+            self._render(f"{self._label(event.step_index, event.kind)} running")
             return
         if isinstance(event, StepEnd):
             self._steps[event.step_index] = (event.kind, event.status)
-            self._print(f"{self._label(event.step_index, event.kind)} {event.status}")
+            self._render(f"{self._label(event.step_index, event.kind)} {event.status}")
             return
         if isinstance(event, RunEnd):
-            self._print(f"Run {event.status}: {event.run_id}")
+            self.finish()
+
+    def finish(self) -> None:
+        if self._live is None:
+            return
+        self._live.stop()
+        self._live = None
+
+    def interrupt(self) -> None:
+        self.finish()
 
     def _label(self, step_index: int, kind: str) -> str:
         return f"{self._thunk_name} step {step_index} {kind}"
 
-    def _print(self, message: str) -> None:
-        print(message, file=sys.stderr, flush=True)
+    def _render(self, message: str) -> None:
+        if not self._render_enabled:
+            return
+        text = Text(message, style="dim")
+        if self._live is None:
+            self._live = Live(
+                text,
+                console=self._console,
+                refresh_per_second=10,
+                transient=True,
+            )
+            self._live.start(refresh=True)
+            return
+        self._live.update(text, refresh=True)
 
 
 def _show_roaming_help(

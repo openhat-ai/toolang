@@ -231,6 +231,8 @@ def test_queue_runner_drains_requests_in_order(tmp_path: Path, caplog) -> None:
             "draft follow-up",
             "refresh status",
         ]
+        assert sum(1 for item in printed if item.startswith("starting run ")) == 3
+        assert sum(1 for item in printed if item.startswith("finished run ")) == 3
         assert _index_where(
             printed,
             lambda item: (
@@ -5207,6 +5209,78 @@ def test_execute_run_pre_start_failure_does_not_emit_persist_sink_error(tmp_path
     assert "model selector could not be resolved with the configured providers: claude" in outcome.error
     assert context.store.list_runs() == []
     assert "persist sink event handling failed" not in caplog.text
+
+
+def test_script_execute_run_logs_lifecycle_without_queue_runner(tmp_path: Path, caplog) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        "agent alice\n\nthunk:\n  Reply directly.\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat",),
+    )
+
+    with (
+        caplog.at_level(logging.INFO, logger="toolang.run"),
+        _patched_runner_execution(),
+    ):
+        outcome = asyncio.run(
+            run_execute_module.execute_run(
+                context,
+                RunSubmission(
+                    request=RunRequest(group="script", origin="script", thunk="hello"),
+                    live=context.live,
+                ),
+                delay_sec=0.0,
+                sleep=asyncio.sleep,
+            )
+        )
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "toolang.run"
+    ]
+    assert outcome.status == "finished"
+    assert messages[0].startswith("starting run group=script origin=script thread_id=script_")
+    assert messages[0].endswith(" input='hello'")
+    assert messages[-1].startswith("finished run run_id=run_")
+    assert " group=script origin=script thread_id=script_" in messages[-1]
+    assert messages[-1].endswith(" status=finished")
+
+
+def test_script_strategy_cancel_does_not_wait_for_worker_thread() -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_run(_context) -> RunResult:
+        started.set()
+        release.wait(timeout=5.0)
+        return RunResult(output_text="late")
+
+    async def run_test() -> None:
+        task = asyncio.create_task(
+            run_execute_module._run_script_strategy(
+                blocking_run,
+                cast(Any, object()),
+                run_id="run_test",
+            )
+        )
+        while not started.is_set():
+            await asyncio.sleep(0.01)
+        started_at = time.monotonic()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=0.5)
+        assert time.monotonic() - started_at < 0.5
+
+    try:
+        asyncio.run(run_test())
+    finally:
+        release.set()
 
 
 def test_execution_store_records_runs_steps_and_messages(tmp_path: Path) -> None:
