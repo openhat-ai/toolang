@@ -122,7 +122,7 @@ Behavior:
 - `toolang a.too --help` lists invokable thunks
 - `toolang a.too thunk --help` prints thunk-specific dynamic usage
 - `toolang a.too` shows usage instead of invoking a default thunk
-- roaming invoke does not expose tools by default
+- roaming invoke exposes the agent's effective tools, subject to thunk tool directives
 - bare arguments become message parts
 - `NAME=VALUE` sets one thunk named param when `NAME` matches the thunk signature
 - `PART` rules:

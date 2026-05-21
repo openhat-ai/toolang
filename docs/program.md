@@ -238,23 +238,23 @@ Recommended directives are:
 
 | Directive | Meaning |
 | --- | --- |
-| `model = ...` | Declare one ordered model preference list |
-| `psyches = ...` | Select one effective psyche set |
-| `skills = ...` | Select one effective skill set |
-| `services = ...` | Select one effective service set |
-| `tools = ...` | Select one effective tool set |
+| `models = ...` | Keep only matching models from the current activation set |
+| `psyches = ...` | Keep only matching psyches from the current activation set |
+| `skills = ...` | Keep only matching skills from the current activation set |
+| `services = ...` | Keep only matching services from the current activation set |
+| `tools = ...` | Keep only matching tools from the current activation set |
 
-Capability directives use names. `model = ...` uses route-neutral model refs
+Capability directives use names. `models = ...` uses route-neutral model refs
 or shorthand selectors and must not include `@provider`.
 
 Example:
 
 ```toolang
 thunk review(input, path?: path) -> ReviewResult
-  model = gpt-5
-  psyches = rigorous
-  skills = review, patch
-  services = github
+  models = gpt-5
+  psyches += rigorous
+  skills += review, patch
+  services += github
   tools = shell, service_use
 
   Review the target and return actionable findings.
@@ -262,27 +262,34 @@ thunk review(input, path?: path) -> ReviewResult
 
 ### Scalar and Set Directives
 
-`model` is one ordered CSV list and uses only `=`. Capability directives are set-valued.
+Directives are ordered set overlays on the activation set. The activation set is
+computed before the program runs from placement defaults and CLI options.
+Program declarations and references form the program set.
 
 | Form | Meaning |
 | --- | --- |
-| `model = gpt-5, o3` | Declare one ordered model preference list |
-| `skills = review, patch` | Use one exact capability set |
-| `skills += review, patch` | Add items to the inherited set |
-| `skills -= review, patch` | Remove items from the inherited set |
+| `models = gpt-5, o3` | Keep only matching models from the current set |
+| `skills = review, patch` | Keep only matching skills from the current set |
+| `skills += review, patch` | Add program-scoped skills to the current set |
+| `skills -= review, patch` | Remove matching skills from the current set |
 
 Rules:
 
 | Rule | Meaning |
 | --- | --- |
-| no directive | inherit activation defaults |
-| `=` | replace with the declared ordered list |
+| initial current set | start from the activation set |
+| no directive | use the activation set unchanged |
+| `+=` | union the current set with named program-set items |
+| `-=` | subtract matching selectors from the current set |
+| `=` | intersect the current set with matching selectors |
 | ordered CSV | preserve declaration order |
 | no `default` keyword | `default` is treated like any other selector text |
-| `+=` | add to the inherited set for capability directives |
-| `-=` | remove from the inherited set for capability directives |
-| route-neutral only | `model = ...` must not include `@provider` |
-| capability names only | capability directives do not resolve shorthand or refs |
+| route-neutral models | `models = ...` must not include `@provider` |
+| program-scoped additions | `+=` operands must name items from the program set |
+| filter selectors | `=` and `-=` operands may be arbitrary selectors |
+
+`=` is a keep-only filter. It does not add resources that were not already in
+the current set.
 
 
 ## Prompts
@@ -372,17 +379,17 @@ Different run surfaces use thunk contracts differently.
 
 | Surface | `input` | Named params |
 | --- | --- | --- |
-| `invoke` | optional | optional |
+| `script` | optional | optional |
 | `chat` | required | forbidden |
 | `task` | required | forbidden |
 | `chore` | required | forbidden |
 
 This means:
 
-- `invoke` may call thunks with only params, only `input`, or both
+- `script` may call thunks with only params, only `input`, or both
 - `chat`, `task`, and `chore` must target thunks that declare `input`
 - `chat`, `task`, and `chore` must not target thunks with extra named params
-- `invoke` CLI usage should be derived from the selected thunk signature
+- script CLI usage should be derived from the selected thunk signature
 
 Startup should validate these surface-specific thunk requirements.
 
@@ -392,27 +399,27 @@ Recommended default thunk resolution is:
 
 | Surface | Default thunk |
 | --- | --- |
-| `invoke` | explicit thunk, else `main` |
+| `script` | explicit thunk, else `main` |
 | `chat` | `chat`, else `main` |
 | `task` | `task`, else `main` |
 | `chore` | `chore`, else `main` |
 
 
-## Invoke Context
+## Script Context
 
-`invoke` runs with one execution context as well as one thunk input.
+`script` runs with one execution context as well as one thunk input.
 
 Current execution-context terms are:
 
 | Term | Meaning |
 | --- | --- |
-| `cwd` | Current working directory for the invoke call |
+| `cwd` | Current working directory for the script call |
 | `home` | Agent home used by the runtime |
 | `root` | Toolang root used by the runtime |
 
 `cwd` belongs to execution context, not to thunk params.
 
-For `invoke`, the default `cwd` is the caller's current directory.
+For `script`, the default `cwd` is the caller's current directory.
 
 
 ## Instruction Layers
@@ -445,7 +452,7 @@ This gives these practical roles:
 | `chat` | current `user message` | conversation mode |
 | `task` | current `task body` | task executor mode |
 | `chore` | current `chore body` | chore executor mode |
-| `invoke` | `input` and named params | operation contract |
+| `script` | `input` and named params | operation contract |
 
 
 ## Examples
@@ -457,7 +464,7 @@ thunk chat(input)
   Help the user in an ongoing conversation.
 ```
 
-One structured invoke thunk:
+One structured script thunk:
 
 ```toolang
 struct DeployResult
@@ -466,7 +473,7 @@ struct DeployResult
   notes: string[]
 
 thunk deploy(env, version?, dry_run?: boolean) -> DeployResult
-  model = gpt-5
+  models = gpt-5
   tools = shell
 
   Deploy the current project.
