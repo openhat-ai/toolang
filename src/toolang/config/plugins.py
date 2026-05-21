@@ -100,6 +100,7 @@ def load_sandbox_binding(
                 _resolve_env_refs(
                     dict(cast(dict[str, object], raw_config)),
                     environ,
+                    context="sandbox.config",
                 )
             )
     if selector is None:
@@ -123,7 +124,13 @@ def _load_plugin_table(
             if not isinstance(name, str) or not isinstance(value, dict):
                 continue
             current = dict(merged.get(name, {}))
-            current.update(_resolve_env_refs(dict(cast(dict[str, object], value)), environ))
+            current.update(
+                _resolve_env_refs(
+                    dict(cast(dict[str, object], value)),
+                    environ,
+                    context=f"{section}.{name}",
+                )
+            )
             merged[name] = current
     return merged
 
@@ -144,6 +151,8 @@ def _load_toml(path: Path) -> dict[str, object]:
 def _resolve_env_refs(
     payload: dict[str, object],
     environ: Mapping[str, str],
+    *,
+    context: str,
 ) -> dict[str, object]:
     resolved = dict(payload)
     for key, value in tuple(payload.items()):
@@ -159,7 +168,10 @@ def _resolve_env_refs(
             continue
         env_value = environ.get(env_name)
         if env_value is None:
-            raise ValueError(f"missing environment variable for plugin config: {env_name}")
+            raise ValueError(
+                f"missing environment variable {env_name} for {context}.{key}; "
+                f"set {env_name} or provide {context}.{target_key} directly"
+            )
         resolved[target_key] = env_value
         resolved.pop(key, None)
     return resolved

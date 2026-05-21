@@ -204,6 +204,73 @@ def test_model_resolution_rejects_ambiguous_selector() -> None:
         resolve_model(context, selector="openai/gpt-5")
 
 
+def test_model_resolution_rejects_missing_provider_env_before_target_use() -> None:
+    provider = _FakeModelProvider(
+        name="openai",
+        models=(
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openai",
+                name="gpt-5",
+                model="gpt-5",
+                selectors=("gpt-5", "openai/gpt-5"),
+                adapter="responses",
+            ),
+        ),
+        required_env_vars=("OPENAI_API_KEY",),
+    )
+    context = SimpleNamespace(
+        model_providers={"openai": provider},
+        model_routes={},
+        default_models=(),
+        model_environ={},
+    )
+
+    with pytest.raises(ToolangError, match="OPENAI_API_KEY"):
+        resolve_model(context, selector="openai/gpt-5@openai")
+
+
+def test_model_resolution_skips_unconfigured_provider_when_configured_match_exists() -> None:
+    openai = _FakeModelProvider(
+        name="openai",
+        models=(
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openai",
+                name="gpt-5",
+                model="gpt-5",
+                selectors=("gpt-5", "openai/gpt-5"),
+                adapter="responses",
+            ),
+        ),
+        required_env_vars=("OPENAI_API_KEY",),
+    )
+    openrouter = _FakeModelProvider(
+        name="openrouter",
+        models=(
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openrouter",
+                name="gpt-5",
+                model="openai/gpt-5",
+                selectors=("gpt-5", "openai/gpt-5"),
+                adapter="responses",
+            ),
+        ),
+        required_env_vars=("OPENROUTER_API_KEY",),
+    )
+    context = SimpleNamespace(
+        model_providers={"openai": openai, "openrouter": openrouter},
+        model_routes={},
+        default_models=(),
+        model_environ={"OPENROUTER_API_KEY": "secret"},
+    )
+
+    target = resolve_model(context, selector="gpt-5")
+
+    assert target.provider == "openrouter"
+
+
 def test_model_resolution_uses_first_allowed_selector_as_default() -> None:
     provider = _FakeModelProvider(
         name="openrouter",
@@ -525,6 +592,34 @@ def test_model_route_can_override_provider_defaults(tmp_path: Path) -> None:
     assert target.base_url == "https://gateway.example.com/v1"
     assert target.api_key == "secret"
     assert target.headers == {"X-Team": "infra"}
+
+
+def test_model_route_reports_missing_route_api_key_env(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    (toolang_root / "agents" / "alice").mkdir(parents=True, exist_ok=True)
+    (toolang_root / "config.toml").write_text(
+        '[model_routes.gateway]\n'
+        'ref = "openai/gpt-5"\n'
+        'provider = "openai"\n'
+        'adapter = "responses"\n'
+        'api_key_env = "GATEWAY_API_KEY"\n',
+        encoding="utf-8",
+    )
+    provider = _FakeModelProvider(
+        name="openai",
+        models=(),
+        required_env_vars=("OPENAI_API_KEY",),
+        default_api_key_env="OPENAI_API_KEY",
+    )
+    context = SimpleNamespace(
+        model_providers={"openai": provider},
+        model_routes=load_model_routes(toolang_root, "alice"),
+        default_models=(),
+        model_environ={},
+    )
+
+    with pytest.raises(ToolangError, match="model route 'gateway'.*GATEWAY_API_KEY"):
+        resolve_model(context, selector="gateway")
 
 
 def test_ollama_provider_discovers_local_models(monkeypatch) -> None:

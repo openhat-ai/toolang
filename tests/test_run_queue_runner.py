@@ -5187,6 +5187,7 @@ def test_execute_run_pre_start_failure_does_not_emit_persist_sink_error(tmp_path
         enabled_features=("chat",),
     )
     context.config.set("models.default_selector", "claude")
+    context.model_environ = {}
 
     with caplog.at_level(logging.ERROR, logger="toolang.run"):
         outcome = asyncio.run(
@@ -5202,7 +5203,8 @@ def test_execute_run_pre_start_failure_does_not_emit_persist_sink_error(tmp_path
         )
 
     assert outcome.status == "failed"
-    assert outcome.error == "model selector could not be resolved: claude"
+    assert outcome.error is not None
+    assert "model selector could not be resolved with the configured providers: claude" in outcome.error
     assert context.store.list_runs() == []
     assert "persist sink event handling failed" not in caplog.text
 
@@ -5634,7 +5636,7 @@ def _build_context(
         model_providers=load_model_providers(),
         model_routes=load_model_routes(toolang_root, agent_name),
         default_models=load_default_models(toolang_root, agent_name),
-        model_environ={},
+        model_environ={"OPENAI_API_KEY": "secret"},
         channel_bindings=channel_bindings or {},
         channel_plugins=channel_plugins or {},
         runner=runner

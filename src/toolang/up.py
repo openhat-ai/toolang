@@ -44,6 +44,7 @@ from .config.plugins import ChannelBinding, load_channel_bindings, load_sandbox_
 from .config.web import resolve_cors_allowed_origins, resolve_ui_base_url
 from .execution.response import build_channel_response_sink
 from .execution.execute import execute_run
+from .execution.model import resolve_model
 from .execution.runner import QueueRunner, RunRequest, RunSubmission, RunOutcome
 from .execution.db import ExecutionStore, execution_db_path
 from .execution.stream import RuntimeEventBus
@@ -400,6 +401,14 @@ class StartupSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class _StartupModelSelection:
+    model_providers: Mapping[str, ModelProvider]
+    model_routes: Mapping[str, ModelRoute]
+    default_models: tuple[str, ...]
+    model_environ: Mapping[str, str]
+
+
+@dataclass(frozen=True, slots=True)
 class _LoadedTool(Tool):
     """One model-facing tool loaded from one named plugin."""
 
@@ -654,6 +663,14 @@ def resolve_startup(
         ),
     )
     dev_artifact = _resolve_dev_artifact(dev) if dev is not None else None
+    model_selectors = _normalize_model_selectors(models)
+    if model_selectors:
+        _validate_startup_model_selectors(
+            toolang_root=toolang_root,
+            agent_name=agent_name,
+            selectors=model_selectors,
+            environ=environ,
+        )
     return StartupSpec(
         toolang_root=toolang_root,
         agent_name=agent_name,
@@ -665,9 +682,26 @@ def resolve_startup(
         selector=selector,
         sandbox_config=sandbox_config,
         dev_artifact=dev_artifact,
-        model_selectors=_normalize_model_selectors(models),
+        model_selectors=model_selectors,
         log_spec=log_spec.strip() if isinstance(log_spec, str) and log_spec.strip() else None,
     )
+
+
+def _validate_startup_model_selectors(
+    *,
+    toolang_root: Path,
+    agent_name: str,
+    selectors: Sequence[str],
+    environ: Mapping[str, str],
+) -> None:
+    context = _StartupModelSelection(
+        model_providers=load_model_providers(),
+        model_routes=load_model_routes(toolang_root, agent_name),
+        default_models=load_default_models(toolang_root, agent_name),
+        model_environ=environ,
+    )
+    for selector in selectors:
+        resolve_model(context, selector=selector)
 
 
 def build_run_argv(
