@@ -715,17 +715,6 @@ def _help_arguments(
                     )
                 )
     if show_parts:
-        args.append(
-            _HelpOnlyArgument(
-                param_decls=["input"],
-                metavar="INPUT",
-                required=False,
-                default=None,
-                expose_value=False,
-                help="Multimodal message input. Repeat to assemble one message.",
-                rich_help_panel="Input",
-            )
-        )
         if show_input_forms:
             args.extend(
                 [
@@ -735,43 +724,43 @@ def _help_arguments(
                         required=False,
                         default=None,
                         expose_value=False,
-                        help="Plain text. Use @@TEXT for literal text starting with @.",
+                        help="Text part. Use @@TEXT for literal text starting with @.",
                         rich_help_panel="Input",
                     ),
                     _HelpOnlyArgument(
                         param_decls=["part_text_file"],
-                        metavar="@FILE.md",
+                        metavar="@PATH.md",
                         required=False,
                         default=None,
                         expose_value=False,
-                        help="Text loaded from a .md file. Also supports .txt.",
+                        help="Text file input. Also supports .txt.",
                         rich_help_panel="Input",
                     ),
                     _HelpOnlyArgument(
                         param_decls=["part_image"],
-                        metavar="@FILE.png",
+                        metavar="@PATH.png",
                         required=False,
                         default=None,
                         expose_value=False,
-                        help="Image loaded from a .png file. Also supports .jpg, .jpeg, .gif, .webp, .bmp, and .svg.",
+                        help="Image file input. Also supports .jpg, .jpeg, .gif, .webp, .bmp, and .svg.",
                         rich_help_panel="Input",
                     ),
                     _HelpOnlyArgument(
                         param_decls=["part_audio"],
-                        metavar="@FILE.mp3",
+                        metavar="@PATH.mp3",
                         required=False,
                         default=None,
                         expose_value=False,
-                        help="Audio loaded from a .mp3 file. Also supports .wav, .m4a, .aac, .ogg, and .flac.",
+                        help="Audio file input. Also supports .wav, .m4a, .aac, .ogg, and .flac.",
                         rich_help_panel="Input",
                     ),
                     _HelpOnlyArgument(
                         param_decls=["part_file"],
-                        metavar="@FILE",
+                        metavar="@PATH",
                         required=False,
                         default=None,
                         expose_value=False,
-                        help="Generic file loaded from any other file type.",
+                        help="Generic file input.",
                         rich_help_panel="Input",
                     ),
                 ]

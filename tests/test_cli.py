@@ -1368,7 +1368,8 @@ thunk summarize(_, style?):
     assert "Params" in captured.out
     assert "NAME=VALUE" in captured.out
     assert "Input" in captured.out
-    assert "@FILE" in captured.out
+    assert "@PATH" in captured.out
+    assert "Multimodal message input" not in captured.out
     assert "Thunks" in captured.out
     assert "main" in captured.out
     assert "summarize" in captured.out
@@ -1405,8 +1406,8 @@ thunk summarize(_, style?, audience?):
     assert "--quiet" in captured.out
     assert "Params" in captured.out
     assert "Input" in captured.out
-    assert "Multimodal message input" in captured.out
-    assert "@FILE" in captured.out
+    assert "Multimodal message input" not in captured.out
+    assert "@PATH" in captured.out
     assert "Thunks" not in captured.out
     assert captured.out.index("Options") < captured.out.index("Params") < captured.out.index("Input")
 
