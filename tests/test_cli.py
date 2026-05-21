@@ -1403,7 +1403,7 @@ thunk summarize(_, style?, audience?):
 
     assert result == 0
     assert "Usage: toolang" in captured.out
-    assert "SCRIPT summarize" in captured.out
+    assert "SCRIPT THUNK" in captured.out
     assert "Summarize the current workspace in a concise style." in captured.out
     assert "Script:" in captured.out
     assert program_path.name in captured.out
@@ -1809,7 +1809,7 @@ thunk summarize(_):
 
     assert result == 0
     assert "Usage:" in output.out
-    assert "SCRIPT summarize [OPTIONS] [INPUT]..." in output.out
+    assert "SCRIPT THUNK [OPTIONS] [INPUT]..." in output.out
     assert "Summarize the current workspace in a concise style." in output.out
     assert "Thunk:  summarize" in output.out
     assert output.err == ""
