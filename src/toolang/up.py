@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib.metadata import entry_points
 import logging
 import os
@@ -39,10 +39,17 @@ from toolang.base.types.sandbox import SandboxSelector, SandboxStartRequest, San
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.base.utils.channels import bind_delivery
 from toolang.base.utils.tools import join_tool_name
-from .config.log import DEFAULT_LOG_LEVEL, build_uvicorn_log_config
+from .config.log import (
+    DEFAULT_LOG_LEVEL,
+    build_uvicorn_log_config,
+    configure_logging_plan,
+    resolve_agent_logging,
+)
 from .config.plugins import ChannelBinding, load_channel_bindings, load_sandbox_binding, load_tool_plugin_config
+from .config.log_spec import PY_LOG_ENV_VAR
 from .config.web import resolve_cors_allowed_origins, resolve_ui_base_url
-from .execution.response import build_channel_response_sink
+from .execution.input import allocate_run_id
+from .execution.response import ResponseSink, build_channel_response_sink
 from .execution.execute import execute_run
 from .execution.model import resolve_model
 from .execution.runner import QueueRunner, RunRequest, RunSubmission, RunOutcome
@@ -54,7 +61,7 @@ from .features.inspect import create_router as create_inspect_router
 from .progress import ProgressSink
 from .state.durable import scan_durable_state
 from .state.live import LiveState, load_live_state
-from .state.prepared import PreparedEntry
+from .state.prepared import PreparedEntry, PreparedState
 
 FeatureName = Literal[
     "chat", "pulse", "poll", "hook", "control", "inspect", "watch"
@@ -496,7 +503,6 @@ def up(
 ) -> int:
     """Start one agent runtime."""
 
-    _restore_termination_signal_defaults()
     spec = resolve_startup(
         host=host,
         toolang_root=toolang_root,
@@ -510,6 +516,24 @@ def up(
         log_spec=log_spec,
         environ=environ,
     )
+    return start_runtime(
+        spec,
+        environ=environ,
+        sandbox_child=sandbox_child,
+        progress=progress,
+    )
+
+
+def start_runtime(
+    spec: StartupSpec,
+    *,
+    environ: Mapping[str, str],
+    sandbox_child: bool = False,
+    progress: ProgressSink | None = None,
+) -> int:
+    """Start one already resolved agent runtime."""
+
+    _restore_termination_signal_defaults()
     if spec.selector.driver != "none":
         return _up_managed_sandbox(
             plugin=spec.sandbox_plugin,
@@ -563,36 +587,74 @@ def invoke(
     models: Sequence[str] | None = None,
     metadata: Mapping[str, object] | None = None,
     environ: Mapping[str, str],
+    response: ResponseSink | None = None,
+    log_spec: str | None = None,
+    prepared_state: PreparedState | None = None,
 ) -> RunOutcome:
     """Execute one thunk once without starting the long-lived runtime."""
 
+    invoke_environ = dict(environ)
+    if log_spec is not None:
+        invoke_environ[PY_LOG_ENV_VAR] = log_spec
+    prepared = prepared_state or prepare_agent(toolang_root=toolang_root, agent_name=agent_name)
     context = _load_runtime_context(
         toolang_root=toolang_root,
         agent_name=agent_name,
         enabled_features=(),
-        environ=environ,
+        environ=invoke_environ,
         model_selectors=_normalize_model_selectors(models),
+        prepared_state=prepared,
     )
+    run_id = allocate_run_id(context)
+    log_plan = resolve_agent_logging(
+        mode="invoke",
+        environ=invoke_environ,
+        run_log_path=agents.agent_script_run_log_path(
+            toolang_root,
+            agent_name,
+            thunk_name=thunk_name,
+            run_id=run_id,
+        ),
+    )
+    if log_plan.destination != "none":
+        configure_logging_plan(log_plan)
+        if log_plan.path is not None:
+            log_plan.path.touch(exist_ok=True)
     try:
-        return asyncio.run(
+        outcome = asyncio.run(
             execute_run(
                 context,
                 RunSubmission(
                     request=RunRequest(
                         group="script",
                         origin="script",
+                        run_id=run_id,
                         thunk=input_text or "",
                         thunk_name=thunk_name,
                         metadata=dict(metadata or {}),
                     ),
+                    response=response,
                     live=context.live,
                 ),
                 delay_sec=0.0,
                 sleep=asyncio.sleep,
             )
         )
+        return replace(outcome, log_path=str(log_plan.path) if log_plan.path is not None else None)
     finally:
         context.store.close()
+
+
+def prepare_agent(
+    *,
+    toolang_root: Path,
+    agent_name: str,
+    progress: ProgressSink | None = None,
+) -> PreparedState:
+    """Prepare one agent for either long-lived startup or one-shot execution."""
+
+    durable = scan_durable_state(toolang_root, agent_name)
+    return watch.build_prepared_state(durable, progress=progress)
 
 
 def prepare_runtime(
@@ -603,8 +665,7 @@ def prepare_runtime(
 ) -> None:
     """Prepare one agent runtime without starting it."""
 
-    durable = scan_durable_state(toolang_root, agent_name)
-    watch.build_prepared_state(durable, progress=progress)
+    prepare_agent(toolang_root=toolang_root, agent_name=agent_name, progress=progress)
 
 
 def resolve_startup(
@@ -619,6 +680,7 @@ def resolve_startup(
     dev: Path | None = None,
     feature_names: Sequence[str] | None = None,
     log_spec: str | None = None,
+    temporary_port: bool = False,
     environ: Mapping[str, str],
 ) -> StartupSpec:
     """Resolve one explicit startup request into stable runtime inputs."""
@@ -630,6 +692,7 @@ def resolve_startup(
         explicit_port=port,
         toolang_root=toolang_root,
         agent_name=agent_name,
+        temporary=temporary_port,
     )
     sandbox_binding = load_sandbox_binding(
         toolang_root,
@@ -1003,6 +1066,7 @@ def _load_runtime_context(
     port: int = 0,
     cors_allowed_origins: Sequence[str] = (),
     progress: ProgressSink | None = None,
+    prepared_state: PreparedState | None = None,
 ) -> UptimeContext:
     channel_bindings = load_channel_bindings(
         toolang_root,
@@ -1010,8 +1074,8 @@ def _load_runtime_context(
         environ=environ,
     )
     runtime_state = agents.load_runtime_state(toolang_root, agent_name) or {}
-    durable = scan_durable_state(toolang_root, agent_name)
-    prepared_state = watch.build_prepared_state(durable, progress=progress)
+    if prepared_state is None:
+        prepared_state = prepare_agent(toolang_root=toolang_root, agent_name=agent_name, progress=progress)
     live = load_live_state(prepared_state, enabled_features=enabled_features)
     normalized_model_selectors = _normalize_model_selectors(model_selectors)
     default_model_selector = normalized_model_selectors[0] if normalized_model_selectors else None

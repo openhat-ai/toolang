@@ -117,8 +117,11 @@ toolang path/to/agent.too THUNK [OPTIONS] [PARAMS] [PARTS]
 Behavior:
 
 - one local `.too` path enters roaming invoke mode
-- `PY_LOG=toolang.run=info toolang a.too thunk ...` shows runtime logs during invoke
-- `PY_LOG=debug toolang a.too thunk ...` also shows lower-level provider and HTTP logs
+- stdout is reserved for the final thunk result
+- progress messages are written to stderr only when stderr is a TTY
+- `-q` or `--quiet` suppresses progress messages
+- `PY_LOG=toolang.run=info toolang a.too thunk ...` writes runtime logs under `.toolang/agents/<agent>/.state/logs/<thunk>/<run_id>.log`
+- `PY_LOG=debug toolang a.too thunk ...` also writes lower-level provider and HTTP logs to that run log file
 - `toolang a.too --help` lists invokable thunks
 - `toolang a.too thunk --help` prints thunk-specific dynamic usage
 - `toolang a.too` shows usage instead of invoking a default thunk
@@ -133,8 +136,9 @@ Behavior:
   - all other path extensions infer generic file parts
 - `--` ends option parsing so later arguments stay message parts
 - `--option` is reserved for Toolang runtime options
-- `PY_LOG` uses env_logger-style directive formatting
-- when `PY_LOG` is not set, Toolang logs only `error` and above by default
+- `PY_LOG` uses env_logger-style directive formatting and does not affect stdout
+- key execution events are recorded in `runs.db` for script runs just like chat,
+  task, and chore runs
 
 
 ## Runtime Commands
@@ -152,6 +156,21 @@ Behavior:
 | `toolang run` | Runs a local agent, or fetches one remote agent program into a stable visiting root and runs it in the foreground |
 | `toolang clone` | Clones one local agent, or fetches one remote agent program into a new local managed agent |
 | `toolang start` | Starts one local managed agent only. Remote selectors must be cloned first |
+
+`toolang run` and `toolang start` share the same startup preparation path after
+selector handling. Both resolve the runnable target, reject already-active
+runtimes, build a `StartupSpec`, prepare the agent state, and then launch from
+that resolved startup checkpoint. `run` starts the resolved runtime in the
+foreground. `start` serializes the same resolved startup into the hidden
+background `toolang run` command.
+
+Agent entrypoints also share one logging policy resolver:
+
+| Entrypoint | Log destination |
+| --- | --- |
+| `toolang run` | `stderr` |
+| `toolang start` | `agent_log` under the agent `.state` directory |
+| local `.too` invoke | `run_log` under the agent `.state` directory when `PY_LOG` is set, otherwise `none` |
 
 When `toolang start` runs without `--port`, Toolang first tries the agent's last
 runtime port. If that port is not reusable, Toolang scans its auto-assigned

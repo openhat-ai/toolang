@@ -76,6 +76,7 @@ class RunOutcome:
     output_text: str = ""
     error: str | None = None
     live_fingerprint: str | None = None
+    log_path: str | None = None
 
 class QueueRunner:
     """Run queued requests with per-group and per-thread limits."""

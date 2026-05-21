@@ -127,7 +127,7 @@ def test_cli_main_intercepts_local_too_program_before_typer(monkeypatch, tmp_pat
     assert captured["prog_name"] == "toolang"
 
 
-def test_cli_main_configures_logging_for_roaming_invoke_from_py_log(monkeypatch, tmp_path: Path) -> None:
+def test_cli_main_does_not_preconfigure_roaming_invoke_from_py_log(monkeypatch, tmp_path: Path) -> None:
     program_path = tmp_path / "demo.too"
     program_path.write_text("thunk:\n  Reply directly.\n", encoding="utf-8")
     captured: dict[str, object] = {}
@@ -151,7 +151,7 @@ def test_cli_main_configures_logging_for_roaming_invoke_from_py_log(monkeypatch,
 
     assert result == 0
     assert captured["spec"] is None
-    assert cast(dict[str, str], captured["environ"])[PY_LOG_ENV_VAR] == "toolang.run=debug"
+    assert PY_LOG_ENV_VAR not in cast(dict[str, str], captured["environ"])
     assert captured["global_args"] == []
     assert captured["body"] == [str(program_path), "--help"]
     assert captured["prog_name"] == "toolang"
@@ -997,27 +997,18 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
         assert ref.render() == "github://brice/agents/agents/alice.too@main"
         return "agent remote-source\n"
 
-    def fake_up(
+    def fake_start_runtime(
+        startup: cli.agent_up.StartupSpec,
         *,
-        toolang_root: Path,
-        agent_name: str,
-        host: str,
-        endpoint_host: str | None,
-        port: int | None,
-        sandbox: str | None,
-        models: list[str] | None,
-        dev: Path | None,
-        sandbox_child: bool,
-        feature_names: tuple[str, ...] | None,
-        log_spec: str | None,
         environ: dict[str, str],
+        sandbox_child: bool,
         progress=None,
     ) -> int:
-        del host, endpoint_host, sandbox, models, dev, sandbox_child, feature_names, log_spec, environ, progress
-        captured["toolang_root"] = toolang_root
-        captured["agent_name"] = agent_name
-        captured["port"] = port
-        program_path = toolang_root / "agents" / agent_name / "agent.too"
+        del environ, sandbox_child, progress
+        captured["toolang_root"] = startup.toolang_root
+        captured["agent_name"] = startup.agent_name
+        captured["port"] = startup.port
+        program_path = startup.toolang_root / "agents" / startup.agent_name / "agent.too"
         captured["program_exists"] = program_path.is_file()
         captured["program_text"] = program_path.read_text(encoding="utf-8")
         return 0
@@ -1025,8 +1016,8 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(agents, "_github_repo_default_branch", lambda owner, repo: "main")
     monkeypatch.setattr(agents, "_github_agent_ref_exists", lambda ref: ref.path == "agents/alice.too")
     monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
-    monkeypatch.setattr(cli.agent_up, "up", fake_up)
-    monkeypatch.setattr(cli.agent_up, "prepare_runtime", lambda **_kwargs: None)
+    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
     monkeypatch.setattr(cli.agent_up, "resolve_runtime_port", lambda **_kwargs: 45123)
 
     result = runner.invoke(
@@ -1056,31 +1047,22 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
         assert ref.render() == "https://toolang.ai/demo/researcher.too"
         return "agent researcher\n"
 
-    def fake_up(
+    def fake_start_runtime(
+        startup: cli.agent_up.StartupSpec,
         *,
-        toolang_root: Path,
-        agent_name: str,
-        host: str,
-        endpoint_host: str | None,
-        port: int | None,
-        sandbox: str | None,
-        models: list[str] | None,
-        dev: Path | None,
-        sandbox_child: bool,
-        feature_names: tuple[str, ...] | None,
-        log_spec: str | None,
         environ: dict[str, str],
+        sandbox_child: bool,
         progress=None,
     ) -> int:
-        del host, endpoint_host, sandbox, models, dev, sandbox_child, feature_names, log_spec, environ, progress
-        captured["toolang_root"] = toolang_root
-        captured["agent_name"] = agent_name
-        captured["port"] = port
+        del environ, sandbox_child, progress
+        captured["toolang_root"] = startup.toolang_root
+        captured["agent_name"] = startup.agent_name
+        captured["port"] = startup.port
         return 0
 
     monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
-    monkeypatch.setattr(cli.agent_up, "up", fake_up)
-    monkeypatch.setattr(cli.agent_up, "prepare_runtime", lambda **_kwargs: None)
+    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
     monkeypatch.setattr(cli.agent_up, "resolve_runtime_port", lambda **_kwargs: 45124)
 
     result = runner.invoke(
@@ -1110,7 +1092,7 @@ def test_cli_run_rejects_active_resident_agent(tmp_path: Path, monkeypatch) -> N
     )
     monkeypatch.setattr(
         cli.agent_up,
-        "prepare_runtime",
+        "prepare_agent",
         lambda **_kwargs: pytest.fail("active agents should be rejected before prepare"),
     )
 
@@ -1130,7 +1112,7 @@ def test_cli_run_rejects_missing_resident_agent(tmp_path: Path, monkeypatch) -> 
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(
         cli.agent_up,
-        "prepare_runtime",
+        "prepare_agent",
         lambda **_kwargs: pytest.fail("missing agents should be rejected before prepare"),
     )
 
@@ -1161,7 +1143,7 @@ def test_cli_run_interrupts_prepare_once(tmp_path: Path, monkeypatch) -> None:
         )
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(cli.agent_up, "prepare_runtime", interrupt_prepare)
+    monkeypatch.setattr(cli.agent_up, "prepare_agent", interrupt_prepare)
 
     result = runner.invoke(
         cli.app,
@@ -1188,7 +1170,7 @@ def test_cli_run_rejects_active_visiting_agent(tmp_path: Path, monkeypatch) -> N
     monkeypatch.setattr(agents, "fetch_agent_ref", lambda *_args, **_kwargs: "agent researcher\n")
     monkeypatch.setattr(
         cli.agent_up,
-        "prepare_runtime",
+        "prepare_agent",
         lambda **_kwargs: pytest.fail("active visiting agents should be rejected before prepare"),
     )
 
@@ -1431,19 +1413,26 @@ thunk(_, tone?, retries?: number, dry_run?: boolean):
         models: tuple[str, ...],
         metadata: dict[str, object] | None,
         environ: dict[str, str],
+        response,
+        log_spec: str | None = None,
+        prepared_state=None,
     ):
-        del environ
+        del environ, response
         captured["toolang_root"] = toolang_root
         captured["agent_name"] = agent_name
         captured["thunk_name"] = thunk_name
         captured["input_text"] = input_text
         captured["models"] = models
         captured["metadata"] = dict(metadata or {})
+        captured["log_spec"] = log_spec
+        captured["prepared_state"] = prepared_state
 
         class _Outcome:
+            run_id = "run_test"
             status = "finished"
             output_text = "done"
             error = None
+            log_path = None
 
         return _Outcome()
 
@@ -1472,6 +1461,8 @@ thunk(_, tone?, retries?: number, dry_run?: boolean):
     assert captured["toolang_root"] == program_path.parent / ".toolang"
     assert captured["thunk_name"] == "main"
     assert captured["models"] == ("gpt-5", "o3")
+    assert captured["log_spec"] is None
+    assert captured["prepared_state"] is not None
     assert "rewrite this" in cast(str, captured["input_text"])
     assert str(attachment.resolve()) in cast(str, captured["input_text"])
     assert captured["metadata"] == {
@@ -1554,15 +1545,20 @@ thunk:
         models: tuple[str, ...],
         metadata: dict[str, object] | None,
         environ: dict[str, str],
+        response,
+        log_spec: str | None = None,
+        prepared_state=None,
     ):
-        del toolang_root, agent_name, thunk_name, models, environ
+        del toolang_root, agent_name, thunk_name, models, environ, response, log_spec, prepared_state
         captured["input_text"] = input_text
         captured["metadata"] = dict(metadata or {})
 
         class _Outcome:
+            run_id = "run_test"
             status = "finished"
             output_text = "done"
             error = None
+            log_path = None
 
         return _Outcome()
 
@@ -1612,15 +1608,20 @@ thunk(_, tone?):
         models: tuple[str, ...],
         metadata: dict[str, object] | None,
         environ: dict[str, str],
+        response,
+        log_spec: str | None = None,
+        prepared_state=None,
     ):
-        del toolang_root, agent_name, thunk_name, models, environ
+        del toolang_root, agent_name, thunk_name, models, environ, response, log_spec, prepared_state
         captured["input_text"] = input_text
         captured["metadata"] = dict(metadata or {})
 
         class _Outcome:
+            run_id = "run_test"
             status = "finished"
             output_text = "done"
             error = None
+            log_path = None
 
         return _Outcome()
 
@@ -1663,15 +1664,20 @@ thunk(_):
         models: tuple[str, ...],
         metadata: dict[str, object] | None,
         environ: dict[str, str],
+        response,
+        log_spec: str | None = None,
+        prepared_state=None,
     ):
-        del toolang_root, agent_name, thunk_name, models, environ
+        del toolang_root, agent_name, thunk_name, models, environ, response, log_spec, prepared_state
         captured["input_text"] = input_text
         captured["metadata"] = dict(metadata or {})
 
         class _Outcome:
+            run_id = "run_test"
             status = "finished"
             output_text = "done"
             error = None
+            log_path = None
 
         return _Outcome()
 
@@ -2286,39 +2292,30 @@ def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     agents.create_agent(toolang_root, "alice")
     captured: dict[str, object] = {}
 
-    def fake_up(
+    def fake_start_runtime(
+        startup: cli.agent_up.StartupSpec,
         *,
-        toolang_root: Path,
-        agent_name: str,
-        host: str = "127.0.0.1",
-        endpoint_host: str | None = None,
-        port: int | None = None,
-        sandbox: str | None = None,
-        models: list[str] | None = None,
-        dev: Path | None = None,
-        sandbox_child: bool = False,
-        feature_names: list[str] | None = None,
-        log_spec: str | None = None,
         environ: dict[str, str],
+        sandbox_child: bool = False,
         progress=None,
     ) -> int:
         del progress
-        captured["toolang_root"] = toolang_root
-        captured["agent_name"] = agent_name
-        captured["host"] = host
-        captured["endpoint_host"] = endpoint_host
-        captured["port"] = port
-        captured["sandbox"] = sandbox
-        captured["models"] = models
-        captured["dev"] = dev
+        captured["toolang_root"] = startup.toolang_root
+        captured["agent_name"] = startup.agent_name
+        captured["host"] = startup.host
+        captured["endpoint_host"] = startup.endpoint_host
+        captured["port"] = startup.port
+        captured["sandbox"] = startup.selector.render()
+        captured["models"] = startup.model_selectors
+        captured["dev"] = startup.dev_artifact
         captured["sandbox_child"] = sandbox_child
-        captured["feature_names"] = feature_names
-        captured["log_spec"] = log_spec
+        captured["feature_names"] = startup.enabled_features
+        captured["log_spec"] = startup.log_spec
         captured["environ"] = environ
         return 0
 
-    monkeypatch.setattr(cli.agent_up, "up", fake_up)
-    monkeypatch.setattr(cli.agent_up, "prepare_runtime", lambda **_kwargs: None)
+    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -2341,56 +2338,48 @@ def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     assert captured["toolang_root"] == toolang_root
     assert captured["agent_name"] == "alice"
     assert captured["host"] == "0.0.0.0"
-    assert captured["endpoint_host"] is None
+    assert captured["endpoint_host"] == "0.0.0.0"
     assert captured["port"] == 9000
-    assert captured["sandbox"] is None
-    assert captured["models"] is None
+    assert captured["sandbox"] == "none"
+    assert captured["models"] == ()
     assert captured["dev"] is None
     assert captured["sandbox_child"] is False
-    assert captured["feature_names"] == ["chat", "inspect"]
+    assert captured["feature_names"] == ("chat", "inspect")
     assert captured["log_spec"] == DEFAULT_AGENT_LOG_SPEC
     assert cast(dict[str, str], captured["environ"])["TOOLANG_ROOT"] == str(toolang_root)
     assert cast(dict[str, str], captured["environ"])[PY_LOG_ENV_VAR] == DEFAULT_AGENT_LOG_SPEC
 
 
-def test_cli_run_omits_port_when_unspecified(tmp_path: Path, monkeypatch) -> None:
+def test_cli_run_resolves_port_when_unspecified(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     captured: dict[str, object] = {}
+    monkeypatch.setattr(cli.agent_up, "resolve_runtime_port", lambda **_kwargs: 8765)
 
-    def fake_up(
+    def fake_start_runtime(
+        startup: cli.agent_up.StartupSpec,
         *,
-        toolang_root: Path,
-        agent_name: str,
-        host: str = "127.0.0.1",
-        endpoint_host: str | None = None,
-        port: int | None = None,
-        sandbox: str | None = None,
-        models: list[str] | None = None,
-        dev: Path | None = None,
-        sandbox_child: bool = False,
-        feature_names: list[str] | None = None,
-        log_spec: str | None = None,
         environ: dict[str, str],
+        sandbox_child: bool = False,
         progress=None,
     ) -> int:
         del progress
-        captured["toolang_root"] = toolang_root
-        captured["agent_name"] = agent_name
-        captured["host"] = host
-        captured["endpoint_host"] = endpoint_host
-        captured["port"] = port
-        captured["sandbox"] = sandbox
-        captured["models"] = models
-        captured["dev"] = dev
+        captured["toolang_root"] = startup.toolang_root
+        captured["agent_name"] = startup.agent_name
+        captured["host"] = startup.host
+        captured["endpoint_host"] = startup.endpoint_host
+        captured["port"] = startup.port
+        captured["sandbox"] = startup.selector.render()
+        captured["models"] = startup.model_selectors
+        captured["dev"] = startup.dev_artifact
         captured["sandbox_child"] = sandbox_child
-        captured["feature_names"] = feature_names
-        captured["log_spec"] = log_spec
+        captured["feature_names"] = startup.enabled_features
+        captured["log_spec"] = startup.log_spec
         captured["environ"] = environ
         return 0
 
-    monkeypatch.setattr(cli.agent_up, "up", fake_up)
-    monkeypatch.setattr(cli.agent_up, "prepare_runtime", lambda **_kwargs: None)
+    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -2402,13 +2391,13 @@ def test_cli_run_omits_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
     assert captured["toolang_root"] == toolang_root
     assert captured["agent_name"] == "alice"
     assert captured["host"] == "127.0.0.1"
-    assert captured["endpoint_host"] is None
-    assert captured["port"] is None
-    assert captured["sandbox"] is None
-    assert captured["models"] is None
+    assert captured["endpoint_host"] == "localhost"
+    assert captured["port"] == 8765
+    assert captured["sandbox"] == "none"
+    assert captured["models"] == ()
     assert captured["dev"] is None
     assert captured["sandbox_child"] is False
-    assert captured["feature_names"] == ["chat"]
+    assert captured["feature_names"] == ("chat",)
     assert captured["log_spec"] == DEFAULT_AGENT_LOG_SPEC
     assert cast(dict[str, str], captured["environ"])["TOOLANG_ROOT"] == str(toolang_root)
 
@@ -2418,28 +2407,19 @@ def test_cli_run_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
     agents.create_agent(toolang_root, "alice")
     captured: dict[str, object] = {}
 
-    def fake_up(
+    def fake_start_runtime(
+        startup: cli.agent_up.StartupSpec,
         *,
-        toolang_root: Path,
-        agent_name: str,
-        host: str = "127.0.0.1",
-        endpoint_host: str | None = None,
-        port: int | None = None,
-        sandbox: str | None = None,
-        models: list[str] | None = None,
-        dev: Path | None = None,
-        sandbox_child: bool = False,
-        feature_names: list[str] | None = None,
-        log_spec: str | None = None,
         environ: dict[str, str],
+        sandbox_child: bool = False,
         progress=None,
     ) -> int:
-        del toolang_root, agent_name, host, endpoint_host, port, sandbox, models, dev, sandbox_child, log_spec, environ, progress
-        captured["feature_names"] = feature_names
+        del environ, sandbox_child, progress
+        captured["feature_names"] = startup.enabled_features
         return 0
 
-    monkeypatch.setattr(cli.agent_up, "up", fake_up)
-    monkeypatch.setattr(cli.agent_up, "prepare_runtime", lambda **_kwargs: None)
+    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -2448,7 +2428,7 @@ def test_cli_run_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
     )
 
     assert result.exit_code == 0
-    assert captured["feature_names"] == ["chat", "inspect", "poll"]
+    assert captured["feature_names"] == ("chat", "inspect", "poll")
 
 
 def test_cli_run_passes_model_selectors_to_agent_up(tmp_path: Path, monkeypatch) -> None:
@@ -2456,37 +2436,28 @@ def test_cli_run_passes_model_selectors_to_agent_up(tmp_path: Path, monkeypatch)
     agents.create_agent(toolang_root, "alice")
     captured: dict[str, object] = {}
 
-    def fake_up(
+    def fake_start_runtime(
+        startup: cli.agent_up.StartupSpec,
         *,
-        toolang_root: Path,
-        agent_name: str,
-        host: str = "127.0.0.1",
-        endpoint_host: str | None = None,
-        port: int | None = None,
-        sandbox: str | None = None,
-        models: list[str] | None = None,
-        dev: Path | None = None,
-        sandbox_child: bool = False,
-        feature_names: list[str] | None = None,
-        log_spec: str | None = None,
         environ: dict[str, str],
+        sandbox_child: bool = False,
         progress=None,
     ) -> int:
-        del toolang_root, agent_name, host, endpoint_host, port, sandbox, dev, sandbox_child, feature_names, log_spec, environ, progress
-        captured["models"] = models
+        del environ, sandbox_child, progress
+        captured["models"] = startup.model_selectors
         return 0
 
-    monkeypatch.setattr(cli.agent_up, "up", fake_up)
-    monkeypatch.setattr(cli.agent_up, "prepare_runtime", lambda **_kwargs: None)
+    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
         ["run", "alice", "--model", "openai/gpt-5@openai", "--model", "o3"],
-        env={"TOOLANG_ROOT": str(toolang_root)},
+        env={"TOOLANG_ROOT": str(toolang_root), "OPENAI_API_KEY": "secret"},
     )
 
     assert result.exit_code == 0
-    assert captured["models"] == ["openai/gpt-5@openai", "o3"]
+    assert captured["models"] == ("openai/gpt-5@openai", "o3")
 
 
 def test_cli_run_uses_py_log_spec(tmp_path: Path, monkeypatch) -> None:
@@ -2494,29 +2465,20 @@ def test_cli_run_uses_py_log_spec(tmp_path: Path, monkeypatch) -> None:
     agents.create_agent(toolang_root, "alice")
     captured: dict[str, object] = {}
 
-    def fake_up(
+    def fake_start_runtime(
+        startup: cli.agent_up.StartupSpec,
         *,
-        toolang_root: Path,
-        agent_name: str,
-        host: str = "127.0.0.1",
-        endpoint_host: str | None = None,
-        port: int | None = None,
-        sandbox: str | None = None,
-        models: list[str] | None = None,
-        dev: Path | None = None,
-        sandbox_child: bool = False,
-        feature_names: list[str] | None = None,
-        log_spec: str | None = None,
         environ: dict[str, str],
+        sandbox_child: bool = False,
         progress=None,
     ) -> int:
-        del toolang_root, agent_name, host, endpoint_host, port, sandbox, models, dev, sandbox_child, feature_names, progress
+        del sandbox_child, progress
         captured["environ"] = environ
-        captured["log_spec"] = log_spec
+        captured["log_spec"] = startup.log_spec
         return 0
 
-    monkeypatch.setattr(cli.agent_up, "up", fake_up)
-    monkeypatch.setattr(cli.agent_up, "prepare_runtime", lambda **_kwargs: None)
+    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -2557,34 +2519,25 @@ def test_cli_run_loads_root_and_agent_env_with_agent_override(tmp_path: Path, mo
     )
     captured: dict[str, object] = {}
 
-    def fake_up(
+    def fake_start_runtime(
+        startup: cli.agent_up.StartupSpec,
         *,
-        toolang_root: Path,
-        agent_name: str,
-        host: str = "127.0.0.1",
-        endpoint_host: str | None = None,
-        port: int | None = None,
-        sandbox: str | None = None,
-        models: list[str] | None = None,
-        dev: Path | None = None,
-        sandbox_child: bool = False,
-        feature_names: list[str] | None = None,
-        log_spec: str | None = None,
         environ: dict[str, str],
+        sandbox_child: bool = False,
         progress=None,
     ) -> int:
         del progress
         captured["environ"] = environ
-        captured["endpoint_host"] = endpoint_host
-        captured["sandbox"] = sandbox
-        captured["models"] = models
-        captured["dev"] = dev
+        captured["endpoint_host"] = startup.endpoint_host
+        captured["sandbox"] = startup.selector.render()
+        captured["models"] = startup.model_selectors
+        captured["dev"] = startup.dev_artifact
         captured["sandbox_child"] = sandbox_child
-        captured["log_spec"] = log_spec
+        captured["log_spec"] = startup.log_spec
         return 0
 
-    monkeypatch.setattr(cli.agent_up, "up", fake_up)
-    monkeypatch.setattr(cli.agent_up, "prepare_runtime", lambda **_kwargs: None)
+    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -2597,9 +2550,9 @@ def test_cli_run_loads_root_and_agent_env_with_agent_override(tmp_path: Path, mo
     assert environ["TELEGRAM_BOT_TOKEN"] == "agent-token"
     assert environ["ROOT_ONLY"] == "1"
     assert environ["AGENT_ONLY"] == "1"
-    assert captured["endpoint_host"] is None
-    assert captured["sandbox"] is None
-    assert captured["models"] is None
+    assert captured["endpoint_host"] == "localhost"
+    assert captured["sandbox"] == "none"
+    assert captured["models"] == ()
     assert captured["dev"] is None
     assert captured["sandbox_child"] is False
     assert captured["log_spec"] == DEFAULT_AGENT_LOG_SPEC

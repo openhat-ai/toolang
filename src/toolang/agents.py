@@ -140,6 +140,12 @@ def agent_runtime_log_path(toolang_root: Path, agent_name: str) -> Path:
     return agent_room(toolang_root, agent_name) / "agent.log"
 
 
+def agent_script_run_log_path(toolang_root: Path, agent_name: str, *, thunk_name: str | None, run_id: str) -> Path:
+    """Return one per-run script invoke log path."""
+
+    return agent_room(toolang_root, agent_name) / "logs" / _safe_log_label(thunk_name or "main") / f"{run_id}.log"
+
+
 def agent_pulse_state_path(toolang_root: Path, agent_name: str) -> Path:
     """Return one agent pulse-state path."""
 
@@ -406,6 +412,11 @@ def _replace_relative_symlink(link_path: Path, target_path: Path, *, replace_reg
     link_path.parent.mkdir(parents=True, exist_ok=True)
     relative_target = os.path.relpath(target_path, start=link_path.parent)
     link_path.symlink_to(relative_target)
+
+
+def _safe_log_label(value: str) -> str:
+    text = "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in value.strip())
+    return text.strip("._") or "main"
 
 
 def materialize_visiting_program(

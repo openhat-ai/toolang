@@ -6,10 +6,12 @@ import re
 from typing import cast
 
 from toolang.config.log import (
+    DEFAULT_AGENT_LOG_SPEC,
     HttpxLogFilter,
     MessageRegexFilter,
     build_uvicorn_log_config,
     configure_logging,
+    resolve_agent_logging,
 )
 from toolang.config.log_spec import OFF_LOG_LEVEL, PY_LOG_ENV_VAR, parse_log_level, parse_log_spec, resolve_log_spec
 
@@ -131,3 +133,39 @@ def test_configure_logging_supports_off_level(monkeypatch) -> None:
     config = cast(dict[str, object], captured["config"])
     loggers = cast(dict[str, dict[str, object]], config["loggers"])
     assert loggers["httpx"]["level"] == "OFF"
+
+
+def test_resolve_agent_logging_defaults_run_and_start_to_agent_spec(tmp_path) -> None:
+    agent_log_path = tmp_path / "agent.log"
+
+    run_plan = resolve_agent_logging(mode="run", environ={}, agent_log_path=agent_log_path)
+    start_plan = resolve_agent_logging(mode="start", environ={}, agent_log_path=agent_log_path)
+
+    assert run_plan.destination == "stderr"
+    assert run_plan.path is None
+    assert run_plan.spec == DEFAULT_AGENT_LOG_SPEC
+    assert run_plan.environ[PY_LOG_ENV_VAR] == DEFAULT_AGENT_LOG_SPEC
+    assert start_plan.destination == "agent_log"
+    assert start_plan.path == agent_log_path
+    assert start_plan.spec == DEFAULT_AGENT_LOG_SPEC
+    assert start_plan.environ[PY_LOG_ENV_VAR] == DEFAULT_AGENT_LOG_SPEC
+
+
+def test_resolve_agent_logging_uses_run_log_only_when_invoke_py_log_is_set(tmp_path) -> None:
+    run_log_path = tmp_path / "run.log"
+
+    quiet_plan = resolve_agent_logging(mode="invoke", environ={}, run_log_path=run_log_path)
+    verbose_plan = resolve_agent_logging(
+        mode="invoke",
+        environ={PY_LOG_ENV_VAR: "toolang.run=debug"},
+        run_log_path=run_log_path,
+    )
+
+    assert quiet_plan.destination == "none"
+    assert quiet_plan.path is None
+    assert quiet_plan.spec is None
+    assert PY_LOG_ENV_VAR not in quiet_plan.environ
+    assert verbose_plan.destination == "run_log"
+    assert verbose_plan.path == run_log_path
+    assert verbose_plan.spec == "toolang.run=debug"
+    assert verbose_plan.environ[PY_LOG_ENV_VAR] == "toolang.run=debug"
