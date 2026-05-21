@@ -82,7 +82,7 @@ class _HelpOnlyArgument(TyperArgument):
 
 
 class _RoamingInvokeHelpGroup(TyperGroup):
-    usage_tail = "THUNK [OPTIONS] [PARAMS] [PARTS]"
+    usage_tail = "THUNK [OPTIONS] [PARAM=VALUE]... [INPUT]..."
 
     def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         if not HAS_RICH or self.rich_markup_mode is None:
@@ -342,9 +342,9 @@ def _parse_roaming_invoke_request(
     thunk_name = _thunk_name(thunk)
     accepts_message = thunk.input is not None
     if accepts_message and not parts:
-        raise click.ClickException(f"thunk {thunk_name!r} requires at least one PART")
+        raise click.ClickException(f"thunk {thunk_name!r} requires at least one INPUT")
     if parts and not accepts_message:
-        raise click.ClickException(f"thunk {thunk_name!r} does not accept message input")
+        raise click.ClickException(f"thunk {thunk_name!r} does not accept INPUT")
     input_text, invoke_parts = _render_roaming_input(parts) if parts else (None, [])
     return RoamingInvokeRequest(
         thunk_name=thunk_name,
@@ -393,7 +393,7 @@ def _render_roaming_input(parts: list[str]) -> tuple[str, list[dict[str, str]]]:
         if part.startswith("@"):
             candidate = Path(part[1:]).expanduser().resolve()
             if not candidate.exists():
-                raise click.ClickException(f"invoke part not found: {candidate}")
+                raise click.ClickException(f"invoke input not found: {candidate}")
             ext = candidate.suffix.lower()
             if ext in _TEXT_PART_EXTENSIONS:
                 text = candidate.read_text(encoding="utf-8")
@@ -535,7 +535,7 @@ def _show_roaming_help(
     try:
         command.main(
             args=args,
-            prog_name=f"{prog_name} {source_label}",
+            prog_name=f"{prog_name} SCRIPT.too",
             standalone_mode=False,
         )
     except click.exceptions.Exit:
@@ -608,9 +608,9 @@ def _make_roaming_help_command() -> Callable[..., None]:
 def _roaming_thunk_usage_tail(thunk: Thunk) -> str:
     pieces = ["[OPTIONS]"]
     if thunk.params:
-        pieces.append("[PARAMS]")
+        pieces.append("[PARAM=VALUE]...")
     if thunk.input is not None:
-        pieces.append("PARTS")
+        pieces.append("[INPUT]...")
     return " ".join(pieces)
 
 
@@ -648,7 +648,7 @@ def _help_arguments(
             args.append(
                 _HelpOnlyArgument(
                     param_decls=["params"],
-                    metavar="NAME=VALUE",
+                    metavar="PARAM=VALUE",
                     required=False,
                     default=None,
                     expose_value=False,
@@ -674,13 +674,22 @@ def _help_arguments(
         args.extend(
             [
                 _HelpOnlyArgument(
+                    param_decls=["input"],
+                    metavar="INPUT",
+                    required=False,
+                    default=None,
+                    expose_value=False,
+                    help="Multimodal message input. Repeat to assemble one message.",
+                    rich_help_panel="Input",
+                ),
+                _HelpOnlyArgument(
                     param_decls=["part_text"],
                     metavar="TEXT",
                     required=False,
                     default=None,
                     expose_value=False,
                     help="Plain text. Use @@TEXT for literal text starting with @.",
-                    rich_help_panel="Parts",
+                    rich_help_panel="Input",
                 ),
                 _HelpOnlyArgument(
                     param_decls=["part_text_file"],
@@ -689,7 +698,7 @@ def _help_arguments(
                     default=None,
                     expose_value=False,
                     help="Text loaded from a .md file. Also supports .txt.",
-                    rich_help_panel="Parts",
+                    rich_help_panel="Input",
                 ),
                 _HelpOnlyArgument(
                     param_decls=["part_image"],
@@ -698,7 +707,7 @@ def _help_arguments(
                     default=None,
                     expose_value=False,
                     help="Image loaded from a .png file. Also supports .jpg, .jpeg, .gif, .webp, .bmp, and .svg.",
-                    rich_help_panel="Parts",
+                    rich_help_panel="Input",
                 ),
                 _HelpOnlyArgument(
                     param_decls=["part_audio"],
@@ -707,7 +716,7 @@ def _help_arguments(
                     default=None,
                     expose_value=False,
                     help="Audio loaded from a .mp3 file. Also supports .wav, .m4a, .aac, .ogg, and .flac.",
-                    rich_help_panel="Parts",
+                    rich_help_panel="Input",
                 ),
                 _HelpOnlyArgument(
                     param_decls=["part_file"],
@@ -716,7 +725,7 @@ def _help_arguments(
                     default=None,
                     expose_value=False,
                     help="Generic file loaded from any other file type.",
-                    rich_help_panel="Parts",
+                    rich_help_panel="Input",
                 ),
             ]
         )
@@ -752,7 +761,7 @@ def _rich_format_roaming_help(
 
     options: list[click.Option] = []
     params_args: list[click.Argument] = []
-    parts_args: list[click.Argument] = []
+    input_args: list[click.Argument] = []
     for param in obj.get_params(ctx):
         if getattr(param, "hidden", False):
             continue
@@ -763,8 +772,8 @@ def _rich_format_roaming_help(
             panel_name = getattr(param, rich_utils._RICH_HELP_PANEL_NAME, None)
             if panel_name == "Params":
                 params_args.append(param)
-            elif panel_name == "Parts":
-                parts_args.append(param)
+            elif panel_name == "Input":
+                input_args.append(param)
 
     rich_utils._print_options_panel(
         name=rich_utils.OPTIONS_PANEL_TITLE,
@@ -793,8 +802,8 @@ def _rich_format_roaming_help(
         console=console,
     )
     _print_argument_examples_panel(
-        name="Parts",
-        params=parts_args,
+        name="Input",
+        params=input_args,
         ctx=ctx,
         markup_mode=markup_mode,
         console=console,

@@ -111,7 +111,7 @@ Foreground runtime port selection depends on the agent mode:
 Roaming invoke uses one local `.too` source path directly:
 
 ```bash
-toolang path/to/agent.too THUNK [OPTIONS] [PARAMS] [PARTS]
+toolang SCRIPT.too THUNK [OPTIONS] [PARAM=VALUE]... [INPUT]...
 ```
 
 Behavior:
@@ -126,15 +126,15 @@ Behavior:
 - `toolang a.too thunk --help` prints thunk-specific dynamic usage
 - `toolang a.too` shows usage instead of invoking a default thunk
 - roaming invoke exposes the agent's effective tools, subject to thunk tool directives
-- bare arguments become message parts
+- `INPUT` values are assembled into one multimodal message
 - `NAME=VALUE` sets one thunk named param when `NAME` matches the thunk signature
-- `PART` rules:
+- `INPUT` rules:
   - `TEXT` adds one text part; use `@@TEXT` for literal text beginning with `@`
   - `@PATH` adds one path-based part; `.txt` and `.md` paths become text parts
   - image extensions such as `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, and `.svg` infer image parts
   - audio extensions such as `.mp3`, `.wav`, `.m4a`, `.aac`, `.ogg`, and `.flac` infer audio parts
   - all other path extensions infer generic file parts
-- `--` ends option parsing so later arguments stay message parts
+- `--` ends option parsing so later arguments stay `INPUT` values
 - `--option` is reserved for Toolang runtime options
 - `PY_LOG` uses env_logger-style directive formatting and does not affect stdout
 - key execution events are recorded in `runs.db` for script runs just like chat,

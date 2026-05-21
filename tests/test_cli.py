@@ -1361,7 +1361,7 @@ thunk summarize(_, style?):
 
     assert result == 0
     assert "Usage: toolang" in captured.out
-    assert "THUNK [OPTIONS] [PARAMS] [PARTS]" in captured.out
+    assert "SCRIPT.too THUNK [OPTIONS] [PARAM=VALUE]... [INPUT]..." in captured.out
     assert "Thunks" in captured.out
     assert "main" in captured.out
     assert "summarize" in captured.out
@@ -1386,12 +1386,15 @@ thunk summarize(_, style?, audience?):
 
     assert result == 0
     assert "Usage: toolang" in captured.out
+    assert "SCRIPT.too summarize" in captured.out
     assert "summarize" in captured.out
     assert "[OPTIONS]" in captured.out
-    assert "[PARAMS]" in captured.out
+    assert "[PARAM=VALUE]..." in captured.out
     assert "style=TEXT" in captured.out
     assert "audience=TEXT" in captured.out
-    assert "PARTS" in captured.out
+    assert "[INPUT]..." in captured.out
+    assert "Input" in captured.out
+    assert "Multimodal message input" in captured.out
 
 
 def test_cli_roaming_invoke_passes_default_thunk_params_and_parts(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -1756,7 +1759,7 @@ thunk:
     output = capsys.readouterr()
 
     assert result == 0
-    assert "THUNK [OPTIONS] [PARAMS] [PARTS]" in output.out
+    assert "SCRIPT.too THUNK [OPTIONS] [PARAM=VALUE]... [INPUT]..." in output.out
     assert "Thunks" in output.out
 
 
@@ -1773,7 +1776,7 @@ thunk summarize(_):
     output = capsys.readouterr()
 
     assert result == 1
-    assert "requires at least one PART" in output.err
+    assert "requires at least one INPUT" in output.err
 
 
 def test_cli_roaming_invoke_rejects_unknown_thunk_name(tmp_path: Path, capsys) -> None:
