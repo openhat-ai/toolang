@@ -13,53 +13,63 @@ Current cap kinds are:
 - `prompt`
 
 
-## Visibility
+## Scope
 
-Public cap views expose visibility:
+Public cap views expose scope:
 
-- `shared`: available to all agents under the Toolang root
-- `private`: available to one agent
+- `global`: available to all agents under the Toolang root
+- `home`: available to one agent home
+- `packed`: follows one authored agent program
 
 Precedence is:
 
-1. `private`
-2. `shared`
+1. `packed`
+2. `home`
+3. `global`
 
 One effective cap set is built by applying this precedence to all visible cap
 definitions.
 
-Prepared-state files, CLI, HTTP API, and UI-facing payloads all use `shared`
-and `private`.
+Mutation APIs and CLI flags still use `shared` and `private` to choose authored
+placement. Read APIs and UI-facing payloads expose the runtime `scope`.
 
 
-## Origins And Inclusions
+## Binding, Scope, And Origin
 
-Cap entries separate content origin from inclusion kind.
+Cap entries separate how a cap is attached, where it is available, and where
+its content comes from.
+
+Binding tells how a cap is attached:
+
+| Binding | Meaning |
+| --- | --- |
+| `inline` | Defined directly in `agent.too` |
+| `cited` | Referenced by `use ...` in `agent.too` |
+| `wired` | Connected through `config.toml` |
+| `mounted` | Mounted from local files or folders |
+
+Scope tells where a cap is available:
+
+| Scope | Meaning |
+| --- | --- |
+| `global` | Available to all agents under the Toolang root |
+| `home` | Available to one agent home |
+| `packed` | Packed with one authored agent program |
 
 `origin` describes where the cap content is authored:
 
 | Origin | Meaning |
 | --- | --- |
-| `local` | A local cap file or skill directory under the root or agent home |
+| `local` | Local authored content, including inline program declarations and mounted files or directories |
 | `remote` | A remote authored cap fetched through a ref |
-| `inline` | A cap body written directly in an agent program |
-
-`inclusion` describes how the cap is included:
-
-| Inclusion | Meaning | Shared? |
-| --- | --- | --- |
-| `authored` | Included by a local authored cap file or skill directory | Yes |
-| `configured` | Included by `config.toml` with a remote ref | Yes |
-| `referenced` | Included by an agent program `use` statement | No |
-| `embedded` | Included by an agent program declaration body | No |
 
 Runtime APIs expose effective caps. They do not expose every authored source
 variant as a separate history object.
 
-Default visibility is `private`. Only `authored` and `configured` inclusions can
-be `shared`, because they can be authored at the Toolang root. `referenced` and
-`embedded` inclusions are scoped to one agent program, so they are always
-`private`.
+Default authored placement is `private`. Only `mounted` and `wired` bindings can
+be authored at shared placement and surface as `global`, because they can be
+authored at the Toolang root. `cited` and `inline` bindings are tied to one
+agent program and surface as `packed`.
 
 Authored placement, such as `config.toml`, `agent.too`, or a cap file path, is
 exposed separately as `definition_file`. When known, APIs may also include
@@ -118,6 +128,19 @@ Private local caps:
 - `${TOOLANG_ROOT}/agents/<agent>/skills/`
 - `${TOOLANG_ROOT}/agents/<agent>/services/`
 - `${TOOLANG_ROOT}/agents/<agent>/prompts/`
+
+
+## Prepared Cap Paths
+
+Prepared materialized caps live under `.caps` roots:
+
+- `inline` caps are materialized under `.caps/inline`
+- `cited` remote caps are materialized under `.caps/cited`
+- `wired` remote caps are materialized under `.caps/wired`
+
+For private scopes, the `.caps` root is
+`${TOOLANG_ROOT}/agents/<agent>/.caps`. For global scopes, the `.caps` root is
+`${TOOLANG_ROOT}/.caps`.
 
 
 ## Local Cap Frontmatter
@@ -212,5 +235,5 @@ Write endpoints:
 Local write requests carry `visibility` and `content`. Remote write requests
 carry `visibility` and `ref`. Deletes use a `visibility` query parameter.
 Template detail responses include template metadata and raw content. Cap read
-requests return the effective runtime view with `visibility`, `origin`,
-`inclusion`, `ref`, `definition_file`, and optional `line`.
+requests return the effective runtime view with `scope`, `origin`, `binding`,
+`ref`, `definition_file`, and optional `line`.

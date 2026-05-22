@@ -21,7 +21,7 @@ def _tool_context(home: Path, plugin_name: str) -> ToolContext:
     return ToolContext(
         run_id="run-1",
         home=home,
-        room=home / ".state" / "tools" / plugin_name,
+        room=home / ".runtime" / "tools" / plugin_name,
         wd=home,
     )
 
@@ -529,7 +529,7 @@ def test_service_use_bridge_start_is_not_required_for_http_service(tmp_path: Pat
 
     assert result["ok"] is True
     assert result["result"]["result"]["status"] == "not_required"
-    assert not (home / ".state" / "tools" / "service_use" / "github" / "connection.json").exists()
+    assert not (home / ".runtime" / "tools" / "service_use" / "github" / "connection.json").exists()
 
 
 def test_service_use_auth_start_prepares_http_connection(monkeypatch, tmp_path: Path) -> None:
@@ -645,7 +645,7 @@ def test_service_use_reuses_service_scoped_session_file(monkeypatch, tmp_path: P
         ToolContext(
             run_id="run-a",
             home=home,
-            room=home / ".state" / "tools" / "service_use",
+            room=home / ".runtime" / "tools" / "service_use",
             wd=home,
         ),
     )
@@ -654,7 +654,7 @@ def test_service_use_reuses_service_scoped_session_file(monkeypatch, tmp_path: P
         ToolContext(
             run_id="run-b",
             home=home,
-            room=home / ".state" / "tools" / "service_use",
+            room=home / ".runtime" / "tools" / "service_use",
             wd=home,
         ),
     )

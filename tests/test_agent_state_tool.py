@@ -15,7 +15,7 @@ def _tool_context(toolang_root: Path, agent_name: str = "alice") -> ToolContext:
     return ToolContext(
         run_id="run-1",
         home=home,
-        room=home / ".state" / "tools" / "agent_state",
+        room=home / ".runtime" / "tools" / "agent_state",
         wd=home,
     )
 
@@ -115,7 +115,8 @@ def test_agent_state_tool_creates_updates_gets_and_deletes_skill(tmp_path: Path)
     loaded = tools["skill_get"].invoke({"name": "reviewer"}, context)
     deleted = tools["skill_delete"].invoke({"name": "reviewer"}, context)
 
-    assert created["skill"]["visibility"] == "private"
+    assert created["skill"]["scope"] == "home"
+    assert created["skill"]["binding"] == "mounted"
     assert created["skill"]["meta"]["description"] == "Review code changes."
     assert updated["skill"]["meta"]["description"] == "Review implementation changes."
     assert "Check correctness, tests, and docs." in loaded["skill"]["content"]
@@ -185,7 +186,7 @@ def test_agent_state_tool_rejects_non_agent_home(tmp_path: Path) -> None:
     context = ToolContext(
         run_id="run-1",
         home=tmp_path / "alice",
-        room=tmp_path / "alice" / ".state" / "tools" / "agent_state",
+        room=tmp_path / "alice" / ".runtime" / "tools" / "agent_state",
         wd=tmp_path / "alice",
     )
     tool = create_agent_state_tool({}).tools()["task_list"]

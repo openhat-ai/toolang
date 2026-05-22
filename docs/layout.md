@@ -38,7 +38,7 @@ ${TOOLANG_ROOT}/
       chores/
       archive/
       .caps/
-      .state/
+      .runtime/
 ```
 
 
@@ -72,14 +72,14 @@ Key paths:
 | `chores/` | Chore documents |
 | `archive/` | Retired task and chore documents |
 | `.caps/` | Prepared runtime artifacts |
-| `.state/` | Live runtime state |
+| `.runtime/` | Live runtime state |
 
 
 ## Runtime Room
 
 Each agent runtime stores operational state under:
 
-- `${TOOLANG_ROOT}/agents/<agent>/.state/`
+- `${TOOLANG_ROOT}/agents/<agent>/.runtime/`
 
 Key paths:
 

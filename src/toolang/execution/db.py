@@ -908,7 +908,7 @@ class ExecutionStore:
 
 
 def execution_db_path(toolang_root: Path, agent_name: str) -> Path:
-    return toolang_root / "agents" / agent_name / ".state" / "runs.db"
+    return toolang_root / "agents" / agent_name / ".runtime" / "runs.db"
 
 
 def utc_now() -> str:

@@ -154,15 +154,16 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
         rows = [
             (
                 entry.name,
-                cap_store.entry_visibility(entry, agent_name=agent_name),
+                cap_store.entry_scope(entry, agent_name=agent_name),
                 cap_store.entry_origin(entry),
-                cap_store.entry_inclusion(entry),
+                cap_store.entry_binding(entry),
                 cap_store.entry_ref(entry, agent_name=agent_name),
             )
             for entry in entries
         ]
-        rows.sort(key=lambda item: (0 if item[1] == "shared" else 1, item[0], item[2], item[3], item[4]))
-        _echo_table((title.upper(), "VISIBILITY", "ORIGIN", "INCLUSION", "REF"), rows)
+        scope_order = {"global": 0, "home": 1, "packed": 2}
+        rows.sort(key=lambda item: (scope_order[item[1]], item[0], item[2], item[3], item[4]))
+        _echo_table((title.upper(), "SCOPE", "ORIGIN", "BINDING", "REF"), rows)
 
     return list_caps
 
@@ -295,7 +296,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             kind=cast(EntryKind, kind),
             name=cap_store.remote_entry_name(cast(EntryKind, kind), ref),
             source_origin="remote",
-            source_inclusion="configured",
+            source_binding="wired",
         )
         if selected_agent:
             _refresh_and_append_cap_update(
@@ -327,7 +328,7 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             kind=cast(EntryKind, kind),
             name=name,
             source_origin="remote",
-            source_inclusion="configured",
+            source_binding="wired",
         )
         removed = _wrap_user_error(
             cap_store.remove_remote_entry,
@@ -441,7 +442,7 @@ def _named_entry(
     kind: EntryKind,
     name: str,
     source_origin: Literal["local", "remote"] | None = None,
-    source_inclusion: cap_store.EntryInclusion | None = None,
+    source_binding: cap_store.EntryBinding | None = None,
 ) -> PreparedEntry:
     entries = cap_store.list_entries(
         toolang_root,
@@ -454,7 +455,7 @@ def _named_entry(
             continue
         if source_origin is not None and entry.source.origin != source_origin:
             continue
-        if source_inclusion is not None and entry.source.inclusion != source_inclusion:
+        if source_binding is not None and entry.source.binding != source_binding:
             continue
         return entry
     raise click.ClickException(f"{kind.title()} {name} not found")
