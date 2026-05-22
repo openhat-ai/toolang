@@ -2616,6 +2616,39 @@ def test_cli_model_list_shows_discovered_models(monkeypatch) -> None:
     assert "tools=y" in result.stdout
 
 
+def test_cli_model_providers_orders_config_fields(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli.agent_up,
+        "load_model_providers",
+        lambda *_args: {
+            "openai": _FakeModelProvider(
+                name="openai",
+                required_env=("OPENAI_API_KEY",),
+                base_url="https://api.openai.com/v1",
+                models=(
+                    ModelInfo(
+                        ref="openai/gpt-5",
+                        provider="openai",
+                        name="gpt-5",
+                        model="gpt-5",
+                        selectors=("gpt-5", "openai/gpt-5"),
+                        adapter="responses",
+                    ),
+                ),
+            ),
+        },
+    )
+
+    result = runner.invoke(
+        cli.app,
+        ["model", "providers"],
+        env={"OPENAI_API_KEY": "secret"},
+    )
+
+    assert result.exit_code == 0
+    assert "url=https://api.openai.com/v1, adapter=responses, env=OPENAI_API_KEY" in result.stdout
+
+
 def test_cli_model_list_filters_by_model_selector(monkeypatch) -> None:
     monkeypatch.setattr(
         cli.agent_up,

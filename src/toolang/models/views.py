@@ -143,13 +143,13 @@ def model_provider_config(
     base_url = default_provider_base_url(provider, environ=environ)
     api_key_env = default_provider_api_key_env(provider)
     parts: list[str] = []
+    if base_url is not None:
+        parts.append(f"url={base_url}")
+    parts.append(f"adapter={adapter}")
     if required:
         parts.append(f"env={'+'.join(required)}")
     elif api_key_env is not None:
         parts.append(f"env={api_key_env}")
-    if base_url is not None:
-        parts.append(f"url={base_url}")
-    parts.append(f"adapter={adapter}")
     if missing:
         parts.append(f"missing_env={'+'.join(missing)}")
     if configured:
