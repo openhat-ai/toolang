@@ -136,7 +136,7 @@ def agent_program_path(toolang_root: Path, agent_name: str) -> Path:
 def agent_room(toolang_root: Path, agent_name: str) -> Path:
     """Return one agent room path."""
 
-    return agent_home(toolang_root, agent_name) / ".state"
+    return agent_home(toolang_root, agent_name) / ".runtime"
 
 
 def agent_runtime_state_path(toolang_root: Path, agent_name: str) -> Path:

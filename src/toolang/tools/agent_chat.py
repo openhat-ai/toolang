@@ -121,7 +121,7 @@ class AgentChatPlugin:
             text = str(message)
             if not text.strip():
                 raise ToolangError("agent_chat message cannot be empty")
-            store = ExecutionStore(context.home / ".state" / "runs.db")
+            store = ExecutionStore(context.home / ".runtime" / "runs.db")
             try:
                 current_run = store.get_run(run_id=context.run_id)
                 if current_run is None:
@@ -268,7 +268,7 @@ def _find_or_create_local_thread(
     for thread in store.list_threads():
         if thread.parent == parent and thread.peer.type == "agent" and thread.peer.name == peer:
             return thread
-    value = allocate_id(context.home / ".state" / "ids.json", family=LOCAL_ID_FAMILY).value
+    value = allocate_id(context.home / ".runtime" / "ids.json", family=LOCAL_ID_FAMILY).value
     return store.ensure_thread(
         thread_id=f"chat_{value}",
         origin="chat",
@@ -287,7 +287,7 @@ def _record_local_a2a_exchange(
     assistant_text: str,
     remote_run_id: object,
 ) -> str:
-    run_id = f"run_{allocate_id(context.home / '.state' / 'ids.json', family=RUN_ID_FAMILY).value}"
+    run_id = f"run_{allocate_id(context.home / '.runtime' / 'ids.json', family=RUN_ID_FAMILY).value}"
     started_at = utc_now()
     store.start_run(
         run_id=run_id,

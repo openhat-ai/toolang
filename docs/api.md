@@ -127,7 +127,7 @@ Behavior:
 - stdout is reserved for the final thunk result
 - progress messages are written to stderr only when stderr is a TTY
 - `-q` or `--quiet` suppresses progress messages
-- `PY_LOG=toolang.run=info toolang a.too thunk ...` writes runtime logs under `.toolang/agents/<agent>/.state/logs/<thunk>/<run_id>.log`
+- `PY_LOG=toolang.run=info toolang a.too thunk ...` writes runtime logs under `.toolang/agents/<agent>/.runtime/logs/<thunk>/<run_id>.log`
 - `PY_LOG=debug toolang a.too thunk ...` also writes lower-level provider and HTTP logs to that run log file
 - `toolang a.too --help` lists invokable thunks
 - `toolang a.too thunk --help` prints thunk-specific dynamic usage
@@ -175,8 +175,8 @@ Agent entrypoints also share one logging policy resolver:
 | Entrypoint | Log destination |
 | --- | --- |
 | `toolang run` | `stderr` |
-| `toolang start` | `agent_log` under the agent `.state` directory |
-| local `.too` invoke | `run_log` under the agent `.state` directory when `PY_LOG` is set, otherwise `none` |
+| `toolang start` | `agent_log` under the agent `.runtime` directory |
+| local `.too` invoke | `run_log` under the agent `.runtime` directory when `PY_LOG` is set, otherwise `none` |
 
 When `toolang start` runs without `--port`, Toolang first tries the agent's last
 runtime port. If that port is not reusable, Toolang scans its auto-assigned

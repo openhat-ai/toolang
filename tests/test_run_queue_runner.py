@@ -2167,7 +2167,7 @@ def test_bind_run_request_allocates_normalized_local_ids(tmp_path: Path) -> None
 
     assert bound.run_id.startswith("run_")
     assert bound.thread_id.startswith("chat_")
-    assert (toolang_root / "agents" / "alice" / ".state" / "ids.json").is_file()
+    assert (toolang_root / "agents" / "alice" / ".runtime" / "ids.json").is_file()
 
 
 def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> None:

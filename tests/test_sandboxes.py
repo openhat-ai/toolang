@@ -99,7 +99,7 @@ def test_create_docker_sandbox_plugin_prepares_and_starts(monkeypatch, tmp_path:
     assert (root / "prompts", Path("/root/.toolang/prompts")) in mounted_pairs
     assert (home, Path("/root/.toolang/agents/alice")) in mounted_pairs
     assert any(
-        item.sandbox_path == Path("/root/.toolang/agents/alice/.state/sandbox")
+        item.sandbox_path == Path("/root/.toolang/agents/alice/.runtime/sandbox")
         for item in plan.mounts
     )
     assert (root / "config.toml").is_file()
@@ -111,7 +111,7 @@ def test_create_docker_sandbox_plugin_prepares_and_starts(monkeypatch, tmp_path:
     assert "ensure_uv" in script_text
     assert "uv tool run --from" in script_text
     assert " too run alice --port 8123" in script_text
-    assert plan.sandbox_dev_artifact == Path("/root/.toolang/agents/alice/.state/sandbox") / dev_artifact.name
+    assert plan.sandbox_dev_artifact == Path("/root/.toolang/agents/alice/.runtime/sandbox") / dev_artifact.name
 
     start = plugin.start(plan)
 
