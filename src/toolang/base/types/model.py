@@ -1,4 +1,4 @@
-"""Shared model discovery, routing, and execution value types."""
+"""Shared model discovery, alias, and execution value types."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ class ModelInfo:
     model: str
     selectors: tuple[str, ...] = field(default_factory=tuple)
     adapter: str = "default"
+    scope: str | None = None
+    tags: tuple[str, ...] = field(default_factory=tuple)
     tools: bool = True
     streaming: bool = True
     context_window: int | None = None
@@ -37,8 +39,8 @@ class ModelInfo:
 
 
 @dataclass(frozen=True, slots=True)
-class ModelRoute:
-    """One named local route to an existing model ref."""
+class ModelAlias:
+    """One named local alias to a selectable model target."""
 
     name: str
     ref: str
@@ -46,8 +48,10 @@ class ModelRoute:
     model: str | None = None
     display_name: str | None = None
     adapter: str | None = None
-    base_url: str | None = None
-    api_key_env: str | None = None
+    endpoint: str | None = None
+    key_env: str | None = None
+    scope: str | None = None
+    tags: tuple[str, ...] = field(default_factory=tuple)
     tools: bool | None = None
     streaming: bool | None = None
     headers: dict[str, str] = field(default_factory=dict)
@@ -66,6 +70,8 @@ class ModelTarget:
     adapter: str
     base_url: str | None = None
     api_key: str | None = None
+    scope: str | None = None
+    tags: tuple[str, ...] = field(default_factory=tuple)
     headers: dict[str, str] = field(default_factory=dict)
     options: dict[str, Any] = field(default_factory=dict)
     tools: bool = True

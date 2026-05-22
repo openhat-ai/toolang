@@ -14,7 +14,7 @@ from toolang.base.error import ToolangError
 from toolang.base.types.message import Message
 from ..execution.detail import run_detail_from_record, thread_info_from_record, thread_info_from_runs
 from ..execution.input import effective_origin_model_selectors
-from ..execution.model import resolve_model
+from ..models.resolution import resolve_model
 from ..execution.records import ThreadPeer
 from ..execution.response import BufferedResponseSink, SseResponseSink
 from ..execution.runner import RunRequest

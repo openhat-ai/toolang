@@ -68,23 +68,26 @@ A model info may include:
 Toolang uses model infos for:
 
 - `too model list`
-- richer `too plugin list` output
+- richer `too model providers` output
 - route-neutral thunk ref expansion
 - selector matching inside one provider
 
 
-## Model Routes
+## Model Config
 
-Root config may define named model routes under `[model_routes]`.
+Root config may define model defaults, provider config, and named aliases under
+`[models]`.
 
-A route binds:
+An alias binds:
 
 - `ref`
 - `provider`
 - optional `model`
 - optional `adapter`
-- optional `base_url`
-- optional `api_key_env`
+- optional `endpoint`
+- optional `key_env`
+- optional `scope`
+- optional `tags`
 - optional `headers`
 - optional `options`
 
@@ -92,19 +95,29 @@ Example:
 
 ```toml
 [models]
-default = ["gateway", "openai/gpt-5@openai"]
+default = ["gateway", "openai/gpt-5[openai]"]
 
-[model_routes.gateway]
+[models.aliases.gateway]
 ref = "openai/gpt-5"
 provider = "openai"
 adapter = "responses"
-base_url = "https://gateway.example.com/v1"
-api_key_env = "GATEWAY_API_KEY"
+endpoint = "https://gateway.example.com/v1"
+key_env = "GATEWAY_API_KEY"
 headers = { "X-Team" = "infra" }
 ```
 
 The `default` list is ordered. The first entry is the default model selector,
 and the full list defines the default allowed set.
+
+Provider-backed aliases may omit `endpoint`, `adapter`, `key_env`, and `model`
+when the provider supplies defaults. `provider = "custom"` is reserved for
+alias-only OpenAI-compatible endpoints and requires an `endpoint`.
+
+Selectors use `namespace/name[filters]`. The pattern may be omitted, so
+`[remote]` means every remote model. Single-word filters map as follows:
+`local` and `remote` mean `scope:local` and `scope:remote`; other words mean
+`provider:<word>`. Explicit filters use `key:value`, for example
+`openai/*[provider:openrouter]` or `*[remote,adapter:responses]`.
 
 
 ## Runtime Model Call
@@ -182,5 +195,5 @@ Resolution proceeds in this order:
 4. built-in default selector
 
 When a thunk declares route-neutral refs through `model = ...` and the
-activation also provides `--model`, Toolang keeps only the intersection and
+activation also provides `--models`, Toolang keeps only the intersection and
 preserves activation order.

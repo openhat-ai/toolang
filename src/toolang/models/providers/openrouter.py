@@ -12,7 +12,7 @@ from toolang.base.error import ToolangError
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelEventHandler
-from . import responses
+from ..adapters import responses
 
 _DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 _DEFAULT_API_KEY_ENV = "OPENROUTER_API_KEY"
@@ -28,24 +28,26 @@ class OpenRouterModelProvider(ModelProvider):
 
     name: str = "openrouter"
     description: str | None = "Use OpenRouter-hosted models."
+    base_url: str = _DEFAULT_BASE_URL
+    key_env: str = _DEFAULT_API_KEY_ENV
 
     def required_env_vars(self) -> tuple[str, ...]:
-        return (_DEFAULT_API_KEY_ENV,)
+        return (self.key_env,)
 
     def default_base_url(self, *, environ: Mapping[str, str]) -> str | None:
         del environ
-        return _DEFAULT_BASE_URL
+        return self.base_url
 
     def default_api_key_env(self) -> str | None:
-        return _DEFAULT_API_KEY_ENV
+        return self.key_env
 
     def list_models(self, *, environ: Mapping[str, str]) -> tuple[ModelInfo, ...]:
-        api_key = environ.get(_DEFAULT_API_KEY_ENV, "").strip()
+        api_key = environ.get(self.key_env, "").strip()
         if not api_key:
             return ()
         try:
             response = httpx.get(
-                f"{_DEFAULT_BASE_URL}/models",
+                f"{self.base_url}/models",
                 headers={
                     "Authorization": f"Bearer {api_key}",
                     **_app_attribution_headers(),
@@ -228,5 +230,15 @@ def _merge_headers(defaults: Mapping[str, str], overrides: Mapping[str, str]) ->
 def create_model(config: Mapping[str, object]) -> ModelProvider:
     """Create the built-in OpenRouter model provider."""
 
-    del config
-    return OpenRouterModelProvider()
+    return OpenRouterModelProvider(
+        base_url=_config_str(config, "endpoint") or _DEFAULT_BASE_URL,
+        key_env=_config_str(config, "key_env") or _DEFAULT_API_KEY_ENV,
+    )
+
+
+def _config_str(config: Mapping[str, object], key: str) -> str | None:
+    value = config.get(key)
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None

@@ -101,9 +101,9 @@ from toolang.up import (
     create_app,
     load_default_models,
     load_model_providers,
-    load_model_routes,
     up as run_experiments_up,
 )
+from toolang.models.config import load_model_aliases
 
 
 def test_runner_queue_is_fifo() -> None:
@@ -1046,7 +1046,7 @@ def test_chat_models_lists_effective_selectors_for_chat_thunk(tmp_path: Path) ->
         enabled_features=("chat", "inspect"),
     )
     context.model_environ = {"OPENAI_API_KEY": "secret"}
-    context.config.set("models.allowed_selectors", ("openai/o3@openai", "openai/gpt-5@openai"))
+    context.config.set("models.allowed_selectors", ("openai/o3[openai]", "openai/gpt-5[openai]"))
     app = _create_test_app(context)
 
     with TestClient(app) as client:
@@ -1055,10 +1055,10 @@ def test_chat_models_lists_effective_selectors_for_chat_thunk(tmp_path: Path) ->
     assert response.status_code == 200
     body = response.json()
     assert body == {
-        "default": "openai/o3@openai",
+        "default": "openai/o3[openai]",
         "items": [
             {
-                "selector": "openai/o3@openai",
+                "selector": "openai/o3[openai]",
                 "name": "o3",
                 "ref": "openai/o3",
                 "provider": "openai",
@@ -1068,7 +1068,7 @@ def test_chat_models_lists_effective_selectors_for_chat_thunk(tmp_path: Path) ->
                 "streaming": True,
             },
             {
-                "selector": "openai/gpt-5@openai",
+                "selector": "openai/gpt-5[openai]",
                 "name": "gpt-5",
                 "ref": "openai/gpt-5",
                 "provider": "openai",
@@ -1098,10 +1098,10 @@ def test_chat_models_returns_all_discoverable_when_unrestricted(tmp_path: Path) 
     assert response.status_code == 200
     body = response.json()
     assert body == {
-        "default": "openai/gpt-5@openai",
+        "default": "openai/gpt-5[openai]",
         "items": [
             {
-                "selector": "openai/gpt-5@openai",
+                "selector": "openai/gpt-5[openai]",
                 "name": "gpt-5",
                 "ref": "openai/gpt-5",
                 "provider": "openai",
@@ -1111,7 +1111,7 @@ def test_chat_models_returns_all_discoverable_when_unrestricted(tmp_path: Path) 
                 "streaming": True,
             },
             {
-                "selector": "openai/o3@openai",
+                "selector": "openai/o3[openai]",
                 "name": "o3",
                 "ref": "openai/o3",
                 "provider": "openai",
@@ -4842,7 +4842,7 @@ def test_assemble_run_input_prefers_thunk_model_over_activation_default(tmp_path
         enabled_features=("chat",),
     )
     context.model_environ = {"OPENAI_API_KEY": "secret"}
-    context.config.set("models.default_selector", "openai/gpt-5@openai")
+    context.config.set("models.default_selector", "openai/gpt-5[openai]")
     bound = bind_run_request(
         context,
         RunRequest(group="chat", origin="chat", thunk="hello"),
@@ -4850,8 +4850,8 @@ def test_assemble_run_input_prefers_thunk_model_over_activation_default(tmp_path
 
     bundle = RunInput.from_binding(context, bound)
 
-    assert bundle.model_selector(context) == "openai/gpt-5@openai"
-    assert bundle.debug["activation_default_model"] == "openai/gpt-5@openai"
+    assert bundle.model_selector(context) == "openai/gpt-5[openai]"
+    assert bundle.debug["activation_default_model"] == "openai/gpt-5[openai]"
 
 
 def test_assemble_run_input_accepts_explicit_run_model_within_allowed_set(tmp_path: Path) -> None:
@@ -4866,22 +4866,22 @@ def test_assemble_run_input_accepts_explicit_run_model_within_allowed_set(tmp_pa
         enabled_features=("chat",),
     )
     context.model_environ = {"OPENAI_API_KEY": "secret"}
-    context.config.set("models.allowed_selectors", ("openai/o3@openai", "openai/gpt-5@openai"))
+    context.config.set("models.allowed_selectors", ("openai/o3[openai]", "openai/gpt-5[openai]"))
     bound = bind_run_request(
         context,
         RunRequest(
             group="chat",
             origin="chat",
             thunk="hello",
-            model_selector="openai/gpt-5@openai",
+            model_selector="openai/gpt-5[openai]",
         ),
     )
 
     bundle = RunInput.from_binding(context, bound)
 
-    assert bundle.effective_model_selectors(context) == ("openai/o3@openai", "openai/gpt-5@openai")
-    assert bundle.model_selector(context) == "openai/gpt-5@openai"
-    assert bundle.debug["requested_model_selector"] == "openai/gpt-5@openai"
+    assert bundle.effective_model_selectors(context) == ("openai/o3[openai]", "openai/gpt-5[openai]")
+    assert bundle.model_selector(context) == "openai/gpt-5[openai]"
+    assert bundle.debug["requested_model_selector"] == "openai/gpt-5[openai]"
 
 
 def test_assemble_run_input_uses_activation_default_when_thunk_omits_one(tmp_path: Path) -> None:
@@ -4895,7 +4895,7 @@ def test_assemble_run_input_uses_activation_default_when_thunk_omits_one(tmp_pat
         agent_name="alice",
         enabled_features=("chat",),
     )
-    context.config.set("models.default_selector", "openai/gpt-5@openai")
+    context.config.set("models.default_selector", "openai/gpt-5[openai]")
     bound = bind_run_request(
         context,
         RunRequest(group="chat", origin="chat", thunk="hello"),
@@ -4903,8 +4903,8 @@ def test_assemble_run_input_uses_activation_default_when_thunk_omits_one(tmp_pat
 
     bundle = RunInput.from_binding(context, bound)
 
-    assert bundle.model_selector(context) == "openai/gpt-5@openai"
-    assert bundle.debug["activation_default_model"] == "openai/gpt-5@openai"
+    assert bundle.model_selector(context) == "openai/gpt-5[openai]"
+    assert bundle.debug["activation_default_model"] == "openai/gpt-5[openai]"
 
 
 def test_assemble_run_input_hides_tools_for_invoke_runs(tmp_path: Path) -> None:
@@ -4918,7 +4918,7 @@ def test_assemble_run_input_hides_tools_for_invoke_runs(tmp_path: Path) -> None:
         agent_name="alice",
         enabled_features=("chat",),
     )
-    context.config.set("models.default_selector", "openai/gpt-5@openai")
+    context.config.set("models.default_selector", "openai/gpt-5[openai]")
     invoke_bound = bind_run_request(
         context,
         RunRequest(
@@ -5157,8 +5157,8 @@ def test_execute_run_rejects_thunk_model_outside_activation_allowlist(tmp_path: 
         enabled_features=("chat",),
     )
     context.model_environ = {"OPENAI_API_KEY": "secret"}
-    context.config.set("models.allowed_selectors", ("openai/o3@openai",))
-    context.config.set("models.default_selector", "openai/o3@openai")
+    context.config.set("models.allowed_selectors", ("openai/o3[openai]",))
+    context.config.set("models.default_selector", "openai/o3[openai]")
 
     outcome = asyncio.run(
         run_execute_module.execute_run(
@@ -5174,7 +5174,7 @@ def test_execute_run_rejects_thunk_model_outside_activation_allowlist(tmp_path: 
 
     assert outcome.status == "failed"
     assert outcome.error is not None
-    assert "no compatible model between thunk model refs and activation --model options" in outcome.error
+    assert "no compatible model between thunk model refs and activation --models options" in outcome.error
 
 
 def test_execute_run_pre_start_failure_does_not_emit_persist_sink_error(tmp_path: Path, caplog) -> None:
@@ -5206,7 +5206,7 @@ def test_execute_run_pre_start_failure_does_not_emit_persist_sink_error(tmp_path
 
     assert outcome.status == "failed"
     assert outcome.error is not None
-    assert "model selector could not be resolved with the configured providers: claude" in outcome.error
+    assert "No configured model is available." in outcome.error
     assert context.store.list_runs() == []
     assert "persist sink event handling failed" not in caplog.text
 
@@ -5341,7 +5341,7 @@ def test_chat_accepts_structured_message_parts_and_model_selector(tmp_path: Path
             response = client.post(
                 "/api/v1/chat",
                 json={
-                    "model": "openai/gpt-5@openai",
+                    "model": "openai/gpt-5[openai]",
                     "message": {
                         "role": "user",
                         "parts": [
@@ -5707,8 +5707,12 @@ def _build_context(
             live=live,
             environ={},
         ),
-        model_providers=load_model_providers(),
-        model_routes=load_model_routes(toolang_root, agent_name),
+        model_providers={
+            name: provider
+            for name, provider in load_model_providers().items()
+            if name == "openai"
+        },
+        model_aliases=load_model_aliases(toolang_root, agent_name),
         default_models=load_default_models(toolang_root, agent_name),
         model_environ={"OPENAI_API_KEY": "secret"},
         channel_bindings=channel_bindings or {},

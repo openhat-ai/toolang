@@ -22,9 +22,7 @@ from typer.core import TyperCommand
 from .. import agents, caps as cap_store, templates, work
 from .. import up as agent_up
 from ..base.protocols.model import ModelProvider
-from ..base.types.model import ModelInfo
 from ..config.log import LoggingPlan, configure_logging, configure_logging_plan, resolve_agent_logging
-from ..execution.model import DEFAULT_MODEL_SELECTOR
 from ..execution.records import UpdateKind
 from ..models.discovery import (
     default_provider_api_key_env,
@@ -33,6 +31,10 @@ from ..models.discovery import (
     model_infos,
     required_provider_env_vars,
 )
+from ..models.config import load_model_aliases, load_model_provider_configs
+from ..models.resolution import DEFAULT_MODEL_SELECTOR
+from ..models.selectors import split_model_selectors
+from ..models.views import available_model_adapters, model_list_rows, model_provider_rows
 from . import caps as caps_cli
 from . import invoke as cli_invoke
 from .progress import CliProgress, as_progress_sink, make_cli_progress
@@ -396,8 +398,8 @@ def run_agent(
     models: Annotated[
         list[str] | None,
         typer.Option(
-            "--model",
-            help="Allow a model selector for this activation. Repeat to allow multiple; the first becomes default.",
+            "--models",
+            help="Allow model selectors for this activation. Repeat or pass CSV; the first becomes default.",
         ),
     ] = None,
     features: Annotated[
@@ -544,8 +546,8 @@ def start_agent(
     models: Annotated[
         list[str] | None,
         typer.Option(
-            "--model",
-            help="Allow a model selector for this activation. Repeat to allow multiple; the first becomes default.",
+            "--models",
+            help="Allow model selectors for this activation. Repeat or pass CSV; the first becomes default.",
         ),
     ] = None,
     features: Annotated[
@@ -749,14 +751,44 @@ model_app = typer.Typer(
 )
 
 
-@model_app.command("list", help="List discoverable models.")
-def list_models() -> None:
+@model_app.command("list", help="List selectable models.")
+def list_models(
+    models: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--models",
+            help="Filter by model selector. Repeat or pass CSV.",
+        ),
+    ] = None,
+) -> None:
     environ = dict(os.environ)
-    rows = _model_rows(environ)
+    root = _toolang_root(None)
+    selectors = split_model_selectors(tuple(models or ()))
+    rows = _model_rows(root, environ, model_selectors=selectors)
     if not rows:
-        typer.echo("No discoverable models found.")
+        typer.echo("No selectable models matched." if selectors else "No selectable models found.")
         return
-    _echo_table(("PROVIDER", "MODEL", "ADAPTER", "FEATURES"), rows)
+    _echo_table(("MODEL", "PROVIDER", "PROFILE"), rows)
+    typer.echo()
+    provider_count = len({provider for _model, provider, _details in rows})
+    typer.echo(f" {len(rows)} {'model' if len(rows) == 1 else 'models'}, {provider_count} {'provider' if provider_count == 1 else 'providers'}")
+
+
+@model_app.command("providers", help="Show model provider and alias configuration.")
+def list_model_providers() -> None:
+    environ = dict(os.environ)
+    root = _toolang_root(None)
+    rows = _model_provider_rows(root, environ)
+    if not rows:
+        typer.echo("No model providers found.")
+        return
+    _echo_table(("PROVIDER", "MODELS", "CONFIG"), rows)
+
+
+@model_app.command("adapters", help="List available model adapters.")
+def list_model_adapters() -> None:
+    rows = [(name,) for name in available_model_adapters()]
+    _echo_table(("ADAPTER",), rows)
 
 
 @plugin_app.command("list", help="List installed plugins.")
@@ -769,44 +801,32 @@ def list_plugins() -> None:
     _echo_table(("FAMILY", "NAME", "SOURCE", "CONFIG", "DETAILS"), rows)
 
 
-def _model_rows(environ: dict[str, str]) -> list[tuple[str, str, str, str]]:
-    rows: list[tuple[str, str, str, str]] = []
-    for name, provider in sorted(agent_up.load_model_providers().items()):
-        for info in model_infos(provider, environ=environ):
-            rows.append(
-                (
-                    name,
-                    info.ref,
-                    info.adapter,
-                    _model_feature_summary(info),
-                )
-            )
-    return rows
+def _model_rows(
+    root: Path,
+    environ: dict[str, str],
+    *,
+    model_selectors: Sequence[str] = (),
+) -> list[tuple[str, str, str]]:
+    providers = agent_up.load_model_providers(root, "")
+    aliases = load_model_aliases(root, "")
+    return model_list_rows(
+        providers=providers,
+        aliases=aliases,
+        environ=environ,
+        selectors=model_selectors,
+    )
 
 
-def _model_feature_summary(info: ModelInfo) -> str:
-    parts: list[str] = []
-    parts.append(f"tools={'yes' if info.tools else 'no'}")
-    parts.append(f"streaming={'yes' if info.streaming else 'no'}")
-    if info.context_window is not None:
-        parts.append(f"ctx={_format_k(info.context_window)}")
-    if info.max_output_tokens is not None:
-        parts.append(f"max_out={_format_k(info.max_output_tokens)}")
-    if info.input_price is not None or info.output_price is not None:
-        in_price = "-" if info.input_price is None else _format_price_per_million(info.input_price)
-        out_price = "-" if info.output_price is None else _format_price_per_million(info.output_price)
-        parts.append(f"price={in_price}/{out_price}")
-    return ", ".join(parts)
-
-
-def _format_k(value: int) -> str:
-    if value >= 1024:
-        return f"{value / 1024:g}k"
-    return str(value)
-
-
-def _format_price_per_million(value: float) -> str:
-    return f"${value * 1_000_000:g}"
+def _model_provider_rows(root: Path, environ: dict[str, str]) -> list[tuple[str, str, str]]:
+    provider_configs = load_model_provider_configs(root, "")
+    providers = agent_up.load_model_providers(root, "")
+    aliases = load_model_aliases(root, "")
+    return model_provider_rows(
+        providers=providers,
+        aliases=aliases,
+        provider_configs=provider_configs,
+        environ=environ,
+    )
 
 
 def _plugin_rows(environ: dict[str, str]) -> list[tuple[str, str, str, str, str]]:
@@ -819,7 +839,7 @@ def _plugin_rows(environ: dict[str, str]) -> list[tuple[str, str, str, str, str]
                 name,
                 model_sources.get(name, _model_provider_source(provider)),
                 _model_provider_config(provider, environ=environ),
-                _model_provider_details(provider, environ=environ),
+                _model_plugin_details(provider, environ=environ),
             )
         )
     for family, group in (
@@ -857,7 +877,7 @@ def _model_provider_config(
     return "missing env" if missing else "configured"
 
 
-def _model_provider_details(
+def _model_plugin_details(
     provider: ModelProvider,
     *,
     environ: dict[str, str],

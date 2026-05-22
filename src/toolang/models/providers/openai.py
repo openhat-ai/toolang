@@ -10,7 +10,7 @@ from toolang.base.protocols.model import ModelProvider
 from toolang.base.types.message import AudioPart
 from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelEventHandler
-from . import responses
+from ..adapters import responses
 
 
 _KNOWN_MODELS: tuple[tuple[str, str], ...] = (
@@ -33,16 +33,18 @@ class OpenAIModelProvider(ModelProvider):
 
     name: str = "openai"
     description: str | None = "Use OpenAI-hosted models."
+    base_url: str = _DEFAULT_BASE_URL
+    key_env: str = _DEFAULT_API_KEY_ENV
 
     def required_env_vars(self) -> tuple[str, ...]:
-        return (_DEFAULT_API_KEY_ENV,)
+        return (self.key_env,)
 
     def default_base_url(self, *, environ: Mapping[str, str]) -> str | None:
         del environ
-        return _DEFAULT_BASE_URL
+        return self.base_url
 
     def default_api_key_env(self) -> str | None:
-        return _DEFAULT_API_KEY_ENV
+        return self.key_env
 
     def list_models(self, *, environ: Mapping[str, str]) -> tuple[ModelInfo, ...]:
         del environ
@@ -131,5 +133,15 @@ def _request_has_audio_input(request: ModelCall) -> bool:
 def create_model(config: Mapping[str, object]) -> ModelProvider:
     """Create the built-in OpenAI model provider."""
 
-    del config
-    return OpenAIModelProvider()
+    return OpenAIModelProvider(
+        base_url=_config_str(config, "endpoint") or _DEFAULT_BASE_URL,
+        key_env=_config_str(config, "key_env") or _DEFAULT_API_KEY_ENV,
+    )
+
+
+def _config_str(config: Mapping[str, object], key: str) -> str | None:
+    value = config.get(key)
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None

@@ -16,7 +16,6 @@ import socket
 import sys
 import time
 import threading
-import tomllib
 from types import FrameType
 from typing import Any, Literal, TypeVar, cast
 from urllib.parse import urlsplit
@@ -33,8 +32,7 @@ from toolang.base.protocols.model import ModelProvider
 from toolang.base.protocols.sandbox import SandboxPlugin
 from toolang.base.protocols.tool import Tool, ToolPlugin
 from toolang.base.types.channel import ChannelContext, InboundDelivery
-from toolang.base.error import ToolangError
-from toolang.base.types.model import ModelRoute
+from toolang.base.types.model import ModelAlias
 from toolang.base.types.sandbox import SandboxSelector, SandboxStartRequest, SandboxState
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.base.utils.channels import bind_delivery
@@ -51,7 +49,7 @@ from .config.web import resolve_cors_allowed_origins, resolve_ui_base_url
 from .execution.input import allocate_run_id
 from .execution.response import ResponseSink, build_channel_response_sink
 from .execution.execute import execute_run
-from .execution.model import resolve_model
+from .models.resolution import resolve_model, select_model_selectors
 from .execution.runner import QueueRunner, RunRequest, RunSubmission, RunOutcome
 from .execution.db import ExecutionStore, execution_db_path
 from .execution.stream import RuntimeEventBus
@@ -62,6 +60,12 @@ from .progress import ProgressSink
 from .state.durable import scan_durable_state
 from .state.live import LiveState, load_live_state
 from .state.prepared import PreparedEntry, PreparedState
+from .models.config import (
+    load_default_models,
+    load_model_aliases,
+)
+from .models.providers.loader import load_model_providers
+from .models.selectors import split_model_selectors
 
 FeatureName = Literal[
     "chat", "pulse", "poll", "hook", "control", "inspect", "watch"
@@ -155,7 +159,7 @@ class UptimeContext:
         live: LiveState,
         tools: dict[str, Tool],
         model_providers: dict[str, ModelProvider],
-        model_routes: dict[str, ModelRoute],
+        model_aliases: dict[str, ModelAlias],
         default_models: tuple[str, ...],
         model_environ: Mapping[str, str],
         channel_bindings: dict[str, ChannelBinding],
@@ -172,7 +176,7 @@ class UptimeContext:
         self.live = live
         self.tools = dict(tools)
         self.model_providers = dict(model_providers)
-        self.model_routes = dict(model_routes)
+        self.model_aliases = dict(model_aliases)
         self.default_models = tuple(default_models)
         self.model_environ = dict(model_environ)
         self.channel_bindings = dict(channel_bindings)
@@ -257,138 +261,6 @@ class UptimeContext:
         )
 
 
-def load_model_providers() -> dict[str, ModelProvider]:
-    """Load all installed model providers for one uptime."""
-
-    from .models.ollama import create_model as create_ollama_model
-    from .models.openai import create_model as create_openai_model
-
-    providers: dict[str, ModelProvider] = {
-        "openai": create_openai_model({}),
-        "ollama": create_ollama_model({}),
-    }
-    for entry_point in entry_points(group="toolang.model"):
-        try:
-            factory = cast(Callable[[Mapping[str, Any]], ModelProvider], entry_point.load())
-        except ModuleNotFoundError:
-            continue
-        provider = factory({})
-        if provider.name in providers:
-            continue
-        providers[provider.name] = provider
-    return providers
-
-
-def load_model_routes(toolang_root: Path, agent_name: str) -> dict[str, ModelRoute]:
-    """Load named model routes for one uptime."""
-
-    routes: dict[str, ModelRoute] = {}
-    for payload in _model_config_payloads(toolang_root, agent_name):
-        raw_routes = payload.get("model_routes")
-        if not isinstance(raw_routes, dict):
-            continue
-        for name, value in raw_routes.items():
-            if not isinstance(name, str) or not isinstance(value, dict):
-                continue
-            routes[name] = _parse_model_route(name, cast(dict[str, object], value))
-    return routes
-
-
-def load_default_models(toolang_root: Path, agent_name: str) -> tuple[str, ...]:
-    """Load default model route or selector names for one uptime."""
-
-    defaults: tuple[str, ...] = ()
-    for payload in _model_config_payloads(toolang_root, agent_name):
-        raw_models = payload.get("models")
-        if not isinstance(raw_models, dict):
-            continue
-        models_table = cast(dict[str, object], raw_models)
-        raw_default = models_table.get("default")
-        if isinstance(raw_default, list):
-            defaults = tuple(str(item).strip() for item in raw_default if str(item).strip())
-    return defaults
-
-
-def _parse_model_route(name: str, payload: dict[str, object]) -> ModelRoute:
-    ref = _required_model_route_str(payload, "ref", route_name=name)
-    provider = _required_model_route_str(payload, "provider", route_name=name)
-    model = _optional_model_route_str(payload.get("model"))
-    display_name = _optional_model_route_str(payload.get("name"))
-    adapter = _optional_model_route_str(payload.get("adapter"))
-    base_url = _optional_model_route_str(payload.get("base_url"))
-    api_key_env = _optional_model_route_str(payload.get("api_key_env"))
-    tools = _optional_model_route_bool(payload.get("tools"))
-    streaming = _optional_model_route_bool(payload.get("streaming"))
-    headers = _model_route_string_table(payload.get("headers"))
-    options = (
-        dict(cast(dict[str, object], payload.get("options", {})))
-        if isinstance(payload.get("options"), dict)
-        else {}
-    )
-    details = _optional_model_route_str(payload.get("details"))
-    return ModelRoute(
-        name=name,
-        ref=ref,
-        provider=provider,
-        model=model,
-        display_name=display_name,
-        adapter=adapter,
-        base_url=base_url,
-        api_key_env=api_key_env,
-        tools=tools,
-        streaming=streaming,
-        headers=headers,
-        options=options,
-        details=details,
-    )
-
-
-def _model_config_payloads(toolang_root: Path, agent_name: str) -> tuple[dict[str, object], dict[str, object]]:
-    return (
-        _load_toml(toolang_root / "config.toml"),
-        _load_toml(toolang_root / "agents" / agent_name / "config.toml"),
-    )
-
-
-def _load_toml(path: Path) -> dict[str, object]:
-    if not path.is_file():
-        return {}
-    return cast(dict[str, object], tomllib.loads(path.read_text(encoding="utf-8")))
-
-
-def _required_model_route_str(payload: dict[str, object], key: str, *, route_name: str) -> str:
-    value = _optional_model_route_str(payload.get(key))
-    if value is None:
-        raise ToolangError(f"model route {route_name!r} is missing {key}")
-    return value
-
-
-def _optional_model_route_str(value: object) -> str | None:
-    if not isinstance(value, str):
-        return None
-    text = value.strip()
-    return text or None
-
-
-def _optional_model_route_bool(value: object) -> bool | None:
-    if isinstance(value, bool):
-        return value
-    return None
-
-
-def _model_route_string_table(value: object) -> dict[str, str]:
-    if not isinstance(value, dict):
-        return {}
-    result: dict[str, str] = {}
-    for key, item in value.items():
-        text_key = _optional_model_route_str(key)
-        text_value = _optional_model_route_str(item)
-        if text_key is None or text_value is None:
-            continue
-        result[text_key] = text_value
-    return result
-
-
 @dataclass(frozen=True, slots=True)
 class StartupSpec:
     """One fully resolved agent startup request."""
@@ -410,7 +282,7 @@ class StartupSpec:
 @dataclass(frozen=True, slots=True)
 class _StartupModelSelection:
     model_providers: Mapping[str, ModelProvider]
-    model_routes: Mapping[str, ModelRoute]
+    model_aliases: Mapping[str, ModelAlias]
     default_models: tuple[str, ...]
     model_environ: Mapping[str, str]
 
@@ -727,8 +599,8 @@ def resolve_startup(
     )
     dev_artifact = _resolve_dev_artifact(dev) if dev is not None else None
     model_selectors = _normalize_model_selectors(models)
-    if model_selectors:
-        _validate_startup_model_selectors(
+    if _startup_requires_model(enabled_features):
+        _validate_startup_models(
             toolang_root=toolang_root,
             agent_name=agent_name,
             selectors=model_selectors,
@@ -750,7 +622,11 @@ def resolve_startup(
     )
 
 
-def _validate_startup_model_selectors(
+def _startup_requires_model(enabled_features: Sequence[str]) -> bool:
+    return any(feature_name in RUN_FEATURES for feature_name in enabled_features)
+
+
+def _validate_startup_models(
     *,
     toolang_root: Path,
     agent_name: str,
@@ -758,11 +634,14 @@ def _validate_startup_model_selectors(
     environ: Mapping[str, str],
 ) -> None:
     context = _StartupModelSelection(
-        model_providers=load_model_providers(),
-        model_routes=load_model_routes(toolang_root, agent_name),
+        model_providers=load_model_providers(toolang_root, agent_name),
+        model_aliases=load_model_aliases(toolang_root, agent_name),
         default_models=load_default_models(toolang_root, agent_name),
         model_environ=environ,
     )
+    if not selectors:
+        select_model_selectors(context)
+        return
     for selector in selectors:
         resolve_model(context, selector=selector)
 
@@ -796,7 +675,7 @@ def build_run_argv(
     ])
     effective_models = _normalize_model_selectors(models) or spec.model_selectors
     for selector in effective_models:
-        command.extend(["--model", selector])
+        command.extend(["--models", selector])
     if spec.dev_artifact is not None and not sandbox_child:
         command.extend(["--dev", str(spec.dev_artifact)])
     if sandbox_child:
@@ -1106,8 +985,8 @@ def _load_runtime_context(
             live=live,
             environ=environ,
         ),
-        model_providers=load_model_providers(),
-        model_routes=load_model_routes(toolang_root, agent_name),
+        model_providers=load_model_providers(toolang_root, agent_name),
+        model_aliases=load_model_aliases(toolang_root, agent_name),
         default_models=load_default_models(toolang_root, agent_name),
         model_environ=environ,
         channel_bindings=channel_bindings,
@@ -1401,7 +1280,7 @@ def _up_managed_sandbox(
 def _normalize_model_selectors(models: Sequence[str] | None) -> tuple[str, ...]:
     result: list[str] = []
     seen: set[str] = set()
-    for raw in models or ():
+    for raw in split_model_selectors(tuple(models or ())):
         selector = raw.strip()
         if not selector:
             raise ValueError("model selector cannot be empty")

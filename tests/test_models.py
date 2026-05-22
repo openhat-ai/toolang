@@ -23,16 +23,16 @@ from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.base.error import ToolangError
 from toolang.execution.context import RunContext
 from toolang.execution.input import RunBinding, RunInput
-from toolang.execution.model import resolve_model, select_model_selectors
+from toolang.models.resolution import resolve_model, select_model_selectors
 from toolang.execution.snapshot import RunSnapshot, SnapshotAgent, SnapshotProgram, SnapshotRun
-from toolang.models import ollama as ollama_models
-from toolang.models import openai as openai_models
-from toolang.models import openrouter as openrouter_models
-from toolang.models import responses as responses_models
-from toolang.models.responses import encode_message, response_payload
+from toolang.models.providers import ollama as ollama_models
+from toolang.models.providers import openai as openai_models
+from toolang.models.providers import openrouter as openrouter_models
+from toolang.models.adapters import responses as responses_models
+from toolang.models.adapters.responses import encode_message, response_payload
 from toolang.program import MessageBlock, ParamDecl, SourceSpan, Thunk
 from toolang.strategies import load_run_strategy
-from toolang.up import load_default_models, load_model_routes
+from toolang.models.config import load_default_models, load_model_aliases
 
 
 class _FakeTool(Tool):
@@ -104,7 +104,7 @@ def test_model_resolution_resolves_named_route(tmp_path: Path) -> None:
         '[models]\n'
         'default = ["fast"]\n'
         '\n'
-        '[model_routes.fast]\n'
+        '[models.aliases.fast]\n'
         'ref = "openai/gpt-5"\n'
         'provider = "openai"\n',
         encoding="utf-8",
@@ -125,7 +125,7 @@ def test_model_resolution_resolves_named_route(tmp_path: Path) -> None:
     )
     context = SimpleNamespace(
         model_providers={"openai": provider},
-        model_routes=load_model_routes(toolang_root, "alice"),
+        model_aliases=load_model_aliases(toolang_root, "alice"),
         default_models=load_default_models(toolang_root, "alice"),
         model_environ={"OPENAI_API_KEY": "secret"},
     )
@@ -154,12 +154,12 @@ def test_model_resolution_resolves_explicit_provider_route() -> None:
     )
     context = SimpleNamespace(
         model_providers={"openrouter": provider},
-        model_routes={},
+        model_aliases={},
         default_models=(),
         model_environ={},
     )
 
-    target = resolve_model(context, selector="openai/gpt-5@openrouter")
+    target = resolve_model(context, selector="openai/gpt-5[openrouter]")
 
     assert target.provider == "openrouter"
     assert target.model == "openai/gpt-5"
@@ -195,7 +195,7 @@ def test_model_resolution_rejects_ambiguous_selector() -> None:
                 ),
             ),
         },
-        model_routes={},
+        model_aliases={},
         default_models=(),
         model_environ={},
     )
@@ -221,13 +221,13 @@ def test_model_resolution_rejects_missing_provider_env_before_target_use() -> No
     )
     context = SimpleNamespace(
         model_providers={"openai": provider},
-        model_routes={},
+        model_aliases={},
         default_models=(),
         model_environ={},
     )
 
     with pytest.raises(ToolangError, match="OPENAI_API_KEY"):
-        resolve_model(context, selector="openai/gpt-5@openai")
+        resolve_model(context, selector="openai/gpt-5[openai]")
 
 
 def test_model_resolution_skips_unconfigured_provider_when_configured_match_exists() -> None:
@@ -261,7 +261,7 @@ def test_model_resolution_skips_unconfigured_provider_when_configured_match_exis
     )
     context = SimpleNamespace(
         model_providers={"openai": openai, "openrouter": openrouter},
-        model_routes={},
+        model_aliases={},
         default_models=(),
         model_environ={"OPENROUTER_API_KEY": "secret"},
     )
@@ -295,7 +295,7 @@ def test_model_resolution_uses_first_allowed_selector_as_default() -> None:
     )
     context = SimpleNamespace(
         model_providers={"openrouter": provider},
-        model_routes={},
+        model_aliases={},
         default_models=(),
         model_environ={},
     )
@@ -303,8 +303,8 @@ def test_model_resolution_uses_first_allowed_selector_as_default() -> None:
     target = resolve_model(
         context,
         selector=None,
-        default_selector="gpt-5@openrouter",
-        allowed_selectors=("gpt-5@openrouter", "o3@openrouter"),
+        default_selector="gpt-5[openrouter]",
+        allowed_selectors=("gpt-5[openrouter]", "o3[openrouter]"),
     )
 
     assert target.ref == "openai/gpt-5"
@@ -321,16 +321,16 @@ def test_model_resolution_allows_selector_within_allowed_set() -> None:
     )
     context = SimpleNamespace(
         model_providers={"openrouter": provider},
-        model_routes={},
+        model_aliases={},
         default_models=(),
         model_environ={},
     )
 
     target = resolve_model(
         context,
-        selector="o3@openrouter",
-        default_selector="gpt-5@openrouter",
-        allowed_selectors=("gpt-5@openrouter", "o3@openrouter"),
+        selector="o3[openrouter]",
+        default_selector="gpt-5[openrouter]",
+        allowed_selectors=("gpt-5[openrouter]", "o3[openrouter]"),
     )
 
     assert target.ref == "openai/o3"
@@ -347,7 +347,7 @@ def test_model_resolution_rejects_selector_outside_allowed_set() -> None:
     )
     context = SimpleNamespace(
         model_providers={"openrouter": provider},
-        model_routes={},
+        model_aliases={},
         default_models=(),
         model_environ={},
     )
@@ -355,9 +355,9 @@ def test_model_resolution_rejects_selector_outside_allowed_set() -> None:
     with pytest.raises(ToolangError, match="not allowed for this activation"):
         resolve_model(
             context,
-            selector="o3@openrouter",
-            default_selector="gpt-5@openrouter",
-            allowed_selectors=("gpt-5@openrouter",),
+            selector="o3[openrouter]",
+            default_selector="gpt-5[openrouter]",
+            allowed_selectors=("gpt-5[openrouter]",),
         )
 
 
@@ -371,7 +371,7 @@ def test_select_model_selectors_preserves_activation_order_for_intersection() ->
     )
     context = SimpleNamespace(
         model_providers={"openrouter": provider},
-        model_routes={},
+        model_aliases={},
         default_models=(),
         model_environ={},
     )
@@ -379,10 +379,10 @@ def test_select_model_selectors_preserves_activation_order_for_intersection() ->
     selectors = select_model_selectors(
         context,
         thunk_selectors=("openai/gpt-5", "openai/o3"),
-        activation_selectors=("openai/o3@openrouter", "openai/gpt-5@openrouter"),
+        activation_selectors=("openai/o3[openrouter]", "openai/gpt-5[openrouter]"),
     )
 
-    assert selectors == ("openai/o3@openrouter", "openai/gpt-5@openrouter")
+    assert selectors == ("openai/o3[openrouter]", "openai/gpt-5[openrouter]")
 
 
 def test_select_model_selectors_expands_route_neutral_thunk_refs_from_discovery() -> None:
@@ -404,7 +404,7 @@ def test_select_model_selectors_expands_route_neutral_thunk_refs_from_discovery(
     )
     context = SimpleNamespace(
         model_providers={"openai": openai, "openrouter": openrouter},
-        model_routes={},
+        model_aliases={},
         default_models=(),
         model_environ={"OPENAI_API_KEY": "secret", "OPENROUTER_API_KEY": "secret"},
     )
@@ -415,10 +415,10 @@ def test_select_model_selectors_expands_route_neutral_thunk_refs_from_discovery(
     )
 
     assert selectors == (
-        "openai/o3@openai",
-        "openai/o3@openrouter",
-        "openai/gpt-5@openai",
-        "openai/gpt-5@openrouter",
+        "openai/o3[openai]",
+        "openai/o3[openrouter]",
+        "openai/gpt-5[openai]",
+        "openai/gpt-5[openrouter]",
     )
 
 
@@ -439,7 +439,7 @@ def test_select_model_selectors_skips_providers_missing_required_env() -> None:
     )
     context = SimpleNamespace(
         model_providers={"openai": openai, "openrouter": openrouter},
-        model_routes={},
+        model_aliases={},
         default_models=(),
         model_environ={"OPENROUTER_API_KEY": "secret"},
     )
@@ -449,7 +449,7 @@ def test_select_model_selectors_skips_providers_missing_required_env() -> None:
         thunk_selectors=("openai/gpt-5",),
     )
 
-    assert selectors == ("openai/gpt-5@openrouter",)
+    assert selectors == ("openai/gpt-5[openrouter]",)
 
 
 def test_select_model_selectors_prefers_exact_ref_over_version_aliases() -> None:
@@ -477,7 +477,7 @@ def test_select_model_selectors_prefers_exact_ref_over_version_aliases() -> None
     )
     context = SimpleNamespace(
         model_providers={"openrouter": openrouter},
-        model_routes={},
+        model_aliases={},
         default_models=(),
         model_environ={"OPENROUTER_API_KEY": "secret"},
     )
@@ -487,7 +487,7 @@ def test_select_model_selectors_prefers_exact_ref_over_version_aliases() -> None
         thunk_selectors=("openai/gpt-5",),
     )
 
-    assert selectors == ("openai/gpt-5@openrouter",)
+    assert selectors == ("openai/gpt-5[openrouter]",)
 
 
 def test_select_model_selectors_returns_all_discoverable_when_unrestricted() -> None:
@@ -509,7 +509,7 @@ def test_select_model_selectors_returns_all_discoverable_when_unrestricted() -> 
     )
     context = SimpleNamespace(
         model_providers={"openai": openai, "openrouter": openrouter},
-        model_routes={},
+        model_aliases={},
         default_models=(),
         model_environ={"OPENAI_API_KEY": "secret", "OPENROUTER_API_KEY": "secret"},
     )
@@ -517,10 +517,10 @@ def test_select_model_selectors_returns_all_discoverable_when_unrestricted() -> 
     selectors = select_model_selectors(context)
 
     assert selectors == (
-        "openai/gpt-5@openai",
-        "openai/gpt-5@openrouter",
-        "openai/o3@openai",
-        "openai/o3@openrouter",
+        "openai/gpt-5[openai]",
+        "openai/gpt-5[openrouter]",
+        "openai/o3[openai]",
+        "openai/o3[openrouter]",
     )
 
 
@@ -541,7 +541,7 @@ def test_model_info_discovery_is_cached_within_one_process() -> None:
     )
     context = SimpleNamespace(
         model_providers={"openrouter": openrouter},
-        model_routes={},
+        model_aliases={},
         default_models=(),
         model_environ={"OPENROUTER_API_KEY": "secret"},
     )
@@ -552,7 +552,7 @@ def test_model_info_discovery_is_cached_within_one_process() -> None:
     )
     target = resolve_model(context, selector=selectors[0])
 
-    assert selectors == ("anthropic/claude-4.5-sonnet-20250929@openrouter",)
+    assert selectors == ("anthropic/claude-4.5-sonnet-20250929[openrouter]",)
     assert target.ref == "anthropic/claude-4.5-sonnet-20250929"
     assert openrouter.list_models_calls == 1
 
@@ -561,12 +561,12 @@ def test_model_route_can_override_provider_defaults(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     (toolang_root / "agents" / "alice").mkdir(parents=True, exist_ok=True)
     (toolang_root / "config.toml").write_text(
-        '[model_routes.gateway]\n'
+        '[models.aliases.gateway]\n'
         'ref = "openai/gpt-5"\n'
         'provider = "openai"\n'
         'adapter = "responses"\n'
-        'base_url = "https://gateway.example.com/v1"\n'
-        'api_key_env = "GATEWAY_API_KEY"\n'
+        'endpoint = "https://gateway.example.com/v1"\n'
+        'key_env = "GATEWAY_API_KEY"\n'
         'headers = { "X-Team" = "infra" }\n',
         encoding="utf-8",
     )
@@ -578,7 +578,7 @@ def test_model_route_can_override_provider_defaults(tmp_path: Path) -> None:
     )
     context = SimpleNamespace(
         model_providers={"openai": provider},
-        model_routes=load_model_routes(toolang_root, "alice"),
+        model_aliases=load_model_aliases(toolang_root, "alice"),
         default_models=(),
         model_environ={"GATEWAY_API_KEY": "secret"},
     )
@@ -594,15 +594,15 @@ def test_model_route_can_override_provider_defaults(tmp_path: Path) -> None:
     assert target.headers == {"X-Team": "infra"}
 
 
-def test_model_route_reports_missing_route_api_key_env(tmp_path: Path) -> None:
+def test_model_alias_reports_missing_key_env(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     (toolang_root / "agents" / "alice").mkdir(parents=True, exist_ok=True)
     (toolang_root / "config.toml").write_text(
-        '[model_routes.gateway]\n'
+        '[models.aliases.gateway]\n'
         'ref = "openai/gpt-5"\n'
         'provider = "openai"\n'
         'adapter = "responses"\n'
-        'api_key_env = "GATEWAY_API_KEY"\n',
+        'key_env = "GATEWAY_API_KEY"\n',
         encoding="utf-8",
     )
     provider = _FakeModelProvider(
@@ -613,12 +613,12 @@ def test_model_route_reports_missing_route_api_key_env(tmp_path: Path) -> None:
     )
     context = SimpleNamespace(
         model_providers={"openai": provider},
-        model_routes=load_model_routes(toolang_root, "alice"),
+        model_aliases=load_model_aliases(toolang_root, "alice"),
         default_models=(),
         model_environ={},
     )
 
-    with pytest.raises(ToolangError, match="model route 'gateway'.*GATEWAY_API_KEY"):
+    with pytest.raises(ToolangError, match="model alias 'gateway'.*GATEWAY_API_KEY"):
         resolve_model(context, selector="gateway")
 
 

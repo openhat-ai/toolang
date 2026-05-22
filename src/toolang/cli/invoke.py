@@ -274,13 +274,13 @@ def _consume_roaming_control_options(argv: list[str]) -> tuple[bool, tuple[str, 
             quiet = True
             index += 1
             continue
-        if token.startswith("--model="):
+        if token.startswith("--models="):
             model = token.partition("=")[2].strip()
             if model:
                 models.append(model)
                 index += 1
                 continue
-        if token == "--model" and index + 1 < len(argv):
+        if token == "--models" and index + 1 < len(argv):
             model = argv[index + 1].strip()
             if model:
                 models.append(model)
@@ -335,19 +335,19 @@ def _parse_roaming_invoke_request(
         if token == "--":
             parts.extend(argv[index + 1 :])
             break
-        if token.startswith("--model="):
+        if token.startswith("--models="):
             model = token.partition("=")[2].strip()
             if not model:
-                raise click.ClickException("--model requires a value")
+                raise click.ClickException("--models requires a value")
             models.append(model)
             index += 1
             continue
-        if token == "--model":
+        if token == "--models":
             if index + 1 >= len(argv):
-                raise click.ClickException("--model requires a value")
+                raise click.ClickException("--models requires a value")
             model = argv[index + 1].strip()
             if not model:
-                raise click.ClickException("--model requires a value")
+                raise click.ClickException("--models requires a value")
             models.append(model)
             index += 2
             continue
@@ -589,8 +589,8 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
     def _callback(
         model: list[str] | None = typer.Option(
             None,
-            "--model",
-            help="Model selector. Repeat to allow multiple.",
+            "--models",
+            help="Model selectors. Repeat or pass CSV.",
         ),
         quiet: bool = typer.Option(
             False,
@@ -633,8 +633,8 @@ def _make_roaming_help_command() -> Callable[..., None]:
     def command(
         model: list[str] | None = typer.Option(
             None,
-            "--model",
-            help="Model selector. Repeat to allow multiple.",
+            "--models",
+            help="Model selectors. Repeat or pass CSV.",
         ),
         quiet: bool = typer.Option(
             False,
