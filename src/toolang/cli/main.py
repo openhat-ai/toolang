@@ -81,6 +81,7 @@ TOP_LEVEL_COMMANDS = frozenset(
         "stop",
         "task",
         "chore",
+        "caps",
         "skill",
         "psyche",
         "service",
@@ -100,7 +101,9 @@ class _RuntimeStartup:
 
 
 POSTFIX_AGENT_COMMANDS = frozenset({"run", "start", "stop", "info"})
-PREFIX_AGENT_COMMANDS = frozenset({"run", "start", "stop", "task", "chore", "skill", "psyche", "service", "prompt"})
+PREFIX_AGENT_COMMANDS = frozenset(
+    {"run", "start", "stop", "task", "chore", "caps", "skill", "psyche", "service", "prompt"}
+)
 
 
 def _utc_now() -> datetime:

@@ -4569,6 +4569,64 @@ def test_cli_cap_list_visibility_filters_results(tmp_path: Path, monkeypatch) ->
     assert "home" in private_result.stdout
 
 
+def test_cli_hidden_caps_command_lists_all_cap_kinds(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="shared",
+        kind="psyche",
+        name="style",
+        text="Prefer concise answers.\n",
+    )
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="reviewer",
+        text="---\ndescription: Review changes\n---\n# Reviewer\n",
+    )
+
+    result = _invoke_app(
+        ["caps"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert result.exit_code == 0
+    assert "KIND" in result.stdout
+    assert "CAP" in result.stdout
+    assert "SCOPE" in result.stdout
+    assert "BINDING" in result.stdout
+    assert "psyche" in result.stdout
+    assert "skill" in result.stdout
+    assert "style" in result.stdout
+    assert "reviewer" in result.stdout
+    assert "global" in result.stdout
+    assert "home" in result.stdout
+    assert "root://psyches/style" in result.stdout
+    assert "home://skills/reviewer" in result.stdout
+
+
+def test_cli_hidden_caps_command_supports_agent_prefix_shortcut(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_app(*, args, prog_name: str, standalone_mode: bool) -> None:
+        captured["args"] = args
+        captured["prog_name"] = prog_name
+        captured["standalone_mode"] = standalone_mode
+
+    monkeypatch.setattr(cli, "app", cast(object, fake_app))
+    monkeypatch.setattr(cli.sys, "argv", ["toolang"])
+
+    result = cli.main(["alice", "caps"])
+
+    assert result == 0
+    assert captured["args"] == ["caps"]
+    assert cli._CLI_PREFIX_AGENT is None
+
+
 def test_cli_cap_list_rejects_private_visibility_without_agent(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
 

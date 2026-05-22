@@ -31,6 +31,7 @@ from .utils import (
 
 CapKind = Literal["skill", "psyche", "prompt", "service"]
 CapVisibilityFilter = Literal["private", "shared"]
+CAP_KINDS: tuple[CapKind, ...] = ("psyche", "skill", "service", "prompt")
 
 
 def register_cap_commands(app: typer.Typer, *, rich_help_panel: str | None = None) -> None:
@@ -129,6 +130,50 @@ def register_cap_commands(app: typer.Typer, *, rich_help_panel: str | None = Non
             no_args_is_help=True,
             rich_help_panel=rich_help_panel,
         )
+    app.command(
+        "caps",
+        help="List all available caps.",
+        hidden=True,
+        cls=_OptionalPrefixAgentCommand,
+    )(_list_all_caps)
+
+
+def _list_all_caps(
+    ctx: typer.Context,
+    visibility: Annotated[
+        CapVisibilityFilter | None,
+        typer.Option("--visibility", help="Filter by visibility: private or shared."),
+    ] = None,
+) -> None:
+    selected_agent = _context_agent(ctx)
+    agent_name = selected_agent or "default"
+    effective_visibility = _cap_list_visibility(ctx, visibility)
+    rows: list[tuple[str, str, str, str, str, str]] = []
+    for kind in CAP_KINDS:
+        entries = cap_store.list_entries(
+            _context_root(ctx),
+            agent_name,
+            visibility=None if effective_visibility == "all" else effective_visibility,
+            kinds={cast(EntryKind, kind)},
+        )
+        rows.extend(
+            (
+                kind,
+                entry.name,
+                cap_store.entry_scope(entry, agent_name=agent_name),
+                cap_store.entry_origin(entry),
+                cap_store.entry_binding(entry),
+                cap_store.entry_ref(entry, agent_name=agent_name),
+            )
+            for entry in entries
+        )
+    if not rows:
+        typer.echo("No caps found.")
+        return
+    kind_order = {kind: index for index, kind in enumerate(CAP_KINDS)}
+    scope_order = {"global": 0, "home": 1, "packed": 2}
+    rows.sort(key=lambda item: (kind_order[item[0]], scope_order[item[2]], item[1], item[3], item[4], item[5]))
+    _echo_table(("KIND", "CAP", "SCOPE", "ORIGIN", "BINDING", "REF"), rows)
 
 
 def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
