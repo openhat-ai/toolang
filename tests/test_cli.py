@@ -4562,7 +4562,7 @@ def test_cli_help_orders_cap_groups() -> None:
     assert result.exit_code == 0
     assert "Run and manage Toolang agents." in result.stdout
     assert "--root" in result.stdout
-    assert "Root directory for all agents." in result.stdout
+    assert "Use a custom Toolang root." in result.stdout
     assert "--version" in result.stdout
     assert "-V" in result.stdout
     assert "Show current version and exit." in result.stdout
