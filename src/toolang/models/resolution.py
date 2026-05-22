@@ -17,6 +17,7 @@ from toolang.models.discovery import (
     model_infos,
     required_provider_env_vars,
 )
+from toolang.models.errors import NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSAGE
 from toolang.models.selectors import ModelSelector, parse_model_selector
 
 DEFAULT_MODEL_SELECTOR = "gpt-5"
@@ -68,7 +69,13 @@ def resolve_model(
         environ=context.model_environ,
     )
     if not matches:
-        raise ToolangError(_no_model_message())
+        raise ToolangError(
+            _empty_model_selection_message(
+                providers=context.model_providers,
+                aliases=context.model_aliases,
+                environ=context.model_environ,
+            )
+        )
     if len(matches) > 1:
         joined = ", ".join(item.selector for item in matches)
         raise ToolangError(f"model selector is ambiguous: {effective_selector} (matches {joined})")
@@ -98,6 +105,22 @@ def select_model_selectors(
         aliases=context.model_aliases,
         environ=context.model_environ,
     )
+    if thunk_selectors and not thunk_candidates:
+        raise ToolangError(
+            _empty_model_selection_message(
+                providers=context.model_providers,
+                aliases=context.model_aliases,
+                environ=context.model_environ,
+            )
+        )
+    if activation_selectors and not activation_candidates:
+        raise ToolangError(
+            _empty_model_selection_message(
+                providers=context.model_providers,
+                aliases=context.model_aliases,
+                environ=context.model_environ,
+            )
+        )
     if thunk_candidates and activation_candidates:
         thunk_identities = {_target_identity(candidate.target) for candidate in thunk_candidates}
         selected = tuple(
@@ -107,7 +130,7 @@ def select_model_selectors(
         )
         if selected:
             return selected
-        raise ToolangError("no compatible model between thunk model refs and activation --models options")
+        raise ToolangError(NO_MATCHED_MODELS_MESSAGE)
 
     if activation_candidates:
         return _dedupe(candidate.selector for candidate in activation_candidates)
@@ -140,7 +163,13 @@ def select_model_selectors(
         ordered.append(candidate.selector)
     if ordered:
         return tuple(ordered)
-    raise ToolangError(_no_model_message())
+    raise ToolangError(
+        _empty_model_selection_message(
+            providers=context.model_providers,
+            aliases=context.model_aliases,
+            environ=context.model_environ,
+        )
+    )
 
 
 def selectable_model_targets(
@@ -571,8 +600,17 @@ def _dedupe(items: Iterable[str]) -> tuple[str, ...]:
     return tuple(values)
 
 
-def _no_model_message() -> str:
-    return (
-        "No configured model is available. Set OPENAI_API_KEY or OPENROUTER_API_KEY, "
-        "start Ollama with a supported model, or configure [models.aliases]."
+def _empty_model_selection_message(
+    *,
+    providers: Mapping[str, ModelProvider],
+    aliases: Mapping[str, ModelAlias],
+    environ: Mapping[str, str],
+) -> str:
+    available = _discover_available_candidates(
+        providers=providers,
+        aliases=aliases,
+        environ=environ,
     )
+    if available:
+        return NO_MATCHED_MODELS_MESSAGE
+    return NO_AVAILABLE_MODELS_MESSAGE

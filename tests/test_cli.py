@@ -2638,6 +2638,39 @@ def test_cli_model_list_filters_by_model_selector(monkeypatch) -> None:
     assert "openai      remote" not in result.stdout
 
 
+def test_cli_model_list_reports_no_matched_models_for_empty_filter(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli.agent_up,
+        "load_model_providers",
+        lambda *_args: {
+            "openai": _FakeModelProvider(
+                name="openai",
+                required_env=("OPENAI_API_KEY",),
+                models=(
+                    ModelInfo(
+                        ref="openai/gpt-5",
+                        provider="openai",
+                        name="gpt-5",
+                        model="gpt-5",
+                        selectors=("gpt-5", "openai/gpt-5"),
+                        adapter="responses",
+                    ),
+                ),
+            ),
+        },
+    )
+
+    result = runner.invoke(
+        cli.app,
+        ["model", "list", "--models", "[openrouter]"],
+        env={"OPENAI_API_KEY": "secret"},
+    )
+
+    assert result.exit_code == 0
+    assert "No matched models." in result.stdout
+    assert "toolang model list --models <selector>" in result.stdout
+
+
 def test_cli_model_list_filters_by_capability_selector(monkeypatch) -> None:
     monkeypatch.setattr(
         cli.agent_up,
@@ -3322,8 +3355,9 @@ def test_cli_start_rejects_missing_default_model_env(tmp_path: Path, monkeypatch
     )
 
     assert result.exit_code == 1
-    assert "No configured model is available." in result.stderr
+    assert "No available models." in result.stderr
     assert "OPENAI_API_KEY" in result.stderr
+    assert "toolang model providers" in result.stderr
 
 
 def test_cli_start_preserves_host_endpoint_host_and_sandbox_in_background_command(

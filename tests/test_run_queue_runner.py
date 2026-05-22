@@ -5163,7 +5163,8 @@ def test_execute_run_rejects_thunk_model_outside_activation_allowlist(tmp_path: 
 
     assert outcome.status == "failed"
     assert outcome.error is not None
-    assert "no compatible model between thunk model refs and activation --models options" in outcome.error
+    assert "No matched models." in outcome.error
+    assert "toolang model list --models <selector>" in outcome.error
 
 
 def test_execute_run_pre_start_failure_does_not_emit_persist_sink_error(tmp_path: Path, caplog) -> None:
@@ -5195,7 +5196,8 @@ def test_execute_run_pre_start_failure_does_not_emit_persist_sink_error(tmp_path
 
     assert outcome.status == "failed"
     assert outcome.error is not None
-    assert "No configured model is available." in outcome.error
+    assert "No available models." in outcome.error
+    assert "toolang model providers" in outcome.error
     assert context.store.list_runs() == []
     assert "persist sink event handling failed" not in caplog.text
 

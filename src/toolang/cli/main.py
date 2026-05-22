@@ -32,6 +32,7 @@ from ..models.discovery import (
     required_provider_env_vars,
 )
 from ..models.config import load_model_aliases, load_model_provider_configs
+from ..models.errors import NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSAGE
 from ..models.resolution import DEFAULT_MODEL_SELECTOR
 from ..models.selectors import split_model_selectors
 from ..models.views import available_model_adapters, model_list_rows, model_provider_rows
@@ -766,7 +767,10 @@ def list_models(
     selectors = split_model_selectors(tuple(models or ()))
     rows = _model_rows(root, environ, model_selectors=selectors)
     if not rows:
-        typer.echo("No selectable models matched." if selectors else "No selectable models found.")
+        if selectors and _model_rows(root, environ):
+            typer.echo(NO_MATCHED_MODELS_MESSAGE)
+        else:
+            typer.echo(NO_AVAILABLE_MODELS_MESSAGE)
         return
     _echo_table(("MODEL", "PROVIDER", "PROFILE"), rows)
     typer.echo()

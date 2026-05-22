@@ -361,6 +361,32 @@ def test_model_resolution_rejects_selector_outside_allowed_set() -> None:
         )
 
 
+def test_model_resolution_reports_no_matched_models_when_selector_misses() -> None:
+    provider = _FakeModelProvider(
+        name="openrouter",
+        models=(
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openrouter",
+                name="gpt-5",
+                model="openai/gpt-5",
+                selectors=("gpt-5", "openai/gpt-5"),
+                adapter="responses",
+            ),
+        ),
+        required_env_vars=("OPENROUTER_API_KEY",),
+    )
+    context = SimpleNamespace(
+        model_providers={"openrouter": provider},
+        model_aliases={},
+        default_models=(),
+        model_environ={"OPENROUTER_API_KEY": "secret"},
+    )
+
+    with pytest.raises(ToolangError, match="No matched models."):
+        resolve_model(context, selector="anthropic/claude-sonnet-4.5")
+
+
 def test_select_model_selectors_preserves_activation_order_for_intersection() -> None:
     provider = _FakeModelProvider(
         name="openrouter",
@@ -548,7 +574,7 @@ def test_model_info_discovery_is_cached_within_one_process() -> None:
 
     selectors = select_model_selectors(
         context,
-        thunk_selectors=("anthropic/claude-sonnet-4.5",),
+        thunk_selectors=("anthropic/claude-4.5-sonnet-20250929",),
     )
     target = resolve_model(context, selector=selectors[0])
 
