@@ -188,13 +188,23 @@ ephemeral port.
 ## Model Commands
 
 - `toolang model list`
+- `toolang model providers`
+- `toolang model adapters`
 
-`toolang model list` shows provider-scoped discoverable models, including:
+`toolang model list` shows selectable models, including:
 
-- provider name
 - canonical ref under the `MODEL` column
-- adapter
-- one compact `k=v` feature summary, including tool support and optional metadata such as context window, max output tokens, or price per million tokens
+- provider name
+- profile details such as streaming, tool support, context window, output limits, and price metadata
+- a summary count after the table
+
+Pass `--models` to preview selector filtering, for example
+`toolang model list --models "[remote]"` or
+`toolang model list --models "openai/*[openrouter]"`.
+
+`toolang model providers` shows provider and alias config health,
+including missing key environment variables and endpoints. `toolang model
+adapters` lists installed model adapter names.
 
 
 ## Plugin Commands

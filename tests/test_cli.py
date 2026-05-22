@@ -1367,7 +1367,7 @@ thunk summarize(_, style?):
     assert "* SCRIPT" not in captured.out
     assert program_path.name in captured.out
     assert "Options" in captured.out
-    assert "--model" in captured.out
+    assert "--models" in captured.out
     assert "--quiet" in captured.out
     assert "Params" in captured.out
     assert "NAME=VALUE" in captured.out
@@ -1415,7 +1415,7 @@ thunk summarize(_, style?, audience?):
     assert "style=TEXT" in captured.out
     assert "audience=TEXT" in captured.out
     assert "[INPUT]..." in captured.out
-    assert "--model" in captured.out
+    assert "--models" in captured.out
     assert "--quiet" in captured.out
     assert "Params" in captured.out
     assert "Input" in captured.out
@@ -1478,7 +1478,7 @@ thunk(_, tone?, retries?: number, dry_run?: boolean):
     result = cli.main(
         [
             str(program_path),
-            "--model",
+            "--models",
             "gpt-5",
             "main",
             "rewrite this",
@@ -1486,7 +1486,7 @@ thunk(_, tone?, retries?: number, dry_run?: boolean):
             "tone=concise",
             "retries=3",
             "dry_run=true",
-            "--model",
+            "--models",
             "o3",
         ]
     )
@@ -1777,6 +1777,31 @@ thunk:
         f"Log: {agents.agent_script_run_log_path(program_path.parent / '.toolang', 'demo', thunk_name='main', run_id='run_test')}",
     ]
     assert "Traceback" not in output.err
+
+
+def test_cli_roaming_invoke_reports_missing_models_without_run_id(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+thunk:
+  Reply directly.
+""".strip(),
+    )
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("OLLAMA_HOST", "http://127.0.0.1:9")
+
+    result = cli.main([str(program_path), "main", "hello"])
+    output = capsys.readouterr()
+
+    assert result == 1
+    assert "toolang error: No available models." in output.err
+    assert "toolang model providers" in output.err
+    assert "Run: run_" not in output.err
 
 
 def test_cli_roaming_invoke_requires_explicit_thunk_name(tmp_path: Path, capsys) -> None:
@@ -2448,7 +2473,7 @@ def test_cli_plugin_list_shows_installed_plugins(monkeypatch) -> None:
     monkeypatch.setattr(
         cli.agent_up,
         "load_model_providers",
-        lambda: {
+            lambda *_args: {
             "openai": _FakeModelProvider(
                 name="openai",
                 description="Use OpenAI-hosted models.",
@@ -2532,7 +2557,7 @@ def test_cli_model_list_shows_discovered_models(monkeypatch) -> None:
     monkeypatch.setattr(
         cli.agent_up,
         "load_model_providers",
-        lambda: {
+        lambda *_args: {
             "openai": _FakeModelProvider(
                 name="openai",
                 required_env=("OPENAI_API_KEY",),
@@ -2579,17 +2604,141 @@ def test_cli_model_list_shows_discovered_models(monkeypatch) -> None:
     )
 
     assert result.exit_code == 0
-    assert "PROVIDER" in result.stdout
     assert "MODEL" in result.stdout
-    assert "ADAPTER" in result.stdout
-    assert "FEATURES" in result.stdout
-    assert "STATUS" not in result.stdout
-    assert "SELECTOR" not in result.stdout
+    assert "PROVIDER" in result.stdout
+    assert "SCOPE" not in result.stdout
+    assert "PROFILE" in result.stdout
+    assert "1 model, 1 provider" in result.stdout
     assert "openai" in result.stdout
+    assert "openrouter" not in result.stdout
+    assert "openai/gpt-5" in result.stdout
+    assert "streaming=y" in result.stdout
+    assert "tools=y" in result.stdout
+
+
+def test_cli_model_list_filters_by_model_selector(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli.agent_up,
+        "load_model_providers",
+        lambda *_args: {
+            "openai": _FakeModelProvider(
+                name="openai",
+                required_env=("OPENAI_API_KEY",),
+                models=(
+                    ModelInfo(
+                        ref="openai/gpt-5",
+                        provider="openai",
+                        name="gpt-5",
+                        model="gpt-5",
+                        selectors=("gpt-5", "openai/gpt-5"),
+                        adapter="responses",
+                    ),
+                ),
+            ),
+            "openrouter": _FakeModelProvider(
+                name="openrouter",
+                required_env=("OPENROUTER_API_KEY",),
+                models=(
+                    ModelInfo(
+                        ref="openai/gpt-5",
+                        provider="openrouter",
+                        name="gpt-5",
+                        model="openai/gpt-5",
+                        selectors=("gpt-5", "openai/gpt-5"),
+                        adapter="responses",
+                    ),
+                ),
+            ),
+        },
+    )
+
+    result = runner.invoke(
+        cli.app,
+        ["model", "list", "--models", "[openrouter]"],
+        env={"OPENAI_API_KEY": "secret", "OPENROUTER_API_KEY": "secret"},
+    )
+
+    assert result.exit_code == 0
     assert "openrouter" in result.stdout
-    assert "tools=yes" in result.stdout
-    assert "streaming=yes" in result.stdout
-    assert "responses" in result.stdout
+    assert "openai      remote" not in result.stdout
+
+
+def test_cli_model_list_reports_no_matched_models_for_empty_filter(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli.agent_up,
+        "load_model_providers",
+        lambda *_args: {
+            "openai": _FakeModelProvider(
+                name="openai",
+                required_env=("OPENAI_API_KEY",),
+                models=(
+                    ModelInfo(
+                        ref="openai/gpt-5",
+                        provider="openai",
+                        name="gpt-5",
+                        model="gpt-5",
+                        selectors=("gpt-5", "openai/gpt-5"),
+                        adapter="responses",
+                    ),
+                ),
+            ),
+        },
+    )
+
+    result = runner.invoke(
+        cli.app,
+        ["model", "list", "--models", "[openrouter]"],
+        env={"OPENAI_API_KEY": "secret"},
+    )
+
+    assert result.exit_code == 0
+    assert "No matched models." in result.stdout
+    assert "toolang model list --models <selector>" in result.stdout
+
+
+def test_cli_model_list_filters_by_capability_selector(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli.agent_up,
+        "load_model_providers",
+        lambda *_args: {
+            "openrouter": _FakeModelProvider(
+                name="openrouter",
+                required_env=("OPENROUTER_API_KEY",),
+                models=(
+                    ModelInfo(
+                        ref="openai/gpt-5",
+                        provider="openrouter",
+                        name="gpt-5",
+                        model="openai/gpt-5",
+                        selectors=("gpt-5", "openai/gpt-5"),
+                        adapter="responses",
+                        tools=True,
+                        streaming=True,
+                    ),
+                    ModelInfo(
+                        ref="google/gemini-pro",
+                        provider="openrouter",
+                        name="gemini-pro",
+                        model="google/gemini-pro",
+                        selectors=("gemini-pro", "google/gemini-pro"),
+                        adapter="responses",
+                        tools=False,
+                        streaming=True,
+                    ),
+                ),
+            ),
+        },
+    )
+
+    result = runner.invoke(
+        cli.app,
+        ["model", "list", "--models", "[remote,streaming:y,tools=false]"],
+        env={"OPENROUTER_API_KEY": "secret"},
+    )
+
+    assert result.exit_code == 0
+    assert "google/gemini-pro" in result.stdout
+    assert "openai/gpt-5" not in result.stdout
 
 
 def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
@@ -2757,12 +2906,32 @@ def test_cli_run_passes_model_selectors_to_agent_up(tmp_path: Path, monkeypatch)
 
     result = runner.invoke(
         cli.app,
-        ["run", "alice", "--model", "openai/gpt-5@openai", "--model", "o3"],
+        ["run", "alice", "--models", "openai/gpt-5[openai]", "--models", "o3"],
         env={"TOOLANG_ROOT": str(toolang_root), "OPENAI_API_KEY": "secret"},
     )
 
     assert result.exit_code == 0
-    assert captured["models"] == ("openai/gpt-5@openai", "o3")
+    assert captured["models"] == ("openai/gpt-5[openai]", "o3")
+
+
+def test_cli_run_rejects_missing_default_model_env(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    monkeypatch.setattr(
+        cli.agent_up,
+        "start_runtime",
+        lambda *_args, **_kwargs: pytest.fail("runtime should exit before launching"),
+    )
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(toolang_root), "run", "alice", "--feature", "chat"],
+        env={"OPENAI_API_KEY": "", "OPENROUTER_API_KEY": "", "OLLAMA_HOST": "http://127.0.0.1:9"},
+    )
+
+    assert result.exit_code == 1
+    assert "No available models." in result.stderr
+    assert "toolang model providers" in result.stderr
 
 
 def test_cli_run_uses_py_log_spec(tmp_path: Path, monkeypatch) -> None:
@@ -2987,7 +3156,7 @@ def test_cli_start_propagates_py_log_to_agent_process(tmp_path: Path, monkeypatc
             "--sandbox",
             "none",
         ],
-        env={PY_LOG_ENV_VAR: "toolang.run=debug,httpx=off"},
+        env={PY_LOG_ENV_VAR: "toolang.run=debug,httpx=off", "OPENAI_API_KEY": "secret"},
     )
 
     assert result.exit_code == 0
@@ -3016,7 +3185,7 @@ def test_cli_start_rejects_active_agent(tmp_path: Path) -> None:
     result = runner.invoke(
         cli.app,
         ["--root", str(toolang_root), "start", "alice"],
-        env={},
+        env={"OPENAI_API_KEY": "secret"},
     )
 
     assert result.exit_code == 1
@@ -3077,7 +3246,7 @@ def test_cli_start_allows_restart_after_stale_preparing_state(tmp_path: Path, mo
     result = runner.invoke(
         cli.app,
         ["--root", str(toolang_root), "start", "alice"],
-        env={},
+        env={"OPENAI_API_KEY": "secret"},
     )
 
     assert result.exit_code == 0
@@ -3121,7 +3290,7 @@ def test_cli_start_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None
     result = runner.invoke(
         cli.app,
         ["--root", str(toolang_root), "start", "alice", "--feature", "chat,inspect"],
-        env={},
+        env={"OPENAI_API_KEY": "secret"},
     )
 
     assert result.exit_code == 0
@@ -3172,9 +3341,9 @@ def test_cli_start_includes_model_selectors_in_background_command(tmp_path: Path
             str(toolang_root),
             "start",
             "alice",
-            "--model",
+            "--models",
             "gpt-5",
-            "--model",
+            "--models",
             "o3",
         ],
         env={"OPENAI_API_KEY": "secret"},
@@ -3182,9 +3351,9 @@ def test_cli_start_includes_model_selectors_in_background_command(tmp_path: Path
 
     assert result.exit_code == 0
     command = cast(list[str], captured["command"])
-    first_flag = command.index("--model")
+    first_flag = command.index("--models")
     assert command[first_flag + 1] == "gpt-5"
-    second_flag = command.index("--model", first_flag + 1)
+    second_flag = command.index("--models", first_flag + 1)
     assert command[second_flag + 1] == "o3"
 
 
@@ -3192,11 +3361,11 @@ def test_cli_start_rejects_unconfigured_model_selector(tmp_path: Path, monkeypat
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     (toolang_root / "config.toml").write_text(
-        '[model_routes.gateway]\n'
+        '[models.aliases.gateway]\n'
         'ref = "openai/gpt-5"\n'
         'provider = "openai"\n'
         'adapter = "responses"\n'
-        'api_key_env = "STARTUP_MISSING_API_KEY"\n',
+        'key_env = "STARTUP_MISSING_API_KEY"\n',
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -3207,12 +3376,33 @@ def test_cli_start_rejects_unconfigured_model_selector(tmp_path: Path, monkeypat
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(toolang_root), "start", "alice", "--model", "gateway"],
+        ["--root", str(toolang_root), "start", "alice", "--models", "gateway"],
         env={},
     )
 
     assert result.exit_code == 1
     assert "STARTUP_MISSING_API_KEY" in result.stderr
+
+
+def test_cli_start_rejects_missing_default_model_env(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    monkeypatch.setattr(
+        cli.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail("startup should exit before launching"),
+    )
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(toolang_root), "start", "alice"],
+        env={"OPENAI_API_KEY": "", "OPENROUTER_API_KEY": "", "OLLAMA_HOST": "http://127.0.0.1:9"},
+    )
+
+    assert result.exit_code == 1
+    assert "No available models." in result.stderr
+    assert "OPENAI_API_KEY" in result.stderr
+    assert "toolang model providers" in result.stderr
 
 
 def test_cli_start_preserves_host_endpoint_host_and_sandbox_in_background_command(
@@ -3267,7 +3457,7 @@ def test_cli_start_preserves_host_endpoint_host_and_sandbox_in_background_comman
             "--sandbox",
             "docker:python:3.13-slim",
         ],
-        env={},
+        env={"OPENAI_API_KEY": "secret"},
     )
 
     assert result.exit_code == 0
@@ -3328,7 +3518,7 @@ def test_cli_start_reuses_preferred_runtime_port(tmp_path: Path, monkeypatch) ->
     result = runner.invoke(
         cli.app,
         ["--root", str(toolang_root), "start", "alice"],
-        env={},
+        env={"OPENAI_API_KEY": "secret"},
     )
 
     assert result.exit_code == 0
@@ -3373,7 +3563,7 @@ def test_cli_start_reports_failed_when_process_exits_before_state(tmp_path: Path
     result = runner.invoke(
         cli.app,
         ["--root", str(toolang_root), "start", "alice"],
-        env={},
+        env={"OPENAI_API_KEY": "secret"},
     )
 
     assert result.exit_code == 1

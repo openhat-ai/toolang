@@ -244,8 +244,8 @@ Recommended directives are:
 | `services = ...` | Keep only matching services from the current activation set |
 | `tools = ...` | Keep only matching tools from the current activation set |
 
-Capability directives use names. `models = ...` uses route-neutral model refs
-or shorthand selectors and must not include `@provider`.
+Capability directives use names. `models = ...` uses model selectors such as
+route-neutral refs, aliases, globs, and bracket filters.
 
 Example:
 
@@ -284,7 +284,7 @@ Rules:
 | `=` | intersect the current set with matching selectors |
 | ordered CSV | preserve declaration order |
 | no `default` keyword | `default` is treated like any other selector text |
-| route-neutral models | `models = ...` must not include `@provider` |
+| model selectors | `models = ...` may use refs, aliases, globs, and bracket filters |
 | program-scoped additions | `+=` operands must name items from the program set |
 | filter selectors | `=` and `-=` operands may be arbitrary selectors |
 

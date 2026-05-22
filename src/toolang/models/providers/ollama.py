@@ -11,7 +11,7 @@ from toolang.base.error import ToolangError
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelEventHandler
-from . import responses
+from ..adapters import responses
 
 _NAMESPACE_BY_PREFIX: tuple[tuple[str, str], ...] = (
     ("qwen", "qwen"),
@@ -32,11 +32,14 @@ class OllamaModelProvider(ModelProvider):
 
     name: str = "ollama"
     description: str | None = "Use local Ollama-hosted models."
+    base_url: str | None = None
 
     def required_env_vars(self) -> tuple[str, ...]:
         return ()
 
     def default_base_url(self, *, environ: Mapping[str, str]) -> str | None:
+        if self.base_url is not None:
+            return self.base_url
         return _ollama_base_url(environ)
 
     def default_api_key_env(self) -> str | None:
@@ -148,5 +151,12 @@ def _ollama_capabilities(ref: str) -> tuple[bool, bool]:
 def create_model(config: Mapping[str, object]) -> ModelProvider:
     """Create the built-in Ollama model provider."""
 
-    del config
-    return OllamaModelProvider()
+    return OllamaModelProvider(base_url=_config_str(config, "endpoint"))
+
+
+def _config_str(config: Mapping[str, object], key: str) -> str | None:
+    value = config.get(key)
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None

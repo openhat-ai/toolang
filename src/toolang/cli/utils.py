@@ -281,7 +281,7 @@ def _make_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> Table:
     for header in headers:
         table.add_column(header, no_wrap=True)
     for row in rows:
-        table.add_row(*row)
+        table.add_row(*(Text(cell) for cell in row))
     return table
 
 
