@@ -200,7 +200,7 @@ def callback(
     ctx: typer.Context,
     toolang_root: Annotated[
         Path | None,
-        typer.Option("--root", "-r", help="Root directory for all agents."),
+        typer.Option("--root", "-r", help="Use a custom Toolang root."),
     ] = None,
     version: Annotated[
         bool,
@@ -744,7 +744,7 @@ plugin_app = typer.Typer(
 
 
 model_app = typer.Typer(
-    help="Inspect discoverable models.",
+    help="Inspect models and settings.",
     add_completion=False,
     no_args_is_help=True,
     pretty_exceptions_enable=False,
@@ -752,7 +752,7 @@ model_app = typer.Typer(
 )
 
 
-@model_app.command("list", help="List selectable models.")
+@model_app.command("list", help="List available models.")
 def list_models(
     models: Annotated[
         list[str] | None,
@@ -778,7 +778,7 @@ def list_models(
     typer.echo(f" {len(rows)} {'model' if len(rows) == 1 else 'models'}, {provider_count} {'provider' if provider_count == 1 else 'providers'}")
 
 
-@model_app.command("providers", help="Show model provider and alias configuration.")
+@model_app.command("providers", help="Show configured model providers.")
 def list_model_providers() -> None:
     environ = dict(os.environ)
     root = _toolang_root(None)
@@ -789,7 +789,7 @@ def list_model_providers() -> None:
     _echo_table(("PROVIDER", "MODELS", "CONFIG"), rows)
 
 
-@model_app.command("adapters", help="List available model adapters.")
+@model_app.command("adapters", help="List available model API adapters.")
 def list_model_adapters() -> None:
     rows = [(name,) for name in available_model_adapters()]
     _echo_table(("ADAPTER",), rows)
