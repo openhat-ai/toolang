@@ -1097,31 +1097,20 @@ def test_chat_models_returns_all_discoverable_when_unrestricted(tmp_path: Path) 
 
     assert response.status_code == 200
     body = response.json()
-    assert body == {
-        "default": "openai/gpt-5[openai]",
-        "items": [
-            {
-                "selector": "openai/gpt-5[openai]",
-                "name": "gpt-5",
-                "ref": "openai/gpt-5",
-                "provider": "openai",
-                "model": "gpt-5",
-                "adapter": "responses",
-                "tools": True,
-                "streaming": True,
-            },
-            {
-                "selector": "openai/o3[openai]",
-                "name": "o3",
-                "ref": "openai/o3",
-                "provider": "openai",
-                "model": "o3",
-                "adapter": "responses",
-                "tools": True,
-                "streaming": True,
-            },
-        ],
+    assert body["default"] == "openai/gpt-5[openai]"
+    assert body["items"][0] == {
+        "selector": "openai/gpt-5[openai]",
+        "name": "gpt-5",
+        "ref": "openai/gpt-5",
+        "provider": "openai",
+        "model": "gpt-5",
+        "adapter": "responses",
+        "tools": True,
+        "streaming": True,
     }
+    items_by_ref = {item["ref"]: item for item in body["items"]}
+    assert items_by_ref["openai/gpt-5.5"]["model"] == "gpt-5.5"
+    assert items_by_ref["openai/o3"]["model"] == "o3"
 
 
 def test_profile_reports_activity_metrics(tmp_path: Path) -> None:

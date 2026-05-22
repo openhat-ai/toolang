@@ -13,10 +13,6 @@ from toolang.base.types.run import ModelCall, ModelCallResult, ModelEventHandler
 from ..adapters import responses
 
 
-_KNOWN_MODELS: tuple[tuple[str, str], ...] = (
-    ("gpt-5", "openai/gpt-5"),
-    ("o3", "openai/o3"),
-)
 _DEFAULT_BASE_URL = "https://api.openai.com/v1"
 _DEFAULT_API_KEY_ENV = "OPENAI_API_KEY"
 _OPENAI_ADAPTER = "responses"
@@ -24,6 +20,61 @@ _AUDIO_MODEL_PREFIXES: tuple[str, ...] = (
     "gpt-audio",
     "gpt-4o-audio-preview",
     "gpt-4o-mini-audio-preview",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _KnownOpenAIModel:
+    name: str
+    context_window: int
+    max_output_tokens: int
+    input_price: float
+    output_price: float
+    tools: bool = True
+    streaming: bool = True
+
+    @property
+    def ref(self) -> str:
+        return f"openai/{self.name}"
+
+    @property
+    def input_price_per_token(self) -> float:
+        return self.input_price / 1_000_000
+
+    @property
+    def output_price_per_token(self) -> float:
+        return self.output_price / 1_000_000
+
+
+_KNOWN_MODELS: tuple[_KnownOpenAIModel, ...] = (
+    _KnownOpenAIModel("gpt-5.5", 1_050_000, 128_000, 5.00, 30.00),
+    _KnownOpenAIModel("gpt-5.5-pro", 1_050_000, 128_000, 30.00, 180.00),
+    _KnownOpenAIModel("gpt-5.4", 1_050_000, 128_000, 2.50, 15.00),
+    _KnownOpenAIModel("gpt-5.4-mini", 400_000, 128_000, 0.75, 4.50),
+    _KnownOpenAIModel("gpt-5.4-nano", 400_000, 128_000, 0.20, 1.25),
+    _KnownOpenAIModel("gpt-5.4-pro", 1_050_000, 128_000, 30.00, 180.00),
+    _KnownOpenAIModel("gpt-5.3-codex", 400_000, 128_000, 1.75, 14.00),
+    _KnownOpenAIModel("gpt-5.3-chat-latest", 128_000, 16_384, 1.75, 14.00),
+    _KnownOpenAIModel("gpt-5.2", 400_000, 128_000, 1.75, 14.00),
+    _KnownOpenAIModel("gpt-5.2-pro", 400_000, 128_000, 21.00, 168.00),
+    _KnownOpenAIModel("gpt-5.2-codex", 400_000, 128_000, 1.75, 14.00),
+    _KnownOpenAIModel("gpt-5.2-chat-latest", 128_000, 16_384, 1.75, 14.00),
+    _KnownOpenAIModel("gpt-5.1", 400_000, 128_000, 1.25, 10.00),
+    _KnownOpenAIModel("gpt-5.1-codex", 400_000, 128_000, 1.25, 10.00),
+    _KnownOpenAIModel("gpt-5.1-chat-latest", 128_000, 16_384, 1.25, 10.00),
+    _KnownOpenAIModel("gpt-5", 400_000, 128_000, 1.25, 10.00),
+    _KnownOpenAIModel("gpt-5-codex", 400_000, 128_000, 1.25, 10.00),
+    _KnownOpenAIModel("gpt-5-mini", 400_000, 128_000, 0.25, 2.00),
+    _KnownOpenAIModel("gpt-5-nano", 400_000, 128_000, 0.05, 0.40),
+    _KnownOpenAIModel("gpt-5-pro", 400_000, 272_000, 15.00, 120.00),
+    _KnownOpenAIModel("o3", 200_000, 100_000, 2.00, 8.00),
+    _KnownOpenAIModel("o4-mini", 200_000, 100_000, 1.10, 4.40),
+    _KnownOpenAIModel("o3-mini", 200_000, 100_000, 1.10, 4.40),
+    _KnownOpenAIModel("gpt-4.1", 1_047_576, 32_768, 2.00, 8.00),
+    _KnownOpenAIModel("gpt-4.1-mini", 1_047_576, 32_768, 0.40, 1.60),
+    _KnownOpenAIModel("gpt-4.1-nano", 1_047_576, 32_768, 0.10, 0.40),
+    _KnownOpenAIModel("gpt-4o", 128_000, 16_384, 2.50, 10.00),
+    _KnownOpenAIModel("gpt-4o-mini", 128_000, 16_384, 0.15, 0.60),
 )
 
 
@@ -50,17 +101,21 @@ class OpenAIModelProvider(ModelProvider):
         del environ
         return tuple(
             ModelInfo(
-                ref=ref,
+                ref=model.ref,
                 provider=self.name,
-                name=name,
-                model=name,
-                selectors=(name, ref),
+                name=model.name,
+                model=model.name,
+                selectors=(model.name, model.ref),
                 adapter=_OPENAI_ADAPTER,
-                tools=True,
-                streaming=True,
-                details="Built-in OpenAI route. Also accepts selectors beginning with gpt- or o-.",
+                tools=model.tools,
+                streaming=model.streaming,
+                context_window=model.context_window,
+                max_output_tokens=model.max_output_tokens,
+                input_price=model.input_price_per_token,
+                output_price=model.output_price_per_token,
+                details="Built-in OpenAI model.",
             )
-            for name, ref in _KNOWN_MODELS
+            for model in _KNOWN_MODELS
         )
 
     def invoke(

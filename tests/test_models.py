@@ -667,6 +667,35 @@ def test_ollama_provider_discovers_local_models(monkeypatch) -> None:
     )
 
 
+def test_openai_provider_lists_curated_common_model_profiles() -> None:
+    provider = openai_models.create_model({})
+
+    by_ref = {model.ref: model for model in provider.list_models(environ={})}
+
+    assert by_ref["openai/gpt-5.5"] == ModelInfo(
+        ref="openai/gpt-5.5",
+        provider="openai",
+        name="gpt-5.5",
+        model="gpt-5.5",
+        selectors=("gpt-5.5", "openai/gpt-5.5"),
+        adapter="responses",
+        tools=True,
+        streaming=True,
+        context_window=1_050_000,
+        max_output_tokens=128_000,
+        input_price=0.000005,
+        output_price=0.00003,
+        details="Built-in OpenAI model.",
+    )
+    assert by_ref["openai/gpt-5.4-mini"].context_window == 400_000
+    assert by_ref["openai/gpt-5.4-mini"].input_price == 0.00000075
+    assert by_ref["openai/gpt-5.3-codex"].max_output_tokens == 128_000
+    assert by_ref["openai/gpt-5.2-chat-latest"].max_output_tokens == 16_384
+    assert by_ref["openai/gpt-5-codex"].context_window == 400_000
+    assert by_ref["openai/gpt-4.1"].context_window == 1_047_576
+    assert by_ref["openai/gpt-4o-mini"].max_output_tokens == 16_384
+
+
 def test_openrouter_provider_discovers_remote_models(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
