@@ -400,7 +400,7 @@ def run_agent(
         list[str] | None,
         typer.Option(
             "--models",
-            help="Allow model selectors for this activation. Repeat or pass CSV; the first becomes default.",
+            help="Limit available models. Repeat or pass CSV.",
         ),
     ] = None,
     features: Annotated[
@@ -548,7 +548,7 @@ def start_agent(
         list[str] | None,
         typer.Option(
             "--models",
-            help="Allow model selectors for this activation. Repeat or pass CSV; the first becomes default.",
+            help="Limit available models. Repeat or pass CSV.",
         ),
     ] = None,
     features: Annotated[
@@ -758,7 +758,7 @@ def list_models(
         list[str] | None,
         typer.Option(
             "--models",
-            help="Filter by model selector. Repeat or pass CSV.",
+            help="Limit available models. Repeat or pass CSV.",
         ),
     ] = None,
 ) -> None:

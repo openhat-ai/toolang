@@ -1368,6 +1368,7 @@ thunk summarize(_, style?):
     assert program_path.name in captured.out
     assert "Options" in captured.out
     assert "--models" in captured.out
+    assert "Limit available models. Repeat or pass CSV." in captured.out
     assert "--quiet" in captured.out
     assert "Params" in captured.out
     assert "NAME=VALUE" in captured.out
@@ -1416,6 +1417,7 @@ thunk summarize(_, style?, audience?):
     assert "audience=TEXT" in captured.out
     assert "[INPUT]..." in captured.out
     assert "--models" in captured.out
+    assert "Limit available models. Repeat or pass CSV." in captured.out
     assert "--quiet" in captured.out
     assert "Params" in captured.out
     assert "Input" in captured.out
@@ -4411,6 +4413,16 @@ def test_cli_run_help_mentions_how_to_select_agent() -> None:
     assert "agent      TEXT" in result.stdout
     assert "Agent selector." in result.stdout
     assert "remote URLs" in result.stdout
+
+
+def test_cli_models_option_help_is_consistent() -> None:
+    expected = "Limit available models. Repeat or pass CSV."
+
+    for command in (["run", "--help"], ["start", "--help"], ["model", "list", "--help"]):
+        result = runner.invoke(cli.app, command)
+
+        assert result.exit_code == 0
+        assert expected in result.stdout
 
 
 def test_cli_info_help_mentions_required_agent() -> None:

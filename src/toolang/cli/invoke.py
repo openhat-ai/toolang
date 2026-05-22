@@ -598,7 +598,7 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
         model: list[str] | None = typer.Option(
             None,
             "--models",
-            help="Model selectors. Repeat or pass CSV.",
+            help="Limit available models. Repeat or pass CSV.",
         ),
         quiet: bool = typer.Option(
             False,
@@ -642,7 +642,7 @@ def _make_roaming_help_command() -> Callable[..., None]:
         model: list[str] | None = typer.Option(
             None,
             "--models",
-            help="Model selectors. Repeat or pass CSV.",
+            help="Limit available models. Repeat or pass CSV.",
         ),
         quiet: bool = typer.Option(
             False,
