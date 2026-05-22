@@ -30,7 +30,9 @@ from .utils import (
 )
 
 CapKind = Literal["skill", "psyche", "prompt", "service"]
-CapVisibilityFilter = Literal["private", "shared"]
+CapScopeFilter = Literal["global", "home", "packed"]
+CapOriginFilter = Literal["local", "remote"]
+CapBindingFilter = Literal["inline", "cited", "wired", "mounted"]
 CAP_KINDS: tuple[CapKind, ...] = ("psyche", "skill", "service", "prompt")
 
 
@@ -140,14 +142,22 @@ def register_cap_commands(app: typer.Typer, *, rich_help_panel: str | None = Non
 
 def _list_all_caps(
     ctx: typer.Context,
-    visibility: Annotated[
-        CapVisibilityFilter | None,
-        typer.Option("--visibility", help="Filter by visibility: private or shared."),
+    scope: Annotated[
+        CapScopeFilter | None,
+        typer.Option("--scope", help="Filter by scope: global, home, or packed."),
+    ] = None,
+    origin: Annotated[
+        CapOriginFilter | None,
+        typer.Option("--origin", help="Filter by origin: local or remote."),
+    ] = None,
+    binding: Annotated[
+        CapBindingFilter | None,
+        typer.Option("--binding", help="Filter by binding: inline, cited, wired, or mounted."),
     ] = None,
 ) -> None:
     selected_agent = _context_agent(ctx)
     agent_name = selected_agent or "default"
-    effective_visibility = _cap_list_visibility(ctx, visibility)
+    effective_visibility = _cap_list_visibility(ctx, scope)
     rows: list[tuple[str, str, str, str, str, str]] = []
     for kind in CAP_KINDS:
         entries = cap_store.list_entries(
@@ -166,6 +176,7 @@ def _list_all_caps(
                 cap_store.entry_ref(entry, agent_name=agent_name),
             )
             for entry in entries
+            if _entry_matches_filters(entry, agent_name=agent_name, scope=scope, origin=origin, binding=binding)
         )
     if not rows:
         typer.echo("No caps found.")
@@ -179,23 +190,28 @@ def _list_all_caps(
 def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
     def list_caps(
         ctx: typer.Context,
-        visibility: Annotated[
-            CapVisibilityFilter | None,
-            typer.Option("--visibility", help="Filter by visibility: private or shared."),
+        scope: Annotated[
+            CapScopeFilter | None,
+            typer.Option("--scope", help="Filter by scope: global, home, or packed."),
+        ] = None,
+        origin: Annotated[
+            CapOriginFilter | None,
+            typer.Option("--origin", help="Filter by origin: local or remote."),
+        ] = None,
+        binding: Annotated[
+            CapBindingFilter | None,
+            typer.Option("--binding", help="Filter by binding: inline, cited, wired, or mounted."),
         ] = None,
     ) -> None:
         selected_agent = _context_agent(ctx)
         agent_name = selected_agent or "default"
-        effective_visibility = _cap_list_visibility(ctx, visibility)
+        effective_visibility = _cap_list_visibility(ctx, scope)
         entries = cap_store.list_entries(
             _context_root(ctx),
             agent_name,
             visibility=None if effective_visibility == "all" else effective_visibility,
             kinds={cast(EntryKind, kind)},
         )
-        if not entries:
-            typer.echo(f"No {kind}s found.")
-            return
         rows = [
             (
                 entry.name,
@@ -205,7 +221,11 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
                 cap_store.entry_ref(entry, agent_name=agent_name),
             )
             for entry in entries
+            if _entry_matches_filters(entry, agent_name=agent_name, scope=scope, origin=origin, binding=binding)
         ]
+        if not rows:
+            typer.echo(f"No {kind}s found.")
+            return
         scope_order = {"global": 0, "home": 1, "packed": 2}
         rows.sort(key=lambda item: (scope_order[item[1]], item[0], item[2], item[3], item[4]))
         _echo_table((title.upper(), "SCOPE", "ORIGIN", "BINDING", "REF"), rows)
@@ -469,14 +489,31 @@ def _target_visibility(ctx: typer.Context) -> tuple[PreparedVisibility, str]:
 
 def _cap_list_visibility(
     ctx: typer.Context,
-    visibility: CapVisibilityFilter | None,
+    scope: CapScopeFilter | None,
 ) -> PreparedVisibility | Literal["all"]:
     selected_agent = _context_agent(ctx)
-    if visibility is None:
+    if scope is None:
         return "all" if selected_agent else "shared"
-    if visibility == "private" and not selected_agent:
-        raise click.ClickException("an agent prefix is required when --visibility is private")
-    return visibility
+    if scope == "global":
+        return "shared"
+    if not selected_agent:
+        raise click.ClickException(f"an agent prefix is required when --scope is {scope}")
+    return "private"
+
+
+def _entry_matches_filters(
+    entry: PreparedEntry,
+    *,
+    agent_name: str,
+    scope: CapScopeFilter | None,
+    origin: CapOriginFilter | None,
+    binding: CapBindingFilter | None,
+) -> bool:
+    if scope is not None and cap_store.entry_scope(entry, agent_name=agent_name) != scope:
+        return False
+    if origin is not None and cap_store.entry_origin(entry) != origin:
+        return False
+    return binding is None or cap_store.entry_binding(entry) == binding
 
 
 def _named_entry(

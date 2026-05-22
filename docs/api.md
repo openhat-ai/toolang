@@ -36,7 +36,7 @@ Global options:
 
 Cap commands:
 
-- `toolang <kind> list [--visibility private|shared]`
+- `toolang <kind> list [--scope global|home|packed] [--origin local|remote] [--binding inline|cited|wired|mounted]`
 - `toolang [agent] <kind> new <name>`
 - `toolang [agent] <kind> edit <name>`
 - `toolang [agent] <kind> delete <name>`

@@ -4452,7 +4452,7 @@ def test_cli_skill_new_help_mentions_agent_scope() -> None:
     assert "Create a local skill." in result.stdout
     assert "[AGENT] skill new" in result.stdout
     assert "agent      TEXT" in result.stdout
-    assert "Apply with private visibility for this agent." in result.stdout
+    assert "Apply to this agent home." in result.stdout
 
 
 def test_cli_skill_template_help_shows_plain_text_metavar() -> None:
@@ -4487,7 +4487,7 @@ def test_cli_skill_list_help_mentions_agent_scope_concisely() -> None:
     assert "[AGENT] skill list" in result.stdout
 
 
-def test_cli_cap_list_with_agent_defaults_to_shared_and_private_visibility(tmp_path: Path, monkeypatch) -> None:
+def test_cli_cap_list_with_agent_defaults_to_all_scopes(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(
         cli.click,
@@ -4525,7 +4525,7 @@ def test_cli_cap_list_with_agent_defaults_to_shared_and_private_visibility(tmp_p
     assert "home://psyches/def" in result.stdout
 
 
-def test_cli_cap_list_visibility_filters_results(tmp_path: Path, monkeypatch) -> None:
+def test_cli_cap_list_scope_filters_results(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(
         cli.click,
@@ -4549,7 +4549,7 @@ def test_cli_cap_list_visibility_filters_results(tmp_path: Path, monkeypatch) ->
     )
 
     shared_result = _invoke_app(
-        ["psyche", "list", "--visibility", "shared"],
+        ["psyche", "list", "--scope", "global"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -4559,7 +4559,7 @@ def test_cli_cap_list_visibility_filters_results(tmp_path: Path, monkeypatch) ->
     assert "global" in shared_result.stdout
 
     private_result = _invoke_app(
-        ["psyche", "list", "--visibility", "private"],
+        ["psyche", "list", "--scope", "home"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -4567,6 +4567,40 @@ def test_cli_cap_list_visibility_filters_results(tmp_path: Path, monkeypatch) ->
     assert "abc" not in private_result.stdout
     assert "def" in private_result.stdout
     assert "home" in private_result.stdout
+
+
+def test_cli_cap_list_concept_filters_results(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="local-reviewer",
+        text="---\ndescription: Review local changes\n---\n# Local Reviewer\n",
+    )
+    caps.add_remote_entry(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        ref="acme/remote-reviewer",
+    )
+
+    result = _invoke_app(
+        ["skill", "list", "--origin", "remote", "--binding", "wired"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert result.exit_code == 0
+    assert "remote-reviewer" in result.stdout
+    assert "local-reviewer" not in result.stdout
+    assert "remote" in result.stdout
+    assert "wired" in result.stdout
 
 
 def test_cli_hidden_caps_command_lists_all_cap_kinds(tmp_path: Path) -> None:
@@ -4609,6 +4643,39 @@ def test_cli_hidden_caps_command_lists_all_cap_kinds(tmp_path: Path) -> None:
     assert "home://skills/reviewer" in result.stdout
 
 
+def test_cli_hidden_caps_command_supports_concept_filters(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="shared",
+        kind="psyche",
+        name="style",
+        text="Prefer concise answers.\n",
+    )
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="reviewer",
+        text="---\ndescription: Review changes\n---\n# Reviewer\n",
+    )
+
+    result = _invoke_app(
+        ["caps", "--scope", "home", "--origin", "local", "--binding", "mounted"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert result.exit_code == 0
+    assert "reviewer" in result.stdout
+    assert "style" not in result.stdout
+    assert "home" in result.stdout
+    assert "local" in result.stdout
+    assert "mounted" in result.stdout
+
+
 def test_cli_hidden_caps_command_supports_agent_prefix_shortcut(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -4627,17 +4694,17 @@ def test_cli_hidden_caps_command_supports_agent_prefix_shortcut(monkeypatch) -> 
     assert cli._CLI_PREFIX_AGENT is None
 
 
-def test_cli_cap_list_rejects_private_visibility_without_agent(tmp_path: Path) -> None:
+def test_cli_cap_list_rejects_home_scope_without_agent(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(toolang_root), "psyche", "list", "--visibility", "private"],
+        ["--root", str(toolang_root), "psyche", "list", "--scope", "home"],
         env={},
     )
 
     assert result.exit_code == 1
-    assert "an agent prefix is required when --visibility is private" in result.stderr
+    assert "an agent prefix is required when --scope is home" in result.stderr
 
 
 def test_cli_version_option_exits_before_other_parsing(monkeypatch) -> None:
