@@ -4623,7 +4623,7 @@ def test_cli_hidden_caps_command_lists_all_cap_kinds(tmp_path: Path) -> None:
     )
 
     result = _invoke_app(
-        ["caps"],
+        ["caps", "list"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -4641,6 +4641,51 @@ def test_cli_hidden_caps_command_lists_all_cap_kinds(tmp_path: Path) -> None:
     assert "home" in result.stdout
     assert "root://psyches/style" in result.stdout
     assert "home://skills/reviewer" in result.stdout
+
+
+def test_cli_hidden_caps_list_collects_all_kinds_once(tmp_path: Path, monkeypatch) -> None:
+    calls: list[set[str] | None] = []
+
+    def fake_list_entries(_toolang_root, _agent_name, *, visibility=None, kinds=None):
+        del visibility
+        calls.append(kinds)
+        return ()
+
+    monkeypatch.setattr(caps, "list_entries", fake_list_entries)
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(tmp_path / "toolang"), "caps", "list"],
+        env={},
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "No caps found."
+    assert calls == [{"psyche", "skill", "service", "prompt"}]
+
+
+def test_cli_hidden_caps_list_prepares_agent_once_with_progress(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="reviewer",
+        text="---\ndescription: Review changes\n---\n# Reviewer\n",
+    )
+
+    result = _invoke_app(
+        ["caps", "list"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert result.exit_code == 0
+    assert "reviewer" in result.stdout
+    assert "home://skills/reviewer" in result.stdout
+    assert "Prepared" in result.stderr
 
 
 def test_cli_hidden_caps_command_supports_concept_filters(tmp_path: Path) -> None:
@@ -4663,7 +4708,7 @@ def test_cli_hidden_caps_command_supports_concept_filters(tmp_path: Path) -> Non
     )
 
     result = _invoke_app(
-        ["caps", "--scope", "home", "--origin", "local", "--binding", "mounted"],
+        ["caps", "list", "--scope", "home", "--origin", "local", "--binding", "mounted"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -4687,10 +4732,10 @@ def test_cli_hidden_caps_command_supports_agent_prefix_shortcut(monkeypatch) -> 
     monkeypatch.setattr(cli, "app", cast(object, fake_app))
     monkeypatch.setattr(cli.sys, "argv", ["toolang"])
 
-    result = cli.main(["alice", "caps"])
+    result = cli.main(["alice", "caps", "list"])
 
     assert result == 0
-    assert captured["args"] == ["caps"]
+    assert captured["args"] == ["caps", "list"]
     assert cli._CLI_PREFIX_AGENT is None
 
 

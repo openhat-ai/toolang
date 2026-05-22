@@ -16,7 +16,7 @@ from ..execution.records import UpdateKind
 from ..features import watch as watch_feature
 from ..progress import ProgressSink
 from ..state.durable import scan_durable_state
-from ..state.prepared import EntryKind, PreparedEntry, PreparedVisibility
+from ..state.prepared import EntryKind, PreparedEntry, PreparedState, PreparedVisibility
 from .progress import as_progress_sink, make_cli_progress
 from .utils import (
     _OptionalPrefixAgentCommand,
@@ -132,12 +132,19 @@ def register_cap_commands(app: typer.Typer, *, rich_help_panel: str | None = Non
             no_args_is_help=True,
             rich_help_panel=rich_help_panel,
         )
-    app.command(
-        "caps",
+    caps_app = typer.Typer(
+        help="Manage all caps.",
+        add_completion=False,
+        no_args_is_help=True,
+        pretty_exceptions_enable=False,
+        pretty_exceptions_show_locals=False,
+    )
+    caps_app.command(
+        "list",
         help="List all available caps.",
-        hidden=True,
         cls=_OptionalPrefixAgentCommand,
     )(_list_all_caps)
+    app.add_typer(caps_app, name="caps", hidden=True)
 
 
 def _list_all_caps(
@@ -158,26 +165,24 @@ def _list_all_caps(
     selected_agent = _context_agent(ctx)
     agent_name = selected_agent or "default"
     effective_visibility = _cap_list_visibility(ctx, scope)
-    rows: list[tuple[str, str, str, str, str, str]] = []
-    for kind in CAP_KINDS:
-        entries = cap_store.list_entries(
-            _context_root(ctx),
-            agent_name,
-            visibility=None if effective_visibility == "all" else effective_visibility,
-            kinds={cast(EntryKind, kind)},
+    entries = _all_cap_entries(
+        _context_root(ctx),
+        agent_name,
+        visibility=effective_visibility,
+        prepare=selected_agent is not None,
+    )
+    rows = [
+        (
+            cast(CapKind, entry.kind),
+            entry.name,
+            cap_store.entry_scope(entry, agent_name=agent_name),
+            cap_store.entry_origin(entry),
+            cap_store.entry_binding(entry),
+            cap_store.entry_ref(entry, agent_name=agent_name),
         )
-        rows.extend(
-            (
-                kind,
-                entry.name,
-                cap_store.entry_scope(entry, agent_name=agent_name),
-                cap_store.entry_origin(entry),
-                cap_store.entry_binding(entry),
-                cap_store.entry_ref(entry, agent_name=agent_name),
-            )
-            for entry in entries
-            if _entry_matches_filters(entry, agent_name=agent_name, scope=scope, origin=origin, binding=binding)
-        )
+        for entry in entries
+        if _entry_matches_filters(entry, agent_name=agent_name, scope=scope, origin=origin, binding=binding)
+    ]
     if not rows:
         typer.echo("No caps found.")
         return
@@ -514,6 +519,46 @@ def _entry_matches_filters(
     if origin is not None and cap_store.entry_origin(entry) != origin:
         return False
     return binding is None or cap_store.entry_binding(entry) == binding
+
+
+def _all_cap_entries(
+    toolang_root: Path,
+    agent_name: str,
+    *,
+    visibility: PreparedVisibility | Literal["all"],
+    prepare: bool,
+) -> tuple[PreparedEntry, ...]:
+    durable = _wrap_user_error(scan_durable_state, toolang_root, agent_name)
+    if prepare and durable.program_source is not None:
+        progress = make_cli_progress(live=False)
+        try:
+            prepared = _wrap_user_error(
+                watch_feature.build_prepared_state,
+                durable,
+                progress=as_progress_sink(progress),
+            )
+        finally:
+            progress.finish(details=False)
+        return _prepared_cap_entries(prepared, visibility=visibility)
+    return cap_store.list_entries(
+        toolang_root,
+        agent_name,
+        visibility=None if visibility == "all" else visibility,
+        kinds=set(cast(tuple[EntryKind, ...], CAP_KINDS)),
+    )
+
+
+def _prepared_cap_entries(
+    prepared: PreparedState,
+    *,
+    visibility: PreparedVisibility | Literal["all"],
+) -> tuple[PreparedEntry, ...]:
+    entries: list[PreparedEntry] = []
+    if visibility in {"all", "shared"}:
+        entries.extend(entry for entry in prepared.shared_lock.entries if entry.kind in CAP_KINDS)
+    if visibility in {"all", "private"}:
+        entries.extend(entry for entry in prepared.private_lock.entries if entry.kind in CAP_KINDS)
+    return tuple(entries)
 
 
 def _named_entry(
