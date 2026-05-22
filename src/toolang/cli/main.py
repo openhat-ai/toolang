@@ -309,12 +309,12 @@ def list_agents(ctx: typer.Context) -> None:
             item.name,
             item.status,
             item.sandbox if item.status == "running" and item.sandbox else "-",
-            item.api_url or "-",
+            str(item.port) if item.port is not None else "-",
             item.webui_url or "-",
         )
         for item in items
     ]
-    _echo_table(("AGENT", "STATUS", "SANDBOX", "API", "WEBUI"), rows)
+    _echo_table(("AGENT", "STATUS", "SANDBOX", "PORT", "WEBUI"), rows)
 
 
 @app.command(

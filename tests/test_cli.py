@@ -2158,12 +2158,14 @@ def test_cli_list_shows_agent_status_and_webui_url(tmp_path: Path) -> None:
     assert "AGENT" in result.stdout
     assert "STATUS" in result.stdout
     assert "SANDBOX" in result.stdout
-    assert "API" in result.stdout
+    assert "PORT" in result.stdout
+    assert "API" not in result.stdout
     assert "WEBUI" in result.stdout
     assert "alice" in result.stdout
     assert "running" in result.stdout
     assert "none" in result.stdout
-    assert "http://127.0.0.1:8765/docs" in result.stdout
+    assert "8765" in result.stdout
+    assert "http://127.0.0.1:8765/docs" not in result.stdout
     assert "https://ui.example/agents/8765" in result.stdout
     assert "bob" in result.stdout
     assert "stopped" in result.stdout

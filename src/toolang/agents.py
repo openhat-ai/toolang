@@ -38,6 +38,17 @@ class AgentStatus:
     webui_url: str | None
     sandbox: str | None
 
+    @property
+    def port(self) -> int | None:
+        """Return the runtime endpoint port when one is known."""
+
+        if self.endpoint is None:
+            return None
+        try:
+            return urlsplit(self.endpoint).port
+        except ValueError:
+            return None
+
 
 AgentSelectorForm = Literal["name", "shorthand", "ref"]
 RunTargetKind = Literal["resident", "visiting"]
