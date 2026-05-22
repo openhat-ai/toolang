@@ -3689,7 +3689,7 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     assert "[skills]" in config_text
     assert 'reviewer = { ref = "github://acme/agents/skills/reviewer@main" }' in config_text
     assert (
-        toolang_root / "agents" / "alice" / ".caps" / "remote" / "skills" / "reviewer" / "SKILL.md"
+        toolang_root / "agents" / "alice" / ".caps" / "wired" / "skills" / "reviewer" / "SKILL.md"
     ).read_text(encoding="utf-8") == "---\ndescription: Review code\n---\n# Reviewer\n"
 
     list_remote_result = _invoke_app(
@@ -3700,14 +3700,14 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     assert list_remote_result.exit_code == 0
     assert "SKILL" in list_remote_result.stdout
     assert "REF" in list_remote_result.stdout
-    assert "VISIBILITY" in list_remote_result.stdout
+    assert "SCOPE" in list_remote_result.stdout
     assert "ORIGIN" in list_remote_result.stdout
-    assert "INCLUSION" in list_remote_result.stdout
+    assert "BINDING" in list_remote_result.stdout
     assert "DESCRIPTION" not in list_remote_result.stdout
     assert "reviewer" in list_remote_result.stdout
-    assert "private" in list_remote_result.stdout
+    assert "home" in list_remote_result.stdout
     assert "remote" in list_remote_result.stdout
-    assert "configured" in list_remote_result.stdout
+    assert "wired" in list_remote_result.stdout
     assert "github://acme/agents/skills/reviewer@main" in list_remote_result.stdout
 
     remove_result = _invoke_app(
@@ -3748,12 +3748,13 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     assert list_result.exit_code == 0
     assert "SKILL" in list_result.stdout
     assert "REF" in list_result.stdout
-    assert "VISIBILITY" in list_result.stdout
+    assert "SCOPE" in list_result.stdout
     assert "ORIGIN" in list_result.stdout
-    assert "INCLUSION" in list_result.stdout
+    assert "BINDING" in list_result.stdout
     assert "reviewer" in list_result.stdout
-    assert "private" in list_result.stdout
+    assert "home" in list_result.stdout
     assert "local" in list_result.stdout
+    assert "mounted" in list_result.stdout
     assert "home://skills/reviewer" in list_result.stdout
 
 
@@ -3795,12 +3796,13 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     assert list_result.exit_code == 0
     assert "SKILL" in list_result.stdout
     assert "REF" in list_result.stdout
-    assert "VISIBILITY" in list_result.stdout
+    assert "SCOPE" in list_result.stdout
     assert "ORIGIN" in list_result.stdout
-    assert "INCLUSION" in list_result.stdout
+    assert "BINDING" in list_result.stdout
     assert "reviewer" in list_result.stdout
-    assert "private" in list_result.stdout
+    assert "home" in list_result.stdout
     assert "local" in list_result.stdout
+    assert "mounted" in list_result.stdout
     assert "home://skills/reviewer" in list_result.stdout
 
     edited_text = (
@@ -4337,10 +4339,10 @@ def test_cli_cap_commands_cover_file_backed_kinds(tmp_path: Path, monkeypatch) -
         assert list_result.exit_code == 0
         assert kind.upper() in list_result.stdout
         assert "REF" in list_result.stdout
-        assert "VISIBILITY" in list_result.stdout
+        assert "SCOPE" in list_result.stdout
         assert "ORIGIN" in list_result.stdout
         assert name in list_result.stdout
-        assert "shared" in list_result.stdout
+        assert "global" in list_result.stdout
         assert "local" in list_result.stdout
         assert f"root://{kind}s/{name}" in list_result.stdout
 
@@ -4517,8 +4519,8 @@ def test_cli_cap_list_with_agent_defaults_to_shared_and_private_visibility(tmp_p
     assert result.exit_code == 0
     assert "abc" in result.stdout
     assert "def" in result.stdout
-    assert "shared" in result.stdout
-    assert "private" in result.stdout
+    assert "global" in result.stdout
+    assert "home" in result.stdout
     assert "root://psyches/abc" in result.stdout
     assert "home://psyches/def" in result.stdout
 
@@ -4554,7 +4556,7 @@ def test_cli_cap_list_visibility_filters_results(tmp_path: Path, monkeypatch) ->
     assert shared_result.exit_code == 0
     assert "abc" in shared_result.stdout
     assert "def" not in shared_result.stdout
-    assert "shared" in shared_result.stdout
+    assert "global" in shared_result.stdout
 
     private_result = _invoke_app(
         ["psyche", "list", "--visibility", "private"],
@@ -4564,7 +4566,7 @@ def test_cli_cap_list_visibility_filters_results(tmp_path: Path, monkeypatch) ->
     assert private_result.exit_code == 0
     assert "abc" not in private_result.stdout
     assert "def" in private_result.stdout
-    assert "private" in private_result.stdout
+    assert "home" in private_result.stdout
 
 
 def test_cli_cap_list_rejects_private_visibility_without_agent(tmp_path: Path) -> None:

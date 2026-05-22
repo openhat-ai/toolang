@@ -15,8 +15,8 @@ from .program import PreparedProgram
 PreparedVisibility = Literal["shared", "private"]
 EntryKind = Literal["psyche", "skill", "service", "prompt", "task", "chore"]
 EntryShape = Literal["file", "dir"]
-SourceOrigin = Literal["local", "remote", "inline"]
-SourceInclusion = Literal["authored", "configured", "referenced", "embedded"]
+SourceOrigin = Literal["local", "remote"]
+SourceBinding = Literal["inline", "cited", "wired", "mounted"]
 
 _EMPTY_INPUT_FINGERPRINT = sha256().hexdigest()
 _EMPTY_LOCK_FINGERPRINT = sha256(b"[]").hexdigest()
@@ -27,7 +27,7 @@ class PreparedSource:
     """One source record used to rebuild a prepared entry."""
 
     origin: SourceOrigin
-    inclusion: SourceInclusion
+    binding: SourceBinding
     path: str
     updated_at: str
     fingerprint: str
@@ -36,7 +36,7 @@ class PreparedSource:
     def to_data(self) -> dict[str, object]:
         data: dict[str, object] = {
             "origin": self.origin,
-            "inclusion": self.inclusion,
+            "binding": self.binding,
             "path": self.path,
             "updated_at": self.updated_at,
             "fingerprint": self.fingerprint,
@@ -51,7 +51,7 @@ class PreparedSource:
         line = raw_line if isinstance(raw_line, int) else None
         return cls(
             origin=cast(SourceOrigin, str(data["origin"])),
-            inclusion=cast(SourceInclusion, str(data["inclusion"])),
+            binding=cast(SourceBinding, str(data["binding"])),
             path=str(data["path"]),
             updated_at=str(data["updated_at"]),
             fingerprint=str(data["fingerprint"]),
@@ -87,16 +87,11 @@ class PreparedEntry:
 
     @classmethod
     def from_data(cls, data: dict[str, object]) -> "PreparedEntry":
-        raw_ref = data.get("ref")
-        if not isinstance(raw_ref, str) or not raw_ref:
-            raw_ref = data.get("locator")
-        if not isinstance(raw_ref, str) or not raw_ref:
-            raise KeyError("ref")
         return cls(
             kind=cast(EntryKind, str(data["kind"])),
             name=str(data["name"]),
             shape=cast(EntryShape, str(data["shape"])),
-            ref=raw_ref,
+            ref=str(data["ref"]),
             path=str(data["path"]),
             source=PreparedSource.from_data(cast(dict[str, object], data["source"])),
             meta=dict(cast(dict[str, object], data.get("meta", {}))),
@@ -231,7 +226,7 @@ def write_prepared_lock(
 
     prepared_dir = lock.prepared_dir
     prepared_dir.mkdir(parents=True, exist_ok=True)
-    for directory_name in ("inline", "remote"):
+    for directory_name in ("inline", "cited", "wired"):
         (prepared_dir / directory_name).mkdir(parents=True, exist_ok=True)
     for relative_path, content in sorted((files or {}).items()):
         target = toolang_root / relative_path

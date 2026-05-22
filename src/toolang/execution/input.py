@@ -75,7 +75,7 @@ Psyches:
 {{/runtime.psyches}}
 Skills:
 {{#runtime.skills}}
-- {{name}} (visibility={{visibility}}, origin={{origin}}, inclusion={{inclusion}}, ref={{ref}})
+- {{name}} (scope={{scope}}, origin={{origin}}, binding={{binding}}, ref={{ref}})
 {{#description}}
   description={{description}}
 {{/description}}
@@ -89,7 +89,7 @@ Skills:
 {{/runtime.skills}}
 Services:
 {{#runtime.services}}
-- {{name}} (visibility={{visibility}}, origin={{origin}}, inclusion={{inclusion}}, ref={{ref}})
+- {{name}} (scope={{scope}}, origin={{origin}}, binding={{binding}}, ref={{ref}})
 {{#description}}
   description={{description}}
 {{/description}}
@@ -1177,9 +1177,9 @@ def _prepared_entry_to_context(
         "content": content,
         "metadata": dict(entry.meta),
         "metadata_items": _metadata_items(entry.meta),
-        "visibility": cap_store.entry_visibility(entry, agent_name=context.name),
+        "scope": cap_store.entry_scope(entry, agent_name=context.name),
         "origin": cap_store.entry_origin(entry),
-        "inclusion": cap_store.entry_inclusion(entry),
+        "binding": cap_store.entry_binding(entry),
     }
 
 

@@ -46,8 +46,8 @@ Cap commands:
 
 `<kind>` is one of `psyche`, `skill`, `service`, or `prompt`. Without an agent
 prefix, cap mutations target `shared` visibility. With an agent prefix, they
-target `private` visibility for that agent. List output uses `VISIBILITY`,
-`ORIGIN`, `INCLUSION`, and `REF`.
+target `private` visibility for that agent. List output uses `SCOPE`, `ORIGIN`,
+`BINDING`, and `REF`.
 
 Typical usage:
 
@@ -316,9 +316,9 @@ items include:
 
 - `name`
 - `description`
-- `visibility`
+- `scope`
 - `origin`
-- `inclusion`
+- `binding`
 - `ref`
 - `definition_file`
 - `line` when known

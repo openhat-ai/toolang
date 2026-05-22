@@ -115,7 +115,8 @@ def test_agent_state_tool_creates_updates_gets_and_deletes_skill(tmp_path: Path)
     loaded = tools["skill_get"].invoke({"name": "reviewer"}, context)
     deleted = tools["skill_delete"].invoke({"name": "reviewer"}, context)
 
-    assert created["skill"]["visibility"] == "private"
+    assert created["skill"]["scope"] == "home"
+    assert created["skill"]["binding"] == "mounted"
     assert created["skill"]["meta"]["description"] == "Review code changes."
     assert updated["skill"]["meta"]["description"] == "Review implementation changes."
     assert "Check correctness, tests, and docs." in loaded["skill"]["content"]
