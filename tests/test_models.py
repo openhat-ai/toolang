@@ -28,6 +28,7 @@ from toolang.execution.snapshot import RunSnapshot, SnapshotAgent, SnapshotProgr
 from toolang.models.providers import ollama as ollama_models
 from toolang.models.providers import openai as openai_models
 from toolang.models.providers import openrouter as openrouter_models
+from toolang.models.providers.loader import load_model_providers
 from toolang.models.adapters import responses as responses_models
 from toolang.models.adapters.responses import encode_message, response_payload
 from toolang.program import MessageBlock, ParamDecl, SourceSpan, Thunk
@@ -691,6 +692,13 @@ def test_ollama_provider_discovers_local_models(monkeypatch) -> None:
             details="Local Ollama model.",
         ),
     )
+
+
+def test_builtin_model_provider_loader_includes_openrouter() -> None:
+    providers = load_model_providers()
+
+    assert {"custom", "ollama", "openai", "openrouter"} <= set(providers)
+    assert providers["openrouter"].default_api_key_env() == "OPENROUTER_API_KEY"
 
 
 def test_openai_provider_lists_curated_common_model_profiles() -> None:

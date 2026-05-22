@@ -12,6 +12,7 @@ from toolang.models.config import load_model_provider_configs
 from toolang.models.providers.custom import create_model as create_custom_model
 from toolang.models.providers.ollama import create_model as create_ollama_model
 from toolang.models.providers.openai import create_model as create_openai_model
+from toolang.models.providers.openrouter import create_model as create_openrouter_model
 
 
 def load_model_providers(
@@ -28,6 +29,7 @@ def load_model_providers(
     providers: dict[str, ModelProvider] = {
         "custom": create_custom_model({}),
         "openai": create_openai_model(_provider_config_payload(provider_configs.get("openai"))),
+        "openrouter": create_openrouter_model(_provider_config_payload(provider_configs.get("openrouter"))),
         "ollama": create_ollama_model(_provider_config_payload(provider_configs.get("ollama"))),
     }
     for entry_point in entry_points(group="toolang.model"):
