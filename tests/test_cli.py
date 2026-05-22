@@ -1779,6 +1779,31 @@ thunk:
     assert "Traceback" not in output.err
 
 
+def test_cli_roaming_invoke_reports_missing_models_without_run_id(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+thunk:
+  Reply directly.
+""".strip(),
+    )
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("OLLAMA_HOST", "http://127.0.0.1:9")
+
+    result = cli.main([str(program_path), "main", "hello"])
+    output = capsys.readouterr()
+
+    assert result == 1
+    assert "toolang error: No available models." in output.err
+    assert "toolang model providers" in output.err
+    assert "Run: run_" not in output.err
+
+
 def test_cli_roaming_invoke_requires_explicit_thunk_name(tmp_path: Path, capsys) -> None:
     program_path = _write_roaming_program(
         tmp_path,
@@ -2887,6 +2912,26 @@ def test_cli_run_passes_model_selectors_to_agent_up(tmp_path: Path, monkeypatch)
 
     assert result.exit_code == 0
     assert captured["models"] == ("openai/gpt-5[openai]", "o3")
+
+
+def test_cli_run_rejects_missing_default_model_env(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    monkeypatch.setattr(
+        cli.agent_up,
+        "start_runtime",
+        lambda *_args, **_kwargs: pytest.fail("runtime should exit before launching"),
+    )
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(toolang_root), "run", "alice", "--feature", "chat"],
+        env={"OPENAI_API_KEY": "", "OPENROUTER_API_KEY": "", "OLLAMA_HOST": "http://127.0.0.1:9"},
+    )
+
+    assert result.exit_code == 1
+    assert "No available models." in result.stderr
+    assert "toolang model providers" in result.stderr
 
 
 def test_cli_run_uses_py_log_spec(tmp_path: Path, monkeypatch) -> None:

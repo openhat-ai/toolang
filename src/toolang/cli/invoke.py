@@ -26,6 +26,7 @@ from ..config.env import load_runtime_environ
 from ..config.log_spec import PY_LOG_ENV_VAR
 from ..execution.events import RunEnd, RunStart, StepEnd, StepStart, TraceEvent
 from ..execution.runner import RunOutcome
+from ..models.errors import NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSAGE
 from ..program import ParamDecl, Thunk
 from ..state.prepared import PreparedState
 from ..state.program import LiveProgram, load_live_program
@@ -452,7 +453,10 @@ def _path_part_type(path: Path) -> str:
 
 def _emit_invoke_outcome(outcome: RunOutcome) -> int:
     if outcome.status == "failed":
-        typer.echo(f"toolang error: {outcome.error or 'invoke failed'}", err=True)
+        error = outcome.error or "invoke failed"
+        typer.echo(f"toolang error: {error}", err=True)
+        if _is_model_selection_error(error):
+            return 1
         typer.echo(f"Run: {outcome.run_id}", err=True)
         if outcome.log_path:
             typer.echo(f"Log: {outcome.log_path}", err=True)
@@ -460,6 +464,10 @@ def _emit_invoke_outcome(outcome: RunOutcome) -> int:
     if outcome.output_text:
         typer.echo(outcome.output_text)
     return 0
+
+
+def _is_model_selection_error(error: str) -> bool:
+    return error in {NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSAGE}
 
 
 def _script_progress_sink(*, thunk_name: str | None, quiet: bool) -> "_ScriptProgressSink":
