@@ -40,7 +40,7 @@ def callback(
     ] = None,
     agent: Annotated[
         str | None,
-        typer.Option("--agent", "-a", help="Include caps for this agent."),
+        typer.Option("--agent", "-a", help="Target caps for this agent."),
     ] = None,
     version: Annotated[
         bool,

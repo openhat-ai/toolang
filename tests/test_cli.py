@@ -4973,7 +4973,7 @@ def test_standalone_caps_help_describes_agent_option() -> None:
     assert "Manage caps for Toolang agents." in result.stdout
     assert "--agent" in result.stdout
     assert "-a" in result.stdout
-    assert "Include caps for this agent." in result.stdout
+    assert "Target caps for this agent." in result.stdout
 
 
 def test_standalone_caps_list_prepares_agent_once_with_progress(tmp_path: Path, monkeypatch) -> None:
