@@ -54,6 +54,7 @@ class _PrefixAgentCommand(TyperCommand):
             default=None,
             expose_value=False,
             help=self.argument_help,
+            rich_help_panel="Scope",
         )
 
     def get_params(self, ctx: click.Context) -> list[click.Parameter]:
@@ -111,6 +112,7 @@ class _OptionalPrefixAgentGroup(TyperGroup):
             default=None,
             expose_value=False,
             help=self.argument_help,
+            rich_help_panel="Scope",
         )
 
     def get_params(self, ctx: click.Context) -> list[click.Parameter]:
@@ -145,6 +147,7 @@ class _RequiredPrefixAgentCommand(_PrefixAgentCommand):
             default=None,
             expose_value=False,
             help=self.argument_help,
+            rich_help_panel="Scope",
         )
 
 

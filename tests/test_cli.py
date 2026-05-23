@@ -4639,6 +4639,7 @@ def test_cli_skill_new_help_mentions_agent_scope() -> None:
     assert "Create a local skill." in result.stdout
     assert "[AGENT] skill new" in result.stdout
     assert "agent      TEXT" in result.stdout
+    assert "Scope" in result.stdout
     assert "Operate on this agent instead of globally." in result.stdout
 
 
@@ -4986,6 +4987,7 @@ def test_standalone_caps_help_shows_agent_prefix_usage() -> None:
     assert result.exit_code == 0
     assert "Manage caps — composable agent primitives." in result.stdout
     assert "caps [AGENT] [OPTIONS] COMMAND [ARGS]..." in result.stdout
+    assert "Scope" in result.stdout
     assert "agent      TEXT  Operate on this agent instead of globally." in result.stdout
     assert "--agent" not in result.stdout
 
@@ -4996,6 +4998,7 @@ def test_standalone_cap_group_help_shows_agent_prefix_usage() -> None:
     assert result.exit_code == 0
     assert "caps [AGENT] psyche [OPTIONS] COMMAND [ARGS]..." in result.stdout
     assert "caps [AGENT] TEXT psyche" not in result.stdout
+    assert "Scope" in result.stdout
     assert "agent      TEXT  Operate on this agent instead of globally." in result.stdout
     assert "--agent" not in result.stdout
 
@@ -5005,7 +5008,8 @@ def test_standalone_cap_template_help_uses_inspect_description() -> None:
 
     assert result.exit_code == 0
     assert "Inspect psyche templates." in result.stdout
-    assert "agent         TEXT  Operate on this agent instead of globally." in result.stdout
+    assert "Scope" in result.stdout
+    assert "agent      TEXT  Operate on this agent instead of globally." in result.stdout
 
 
 def test_standalone_caps_main_supports_agent_prefix(monkeypatch) -> None:
