@@ -818,6 +818,38 @@ def test_cli_progress_can_finish_with_summary_only() -> None:
     assert stream.getvalue() == ""
 
 
+def test_cli_progress_renders_summary_dimmed_on_tty() -> None:
+    class TtyStringIO(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    stream = TtyStringIO()
+    progress = CliProgress(stream=stream, live=False)
+    progress._started_at -= 0.2
+
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="running",
+            detail="alice",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="ok",
+            detail="abc123",
+        )
+    )
+    progress.finish(details=False)
+
+    assert "\x1b[2mPrepared 0 caps in 0.2s" in stream.getvalue()
+
+
 def test_cli_progress_summarizes_zero_caps_when_prepare_runs() -> None:
     stream = io.StringIO()
     progress = CliProgress(stream=stream)

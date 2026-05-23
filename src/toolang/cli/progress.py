@@ -26,13 +26,21 @@ class CliProgress:
         show_cached_prepare: bool = False,
     ) -> None:
         self._stream = stream or sys.stderr
-        self._console = Console(file=self._stream, force_terminal=live, highlight=False)
+        stream_is_tty = bool(getattr(self._stream, "isatty", lambda: False)())
+        force_terminal = True if live is True or (live is False and stream_is_tty) else None
+        color_system = "standard" if force_terminal else "auto"
+        self._console = Console(
+            file=self._stream,
+            force_terminal=force_terminal,
+            color_system=color_system,
+            highlight=False,
+        )
         self._items: dict[str, _ProgressItem] = {}
         self._aliases: dict[str, str] = {}
         self._prepare: dict[str, str] = {}
         self._prepare_details: dict[str, str] = {}
         self._agent_name: str | None = None
-        self._live = bool(getattr(self._stream, "isatty", lambda: False)()) if live is None else live
+        self._live = stream_is_tty if live is None else live
         self._live_display: Live | None = None
         self._printed = False
         self._finished = False
@@ -225,10 +233,7 @@ class CliProgress:
         summary = self._summary_line()
         if not summary:
             return
-        if self._live:
-            self._console.print(Text(summary, style="dim"))
-            return
-        print(summary, file=self._stream, flush=True)
+        self._console.print(Text(summary, style="dim"))
 
     def _live_text(self) -> Text:
         text = Text()
