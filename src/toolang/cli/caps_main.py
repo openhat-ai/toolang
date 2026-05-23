@@ -22,7 +22,7 @@ _CLI_PREFIX_AGENT: str | None = None
 CAP_TOP_LEVEL_COMMANDS = frozenset({"list", *CAP_KINDS})
 
 app = typer.Typer(
-    help="List and manage Toolang caps.",
+    help="Manage caps for Toolang agents.",
     add_completion=False,
     invoke_without_command=True,
     no_args_is_help=True,

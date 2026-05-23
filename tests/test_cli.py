@@ -4769,6 +4769,7 @@ def test_standalone_caps_help_describes_agent_option() -> None:
     result = runner.invoke(caps_cli.app, ["--help"])
 
     assert result.exit_code == 0
+    assert "Manage caps for Toolang agents." in result.stdout
     assert "--agent" in result.stdout
     assert "-a" in result.stdout
     assert "Include caps for this agent." in result.stdout
