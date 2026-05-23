@@ -1231,9 +1231,9 @@ def _remote_entry_from_ref(
     if materialize:
         emit_progress(
             progress,
-            id=f"cap.materialize:{kind}:{canonical_ref}",
-            phase="cap.materialize",
-            label=f"Materialize {kind}",
+            id=f"cap.extract:{kind}:{canonical_ref}",
+            phase="cap.extract",
+            label=f"Extract {kind}",
             status="running",
             detail=str(relative_entry_path),
         )
@@ -1259,14 +1259,29 @@ def _remote_entry_from_ref(
         if materialize:
             emit_progress(
                 progress,
-                id=f"cap.materialize:{kind}:{canonical_ref}",
-                phase="cap.materialize",
-                label=f"Materialize {kind}",
+                id=f"cap.extract:{kind}:{canonical_ref}",
+                phase="cap.extract",
+                label=f"Extract {kind}",
                 status="failed",
                 detail=str(exc),
             )
         raise
     if materialize:
+        emit_progress(
+            progress,
+            id=f"cap.extract:{kind}:{canonical_ref}",
+            phase="cap.extract",
+            label=f"Extract {kind}",
+            status="ok",
+        )
+        emit_progress(
+            progress,
+            id=f"cap.materialize:{kind}:{canonical_ref}",
+            phase="cap.materialize",
+            label=f"Materialize {kind}",
+            status="running",
+            detail=str(relative_entry_path),
+        )
         emit_progress(
             progress,
             id=f"cap.materialize:{kind}:{canonical_ref}",

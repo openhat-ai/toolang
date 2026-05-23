@@ -592,7 +592,7 @@ def test_cli_progress_groups_agent_and_cap_steps() -> None:
     progress.finish()
 
     assert stream.getvalue().splitlines() == [
-        "psyche briceyan/concise prepared",
+        "psyche briceyan/concise materialized",
         "Prepared 1 caps in 1.2s",
     ]
 
@@ -1008,6 +1008,62 @@ def test_cli_progress_can_use_resolved_prepare_summary() -> None:
     progress.finish(details=False)
 
     assert stream.getvalue().splitlines() == ["Resolved 11 caps in 0.1s"]
+
+
+def test_cli_progress_summarizes_materialized_caps() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(
+        stream=stream,
+        prepare_summary_label="Resolved",
+        show_materialize_summary=True,
+    )
+    progress._started_at -= 8.0
+
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="running",
+            detail="alice",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="cap.materialize:skill:github://acme/agents/skills/review@main",
+            phase="cap.materialize",
+            label="Materialize skill",
+            status="running",
+            detail="agents/alice/.caps/cited/skills/review/SKILL.md",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="cap.materialize:skill:github://acme/agents/skills/review@main",
+            phase="cap.materialize",
+            label="Materialize skill",
+            status="ok",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="ok",
+            detail="abc123",
+        )
+    )
+    progress.set_prepare_total(12)
+    assert progress._materialize_finished_at is not None
+    progress._materialize_started_at = progress._materialize_finished_at - 4.0
+
+    progress.finish(details=False)
+
+    assert stream.getvalue().splitlines() == [
+        "Resolved 12 caps in 8.0s",
+        "Materialized 1 caps in 4.0s",
+    ]
 
 
 def test_cli_progress_finish_is_idempotent() -> None:
@@ -4985,6 +5041,43 @@ def test_standalone_cap_kind_list_prepares_agent_once_with_progress(tmp_path: Pa
     assert "reviewer" in result.stdout
     assert "agents/alice/skills/reviewer/SKILL.md" in result.stdout
     assert "Resolved 1 caps" in result.stderr
+
+
+def test_standalone_cap_kind_list_summarizes_materialized_remote_caps(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    config_path = toolang_root / "agents" / "alice" / "config.toml"
+    config_path.write_text(
+        '[skills]\nreview = { ref = "github://acme/agents/skills/review@main" }\n',
+        encoding="utf-8",
+    )
+    def fake_remote_materialized_files(*, relative_entry_path, kind, name, ref, progress=None):
+        del name
+        if progress is not None:
+            progress(
+                ProgressEvent(
+                    id=f"cap.fetch:{kind}:{ref}",
+                    phase="cap.fetch",
+                    label=f"Fetch {kind}",
+                    status="ok",
+                    detail="1 file",
+                )
+            )
+        return {str(relative_entry_path): b"---\ndescription: Review changes\n---\n# Review\n"}
+
+    monkeypatch.setattr(caps, "_remote_materialized_files", fake_remote_materialized_files)
+
+    result = runner.invoke(
+        caps_cli.app,
+        ["--root", str(toolang_root), "--agent", "alice", "skill", "list"],
+        env={},
+    )
+
+    assert result.exit_code == 0
+    assert "review" in result.stdout
+    assert "github://acme/agents/skills/review@main" in result.stdout
+    assert "Resolved 1 caps" in result.stderr
+    assert "Materialized 1 caps" in result.stderr
 
 
 def test_standalone_cap_kind_list_hides_cached_prepare_progress(tmp_path: Path) -> None:
