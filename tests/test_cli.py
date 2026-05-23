@@ -43,6 +43,20 @@ def _invoke_app(
         cli._CLI_PREFIX_AGENT = previous
 
 
+def _invoke_caps_app(
+    args: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    prefix_agent: str | None = None,
+):
+    previous = caps_cli._CLI_PREFIX_AGENT
+    caps_cli._CLI_PREFIX_AGENT = prefix_agent
+    try:
+        return runner.invoke(caps_cli.app, args, env=env)
+    finally:
+        caps_cli._CLI_PREFIX_AGENT = previous
+
+
 class _FakeModelProvider:
     def __init__(
         self,
@@ -4938,7 +4952,7 @@ def test_cli_hidden_caps_command_supports_agent_prefix_shortcut(monkeypatch) -> 
     assert cli._CLI_PREFIX_AGENT is None
 
 
-def test_standalone_caps_list_supports_agent_option(tmp_path: Path) -> None:
+def test_standalone_caps_list_supports_agent_prefix(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     caps.put_local_entry_text(
         toolang_root,
@@ -4949,9 +4963,9 @@ def test_standalone_caps_list_supports_agent_option(tmp_path: Path) -> None:
         text="---\ndescription: Review changes\n---\n# Reviewer\n",
     )
 
-    result = runner.invoke(
-        caps_cli.app,
-        ["--root", str(toolang_root), "--agent", "alice", "list", "--kind", "skill"],
+    result = _invoke_caps_app(
+        ["--root", str(toolang_root), "list", "--kind", "skill"],
+        prefix_agent="alice",
         env={},
     )
 
@@ -4966,14 +4980,51 @@ def test_standalone_caps_list_supports_agent_option(tmp_path: Path) -> None:
     assert "agents/alice/skills/reviewer/SKILL.md" in result.stdout
 
 
-def test_standalone_caps_help_describes_agent_option() -> None:
+def test_standalone_caps_help_shows_agent_prefix_usage() -> None:
     result = runner.invoke(caps_cli.app, ["--help"])
 
     assert result.exit_code == 0
-    assert "Manage caps for Toolang agents." in result.stdout
-    assert "--agent" in result.stdout
-    assert "-a" in result.stdout
-    assert "Target caps for this agent." in result.stdout
+    assert "Manage caps — composable agent primitives." in result.stdout
+    assert "caps [AGENT] [OPTIONS] COMMAND [ARGS]..." in result.stdout
+    assert "--agent" not in result.stdout
+
+
+def test_standalone_cap_group_help_shows_agent_prefix_usage() -> None:
+    result = runner.invoke(caps_cli.app, ["psyche", "--help"])
+
+    assert result.exit_code == 0
+    assert "caps [AGENT] psyche [OPTIONS] COMMAND [ARGS]..." in result.stdout
+    assert "--agent" not in result.stdout
+
+
+def test_standalone_cap_template_help_uses_inspect_description() -> None:
+    result = runner.invoke(caps_cli.app, ["psyche", "template", "--help"])
+
+    assert result.exit_code == 0
+    assert "Inspect psyche templates." in result.stdout
+
+
+def test_standalone_caps_main_supports_agent_prefix(monkeypatch) -> None:
+    captured: list[tuple[list[str], str | None]] = []
+
+    def fake_app(*, args, prog_name: str, standalone_mode: bool) -> None:
+        del prog_name, standalone_mode
+        captured.append((args, caps_cli._CLI_PREFIX_AGENT))
+
+    monkeypatch.setattr(caps_cli, "app", cast(object, fake_app))
+    monkeypatch.setattr(caps_cli.sys, "argv", ["caps"])
+
+    result = caps_cli.main(["alice", "skill", "list"])
+
+    assert result == 0
+    assert captured == [(["skill", "list"], "alice")]
+    assert caps_cli._CLI_PREFIX_AGENT is None
+
+
+def test_standalone_caps_main_rejects_removed_agent_option() -> None:
+    result = runner.invoke(caps_cli.app, ["list", "--agent", "alice"])
+
+    assert result.exit_code != 0
 
 
 def test_standalone_caps_list_prepares_agent_once_with_progress(tmp_path: Path, monkeypatch) -> None:
@@ -4997,9 +5048,9 @@ def test_standalone_caps_list_prepares_agent_once_with_progress(tmp_path: Path, 
 
     monkeypatch.setattr(caps_commands.watch_feature, "build_prepared_state", counted_build_prepared_state)
 
-    result = runner.invoke(
-        caps_cli.app,
-        ["--root", str(toolang_root), "--agent", "alice", "list"],
+    result = _invoke_caps_app(
+        ["--root", str(toolang_root), "list"],
+        prefix_agent="alice",
         env={},
     )
 
@@ -5031,9 +5082,9 @@ def test_standalone_cap_kind_list_prepares_agent_once_with_progress(tmp_path: Pa
 
     monkeypatch.setattr(caps_commands.watch_feature, "build_prepared_state", counted_build_prepared_state)
 
-    result = runner.invoke(
-        caps_cli.app,
-        ["--root", str(toolang_root), "--agent", "alice", "skill", "list"],
+    result = _invoke_caps_app(
+        ["--root", str(toolang_root), "skill", "list"],
+        prefix_agent="alice",
         env={},
     )
 
@@ -5052,6 +5103,7 @@ def test_standalone_cap_kind_list_summarizes_updated_remote_caps(tmp_path: Path,
         '[skills]\nreview = { ref = "github://acme/agents/skills/review@main" }\n',
         encoding="utf-8",
     )
+
     def fake_remote_materialized_files(*, relative_entry_path, kind, name, ref, progress=None):
         del name
         if progress is not None:
@@ -5068,9 +5120,9 @@ def test_standalone_cap_kind_list_summarizes_updated_remote_caps(tmp_path: Path,
 
     monkeypatch.setattr(caps, "_remote_materialized_files", fake_remote_materialized_files)
 
-    result = runner.invoke(
-        caps_cli.app,
-        ["--root", str(toolang_root), "--agent", "alice", "skill", "list"],
+    result = _invoke_caps_app(
+        ["--root", str(toolang_root), "skill", "list"],
+        prefix_agent="alice",
         env={},
     )
 
@@ -5093,14 +5145,14 @@ def test_standalone_cap_kind_list_hides_cached_prepare_progress(tmp_path: Path) 
         text="---\ndescription: Review changes\n---\n# Reviewer\n",
     )
 
-    first_result = runner.invoke(
-        caps_cli.app,
-        ["--root", str(toolang_root), "--agent", "alice", "skill", "list"],
+    first_result = _invoke_caps_app(
+        ["--root", str(toolang_root), "skill", "list"],
+        prefix_agent="alice",
         env={},
     )
-    second_result = runner.invoke(
-        caps_cli.app,
-        ["--root", str(toolang_root), "--agent", "alice", "skill", "list"],
+    second_result = _invoke_caps_app(
+        ["--root", str(toolang_root), "skill", "list"],
+        prefix_agent="alice",
         env={},
     )
 
@@ -5108,28 +5160,6 @@ def test_standalone_cap_kind_list_hides_cached_prepare_progress(tmp_path: Path) 
     assert second_result.exit_code == 0
     assert "reviewer" in second_result.stdout
     assert second_result.stderr == ""
-
-
-def test_standalone_caps_main_supports_agent_prefix_and_trailing_agent_option(monkeypatch) -> None:
-    captured: list[tuple[list[str], str | None]] = []
-
-    def fake_app(*, args, prog_name: str, standalone_mode: bool) -> None:
-        del prog_name, standalone_mode
-        captured.append((args, caps_cli._CLI_PREFIX_AGENT))
-
-    monkeypatch.setattr(caps_cli, "app", cast(object, fake_app))
-    monkeypatch.setattr(caps_cli.sys, "argv", ["caps"])
-
-    prefix_result = caps_cli.main(["alice", "skill", "list"])
-    option_result = caps_cli.main(["list", "--agent", "alice", "--binding", "mounted"])
-
-    assert prefix_result == 0
-    assert option_result == 0
-    assert captured == [
-        (["skill", "list"], "alice"),
-        (["--agent", "alice", "list", "--binding", "mounted"], None),
-    ]
-    assert caps_cli._CLI_PREFIX_AGENT is None
 
 
 def test_cli_cap_list_rejects_invalid_global_filter(tmp_path: Path) -> None:

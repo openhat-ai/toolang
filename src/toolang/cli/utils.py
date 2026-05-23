@@ -93,6 +93,24 @@ class _PrefixAgentWorkGroup(TyperGroup):
         formatter.write_usage(prefix_path, " ".join(pieces))
 
 
+class _OptionalPrefixAgentGroup(TyperGroup):
+    """Render optional AGENT between the executable and command path in usage."""
+
+    prefix_agent_metavar = "[AGENT]"
+
+    def format_usage(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        command_path = ctx.command_path
+        root_name, _, remainder = command_path.partition(" ")
+        prefix_path = (
+            f"{root_name} {self.prefix_agent_metavar} {remainder}"
+            if remainder
+            else f"{root_name} {self.prefix_agent_metavar}"
+        )
+        pieces = [self.options_metavar] if self.options_metavar else []
+        pieces.append(self.subcommand_metavar or "[COMMAND] [ARGS]...")
+        formatter.write_usage(prefix_path, " ".join(pieces))
+
+
 class _OptionalPrefixAgentCommand(_PrefixAgentCommand):
     prefix_agent_metavar = "[AGENT]"
 

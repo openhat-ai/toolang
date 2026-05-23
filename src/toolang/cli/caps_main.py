@@ -16,13 +16,15 @@ import typer
 
 from ..config.log import configure_logging
 from .caps import CAP_KINDS, register_standalone_caps_commands
-from .utils import _toolang_root
+from .utils import _OptionalPrefixAgentGroup, _toolang_root
 
 _CLI_PREFIX_AGENT: str | None = None
 CAP_TOP_LEVEL_COMMANDS = frozenset({"list", *CAP_KINDS})
 
 app = typer.Typer(
-    help="Manage caps for Toolang agents.",
+    name="caps",
+    help="Manage caps — composable agent primitives.",
+    cls=_OptionalPrefixAgentGroup,
     add_completion=False,
     invoke_without_command=True,
     no_args_is_help=True,
@@ -37,10 +39,6 @@ def callback(
     toolang_root: Annotated[
         Path | None,
         typer.Option("--root", "-r", help="Use a custom Toolang root."),
-    ] = None,
-    agent: Annotated[
-        str | None,
-        typer.Option("--agent", "-a", help="Target caps for this agent."),
     ] = None,
     version: Annotated[
         bool,
@@ -60,16 +58,9 @@ def callback(
         configure_logging(spec=None, environ=os.environ)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
-    effective_agent = agent
-    if _CLI_PREFIX_AGENT is not None:
-        if agent is not None and agent != _CLI_PREFIX_AGENT:
-            raise click.ClickException(
-                f"conflicting agent selectors: {_CLI_PREFIX_AGENT} and {agent}"
-            )
-        effective_agent = _CLI_PREFIX_AGENT
     ctx.obj = {
         "toolang_root": _toolang_root(toolang_root),
-        "agent": effective_agent,
+        "agent": _CLI_PREFIX_AGENT,
     }
 
 
@@ -117,14 +108,12 @@ def _extract_global_args(argv: list[str]) -> tuple[list[str], list[str]]:
 
 
 def _consume_global_arg(token: str, argv: list[str], index: int) -> tuple[list[str], int] | None:
-    if token in {"--root", "-r", "--agent", "-a"}:
+    if token in {"--root", "-r"}:
         if index + 1 >= len(argv):
             return ([token], 1)
         return ([token, argv[index + 1]], 2)
     if token.startswith("--root="):
         return (["--root", token.removeprefix("--root=")], 1)
-    if token.startswith("--agent="):
-        return (["--agent", token.removeprefix("--agent=")], 1)
     return None
 
 

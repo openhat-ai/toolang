@@ -9,6 +9,7 @@ from typing import Annotated, Literal, cast
 
 import click
 import typer
+from typer.core import TyperGroup
 
 from .. import caps as cap_store
 from .. import templates
@@ -20,6 +21,7 @@ from ..state.prepared import EntryKind, PreparedEntry, PreparedState, PreparedVi
 from .progress import as_progress_sink, make_cli_progress
 from .utils import (
     _OptionalPrefixAgentCommand,
+    _OptionalPrefixAgentGroup,
     _OptionalPrefixAgentTemplateCommand,
     _append_agent_update,
     _context_agent,
@@ -63,10 +65,19 @@ def register_standalone_caps_commands(app: typer.Typer, *, rich_help_panel: str 
         help="List available caps.",
         cls=_OptionalPrefixAgentCommand,
     )(_list_all_caps)
-    _register_cap_kind_commands(app, rich_help_panel=rich_help_panel)
+    _register_cap_kind_commands(
+        app,
+        rich_help_panel=rich_help_panel,
+        group_cls=_OptionalPrefixAgentGroup,
+    )
 
 
-def _register_cap_kind_commands(app: typer.Typer, *, rich_help_panel: str | None = None) -> None:
+def _register_cap_kind_commands(
+    app: typer.Typer,
+    *,
+    rich_help_panel: str | None = None,
+    group_cls: type[TyperGroup] | None = None,
+) -> None:
     cap_titles: dict[CapKind, str] = {
         "psyche": "Psyche",
         "skill": "Skill",
@@ -131,7 +142,7 @@ def _register_cap_kind_commands(app: typer.Typer, *, rich_help_panel: str | None
         ),
         CapCommandSpec(
             name="template",
-            help=lambda kind: f"List or show {kind} templates.",
+            help=lambda kind: f"Inspect {kind} templates.",
             factory=_make_template_command,
         ),
     )
@@ -140,6 +151,7 @@ def _register_cap_kind_commands(app: typer.Typer, *, rich_help_panel: str | None
         title = cap_titles[kind]
         cap_app = typer.Typer(
             help=cap_group_help[kind],
+            cls=group_cls,
             add_completion=False,
             no_args_is_help=True,
             pretty_exceptions_enable=False,
