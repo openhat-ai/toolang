@@ -60,7 +60,7 @@ class _PrefixAgentCommand(TyperCommand):
         return [self._prefix_agent_argument(), *self._real_params(ctx)]
 
     def format_usage(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
-        command_path = ctx.command_path
+        command_path = _strip_help_only_agent_metavars(ctx.command_path)
         root_name, _, remainder = command_path.partition(" ")
         prefix_path = (
             f"{root_name} {self.prefix_agent_metavar} {remainder}"
@@ -79,7 +79,7 @@ class _PrefixAgentWorkGroup(TyperGroup):
     prefix_agent_metavar = "AGENT"
 
     def format_usage(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
-        command_path = ctx.command_path
+        command_path = _strip_help_only_agent_metavars(ctx.command_path)
         root_name, _, remainder = command_path.partition(" ")
         prefix_path = (
             f"{root_name} {self.prefix_agent_metavar} {remainder}"
@@ -97,9 +97,27 @@ class _OptionalPrefixAgentGroup(TyperGroup):
     """Render optional AGENT between the executable and command path in usage."""
 
     prefix_agent_metavar = "[AGENT]"
+    argument_metavar = "TEXT"
+    argument_help = "Operate on this agent instead of globally."
+
+    def _real_params(self, ctx: click.Context) -> list[click.Parameter]:
+        return TyperGroup.get_params(self, ctx)
+
+    def _prefix_agent_argument(self) -> click.Argument:
+        return _HelpOnlyTyperArgument(
+            param_decls=["agent"],
+            metavar=self.argument_metavar,
+            required=False,
+            default=None,
+            expose_value=False,
+            help=self.argument_help,
+        )
+
+    def get_params(self, ctx: click.Context) -> list[click.Parameter]:
+        return [self._prefix_agent_argument(), *self._real_params(ctx)]
 
     def format_usage(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
-        command_path = ctx.command_path
+        command_path = _strip_help_only_agent_metavars(ctx.command_path)
         root_name, _, remainder = command_path.partition(" ")
         prefix_path = (
             f"{root_name} {self.prefix_agent_metavar} {remainder}"
@@ -148,6 +166,10 @@ class _HelpOnlyTyperArgument(TyperArgument):
     ) -> tuple[None, list[str]]:
         del ctx, opts
         return None, args
+
+
+def _strip_help_only_agent_metavars(command_path: str) -> str:
+    return " ".join(part for part in command_path.split() if part != "TEXT")
 
 
 class _RuntimeAgentCommand(TyperCommand):

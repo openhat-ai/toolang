@@ -4986,6 +4986,7 @@ def test_standalone_caps_help_shows_agent_prefix_usage() -> None:
     assert result.exit_code == 0
     assert "Manage caps — composable agent primitives." in result.stdout
     assert "caps [AGENT] [OPTIONS] COMMAND [ARGS]..." in result.stdout
+    assert "agent      TEXT  Operate on this agent instead of globally." in result.stdout
     assert "--agent" not in result.stdout
 
 
@@ -4994,6 +4995,8 @@ def test_standalone_cap_group_help_shows_agent_prefix_usage() -> None:
 
     assert result.exit_code == 0
     assert "caps [AGENT] psyche [OPTIONS] COMMAND [ARGS]..." in result.stdout
+    assert "caps [AGENT] TEXT psyche" not in result.stdout
+    assert "agent      TEXT  Operate on this agent instead of globally." in result.stdout
     assert "--agent" not in result.stdout
 
 
