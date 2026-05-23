@@ -17,6 +17,7 @@ from toolang.base.types.message import Message
 from toolang.base.types.model import ModelInfo
 import toolang.cli.main as cli
 import toolang.cli.caps_main as caps_cli
+import toolang.cli.caps as caps_commands
 from toolang.cli.progress import CliProgress
 from toolang.config.log import DEFAULT_AGENT_LOG_SPEC
 from toolang.config.log_spec import PY_LOG_ENV_VAR
@@ -4762,6 +4763,40 @@ def test_standalone_caps_list_supports_agent_option(tmp_path: Path) -> None:
     assert "skill" in result.stdout
     assert "reviewer" in result.stdout
     assert "agents/alice/skills/reviewer/SKILL.md" in result.stdout
+
+
+def test_standalone_caps_list_prepares_agent_once_with_progress(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="reviewer",
+        text="---\ndescription: Review changes\n---\n# Reviewer\n",
+    )
+    calls = 0
+    original_build_prepared_state = caps_commands.watch_feature.build_prepared_state
+
+    def counted_build_prepared_state(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_build_prepared_state(*args, **kwargs)
+
+    monkeypatch.setattr(caps_commands.watch_feature, "build_prepared_state", counted_build_prepared_state)
+
+    result = runner.invoke(
+        caps_cli.app,
+        ["--root", str(toolang_root), "--agent", "alice", "list"],
+        env={},
+    )
+
+    assert result.exit_code == 0
+    assert calls == 1
+    assert "reviewer" in result.stdout
+    assert "agents/alice/skills/reviewer/SKILL.md" in result.stdout
+    assert "Prepared" in result.stderr
 
 
 def test_standalone_caps_main_supports_agent_prefix_and_trailing_agent_option(monkeypatch) -> None:
