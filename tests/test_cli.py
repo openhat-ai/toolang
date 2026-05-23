@@ -892,6 +892,53 @@ def test_cli_progress_skips_output_when_prepared_state_is_cached() -> None:
     assert stream.getvalue() == ""
 
 
+def test_cli_progress_can_show_cached_prepared_state() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream, show_cached_prepare=True)
+    progress._started_at -= 0.1
+
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="running",
+            detail="alice",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="prepare.visibility:shared",
+            phase="prepare.visibility",
+            label="Prepare shared caps",
+            status="ok",
+            detail="cached",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="prepare.visibility:private",
+            phase="prepare.visibility",
+            label="Prepare private caps",
+            status="ok",
+            detail="cached",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="ok",
+            detail="abc123",
+        )
+    )
+
+    progress.finish(details=False)
+
+    assert stream.getvalue().splitlines() == ["Prepared caps from cache in 0.1s"]
+
+
 def test_cli_progress_finish_is_idempotent() -> None:
     stream = io.StringIO()
     progress = CliProgress(stream=stream)
@@ -4841,6 +4888,35 @@ def test_standalone_cap_kind_list_prepares_agent_once_with_progress(tmp_path: Pa
     assert "reviewer" in result.stdout
     assert "agents/alice/skills/reviewer/SKILL.md" in result.stdout
     assert "Prepared" in result.stderr
+
+
+def test_standalone_cap_kind_list_shows_cached_prepare_progress(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="reviewer",
+        text="---\ndescription: Review changes\n---\n# Reviewer\n",
+    )
+
+    first_result = runner.invoke(
+        caps_cli.app,
+        ["--root", str(toolang_root), "--agent", "alice", "skill", "list"],
+        env={},
+    )
+    second_result = runner.invoke(
+        caps_cli.app,
+        ["--root", str(toolang_root), "--agent", "alice", "skill", "list"],
+        env={},
+    )
+
+    assert first_result.exit_code == 0
+    assert second_result.exit_code == 0
+    assert "reviewer" in second_result.stdout
+    assert "Prepared caps from cache" in second_result.stderr
 
 
 def test_standalone_caps_main_supports_agent_prefix_and_trailing_agent_option(monkeypatch) -> None:

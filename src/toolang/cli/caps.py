@@ -631,7 +631,7 @@ def _all_cap_entries(
 ) -> tuple[PreparedEntry, ...]:
     durable = _wrap_user_error(scan_durable_state, toolang_root, agent_name)
     if prepare and durable.program_source is not None:
-        progress = make_cli_progress(live=False)
+        progress = make_cli_progress(live=False, show_cached_prepare=True)
         try:
             prepared = _wrap_user_error(
                 watch_feature.build_prepared_state,

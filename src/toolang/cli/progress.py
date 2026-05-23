@@ -18,7 +18,13 @@ from ..progress import ProgressEvent, ProgressSink
 class CliProgress:
     """Render progress updates to stderr without affecting stdout contracts."""
 
-    def __init__(self, *, stream: TextIO | None = None, live: bool | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        stream: TextIO | None = None,
+        live: bool | None = None,
+        show_cached_prepare: bool = False,
+    ) -> None:
         self._stream = stream or sys.stderr
         self._console = Console(file=self._stream, force_terminal=live, highlight=False)
         self._items: dict[str, _ProgressItem] = {}
@@ -31,6 +37,7 @@ class CliProgress:
         self._printed = False
         self._finished = False
         self._interrupted = False
+        self._show_cached_prepare = show_cached_prepare
         self._started_at = time.monotonic()
         self._lock = RLock()
 
@@ -164,7 +171,10 @@ class CliProgress:
         agent_items = [item for item in self._items.values() if item.kind == "agent"]
         cap_items = [item for item in self._items.values() if item.kind != "agent"]
         if not cap_items and self._prepare_is_cached():
-            return ""
+            if not self._show_cached_prepare:
+                return ""
+            elapsed = _format_elapsed(time.monotonic() - self._started_at)
+            return f"Prepared caps from cache in {elapsed}"
         failed = sum(1 for item in cap_items if _item_status(item) == "failed")
         running = sum(1 for item in cap_items if _item_status(item) == "running")
         pending = sum(1 for item in cap_items if _item_status(item) == "pending")
@@ -275,10 +285,10 @@ class CliProgress:
         return (agent_items,) if agent_items else ()
 
 
-def make_cli_progress(*, live: bool | None = None) -> CliProgress:
+def make_cli_progress(*, live: bool | None = None, show_cached_prepare: bool = False) -> CliProgress:
     """Return the default CLI progress sink."""
 
-    return CliProgress(live=live)
+    return CliProgress(live=live, show_cached_prepare=show_cached_prepare)
 
 
 def as_progress_sink(progress: CliProgress | None) -> ProgressSink | None:
