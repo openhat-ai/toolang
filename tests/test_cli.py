@@ -715,7 +715,7 @@ def test_cli_progress_updates_agent_live_summary_by_phase() -> None:
         )
     )
 
-    assert progress._live_text().plain.splitlines() == ["Fetched 1 agent in 0.3s"]
+    assert progress._live_text().plain.splitlines() == ["Fetched 1 agent in 300ms"]
     progress.finish(details=False)
 
 
@@ -796,7 +796,7 @@ def test_cli_progress_formats_agent_source_stage() -> None:
 
     assert stream.getvalue().splitlines() == [
         "agent briceyan/dev fetched",
-        "Fetched 1 agent in 0.4s",
+        "Fetched 1 agent in 400ms",
     ]
 
 
@@ -847,7 +847,7 @@ def test_cli_progress_renders_summary_dimmed_on_tty() -> None:
     )
     progress.finish(details=False)
 
-    assert "\x1b[2mPrepared 0 caps in 0.2s" in stream.getvalue()
+    assert "\x1b[2mPrepared 0 caps in 200ms" in stream.getvalue()
 
 
 def test_cli_progress_summarizes_zero_caps_when_prepare_runs() -> None:
@@ -875,7 +875,7 @@ def test_cli_progress_summarizes_zero_caps_when_prepare_runs() -> None:
     )
     progress.finish(details=False)
 
-    assert stream.getvalue().splitlines() == ["Prepared 0 caps in 0.2s"]
+    assert stream.getvalue().splitlines() == ["Prepared 0 caps in 200ms"]
 
 
 def test_cli_progress_skips_output_when_prepared_state_is_cached() -> None:
@@ -968,7 +968,7 @@ def test_cli_progress_can_show_cached_prepared_state() -> None:
 
     progress.finish(details=False)
 
-    assert stream.getvalue().splitlines() == ["Prepared caps from cache in 0.1s"]
+    assert stream.getvalue().splitlines() == ["Prepared caps from cache in 100ms"]
 
 
 def test_cli_progress_can_use_resolved_prepare_summary() -> None:
@@ -1007,7 +1007,7 @@ def test_cli_progress_can_use_resolved_prepare_summary() -> None:
 
     progress.finish(details=False)
 
-    assert stream.getvalue().splitlines() == ["Resolved 11 caps in 0.1s"]
+    assert stream.getvalue().splitlines() == ["Resolved 11 caps in 100ms"]
 
 
 def test_cli_progress_summarizes_updated_caps() -> None:
@@ -1084,7 +1084,7 @@ def test_cli_progress_finish_is_idempotent() -> None:
     progress.finish(details=False)
     progress.finish(details=False)
 
-    assert stream.getvalue().splitlines() == ["Preparing 0 caps: 0.2s"]
+    assert stream.getvalue().splitlines() == ["Preparing 0 caps: 200ms"]
 
 
 def test_cli_progress_reports_interrupted_stage_once() -> None:
@@ -1163,7 +1163,7 @@ def test_cli_progress_can_list_pending_items_before_updates() -> None:
 
     assert stream.getvalue().splitlines() == [
         "skill by3gus/pdf-processing pending",
-        "Preparing 1 caps: 1 pending, 0.4s",
+        "Preparing 1 caps: 1 pending, 400ms",
     ]
 
 

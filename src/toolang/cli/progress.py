@@ -474,6 +474,8 @@ def _aggregate_status(statuses: tuple[str, ...]) -> str:
 
 
 def _format_elapsed(seconds: float) -> str:
+    if seconds < 1:
+        return f"{max(round(seconds * 1000), 1)}ms"
     if seconds < 10:
         return f"{seconds:.1f}s"
     return f"{seconds:.0f}s"
