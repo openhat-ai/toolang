@@ -190,6 +190,7 @@ def _list_all_caps(
         agent_name,
         visibility=effective_visibility,
         prepare=selected_agent is not None,
+        kinds=set(cast(tuple[EntryKind, ...], CAP_KINDS)),
     )
     rows = [
         (
@@ -234,10 +235,11 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
         effective_visibility = "all" if selected_agent else "shared"
         binding_filter = _parse_binding_filter(binding)
         global_filter = _parse_global_filter(global_)
-        entries = cap_store.list_entries(
+        entries = _all_cap_entries(
             _context_root(ctx),
             agent_name,
-            visibility=None if effective_visibility == "all" else effective_visibility,
+            visibility=effective_visibility,
+            prepare=selected_agent is not None,
             kinds={cast(EntryKind, kind)},
         )
         rows = [
@@ -625,6 +627,7 @@ def _all_cap_entries(
     *,
     visibility: PreparedVisibility | Literal["all"],
     prepare: bool,
+    kinds: set[EntryKind],
 ) -> tuple[PreparedEntry, ...]:
     durable = _wrap_user_error(scan_durable_state, toolang_root, agent_name)
     if prepare and durable.program_source is not None:
@@ -637,12 +640,12 @@ def _all_cap_entries(
             )
         finally:
             progress.finish(details=False)
-        return _prepared_cap_entries(prepared, visibility=visibility)
+        return _prepared_cap_entries(prepared, visibility=visibility, kinds=kinds)
     return cap_store.list_entries(
         toolang_root,
         agent_name,
         visibility=None if visibility == "all" else visibility,
-        kinds=set(cast(tuple[EntryKind, ...], CAP_KINDS)),
+        kinds=kinds,
     )
 
 
@@ -650,12 +653,13 @@ def _prepared_cap_entries(
     prepared: PreparedState,
     *,
     visibility: PreparedVisibility | Literal["all"],
+    kinds: set[EntryKind],
 ) -> tuple[PreparedEntry, ...]:
     entries: list[PreparedEntry] = []
     if visibility in {"all", "shared"}:
-        entries.extend(entry for entry in prepared.shared_lock.entries if entry.kind in CAP_KINDS)
+        entries.extend(entry for entry in prepared.shared_lock.entries if entry.kind in kinds)
     if visibility in {"all", "private"}:
-        entries.extend(entry for entry in prepared.private_lock.entries if entry.kind in CAP_KINDS)
+        entries.extend(entry for entry in prepared.private_lock.entries if entry.kind in kinds)
     return tuple(entries)
 
 

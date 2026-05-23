@@ -4809,6 +4809,40 @@ def test_standalone_caps_list_prepares_agent_once_with_progress(tmp_path: Path, 
     assert "Prepared" in result.stderr
 
 
+def test_standalone_cap_kind_list_prepares_agent_once_with_progress(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="reviewer",
+        text="---\ndescription: Review changes\n---\n# Reviewer\n",
+    )
+    calls = 0
+    original_build_prepared_state = caps_commands.watch_feature.build_prepared_state
+
+    def counted_build_prepared_state(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_build_prepared_state(*args, **kwargs)
+
+    monkeypatch.setattr(caps_commands.watch_feature, "build_prepared_state", counted_build_prepared_state)
+
+    result = runner.invoke(
+        caps_cli.app,
+        ["--root", str(toolang_root), "--agent", "alice", "skill", "list"],
+        env={},
+    )
+
+    assert result.exit_code == 0
+    assert calls == 1
+    assert "reviewer" in result.stdout
+    assert "agents/alice/skills/reviewer/SKILL.md" in result.stdout
+    assert "Prepared" in result.stderr
+
+
 def test_standalone_caps_main_supports_agent_prefix_and_trailing_agent_option(monkeypatch) -> None:
     captured: list[tuple[list[str], str | None]] = []
 
