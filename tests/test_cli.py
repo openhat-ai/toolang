@@ -594,6 +594,7 @@ def test_cli_progress_groups_agent_and_cap_steps() -> None:
     assert stream.getvalue().splitlines() == [
         "psyche briceyan/concise materialized",
         "Prepared 1 caps in 1.2s",
+        "",
     ]
 
 
@@ -745,7 +746,7 @@ def test_cli_progress_failed_summary_omits_elapsed_time() -> None:
 
     progress.finish(details=False)
 
-    assert stream.getvalue().splitlines() == ["Failed 1/1 caps"]
+    assert stream.getvalue().splitlines() == ["Failed 1/1 caps", ""]
 
 
 def test_cli_progress_reports_agent_resolve_failure() -> None:
@@ -765,7 +766,8 @@ def test_cli_progress_reports_agent_resolve_failure() -> None:
     progress.finish(details=False)
 
     assert stream.getvalue().splitlines() == [
-        "Resolve agent failed: could not resolve agent shorthand: briceyan/dev"
+        "Resolve agent failed: could not resolve agent shorthand: briceyan/dev",
+        "",
     ]
 
 
@@ -797,6 +799,7 @@ def test_cli_progress_formats_agent_source_stage() -> None:
     assert stream.getvalue().splitlines() == [
         "agent briceyan/dev fetched",
         "Fetched 1 agent in 0.4s",
+        "",
     ]
 
 
@@ -875,7 +878,7 @@ def test_cli_progress_summarizes_zero_caps_when_prepare_runs() -> None:
     )
     progress.finish(details=False)
 
-    assert stream.getvalue().splitlines() == ["Prepared 0 caps in 0.2s"]
+    assert stream.getvalue().splitlines() == ["Prepared 0 caps in 0.2s", ""]
 
 
 def test_cli_progress_skips_output_when_prepared_state_is_cached() -> None:
@@ -968,7 +971,7 @@ def test_cli_progress_can_show_cached_prepared_state() -> None:
 
     progress.finish(details=False)
 
-    assert stream.getvalue().splitlines() == ["Prepared caps from cache in 0.1s"]
+    assert stream.getvalue().splitlines() == ["Prepared caps from cache in 0.1s", ""]
 
 
 def test_cli_progress_can_use_resolved_prepare_summary() -> None:
@@ -1007,7 +1010,7 @@ def test_cli_progress_can_use_resolved_prepare_summary() -> None:
 
     progress.finish(details=False)
 
-    assert stream.getvalue().splitlines() == ["Resolved 11 caps in 0.1s"]
+    assert stream.getvalue().splitlines() == ["Resolved 11 caps in 0.1s", ""]
 
 
 def test_cli_progress_summarizes_updated_caps() -> None:
@@ -1064,6 +1067,7 @@ def test_cli_progress_summarizes_updated_caps() -> None:
     assert stream.getvalue().splitlines() == [
         "Resolved 12 caps in 4.0s",
         "Updated 1 caps in 8.0s",
+        "",
     ]
 
 
@@ -1084,7 +1088,7 @@ def test_cli_progress_finish_is_idempotent() -> None:
     progress.finish(details=False)
     progress.finish(details=False)
 
-    assert stream.getvalue().splitlines() == ["Preparing 0 caps: 0.2s"]
+    assert stream.getvalue().splitlines() == ["Preparing 0 caps: 0.2s", ""]
 
 
 def test_cli_progress_reports_interrupted_stage_once() -> None:
@@ -1104,7 +1108,7 @@ def test_cli_progress_reports_interrupted_stage_once() -> None:
     progress.interrupt()
     progress.finish(details=False)
 
-    assert stream.getvalue().splitlines() == ["Fetch agent interrupted"]
+    assert stream.getvalue().splitlines() == ["Fetch agent interrupted", ""]
 
 
 def test_cli_progress_ignores_events_after_interrupt() -> None:
@@ -1132,7 +1136,7 @@ def test_cli_progress_ignores_events_after_interrupt() -> None:
     )
     progress.finish()
 
-    assert stream.getvalue().splitlines() == ["Prepare caps interrupted"]
+    assert stream.getvalue().splitlines() == ["Prepare caps interrupted", ""]
 
 
 def test_cli_progress_can_list_pending_items_before_updates() -> None:
@@ -1164,6 +1168,7 @@ def test_cli_progress_can_list_pending_items_before_updates() -> None:
     assert stream.getvalue().splitlines() == [
         "skill by3gus/pdf-processing pending",
         "Preparing 1 caps: 1 pending, 0.4s",
+        "",
     ]
 
 

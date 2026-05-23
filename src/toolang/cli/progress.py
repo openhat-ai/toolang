@@ -289,6 +289,7 @@ class CliProgress:
             return
         for summary in summaries:
             self._console.print(Text(summary, style="dim"))
+        self._console.print()
 
     def _live_text(self) -> Text:
         text = Text()
