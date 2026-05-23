@@ -4639,7 +4639,7 @@ def test_cli_skill_new_help_mentions_agent_scope() -> None:
     assert "Create a local skill." in result.stdout
     assert "[AGENT] skill new" in result.stdout
     assert "agent      TEXT" in result.stdout
-    assert "Apply to this agent home." in result.stdout
+    assert "Operate on this agent instead of globally." in result.stdout
 
 
 def test_cli_skill_template_help_shows_plain_text_metavar() -> None:
@@ -5002,6 +5002,7 @@ def test_standalone_cap_template_help_uses_inspect_description() -> None:
 
     assert result.exit_code == 0
     assert "Inspect psyche templates." in result.stdout
+    assert "agent         TEXT  Operate on this agent instead of globally." in result.stdout
 
 
 def test_standalone_caps_main_supports_agent_prefix(monkeypatch) -> None:

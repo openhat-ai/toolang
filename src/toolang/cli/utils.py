@@ -41,7 +41,7 @@ class _PrefixAgentCommand(TyperCommand):
 
     prefix_agent_metavar = "[AGENT]"
     argument_metavar = "TEXT"
-    argument_help = "Apply to this agent home."
+    argument_help = "Operate on this agent instead of globally."
 
     def _real_params(self, ctx: click.Context) -> list[click.Parameter]:
         return TyperCommand.get_params(self, ctx)
