@@ -1010,7 +1010,7 @@ def test_cli_progress_can_use_resolved_prepare_summary() -> None:
     assert stream.getvalue().splitlines() == ["Resolved 11 caps in 0.1s"]
 
 
-def test_cli_progress_summarizes_materialized_caps() -> None:
+def test_cli_progress_summarizes_updated_caps() -> None:
     stream = io.StringIO()
     progress = CliProgress(
         stream=stream,
@@ -1063,7 +1063,7 @@ def test_cli_progress_summarizes_materialized_caps() -> None:
 
     assert stream.getvalue().splitlines() == [
         "Resolved 12 caps in 4.0s",
-        "Materialized 1 caps in 8.0s",
+        "Updated 1 caps in 8.0s",
     ]
 
 
@@ -5044,7 +5044,7 @@ def test_standalone_cap_kind_list_prepares_agent_once_with_progress(tmp_path: Pa
     assert "Resolved 1 caps" in result.stderr
 
 
-def test_standalone_cap_kind_list_summarizes_materialized_remote_caps(tmp_path: Path, monkeypatch) -> None:
+def test_standalone_cap_kind_list_summarizes_updated_remote_caps(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     config_path = toolang_root / "agents" / "alice" / "config.toml"
@@ -5078,7 +5078,7 @@ def test_standalone_cap_kind_list_summarizes_materialized_remote_caps(tmp_path: 
     assert "review" in result.stdout
     assert "github://acme/agents/skills/review@main" in result.stdout
     assert "Resolved 1 caps" in result.stderr
-    assert "Materialized 1 caps" in result.stderr
+    assert "Updated 1 caps" in result.stderr
 
 
 def test_standalone_cap_kind_list_hides_cached_prepare_progress(tmp_path: Path) -> None:

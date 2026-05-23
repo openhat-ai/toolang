@@ -270,7 +270,7 @@ class CliProgress:
         started_at = self._post_resolve_started_at or self._materialize_started_at or self._started_at
         finished_at = self._materialize_finished_at or time.monotonic()
         elapsed = _format_elapsed(max(finished_at - started_at, 0))
-        return (summary, f"Materialized {len(self._materialized_keys)} caps in {elapsed}")
+        return (summary, f"Updated {len(self._materialized_keys)} caps in {elapsed}")
 
     def _prepare_elapsed(self) -> str:
         if self._show_materialize_summary and self._materialized_keys and self._post_resolve_started_at is not None:
