@@ -52,6 +52,7 @@ class CliProgress:
         self._prepare_summary_label = prepare_summary_label
         self._prepare_total: int | None = None
         self._materialized_keys: set[str] = set()
+        self._post_resolve_started_at: float | None = None
         self._materialize_started_at: float | None = None
         self._materialize_finished_at: float | None = None
         self._started_at = time.monotonic()
@@ -180,6 +181,8 @@ class CliProgress:
             item.step_details[step] = event.detail
             if step == "fetch" and event.status == "ok":
                 item.detail = event.detail
+        if step in {"fetch", "extract", "materialize"} and self._post_resolve_started_at is None:
+            self._post_resolve_started_at = time.monotonic()
         if step == "materialize":
             if event.status == "running" and self._materialize_started_at is None:
                 self._materialize_started_at = time.monotonic()
@@ -210,7 +213,7 @@ class CliProgress:
         failed = sum(1 for item in cap_items if _item_status(item) == "failed")
         running = sum(1 for item in cap_items if _item_status(item) == "running")
         pending = sum(1 for item in cap_items if _item_status(item) == "pending")
-        elapsed = _format_elapsed(time.monotonic() - self._started_at)
+        elapsed = self._prepare_elapsed()
         prepare_status = _aggregate_status(tuple(self._prepare.values())) if self._prepare else "skipped"
         if self._interrupted:
             if cap_items or self._prepare:
@@ -264,10 +267,15 @@ class CliProgress:
     def _with_materialize_summary(self, summary: str) -> tuple[str, ...]:
         if not self._show_materialize_summary or not self._materialized_keys:
             return (summary,)
-        started_at = self._materialize_started_at or self._started_at
+        started_at = self._post_resolve_started_at or self._materialize_started_at or self._started_at
         finished_at = self._materialize_finished_at or time.monotonic()
         elapsed = _format_elapsed(max(finished_at - started_at, 0))
         return (summary, f"Materialized {len(self._materialized_keys)} caps in {elapsed}")
+
+    def _prepare_elapsed(self) -> str:
+        if self._show_materialize_summary and self._materialized_keys and self._post_resolve_started_at is not None:
+            return _format_elapsed(max(self._post_resolve_started_at - self._started_at, 0))
+        return _format_elapsed(time.monotonic() - self._started_at)
 
     def _cap_count_label(self, total: int | None = None) -> str:
         value = self._prepare_total if total is None else total

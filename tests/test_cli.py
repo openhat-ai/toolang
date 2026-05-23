@@ -1017,7 +1017,7 @@ def test_cli_progress_summarizes_materialized_caps() -> None:
         prepare_summary_label="Resolved",
         show_materialize_summary=True,
     )
-    progress._started_at -= 8.0
+    progress._started_at -= 12.0
 
     progress(
         ProgressEvent(
@@ -1056,13 +1056,14 @@ def test_cli_progress_summarizes_materialized_caps() -> None:
     )
     progress.set_prepare_total(12)
     assert progress._materialize_finished_at is not None
-    progress._materialize_started_at = progress._materialize_finished_at - 4.0
+    progress._post_resolve_started_at = progress._started_at + 4.0
+    progress._materialize_finished_at = progress._post_resolve_started_at + 8.0
 
     progress.finish(details=False)
 
     assert stream.getvalue().splitlines() == [
-        "Resolved 12 caps in 8.0s",
-        "Materialized 1 caps in 4.0s",
+        "Resolved 12 caps in 4.0s",
+        "Materialized 1 caps in 8.0s",
     ]
 
 
