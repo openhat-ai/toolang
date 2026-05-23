@@ -971,6 +971,45 @@ def test_cli_progress_can_show_cached_prepared_state() -> None:
     assert stream.getvalue().splitlines() == ["Prepared caps from cache in 0.1s"]
 
 
+def test_cli_progress_can_use_resolved_prepare_summary() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream, prepare_summary_label="Resolved")
+    progress._started_at -= 0.1
+
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="running",
+            detail="alice",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="prepare.visibility:private",
+            phase="prepare.visibility",
+            label="Prepare private caps",
+            status="ok",
+            detail="3 entries",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="ok",
+            detail="abc123",
+        )
+    )
+    progress.set_prepare_total(11)
+
+    progress.finish(details=False)
+
+    assert stream.getvalue().splitlines() == ["Resolved 11 caps in 0.1s"]
+
+
 def test_cli_progress_finish_is_idempotent() -> None:
     stream = io.StringIO()
     progress = CliProgress(stream=stream)
@@ -4764,7 +4803,7 @@ def test_cli_hidden_caps_list_prepares_agent_once_with_progress(tmp_path: Path) 
     assert result.exit_code == 0
     assert "reviewer" in result.stdout
     assert "agents/alice/skills/reviewer/SKILL.md" in result.stdout
-    assert "Prepared" in result.stderr
+    assert "Resolved 1 caps" in result.stderr
 
 
 def test_cli_hidden_caps_command_supports_concept_filters(tmp_path: Path) -> None:
@@ -4796,6 +4835,32 @@ def test_cli_hidden_caps_command_supports_concept_filters(tmp_path: Path) -> Non
     assert "reviewer" in result.stdout
     assert "style" not in result.stdout
     assert "mounted" in result.stdout
+
+
+def test_cli_hidden_caps_command_treats_packed_caps_as_not_global(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    (toolang_root / "agents" / "alice" / "agent.too").write_text(
+        (
+            "agent alice\n\n"
+            "psyche reviewer: ```md\n"
+            "Prefer concrete findings.\n"
+            "```\n"
+        ),
+        encoding="utf-8",
+    )
+
+    result = _invoke_app(
+        ["caps", "list", "--global", "n"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert result.exit_code == 0
+    assert "reviewer" in result.stdout
+    assert "inline://psyches/reviewer" in result.stdout
+    assert "defined" in result.stdout
+    assert "N" in result.stdout
 
 
 def test_cli_hidden_caps_command_supports_agent_prefix_shortcut(monkeypatch) -> None:
@@ -4885,7 +4950,7 @@ def test_standalone_caps_list_prepares_agent_once_with_progress(tmp_path: Path, 
     assert calls == 1
     assert "reviewer" in result.stdout
     assert "agents/alice/skills/reviewer/SKILL.md" in result.stdout
-    assert "Prepared" in result.stderr
+    assert "Resolved 1 caps" in result.stderr
 
 
 def test_standalone_cap_kind_list_prepares_agent_once_with_progress(tmp_path: Path, monkeypatch) -> None:
@@ -4919,10 +4984,10 @@ def test_standalone_cap_kind_list_prepares_agent_once_with_progress(tmp_path: Pa
     assert calls == 1
     assert "reviewer" in result.stdout
     assert "agents/alice/skills/reviewer/SKILL.md" in result.stdout
-    assert "Prepared" in result.stderr
+    assert "Resolved 1 caps" in result.stderr
 
 
-def test_standalone_cap_kind_list_shows_cached_prepare_progress(tmp_path: Path) -> None:
+def test_standalone_cap_kind_list_hides_cached_prepare_progress(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     caps.put_local_entry_text(
@@ -4948,7 +5013,7 @@ def test_standalone_cap_kind_list_shows_cached_prepare_progress(tmp_path: Path) 
     assert first_result.exit_code == 0
     assert second_result.exit_code == 0
     assert "reviewer" in second_result.stdout
-    assert "Prepared caps from cache" in second_result.stderr
+    assert second_result.stderr == ""
 
 
 def test_standalone_caps_main_supports_agent_prefix_and_trailing_agent_option(monkeypatch) -> None:

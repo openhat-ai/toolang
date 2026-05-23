@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 import subprocess
 import time
-from typing import cast
+from typing import Literal, cast
 
 import click
 from rich import box
@@ -30,6 +30,7 @@ from ..execution.records import UpdateKind
 # weight so usage notes remain easy to read in terminal help output.
 setattr(typer_rich_utils, "STYLE_HELPTEXT", "")
 _TABLE_CONSOLE = Console(highlight=False, width=4096)
+TableJustify = Literal["default", "left", "center", "right", "full"]
 _AGENT_AVATAR = templates.load_info_avatar()
 _PALETTE_STYLES_TOP, _PALETTE_STYLES_BOTTOM = templates.load_info_palette()
 _RAINBOW_STYLES = _PALETTE_STYLES_TOP
@@ -270,7 +271,12 @@ def _runtime_environ_for_agent(
     return load_runtime_environ(root, agent_name, base_environ=os.environ)
 
 
-def _make_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> Table:
+def _make_table(
+    headers: Sequence[str],
+    rows: Sequence[Sequence[str]],
+    *,
+    justify: Sequence[TableJustify | None] | None = None,
+) -> Table:
     table = Table(
         box=box.HORIZONTALS,
         header_style="",
@@ -278,8 +284,11 @@ def _make_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> Table:
         pad_edge=False,
         collapse_padding=True,
     )
-    for header in headers:
-        table.add_column(header, no_wrap=True)
+    for index, header in enumerate(headers):
+        column_justify: TableJustify = "left"
+        if justify is not None and index < len(justify) and justify[index] is not None:
+            column_justify = cast(TableJustify, justify[index])
+        table.add_column(header, no_wrap=True, justify=column_justify)
     for row in rows:
         table.add_row(*(Text(cell) for cell in row))
     return table
@@ -291,8 +300,13 @@ def _echo_block(text: str) -> None:
     typer.echo()
 
 
-def _echo_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> None:
-    _TABLE_CONSOLE.print(_make_table(headers, rows))
+def _echo_table(
+    headers: Sequence[str],
+    rows: Sequence[Sequence[str]],
+    *,
+    justify: Sequence[TableJustify | None] | None = None,
+) -> None:
+    _TABLE_CONSOLE.print(_make_table(headers, rows, justify=justify))
 
 
 def _echo_pairs_table(

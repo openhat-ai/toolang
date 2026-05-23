@@ -215,7 +215,11 @@ def _list_all_caps(
         return
     kind_order = {kind: index for index, kind in enumerate(CAP_KINDS)}
     rows.sort(key=lambda item: (kind_order[item[0]], item[1], item[3], item[4], item[2]))
-    _echo_table(("KIND", "CAP", "FROM", "BINDING", "IN", "GLOBAL"), rows)
+    _echo_table(
+        ("KIND", "CAP", "FROM", "BINDING", "IN", "GLOBAL"),
+        rows,
+        justify=(None, None, None, None, None, "right"),
+    )
 
 
 def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
@@ -263,7 +267,11 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             typer.echo(f"No {kind}s found.")
             return
         rows.sort(key=lambda item: (item[0], item[2], item[3], item[1]))
-        _echo_table((title.upper(), "FROM", "BINDING", "IN", "GLOBAL"), rows)
+        _echo_table(
+            (title.upper(), "FROM", "BINDING", "IN", "GLOBAL"),
+            rows,
+            justify=(None, None, None, None, "right"),
+        )
 
     return list_caps
 
@@ -557,7 +565,7 @@ def _entry_attached_in(entry: PreparedEntry) -> str:
 
 
 def _entry_is_global(entry: PreparedEntry, *, agent_name: str) -> bool:
-    return cap_store.entry_scope(entry, agent_name=agent_name) in {"global", "packed"}
+    return cap_store.entry_scope(entry, agent_name=agent_name) == "global"
 
 
 def _entry_global_label(entry: PreparedEntry, *, agent_name: str) -> Literal["Y", "N"]:
@@ -631,16 +639,18 @@ def _all_cap_entries(
 ) -> tuple[PreparedEntry, ...]:
     durable = _wrap_user_error(scan_durable_state, toolang_root, agent_name)
     if prepare and durable.program_source is not None:
-        progress = make_cli_progress(live=False, show_cached_prepare=True)
+        progress = make_cli_progress(prepare_summary_label="Resolved")
         try:
             prepared = _wrap_user_error(
                 watch_feature.build_prepared_state,
                 durable,
                 progress=as_progress_sink(progress),
             )
+            entries = _prepared_cap_entries(prepared, visibility=visibility, kinds=kinds)
+            progress.set_prepare_total(len(entries))
+            return entries
         finally:
             progress.finish(details=False)
-        return _prepared_cap_entries(prepared, visibility=visibility, kinds=kinds)
     return cap_store.list_entries(
         toolang_root,
         agent_name,

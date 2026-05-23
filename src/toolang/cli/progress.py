@@ -24,6 +24,7 @@ class CliProgress:
         stream: TextIO | None = None,
         live: bool | None = None,
         show_cached_prepare: bool = False,
+        prepare_summary_label: str = "Prepared",
     ) -> None:
         self._stream = stream or sys.stderr
         stream_is_tty = bool(getattr(self._stream, "isatty", lambda: False)())
@@ -46,6 +47,8 @@ class CliProgress:
         self._finished = False
         self._interrupted = False
         self._show_cached_prepare = show_cached_prepare
+        self._prepare_summary_label = prepare_summary_label
+        self._prepare_total: int | None = None
         self._started_at = time.monotonic()
         self._lock = RLock()
 
@@ -79,6 +82,10 @@ class CliProgress:
         with self._lock:
             self._interrupted = True
             self.finish(details=False)
+
+    def set_prepare_total(self, total: int) -> None:
+        with self._lock:
+            self._prepare_total = total
 
     def _render_live(self) -> None:
         if not self._has_visible_items():
@@ -182,7 +189,7 @@ class CliProgress:
             if not self._show_cached_prepare:
                 return ""
             elapsed = _format_elapsed(time.monotonic() - self._started_at)
-            return f"Prepared caps from cache in {elapsed}"
+            return f"{self._prepare_summary_label} {self._cap_count_label()} from cache in {elapsed}"
         failed = sum(1 for item in cap_items if _item_status(item) == "failed")
         running = sum(1 for item in cap_items if _item_status(item) == "running")
         pending = sum(1 for item in cap_items if _item_status(item) == "pending")
@@ -195,7 +202,7 @@ class CliProgress:
                 return "Fetch agent interrupted"
             return ""
         if self._prepare:
-            total = len(cap_items)
+            total = self._prepare_total if self._prepare_total is not None else len(cap_items)
             if failed:
                 return f"Failed {failed}/{total} caps"
             if running:
@@ -203,10 +210,10 @@ class CliProgress:
             if pending:
                 return f"Preparing {total} caps: {pending} pending, {elapsed}"
             if prepare_status in {"ok", "skipped"}:
-                return f"Prepared {total} caps in {elapsed}"
+                return f"{self._prepare_summary_label} {self._cap_count_label(total)} in {elapsed}"
             if prepare_status in {"running", "pending"}:
                 return f"Preparing {total} caps: {elapsed}"
-            return f"Prepared {total} caps in {elapsed}"
+            return f"{self._prepare_summary_label} {self._cap_count_label(total)} in {elapsed}"
         if not cap_items and agent_items:
             item = agent_items[0]
             agent_status = _aggregate_status(tuple(_item_status(item) for item in agent_items))
@@ -226,8 +233,14 @@ class CliProgress:
         if pending:
             return f"Preparing {len(cap_items)} caps: {pending} pending, {elapsed}"
         if prepare_status in {"ok", "skipped"}:
-            return f"Prepared {len(cap_items)} caps in {elapsed}"
-        return f"Prepared {len(cap_items)} caps in {elapsed}"
+            return f"{self._prepare_summary_label} {self._cap_count_label(len(cap_items))} in {elapsed}"
+        return f"{self._prepare_summary_label} {self._cap_count_label(len(cap_items))} in {elapsed}"
+
+    def _cap_count_label(self, total: int | None = None) -> str:
+        value = self._prepare_total if total is None else total
+        if value is None:
+            return "caps"
+        return f"{value} caps"
 
     def _print_summary(self) -> None:
         summary = self._summary_line()
@@ -290,10 +303,19 @@ class CliProgress:
         return (agent_items,) if agent_items else ()
 
 
-def make_cli_progress(*, live: bool | None = None, show_cached_prepare: bool = False) -> CliProgress:
+def make_cli_progress(
+    *,
+    live: bool | None = None,
+    show_cached_prepare: bool = False,
+    prepare_summary_label: str = "Prepared",
+) -> CliProgress:
     """Return the default CLI progress sink."""
 
-    return CliProgress(live=live, show_cached_prepare=show_cached_prepare)
+    return CliProgress(
+        live=live,
+        show_cached_prepare=show_cached_prepare,
+        prepare_summary_label=prepare_summary_label,
+    )
 
 
 def as_progress_sink(progress: CliProgress | None) -> ProgressSink | None:
