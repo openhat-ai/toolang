@@ -30,13 +30,43 @@ from .utils import (
 )
 
 CapKind = Literal["skill", "psyche", "prompt", "service"]
-CapScopeFilter = Literal["global", "home", "packed"]
-CapOriginFilter = Literal["local", "remote"]
-CapBindingFilter = Literal["inline", "cited", "wired", "mounted"]
+CapDisplayBinding = Literal["mounted", "configured", "used", "defined"]
 CAP_KINDS: tuple[CapKind, ...] = ("psyche", "skill", "service", "prompt")
+BINDING_BY_SOURCE: dict[cap_store.EntryBinding, CapDisplayBinding] = {
+    "mounted": "mounted",
+    "wired": "configured",
+    "cited": "used",
+    "inline": "defined",
+}
 
 
 def register_cap_commands(app: typer.Typer, *, rich_help_panel: str | None = None) -> None:
+    _register_cap_kind_commands(app, rich_help_panel=rich_help_panel)
+    caps_app = typer.Typer(
+        help="Manage all caps.",
+        add_completion=False,
+        no_args_is_help=True,
+        pretty_exceptions_enable=False,
+        pretty_exceptions_show_locals=False,
+    )
+    caps_app.command(
+        "list",
+        help="List all available caps.",
+        cls=_OptionalPrefixAgentCommand,
+    )(_list_all_caps)
+    app.add_typer(caps_app, name="caps", hidden=True)
+
+
+def register_standalone_caps_commands(app: typer.Typer, *, rich_help_panel: str | None = None) -> None:
+    app.command(
+        "list",
+        help="List available caps.",
+        cls=_OptionalPrefixAgentCommand,
+    )(_list_all_caps)
+    _register_cap_kind_commands(app, rich_help_panel=rich_help_panel)
+
+
+def _register_cap_kind_commands(app: typer.Typer, *, rich_help_panel: str | None = None) -> None:
     cap_titles: dict[CapKind, str] = {
         "psyche": "Psyche",
         "skill": "Skill",
@@ -132,39 +162,29 @@ def register_cap_commands(app: typer.Typer, *, rich_help_panel: str | None = Non
             no_args_is_help=True,
             rich_help_panel=rich_help_panel,
         )
-    caps_app = typer.Typer(
-        help="Manage all caps.",
-        add_completion=False,
-        no_args_is_help=True,
-        pretty_exceptions_enable=False,
-        pretty_exceptions_show_locals=False,
-    )
-    caps_app.command(
-        "list",
-        help="List all available caps.",
-        cls=_OptionalPrefixAgentCommand,
-    )(_list_all_caps)
-    app.add_typer(caps_app, name="caps", hidden=True)
 
 
 def _list_all_caps(
     ctx: typer.Context,
-    scope: Annotated[
-        CapScopeFilter | None,
-        typer.Option("--scope", help="Filter by scope: global, home, or packed."),
-    ] = None,
-    origin: Annotated[
-        CapOriginFilter | None,
-        typer.Option("--origin", help="Filter by origin: local or remote."),
-    ] = None,
     binding: Annotated[
-        CapBindingFilter | None,
-        typer.Option("--binding", help="Filter by binding: inline, cited, wired, or mounted."),
+        str | None,
+        typer.Option("--binding", help="Filter by binding CSV: mounted, configured, used, defined."),
+    ] = None,
+    global_: Annotated[
+        str | None,
+        typer.Option("--global", help="Filter by global CSV: y, n, yes, no, true, false."),
+    ] = None,
+    kind: Annotated[
+        str | None,
+        typer.Option("--kind", help="Filter by kind CSV: psyche, skill, service, prompt."),
     ] = None,
 ) -> None:
     selected_agent = _context_agent(ctx)
     agent_name = selected_agent or "default"
-    effective_visibility = _cap_list_visibility(ctx, scope)
+    effective_visibility = "all" if selected_agent else "shared"
+    kind_filter = _parse_kind_filter(kind)
+    binding_filter = _parse_binding_filter(binding)
+    global_filter = _parse_global_filter(global_)
     entries = _all_cap_entries(
         _context_root(ctx),
         agent_name,
@@ -175,42 +195,45 @@ def _list_all_caps(
         (
             cast(CapKind, entry.kind),
             entry.name,
-            cap_store.entry_scope(entry, agent_name=agent_name),
-            cap_store.entry_origin(entry),
-            cap_store.entry_binding(entry),
-            cap_store.entry_ref(entry, agent_name=agent_name),
+            _entry_from(entry, agent_name=agent_name),
+            _entry_display_binding(entry),
+            _entry_attached_in(entry),
+            _entry_global_label(entry, agent_name=agent_name),
         )
         for entry in entries
-        if _entry_matches_filters(entry, agent_name=agent_name, scope=scope, origin=origin, binding=binding)
+        if _entry_matches_filters(
+            entry,
+            agent_name=agent_name,
+            kind_filter=kind_filter,
+            binding_filter=binding_filter,
+            global_filter=global_filter,
+        )
     ]
     if not rows:
         typer.echo("No caps found.")
         return
     kind_order = {kind: index for index, kind in enumerate(CAP_KINDS)}
-    scope_order = {"global": 0, "home": 1, "packed": 2}
-    rows.sort(key=lambda item: (kind_order[item[0]], scope_order[item[2]], item[1], item[3], item[4], item[5]))
-    _echo_table(("KIND", "CAP", "SCOPE", "ORIGIN", "BINDING", "REF"), rows)
+    rows.sort(key=lambda item: (kind_order[item[0]], item[1], item[3], item[4], item[2]))
+    _echo_table(("KIND", "CAP", "FROM", "BINDING", "IN", "GLOBAL"), rows)
 
 
 def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
     def list_caps(
         ctx: typer.Context,
-        scope: Annotated[
-            CapScopeFilter | None,
-            typer.Option("--scope", help="Filter by scope: global, home, or packed."),
-        ] = None,
-        origin: Annotated[
-            CapOriginFilter | None,
-            typer.Option("--origin", help="Filter by origin: local or remote."),
-        ] = None,
         binding: Annotated[
-            CapBindingFilter | None,
-            typer.Option("--binding", help="Filter by binding: inline, cited, wired, or mounted."),
+            str | None,
+            typer.Option("--binding", help="Filter by binding CSV: mounted, configured, used, defined."),
+        ] = None,
+        global_: Annotated[
+            str | None,
+            typer.Option("--global", help="Filter by global CSV: y, n, yes, no, true, false."),
         ] = None,
     ) -> None:
         selected_agent = _context_agent(ctx)
         agent_name = selected_agent or "default"
-        effective_visibility = _cap_list_visibility(ctx, scope)
+        effective_visibility = "all" if selected_agent else "shared"
+        binding_filter = _parse_binding_filter(binding)
+        global_filter = _parse_global_filter(global_)
         entries = cap_store.list_entries(
             _context_root(ctx),
             agent_name,
@@ -220,20 +243,25 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
         rows = [
             (
                 entry.name,
-                cap_store.entry_scope(entry, agent_name=agent_name),
-                cap_store.entry_origin(entry),
-                cap_store.entry_binding(entry),
-                cap_store.entry_ref(entry, agent_name=agent_name),
+                _entry_from(entry, agent_name=agent_name),
+                _entry_display_binding(entry),
+                _entry_attached_in(entry),
+                _entry_global_label(entry, agent_name=agent_name),
             )
             for entry in entries
-            if _entry_matches_filters(entry, agent_name=agent_name, scope=scope, origin=origin, binding=binding)
+            if _entry_matches_filters(
+                entry,
+                agent_name=agent_name,
+                kind_filter=None,
+                binding_filter=binding_filter,
+                global_filter=global_filter,
+            )
         ]
         if not rows:
             typer.echo(f"No {kind}s found.")
             return
-        scope_order = {"global": 0, "home": 1, "packed": 2}
-        rows.sort(key=lambda item: (scope_order[item[1]], item[0], item[2], item[3], item[4]))
-        _echo_table((title.upper(), "SCOPE", "ORIGIN", "BINDING", "REF"), rows)
+        rows.sort(key=lambda item: (item[0], item[2], item[3], item[1]))
+        _echo_table((title.upper(), "FROM", "BINDING", "IN", "GLOBAL"), rows)
 
     return list_caps
 
@@ -492,33 +520,103 @@ def _target_visibility(ctx: typer.Context) -> tuple[PreparedVisibility, str]:
     return "shared", "default"
 
 
-def _cap_list_visibility(
-    ctx: typer.Context,
-    scope: CapScopeFilter | None,
-) -> PreparedVisibility | Literal["all"]:
-    selected_agent = _context_agent(ctx)
-    if scope is None:
-        return "all" if selected_agent else "shared"
-    if scope == "global":
-        return "shared"
-    if not selected_agent:
-        raise click.ClickException(f"an agent prefix is required when --scope is {scope}")
-    return "private"
-
-
 def _entry_matches_filters(
     entry: PreparedEntry,
     *,
     agent_name: str,
-    scope: CapScopeFilter | None,
-    origin: CapOriginFilter | None,
-    binding: CapBindingFilter | None,
+    kind_filter: set[CapKind] | None,
+    binding_filter: set[CapDisplayBinding] | None,
+    global_filter: set[bool] | None,
 ) -> bool:
-    if scope is not None and cap_store.entry_scope(entry, agent_name=agent_name) != scope:
+    if kind_filter is not None and entry.kind not in kind_filter:
         return False
-    if origin is not None and cap_store.entry_origin(entry) != origin:
+    if binding_filter is not None and _entry_display_binding(entry) not in binding_filter:
         return False
-    return binding is None or cap_store.entry_binding(entry) == binding
+    return global_filter is None or _entry_is_global(entry, agent_name=agent_name) in global_filter
+
+
+def _entry_display_binding(entry: PreparedEntry) -> CapDisplayBinding:
+    return BINDING_BY_SOURCE[cap_store.entry_binding(entry)]
+
+
+def _entry_from(entry: PreparedEntry, *, agent_name: str) -> str:
+    if entry.source.origin == "remote" or entry.source.binding == "inline":
+        return cap_store.entry_ref(entry, agent_name=agent_name)
+    return cap_store.entry_definition_file(entry)
+
+
+def _entry_attached_in(entry: PreparedEntry) -> str:
+    if entry.source.binding == "mounted":
+        return "-"
+    line = cap_store.entry_line(entry)
+    if line is None:
+        return cap_store.entry_definition_file(entry)
+    return f"{cap_store.entry_definition_file(entry)}:{line}"
+
+
+def _entry_is_global(entry: PreparedEntry, *, agent_name: str) -> bool:
+    return cap_store.entry_scope(entry, agent_name=agent_name) in {"global", "packed"}
+
+
+def _entry_global_label(entry: PreparedEntry, *, agent_name: str) -> Literal["Y", "N"]:
+    return "Y" if _entry_is_global(entry, agent_name=agent_name) else "N"
+
+
+def _parse_kind_filter(value: str | None) -> set[CapKind] | None:
+    parsed = _parse_csv_filter(
+        value,
+        option_name="--kind",
+        allowed=set(cast(tuple[str, ...], CAP_KINDS)),
+    )
+    return None if parsed is None else set(cast(set[CapKind], parsed))
+
+
+def _parse_binding_filter(value: str | None) -> set[CapDisplayBinding] | None:
+    parsed = _parse_csv_filter(
+        value,
+        option_name="--binding",
+        allowed=set(cast(tuple[str, ...], tuple(BINDING_BY_SOURCE.values()))),
+    )
+    return None if parsed is None else set(cast(set[CapDisplayBinding], parsed))
+
+
+def _parse_global_filter(value: str | None) -> set[bool] | None:
+    if value is None:
+        return None
+    parsed: set[bool] = set()
+    for item in _split_csv(value, option_name="--global"):
+        if item in {"y", "yes", "true"}:
+            parsed.add(True)
+            continue
+        if item in {"n", "no", "false"}:
+            parsed.add(False)
+            continue
+        raise click.ClickException("invalid --global value: expected y, n, yes, no, true, or false")
+    return parsed
+
+
+def _parse_csv_filter(
+    value: str | None,
+    *,
+    option_name: str,
+    allowed: set[str],
+) -> set[str] | None:
+    if value is None:
+        return None
+    parsed: set[str] = set()
+    for item in _split_csv(value, option_name=option_name):
+        if item not in allowed:
+            choices = ", ".join(sorted(allowed))
+            raise click.ClickException(f"invalid {option_name} value: {item}; expected one of {choices}")
+        parsed.add(item)
+    return parsed
+
+
+def _split_csv(value: str, *, option_name: str) -> tuple[str, ...]:
+    items = tuple(item.strip().lower() for item in value.split(",") if item.strip())
+    if not items:
+        raise click.ClickException(f"{option_name} requires at least one value")
+    return items
 
 
 def _all_cap_entries(
