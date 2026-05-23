@@ -4765,6 +4765,15 @@ def test_standalone_caps_list_supports_agent_option(tmp_path: Path) -> None:
     assert "agents/alice/skills/reviewer/SKILL.md" in result.stdout
 
 
+def test_standalone_caps_help_describes_agent_option() -> None:
+    result = runner.invoke(caps_cli.app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "--agent" in result.stdout
+    assert "-a" in result.stdout
+    assert "Include caps for this agent." in result.stdout
+
+
 def test_standalone_caps_list_prepares_agent_once_with_progress(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
