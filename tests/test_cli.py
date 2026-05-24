@@ -4987,6 +4987,7 @@ def test_cli_runtime_option_help_order_and_descriptions() -> None:
         assert positions == sorted(positions)
         for _option, description in expected:
             assert description in result.stdout
+        assert "[default: none]" in result.stdout
         assert "starting a sandbox." in result.stdout
 
 

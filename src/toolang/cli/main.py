@@ -387,9 +387,9 @@ def run_agent(
     ctx: typer.Context,
     agent: str | None = typer.Argument(None, help="Agent selector", hidden=True),
     sandbox: Annotated[
-        str | None,
+        str,
         typer.Option(help="Run the agent in a sandbox."),
-    ] = None,
+    ] = "none",
     tools: Annotated[
         list[str] | None,
         typer.Option(
@@ -545,9 +545,9 @@ def start_agent(
     ctx: typer.Context,
     agent: str | None = typer.Argument(None, help="Agent name", hidden=True),
     sandbox: Annotated[
-        str | None,
+        str,
         typer.Option(help="Run the agent in a sandbox."),
-    ] = None,
+    ] = "none",
     tools: Annotated[
         list[str] | None,
         typer.Option(
