@@ -4626,7 +4626,7 @@ def test_cli_skill_add_help_mentions_agent_scope() -> None:
     result = runner.invoke(cli.app, ["skill", "add", "--help"])
 
     assert result.exit_code == 0
-    assert "Add a remote skill cap." in result.stdout
+    assert "Add a remote skill." in result.stdout
     assert "[AGENT] skill add" in result.stdout
 
 
@@ -4634,11 +4634,11 @@ def test_cli_skill_new_help_mentions_agent_scope() -> None:
     result = runner.invoke(cli.app, ["skill", "new", "--help"])
 
     assert result.exit_code == 0
-    assert "Create a local skill cap." in result.stdout
+    assert "Create a local skill." in result.stdout
     assert "[AGENT] skill new" in result.stdout
     assert "agent      TEXT" in result.stdout
     assert "Scope" in result.stdout
-    assert "Apply to this agent's caps instead of global caps." in result.stdout
+    assert "Apply to this agent's skills instead of global skills." in result.stdout
 
 
 def test_cli_skill_template_help_shows_plain_text_metavar() -> None:
@@ -4655,7 +4655,7 @@ def test_cli_skill_remove_help_mentions_agent_scope() -> None:
     result = runner.invoke(cli.app, ["skill", "remove", "--help"])
 
     assert result.exit_code == 0
-    assert "Remove a remote skill cap." in result.stdout
+    assert "Remove a remote skill." in result.stdout
     assert "[AGENT] skill remove" in result.stdout
 
 
@@ -4663,7 +4663,7 @@ def test_cli_skill_edit_help_mentions_agent_scope() -> None:
     result = runner.invoke(cli.app, ["skill", "edit", "--help"])
 
     assert result.exit_code == 0
-    assert "Edit a local skill cap." in result.stdout
+    assert "Edit a local skill." in result.stdout
     assert "[AGENT] skill edit" in result.stdout
 
 
@@ -4671,9 +4671,9 @@ def test_cli_skill_list_help_mentions_agent_scope_concisely() -> None:
     result = runner.invoke(cli.app, ["skill", "list", "--help"])
 
     assert result.exit_code == 0
-    assert "List skill caps." in result.stdout
+    assert "List skills." in result.stdout
     assert "[AGENT] skill list" in result.stdout
-    assert "agent      TEXT  Also include this agent's caps." in result.stdout
+    assert "agent      TEXT  Also include this agent's skills." in result.stdout
 
 
 def test_cli_cap_list_with_agent_defaults_to_all_scopes(tmp_path: Path, monkeypatch) -> None:
@@ -5025,7 +5025,7 @@ def test_standalone_cap_kind_list_help_omits_kind_filters() -> None:
     result = runner.invoke(caps_cli.app, ["skill", "list", "--help"])
 
     assert result.exit_code == 0
-    assert "List skill caps." in result.stdout
+    assert "List skills." in result.stdout
     assert "Filter by form or scope CSV" in result.stdout
     assert "inline, cited, local" in result.stdout
     assert "remote, global, agent" in result.stdout
@@ -5041,8 +5041,8 @@ def test_standalone_cap_group_help_shows_agent_prefix_usage() -> None:
     assert "caps [AGENT] TEXT psyche" not in result.stdout
     assert "Scope" in result.stdout
     assert "Manage psyche caps." in result.stdout
-    assert "List psyche caps." in result.stdout
-    assert "agent      TEXT  Apply to this agent's caps instead of global caps." in result.stdout
+    assert "List psyches." in result.stdout
+    assert "agent      TEXT  Apply to this agent's psyches instead of global psyches." in result.stdout
     assert "--agent" not in result.stdout
 
 
@@ -5051,10 +5051,10 @@ def test_standalone_cap_template_help_uses_inspect_description() -> None:
 
     assert result.exit_code == 0
     assert "caps [AGENT] psyche template [OPTIONS] [NAME]" in result.stdout
-    assert "Inspect psyche cap templates." in result.stdout
+    assert "Inspect psyche templates." in result.stdout
     assert "name      TEXT  Template name." in result.stdout
     assert "Scope" in result.stdout
-    assert "agent      TEXT  Apply to this agent's caps instead of global caps." in result.stdout
+    assert "agent      TEXT  Apply to this agent's psyches instead of global psyches." in result.stdout
 
 
 def test_standalone_caps_main_supports_agent_prefix(monkeypatch) -> None:

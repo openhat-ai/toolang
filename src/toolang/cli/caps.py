@@ -70,6 +70,40 @@ def register_standalone_caps_commands(app: typer.Typer, *, rich_help_panel: str 
     )
 
 
+def _kind_command_cls(label: str) -> type[_OptionalPrefixAgentCommand]:
+    return type(
+        f"{label.title().replace(' ', '')}ScopeCommand",
+        (_OptionalPrefixAgentCommand,),
+        {"argument_help": f"Apply to this agent's {label} instead of global {label}."},
+    )
+
+
+def _kind_list_command_cls(label: str) -> type[_OptionalPrefixAgentListCommand]:
+    return type(
+        f"{label.title().replace(' ', '')}ListScopeCommand",
+        (_OptionalPrefixAgentListCommand,),
+        {"argument_help": f"Also include this agent's {label}."},
+    )
+
+
+def _kind_template_command_cls(label: str) -> type[_OptionalPrefixAgentTemplateCommand]:
+    return type(
+        f"{label.title().replace(' ', '')}TemplateScopeCommand",
+        (_OptionalPrefixAgentTemplateCommand,),
+        {"argument_help": f"Apply to this agent's {label} instead of global {label}."},
+    )
+
+
+def _kind_group_cls(group_cls: type[TyperGroup] | None, label: str) -> type[TyperGroup] | None:
+    if group_cls is None:
+        return None
+    return type(
+        f"{label.title().replace(' ', '')}ScopeGroup",
+        (group_cls,),
+        {"argument_help": f"Apply to this agent's {label} instead of global {label}."},
+    )
+
+
 def _register_cap_kind_commands(
     app: typer.Typer,
     *,
@@ -82,6 +116,12 @@ def _register_cap_kind_commands(
         "service": "Service",
         "prompt": "Prompt",
     }
+    cap_labels: dict[CapKind, str] = {
+        "psyche": "psyches",
+        "skill": "skills",
+        "service": "services",
+        "prompt": "prompts",
+    }
     cap_group_help: dict[CapKind, str] = {
         "psyche": "Manage psyche caps.",
         "skill": "Manage skill caps.",
@@ -89,10 +129,10 @@ def _register_cap_kind_commands(
         "prompt": "Manage prompt caps.",
     }
     cap_list_help: dict[CapKind, str] = {
-        "psyche": "List psyche caps.",
-        "skill": "List skill caps.",
-        "service": "List service caps.",
-        "prompt": "List prompt caps.",
+        "psyche": "List psyches.",
+        "skill": "List skills.",
+        "service": "List services.",
+        "prompt": "List prompts.",
     }
 
     @dataclass(frozen=True, slots=True)
@@ -110,46 +150,50 @@ def _register_cap_kind_commands(
         ),
         CapCommandSpec(
             name="new",
-            help=lambda kind: f"Create a local {kind} cap.",
+            help=lambda kind: f"Create a local {kind}.",
             factory=_make_new_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="edit",
-            help=lambda kind: f"Edit a local {kind} cap.",
+            help=lambda kind: f"Edit a local {kind}.",
             factory=_make_edit_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="delete",
-            help=lambda kind: f"Delete a local {kind} cap.",
+            help=lambda kind: f"Delete a local {kind}.",
             factory=_make_delete_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="add",
-            help=lambda kind: f"Add a remote {kind} cap.",
+            help=lambda kind: f"Add a remote {kind}.",
             factory=_make_add_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="remove",
-            help=lambda kind: f"Remove a remote {kind} cap.",
+            help=lambda kind: f"Remove a remote {kind}.",
             factory=_make_remove_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="template",
-            help=lambda kind: f"Inspect {kind} cap templates.",
+            help=lambda kind: f"Inspect {kind} templates.",
             factory=_make_template_command,
         ),
     )
 
     for kind in cap_titles:
         title = cap_titles[kind]
+        label = cap_labels[kind]
+        command_cls = _kind_command_cls(label)
+        list_command_cls = _kind_list_command_cls(label)
+        template_command_cls = _kind_template_command_cls(label)
         cap_app = typer.Typer(
             help=cap_group_help[kind],
-            cls=group_cls,
+            cls=_kind_group_cls(group_cls, label),
             add_completion=False,
             no_args_is_help=True,
             pretty_exceptions_enable=False,
@@ -161,11 +205,11 @@ def _register_cap_kind_commands(
                 help=spec.help(kind),
                 no_args_is_help=spec.no_args_is_help,
                 cls=(
-                    _OptionalPrefixAgentTemplateCommand
+                    template_command_cls
                     if spec.name == "template"
-                    else _OptionalPrefixAgentListCommand
+                    else list_command_cls
                     if spec.name == "list"
-                    else _OptionalPrefixAgentCommand
+                    else command_cls
                 ),
             )(spec.factory(kind, title))
         app.add_typer(
