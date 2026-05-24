@@ -225,7 +225,7 @@ def test_cli_main_normalizes_agent_prefix_shortcut_for_info(monkeypatch) -> None
     assert captured["args"] == ["info", "alice"]
 
 
-def test_cli_main_keeps_postfix_cap_command_without_agent_prefix(monkeypatch) -> None:
+def test_cli_main_does_not_special_case_removed_cap_command_without_agent_prefix(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     def fake_app(*, args, prog_name: str, standalone_mode: bool) -> None:
@@ -255,7 +255,7 @@ def test_cli_main_normalizes_agent_prefix_shortcut_for_task_commands(monkeypatch
     assert captured["prefix_agent"] == "alice"
 
 
-def test_cli_main_normalizes_agent_prefix_shortcut_for_cap_commands(monkeypatch) -> None:
+def test_cli_main_does_not_normalize_agent_prefix_shortcut_for_removed_cap_commands(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     def fake_app(*, args, prog_name: str, standalone_mode: bool) -> None:
@@ -267,8 +267,8 @@ def test_cli_main_normalizes_agent_prefix_shortcut_for_cap_commands(monkeypatch)
     result = cli.main(["alice", "skill", "list"])
 
     assert result == 0
-    assert captured["args"] == ["skill", "list"]
-    assert captured["prefix_agent"] == "alice"
+    assert captured["args"] == ["alice", "skill", "list"]
+    assert captured["prefix_agent"] is None
 
 
 def test_cli_new_creates_agent(tmp_path: Path) -> None:
@@ -3868,7 +3868,7 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
         },
     )
 
-    add_result = _invoke_app(
+    add_result = _invoke_caps_app(
         ["skill", "add", "acme/reviewer"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
@@ -3883,7 +3883,7 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
         toolang_root / "agents" / "alice" / ".caps" / "remote" / "skills" / "reviewer" / "SKILL.md"
     ).read_text(encoding="utf-8") == "---\ndescription: Review code\n---\n# Reviewer\n"
 
-    list_remote_result = _invoke_app(
+    list_remote_result = _invoke_caps_app(
         ["skill", "list"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
@@ -3899,7 +3899,7 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     assert "agent" in list_remote_result.stdout
     assert "https://github.com/acme/agents/tree/main/skills/reviewer" in list_remote_result.stdout
 
-    remove_result = _invoke_app(
+    remove_result = _invoke_caps_app(
         ["skill", "remove", "reviewer"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
@@ -3919,7 +3919,7 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
         ),
     )
 
-    add_result = _invoke_app(
+    add_result = _invoke_caps_app(
         ["skill", "new", "reviewer"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
@@ -3929,7 +3929,7 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
         f"Created skill reviewer: {toolang_root / 'agents' / 'alice' / 'skills' / 'reviewer' / 'SKILL.md'}"
     )
 
-    list_result = _invoke_app(
+    list_result = _invoke_caps_app(
         ["skill", "list"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
@@ -3956,7 +3956,7 @@ def test_cli_cap_remote_list_shows_accessible_source_url(tmp_path: Path, monkeyp
         },
     )
 
-    add_result = _invoke_app(
+    add_result = _invoke_caps_app(
         ["skill", "add", "https://github.com/acme/agents/tree/main/skills/reviewer"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
@@ -3964,7 +3964,7 @@ def test_cli_cap_remote_list_shows_accessible_source_url(tmp_path: Path, monkeyp
     assert add_result.exit_code == 0
     assert add_result.stdout.strip() == "Added skill reviewer: github://acme/agents/skills/reviewer@main"
 
-    list_result = _invoke_app(
+    list_result = _invoke_caps_app(
         ["skill", "list"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
@@ -3986,14 +3986,14 @@ def test_cli_cap_remote_file_list_uses_github_blob_url(tmp_path: Path, monkeypat
         },
     )
 
-    add_result = _invoke_app(
+    add_result = _invoke_caps_app(
         ["psyche", "add", "github://acme/agents/psyches/concise.md@main"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
     assert add_result.exit_code == 0
 
-    list_result = _invoke_app(
+    list_result = _invoke_caps_app(
         ["psyche", "list"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
@@ -4016,7 +4016,7 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
             "Review code carefully.\n"
         ),
     )
-    new_result = _invoke_app(
+    new_result = _invoke_caps_app(
         ["skill", "new", "reviewer"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
@@ -4033,7 +4033,7 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
         "---\ndescription: Review code\n---\n# Reviewer\n"
     )
 
-    list_result = _invoke_app(
+    list_result = _invoke_caps_app(
         ["skill", "list"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
@@ -4056,7 +4056,7 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
         "Review code even more carefully.\n"
     )
     monkeypatch.setattr(cli.click, "edit", lambda *_args, **_kwargs: edited_text)
-    edit_result = _invoke_app(
+    edit_result = _invoke_caps_app(
         ["skill", "edit", "reviewer"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
@@ -4071,7 +4071,7 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     ).read_text(encoding="utf-8") == edited_text
 
     monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
-    no_changes_result = _invoke_app(
+    no_changes_result = _invoke_caps_app(
         ["skill", "edit", "reviewer"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
@@ -4079,7 +4079,7 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     assert no_changes_result.exit_code == 0
     assert no_changes_result.stdout.strip() == "No changes"
 
-    duplicate_result = _invoke_app(
+    duplicate_result = _invoke_caps_app(
         ["skill", "new", "reviewer"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
@@ -4087,7 +4087,7 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     assert duplicate_result.exit_code == 1
     assert "Skill reviewer already exists" in duplicate_result.stderr
 
-    delete_result = _invoke_app(
+    delete_result = _invoke_caps_app(
         ["skill", "delete", "reviewer"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
@@ -4099,7 +4099,7 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     assert "Resolved 0 caps" in delete_result.stderr
     assert not (toolang_root / "agents" / "alice" / "skills" / "reviewer").exists()
 
-    missing_result = _invoke_app(
+    missing_result = _invoke_caps_app(
         ["skill", "delete", "reviewer"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
@@ -4113,7 +4113,7 @@ def test_cli_cap_remote_add_reports_not_found(tmp_path: Path, monkeypatch) -> No
     monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: False)
 
-    result = _invoke_app(
+    result = _invoke_caps_app(
         ["skill", "add", "acme/missing"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
@@ -4136,7 +4136,7 @@ def test_cli_cap_add_preserves_unrelated_config_sections(tmp_path: Path, monkeyp
     )
 
     result = runner.invoke(
-        cli.app,
+        caps_cli.app,
         ["skill", "add", "by3gus/pdf-processing"],
         env={"TOOLANG_ROOT": str(toolang_root)},
     )
@@ -4165,7 +4165,7 @@ def test_cli_cap_new_cancel_does_not_create(tmp_path: Path, monkeypatch) -> None
 
     monkeypatch.setattr(cli.click, "edit", fake_edit)
     result = runner.invoke(
-        cli.app,
+        caps_cli.app,
         ["prompt", "new", "rewrite"],
         env={"TOOLANG_ROOT": str(toolang_root)},
     )
@@ -4182,7 +4182,7 @@ def test_cli_cap_new_unchanged_template_does_not_create(tmp_path: Path, monkeypa
 
     monkeypatch.setattr(cli.click, "edit", lambda *_args, **_kwargs: None)
     result = runner.invoke(
-        cli.app,
+        caps_cli.app,
         ["prompt", "new", "rewrite"],
         env={"TOOLANG_ROOT": str(toolang_root)},
     )
@@ -4204,7 +4204,7 @@ def test_cli_cap_new_supports_named_template(tmp_path: Path, monkeypatch) -> Non
 
     monkeypatch.setattr(cli.click, "edit", fake_edit)
     result = runner.invoke(
-        cli.app,
+        caps_cli.app,
         ["service", "new", "search", "-t", "stdio"],
         env={"TOOLANG_ROOT": str(toolang_root)},
     )
@@ -4483,7 +4483,7 @@ def test_cli_global_cap_change_does_not_create_agent_local_update_store(tmp_path
     )
 
     result = runner.invoke(
-        cli.app,
+        caps_cli.app,
         ["skill", "new", "reviewer"],
         env={"TOOLANG_ROOT": str(toolang_root)},
     )
@@ -4548,6 +4548,14 @@ def test_cli_work_group_help_shows_required_prefix_agent() -> None:
     assert "AGENT chore" in chore_result.stdout
 
 
+def test_cli_does_not_register_cap_commands() -> None:
+    for command in ("caps", "psyche", "skill", "service", "prompt"):
+        result = runner.invoke(cli.app, [command, "--help"])
+
+        assert result.exit_code != 0
+        assert "No such command" in result.output
+
+
 def test_cli_cap_commands_cover_file_backed_kinds(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     cases = (
@@ -4570,7 +4578,7 @@ def test_cli_cap_commands_cover_file_backed_kinds(tmp_path: Path, monkeypatch) -
     monkeypatch.setattr(cli.click, "edit", fake_edit)
     for kind, name, path in cases:
         add_result = runner.invoke(
-            cli.app,
+            caps_cli.app,
             [kind, "new", name],
             env={"TOOLANG_ROOT": str(toolang_root)},
         )
@@ -4579,7 +4587,7 @@ def test_cli_cap_commands_cover_file_backed_kinds(tmp_path: Path, monkeypatch) -
         assert "Resolved" not in add_result.stderr
 
         list_result = runner.invoke(
-            cli.app,
+            caps_cli.app,
             [kind, "list"],
             env={"TOOLANG_ROOT": str(toolang_root)},
         )
@@ -4594,7 +4602,7 @@ def test_cli_cap_commands_cover_file_backed_kinds(tmp_path: Path, monkeypatch) -
         assert f"{kind}s/{name}" in list_result.stdout
 
         delete_result = runner.invoke(
-            cli.app,
+            caps_cli.app,
             [kind, "delete", name],
             env={"TOOLANG_ROOT": str(toolang_root)},
         )
@@ -4605,10 +4613,10 @@ def test_cli_cap_commands_cover_file_backed_kinds(tmp_path: Path, monkeypatch) -
 
 
 def test_cli_cap_template_outputs_named_template() -> None:
-    skill_result = runner.invoke(cli.app, ["skill", "template", "default"])
-    prompt_result = runner.invoke(cli.app, ["prompt", "template", "default"])
-    service_result = runner.invoke(cli.app, ["service", "template", "default"])
-    psyche_result = runner.invoke(cli.app, ["psyche", "template", "default"])
+    skill_result = runner.invoke(caps_cli.app, ["skill", "template", "default"])
+    prompt_result = runner.invoke(caps_cli.app, ["prompt", "template", "default"])
+    service_result = runner.invoke(caps_cli.app, ["service", "template", "default"])
+    psyche_result = runner.invoke(caps_cli.app, ["psyche", "template", "default"])
 
     assert skill_result.exit_code == 0
     assert prompt_result.exit_code == 0
@@ -4628,7 +4636,7 @@ def test_cli_cap_template_outputs_named_template() -> None:
 
 
 def test_cli_cap_template_without_argument_lists_named_templates() -> None:
-    result = runner.invoke(cli.app, ["service", "template"])
+    result = runner.invoke(caps_cli.app, ["service", "template"])
 
     assert result.exit_code == 0
     assert "TEMPLATE" in result.stdout
@@ -4637,7 +4645,7 @@ def test_cli_cap_template_without_argument_lists_named_templates() -> None:
 
 
 def test_cli_skill_help_describes_remote_and_local_commands() -> None:
-    result = runner.invoke(cli.app, ["skill", "--help"])
+    result = runner.invoke(caps_cli.app, ["skill", "--help"])
 
     assert result.exit_code == 0
     assert "Manage skill caps." in result.stdout
@@ -4686,7 +4694,7 @@ def test_cli_info_help_mentions_required_agent() -> None:
 
 
 def test_cli_skill_add_help_mentions_agent_scope() -> None:
-    result = runner.invoke(cli.app, ["skill", "add", "--help"])
+    result = runner.invoke(caps_cli.app, ["skill", "add", "--help"])
 
     assert result.exit_code == 0
     assert "Add a remote skill." in result.stdout
@@ -4694,7 +4702,7 @@ def test_cli_skill_add_help_mentions_agent_scope() -> None:
 
 
 def test_cli_skill_new_help_mentions_agent_scope() -> None:
-    result = runner.invoke(cli.app, ["skill", "new", "--help"])
+    result = runner.invoke(caps_cli.app, ["skill", "new", "--help"])
 
     assert result.exit_code == 0
     assert "Create a local skill." in result.stdout
@@ -4705,7 +4713,7 @@ def test_cli_skill_new_help_mentions_agent_scope() -> None:
 
 
 def test_cli_skill_template_help_shows_plain_text_metavar() -> None:
-    result = runner.invoke(cli.app, ["skill", "template", "--help"])
+    result = runner.invoke(caps_cli.app, ["skill", "template", "--help"])
 
     assert result.exit_code == 0
     assert "Usage:" in result.stdout
@@ -4715,7 +4723,7 @@ def test_cli_skill_template_help_shows_plain_text_metavar() -> None:
 
 
 def test_cli_skill_remove_help_mentions_agent_scope() -> None:
-    result = runner.invoke(cli.app, ["skill", "remove", "--help"])
+    result = runner.invoke(caps_cli.app, ["skill", "remove", "--help"])
 
     assert result.exit_code == 0
     assert "Remove a remote skill." in result.stdout
@@ -4723,7 +4731,7 @@ def test_cli_skill_remove_help_mentions_agent_scope() -> None:
 
 
 def test_cli_skill_edit_help_mentions_agent_scope() -> None:
-    result = runner.invoke(cli.app, ["skill", "edit", "--help"])
+    result = runner.invoke(caps_cli.app, ["skill", "edit", "--help"])
 
     assert result.exit_code == 0
     assert "Edit a local skill." in result.stdout
@@ -4731,7 +4739,7 @@ def test_cli_skill_edit_help_mentions_agent_scope() -> None:
 
 
 def test_cli_skill_list_help_mentions_agent_scope_concisely() -> None:
-    result = runner.invoke(cli.app, ["skill", "list", "--help"])
+    result = runner.invoke(caps_cli.app, ["skill", "list", "--help"])
 
     assert result.exit_code == 0
     assert "List skills." in result.stdout
@@ -4752,17 +4760,17 @@ def test_cli_cap_list_with_agent_defaults_to_all_scopes(tmp_path: Path, monkeypa
         ),
     )
     runner.invoke(
-        cli.app,
+        caps_cli.app,
         ["psyche", "new", "abc"],
         env={"TOOLANG_ROOT": str(toolang_root)},
     )
-    _invoke_app(
+    _invoke_caps_app(
         ["psyche", "new", "def"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
 
-    result = _invoke_app(
+    result = _invoke_caps_app(
         ["psyche", "list"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
@@ -4790,17 +4798,17 @@ def test_cli_cap_list_global_filters_results(tmp_path: Path, monkeypatch) -> Non
         ),
     )
     runner.invoke(
-        cli.app,
+        caps_cli.app,
         ["psyche", "new", "abc"],
         env={"TOOLANG_ROOT": str(toolang_root)},
     )
-    _invoke_app(
+    _invoke_caps_app(
         ["psyche", "new", "def"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
 
-    shared_result = _invoke_app(
+    shared_result = _invoke_caps_app(
         ["psyche", "list", "--filter", "global"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
@@ -4810,7 +4818,7 @@ def test_cli_cap_list_global_filters_results(tmp_path: Path, monkeypatch) -> Non
     assert "def" not in shared_result.stdout
     assert "global" in shared_result.stdout
 
-    private_result = _invoke_app(
+    private_result = _invoke_caps_app(
         ["psyche", "list", "--filter", "agent"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
@@ -4842,7 +4850,7 @@ def test_cli_cap_list_concept_filters_results(tmp_path: Path, monkeypatch) -> No
         ref="acme/remote-reviewer",
     )
 
-    result = _invoke_app(
+    result = _invoke_caps_app(
         ["skill", "list", "--filter", "remote,agent"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
@@ -4855,7 +4863,7 @@ def test_cli_cap_list_concept_filters_results(tmp_path: Path, monkeypatch) -> No
     assert "agent" in result.stdout
     assert "https://github.com/acme/agents/tree/main/skills/remote-reviewer" in result.stdout
 
-    union_result = _invoke_app(
+    union_result = _invoke_caps_app(
         ["skill", "list", "--filter", "local,remote,agent"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
@@ -4867,7 +4875,7 @@ def test_cli_cap_list_concept_filters_results(tmp_path: Path, monkeypatch) -> No
     assert "agent" in union_result.stdout
 
 
-def test_cli_hidden_caps_command_lists_all_cap_kinds(tmp_path: Path) -> None:
+def test_standalone_caps_command_lists_all_cap_kinds(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     caps.put_local_entry_text(
         toolang_root,
@@ -4886,8 +4894,8 @@ def test_cli_hidden_caps_command_lists_all_cap_kinds(tmp_path: Path) -> None:
         text="---\ndescription: Review changes\n---\n# Reviewer\n",
     )
 
-    result = _invoke_app(
-        ["caps", "list"],
+    result = _invoke_caps_app(
+        ["list"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -4908,7 +4916,7 @@ def test_cli_hidden_caps_command_lists_all_cap_kinds(tmp_path: Path) -> None:
     assert "agents/alice/skills/reviewer" in result.stdout
 
 
-def test_cli_hidden_caps_list_collects_all_kinds_once(tmp_path: Path, monkeypatch) -> None:
+def test_standalone_caps_list_collects_all_kinds_once(tmp_path: Path, monkeypatch) -> None:
     calls: list[set[str] | None] = []
 
     def fake_list_entries(_toolang_root, _agent_name, *, visibility=None, kinds=None):
@@ -4919,8 +4927,8 @@ def test_cli_hidden_caps_list_collects_all_kinds_once(tmp_path: Path, monkeypatc
     monkeypatch.setattr(caps, "list_entries", fake_list_entries)
 
     result = runner.invoke(
-        cli.app,
-        ["--root", str(tmp_path / "toolang"), "caps", "list"],
+        caps_cli.app,
+        ["--root", str(tmp_path / "toolang"), "list"],
         env={},
     )
 
@@ -4929,7 +4937,7 @@ def test_cli_hidden_caps_list_collects_all_kinds_once(tmp_path: Path, monkeypatc
     assert calls == [{"psyche", "skill", "service", "prompt"}]
 
 
-def test_cli_hidden_caps_list_prepares_agent_once_with_progress(tmp_path: Path) -> None:
+def test_standalone_caps_all_kind_list_prepares_agent_once_with_progress(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     caps.put_local_entry_text(
@@ -4941,8 +4949,8 @@ def test_cli_hidden_caps_list_prepares_agent_once_with_progress(tmp_path: Path) 
         text="---\ndescription: Review changes\n---\n# Reviewer\n",
     )
 
-    result = _invoke_app(
-        ["caps", "list"],
+    result = _invoke_caps_app(
+        ["list"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -4953,7 +4961,7 @@ def test_cli_hidden_caps_list_prepares_agent_once_with_progress(tmp_path: Path) 
     assert "Resolved 1 caps" in result.stderr
 
 
-def test_cli_hidden_caps_command_supports_concept_filters(tmp_path: Path) -> None:
+def test_standalone_caps_command_supports_concept_filters(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     caps.put_local_entry_text(
         toolang_root,
@@ -4972,8 +4980,8 @@ def test_cli_hidden_caps_command_supports_concept_filters(tmp_path: Path) -> Non
         text="---\ndescription: Review changes\n---\n# Reviewer\n",
     )
 
-    result = _invoke_app(
-        ["caps", "list", "--filter", "skill,local,agent"],
+    result = _invoke_caps_app(
+        ["list", "--filter", "skill,local,agent"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -4987,7 +4995,7 @@ def test_cli_hidden_caps_command_supports_concept_filters(tmp_path: Path) -> Non
     assert "agent" in result.stdout
 
 
-def test_cli_hidden_caps_command_treats_packed_caps_as_not_global(tmp_path: Path) -> None:
+def test_standalone_caps_command_treats_packed_caps_as_not_global(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     (toolang_root / "agents" / "alice" / "agent.too").write_text(
@@ -5000,8 +5008,8 @@ def test_cli_hidden_caps_command_treats_packed_caps_as_not_global(tmp_path: Path
         encoding="utf-8",
     )
 
-    result = _invoke_app(
-        ["caps", "list", "--filter", "agent"],
+    result = _invoke_caps_app(
+        ["list", "--filter", "agent"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -5013,7 +5021,7 @@ def test_cli_hidden_caps_command_treats_packed_caps_as_not_global(tmp_path: Path
     assert "agent" in result.stdout
 
 
-def test_cli_hidden_caps_command_supports_agent_prefix_shortcut(monkeypatch) -> None:
+def test_cli_main_does_not_normalize_agent_prefix_shortcut_for_removed_hidden_caps_command(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     def fake_app(*, args, prog_name: str, standalone_mode: bool) -> None:
@@ -5027,7 +5035,7 @@ def test_cli_hidden_caps_command_supports_agent_prefix_shortcut(monkeypatch) -> 
     result = cli.main(["alice", "caps", "list"])
 
     assert result == 0
-    assert captured["args"] == ["caps", "list"]
+    assert captured["args"] == ["alice", "caps", "list"]
     assert cli._CLI_PREFIX_AGENT is None
 
 
@@ -5281,7 +5289,7 @@ def test_cli_cap_list_rejects_invalid_filter(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
 
     result = runner.invoke(
-        cli.app,
+        caps_cli.app,
         ["--root", str(toolang_root), "psyche", "list", "--filter", "maybe"],
         env={},
     )
@@ -5313,7 +5321,7 @@ def test_cli_version_includes_source_revision_suffix(monkeypatch) -> None:
     assert result.stdout.strip() == "toolang 0.1.2+abc1234*"
 
 
-def test_cli_help_orders_cap_groups() -> None:
+def test_cli_help_omits_cap_commands() -> None:
     result = runner.invoke(cli.app, ["--help"])
 
     assert result.exit_code == 0
@@ -5335,17 +5343,15 @@ def test_cli_help_orders_cap_groups() -> None:
     assert "Runtime Components" not in result.stdout
     assert "Agent Capabilities" not in result.stdout
     assert "Work Commands" not in result.stdout
-    psyche_index = result.stdout.index("psyche")
-    skill_index = result.stdout.index("skill")
-    service_index = result.stdout.index("service")
-    prompt_index = result.stdout.index("prompt")
+    assert "psyche" not in result.stdout
+    assert "skill" not in result.stdout
+    assert "service" not in result.stdout
+    assert "prompt" not in result.stdout
     chore_index = result.stdout.index("chore")
     task_index = result.stdout.index("task")
     plugin_index = result.stdout.index("plugin")
     model_index = result.stdout.index("model")
-    assert result.stdout.index("Agent Commands") < psyche_index
-    assert psyche_index < skill_index < service_index < prompt_index
-    assert prompt_index < chore_index
+    assert result.stdout.index("Agent Commands") < chore_index
     assert chore_index < task_index
     assert task_index < result.stdout.index("Runtime Commands") < plugin_index < model_index
 

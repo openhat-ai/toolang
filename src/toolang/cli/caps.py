@@ -40,23 +40,6 @@ CAP_FORMS: tuple[CapForm, ...] = ("inline", "cited", "remote", "local")
 CAP_SCOPES: tuple[CapScope, ...] = ("global", "agent")
 
 
-def register_cap_commands(app: typer.Typer, *, rich_help_panel: str | None = None) -> None:
-    _register_cap_kind_commands(app, rich_help_panel=rich_help_panel)
-    caps_app = typer.Typer(
-        help="Manage all caps.",
-        add_completion=False,
-        no_args_is_help=True,
-        pretty_exceptions_enable=False,
-        pretty_exceptions_show_locals=False,
-    )
-    caps_app.command(
-        "list",
-        help="List caps of all kinds.",
-        cls=_OptionalPrefixAgentListCommand,
-    )(_list_all_caps)
-    app.add_typer(caps_app, name="caps", hidden=True)
-
-
 def register_standalone_caps_commands(app: typer.Typer, *, rich_help_panel: str | None = None) -> None:
     app.command(
         "list",

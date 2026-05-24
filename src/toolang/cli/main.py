@@ -36,7 +36,6 @@ from ..models.errors import NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSA
 from ..models.resolution import DEFAULT_MODEL_SELECTOR
 from ..models.selectors import split_model_selectors
 from ..models.views import available_model_adapters, model_list_rows, model_provider_rows
-from . import caps as caps_cli
 from . import invoke as cli_invoke
 from .progress import CliProgress, as_progress_sink, make_cli_progress
 from .utils import (
@@ -81,11 +80,6 @@ TOP_LEVEL_COMMANDS = frozenset(
         "stop",
         "task",
         "chore",
-        "caps",
-        "skill",
-        "psyche",
-        "service",
-        "prompt",
     }
 )
 
@@ -102,7 +96,7 @@ class _RuntimeStartup:
 
 POSTFIX_AGENT_COMMANDS = frozenset({"run", "start", "stop", "info"})
 PREFIX_AGENT_COMMANDS = frozenset(
-    {"run", "start", "stop", "task", "chore", "caps", "skill", "psyche", "service", "prompt"}
+    {"run", "start", "stop", "task", "chore"}
 )
 
 
@@ -1259,7 +1253,6 @@ def _work_location(toolang_root: Path, agent_name: str, path: Path) -> str:
     except ValueError:
         return str(path)
 
-caps_cli.register_cap_commands(app, rich_help_panel=AGENT_COMMAND_PANEL)
 app.add_typer(plugin_app, name="plugin", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
 app.add_typer(model_app, name="model", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
 register_work_commands()
