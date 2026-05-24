@@ -394,21 +394,21 @@ def run_agent(
         list[str] | None,
         typer.Option(
             "--tools",
-            help="Allow selected tools. Repeat or pass CSV.",
+            help="Allow selected tools. Pass CSV or repeat.",
         ),
     ] = None,
     models: Annotated[
         list[str] | None,
         typer.Option(
             "--models",
-            help="Limit available models. Repeat or pass CSV.",
+            help="Limit available models. Pass CSV or repeat.",
         ),
     ] = None,
     host: Annotated[str, typer.Option(help="Bind the agent API to this host.")] = "127.0.0.1",
     port: Annotated[int | None, typer.Option(help="Bind the agent API to this port.")] = None,
     features: Annotated[
         list[str] | None,
-        typer.Option("--enable", help="Enable runtime components. Repeat or pass CSV."),
+        typer.Option("--enable", help="Enable runtime components. Pass CSV or repeat."),
     ] = None,
     dev: Annotated[
         Path | None,
@@ -552,21 +552,21 @@ def start_agent(
         list[str] | None,
         typer.Option(
             "--tools",
-            help="Allow selected tools. Repeat or pass CSV.",
+            help="Allow selected tools. Pass CSV or repeat.",
         ),
     ] = None,
     models: Annotated[
         list[str] | None,
         typer.Option(
             "--models",
-            help="Limit available models. Repeat or pass CSV.",
+            help="Limit available models. Pass CSV or repeat.",
         ),
     ] = None,
     host: Annotated[str, typer.Option(help="Bind the agent API to this host.")] = "127.0.0.1",
     port: Annotated[int | None, typer.Option(help="Bind the agent API to this port.")] = None,
     features: Annotated[
         list[str] | None,
-        typer.Option("--enable", help="Enable runtime components. Repeat or pass CSV."),
+        typer.Option("--enable", help="Enable runtime components. Pass CSV or repeat."),
     ] = None,
     dev: Annotated[
         Path | None,
@@ -788,7 +788,7 @@ def list_models(
         list[str] | None,
         typer.Option(
             "--select",
-            help=r"Select models by ref\[filters], alias, or glob. Repeat or pass CSV.",
+            help=r"Select models by ref\[filters], alias, or glob. Pass CSV or repeat.",
         ),
     ] = None,
 ) -> None:
@@ -832,7 +832,7 @@ def list_tools(
         list[str] | None,
         typer.Option(
             "--select",
-            help="Select tools by namespace/name. Repeat or pass CSV.",
+            help="Select tools by namespace/name. Pass CSV or repeat.",
         ),
     ] = None,
 ) -> None:

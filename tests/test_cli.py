@@ -1588,9 +1588,9 @@ thunk summarize(_, style?):
     assert program_path.name in captured.out
     assert "Options" in captured.out
     assert "--models" in captured.out
-    assert "Limit available models. Repeat or pass CSV." in captured.out
+    assert "Limit available models. Pass CSV or repeat." in captured.out
     assert "--tools" in captured.out
-    assert "Allow selected tools. Repeat or pass CSV." in captured.out
+    assert "Allow selected tools. Pass CSV or repeat." in captured.out
     assert "--quiet" in captured.out
     assert "Params" in captured.out
     assert "NAME=VALUE" in captured.out
@@ -1639,9 +1639,9 @@ thunk summarize(_, style?, audience?):
     assert "audience=TEXT" in captured.out
     assert "[INPUT]..." in captured.out
     assert "--models" in captured.out
-    assert "Limit available models. Repeat or pass CSV." in captured.out
+    assert "Limit available models. Pass CSV or repeat." in captured.out
     assert "--tools" in captured.out
-    assert "Allow selected tools. Repeat or pass CSV." in captured.out
+    assert "Allow selected tools. Pass CSV or repeat." in captured.out
     assert "--quiet" in captured.out
     assert "Params" in captured.out
     assert "Input" in captured.out
@@ -4948,7 +4948,7 @@ def test_cli_run_help_mentions_how_to_select_agent() -> None:
 
 
 def test_cli_models_option_help_is_consistent_for_run_commands() -> None:
-    expected = "Limit available models. Repeat or pass CSV."
+    expected = "Limit available models. Pass CSV or repeat."
 
     for command in (["run", "--help"], ["start", "--help"]):
         result = runner.invoke(cli.app, command)
@@ -4958,7 +4958,7 @@ def test_cli_models_option_help_is_consistent_for_run_commands() -> None:
 
 
 def test_cli_tools_option_help_is_consistent_for_run_commands() -> None:
-    expected = "Allow selected tools. Repeat or pass CSV."
+    expected = "Allow selected tools. Pass CSV or repeat."
 
     for command in (["run", "--help"], ["start", "--help"]):
         result = runner.invoke(cli.app, command)
@@ -4971,11 +4971,11 @@ def test_cli_tools_option_help_is_consistent_for_run_commands() -> None:
 def test_cli_runtime_option_help_order_and_descriptions() -> None:
     expected = (
         ("--sandbox", "Run the agent in a sandbox."),
-        ("--tools", "Allow selected tools. Repeat or pass CSV."),
-        ("--models", "Limit available models. Repeat or pass CSV."),
+        ("--tools", "Allow selected tools. Pass CSV or repeat."),
+        ("--models", "Limit available models. Pass CSV or repeat."),
         ("--host", "Bind the agent API to this host."),
         ("--port", "Bind the agent API to this port."),
-        ("--enable", "Enable runtime components. Repeat or pass CSV."),
+        ("--enable", "Enable runtime components. Pass CSV or repeat."),
         ("--dev", "Use wheels from this file or directory"),
     )
 
@@ -4998,7 +4998,8 @@ def test_cli_model_list_select_help() -> None:
     assert "--select" in result.stdout
     assert "--models" not in result.stdout
     assert "Select models by ref[filters], alias, or glob." in result.stdout
-    assert "or pass CSV." in result.stdout
+    assert "Pass" in result.stdout
+    assert "CSV or repeat." in result.stdout
 
 
 def test_cli_info_help_mentions_required_agent() -> None:
