@@ -40,19 +40,19 @@ shape instead: without `AGENT`, they write global caps; with `AGENT`, they write
 that agent's caps.
 
 
-## Binding, Scope, And Origin
+## Form, Scope, And Origin
 
 Cap entries separate how a cap is attached, where it is available, and where
 its content comes from.
 
-Binding tells how a cap is attached:
+Form tells how a cap is attached:
 
-| Binding | Meaning |
+| Form | Meaning |
 | --- | --- |
 | `inline` | Defined directly in `agent.too` |
 | `cited` | Referenced by `use ...` in `agent.too` |
-| `wired` | Connected through `config.toml` |
-| `mounted` | Mounted from local files or folders |
+| `remote` | Connected through `config.toml` |
+| `local` | Mounted from local files or folders |
 
 Scope tells where a cap is available:
 
@@ -66,16 +66,16 @@ Scope tells where a cap is available:
 
 | Origin | Meaning |
 | --- | --- |
-| `local` | Local authored content, including inline program declarations and mounted files or directories |
+| `local` | Local authored content, including inline program declarations and local files or directories |
 | `remote` | A remote authored cap fetched through a ref |
 
 Runtime APIs expose effective caps. They do not expose every authored source
 variant as a separate history object.
 
 HTTP write payloads default to `private` placement. CLI write commands default
-to global caps when `AGENT` is omitted. Only `mounted` and `wired` bindings can
+to global caps when `AGENT` is omitted. Only `local` and `remote` forms can
 be authored at shared placement and surface as `global`, because they can be
-authored at the Toolang root. `cited` and `inline` bindings are tied to one
+authored at the Toolang root. `cited` and `inline` forms are tied to one
 agent program and surface as `packed`.
 
 Authored placement, such as `config.toml`, `agent.too`, or a cap file path, is
@@ -91,17 +91,11 @@ view:
 | Column | Meaning |
 | --- | --- |
 | `SOURCE` | Authored file path, `agent.too` line reference, or directly accessible remote URL |
-| `FORM` | Display form: `inline`, `cited`, `local`, or `remote` |
+| `FORM` | Source form: `inline`, `cited`, `remote`, or `local` |
 | `SCOPE` | Display scope: `global` or `agent` |
 
-`FORM` is a display projection from the runtime concepts:
-
-| Runtime entry | CLI `FORM` |
-| --- | --- |
-| `binding=inline` | `inline` |
-| `binding=cited` | `cited` |
-| `origin=local` and another binding | `local` |
-| `origin=remote` and another binding | `remote` |
+`FORM` uses the same values as the runtime source form. It is not remapped for
+display.
 
 `SCOPE` is also projected for CLI readability:
 
@@ -175,7 +169,7 @@ Prepared materialized caps live under `.caps` roots:
 
 - `inline` caps are materialized under `.caps/inline`
 - `cited` remote caps are materialized under `.caps/cited`
-- `wired` remote caps are materialized under `.caps/wired`
+- `remote` caps are materialized under `.caps/remote`
 
 For agent-specific prepared caps, the `.caps` root is
 `${TOOLANG_ROOT}/agents/<agent>/.caps`. For global prepared caps, the `.caps` root is
@@ -277,6 +271,6 @@ carry `visibility` and `ref`. Deletes use a `visibility` query parameter.
 authored caps and `private` maps to the current agent's authored caps.
 
 Template detail responses include template metadata and raw content. Cap read
-requests return the effective runtime view with `scope`, `origin`, `binding`,
+requests return the effective runtime view with `scope`, `origin`, `form`,
 `ref`, `definition_file`, and optional `line`. CLI list commands project that
 runtime view into `SOURCE`, `FORM`, and display `SCOPE`.

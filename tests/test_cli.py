@@ -3880,7 +3880,7 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     assert "[skills]" in config_text
     assert 'reviewer = { ref = "github://acme/agents/skills/reviewer@main" }' in config_text
     assert (
-        toolang_root / "agents" / "alice" / ".caps" / "wired" / "skills" / "reviewer" / "SKILL.md"
+        toolang_root / "agents" / "alice" / ".caps" / "remote" / "skills" / "reviewer" / "SKILL.md"
     ).read_text(encoding="utf-8") == "---\ndescription: Review code\n---\n# Reviewer\n"
 
     list_remote_result = _invoke_app(
@@ -5077,9 +5077,8 @@ def test_standalone_caps_list_help_mentions_agent_inclusion() -> None:
     assert "--filter" in result.stdout
     assert "psyche, skill" in result.stdout
     assert "service, prompt, inline" in result.stdout
-    assert "local, remote, global" in result.stdout
+    assert "cited, remote, local, global" in result.stdout
     assert "--kind" not in result.stdout
-    assert "--binding" not in result.stdout
     assert "--global" not in result.stdout
     assert "agent      TEXT  Also include this agent's caps." in result.stdout
 
@@ -5090,8 +5089,8 @@ def test_standalone_cap_kind_list_help_omits_kind_filters() -> None:
     assert result.exit_code == 0
     assert "List skills." in result.stdout
     assert "Filter by form or scope CSV" in result.stdout
-    assert "inline, cited, local" in result.stdout
-    assert "remote, global, agent" in result.stdout
+    assert "inline, cited, remote" in result.stdout
+    assert "local, global, agent" in result.stdout
     assert "psyche, skill" not in result.stdout
     assert "service, prompt" not in result.stdout
 

@@ -33,10 +33,10 @@ from .utils import (
 )
 
 CapKind = Literal["skill", "psyche", "prompt", "service"]
-CapForm = Literal["inline", "cited", "local", "remote"]
+CapForm = Literal["inline", "cited", "remote", "local"]
 CapScope = Literal["global", "agent"]
 CAP_KINDS: tuple[CapKind, ...] = ("psyche", "skill", "service", "prompt")
-CAP_FORMS: tuple[CapForm, ...] = ("inline", "cited", "local", "remote")
+CAP_FORMS: tuple[CapForm, ...] = ("inline", "cited", "remote", "local")
 CAP_SCOPES: tuple[CapScope, ...] = ("global", "agent")
 
 
@@ -228,7 +228,7 @@ def _list_all_caps(
             "--filter",
             help=(
                 "Filter by kind, form, or scope CSV: psyche, skill, service, prompt, "
-                "inline, cited, local, remote, global, agent."
+                "inline, cited, remote, local, global, agent."
             ),
         ),
     ] = None,
@@ -280,7 +280,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             typer.Option(
                 "--filter",
                 help=(
-                    "Filter by form or scope CSV: inline, cited, local, remote, global, agent."
+                    "Filter by form or scope CSV: inline, cited, remote, local, global, agent."
                 ),
             ),
         ] = None,
@@ -462,7 +462,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             kind=cast(EntryKind, kind),
             name=cap_store.remote_entry_name(cast(EntryKind, kind), ref),
             source_origin="remote",
-            source_binding="wired",
+            source_form="remote",
         )
         if selected_agent:
             try:
@@ -498,7 +498,7 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             kind=cast(EntryKind, kind),
             name=name,
             source_origin="remote",
-            source_binding="wired",
+            source_form="remote",
         )
         removed = _wrap_user_error(
             cap_store.remove_remote_entry,
@@ -648,10 +648,7 @@ def _external_source_url(ref: str, *, entry: PreparedEntry) -> str:
 
 
 def _entry_form(entry: PreparedEntry) -> CapForm:
-    binding = cap_store.entry_binding(entry)
-    if binding in {"inline", "cited"}:
-        return cast(CapForm, binding)
-    return cast(CapForm, cap_store.entry_origin(entry))
+    return cap_store.entry_form(entry)
 
 
 def _entry_is_global(entry: PreparedEntry, *, agent_name: str) -> bool:
@@ -747,7 +744,7 @@ def _named_entry(
     kind: EntryKind,
     name: str,
     source_origin: Literal["local", "remote"] | None = None,
-    source_binding: cap_store.EntryBinding | None = None,
+    source_form: cap_store.EntryForm | None = None,
 ) -> PreparedEntry:
     entries = cap_store.list_entries(
         toolang_root,
@@ -760,7 +757,7 @@ def _named_entry(
             continue
         if source_origin is not None and entry.source.origin != source_origin:
             continue
-        if source_binding is not None and entry.source.binding != source_binding:
+        if source_form is not None and entry.source.form != source_form:
             continue
         return entry
     raise click.ClickException(f"{kind.title()} {name} not found")

@@ -32,7 +32,7 @@ from .state.prepared import (
     EntryKind,
     PreparedEntry,
     PreparedLock,
-    SourceBinding,
+    SourceForm,
     SourceOrigin,
     PreparedVisibility,
     PreparedSource,
@@ -50,7 +50,7 @@ CAP_KINDS: tuple[EntryKind, ...] = ("psyche", "skill", "service", "prompt")
 JOB_KINDS: tuple[EntryKind, ...] = ("task", "chore")
 Visibility = PreparedVisibility
 EntryOrigin = SourceOrigin
-EntryBinding = SourceBinding
+EntryForm = SourceForm
 EntryScope = Literal["global", "home", "packed"]
 MANAGED_KINDS = frozenset((*CAP_KINDS, *JOB_KINDS))
 EMBEDDED_DECL_KINDS = frozenset({"psyche", "service", "prompt"})
@@ -104,7 +104,7 @@ class _RemoteEntryRequest:
     name: str | None
     relative_config_path: Path
     config_path: Path
-    binding: Literal["wired", "cited"]
+    form: Literal["remote", "cited"]
     source_line: int | None = None
 
 
@@ -301,7 +301,7 @@ def remote_entry_name(kind: EntryKind, ref: str) -> str:
 def entry_visibility(entry: PreparedEntry, *, agent_name: str) -> Visibility:
     """Return the external visibility for one prepared entry."""
 
-    if entry.source.binding in {"inline", "cited"}:
+    if entry.source.form in {"inline", "cited"}:
         return "private"
     prefix = f"agents/{agent_name}/"
     if entry.path.startswith(prefix) or entry.source.path.startswith(prefix):
@@ -315,16 +315,16 @@ def entry_origin(entry: PreparedEntry) -> EntryOrigin:
     return entry.source.origin
 
 
-def entry_binding(entry: PreparedEntry) -> EntryBinding:
-    """Return how one prepared entry is attached to the agent."""
+def entry_form(entry: PreparedEntry) -> EntryForm:
+    """Return how one prepared entry is authored or attached."""
 
-    return entry.source.binding
+    return entry.source.form
 
 
 def entry_scope(entry: PreparedEntry, *, agent_name: str) -> EntryScope:
     """Return where one prepared entry is available."""
 
-    if entry.source.binding in {"inline", "cited"}:
+    if entry.source.form in {"inline", "cited"}:
         return "packed"
     if entry_visibility(entry, agent_name=agent_name) == "shared":
         return "global"
@@ -337,7 +337,7 @@ def entry_ref(entry: PreparedEntry, *, agent_name: str) -> str:
     origin = entry_origin(entry)
     if origin == "remote":
         return entry.ref
-    if entry.source.binding == "inline":
+    if entry.source.form == "inline":
         return f"inline://{DIR_NAME_BY_KIND[entry.kind]}/{entry.name}"
     visibility = entry_visibility(entry, agent_name=agent_name)
     return f"{'root' if visibility == 'shared' else 'home'}://{DIR_NAME_BY_KIND[entry.kind]}/{entry.name}"
@@ -346,7 +346,7 @@ def entry_ref(entry: PreparedEntry, *, agent_name: str) -> str:
 def entry_definition_file(entry: PreparedEntry) -> str:
     """Return the authored file that defines or links one prepared entry."""
 
-    if entry.source.binding == "mounted":
+    if entry.source.form == "local":
         return entry.path
     return entry.source.path
 
@@ -578,7 +578,7 @@ def _skill_entry(
             root_relative_path=root_relative_dir,
             absolute_path=source_path,
             origin="local",
-            binding="mounted",
+            form="local",
             shape="dir",
         ),
         meta=_load_meta(entry_file),
@@ -604,7 +604,7 @@ def _file_entry(
             root_relative_path=relative_path,
             absolute_path=absolute_path,
             origin="local",
-            binding="mounted",
+            form="local",
             shape="file",
         ),
         meta=_load_meta(absolute_path),
@@ -616,14 +616,14 @@ def _source_record(
     root_relative_path: Path,
     absolute_path: Path,
     origin: EntryOrigin,
-    binding: EntryBinding,
+    form: EntryForm,
     shape: Literal["file", "dir"],
     line: int | None = None,
 ) -> PreparedSource:
     fingerprint = _dir_fingerprint(absolute_path) if shape == "dir" else hashlib.sha256(absolute_path.read_bytes()).hexdigest()
     return PreparedSource(
         origin=origin,
-        binding=binding,
+        form=form,
         path=str(root_relative_path),
         updated_at=_updated_at(absolute_path, shape=shape),
         fingerprint=fingerprint,
@@ -698,7 +698,7 @@ def _lock_fingerprint(
             "path": entry.path,
             "source": {
                 "origin": entry.source.origin,
-                "binding": entry.source.binding,
+                "form": entry.source.form,
                 "path": entry.source.path,
                 "fingerprint": entry.source.fingerprint,
             },
@@ -722,7 +722,7 @@ def _prepared_materialized_files(
 ) -> dict[str, bytes]:
     files: dict[str, bytes] = {}
     for entry in entries:
-        if entry.source.binding == "mounted":
+        if entry.source.form == "local":
             continue
         entry_path = toolang_root / entry.path
         if entry.shape == "dir":
@@ -743,7 +743,7 @@ def _content_fingerprint(
     entry: PreparedEntry,
     materialized_files: Mapping[str, bytes],
 ) -> str:
-    if entry.source.binding == "mounted":
+    if entry.source.form == "local":
         entry_path = toolang_root / entry.path
         if entry.shape == "dir":
             return _dir_fingerprint(entry_path.parent)
@@ -1008,7 +1008,7 @@ def _collect_remote_entry_requests(
                         name=name,
                         relative_config_path=relative_config_path,
                         config_path=config_path,
-                        binding="wired",
+                        form="remote",
                     )
                 )
     return tuple(requests)
@@ -1047,7 +1047,7 @@ def _collect_program_use_entries(
                 name=None,
                 relative_config_path=relative_program_path,
                 config_path=program_path,
-                binding="cited",
+                form="cited",
                 source_line=use.span.line + line_offset,
             )
         )
@@ -1139,7 +1139,7 @@ def _embedded_entry_from_decl(
                 root_relative_path=relative_program_path,
                 absolute_path=program_path,
                 origin="local",
-                binding="inline",
+                form="inline",
                 shape="file",
                 line=source_line,
             ),
@@ -1187,7 +1187,7 @@ def _remote_entry_from_ref(
     name: str | None,
     relative_config_path: Path,
     config_path: Path,
-    binding: Literal["wired", "cited"],
+    form: Literal["remote", "cited"],
     source_line: int | None = None,
     materialize: bool,
     progress: ProgressSink | None = None,
@@ -1203,7 +1203,7 @@ def _remote_entry_from_ref(
         visibility=visibility,
         kind=kind,
         name=name,
-        binding=binding,
+        form=form,
     )
     if materialize and progress is not None:
         entry_files = _remote_materialized_files(
@@ -1249,7 +1249,7 @@ def _remote_entry_from_ref(
                 root_relative_path=relative_config_path,
                 absolute_path=config_path,
                 origin="remote",
-                binding=binding,
+                form=form,
                 shape="file",
                 line=source_line,
             ),
@@ -1393,7 +1393,7 @@ def _remote_entry_from_request(
         name=request.name,
         relative_config_path=request.relative_config_path,
         config_path=request.config_path,
-        binding=request.binding,
+        form=request.form,
         source_line=request.source_line,
         materialize=materialize,
         progress=progress,
@@ -1436,10 +1436,10 @@ def _relative_remote_entry_path(
     visibility: PreparedVisibility,
     kind: EntryKind,
     name: str,
-    binding: Literal["wired", "cited"],
+    form: Literal["remote", "cited"],
 ) -> Path:
     prefix = Path(".caps") if visibility == "shared" else Path("agents") / agent_name / ".caps"
-    root = prefix / binding / DIR_NAME_BY_KIND[kind] / name
+    root = prefix / form / DIR_NAME_BY_KIND[kind] / name
     if kind == "skill":
         return root / "SKILL.md"
     return root.with_suffix(".md")

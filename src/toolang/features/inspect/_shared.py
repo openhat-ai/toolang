@@ -1048,10 +1048,10 @@ def _cap_summary_item(context: UptimeContext, entry: PreparedEntry) -> dict[str,
         "description": str(entry.meta["description"]) if entry.meta.get("description") is not None else None,
         "scope": caps.entry_scope(entry, agent_name=context.name),
         "origin": caps.entry_origin(entry),
-        "binding": caps.entry_binding(entry),
+        "form": caps.entry_form(entry),
         "ref": caps.entry_ref(entry, agent_name=context.name),
         "definition_file": caps.entry_definition_file(entry),
-        "editable": entry.source.binding == "mounted",
+        "editable": entry.source.form == "local",
     }
     line = caps.entry_line(entry)
     if line is not None:

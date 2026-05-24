@@ -63,7 +63,7 @@ Kind-specific list commands omit `KIND`.
 the Toolang root. Inline caps use `<path-to-agent.too>:<line>`. Remote GitHub
 sources are shown as directly accessible `https://github.com/...` URLs.
 
-`FORM` accepts `inline`, `cited`, `local`, and `remote`. `SCOPE` accepts
+`FORM` accepts `inline`, `cited`, `remote`, and `local`. `SCOPE` accepts
 `global` and `agent`. `--filter` accepts kind, form, and scope values for
 all-kind lists. Kind-specific lists accept only form and scope values. Values in
 one group are unioned; different groups are intersected.
@@ -337,7 +337,7 @@ items include:
 - `description`
 - `scope`
 - `origin`
-- `binding`
+- `form`
 - `ref`
 - `definition_file`
 - `line` when known
@@ -345,7 +345,7 @@ items include:
 
 `visibility` is an HTTP write-placement field, not a CLI list concept:
 `shared` maps to globally authored caps and `private` maps to the current
-agent's authored caps. Read payloads expose runtime `binding`, `scope`, and
+agent's authored caps. Read payloads expose runtime `form`, `scope`, and
 `origin`; CLI list commands project those into `SOURCE`, `FORM`, and display
 `SCOPE`.
 

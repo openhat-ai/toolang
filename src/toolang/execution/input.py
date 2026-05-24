@@ -75,7 +75,7 @@ Psyches:
 {{/runtime.psyches}}
 Skills:
 {{#runtime.skills}}
-- {{name}} (scope={{scope}}, origin={{origin}}, binding={{binding}}, ref={{ref}})
+- {{name}} (scope={{scope}}, origin={{origin}}, form={{form}}, ref={{ref}})
 {{#description}}
   description={{description}}
 {{/description}}
@@ -89,7 +89,7 @@ Skills:
 {{/runtime.skills}}
 Services:
 {{#runtime.services}}
-- {{name}} (scope={{scope}}, origin={{origin}}, binding={{binding}}, ref={{ref}})
+- {{name}} (scope={{scope}}, origin={{origin}}, form={{form}}, ref={{ref}})
 {{#description}}
   description={{description}}
 {{/description}}
@@ -1179,7 +1179,7 @@ def _prepared_entry_to_context(
         "metadata_items": _metadata_items(entry.meta),
         "scope": cap_store.entry_scope(entry, agent_name=context.name),
         "origin": cap_store.entry_origin(entry),
-        "binding": cap_store.entry_binding(entry),
+        "form": cap_store.entry_form(entry),
     }
 
 

@@ -192,7 +192,7 @@ def _cap_detail_item(context, entry: PreparedEntry) -> dict[str, object]:
         "name": entry.name,
         "scope": caps.entry_scope(entry, agent_name=context.name),
         "origin": caps.entry_origin(entry),
-        "binding": caps.entry_binding(entry),
+        "form": caps.entry_form(entry),
         "ref": caps.entry_ref(entry, agent_name=context.name),
         "definition_file": caps.entry_definition_file(entry),
     }
