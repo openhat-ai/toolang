@@ -386,12 +386,9 @@ def info_agent(
 def run_agent(
     ctx: typer.Context,
     agent: str | None = typer.Argument(None, help="Agent selector", hidden=True),
-    models: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--models",
-            help="Limit available models. Repeat or pass CSV.",
-        ),
+    sandbox: Annotated[
+        str | None,
+        typer.Option(help="Run the agent in a sandbox."),
     ] = None,
     tools: Annotated[
         list[str] | None,
@@ -400,9 +397,12 @@ def run_agent(
             help="Allow selected tools. Repeat or pass CSV.",
         ),
     ] = None,
-    sandbox: Annotated[
-        str | None,
-        typer.Option(help="Run the agent in a sandbox."),
+    models: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--models",
+            help="Limit available models. Repeat or pass CSV.",
+        ),
     ] = None,
     host: Annotated[str, typer.Option(help="Bind the agent API to this host.")] = "127.0.0.1",
     port: Annotated[int | None, typer.Option(help="Bind the agent API to this port.")] = None,
@@ -414,7 +414,7 @@ def run_agent(
         Path | None,
         typer.Option(
             "--dev",
-            help="Wheel file, or a directory tree containing wheels, for managed sandbox startup.",
+            help="Use wheels from this file or directory when starting a sandbox.",
         ),
     ] = None,
     endpoint_host: Annotated[
@@ -544,12 +544,9 @@ def _resolve_runtime_startup(
 def start_agent(
     ctx: typer.Context,
     agent: str | None = typer.Argument(None, help="Agent name", hidden=True),
-    models: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--models",
-            help="Limit available models. Repeat or pass CSV.",
-        ),
+    sandbox: Annotated[
+        str | None,
+        typer.Option(help="Run the agent in a sandbox."),
     ] = None,
     tools: Annotated[
         list[str] | None,
@@ -558,9 +555,12 @@ def start_agent(
             help="Allow selected tools. Repeat or pass CSV.",
         ),
     ] = None,
-    sandbox: Annotated[
-        str | None,
-        typer.Option(help="Run the agent in a sandbox."),
+    models: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--models",
+            help="Limit available models. Repeat or pass CSV.",
+        ),
     ] = None,
     host: Annotated[str, typer.Option(help="Bind the agent API to this host.")] = "127.0.0.1",
     port: Annotated[int | None, typer.Option(help="Bind the agent API to this port.")] = None,
@@ -572,7 +572,7 @@ def start_agent(
         Path | None,
         typer.Option(
             "--dev",
-            help="Wheel file, or a directory tree containing wheels, for managed sandbox startup.",
+            help="Use wheels from this file or directory when starting a sandbox.",
         ),
     ] = None,
     endpoint_host: Annotated[

@@ -4970,13 +4970,13 @@ def test_cli_tools_option_help_is_consistent_for_run_commands() -> None:
 
 def test_cli_runtime_option_help_order_and_descriptions() -> None:
     expected = (
-        ("--models", "Limit available models. Repeat or pass CSV."),
-        ("--tools", "Allow selected tools. Repeat or pass CSV."),
         ("--sandbox", "Run the agent in a sandbox."),
+        ("--tools", "Allow selected tools. Repeat or pass CSV."),
+        ("--models", "Limit available models. Repeat or pass CSV."),
         ("--host", "Bind the agent API to this host."),
         ("--port", "Bind the agent API to this port."),
         ("--enable", "Enable runtime components. Repeat or pass CSV."),
-        ("--dev", "Wheel file, or a directory tree containing wheels"),
+        ("--dev", "Use wheels from this file or directory"),
     )
 
     for command in (["run", "--help"], ["start", "--help"]):
@@ -4987,6 +4987,7 @@ def test_cli_runtime_option_help_order_and_descriptions() -> None:
         assert positions == sorted(positions)
         for _option, description in expected:
             assert description in result.stdout
+        assert "starting a sandbox." in result.stdout
 
 
 def test_cli_model_list_select_help() -> None:
