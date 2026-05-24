@@ -9,6 +9,7 @@ The CLI entry points are:
 
 - `toolang`
 - `too`
+- `caps`
 
 Top-level commands are:
 
@@ -36,18 +37,36 @@ Global options:
 
 Cap commands:
 
-- `toolang <kind> list [--scope global|home|packed] [--origin local|remote] [--binding inline|cited|wired|mounted]`
-- `toolang [agent] <kind> new <name>`
-- `toolang [agent] <kind> edit <name>`
-- `toolang [agent] <kind> delete <name>`
-- `toolang [agent] <kind> add <ref>`
-- `toolang [agent] <kind> remove <name>`
-- `toolang <kind> template [template-name]`
+- `caps [AGENT] list [--filter <csv>]`
+- `caps [AGENT] <kind> list [--filter <csv>]`
+- `caps [AGENT] <kind> new <name>`
+- `caps [AGENT] <kind> edit <name>`
+- `caps [AGENT] <kind> delete <name>`
+- `caps [AGENT] <kind> add <ref>`
+- `caps [AGENT] <kind> remove <name>`
+- `caps [AGENT] <kind> template [template-name]`
 
-`<kind>` is one of `psyche`, `skill`, `service`, or `prompt`. Without an agent
-prefix, cap mutations target `shared` visibility. With an agent prefix, they
-target `private` visibility for that agent. List output uses `SCOPE`, `ORIGIN`,
-`BINDING`, and `REF`.
+`<kind>` is one of `psyche`, `skill`, `service`, or `prompt`. Without `AGENT`,
+cap mutations target global caps. With `AGENT`, they target that agent's caps.
+
+List output uses:
+
+- `KIND`
+- `CAP`
+- `SOURCE`
+- `FORM`
+- `SCOPE`
+
+Kind-specific list commands omit `KIND`.
+
+`SOURCE` is the authored source location. Local sources are paths relative to
+the Toolang root. Inline caps use `<path-to-agent.too>:<line>`. Remote GitHub
+sources are shown as directly accessible `https://github.com/...` URLs.
+
+`FORM` accepts `inline`, `cited`, `local`, and `remote`. `SCOPE` accepts
+`global` and `agent`. `--filter` accepts kind, form, and scope values for
+all-kind lists. Kind-specific lists accept only form and scope values. Values in
+one group are unioned; different groups are intersected.
 
 Typical usage:
 
@@ -323,6 +342,12 @@ items include:
 - `definition_file`
 - `line` when known
 - `editable`
+
+`visibility` is an HTTP write-placement field, not a CLI list concept:
+`shared` maps to globally authored caps and `private` maps to the current
+agent's authored caps. Read payloads expose runtime `binding`, `scope`, and
+`origin`; CLI list commands project those into `SOURCE`, `FORM`, and display
+`SCOPE`.
 
 
 ## Chat Endpoints

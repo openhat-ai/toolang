@@ -44,16 +44,16 @@ toolang clone briceyan/dev bob
 Caps add behavior and integrations to an agent:
 
 ```bash
-toolang alice skill add briceyan/codebase-navigation
-toolang alice psyche add briceyan/senior-engineer
-toolang alice service add briceyan/github
+caps alice skill add briceyan/codebase-navigation
+caps alice psyche add briceyan/senior-engineer
+caps alice service add briceyan/github
 ```
 
 Create local caps when you want to author your own:
 
 ```bash
-toolang alice skill new reviewer
-toolang alice skill list
+caps alice skill new reviewer
+caps alice skill list
 ```
 
 ### Run or start an agent

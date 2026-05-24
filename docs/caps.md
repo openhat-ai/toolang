@@ -13,9 +13,9 @@ Current cap kinds are:
 - `prompt`
 
 
-## Scope
+## Runtime Scope
 
-Public cap views expose scope:
+Prepared cap entries use runtime scope:
 
 - `global`: available to all agents under the Toolang root
 - `home`: available to one agent home
@@ -30,8 +30,14 @@ Precedence is:
 One effective cap set is built by applying this precedence to all visible cap
 definitions.
 
-Mutation APIs and CLI flags still use `shared` and `private` to choose authored
-placement. Read APIs and UI-facing payloads expose the runtime `scope`.
+User-facing CLI list commands collapse `home` and `packed` into one `agent`
+scope, because both are only available through the selected agent. HTTP read
+APIs expose the runtime `scope` values.
+
+HTTP write payloads and internal storage still use `shared` and `private` to
+choose authored placement. CLI write commands expose that placement as command
+shape instead: without `AGENT`, they write global caps; with `AGENT`, they write
+that agent's caps.
 
 
 ## Binding, Scope, And Origin
@@ -66,7 +72,8 @@ Scope tells where a cap is available:
 Runtime APIs expose effective caps. They do not expose every authored source
 variant as a separate history object.
 
-Default authored placement is `private`. Only `mounted` and `wired` bindings can
+HTTP write payloads default to `private` placement. CLI write commands default
+to global caps when `AGENT` is omitted. Only `mounted` and `wired` bindings can
 be authored at shared placement and surface as `global`, because they can be
 authored at the Toolang root. `cited` and `inline` bindings are tied to one
 agent program and surface as `packed`.
@@ -74,6 +81,38 @@ agent program and surface as `packed`.
 Authored placement, such as `config.toml`, `agent.too`, or a cap file path, is
 exposed separately as `definition_file`. When known, APIs may also include
 `line`.
+
+
+## CLI List Projection
+
+The `caps list` and `caps <kind> list` commands present a compact user-facing
+view:
+
+| Column | Meaning |
+| --- | --- |
+| `SOURCE` | Authored file path, `agent.too` line reference, or directly accessible remote URL |
+| `FORM` | Display form: `inline`, `cited`, `local`, or `remote` |
+| `SCOPE` | Display scope: `global` or `agent` |
+
+`FORM` is a display projection from the runtime concepts:
+
+| Runtime entry | CLI `FORM` |
+| --- | --- |
+| `binding=inline` | `inline` |
+| `binding=cited` | `cited` |
+| `origin=local` and another binding | `local` |
+| `origin=remote` and another binding | `remote` |
+
+`SCOPE` is also projected for CLI readability:
+
+| Runtime scope | CLI `SCOPE` |
+| --- | --- |
+| `global` | `global` |
+| `home` | `agent` |
+| `packed` | `agent` |
+
+The `--filter` option accepts kind, form, and display-scope values. Values in
+the same group are unioned; conditions across groups are intersected.
 
 
 ## Refs
@@ -138,8 +177,8 @@ Prepared materialized caps live under `.caps` roots:
 - `cited` remote caps are materialized under `.caps/cited`
 - `wired` remote caps are materialized under `.caps/wired`
 
-For private scopes, the `.caps` root is
-`${TOOLANG_ROOT}/agents/<agent>/.caps`. For global scopes, the `.caps` root is
+For agent-specific prepared caps, the `.caps` root is
+`${TOOLANG_ROOT}/agents/<agent>/.caps`. For global prepared caps, the `.caps` root is
 `${TOOLANG_ROOT}/.caps`.
 
 
@@ -183,7 +222,7 @@ One activation sees one effective cap set.
 
 The runtime:
 
-1. collects shared and private definitions
+1. collects global and agent definitions
 2. resolves remote entries
 3. materializes runtime-ready artifacts when needed
 4. selects the winning definition for each `(kind, name)`
@@ -234,6 +273,10 @@ Write endpoints:
 
 Local write requests carry `visibility` and `content`. Remote write requests
 carry `visibility` and `ref`. Deletes use a `visibility` query parameter.
+`visibility` is the HTTP write-placement field: `shared` maps to globally
+authored caps and `private` maps to the current agent's authored caps.
+
 Template detail responses include template metadata and raw content. Cap read
 requests return the effective runtime view with `scope`, `origin`, `binding`,
-`ref`, `definition_file`, and optional `line`.
+`ref`, `definition_file`, and optional `line`. CLI list commands project that
+runtime view into `SOURCE`, `FORM`, and display `SCOPE`.
