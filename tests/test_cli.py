@@ -3421,8 +3421,7 @@ def test_cli_run_requires_agent(tmp_path: Path) -> None:
     assert "Usage:" in result.stdout
     assert "run [OPTIONS] AGENT" in result.stdout
     assert "agent      TEXT" in result.stdout
-    assert "Agent selector." in result.stdout
-    assert "remote URLs" in result.stdout
+    assert "Existing local agent name, remote agent ref, or URL." in result.stdout
 
 
 def test_cli_run_loads_root_and_agent_env_with_agent_override(tmp_path: Path, monkeypatch) -> None:
@@ -4085,7 +4084,7 @@ def test_cli_start_requires_agent(tmp_path: Path) -> None:
     assert "Usage:" in result.stdout
     assert "AGENT start [OPTIONS]" in result.stdout
     assert "agent      TEXT" in result.stdout
-    assert "Agent name." in result.stdout
+    assert "Existing local agent name." in result.stdout
 
 
 def test_cli_stop_stops_sandboxed_agent(tmp_path: Path, monkeypatch) -> None:
@@ -4943,8 +4942,7 @@ def test_cli_run_help_mentions_how_to_select_agent() -> None:
     assert "Usage:" in result.stdout
     assert "run [OPTIONS] AGENT" in result.stdout
     assert "agent      TEXT" in result.stdout
-    assert "Agent selector." in result.stdout
-    assert "remote URLs" in result.stdout
+    assert "Existing local agent name, remote agent ref, or URL." in result.stdout
 
 
 def test_cli_models_option_help_is_consistent_for_run_commands() -> None:

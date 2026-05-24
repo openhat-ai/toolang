@@ -219,7 +219,7 @@ class _RuntimeAgentCommand(TyperCommand):
 
 
 class _RunAgentCommand(_RuntimeAgentCommand):
-    argument_help = "Agent selector. Supports local names, shorthand refs, and remote URLs."
+    argument_help = "Existing local agent name, remote agent ref, or URL."
 
     def format_usage(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         pieces = [self.options_metavar] if self.options_metavar else []
@@ -227,6 +227,10 @@ class _RunAgentCommand(_RuntimeAgentCommand):
             pieces.extend(param.get_usage_pieces(ctx))
         pieces.append(self.usage_agent_metavar)
         formatter.write_usage(ctx.command_path, " ".join(pieces))
+
+
+class _StartAgentCommand(_RuntimeAgentCommand):
+    argument_help = "Existing local agent name."
 
 
 class _OptionalPrefixAgentTemplateCommand(_OptionalPrefixAgentCommand):

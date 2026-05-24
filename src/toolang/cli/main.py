@@ -39,6 +39,7 @@ from .utils import (
     _RequiredPrefixAgentCommand,
     _RunAgentCommand,
     _RuntimeAgentCommand,
+    _StartAgentCommand,
     _append_agent_update,
     _context_root,
     _created_time,
@@ -385,7 +386,11 @@ def info_agent(
 )
 def run_agent(
     ctx: typer.Context,
-    agent: str | None = typer.Argument(None, help="Agent selector", hidden=True),
+    agent: str | None = typer.Argument(
+        None,
+        help="Existing local agent name, remote agent ref, or URL.",
+        hidden=True,
+    ),
     sandbox: Annotated[
         str,
         typer.Option(help="Run the agent in a sandbox."),
@@ -538,12 +543,12 @@ def _resolve_runtime_startup(
     "start",
     help="Start an agent.",
     no_args_is_help=True,
-    cls=_RuntimeAgentCommand,
+    cls=_StartAgentCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
 def start_agent(
     ctx: typer.Context,
-    agent: str | None = typer.Argument(None, help="Agent name", hidden=True),
+    agent: str | None = typer.Argument(None, help="Existing local agent name.", hidden=True),
     sandbox: Annotated[
         str,
         typer.Option(help="Run the agent in a sandbox."),
