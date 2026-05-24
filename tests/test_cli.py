@@ -4987,7 +4987,7 @@ def test_standalone_caps_help_shows_agent_prefix_usage() -> None:
     result = runner.invoke(caps_cli.app, ["--help"])
 
     assert result.exit_code == 0
-    assert "Manage caps — composable agent primitives." in result.stdout
+    assert "Manage composable agent primitives." in result.stdout
     assert "caps [AGENT] [OPTIONS] COMMAND [ARGS]..." in result.stdout
     assert "Scope" in result.stdout
     assert "agent      TEXT  Apply to agent caps instead of global caps." in result.stdout

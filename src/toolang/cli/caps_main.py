@@ -23,7 +23,7 @@ CAP_TOP_LEVEL_COMMANDS = frozenset({"list", *CAP_KINDS})
 
 app = typer.Typer(
     name="caps",
-    help="Manage caps — composable agent primitives.",
+    help="Manage composable agent primitives.",
     cls=_OptionalPrefixAgentGroup,
     add_completion=False,
     invoke_without_command=True,
