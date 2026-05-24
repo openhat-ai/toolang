@@ -1590,7 +1590,7 @@ thunk summarize(_, style?):
     assert "--models" in captured.out
     assert "Limit available models. Repeat or pass CSV." in captured.out
     assert "--tools" in captured.out
-    assert "Limit available tools. Repeat or pass CSV." in captured.out
+    assert "Allow selected tools. Repeat or pass CSV." in captured.out
     assert "--quiet" in captured.out
     assert "Params" in captured.out
     assert "NAME=VALUE" in captured.out
@@ -1641,7 +1641,7 @@ thunk summarize(_, style?, audience?):
     assert "--models" in captured.out
     assert "Limit available models. Repeat or pass CSV." in captured.out
     assert "--tools" in captured.out
-    assert "Limit available tools. Repeat or pass CSV." in captured.out
+    assert "Allow selected tools. Repeat or pass CSV." in captured.out
     assert "--quiet" in captured.out
     assert "Params" in captured.out
     assert "Input" in captured.out
@@ -4958,7 +4958,7 @@ def test_cli_models_option_help_is_consistent_for_run_commands() -> None:
 
 
 def test_cli_tools_option_help_is_consistent_for_run_commands() -> None:
-    expected = "Limit available tools. Repeat or pass CSV."
+    expected = "Allow selected tools. Repeat or pass CSV."
 
     for command in (["run", "--help"], ["start", "--help"]):
         result = runner.invoke(cli.app, command)
@@ -4966,6 +4966,27 @@ def test_cli_tools_option_help_is_consistent_for_run_commands() -> None:
         assert result.exit_code == 0
         assert "--tools" in result.stdout
         assert expected in result.stdout
+
+
+def test_cli_runtime_option_help_order_and_descriptions() -> None:
+    expected = (
+        ("--models", "Limit available models. Repeat or pass CSV."),
+        ("--tools", "Allow selected tools. Repeat or pass CSV."),
+        ("--sandbox", "Run the agent in a sandbox."),
+        ("--host", "Bind the agent API to this host."),
+        ("--port", "Bind the agent API to this port."),
+        ("--enable", "Enable runtime components. Repeat or pass CSV."),
+        ("--dev", "Wheel file, or a directory tree containing wheels"),
+    )
+
+    for command in (["run", "--help"], ["start", "--help"]):
+        result = runner.invoke(cli.app, command)
+
+        assert result.exit_code == 0
+        positions = [result.stdout.index(option) for option, description in expected]
+        assert positions == sorted(positions)
+        for _option, description in expected:
+            assert description in result.stdout
 
 
 def test_cli_model_list_select_help() -> None:

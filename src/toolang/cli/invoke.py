@@ -652,7 +652,7 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
         tools: list[str] | None = typer.Option(
             None,
             "--tools",
-            help="Limit available tools. Repeat or pass CSV.",
+            help="Allow selected tools. Repeat or pass CSV.",
         ),
         model: list[str] | None = typer.Option(
             None,
@@ -701,7 +701,7 @@ def _make_roaming_help_command() -> Callable[..., None]:
         tools: list[str] | None = typer.Option(
             None,
             "--tools",
-            help="Limit available tools. Repeat or pass CSV.",
+            help="Allow selected tools. Repeat or pass CSV.",
         ),
         model: list[str] | None = typer.Option(
             None,

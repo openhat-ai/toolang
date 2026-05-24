@@ -386,17 +386,6 @@ def info_agent(
 def run_agent(
     ctx: typer.Context,
     agent: str | None = typer.Argument(None, help="Agent selector", hidden=True),
-    features: Annotated[
-        list[str] | None,
-        typer.Option("--enable", help="Runtime feature to enable. Repeat or pass CSV."),
-    ] = None,
-    tools: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--tools",
-            help="Limit available tools. Repeat or pass CSV.",
-        ),
-    ] = None,
     models: Annotated[
         list[str] | None,
         typer.Option(
@@ -404,12 +393,23 @@ def run_agent(
             help="Limit available models. Repeat or pass CSV.",
         ),
     ] = None,
+    tools: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--tools",
+            help="Allow selected tools. Repeat or pass CSV.",
+        ),
+    ] = None,
     sandbox: Annotated[
         str | None,
-        typer.Option(help="Sandbox to use: none or <driver>[:target]."),
+        typer.Option(help="Run the agent in a sandbox."),
     ] = None,
-    host: Annotated[str, typer.Option(help="Host interface to bind.")] = "127.0.0.1",
-    port: Annotated[int | None, typer.Option(help="Port to listen on.")] = None,
+    host: Annotated[str, typer.Option(help="Bind the agent API to this host.")] = "127.0.0.1",
+    port: Annotated[int | None, typer.Option(help="Bind the agent API to this port.")] = None,
+    features: Annotated[
+        list[str] | None,
+        typer.Option("--enable", help="Enable runtime components. Repeat or pass CSV."),
+    ] = None,
     dev: Annotated[
         Path | None,
         typer.Option(
@@ -544,17 +544,6 @@ def _resolve_runtime_startup(
 def start_agent(
     ctx: typer.Context,
     agent: str | None = typer.Argument(None, help="Agent name", hidden=True),
-    features: Annotated[
-        list[str] | None,
-        typer.Option("--enable", help="Runtime feature to enable. Repeat or pass CSV."),
-    ] = None,
-    tools: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--tools",
-            help="Limit available tools. Repeat or pass CSV.",
-        ),
-    ] = None,
     models: Annotated[
         list[str] | None,
         typer.Option(
@@ -562,12 +551,23 @@ def start_agent(
             help="Limit available models. Repeat or pass CSV.",
         ),
     ] = None,
+    tools: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--tools",
+            help="Allow selected tools. Repeat or pass CSV.",
+        ),
+    ] = None,
     sandbox: Annotated[
         str | None,
-        typer.Option(help="Sandbox to use: none or <driver>[:target]."),
+        typer.Option(help="Run the agent in a sandbox."),
     ] = None,
-    host: Annotated[str, typer.Option(help="Host interface to bind.")] = "127.0.0.1",
-    port: Annotated[int | None, typer.Option(help="Port to listen on.")] = None,
+    host: Annotated[str, typer.Option(help="Bind the agent API to this host.")] = "127.0.0.1",
+    port: Annotated[int | None, typer.Option(help="Bind the agent API to this port.")] = None,
+    features: Annotated[
+        list[str] | None,
+        typer.Option("--enable", help="Enable runtime components. Repeat or pass CSV."),
+    ] = None,
     dev: Annotated[
         Path | None,
         typer.Option(
