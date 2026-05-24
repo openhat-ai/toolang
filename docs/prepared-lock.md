@@ -153,9 +153,104 @@ A global lock uses `config.toml` and `skills/pdf/SKILL.md`.
   "prepared": {
     "program": {
       "source": "program",
-      "thunks": [],
-      "uses": [],
-      "declared_caps": []
+      "uses": [
+        {
+          "kind": "skill",
+          "ref": "github://coinbase/agentic-wallet-skills/skills/fund@<commit-sha>",
+          "line": 12,
+          "prepared": 2
+        }
+      ],
+      "structs": [
+        {
+          "name": "ReviewResult",
+          "line": 20,
+          "fields": [
+            {
+              "name": "summary",
+              "type": "Text",
+              "optional": false,
+              "line": 21
+            },
+            {
+              "name": "findings",
+              "type": "ReviewFinding[]",
+              "optional": false,
+              "line": 22
+            }
+          ]
+        }
+      ],
+      "instructs": [
+        {
+          "name": null,
+          "line": 30,
+          "content": "You are running {{thunk.name}}."
+        }
+      ],
+      "caps": [
+        {
+          "kind": "prompt",
+          "name": "summary",
+          "line": 8,
+          "prepared": 1
+        }
+      ],
+      "thunks": [
+        {
+          "name": "review",
+          "line": 40,
+          "params": [
+            {
+              "name": "input",
+              "type": "Message",
+              "optional": false
+            },
+            {
+              "name": "path",
+              "type": "Text",
+              "optional": false
+            },
+            {
+              "name": "focus",
+              "type": "Text",
+              "optional": true
+            }
+          ],
+          "output": "ReviewResult",
+          "directives": [
+            {
+              "key": "models",
+              "op": "=",
+              "values": ["gpt-5"],
+              "line": 41
+            },
+            {
+              "key": "skills",
+              "op": "+=",
+              "values": ["review", "patch"],
+              "line": 42
+            }
+          ],
+          "blocks": [
+            {
+              "kind": "instruct",
+              "value": "default",
+              "line": 44
+            },
+            {
+              "kind": "system",
+              "content": "Review correctness issues only.",
+              "line": 46
+            },
+            {
+              "kind": "user",
+              "content": "Review {{path}} carefully.\n{{focus}}",
+              "line": 49
+            }
+          ]
+        }
+      ]
     },
 
     "caps": [
@@ -347,8 +442,46 @@ artifact index even when the artifact contains multiple files.
 
 `prepared` contains structured runtime data.
 
-`prepared.program` is a program-specific structure. It does not use
-`object.meta` or `object.content`.
+`prepared.program` is a program-specific structure based on
+`tree-sitter-toolang` concepts. It does not use `object.meta` or
+`object.content`.
+
+Program fields are:
+
+| Field | Meaning |
+| --- | --- |
+| `source` | Always `program`, referring to `sources.program` |
+| `uses` | Program `use` items |
+| `structs` | Program `struct` items |
+| `instructs` | Top-level `instruct` items |
+| `caps` | Program `psyche`, `skill`, `service`, and `prompt` items |
+| `thunks` | Program `thunk` items |
+
+Program cap items use `caps`, not `declarations` or `definitions`, because the
+collection specifically describes program-level cap items. Each item may point
+to the corresponding runtime cap with `prepared`, an index into
+`prepared.caps`.
+
+Program `use` items may also point to the cited prepared cap with `prepared`,
+an index into `prepared.caps`.
+
+Thunk fields follow grammar names:
+
+| Field | Meaning |
+| --- | --- |
+| `params` | Thunk `params`, preserving source order |
+| `output` | Thunk output type |
+| `directives` | Thunk `directive` items |
+| `blocks` | Thunk `block` items |
+
+Use `directives`, not `overlays`, and `blocks`, not `messages`, in the lock
+format. Those names match `tree-sitter-toolang`; overlay and message concepts
+are runtime projections.
+
+Type strings use the canonical source spelling from the grammar. Built-in
+types include `Text`, `Number`, `Boolean`, `Json`, and `Message`. User type
+names such as `Path`, `Artifact`, or `ReviewResult` use the same spelling as
+the source. Array suffixes are preserved, for example `ReviewFinding[]`.
 
 Caps, tasks, and chores use the same object envelope:
 
