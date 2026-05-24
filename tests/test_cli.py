@@ -16,6 +16,8 @@ from toolang import caps
 from toolang.base.types.message import Message
 from toolang.base.types.model import ModelInfo
 import toolang.cli.main as cli
+import toolang.cli.caps_main as caps_cli
+import toolang.cli.caps as caps_commands
 from toolang.cli.progress import CliProgress
 from toolang.config.log import DEFAULT_AGENT_LOG_SPEC
 from toolang.config.log_spec import PY_LOG_ENV_VAR
@@ -39,6 +41,20 @@ def _invoke_app(
         return runner.invoke(cli.app, args, env=env)
     finally:
         cli._CLI_PREFIX_AGENT = previous
+
+
+def _invoke_caps_app(
+    args: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    prefix_agent: str | None = None,
+):
+    previous = caps_cli._CLI_PREFIX_AGENT
+    caps_cli._CLI_PREFIX_AGENT = prefix_agent
+    try:
+        return runner.invoke(caps_cli.app, args, env=env)
+    finally:
+        caps_cli._CLI_PREFIX_AGENT = previous
 
 
 class _FakeModelProvider:
@@ -590,7 +606,7 @@ def test_cli_progress_groups_agent_and_cap_steps() -> None:
     progress.finish()
 
     assert stream.getvalue().splitlines() == [
-        "psyche briceyan/concise prepared",
+        "psyche briceyan/concise materialized",
         "Prepared 1 caps in 1.2s",
     ]
 
@@ -713,7 +729,7 @@ def test_cli_progress_updates_agent_live_summary_by_phase() -> None:
         )
     )
 
-    assert progress._live_text().plain.splitlines() == ["Fetched 1 agent in 0.3s"]
+    assert progress._live_text().plain.splitlines() == ["Fetched 1 agent in 300ms"]
     progress.finish(details=False)
 
 
@@ -763,7 +779,7 @@ def test_cli_progress_reports_agent_resolve_failure() -> None:
     progress.finish(details=False)
 
     assert stream.getvalue().splitlines() == [
-        "Resolve agent failed: could not resolve agent shorthand: briceyan/dev"
+        "Resolve agent failed: could not resolve agent shorthand: briceyan/dev",
     ]
 
 
@@ -794,7 +810,7 @@ def test_cli_progress_formats_agent_source_stage() -> None:
 
     assert stream.getvalue().splitlines() == [
         "agent briceyan/dev fetched",
-        "Fetched 1 agent in 0.4s",
+        "Fetched 1 agent in 400ms",
     ]
 
 
@@ -814,6 +830,38 @@ def test_cli_progress_can_finish_with_summary_only() -> None:
     progress.finish(details=False)
 
     assert stream.getvalue() == ""
+
+
+def test_cli_progress_renders_summary_dimmed_on_tty() -> None:
+    class TtyStringIO(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    stream = TtyStringIO()
+    progress = CliProgress(stream=stream, live=False)
+    progress._started_at -= 0.2
+
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="running",
+            detail="alice",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="ok",
+            detail="abc123",
+        )
+    )
+    progress.finish(details=False)
+
+    assert "\x1b[2mPrepared 0 caps in 200ms" in stream.getvalue()
 
 
 def test_cli_progress_summarizes_zero_caps_when_prepare_runs() -> None:
@@ -841,7 +889,7 @@ def test_cli_progress_summarizes_zero_caps_when_prepare_runs() -> None:
     )
     progress.finish(details=False)
 
-    assert stream.getvalue().splitlines() == ["Prepared 0 caps in 0.2s"]
+    assert stream.getvalue().splitlines() == ["Prepared 0 caps in 200ms"]
 
 
 def test_cli_progress_skips_output_when_prepared_state_is_cached() -> None:
@@ -890,6 +938,149 @@ def test_cli_progress_skips_output_when_prepared_state_is_cached() -> None:
     assert stream.getvalue() == ""
 
 
+def test_cli_progress_can_show_cached_prepared_state() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream, show_cached_prepare=True)
+    progress._started_at -= 0.1
+
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="running",
+            detail="alice",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="prepare.visibility:shared",
+            phase="prepare.visibility",
+            label="Prepare shared caps",
+            status="ok",
+            detail="cached",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="prepare.visibility:private",
+            phase="prepare.visibility",
+            label="Prepare private caps",
+            status="ok",
+            detail="cached",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="ok",
+            detail="abc123",
+        )
+    )
+
+    progress.finish(details=False)
+
+    assert stream.getvalue().splitlines() == ["Prepared caps from cache in 100ms"]
+
+
+def test_cli_progress_can_use_resolved_prepare_summary() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(stream=stream, prepare_summary_label="Resolved")
+    progress._started_at -= 0.1
+
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="running",
+            detail="alice",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="prepare.visibility:private",
+            phase="prepare.visibility",
+            label="Prepare private caps",
+            status="ok",
+            detail="3 entries",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="ok",
+            detail="abc123",
+        )
+    )
+    progress.set_prepare_total(11)
+
+    progress.finish(details=False)
+
+    assert stream.getvalue().splitlines() == ["Resolved 11 caps in 100ms"]
+
+
+def test_cli_progress_summarizes_updated_caps() -> None:
+    stream = io.StringIO()
+    progress = CliProgress(
+        stream=stream,
+        prepare_summary_label="Resolved",
+        show_materialize_summary=True,
+    )
+    progress._started_at -= 12.0
+
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="running",
+            detail="alice",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="cap.materialize:skill:github://acme/agents/skills/review@main",
+            phase="cap.materialize",
+            label="Materialize skill",
+            status="running",
+            detail="agents/alice/.caps/cited/skills/review/SKILL.md",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="cap.materialize:skill:github://acme/agents/skills/review@main",
+            phase="cap.materialize",
+            label="Materialize skill",
+            status="ok",
+        )
+    )
+    progress(
+        ProgressEvent(
+            id="prepare.state",
+            phase="prepare.state",
+            label="Prepare agent state",
+            status="ok",
+            detail="abc123",
+        )
+    )
+    progress.set_prepare_total(12)
+    assert progress._materialize_finished_at is not None
+    progress._post_resolve_started_at = progress._started_at + 4.0
+    progress._materialize_finished_at = progress._post_resolve_started_at + 8.0
+
+    progress.finish(details=False)
+
+    assert stream.getvalue().splitlines() == [
+        "Resolved 12 caps in 4.0s",
+        "Updated 1 caps in 8.0s",
+    ]
+
+
 def test_cli_progress_finish_is_idempotent() -> None:
     stream = io.StringIO()
     progress = CliProgress(stream=stream)
@@ -907,7 +1098,7 @@ def test_cli_progress_finish_is_idempotent() -> None:
     progress.finish(details=False)
     progress.finish(details=False)
 
-    assert stream.getvalue().splitlines() == ["Preparing 0 caps: 0.2s"]
+    assert stream.getvalue().splitlines() == ["Preparing 0 caps: 200ms"]
 
 
 def test_cli_progress_reports_interrupted_stage_once() -> None:
@@ -986,7 +1177,7 @@ def test_cli_progress_can_list_pending_items_before_updates() -> None:
 
     assert stream.getvalue().splitlines() == [
         "skill by3gus/pdf-processing pending",
-        "Preparing 1 caps: 1 pending, 0.4s",
+        "Preparing 1 caps: 1 pending, 400ms",
     ]
 
 
@@ -3689,7 +3880,7 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     assert "[skills]" in config_text
     assert 'reviewer = { ref = "github://acme/agents/skills/reviewer@main" }' in config_text
     assert (
-        toolang_root / "agents" / "alice" / ".caps" / "wired" / "skills" / "reviewer" / "SKILL.md"
+        toolang_root / "agents" / "alice" / ".caps" / "remote" / "skills" / "reviewer" / "SKILL.md"
     ).read_text(encoding="utf-8") == "---\ndescription: Review code\n---\n# Reviewer\n"
 
     list_remote_result = _invoke_app(
@@ -3699,16 +3890,14 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     )
     assert list_remote_result.exit_code == 0
     assert "SKILL" in list_remote_result.stdout
-    assert "REF" in list_remote_result.stdout
+    assert "SOURCE" in list_remote_result.stdout
+    assert "FORM" in list_remote_result.stdout
     assert "SCOPE" in list_remote_result.stdout
-    assert "ORIGIN" in list_remote_result.stdout
-    assert "BINDING" in list_remote_result.stdout
     assert "DESCRIPTION" not in list_remote_result.stdout
     assert "reviewer" in list_remote_result.stdout
-    assert "home" in list_remote_result.stdout
     assert "remote" in list_remote_result.stdout
-    assert "wired" in list_remote_result.stdout
-    assert "github://acme/agents/skills/reviewer@main" in list_remote_result.stdout
+    assert "agent" in list_remote_result.stdout
+    assert "https://github.com/acme/agents/tree/main/skills/reviewer" in list_remote_result.stdout
 
     remove_result = _invoke_app(
         ["skill", "remove", "reviewer"],
@@ -3747,15 +3936,70 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     )
     assert list_result.exit_code == 0
     assert "SKILL" in list_result.stdout
-    assert "REF" in list_result.stdout
+    assert "SOURCE" in list_result.stdout
+    assert "FORM" in list_result.stdout
     assert "SCOPE" in list_result.stdout
-    assert "ORIGIN" in list_result.stdout
-    assert "BINDING" in list_result.stdout
     assert "reviewer" in list_result.stdout
-    assert "home" in list_result.stdout
     assert "local" in list_result.stdout
-    assert "mounted" in list_result.stdout
-    assert "home://skills/reviewer" in list_result.stdout
+    assert "agent" in list_result.stdout
+    assert "agents/alice/skills/reviewer" in list_result.stdout
+
+
+def test_cli_cap_remote_list_shows_accessible_source_url(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        caps,
+        "_remote_materialized_files",
+        lambda *, relative_entry_path, kind, name, ref, progress=None: {
+            str(relative_entry_path): b"---\ndescription: Review code\n---\n# Reviewer\n"
+        },
+    )
+
+    add_result = _invoke_app(
+        ["skill", "add", "https://github.com/acme/agents/tree/main/skills/reviewer"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    assert add_result.exit_code == 0
+    assert add_result.stdout.strip() == "Added skill reviewer: github://acme/agents/skills/reviewer@main"
+
+    list_result = _invoke_app(
+        ["skill", "list"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    assert list_result.exit_code == 0
+    assert "SOURCE" in list_result.stdout
+    assert "https://github.com/acme/agents/tree/main/skills/reviewer" in list_result.stdout
+    assert "github://acme/agents/skills/reviewer@main" not in list_result.stdout
+
+
+def test_cli_cap_remote_file_list_uses_github_blob_url(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        caps,
+        "_remote_materialized_files",
+        lambda *, relative_entry_path, kind, name, ref, progress=None: {
+            str(relative_entry_path): b"Prefer concise answers.\n"
+        },
+    )
+
+    add_result = _invoke_app(
+        ["psyche", "add", "github://acme/agents/psyches/concise.md@main"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    assert add_result.exit_code == 0
+
+    list_result = _invoke_app(
+        ["psyche", "list"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    assert list_result.exit_code == 0
+    assert "https://github.com/acme/agents/blob/main/psyches/concise.md" in list_result.stdout
 
 
 def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -> None:
@@ -3782,6 +4026,7 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     assert new_result.stdout.strip() == (
         f"Created skill reviewer: {toolang_root / 'agents' / 'alice' / 'skills' / 'reviewer' / 'SKILL.md'}"
     )
+    assert "Resolved 1 caps" in new_result.stderr
     assert (
         toolang_root / "agents" / "alice" / "skills" / "reviewer" / "SKILL.md"
     ).read_text(encoding="utf-8").startswith(
@@ -3795,15 +4040,13 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     )
     assert list_result.exit_code == 0
     assert "SKILL" in list_result.stdout
-    assert "REF" in list_result.stdout
+    assert "SOURCE" in list_result.stdout
+    assert "FORM" in list_result.stdout
     assert "SCOPE" in list_result.stdout
-    assert "ORIGIN" in list_result.stdout
-    assert "BINDING" in list_result.stdout
     assert "reviewer" in list_result.stdout
-    assert "home" in list_result.stdout
     assert "local" in list_result.stdout
-    assert "mounted" in list_result.stdout
-    assert "home://skills/reviewer" in list_result.stdout
+    assert "agent" in list_result.stdout
+    assert "agents/alice/skills/reviewer" in list_result.stdout
 
     edited_text = (
         "---\n"
@@ -3822,6 +4065,7 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     assert edit_result.stdout.strip() == (
         f"Updated skill reviewer: {toolang_root / 'agents' / 'alice' / 'skills' / 'reviewer' / 'SKILL.md'}"
     )
+    assert "Resolved 1 caps" in edit_result.stderr
     assert (
         toolang_root / "agents" / "alice" / "skills" / "reviewer" / "SKILL.md"
     ).read_text(encoding="utf-8") == edited_text
@@ -3852,6 +4096,7 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     assert delete_result.stdout.strip() == (
         f"Deleted skill reviewer: {toolang_root / 'agents' / 'alice' / 'skills' / 'reviewer'}"
     )
+    assert "Resolved 0 caps" in delete_result.stderr
     assert not (toolang_root / "agents" / "alice" / "skills" / "reviewer").exists()
 
     missing_result = _invoke_app(
@@ -3897,6 +4142,7 @@ def test_cli_cap_add_preserves_unrelated_config_sections(tmp_path: Path, monkeyp
     )
 
     assert result.exit_code == 0
+    assert "Resolved 1 caps" in result.stderr
     text = config_path.read_text(encoding="utf-8")
     assert "[web]" in text
     assert "cors_allowed_origins" in text
@@ -4330,6 +4576,7 @@ def test_cli_cap_commands_cover_file_backed_kinds(tmp_path: Path, monkeypatch) -
         )
         assert add_result.exit_code == 0
         assert add_result.stdout.strip() == f"Created {kind} {name}: {path}"
+        assert "Resolved" not in add_result.stderr
 
         list_result = runner.invoke(
             cli.app,
@@ -4338,13 +4585,13 @@ def test_cli_cap_commands_cover_file_backed_kinds(tmp_path: Path, monkeypatch) -
         )
         assert list_result.exit_code == 0
         assert kind.upper() in list_result.stdout
-        assert "REF" in list_result.stdout
+        assert "SOURCE" in list_result.stdout
+        assert "FORM" in list_result.stdout
         assert "SCOPE" in list_result.stdout
-        assert "ORIGIN" in list_result.stdout
         assert name in list_result.stdout
-        assert "global" in list_result.stdout
         assert "local" in list_result.stdout
-        assert f"root://{kind}s/{name}" in list_result.stdout
+        assert "global" in list_result.stdout
+        assert f"{kind}s/{name}" in list_result.stdout
 
         delete_result = runner.invoke(
             cli.app,
@@ -4353,6 +4600,7 @@ def test_cli_cap_commands_cover_file_backed_kinds(tmp_path: Path, monkeypatch) -
         )
         assert delete_result.exit_code == 0
         assert delete_result.stdout.strip() == f"Deleted {kind} {name}: {path}"
+        assert "Resolved" not in delete_result.stderr
         assert not path.exists()
 
 
@@ -4392,7 +4640,7 @@ def test_cli_skill_help_describes_remote_and_local_commands() -> None:
     result = runner.invoke(cli.app, ["skill", "--help"])
 
     assert result.exit_code == 0
-    assert "Manage skills." in result.stdout
+    assert "Manage skill caps." in result.stdout
     assert "add" in result.stdout
     assert "remove" in result.stdout
     assert "new" in result.stdout
@@ -4452,14 +4700,17 @@ def test_cli_skill_new_help_mentions_agent_scope() -> None:
     assert "Create a local skill." in result.stdout
     assert "[AGENT] skill new" in result.stdout
     assert "agent      TEXT" in result.stdout
-    assert "Apply with private visibility for this agent." in result.stdout
+    assert "Scope" in result.stdout
+    assert "Apply to this agent's skills instead of global skills." in result.stdout
 
 
 def test_cli_skill_template_help_shows_plain_text_metavar() -> None:
     result = runner.invoke(cli.app, ["skill", "template", "--help"])
 
     assert result.exit_code == 0
-    assert "template      TEXT" in result.stdout
+    assert "Usage:" in result.stdout
+    assert "[AGENT] skill template [OPTIONS] [NAME]" in result.stdout
+    assert "name      TEXT" in result.stdout
     assert "Template name." in result.stdout
 
 
@@ -4483,11 +4734,12 @@ def test_cli_skill_list_help_mentions_agent_scope_concisely() -> None:
     result = runner.invoke(cli.app, ["skill", "list", "--help"])
 
     assert result.exit_code == 0
-    assert "List available skills." in result.stdout
+    assert "List skills." in result.stdout
     assert "[AGENT] skill list" in result.stdout
+    assert "agent      TEXT  Also include this agent's skills." in result.stdout
 
 
-def test_cli_cap_list_with_agent_defaults_to_shared_and_private_visibility(tmp_path: Path, monkeypatch) -> None:
+def test_cli_cap_list_with_agent_defaults_to_all_scopes(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(
         cli.click,
@@ -4520,12 +4772,12 @@ def test_cli_cap_list_with_agent_defaults_to_shared_and_private_visibility(tmp_p
     assert "abc" in result.stdout
     assert "def" in result.stdout
     assert "global" in result.stdout
-    assert "home" in result.stdout
-    assert "root://psyches/abc" in result.stdout
-    assert "home://psyches/def" in result.stdout
+    assert "agent" in result.stdout
+    assert "psyches/abc.md" in result.stdout
+    assert "agents/alice/psyches/def.md" in result.stdout
 
 
-def test_cli_cap_list_visibility_filters_results(tmp_path: Path, monkeypatch) -> None:
+def test_cli_cap_list_global_filters_results(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(
         cli.click,
@@ -4549,7 +4801,7 @@ def test_cli_cap_list_visibility_filters_results(tmp_path: Path, monkeypatch) ->
     )
 
     shared_result = _invoke_app(
-        ["psyche", "list", "--visibility", "shared"],
+        ["psyche", "list", "--filter", "global"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -4559,27 +4811,483 @@ def test_cli_cap_list_visibility_filters_results(tmp_path: Path, monkeypatch) ->
     assert "global" in shared_result.stdout
 
     private_result = _invoke_app(
-        ["psyche", "list", "--visibility", "private"],
+        ["psyche", "list", "--filter", "agent"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
     assert private_result.exit_code == 0
     assert "abc" not in private_result.stdout
     assert "def" in private_result.stdout
-    assert "home" in private_result.stdout
+    assert "agent" in private_result.stdout
 
 
-def test_cli_cap_list_rejects_private_visibility_without_agent(tmp_path: Path) -> None:
+def test_cli_cap_list_concept_filters_results(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="local-reviewer",
+        text="---\ndescription: Review local changes\n---\n# Local Reviewer\n",
+    )
+    caps.add_remote_entry(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        ref="acme/remote-reviewer",
+    )
+
+    result = _invoke_app(
+        ["skill", "list", "--filter", "remote,agent"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert result.exit_code == 0
+    assert "remote-reviewer" in result.stdout
+    assert "local-reviewer" not in result.stdout
+    assert "remote" in result.stdout
+    assert "agent" in result.stdout
+    assert "https://github.com/acme/agents/tree/main/skills/remote-reviewer" in result.stdout
+
+    union_result = _invoke_app(
+        ["skill", "list", "--filter", "local,remote,agent"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert union_result.exit_code == 0
+    assert "remote-reviewer" in union_result.stdout
+    assert "local-reviewer" in union_result.stdout
+    assert "agent" in union_result.stdout
+
+
+def test_cli_hidden_caps_command_lists_all_cap_kinds(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="shared",
+        kind="psyche",
+        name="style",
+        text="Prefer concise answers.\n",
+    )
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="reviewer",
+        text="---\ndescription: Review changes\n---\n# Reviewer\n",
+    )
+
+    result = _invoke_app(
+        ["caps", "list"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert result.exit_code == 0
+    assert "KIND" in result.stdout
+    assert "CAP" in result.stdout
+    assert "SOURCE" in result.stdout
+    assert "FORM" in result.stdout
+    assert "SCOPE" in result.stdout
+    assert "psyche" in result.stdout
+    assert "skill" in result.stdout
+    assert "style" in result.stdout
+    assert "reviewer" in result.stdout
+    assert "global" in result.stdout
+    assert "agent" in result.stdout
+    assert "psyches/style.md" in result.stdout
+    assert "agents/alice/skills/reviewer" in result.stdout
+
+
+def test_cli_hidden_caps_list_collects_all_kinds_once(tmp_path: Path, monkeypatch) -> None:
+    calls: list[set[str] | None] = []
+
+    def fake_list_entries(_toolang_root, _agent_name, *, visibility=None, kinds=None):
+        del visibility
+        calls.append(kinds)
+        return ()
+
+    monkeypatch.setattr(caps, "list_entries", fake_list_entries)
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(tmp_path / "toolang"), "caps", "list"],
+        env={},
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "No caps found."
+    assert calls == [{"psyche", "skill", "service", "prompt"}]
+
+
+def test_cli_hidden_caps_list_prepares_agent_once_with_progress(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="reviewer",
+        text="---\ndescription: Review changes\n---\n# Reviewer\n",
+    )
+
+    result = _invoke_app(
+        ["caps", "list"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert result.exit_code == 0
+    assert "reviewer" in result.stdout
+    assert "agents/alice/skills/reviewer" in result.stdout
+    assert "Resolved 1 caps" in result.stderr
+
+
+def test_cli_hidden_caps_command_supports_concept_filters(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="shared",
+        kind="psyche",
+        name="style",
+        text="Prefer concise answers.\n",
+    )
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="reviewer",
+        text="---\ndescription: Review changes\n---\n# Reviewer\n",
+    )
+
+    result = _invoke_app(
+        ["caps", "list", "--filter", "skill,local,agent"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert result.exit_code == 0
+    assert "reviewer" in result.stdout
+    assert "style" not in result.stdout
+    assert "skill" in result.stdout
+    assert "psyche" not in result.stdout
+    assert "local" in result.stdout
+    assert "agent" in result.stdout
+
+
+def test_cli_hidden_caps_command_treats_packed_caps_as_not_global(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    (toolang_root / "agents" / "alice" / "agent.too").write_text(
+        (
+            "agent alice\n\n"
+            "psyche reviewer: ```md\n"
+            "Prefer concrete findings.\n"
+            "```\n"
+        ),
+        encoding="utf-8",
+    )
+
+    result = _invoke_app(
+        ["caps", "list", "--filter", "agent"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert result.exit_code == 0
+    assert "reviewer" in result.stdout
+    assert "agents/alice/agent.too:" in result.stdout
+    assert "inline" in result.stdout
+    assert "agent" in result.stdout
+
+
+def test_cli_hidden_caps_command_supports_agent_prefix_shortcut(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_app(*, args, prog_name: str, standalone_mode: bool) -> None:
+        captured["args"] = args
+        captured["prog_name"] = prog_name
+        captured["standalone_mode"] = standalone_mode
+
+    monkeypatch.setattr(cli, "app", cast(object, fake_app))
+    monkeypatch.setattr(cli.sys, "argv", ["toolang"])
+
+    result = cli.main(["alice", "caps", "list"])
+
+    assert result == 0
+    assert captured["args"] == ["caps", "list"]
+    assert cli._CLI_PREFIX_AGENT is None
+
+
+def test_standalone_caps_list_supports_agent_prefix(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="reviewer",
+        text="---\ndescription: Review changes\n---\n# Reviewer\n",
+    )
+
+    result = _invoke_caps_app(
+        ["--root", str(toolang_root), "skill", "list"],
+        prefix_agent="alice",
+        env={},
+    )
+
+    assert result.exit_code == 0
+    assert "SKILL" in result.stdout
+    assert "SOURCE" in result.stdout
+    assert "FORM" in result.stdout
+    assert "SCOPE" in result.stdout
+    assert "reviewer" in result.stdout
+    assert "agents/alice/skills/reviewer" in result.stdout
+
+
+def test_standalone_caps_help_shows_agent_prefix_usage() -> None:
+    result = runner.invoke(caps_cli.app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "Manage composable agent primitives." in result.stdout
+    assert "caps [AGENT] [OPTIONS] COMMAND [ARGS]..." in result.stdout
+    assert "Scope" in result.stdout
+    assert "agent      TEXT  Apply to this agent's caps instead of global caps." in result.stdout
+    assert "--agent" not in result.stdout
+
+
+def test_standalone_caps_list_help_mentions_agent_inclusion() -> None:
+    result = runner.invoke(caps_cli.app, ["list", "--help"])
+
+    assert result.exit_code == 0
+    assert "List caps of all kinds." in result.stdout
+    assert "caps [AGENT] list [OPTIONS]" in result.stdout
+    assert "--filter" in result.stdout
+    assert "psyche, skill" in result.stdout
+    assert "service, prompt, inline" in result.stdout
+    assert "cited, remote, local, global" in result.stdout
+    assert "--kind" not in result.stdout
+    assert "--global" not in result.stdout
+    assert "agent      TEXT  Also include this agent's caps." in result.stdout
+
+
+def test_standalone_cap_kind_list_help_omits_kind_filters() -> None:
+    result = runner.invoke(caps_cli.app, ["skill", "list", "--help"])
+
+    assert result.exit_code == 0
+    assert "List skills." in result.stdout
+    assert "Filter by form or scope CSV" in result.stdout
+    assert "inline, cited, remote" in result.stdout
+    assert "local, global, agent" in result.stdout
+    assert "psyche, skill" not in result.stdout
+    assert "service, prompt" not in result.stdout
+
+
+def test_standalone_cap_group_help_shows_agent_prefix_usage() -> None:
+    result = runner.invoke(caps_cli.app, ["psyche", "--help"])
+
+    assert result.exit_code == 0
+    assert "caps [AGENT] psyche [OPTIONS] COMMAND [ARGS]..." in result.stdout
+    assert "caps [AGENT] TEXT psyche" not in result.stdout
+    assert "Scope" in result.stdout
+    assert "Manage psyche caps." in result.stdout
+    assert "List psyches." in result.stdout
+    assert "agent      TEXT  Apply to this agent's psyches instead of global psyches." in result.stdout
+    assert "--agent" not in result.stdout
+
+
+def test_standalone_cap_template_help_uses_inspect_description() -> None:
+    result = runner.invoke(caps_cli.app, ["psyche", "template", "--help"])
+
+    assert result.exit_code == 0
+    assert "caps [AGENT] psyche template [OPTIONS] [NAME]" in result.stdout
+    assert "Inspect psyche templates." in result.stdout
+    assert "name      TEXT  Template name." in result.stdout
+    assert "Scope" in result.stdout
+    assert "agent      TEXT  Apply to this agent's psyches instead of global psyches." in result.stdout
+
+
+def test_standalone_caps_main_supports_agent_prefix(monkeypatch) -> None:
+    captured: list[tuple[list[str], str | None]] = []
+
+    def fake_app(*, args, prog_name: str, standalone_mode: bool) -> None:
+        del prog_name, standalone_mode
+        captured.append((args, caps_cli._CLI_PREFIX_AGENT))
+
+    monkeypatch.setattr(caps_cli, "app", cast(object, fake_app))
+    monkeypatch.setattr(caps_cli.sys, "argv", ["caps"])
+
+    result = caps_cli.main(["alice", "skill", "list"])
+
+    assert result == 0
+    assert captured == [(["skill", "list"], "alice")]
+    assert caps_cli._CLI_PREFIX_AGENT is None
+
+
+def test_standalone_caps_main_rejects_removed_agent_option() -> None:
+    result = runner.invoke(caps_cli.app, ["list", "--agent", "alice"])
+
+    assert result.exit_code != 0
+
+
+def test_standalone_caps_list_prepares_agent_once_with_progress(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="reviewer",
+        text="---\ndescription: Review changes\n---\n# Reviewer\n",
+    )
+    calls = 0
+    original_build_prepared_state = caps_commands.watch_feature.build_prepared_state
+
+    def counted_build_prepared_state(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_build_prepared_state(*args, **kwargs)
+
+    monkeypatch.setattr(caps_commands.watch_feature, "build_prepared_state", counted_build_prepared_state)
+
+    result = _invoke_caps_app(
+        ["--root", str(toolang_root), "list"],
+        prefix_agent="alice",
+        env={},
+    )
+
+    assert result.exit_code == 0
+    assert calls == 1
+    assert "reviewer" in result.stdout
+    assert "agents/alice/skills/reviewer" in result.stdout
+    assert "Resolved 1 caps" in result.stderr
+
+
+def test_standalone_cap_kind_list_prepares_agent_once_with_progress(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="reviewer",
+        text="---\ndescription: Review changes\n---\n# Reviewer\n",
+    )
+    calls = 0
+    original_build_prepared_state = caps_commands.watch_feature.build_prepared_state
+
+    def counted_build_prepared_state(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_build_prepared_state(*args, **kwargs)
+
+    monkeypatch.setattr(caps_commands.watch_feature, "build_prepared_state", counted_build_prepared_state)
+
+    result = _invoke_caps_app(
+        ["--root", str(toolang_root), "skill", "list"],
+        prefix_agent="alice",
+        env={},
+    )
+
+    assert result.exit_code == 0
+    assert calls == 1
+    assert "reviewer" in result.stdout
+    assert "agents/alice/skills/reviewer" in result.stdout
+    assert "Resolved 1 caps" in result.stderr
+
+
+def test_standalone_cap_kind_list_summarizes_updated_remote_caps(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    config_path = toolang_root / "agents" / "alice" / "config.toml"
+    config_path.write_text(
+        '[skills]\nreview = { ref = "github://acme/agents/skills/review@main" }\n',
+        encoding="utf-8",
+    )
+
+    def fake_remote_materialized_files(*, relative_entry_path, kind, name, ref, progress=None):
+        del name
+        if progress is not None:
+            progress(
+                ProgressEvent(
+                    id=f"cap.fetch:{kind}:{ref}",
+                    phase="cap.fetch",
+                    label=f"Fetch {kind}",
+                    status="ok",
+                    detail="1 file",
+                )
+            )
+        return {str(relative_entry_path): b"---\ndescription: Review changes\n---\n# Review\n"}
+
+    monkeypatch.setattr(caps, "_remote_materialized_files", fake_remote_materialized_files)
+
+    result = _invoke_caps_app(
+        ["--root", str(toolang_root), "skill", "list"],
+        prefix_agent="alice",
+        env={},
+    )
+
+    assert result.exit_code == 0
+    assert "review" in result.stdout
+    assert "https://github.com/acme/agents/tree/main/skills/review" in result.stdout
+    assert "Resolved 1 caps" in result.stderr
+    assert "Updated 1 caps" in result.stderr
+
+
+def test_standalone_cap_kind_list_hides_cached_prepare_progress(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="reviewer",
+        text="---\ndescription: Review changes\n---\n# Reviewer\n",
+    )
+
+    first_result = _invoke_caps_app(
+        ["--root", str(toolang_root), "skill", "list"],
+        prefix_agent="alice",
+        env={},
+    )
+    second_result = _invoke_caps_app(
+        ["--root", str(toolang_root), "skill", "list"],
+        prefix_agent="alice",
+        env={},
+    )
+
+    assert first_result.exit_code == 0
+    assert second_result.exit_code == 0
+    assert "reviewer" in second_result.stdout
+    assert second_result.stderr == ""
+
+
+def test_cli_cap_list_rejects_invalid_filter(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(toolang_root), "psyche", "list", "--visibility", "private"],
+        ["--root", str(toolang_root), "psyche", "list", "--filter", "maybe"],
         env={},
     )
 
     assert result.exit_code == 1
-    assert "an agent prefix is required when --visibility is private" in result.stderr
+    assert "invalid --filter value" in result.stderr
 
 
 def test_cli_version_option_exits_before_other_parsing(monkeypatch) -> None:

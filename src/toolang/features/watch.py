@@ -263,14 +263,14 @@ def _write_visibility_if_changed(
     if _is_empty_shared_lock(lock, files):
         _remove_shared_prepared_dir(lock)
         return lock
-    current = _load_lock_optional(lock)
-    if (
-        not force
-        and current is not None
-        and current.fingerprint == lock.fingerprint
-        and current.input_fingerprint == lock.input_fingerprint
-    ):
-        return current
+    if not force:
+        current = _load_lock_optional(lock)
+        if (
+            current is not None
+            and current.fingerprint == lock.fingerprint
+            and current.input_fingerprint == lock.input_fingerprint
+        ):
+            return current
     return write_prepared_lock(toolang_root, lock, files=files)
 
 
@@ -293,14 +293,14 @@ def _load_lock_optional(lock: PreparedLock) -> PreparedLock | None:
         if lock.visibility == "shared":
             return load_shared_lock(lock.lock_path.parent.parent)
         return load_private_lock(lock.lock_path.parents[3], lock.lock_path.parents[1].name)
-    except FileNotFoundError:
+    except (FileNotFoundError, KeyError, TypeError, ValueError):
         return None
 
 
 def _load_prepared_optional(toolang_root: Path, agent_name: str) -> PreparedState | None:
     try:
         return load_prepared_state(toolang_root, agent_name)
-    except FileNotFoundError:
+    except (FileNotFoundError, KeyError, TypeError, ValueError):
         return None
 
 

@@ -16,7 +16,7 @@ PreparedVisibility = Literal["shared", "private"]
 EntryKind = Literal["psyche", "skill", "service", "prompt", "task", "chore"]
 EntryShape = Literal["file", "dir"]
 SourceOrigin = Literal["local", "remote"]
-SourceBinding = Literal["inline", "cited", "wired", "mounted"]
+SourceForm = Literal["inline", "cited", "remote", "local"]
 
 _EMPTY_INPUT_FINGERPRINT = sha256().hexdigest()
 _EMPTY_LOCK_FINGERPRINT = sha256(b"[]").hexdigest()
@@ -27,7 +27,7 @@ class PreparedSource:
     """One source record used to rebuild a prepared entry."""
 
     origin: SourceOrigin
-    binding: SourceBinding
+    form: SourceForm
     path: str
     updated_at: str
     fingerprint: str
@@ -36,7 +36,7 @@ class PreparedSource:
     def to_data(self) -> dict[str, object]:
         data: dict[str, object] = {
             "origin": self.origin,
-            "binding": self.binding,
+            "form": self.form,
             "path": self.path,
             "updated_at": self.updated_at,
             "fingerprint": self.fingerprint,
@@ -51,7 +51,7 @@ class PreparedSource:
         line = raw_line if isinstance(raw_line, int) else None
         return cls(
             origin=cast(SourceOrigin, str(data["origin"])),
-            binding=cast(SourceBinding, str(data["binding"])),
+            form=cast(SourceForm, str(data["form"])),
             path=str(data["path"]),
             updated_at=str(data["updated_at"]),
             fingerprint=str(data["fingerprint"]),
@@ -226,7 +226,7 @@ def write_prepared_lock(
 
     prepared_dir = lock.prepared_dir
     prepared_dir.mkdir(parents=True, exist_ok=True)
-    for directory_name in ("inline", "cited", "wired"):
+    for directory_name in ("inline", "cited", "remote"):
         (prepared_dir / directory_name).mkdir(parents=True, exist_ok=True)
     for relative_path, content in sorted((files or {}).items()):
         target = toolang_root / relative_path

@@ -2016,7 +2016,7 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
         assert add_response.status_code == 200
         assert add_response.json()["item"]["name"] == "reviewer"
         assert add_response.json()["item"]["origin"] == "remote"
-        assert add_response.json()["item"]["binding"] == "wired"
+        assert add_response.json()["item"]["form"] == "remote"
         assert add_response.json()["item"]["scope"] == "home"
 
         snapshot = inspect.snapshot_context(context, enabled_features=("control", "inspect"))
@@ -2047,7 +2047,7 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
         assert local_response.status_code == 200
         assert local_response.json()["item"]["name"] == "rewrite"
         assert local_response.json()["item"]["origin"] == "local"
-        assert local_response.json()["item"]["binding"] == "mounted"
+        assert local_response.json()["item"]["form"] == "local"
         assert local_response.json()["item"]["scope"] == "home"
 
         delete_local_response = client.delete("/api/v1/prompts/rewrite/local?visibility=private")
@@ -3454,12 +3454,12 @@ def test_prepare_materializes_remote_entries_from_config(tmp_path: Path, monkeyp
     prepared = watch.build_prepared_state(durable)
     live = load_live_state(prepared, enabled_features=("watch",))
 
-    assert (toolang_root / ".caps" / "wired" / "prompts" / "rewrite.md").is_file()
+    assert (toolang_root / ".caps" / "remote" / "prompts" / "rewrite.md").is_file()
     assert [entry.source.origin for entry in prepared.shared_lock.entries] == ["remote"]
-    assert [entry.source.binding for entry in prepared.shared_lock.entries] == ["wired"]
-    assert prepared.shared_lock.entries[0].path == ".caps/wired/prompts/rewrite.md"
+    assert [entry.source.form for entry in prepared.shared_lock.entries] == ["remote"]
+    assert prepared.shared_lock.entries[0].path == ".caps/remote/prompts/rewrite.md"
     assert prepared.shared_lock.entries[0].ref == "github://acme/agents/prompts/rewrite.md@main"
-    assert live.caps == (".caps/wired/prompts/rewrite.md",)
+    assert live.caps == (".caps/remote/prompts/rewrite.md",)
 
 
 def test_remote_skill_shorthand_probes_agent_skills_and_skills_repos(
@@ -3549,7 +3549,7 @@ def test_remote_skill_add_canonicalizes_github_tree_url(tmp_path: Path, monkeypa
     assert 'answers = { ref = "github://brave/brave-search-skills/skills/answers@main" }' in config_text
     assert prepared.private_lock.entries[0].ref == "github://brave/brave-search-skills/skills/answers@main"
     assert (
-        toolang_root / "agents" / "alice" / ".caps" / "wired" / "skills" / "answers" / "SKILL.md"
+        toolang_root / "agents" / "alice" / ".caps" / "remote" / "skills" / "answers" / "SKILL.md"
     ).is_file()
 
 
@@ -3692,6 +3692,65 @@ def test_prepare_reuses_remote_caps_when_visibility_inputs_and_outputs_match(
     assert second.fingerprint == first.fingerprint
 
 
+def test_prepare_rebuilds_stale_lock_schema_as_cache_miss(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    config_path = toolang_root / "agents" / "alice" / "config.toml"
+    config_path.write_text(
+        '[skills]\npdf = { ref = "github://acme/agents/skills/pdf@main" }\n',
+        encoding="utf-8",
+    )
+    lock_path = toolang_root / "agents" / "alice" / ".caps" / "lock.json"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text(
+        json.dumps(
+            {
+                "visibility": "private",
+                "updated_at": "2026-04-18T00:00:00Z",
+                "fingerprint": "stale",
+                "input_fingerprint": "stale",
+                "entries": [
+                    {
+                        "kind": "skill",
+                        "name": "pdf",
+                        "shape": "dir",
+                        "ref": "github://acme/agents/skills/pdf@main",
+                        "path": "agents/alice/.caps/remote/skills/pdf/SKILL.md",
+                        "source": {
+                            "origin": "remote",
+                            "path": "agents/alice/config.toml",
+                            "updated_at": "2026-04-18T00:00:00Z",
+                            "fingerprint": "stale",
+                        },
+                        "meta": {"description": "stale"},
+                    }
+                ],
+                "program": {
+                    "agent_name": "alice",
+                    "source_path": "agents/alice/agent.too",
+                    "source_text": "agent alice\n",
+                    "body_text": "agent alice\n",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        caps,
+        "_fetch_github_directory",
+        lambda ref: {"SKILL.md": b"---\ndescription: PDF\n---\n# PDF\n"},
+    )
+
+    prepared = watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+
+    assert prepared.private_lock.entries[0].source.form == "remote"
+    assert '"form": "remote"' in lock_path.read_text(encoding="utf-8")
+
+
 def test_prepare_reuses_private_remote_caps_when_shared_inputs_change(
     tmp_path: Path,
     monkeypatch,
@@ -3753,7 +3812,7 @@ def test_prepare_refetches_remote_caps_when_prepared_output_does_not_match_lock(
         ref="acme/pdf",
     )
     watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
-    prepared_file = toolang_root / "agents" / "alice" / ".caps" / "wired" / "skills" / "pdf" / "SKILL.md"
+    prepared_file = toolang_root / "agents" / "alice" / ".caps" / "remote" / "skills" / "pdf" / "SKILL.md"
     prepared_file.write_text("---\ndescription: Corrupt\n---\n# Corrupt\n", encoding="utf-8")
 
     watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
@@ -3801,13 +3860,13 @@ def test_prepare_materializes_remote_skill_directory(tmp_path: Path, monkeypatch
     prepared = watch.build_prepared_state(durable)
 
     assert (
-        toolang_root / "agents" / "alice" / ".caps" / "wired" / "skills" / "pdf" / "SKILL.md"
+        toolang_root / "agents" / "alice" / ".caps" / "remote" / "skills" / "pdf" / "SKILL.md"
     ).read_text(encoding="utf-8") == "---\ndescription: PDF work\n---\n# PDF\n"
     assert (
-        toolang_root / "agents" / "alice" / ".caps" / "wired" / "skills" / "pdf" / "REFERENCE.md"
+        toolang_root / "agents" / "alice" / ".caps" / "remote" / "skills" / "pdf" / "REFERENCE.md"
     ).read_text(encoding="utf-8") == "# Reference\n"
     assert prepared.private_lock.entries[0].meta["description"] == "PDF work"
-    assert prepared.private_lock.entries[0].source.binding == "wired"
+    assert prepared.private_lock.entries[0].source.form == "remote"
 
 
 def test_prepare_materializes_remote_skill_from_program_use(tmp_path: Path, monkeypatch) -> None:
@@ -3834,7 +3893,7 @@ def test_prepare_materializes_remote_skill_from_program_use(tmp_path: Path, monk
     assert entry.name == "fund"
     assert entry.ref == "github://coinbase/agentic-wallet-skills/skills/fund@main"
     assert entry.source.origin == "remote"
-    assert entry.source.binding == "cited"
+    assert entry.source.form == "cited"
     assert entry.source.path == "agents/alice/agent.too"
     assert entry.source.line == 3
     assert live.caps == ("agents/alice/.caps/cited/skills/fund/SKILL.md",)
@@ -3890,16 +3949,16 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
     assert set(entries_by_kind) == {"prompt", "psyche", "service"}
     assert entries_by_kind["psyche"].name == "reviewer"
     assert entries_by_kind["psyche"].ref == "inline://psyches/reviewer"
-    assert entries_by_kind["psyche"].source.binding == "inline"
+    assert entries_by_kind["psyche"].source.form == "inline"
     assert entries_by_kind["psyche"].source.line == 3
     assert entries_by_kind["service"].name == "github"
     assert entries_by_kind["service"].ref == "inline://services/github"
-    assert entries_by_kind["service"].source.binding == "inline"
+    assert entries_by_kind["service"].source.form == "inline"
     assert entries_by_kind["service"].source.line == 7
     assert entries_by_kind["prompt"].name == "summarize"
     assert entries_by_kind["prompt"].ref == "inline://prompts/summarize"
     assert entries_by_kind["prompt"].source.origin == "local"
-    assert entries_by_kind["prompt"].source.binding == "inline"
+    assert entries_by_kind["prompt"].source.form == "inline"
     assert entries_by_kind["prompt"].source.path == "agents/alice/agent.too"
     assert entries_by_kind["prompt"].source.line == 17
     assert live.caps == (
@@ -3919,7 +3978,7 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
         assert psyche_response.status_code == 200
         psyche_detail = psyche_response.json()["item"]
         assert psyche_detail["origin"] == "local"
-        assert psyche_detail["binding"] == "inline"
+        assert psyche_detail["form"] == "inline"
         assert psyche_detail["scope"] == "packed"
         assert psyche_detail["definition_file"] == "agents/alice/agent.too"
         assert psyche_detail["line"] == 3
@@ -3930,7 +3989,7 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
         service_detail = service_response.json()["item"]
         assert service_detail["description"] == "Use when the agent needs GitHub MCP access."
         assert service_detail["origin"] == "local"
-        assert service_detail["binding"] == "inline"
+        assert service_detail["form"] == "inline"
         assert service_detail["scope"] == "packed"
         assert service_detail["definition_file"] == "agents/alice/agent.too"
         assert service_detail["line"] == 7
@@ -3944,7 +4003,7 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
                 "description": None,
                 "scope": "packed",
                 "origin": "local",
-                "binding": "inline",
+                "form": "inline",
                 "ref": "inline://prompts/summarize",
                 "definition_file": "agents/alice/agent.too",
                 "editable": False,
@@ -4067,8 +4126,8 @@ def test_prepare_fetches_remote_caps_with_bounded_concurrency(tmp_path: Path, mo
     assert max_active == 2
     assert [entry.name for entry in lock_record.entries] == ["alpha", "bravo"]
     assert sorted(files) == [
-        ".caps/wired/psyches/alpha.md",
-        ".caps/wired/psyches/bravo.md",
+        ".caps/remote/psyches/alpha.md",
+        ".caps/remote/psyches/bravo.md",
     ]
 
 
@@ -4108,8 +4167,8 @@ def test_caps_list_and_remove_remote_entries(tmp_path: Path, monkeypatch) -> Non
 
     entries = list_entries(toolang_root, "alice", visibility="private", kinds={"skill"})
 
-    assert [(entry.source.origin, entry.source.binding, entry.path) for entry in entries] == [
-        ("remote", "wired", "agents/alice/.caps/wired/skills/reviewer/SKILL.md")
+    assert [(entry.source.origin, entry.source.form, entry.path) for entry in entries] == [
+        ("remote", "remote", "agents/alice/.caps/remote/skills/reviewer/SKILL.md")
     ]
     assert remove_remote_entry(toolang_root, "alice", visibility="private", kind="skill", name="reviewer") is True
     assert list_entries(toolang_root, "alice", visibility="private", kinds={"skill"}) == ()

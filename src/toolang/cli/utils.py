@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 import subprocess
 import time
-from typing import cast
+from typing import Literal, cast
 
 import click
 from rich import box
@@ -30,6 +30,7 @@ from ..execution.records import UpdateKind
 # weight so usage notes remain easy to read in terminal help output.
 setattr(typer_rich_utils, "STYLE_HELPTEXT", "")
 _TABLE_CONSOLE = Console(highlight=False, width=4096)
+TableJustify = Literal["default", "left", "center", "right", "full"]
 _AGENT_AVATAR = templates.load_info_avatar()
 _PALETTE_STYLES_TOP, _PALETTE_STYLES_BOTTOM = templates.load_info_palette()
 _RAINBOW_STYLES = _PALETTE_STYLES_TOP
@@ -40,7 +41,7 @@ class _PrefixAgentCommand(TyperCommand):
 
     prefix_agent_metavar = "[AGENT]"
     argument_metavar = "TEXT"
-    argument_help = "Apply with private visibility for this agent."
+    argument_help = "Apply to this agent's caps instead of global caps."
 
     def _real_params(self, ctx: click.Context) -> list[click.Parameter]:
         return TyperCommand.get_params(self, ctx)
@@ -53,13 +54,14 @@ class _PrefixAgentCommand(TyperCommand):
             default=None,
             expose_value=False,
             help=self.argument_help,
+            rich_help_panel="Scope",
         )
 
     def get_params(self, ctx: click.Context) -> list[click.Parameter]:
         return [self._prefix_agent_argument(), *self._real_params(ctx)]
 
     def format_usage(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
-        command_path = ctx.command_path
+        command_path = _strip_help_only_agent_metavars(ctx.command_path)
         root_name, _, remainder = command_path.partition(" ")
         prefix_path = (
             f"{root_name} {self.prefix_agent_metavar} {remainder}"
@@ -78,7 +80,7 @@ class _PrefixAgentWorkGroup(TyperGroup):
     prefix_agent_metavar = "AGENT"
 
     def format_usage(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
-        command_path = ctx.command_path
+        command_path = _strip_help_only_agent_metavars(ctx.command_path)
         root_name, _, remainder = command_path.partition(" ")
         prefix_path = (
             f"{root_name} {self.prefix_agent_metavar} {remainder}"
@@ -92,8 +94,49 @@ class _PrefixAgentWorkGroup(TyperGroup):
         formatter.write_usage(prefix_path, " ".join(pieces))
 
 
+class _OptionalPrefixAgentGroup(TyperGroup):
+    """Render optional AGENT between the executable and command path in usage."""
+
+    prefix_agent_metavar = "[AGENT]"
+    argument_metavar = "TEXT"
+    argument_help = "Apply to this agent's caps instead of global caps."
+
+    def _real_params(self, ctx: click.Context) -> list[click.Parameter]:
+        return TyperGroup.get_params(self, ctx)
+
+    def _prefix_agent_argument(self) -> click.Argument:
+        return _HelpOnlyTyperArgument(
+            param_decls=["agent"],
+            metavar=self.argument_metavar,
+            required=False,
+            default=None,
+            expose_value=False,
+            help=self.argument_help,
+            rich_help_panel="Scope",
+        )
+
+    def get_params(self, ctx: click.Context) -> list[click.Parameter]:
+        return [self._prefix_agent_argument(), *self._real_params(ctx)]
+
+    def format_usage(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        command_path = _strip_help_only_agent_metavars(ctx.command_path)
+        root_name, _, remainder = command_path.partition(" ")
+        prefix_path = (
+            f"{root_name} {self.prefix_agent_metavar} {remainder}"
+            if remainder
+            else f"{root_name} {self.prefix_agent_metavar}"
+        )
+        pieces = [self.options_metavar] if self.options_metavar else []
+        pieces.append(self.subcommand_metavar or "[COMMAND] [ARGS]...")
+        formatter.write_usage(prefix_path, " ".join(pieces))
+
+
 class _OptionalPrefixAgentCommand(_PrefixAgentCommand):
     prefix_agent_metavar = "[AGENT]"
+
+
+class _OptionalPrefixAgentListCommand(_OptionalPrefixAgentCommand):
+    argument_help = "Also include this agent's caps."
 
 
 class _RequiredPrefixAgentCommand(_PrefixAgentCommand):
@@ -108,6 +151,7 @@ class _RequiredPrefixAgentCommand(_PrefixAgentCommand):
             default=None,
             expose_value=False,
             help=self.argument_help,
+            rich_help_panel="Scope",
         )
 
 
@@ -129,6 +173,10 @@ class _HelpOnlyTyperArgument(TyperArgument):
     ) -> tuple[None, list[str]]:
         del ctx, opts
         return None, args
+
+
+def _strip_help_only_agent_metavars(command_path: str) -> str:
+    return " ".join(part for part in command_path.split() if part != "TEXT")
 
 
 class _RuntimeAgentCommand(TyperCommand):
@@ -184,7 +232,7 @@ class _RunAgentCommand(_RuntimeAgentCommand):
 class _OptionalPrefixAgentTemplateCommand(_OptionalPrefixAgentCommand):
     def _help_template_argument(self) -> click.Argument:
         return _HelpOnlyTyperArgument(
-            param_decls=["template"],
+            param_decls=["name"],
             metavar="TEXT",
             required=False,
             default=None,
@@ -270,7 +318,12 @@ def _runtime_environ_for_agent(
     return load_runtime_environ(root, agent_name, base_environ=os.environ)
 
 
-def _make_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> Table:
+def _make_table(
+    headers: Sequence[str],
+    rows: Sequence[Sequence[str]],
+    *,
+    justify: Sequence[TableJustify | None] | None = None,
+) -> Table:
     table = Table(
         box=box.HORIZONTALS,
         header_style="",
@@ -278,8 +331,11 @@ def _make_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> Table:
         pad_edge=False,
         collapse_padding=True,
     )
-    for header in headers:
-        table.add_column(header, no_wrap=True)
+    for index, header in enumerate(headers):
+        column_justify: TableJustify = "left"
+        if justify is not None and index < len(justify) and justify[index] is not None:
+            column_justify = cast(TableJustify, justify[index])
+        table.add_column(header, no_wrap=True, justify=column_justify)
     for row in rows:
         table.add_row(*(Text(cell) for cell in row))
     return table
@@ -291,8 +347,13 @@ def _echo_block(text: str) -> None:
     typer.echo()
 
 
-def _echo_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> None:
-    _TABLE_CONSOLE.print(_make_table(headers, rows))
+def _echo_table(
+    headers: Sequence[str],
+    rows: Sequence[Sequence[str]],
+    *,
+    justify: Sequence[TableJustify | None] | None = None,
+) -> None:
+    _TABLE_CONSOLE.print(_make_table(headers, rows, justify=justify))
 
 
 def _echo_pairs_table(

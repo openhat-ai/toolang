@@ -18,19 +18,43 @@ from ..progress import ProgressEvent, ProgressSink
 class CliProgress:
     """Render progress updates to stderr without affecting stdout contracts."""
 
-    def __init__(self, *, stream: TextIO | None = None, live: bool | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        stream: TextIO | None = None,
+        live: bool | None = None,
+        show_cached_prepare: bool = False,
+        show_materialize_summary: bool = False,
+        prepare_summary_label: str = "Prepared",
+    ) -> None:
         self._stream = stream or sys.stderr
-        self._console = Console(file=self._stream, force_terminal=live, highlight=False)
+        stream_is_tty = bool(getattr(self._stream, "isatty", lambda: False)())
+        force_terminal = True if live is True or (live is False and stream_is_tty) else None
+        color_system = "standard" if force_terminal else "auto"
+        self._console = Console(
+            file=self._stream,
+            force_terminal=force_terminal,
+            color_system=color_system,
+            highlight=False,
+        )
         self._items: dict[str, _ProgressItem] = {}
         self._aliases: dict[str, str] = {}
         self._prepare: dict[str, str] = {}
         self._prepare_details: dict[str, str] = {}
         self._agent_name: str | None = None
-        self._live = bool(getattr(self._stream, "isatty", lambda: False)()) if live is None else live
+        self._live = stream_is_tty if live is None else live
         self._live_display: Live | None = None
         self._printed = False
         self._finished = False
         self._interrupted = False
+        self._show_cached_prepare = show_cached_prepare
+        self._show_materialize_summary = show_materialize_summary
+        self._prepare_summary_label = prepare_summary_label
+        self._prepare_total: int | None = None
+        self._materialized_keys: set[str] = set()
+        self._post_resolve_started_at: float | None = None
+        self._materialize_started_at: float | None = None
+        self._materialize_finished_at: float | None = None
         self._started_at = time.monotonic()
         self._lock = RLock()
 
@@ -64,6 +88,10 @@ class CliProgress:
         with self._lock:
             self._interrupted = True
             self.finish(details=False)
+
+    def set_prepare_total(self, total: int) -> None:
+        with self._lock:
+            self._prepare_total = total
 
     def _render_live(self) -> None:
         if not self._has_visible_items():
@@ -153,6 +181,16 @@ class CliProgress:
             item.step_details[step] = event.detail
             if step == "fetch" and event.status == "ok":
                 item.detail = event.detail
+        if step in {"fetch", "extract", "materialize"} and self._post_resolve_started_at is None:
+            self._post_resolve_started_at = time.monotonic()
+        if step == "materialize":
+            if event.status == "running" and self._materialize_started_at is None:
+                self._materialize_started_at = time.monotonic()
+            if event.status == "ok":
+                self._materialized_keys.add(key)
+                self._materialize_finished_at = time.monotonic()
+            if event.status == "failed":
+                self._materialize_finished_at = time.monotonic()
 
     def _lines(self) -> tuple[str, ...]:
         lines: list[str] = []
@@ -161,34 +199,45 @@ class CliProgress:
         return tuple(lines)
 
     def _summary_line(self) -> str:
+        lines = self._summary_lines()
+        return lines[0] if lines else ""
+
+    def _summary_lines(self) -> tuple[str, ...]:
         agent_items = [item for item in self._items.values() if item.kind == "agent"]
         cap_items = [item for item in self._items.values() if item.kind != "agent"]
         if not cap_items and self._prepare_is_cached():
-            return ""
+            if not self._show_cached_prepare:
+                return ()
+            elapsed = _format_elapsed(time.monotonic() - self._started_at)
+            return (f"{self._prepare_summary_label} {self._cap_count_label()} from cache in {elapsed}",)
         failed = sum(1 for item in cap_items if _item_status(item) == "failed")
         running = sum(1 for item in cap_items if _item_status(item) == "running")
         pending = sum(1 for item in cap_items if _item_status(item) == "pending")
-        elapsed = _format_elapsed(time.monotonic() - self._started_at)
+        elapsed = self._prepare_elapsed()
         prepare_status = _aggregate_status(tuple(self._prepare.values())) if self._prepare else "skipped"
         if self._interrupted:
             if cap_items or self._prepare:
-                return "Prepare caps interrupted"
+                return ("Prepare caps interrupted",)
             if agent_items:
-                return "Fetch agent interrupted"
-            return ""
+                return ("Fetch agent interrupted",)
+            return ()
         if self._prepare:
-            total = len(cap_items)
+            total = self._prepare_total if self._prepare_total is not None else len(cap_items)
             if failed:
-                return f"Failed {failed}/{total} caps"
+                return (f"Failed {failed}/{total} caps",)
             if running:
-                return f"Preparing {total} caps: {running} running, {elapsed}"
+                return (f"Preparing {total} caps: {running} running, {elapsed}",)
             if pending:
-                return f"Preparing {total} caps: {pending} pending, {elapsed}"
+                return (f"Preparing {total} caps: {pending} pending, {elapsed}",)
             if prepare_status in {"ok", "skipped"}:
-                return f"Prepared {total} caps in {elapsed}"
+                return self._with_materialize_summary(
+                    f"{self._prepare_summary_label} {self._cap_count_label(total)} in {elapsed}"
+                )
             if prepare_status in {"running", "pending"}:
-                return f"Preparing {total} caps: {elapsed}"
-            return f"Prepared {total} caps in {elapsed}"
+                return (f"Preparing {total} caps: {elapsed}",)
+            return self._with_materialize_summary(
+                f"{self._prepare_summary_label} {self._cap_count_label(total)} in {elapsed}"
+            )
         if not cap_items and agent_items:
             item = agent_items[0]
             agent_status = _aggregate_status(tuple(_item_status(item) for item in agent_items))
@@ -196,29 +245,50 @@ class CliProgress:
                 detail = _failed_detail(item)
                 suffix = f": {detail}" if detail else ""
                 if _first_step_with_status(item, "failed") == "resolve":
-                    return f"Resolve agent failed{suffix}"
-                return f"Fetch agent failed{suffix}"
+                    return (f"Resolve agent failed{suffix}",)
+                return (f"Fetch agent failed{suffix}",)
             if agent_status in {"running", "pending"}:
-                return f"Fetching 1 agent: {_agent_progress_word(item)}, {elapsed}"
-            return f"Fetched 1 agent in {elapsed}"
+                return (f"Fetching 1 agent: {_agent_progress_word(item)}, {elapsed}",)
+            return (f"Fetched 1 agent in {elapsed}",)
         if failed:
-            return f"Failed {failed}/{len(cap_items)} caps"
+            return (f"Failed {failed}/{len(cap_items)} caps",)
         if running:
-            return f"Preparing {len(cap_items)} caps: {running} running, {elapsed}"
+            return (f"Preparing {len(cap_items)} caps: {running} running, {elapsed}",)
         if pending:
-            return f"Preparing {len(cap_items)} caps: {pending} pending, {elapsed}"
+            return (f"Preparing {len(cap_items)} caps: {pending} pending, {elapsed}",)
         if prepare_status in {"ok", "skipped"}:
-            return f"Prepared {len(cap_items)} caps in {elapsed}"
-        return f"Prepared {len(cap_items)} caps in {elapsed}"
+            return self._with_materialize_summary(
+                f"{self._prepare_summary_label} {self._cap_count_label(len(cap_items))} in {elapsed}"
+            )
+        return self._with_materialize_summary(
+            f"{self._prepare_summary_label} {self._cap_count_label(len(cap_items))} in {elapsed}"
+        )
+
+    def _with_materialize_summary(self, summary: str) -> tuple[str, ...]:
+        if not self._show_materialize_summary or not self._materialized_keys:
+            return (summary,)
+        started_at = self._post_resolve_started_at or self._materialize_started_at or self._started_at
+        finished_at = self._materialize_finished_at or time.monotonic()
+        elapsed = _format_elapsed(max(finished_at - started_at, 0))
+        return (summary, f"Updated {len(self._materialized_keys)} caps in {elapsed}")
+
+    def _prepare_elapsed(self) -> str:
+        if self._show_materialize_summary and self._materialized_keys and self._post_resolve_started_at is not None:
+            return _format_elapsed(max(self._post_resolve_started_at - self._started_at, 0))
+        return _format_elapsed(time.monotonic() - self._started_at)
+
+    def _cap_count_label(self, total: int | None = None) -> str:
+        value = self._prepare_total if total is None else total
+        if value is None:
+            return "caps"
+        return f"{value} caps"
 
     def _print_summary(self) -> None:
-        summary = self._summary_line()
-        if not summary:
+        summaries = self._summary_lines()
+        if not summaries:
             return
-        if self._live:
+        for summary in summaries:
             self._console.print(Text(summary, style="dim"))
-            return
-        print(summary, file=self._stream, flush=True)
 
     def _live_text(self) -> Text:
         text = Text()
@@ -227,8 +297,7 @@ class CliProgress:
         if agent_items and not cap_items and not self._prepare and not self._agent_stage_uses_summary(agent_items[0]):
             text.append(f"{_format_item(agent_items[0])}\n", style="dim")
             return text
-        summary = self._summary_line()
-        if summary:
+        for summary in self._summary_lines():
             text.append(f"{summary}\n", style="dim")
         for group in self._item_groups():
             for item in group:
@@ -275,10 +344,21 @@ class CliProgress:
         return (agent_items,) if agent_items else ()
 
 
-def make_cli_progress(*, live: bool | None = None) -> CliProgress:
+def make_cli_progress(
+    *,
+    live: bool | None = None,
+    show_cached_prepare: bool = False,
+    show_materialize_summary: bool = False,
+    prepare_summary_label: str = "Prepared",
+) -> CliProgress:
     """Return the default CLI progress sink."""
 
-    return CliProgress(live=live)
+    return CliProgress(
+        live=live,
+        show_cached_prepare=show_cached_prepare,
+        show_materialize_summary=show_materialize_summary,
+        prepare_summary_label=prepare_summary_label,
+    )
 
 
 def as_progress_sink(progress: CliProgress | None) -> ProgressSink | None:
@@ -324,7 +404,9 @@ def _item_state(item: _ProgressItem) -> tuple[str, str]:
         if item.steps.get("resolve") == "ok":
             return "resolved", item.step_details.get("resolve", "")
     if item.steps.get("materialize") == "ok":
-        return "prepared", ""
+        return "materialized", ""
+    if item.steps.get("extract") == "ok":
+        return "extracted", ""
     if item.steps.get("fetch") == "ok":
         return "fetched", item.detail or ""
     if item.steps.get("resolve") == "ok":
@@ -335,7 +417,7 @@ def _item_state(item: _ProgressItem) -> tuple[str, str]:
 
 
 def _first_step_with_status(item: _ProgressItem, status: str) -> str | None:
-    for step in ("resolve", "fetch", "materialize"):
+    for step in ("resolve", "fetch", "extract", "materialize"):
         if item.steps.get(step) == status:
             return step
     return None
@@ -345,6 +427,7 @@ def _running_word(step: str) -> str:
     return {
         "resolve": "resolving",
         "fetch": "fetching",
+        "extract": "extracting",
         "materialize": "materializing",
     }.get(step, "running")
 
@@ -355,6 +438,8 @@ def _agent_progress_word(item: _ProgressItem) -> str:
         return "resolving"
     if running_step == "fetch":
         return "fetching"
+    if running_step == "extract":
+        return "extracting"
     if running_step == "materialize":
         return "materializing"
     pending_step = _first_step_with_status(item, "pending")
@@ -389,6 +474,8 @@ def _aggregate_status(statuses: tuple[str, ...]) -> str:
 
 
 def _format_elapsed(seconds: float) -> str:
+    if seconds < 1:
+        return f"{max(round(seconds * 1000), 1)}ms"
     if seconds < 10:
         return f"{seconds:.1f}s"
     return f"{seconds:.0f}s"
@@ -399,6 +486,6 @@ def _parse_cap_event(event: ProgressEvent) -> tuple[str, str] | None:
     if len(parts) != 3:
         return None
     prefix, kind, ref = parts
-    if prefix not in {"cap.resolve", "cap.fetch", "cap.materialize", "cap.config"}:
+    if prefix not in {"cap.resolve", "cap.fetch", "cap.extract", "cap.materialize", "cap.config"}:
         return None
     return kind, ref
