@@ -180,19 +180,25 @@ def _list_all_caps(
     ctx: typer.Context,
     filter_: Annotated[
         str | None,
-        typer.Option("--filter", help="Filter by form or scope CSV: inline, cited, local, remote, global, agent."),
+        typer.Option(
+            "--filter",
+            help=(
+                "Filter by kind, form, or scope CSV: psyche, skill, service, prompt, "
+                "inline, cited, local, remote, global, agent."
+            ),
+        ),
     ] = None,
 ) -> None:
     selected_agent = _context_agent(ctx)
     agent_name = selected_agent or "default"
     effective_visibility = "all" if selected_agent else "shared"
-    form_filter, scope_filter = _parse_cap_filter(filter_)
+    kind_filter, form_filter, scope_filter = _parse_cap_filter(filter_)
     entries = _all_cap_entries(
         _context_root(ctx),
         agent_name,
         visibility=effective_visibility,
         prepare=selected_agent is not None,
-        kinds=set(cast(tuple[EntryKind, ...], CAP_KINDS)),
+        kinds=set(cast(tuple[EntryKind, ...], tuple(kind_filter or CAP_KINDS))),
     )
     rows = [
         (
@@ -206,6 +212,7 @@ def _list_all_caps(
         if _entry_matches_filters(
             entry,
             agent_name=agent_name,
+            kind_filter=kind_filter,
             form_filter=form_filter,
             scope_filter=scope_filter,
         )
@@ -226,13 +233,19 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         filter_: Annotated[
             str | None,
-            typer.Option("--filter", help="Filter by form or scope CSV: inline, cited, local, remote, global, agent."),
+            typer.Option(
+                "--filter",
+                help=(
+                    "Filter by kind, form, or scope CSV: psyche, skill, service, prompt, "
+                    "inline, cited, local, remote, global, agent."
+                ),
+            ),
         ] = None,
     ) -> None:
         selected_agent = _context_agent(ctx)
         agent_name = selected_agent or "default"
         effective_visibility = "all" if selected_agent else "shared"
-        form_filter, scope_filter = _parse_cap_filter(filter_)
+        kind_filter, form_filter, scope_filter = _parse_cap_filter(filter_)
         entries = _all_cap_entries(
             _context_root(ctx),
             agent_name,
@@ -251,6 +264,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             if _entry_matches_filters(
                 entry,
                 agent_name=agent_name,
+                kind_filter=kind_filter,
                 form_filter=form_filter,
                 scope_filter=scope_filter,
             )
@@ -528,9 +542,12 @@ def _entry_matches_filters(
     entry: PreparedEntry,
     *,
     agent_name: str,
+    kind_filter: set[CapKind] | None,
     form_filter: set[CapForm] | None,
     scope_filter: set[CapScope] | None,
 ) -> bool:
+    if kind_filter is not None and entry.kind not in kind_filter:
+        return False
     if form_filter is not None and _entry_form(entry) not in form_filter:
         return False
     return scope_filter is None or _entry_scope_label(entry, agent_name=agent_name) in scope_filter
@@ -555,21 +572,27 @@ def _entry_scope_label(entry: PreparedEntry, *, agent_name: str) -> CapScope:
     return "global" if _entry_is_global(entry, agent_name=agent_name) else "agent"
 
 
-def _parse_cap_filter(value: str | None) -> tuple[set[CapForm] | None, set[CapScope] | None]:
+def _parse_cap_filter(
+    value: str | None,
+) -> tuple[set[CapKind] | None, set[CapForm] | None, set[CapScope] | None]:
     if value is None:
-        return None, None
+        return None, None, None
+    kinds: set[CapKind] = set()
     forms: set[CapForm] = set()
     scopes: set[CapScope] = set()
     for item in _split_csv(value, option_name="--filter"):
+        if item in CAP_KINDS:
+            kinds.add(cast(CapKind, item))
+            continue
         if item in CAP_FORMS:
             forms.add(cast(CapForm, item))
             continue
         if item in CAP_SCOPES:
             scopes.add(cast(CapScope, item))
             continue
-        expected = ", ".join((*CAP_FORMS, *CAP_SCOPES))
+        expected = ", ".join((*CAP_KINDS, *CAP_FORMS, *CAP_SCOPES))
         raise click.ClickException(f"invalid --filter value: {item}; expected one of {expected}")
-    return forms or None, scopes or None
+    return kinds or None, forms or None, scopes or None
 
 
 def _split_csv(value: str, *, option_name: str) -> tuple[str, ...]:

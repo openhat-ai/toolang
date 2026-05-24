@@ -4910,7 +4910,7 @@ def test_cli_hidden_caps_command_supports_concept_filters(tmp_path: Path) -> Non
     )
 
     result = _invoke_app(
-        ["caps", "list", "--filter", "local,agent"],
+        ["caps", "list", "--filter", "skill,local,agent"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -4918,6 +4918,8 @@ def test_cli_hidden_caps_command_supports_concept_filters(tmp_path: Path) -> Non
     assert result.exit_code == 0
     assert "reviewer" in result.stdout
     assert "style" not in result.stdout
+    assert "skill" in result.stdout
+    assert "psyche" not in result.stdout
     assert "local" in result.stdout
     assert "agent" in result.stdout
 
@@ -5010,8 +5012,9 @@ def test_standalone_caps_list_help_mentions_agent_inclusion() -> None:
     assert "List caps." in result.stdout
     assert "caps [AGENT] list [OPTIONS]" in result.stdout
     assert "--filter" in result.stdout
-    assert "inline, cited, local" in result.stdout
-    assert "remote, global, agent" in result.stdout
+    assert "psyche, skill" in result.stdout
+    assert "service, prompt, inline" in result.stdout
+    assert "local, remote, global" in result.stdout
     assert "--kind" not in result.stdout
     assert "--binding" not in result.stdout
     assert "--global" not in result.stdout
