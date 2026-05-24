@@ -4026,6 +4026,7 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     assert new_result.stdout.strip() == (
         f"Created skill reviewer: {toolang_root / 'agents' / 'alice' / 'skills' / 'reviewer' / 'SKILL.md'}"
     )
+    assert "Resolved 1 caps" in new_result.stderr
     assert (
         toolang_root / "agents" / "alice" / "skills" / "reviewer" / "SKILL.md"
     ).read_text(encoding="utf-8").startswith(
@@ -4064,6 +4065,7 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     assert edit_result.stdout.strip() == (
         f"Updated skill reviewer: {toolang_root / 'agents' / 'alice' / 'skills' / 'reviewer' / 'SKILL.md'}"
     )
+    assert "Resolved 1 caps" in edit_result.stderr
     assert (
         toolang_root / "agents" / "alice" / "skills" / "reviewer" / "SKILL.md"
     ).read_text(encoding="utf-8") == edited_text
@@ -4094,6 +4096,7 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     assert delete_result.stdout.strip() == (
         f"Deleted skill reviewer: {toolang_root / 'agents' / 'alice' / 'skills' / 'reviewer'}"
     )
+    assert "Resolved 0 caps" in delete_result.stderr
     assert not (toolang_root / "agents" / "alice" / "skills" / "reviewer").exists()
 
     missing_result = _invoke_app(
@@ -4139,6 +4142,7 @@ def test_cli_cap_add_preserves_unrelated_config_sections(tmp_path: Path, monkeyp
     )
 
     assert result.exit_code == 0
+    assert "Resolved 1 caps" in result.stderr
     text = config_path.read_text(encoding="utf-8")
     assert "[web]" in text
     assert "cors_allowed_origins" in text
@@ -4572,6 +4576,7 @@ def test_cli_cap_commands_cover_file_backed_kinds(tmp_path: Path, monkeypatch) -
         )
         assert add_result.exit_code == 0
         assert add_result.stdout.strip() == f"Created {kind} {name}: {path}"
+        assert "Resolved" not in add_result.stderr
 
         list_result = runner.invoke(
             cli.app,
@@ -4595,6 +4600,7 @@ def test_cli_cap_commands_cover_file_backed_kinds(tmp_path: Path, monkeypatch) -
         )
         assert delete_result.exit_code == 0
         assert delete_result.stdout.strip() == f"Deleted {kind} {name}: {path}"
+        assert "Resolved" not in delete_result.stderr
         assert not path.exists()
 
 
