@@ -53,6 +53,20 @@ def register_standalone_caps_commands(app: typer.Typer, *, rich_help_panel: str 
     )
 
 
+def register_toolang_caps_commands(app: typer.Typer, *, rich_help_panel: str | None = None) -> None:
+    app.command(
+        "caps",
+        help="List caps of all kinds.",
+        cls=_OptionalPrefixAgentListCommand,
+        rich_help_panel=rich_help_panel,
+    )(_list_all_caps)
+    _register_cap_kind_commands(
+        app,
+        rich_help_panel=rich_help_panel,
+        group_cls=_OptionalPrefixAgentGroup,
+    )
+
+
 def _kind_command_cls(label: str) -> type[_OptionalPrefixAgentCommand]:
     return type(
         f"{label.title().replace(' ', '')}ScopeCommand",

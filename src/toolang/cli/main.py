@@ -31,6 +31,7 @@ from ..models.selectors import split_model_selectors
 from ..models.views import available_model_adapters, model_list_rows, model_provider_rows
 from ..tools.registry import split_tool_selectors
 from ..tools.views import tool_list_rows
+from .caps import CAP_KINDS, register_toolang_caps_commands
 from . import invoke as cli_invoke
 from .progress import CliProgress, as_progress_sink, make_cli_progress
 from .utils import (
@@ -62,6 +63,7 @@ WorkKind = Literal["task", "chore"]
 _CLI_PREFIX_AGENT: str | None = None
 AGENT_COMMAND_PANEL = "Agent Commands"
 RUNTIME_COMMAND_PANEL = "Runtime Commands"
+CAPS_COMMAND_PANEL = "Caps Commands"
 TOP_LEVEL_COMMANDS = frozenset(
     {
         "new",
@@ -76,6 +78,8 @@ TOP_LEVEL_COMMANDS = frozenset(
         "run",
         "start",
         "stop",
+        "caps",
+        *CAP_KINDS,
         "task",
         "chore",
     }
@@ -94,7 +98,7 @@ class _RuntimeStartup:
 
 POSTFIX_AGENT_COMMANDS = frozenset({"run", "start", "stop", "info"})
 PREFIX_AGENT_COMMANDS = frozenset(
-    {"run", "start", "stop", "task", "chore"}
+    {"run", "start", "stop", "caps", *CAP_KINDS, "task", "chore"}
 )
 
 
@@ -953,8 +957,8 @@ def register_work_commands() -> None:
         "task": "Task",
     }
     work_group_help: dict[WorkKind, str] = {
-        "chore": "Manage chores.",
-        "task": "Manage tasks.",
+        "chore": "Manage agent chores.",
+        "task": "Manage agent tasks.",
     }
 
     @dataclass(frozen=True, slots=True)
@@ -1282,6 +1286,7 @@ app.add_typer(model_app, name="model", no_args_is_help=True, rich_help_panel=RUN
 app.add_typer(tool_app, name="tool", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
 app.add_typer(channel_app, name="channel", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
 app.add_typer(sandbox_app, name="sandbox", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
+register_toolang_caps_commands(app, rich_help_panel=CAPS_COMMAND_PANEL)
 register_work_commands()
 
 

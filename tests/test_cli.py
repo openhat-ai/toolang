@@ -254,7 +254,7 @@ def test_cli_main_normalizes_agent_prefix_shortcut_for_info(monkeypatch) -> None
     assert captured["args"] == ["info", "alice"]
 
 
-def test_cli_main_does_not_special_case_removed_cap_command_without_agent_prefix(monkeypatch) -> None:
+def test_cli_main_passes_cap_command_without_agent_prefix(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     def fake_app(*, args, prog_name: str, standalone_mode: bool) -> None:
@@ -284,7 +284,7 @@ def test_cli_main_normalizes_agent_prefix_shortcut_for_task_commands(monkeypatch
     assert captured["prefix_agent"] == "alice"
 
 
-def test_cli_main_does_not_normalize_agent_prefix_shortcut_for_removed_cap_commands(monkeypatch) -> None:
+def test_cli_main_normalizes_agent_prefix_shortcut_for_cap_commands(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     def fake_app(*, args, prog_name: str, standalone_mode: bool) -> None:
@@ -296,8 +296,8 @@ def test_cli_main_does_not_normalize_agent_prefix_shortcut_for_removed_cap_comma
     result = cli.main(["alice", "skill", "list"])
 
     assert result == 0
-    assert captured["args"] == ["alice", "skill", "list"]
-    assert captured["prefix_agent"] is None
+    assert captured["args"] == ["skill", "list"]
+    assert captured["prefix_agent"] == "alice"
 
 
 def test_cli_new_creates_agent(tmp_path: Path) -> None:
@@ -4817,16 +4817,73 @@ def test_cli_work_group_help_shows_required_prefix_agent() -> None:
     assert chore_result.exit_code == 0
     assert "Usage:" in task_result.stdout
     assert "AGENT task" in task_result.stdout
+    assert "Manage agent tasks." in task_result.stdout
     assert "Usage:" in chore_result.stdout
     assert "AGENT chore" in chore_result.stdout
+    assert "Manage agent chores." in chore_result.stdout
 
 
-def test_cli_does_not_register_cap_commands() -> None:
-    for command in ("caps", "psyche", "skill", "service", "prompt", "plugin"):
+def test_cli_registers_cap_commands() -> None:
+    for command in ("caps", "psyche", "skill", "service", "prompt"):
         result = runner.invoke(cli.app, [command, "--help"])
 
-        assert result.exit_code != 0
-        assert "No such command" in result.output
+        assert result.exit_code == 0
+
+
+def test_cli_does_not_register_plugin_command() -> None:
+    result = runner.invoke(cli.app, ["plugin", "--help"])
+
+    assert result.exit_code != 0
+    assert "No such command" in result.output
+
+
+def test_cli_caps_alias_lists_caps(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="shared",
+        kind="skill",
+        name="reviewer",
+        text="---\ndescription: Review changes\n---\n# Reviewer\n",
+    )
+
+    result = runner.invoke(
+        cli.app,
+        ["caps"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+    )
+
+    assert result.exit_code == 0
+    assert "KIND" in result.stdout
+    assert "CAP" in result.stdout
+    assert "skill" in result.stdout
+    assert "reviewer" in result.stdout
+    assert "global" in result.stdout
+
+
+def test_cli_cap_kind_alias_lists_agent_caps(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="reviewer",
+        text="---\ndescription: Review changes\n---\n# Reviewer\n",
+    )
+
+    result = _invoke_app(
+        ["skill", "list"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert result.exit_code == 0
+    assert "SKILL" in result.stdout
+    assert "reviewer" in result.stdout
+    assert "agent" in result.stdout
+    assert "agents/alice/skills/reviewer" in result.stdout
 
 
 def test_cli_cap_commands_cover_file_backed_kinds(tmp_path: Path, monkeypatch) -> None:
@@ -5338,21 +5395,23 @@ def test_standalone_caps_command_treats_packed_caps_as_not_global(tmp_path: Path
     assert "agent" in result.stdout
 
 
-def test_cli_main_does_not_normalize_agent_prefix_shortcut_for_removed_hidden_caps_command(monkeypatch) -> None:
+def test_cli_main_normalizes_agent_prefix_shortcut_for_caps_command(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     def fake_app(*, args, prog_name: str, standalone_mode: bool) -> None:
         captured["args"] = args
         captured["prog_name"] = prog_name
         captured["standalone_mode"] = standalone_mode
+        captured["prefix_agent"] = cli._CLI_PREFIX_AGENT
 
     monkeypatch.setattr(cli, "app", cast(object, fake_app))
     monkeypatch.setattr(cli.sys, "argv", ["toolang"])
 
-    result = cli.main(["alice", "caps", "list"])
+    result = cli.main(["alice", "caps"])
 
     assert result == 0
-    assert captured["args"] == ["alice", "caps", "list"]
+    assert captured["args"] == ["caps"]
+    assert captured["prefix_agent"] == "alice"
     assert cli._CLI_PREFIX_AGENT is None
 
 
@@ -5638,7 +5697,7 @@ def test_cli_version_includes_source_revision_suffix(monkeypatch) -> None:
     assert result.stdout.strip() == "toolang 0.1.2+abc1234*"
 
 
-def test_cli_help_omits_cap_commands() -> None:
+def test_cli_help_lists_cap_commands() -> None:
     result = runner.invoke(cli.app, ["--help"])
 
     assert result.exit_code == 0
@@ -5655,25 +5714,34 @@ def test_cli_help_omits_cap_commands() -> None:
     assert "Show agents and their status." in result.stdout
     assert "Show agent info." in result.stdout
     assert "Run an agent in the foreground." in result.stdout
+    assert "Manage agent chores." in result.stdout
+    assert "Manage agent tasks." in result.stdout
     assert "Inspect models and model settings." in result.stdout
     assert "Inspect available tools." in result.stdout
     assert "Inspect available channels." in result.stdout
     assert "Inspect available sandboxes." in result.stdout
     assert "Agent Commands" in result.stdout
     assert "Runtime Commands" in result.stdout
+    assert "Caps Commands" in result.stdout
     assert "Runtime Components" not in result.stdout
     assert "Agent Capabilities" not in result.stdout
     assert "Work Commands" not in result.stdout
-    assert "psyche" not in result.stdout
-    assert "skill" not in result.stdout
-    assert "service" not in result.stdout
-    assert "prompt" not in result.stdout
+    assert "List caps of all kinds." in result.stdout
+    assert "Manage psyche caps." in result.stdout
+    assert "Manage skill caps." in result.stdout
+    assert "Manage service caps." in result.stdout
+    assert "Manage prompt caps." in result.stdout
     chore_index = result.stdout.index("chore")
     task_index = result.stdout.index("task")
     model_index = result.stdout.index("model")
     tool_index = result.stdout.index("tool")
     channel_index = result.stdout.index("channel")
     sandbox_index = result.stdout.index("sandbox")
+    caps_index = result.stdout.index("caps")
+    psyche_index = result.stdout.index("psyche")
+    skill_index = result.stdout.index("skill")
+    service_index = result.stdout.index("service")
+    prompt_index = result.stdout.index("prompt")
     assert "plugin" not in result.stdout
     assert result.stdout.index("Agent Commands") < chore_index
     assert chore_index < task_index
@@ -5685,6 +5753,8 @@ def test_cli_help_omits_cap_commands() -> None:
         < channel_index
         < sandbox_index
     )
+    assert result.stdout.index("Caps Commands") < caps_index
+    assert caps_index < psyche_index < skill_index < service_index < prompt_index
 
 
 def _write_roaming_program(tmp_path: Path, body_text: str, *, name: str = "demo") -> Path:
