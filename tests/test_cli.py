@@ -4675,6 +4675,7 @@ def test_cli_skill_list_help_mentions_agent_scope_concisely() -> None:
     assert result.exit_code == 0
     assert "List skills." in result.stdout
     assert "[AGENT] skill list" in result.stdout
+    assert "agent      TEXT  Also include agent caps." in result.stdout
 
 
 def test_cli_cap_list_with_agent_defaults_to_all_scopes(tmp_path: Path, monkeypatch) -> None:
@@ -4992,6 +4993,15 @@ def test_standalone_caps_help_shows_agent_prefix_usage() -> None:
     assert "Scope" in result.stdout
     assert "agent      TEXT  Apply to agent caps instead of global caps." in result.stdout
     assert "--agent" not in result.stdout
+
+
+def test_standalone_caps_list_help_mentions_agent_inclusion() -> None:
+    result = runner.invoke(caps_cli.app, ["list", "--help"])
+
+    assert result.exit_code == 0
+    assert "List caps." in result.stdout
+    assert "caps [AGENT] list [OPTIONS]" in result.stdout
+    assert "agent      TEXT  Also include agent caps." in result.stdout
 
 
 def test_standalone_cap_group_help_shows_agent_prefix_usage() -> None:

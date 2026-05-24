@@ -135,6 +135,10 @@ class _OptionalPrefixAgentCommand(_PrefixAgentCommand):
     prefix_agent_metavar = "[AGENT]"
 
 
+class _OptionalPrefixAgentListCommand(_OptionalPrefixAgentCommand):
+    argument_help = "Also include agent caps."
+
+
 class _RequiredPrefixAgentCommand(_PrefixAgentCommand):
     prefix_agent_metavar = "AGENT"
     argument_help = "Agent name."

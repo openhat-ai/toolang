@@ -22,6 +22,7 @@ from .progress import as_progress_sink, make_cli_progress
 from .utils import (
     _OptionalPrefixAgentCommand,
     _OptionalPrefixAgentGroup,
+    _OptionalPrefixAgentListCommand,
     _OptionalPrefixAgentTemplateCommand,
     _append_agent_update,
     _context_agent,
@@ -54,7 +55,7 @@ def register_cap_commands(app: typer.Typer, *, rich_help_panel: str | None = Non
     caps_app.command(
         "list",
         help="List caps.",
-        cls=_OptionalPrefixAgentCommand,
+        cls=_OptionalPrefixAgentListCommand,
     )(_list_all_caps)
     app.add_typer(caps_app, name="caps", hidden=True)
 
@@ -63,7 +64,7 @@ def register_standalone_caps_commands(app: typer.Typer, *, rich_help_panel: str 
     app.command(
         "list",
         help="List caps.",
-        cls=_OptionalPrefixAgentCommand,
+        cls=_OptionalPrefixAgentListCommand,
     )(_list_all_caps)
     _register_cap_kind_commands(
         app,
@@ -165,6 +166,8 @@ def _register_cap_kind_commands(
                 cls=(
                     _OptionalPrefixAgentTemplateCommand
                     if spec.name == "template"
+                    else _OptionalPrefixAgentListCommand
+                    if spec.name == "list"
                     else _OptionalPrefixAgentCommand
                 ),
             )(spec.factory(kind, title))
