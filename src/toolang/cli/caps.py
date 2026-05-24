@@ -248,7 +248,7 @@ def _list_all_caps(
         (
             cast(CapKind, entry.kind),
             entry.name,
-            _entry_ref(entry, agent_name=agent_name),
+            _entry_source(entry, agent_name=agent_name),
             _entry_form(entry),
             _entry_scope_label(entry, agent_name=agent_name),
         )
@@ -267,7 +267,7 @@ def _list_all_caps(
     kind_order = {kind: index for index, kind in enumerate(CAP_KINDS)}
     rows.sort(key=lambda item: (kind_order[item[0]], item[1], item[3], item[4], item[2]))
     _echo_table(
-        ("KIND", "CAP", "REF", "FORM", "SCOPE"),
+        ("KIND", "CAP", "SOURCE", "FORM", "SCOPE"),
         rows,
     )
 
@@ -299,7 +299,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
         rows = [
             (
                 entry.name,
-                _entry_ref(entry, agent_name=agent_name),
+                _entry_source(entry, agent_name=agent_name),
                 _entry_form(entry),
                 _entry_scope_label(entry, agent_name=agent_name),
             )
@@ -317,7 +317,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             return
         rows.sort(key=lambda item: (item[0], item[2], item[3], item[1]))
         _echo_table(
-            (title.upper(), "REF", "FORM", "SCOPE"),
+            (title.upper(), "SOURCE", "FORM", "SCOPE"),
             rows,
         )
 
@@ -596,8 +596,15 @@ def _entry_matches_filters(
     return scope_filter is None or _entry_scope_label(entry, agent_name=agent_name) in scope_filter
 
 
-def _entry_ref(entry: PreparedEntry, *, agent_name: str) -> str:
-    return cap_store.entry_ref(entry, agent_name=agent_name)
+def _entry_source(entry: PreparedEntry, *, agent_name: str) -> str:
+    form = _entry_form(entry)
+    if form in {"cited", "remote"}:
+        return cap_store.entry_ref(entry, agent_name=agent_name)
+    source = cap_store.entry_definition_file(entry)
+    if form == "inline":
+        line = cap_store.entry_line(entry)
+        return f"{source}:{line}" if line is not None else source
+    return source
 
 
 def _entry_form(entry: PreparedEntry) -> CapForm:

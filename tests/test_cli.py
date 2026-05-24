@@ -3890,7 +3890,7 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     )
     assert list_remote_result.exit_code == 0
     assert "SKILL" in list_remote_result.stdout
-    assert "REF" in list_remote_result.stdout
+    assert "SOURCE" in list_remote_result.stdout
     assert "FORM" in list_remote_result.stdout
     assert "SCOPE" in list_remote_result.stdout
     assert "DESCRIPTION" not in list_remote_result.stdout
@@ -3936,13 +3936,13 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     )
     assert list_result.exit_code == 0
     assert "SKILL" in list_result.stdout
-    assert "REF" in list_result.stdout
+    assert "SOURCE" in list_result.stdout
     assert "FORM" in list_result.stdout
     assert "SCOPE" in list_result.stdout
     assert "reviewer" in list_result.stdout
     assert "local" in list_result.stdout
     assert "agent" in list_result.stdout
-    assert "home://skills/reviewer" in list_result.stdout
+    assert "agents/alice/skills/reviewer" in list_result.stdout
 
 
 def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -> None:
@@ -3982,13 +3982,13 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     )
     assert list_result.exit_code == 0
     assert "SKILL" in list_result.stdout
-    assert "REF" in list_result.stdout
+    assert "SOURCE" in list_result.stdout
     assert "FORM" in list_result.stdout
     assert "SCOPE" in list_result.stdout
     assert "reviewer" in list_result.stdout
     assert "local" in list_result.stdout
     assert "agent" in list_result.stdout
-    assert "home://skills/reviewer" in list_result.stdout
+    assert "agents/alice/skills/reviewer" in list_result.stdout
 
     edited_text = (
         "---\n"
@@ -4523,13 +4523,13 @@ def test_cli_cap_commands_cover_file_backed_kinds(tmp_path: Path, monkeypatch) -
         )
         assert list_result.exit_code == 0
         assert kind.upper() in list_result.stdout
-        assert "REF" in list_result.stdout
+        assert "SOURCE" in list_result.stdout
         assert "FORM" in list_result.stdout
         assert "SCOPE" in list_result.stdout
         assert name in list_result.stdout
         assert "local" in list_result.stdout
         assert "global" in list_result.stdout
-        assert f"root://{kind}s/{name}" in list_result.stdout
+        assert f"{kind}s/{name}" in list_result.stdout
 
         delete_result = runner.invoke(
             cli.app,
@@ -4710,8 +4710,8 @@ def test_cli_cap_list_with_agent_defaults_to_all_scopes(tmp_path: Path, monkeypa
     assert "def" in result.stdout
     assert "global" in result.stdout
     assert "agent" in result.stdout
-    assert "root://psyches/abc" in result.stdout
-    assert "home://psyches/def" in result.stdout
+    assert "psyches/abc.md" in result.stdout
+    assert "agents/alice/psyches/def.md" in result.stdout
 
 
 def test_cli_cap_list_global_filters_results(tmp_path: Path, monkeypatch) -> None:
@@ -4832,7 +4832,7 @@ def test_cli_hidden_caps_command_lists_all_cap_kinds(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "KIND" in result.stdout
     assert "CAP" in result.stdout
-    assert "REF" in result.stdout
+    assert "SOURCE" in result.stdout
     assert "FORM" in result.stdout
     assert "SCOPE" in result.stdout
     assert "psyche" in result.stdout
@@ -4841,8 +4841,8 @@ def test_cli_hidden_caps_command_lists_all_cap_kinds(tmp_path: Path) -> None:
     assert "reviewer" in result.stdout
     assert "global" in result.stdout
     assert "agent" in result.stdout
-    assert "root://psyches/style" in result.stdout
-    assert "home://skills/reviewer" in result.stdout
+    assert "psyches/style.md" in result.stdout
+    assert "agents/alice/skills/reviewer" in result.stdout
 
 
 def test_cli_hidden_caps_list_collects_all_kinds_once(tmp_path: Path, monkeypatch) -> None:
@@ -4886,7 +4886,7 @@ def test_cli_hidden_caps_list_prepares_agent_once_with_progress(tmp_path: Path) 
 
     assert result.exit_code == 0
     assert "reviewer" in result.stdout
-    assert "home://skills/reviewer" in result.stdout
+    assert "agents/alice/skills/reviewer" in result.stdout
     assert "Resolved 1 caps" in result.stderr
 
 
@@ -4945,7 +4945,7 @@ def test_cli_hidden_caps_command_treats_packed_caps_as_not_global(tmp_path: Path
 
     assert result.exit_code == 0
     assert "reviewer" in result.stdout
-    assert "inline://psyches/reviewer" in result.stdout
+    assert "agents/alice/agent.too:" in result.stdout
     assert "inline" in result.stdout
     assert "agent" in result.stdout
 
@@ -4987,11 +4987,11 @@ def test_standalone_caps_list_supports_agent_prefix(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert "SKILL" in result.stdout
-    assert "REF" in result.stdout
+    assert "SOURCE" in result.stdout
     assert "FORM" in result.stdout
     assert "SCOPE" in result.stdout
     assert "reviewer" in result.stdout
-    assert "home://skills/reviewer" in result.stdout
+    assert "agents/alice/skills/reviewer" in result.stdout
 
 
 def test_standalone_caps_help_shows_agent_prefix_usage() -> None:
@@ -5110,7 +5110,7 @@ def test_standalone_caps_list_prepares_agent_once_with_progress(tmp_path: Path, 
     assert result.exit_code == 0
     assert calls == 1
     assert "reviewer" in result.stdout
-    assert "home://skills/reviewer" in result.stdout
+    assert "agents/alice/skills/reviewer" in result.stdout
     assert "Resolved 1 caps" in result.stderr
 
 
@@ -5144,7 +5144,7 @@ def test_standalone_cap_kind_list_prepares_agent_once_with_progress(tmp_path: Pa
     assert result.exit_code == 0
     assert calls == 1
     assert "reviewer" in result.stdout
-    assert "home://skills/reviewer" in result.stdout
+    assert "agents/alice/skills/reviewer" in result.stdout
     assert "Resolved 1 caps" in result.stderr
 
 
