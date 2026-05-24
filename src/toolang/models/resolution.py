@@ -478,6 +478,7 @@ def _target_from_alias_only(
     model_name = alias.model or _provider_model_name_from_ref(alias.provider, alias.ref)
     endpoint = alias.endpoint or default_provider_base_url(provider, environ=environ)
     scope = alias.scope or _scope_from_endpoint(endpoint) or _provider_scope(alias.provider)
+    api_key_env = alias.key_env or default_provider_api_key_env(provider)
     return ModelTarget(
         ref=alias.ref,
         provider=provider.name,
@@ -485,7 +486,7 @@ def _target_from_alias_only(
         model=model_name,
         adapter=alias.adapter or _default_provider_adapter(provider.name),
         base_url=endpoint,
-        api_key=environ.get(alias.key_env) if alias.key_env else None,
+        api_key=environ.get(api_key_env) if api_key_env else None,
         scope=scope,
         tags=alias.tags,
         headers=dict(alias.headers),

@@ -621,6 +621,37 @@ def test_model_route_can_override_provider_defaults(tmp_path: Path) -> None:
     assert target.headers == {"X-Team": "infra"}
 
 
+def test_model_alias_uses_provider_default_key_env(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    (toolang_root / "agents" / "alice").mkdir(parents=True, exist_ok=True)
+    (toolang_root / "config.toml").write_text(
+        '[models.aliases.qwen]\n'
+        'ref = "qwen/qwen3-coder"\n'
+        'provider = "openrouter"\n',
+        encoding="utf-8",
+    )
+    provider = _FakeModelProvider(
+        name="openrouter",
+        models=(),
+        default_base_url="https://openrouter.ai/api/v1",
+        default_api_key_env="OPENROUTER_API_KEY",
+    )
+    context = SimpleNamespace(
+        model_providers={"openrouter": provider},
+        model_aliases=load_model_aliases(toolang_root, "alice"),
+        default_models=(),
+        model_environ={"OPENROUTER_API_KEY": "secret"},
+    )
+
+    target = resolve_model(context, selector="qwen")
+
+    assert target.ref == "qwen/qwen3-coder"
+    assert target.provider == "openrouter"
+    assert target.model == "qwen/qwen3-coder"
+    assert target.base_url == "https://openrouter.ai/api/v1"
+    assert target.api_key == "secret"
+
+
 def test_model_alias_reports_missing_key_env(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     (toolang_root / "agents" / "alice").mkdir(parents=True, exist_ok=True)
