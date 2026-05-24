@@ -236,8 +236,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             typer.Option(
                 "--filter",
                 help=(
-                    "Filter by kind, form, or scope CSV: psyche, skill, service, prompt, "
-                    "inline, cited, local, remote, global, agent."
+                    "Filter by form or scope CSV: inline, cited, local, remote, global, agent."
                 ),
             ),
         ] = None,
@@ -245,7 +244,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
         selected_agent = _context_agent(ctx)
         agent_name = selected_agent or "default"
         effective_visibility = "all" if selected_agent else "shared"
-        kind_filter, form_filter, scope_filter = _parse_cap_filter(filter_)
+        _, form_filter, scope_filter = _parse_cap_filter(filter_)
         entries = _all_cap_entries(
             _context_root(ctx),
             agent_name,
@@ -264,7 +263,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             if _entry_matches_filters(
                 entry,
                 agent_name=agent_name,
-                kind_filter=kind_filter,
+                kind_filter=None,
                 form_filter=form_filter,
                 scope_filter=scope_filter,
             )

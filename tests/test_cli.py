@@ -5021,6 +5021,18 @@ def test_standalone_caps_list_help_mentions_agent_inclusion() -> None:
     assert "agent      TEXT  Also include agent caps." in result.stdout
 
 
+def test_standalone_cap_kind_list_help_omits_kind_filters() -> None:
+    result = runner.invoke(caps_cli.app, ["skill", "list", "--help"])
+
+    assert result.exit_code == 0
+    assert "List skills." in result.stdout
+    assert "Filter by form or scope CSV" in result.stdout
+    assert "inline, cited, local" in result.stdout
+    assert "remote, global, agent" in result.stdout
+    assert "psyche, skill" not in result.stdout
+    assert "service, prompt" not in result.stdout
+
+
 def test_standalone_cap_group_help_shows_agent_prefix_usage() -> None:
     result = runner.invoke(caps_cli.app, ["psyche", "--help"])
 
