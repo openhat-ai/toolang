@@ -3890,15 +3890,13 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     )
     assert list_remote_result.exit_code == 0
     assert "SKILL" in list_remote_result.stdout
-    assert "FROM" in list_remote_result.stdout
-    assert "BINDING" in list_remote_result.stdout
-    assert "IN" in list_remote_result.stdout
-    assert "GLOBAL" in list_remote_result.stdout
+    assert "REF" in list_remote_result.stdout
+    assert "FORM" in list_remote_result.stdout
+    assert "SCOPE" in list_remote_result.stdout
     assert "DESCRIPTION" not in list_remote_result.stdout
     assert "reviewer" in list_remote_result.stdout
-    assert "configured" in list_remote_result.stdout
-    assert "agents/alice/config.toml" in list_remote_result.stdout
-    assert "N" in list_remote_result.stdout
+    assert "remote" in list_remote_result.stdout
+    assert "agent" in list_remote_result.stdout
     assert "github://acme/agents/skills/reviewer@main" in list_remote_result.stdout
 
     remove_result = _invoke_app(
@@ -3938,13 +3936,13 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     )
     assert list_result.exit_code == 0
     assert "SKILL" in list_result.stdout
-    assert "FROM" in list_result.stdout
-    assert "BINDING" in list_result.stdout
-    assert "IN" in list_result.stdout
-    assert "GLOBAL" in list_result.stdout
+    assert "REF" in list_result.stdout
+    assert "FORM" in list_result.stdout
+    assert "SCOPE" in list_result.stdout
     assert "reviewer" in list_result.stdout
-    assert "mounted" in list_result.stdout
-    assert "agents/alice/skills/reviewer/SKILL.md" in list_result.stdout
+    assert "local" in list_result.stdout
+    assert "agent" in list_result.stdout
+    assert "home://skills/reviewer" in list_result.stdout
 
 
 def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -> None:
@@ -3984,13 +3982,13 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     )
     assert list_result.exit_code == 0
     assert "SKILL" in list_result.stdout
-    assert "FROM" in list_result.stdout
-    assert "BINDING" in list_result.stdout
-    assert "IN" in list_result.stdout
-    assert "GLOBAL" in list_result.stdout
+    assert "REF" in list_result.stdout
+    assert "FORM" in list_result.stdout
+    assert "SCOPE" in list_result.stdout
     assert "reviewer" in list_result.stdout
-    assert "mounted" in list_result.stdout
-    assert "agents/alice/skills/reviewer/SKILL.md" in list_result.stdout
+    assert "local" in list_result.stdout
+    assert "agent" in list_result.stdout
+    assert "home://skills/reviewer" in list_result.stdout
 
     edited_text = (
         "---\n"
@@ -4525,13 +4523,13 @@ def test_cli_cap_commands_cover_file_backed_kinds(tmp_path: Path, monkeypatch) -
         )
         assert list_result.exit_code == 0
         assert kind.upper() in list_result.stdout
-        assert "FROM" in list_result.stdout
-        assert "BINDING" in list_result.stdout
-        assert "GLOBAL" in list_result.stdout
+        assert "REF" in list_result.stdout
+        assert "FORM" in list_result.stdout
+        assert "SCOPE" in list_result.stdout
         assert name in list_result.stdout
-        assert "mounted" in list_result.stdout
-        assert "Y" in list_result.stdout
-        assert f"{kind}s/{name}.md" in list_result.stdout
+        assert "local" in list_result.stdout
+        assert "global" in list_result.stdout
+        assert f"root://{kind}s/{name}" in list_result.stdout
 
         delete_result = runner.invoke(
             cli.app,
@@ -4710,10 +4708,10 @@ def test_cli_cap_list_with_agent_defaults_to_all_scopes(tmp_path: Path, monkeypa
     assert result.exit_code == 0
     assert "abc" in result.stdout
     assert "def" in result.stdout
-    assert "Y" in result.stdout
-    assert "N" in result.stdout
-    assert "psyches/abc.md" in result.stdout
-    assert "agents/alice/psyches/def.md" in result.stdout
+    assert "global" in result.stdout
+    assert "agent" in result.stdout
+    assert "root://psyches/abc" in result.stdout
+    assert "home://psyches/def" in result.stdout
 
 
 def test_cli_cap_list_global_filters_results(tmp_path: Path, monkeypatch) -> None:
@@ -4740,24 +4738,24 @@ def test_cli_cap_list_global_filters_results(tmp_path: Path, monkeypatch) -> Non
     )
 
     shared_result = _invoke_app(
-        ["psyche", "list", "--global", "y"],
+        ["psyche", "list", "--filter", "global"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
     assert shared_result.exit_code == 0
     assert "abc" in shared_result.stdout
     assert "def" not in shared_result.stdout
-    assert "Y" in shared_result.stdout
+    assert "global" in shared_result.stdout
 
     private_result = _invoke_app(
-        ["psyche", "list", "--global", "n"],
+        ["psyche", "list", "--filter", "agent"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
     assert private_result.exit_code == 0
     assert "abc" not in private_result.stdout
     assert "def" in private_result.stdout
-    assert "N" in private_result.stdout
+    assert "agent" in private_result.stdout
 
 
 def test_cli_cap_list_concept_filters_results(tmp_path: Path, monkeypatch) -> None:
@@ -4782,7 +4780,7 @@ def test_cli_cap_list_concept_filters_results(tmp_path: Path, monkeypatch) -> No
     )
 
     result = _invoke_app(
-        ["skill", "list", "--binding", "configured", "--global", "n"],
+        ["skill", "list", "--filter", "remote,agent"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -4790,8 +4788,20 @@ def test_cli_cap_list_concept_filters_results(tmp_path: Path, monkeypatch) -> No
     assert result.exit_code == 0
     assert "remote-reviewer" in result.stdout
     assert "local-reviewer" not in result.stdout
-    assert "configured" in result.stdout
+    assert "remote" in result.stdout
+    assert "agent" in result.stdout
     assert "github://acme/agents/skills/remote-reviewer@main" in result.stdout
+
+    union_result = _invoke_app(
+        ["skill", "list", "--filter", "local,remote,agent"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert union_result.exit_code == 0
+    assert "remote-reviewer" in union_result.stdout
+    assert "local-reviewer" in union_result.stdout
+    assert "agent" in union_result.stdout
 
 
 def test_cli_hidden_caps_command_lists_all_cap_kinds(tmp_path: Path) -> None:
@@ -4822,18 +4832,17 @@ def test_cli_hidden_caps_command_lists_all_cap_kinds(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "KIND" in result.stdout
     assert "CAP" in result.stdout
-    assert "FROM" in result.stdout
-    assert "BINDING" in result.stdout
-    assert "IN" in result.stdout
-    assert "GLOBAL" in result.stdout
+    assert "REF" in result.stdout
+    assert "FORM" in result.stdout
+    assert "SCOPE" in result.stdout
     assert "psyche" in result.stdout
     assert "skill" in result.stdout
     assert "style" in result.stdout
     assert "reviewer" in result.stdout
-    assert "Y" in result.stdout
-    assert "N" in result.stdout
-    assert "psyches/style.md" in result.stdout
-    assert "agents/alice/skills/reviewer/SKILL.md" in result.stdout
+    assert "global" in result.stdout
+    assert "agent" in result.stdout
+    assert "root://psyches/style" in result.stdout
+    assert "home://skills/reviewer" in result.stdout
 
 
 def test_cli_hidden_caps_list_collects_all_kinds_once(tmp_path: Path, monkeypatch) -> None:
@@ -4877,7 +4886,7 @@ def test_cli_hidden_caps_list_prepares_agent_once_with_progress(tmp_path: Path) 
 
     assert result.exit_code == 0
     assert "reviewer" in result.stdout
-    assert "agents/alice/skills/reviewer/SKILL.md" in result.stdout
+    assert "home://skills/reviewer" in result.stdout
     assert "Resolved 1 caps" in result.stderr
 
 
@@ -4901,7 +4910,7 @@ def test_cli_hidden_caps_command_supports_concept_filters(tmp_path: Path) -> Non
     )
 
     result = _invoke_app(
-        ["caps", "list", "--kind", "skill", "--binding", "mounted", "--global", "n"],
+        ["caps", "list", "--filter", "local,agent"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -4909,7 +4918,8 @@ def test_cli_hidden_caps_command_supports_concept_filters(tmp_path: Path) -> Non
     assert result.exit_code == 0
     assert "reviewer" in result.stdout
     assert "style" not in result.stdout
-    assert "mounted" in result.stdout
+    assert "local" in result.stdout
+    assert "agent" in result.stdout
 
 
 def test_cli_hidden_caps_command_treats_packed_caps_as_not_global(tmp_path: Path) -> None:
@@ -4926,7 +4936,7 @@ def test_cli_hidden_caps_command_treats_packed_caps_as_not_global(tmp_path: Path
     )
 
     result = _invoke_app(
-        ["caps", "list", "--global", "n"],
+        ["caps", "list", "--filter", "agent"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -4934,8 +4944,8 @@ def test_cli_hidden_caps_command_treats_packed_caps_as_not_global(tmp_path: Path
     assert result.exit_code == 0
     assert "reviewer" in result.stdout
     assert "inline://psyches/reviewer" in result.stdout
-    assert "defined" in result.stdout
-    assert "N" in result.stdout
+    assert "inline" in result.stdout
+    assert "agent" in result.stdout
 
 
 def test_cli_hidden_caps_command_supports_agent_prefix_shortcut(monkeypatch) -> None:
@@ -4968,20 +4978,18 @@ def test_standalone_caps_list_supports_agent_prefix(tmp_path: Path) -> None:
     )
 
     result = _invoke_caps_app(
-        ["--root", str(toolang_root), "list", "--kind", "skill"],
+        ["--root", str(toolang_root), "skill", "list"],
         prefix_agent="alice",
         env={},
     )
 
     assert result.exit_code == 0
-    assert "KIND" in result.stdout
-    assert "CAP" in result.stdout
-    assert "FROM" in result.stdout
-    assert "BINDING" in result.stdout
-    assert "GLOBAL" in result.stdout
-    assert "skill" in result.stdout
+    assert "SKILL" in result.stdout
+    assert "REF" in result.stdout
+    assert "FORM" in result.stdout
+    assert "SCOPE" in result.stdout
     assert "reviewer" in result.stdout
-    assert "agents/alice/skills/reviewer/SKILL.md" in result.stdout
+    assert "home://skills/reviewer" in result.stdout
 
 
 def test_standalone_caps_help_shows_agent_prefix_usage() -> None:
@@ -5001,6 +5009,12 @@ def test_standalone_caps_list_help_mentions_agent_inclusion() -> None:
     assert result.exit_code == 0
     assert "List caps." in result.stdout
     assert "caps [AGENT] list [OPTIONS]" in result.stdout
+    assert "--filter" in result.stdout
+    assert "inline, cited, local" in result.stdout
+    assert "remote, global, agent" in result.stdout
+    assert "--kind" not in result.stdout
+    assert "--binding" not in result.stdout
+    assert "--global" not in result.stdout
     assert "agent      TEXT  Also include agent caps." in result.stdout
 
 
@@ -5081,7 +5095,7 @@ def test_standalone_caps_list_prepares_agent_once_with_progress(tmp_path: Path, 
     assert result.exit_code == 0
     assert calls == 1
     assert "reviewer" in result.stdout
-    assert "agents/alice/skills/reviewer/SKILL.md" in result.stdout
+    assert "home://skills/reviewer" in result.stdout
     assert "Resolved 1 caps" in result.stderr
 
 
@@ -5115,7 +5129,7 @@ def test_standalone_cap_kind_list_prepares_agent_once_with_progress(tmp_path: Pa
     assert result.exit_code == 0
     assert calls == 1
     assert "reviewer" in result.stdout
-    assert "agents/alice/skills/reviewer/SKILL.md" in result.stdout
+    assert "home://skills/reviewer" in result.stdout
     assert "Resolved 1 caps" in result.stderr
 
 
@@ -5186,17 +5200,17 @@ def test_standalone_cap_kind_list_hides_cached_prepare_progress(tmp_path: Path) 
     assert second_result.stderr == ""
 
 
-def test_cli_cap_list_rejects_invalid_global_filter(tmp_path: Path) -> None:
+def test_cli_cap_list_rejects_invalid_filter(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(toolang_root), "psyche", "list", "--global", "maybe"],
+        ["--root", str(toolang_root), "psyche", "list", "--filter", "maybe"],
         env={},
     )
 
     assert result.exit_code == 1
-    assert "invalid --global value" in result.stderr
+    assert "invalid --filter value" in result.stderr
 
 
 def test_cli_version_option_exits_before_other_parsing(monkeypatch) -> None:
