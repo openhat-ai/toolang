@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import hashlib
 import io
 from pathlib import Path
 import os
 import time
 from datetime import datetime, timezone
-from typing import cast
+from typing import Any, cast
 from uuid import uuid4
 import pytest
 from typer.testing import CliRunner
@@ -15,6 +16,7 @@ from toolang import agents
 from toolang import caps
 from toolang.base.types.message import Message
 from toolang.base.types.model import ModelInfo
+from toolang.base.types.tool import ToolContext, ToolDefinition
 import toolang.cli.main as cli
 import toolang.cli.caps_main as caps_cli
 import toolang.cli.caps as caps_commands
@@ -88,6 +90,33 @@ class _FakeModelProvider:
     def list_models(self, *, environ) -> tuple[ModelInfo, ...]:
         del environ
         return self._models
+
+
+class _FakeLeafTool:
+    def __init__(self, *, name: str, description: str) -> None:
+        self.name = name
+        self._description = description
+
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(name=self.name, description=self._description)
+
+    def invoke(self, arguments: Mapping[str, Any], context: ToolContext) -> dict[str, Any]:
+        del arguments, context
+        return {}
+
+
+class _FakeLoadedTool:
+    def __init__(self, *, plugin_name: str, leaf_name: str, description: str) -> None:
+        self.plugin_name = plugin_name
+        self.leaf_tool = _FakeLeafTool(name=leaf_name, description=description)
+        self.name = f"{plugin_name}__{leaf_name}"
+
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(name=self.name, description=self.leaf_tool.definition().description)
+
+    def invoke(self, arguments: Mapping[str, Any], context: ToolContext) -> dict[str, Any]:
+        del arguments, context
+        return {}
 
 
 def test_cli_main_normalizes_agent_prefix_shortcut(monkeypatch) -> None:
@@ -2664,88 +2693,182 @@ def test_cli_info_prefers_runtime_models_for_active_agent(tmp_path: Path) -> Non
     assert "claude, gpt-5" in result.stdout
 
 
-def test_cli_plugin_list_shows_installed_plugins(monkeypatch) -> None:
+def test_cli_channel_list_shows_installed_channels(monkeypatch) -> None:
+    def fake_list_plugin_infos(*, group: str) -> list[cli.agent_up.PluginInfo]:
+        assert group == "toolang.channel"
+        return [cli.agent_up.PluginInfo(name="telegram", source="external")]
+
+    monkeypatch.setattr(cli.agent_up, "list_plugin_infos", fake_list_plugin_infos)
+
+    result = runner.invoke(cli.app, ["channel", "list"])
+
+    assert result.exit_code == 0
+    assert "CHANNEL" in result.stdout
+    assert "SOURCE" in result.stdout
+    assert "telegram" in result.stdout
+    assert "external" in result.stdout
+
+
+def test_cli_sandbox_list_shows_installed_sandboxes(monkeypatch) -> None:
+    def fake_list_plugin_infos(*, group: str) -> list[cli.agent_up.PluginInfo]:
+        assert group == "toolang.sandbox"
+        return [
+            cli.agent_up.PluginInfo(name="docker", source="external"),
+            cli.agent_up.PluginInfo(name="none", source="built-in"),
+        ]
+
+    monkeypatch.setattr(cli.agent_up, "list_plugin_infos", fake_list_plugin_infos)
+
+    result = runner.invoke(cli.app, ["sandbox", "list"])
+
+    assert result.exit_code == 0
+    assert "SANDBOX" in result.stdout
+    assert "SOURCE" in result.stdout
+    assert "docker" in result.stdout
+    assert "none" in result.stdout
+    assert "built-in" in result.stdout
+    assert "external" in result.stdout
+
+
+def test_cli_tool_list_shows_installed_tool_plugin_tools(monkeypatch) -> None:
     monkeypatch.setattr(
         cli.agent_up,
-        "load_model_providers",
-            lambda *_args: {
-            "openai": _FakeModelProvider(
-                name="openai",
-                description="Use OpenAI-hosted models.",
-                required_env=("OPENAI_API_KEY",),
-                base_url="https://api.openai.com/v1",
-                api_key_env="OPENAI_API_KEY",
-                models=(
-                    ModelInfo(
-                        ref="openai/gpt-5",
-                        provider="openai",
-                        name="gpt-5",
-                        model="gpt-5",
-                        selectors=("gpt-5", "openai/gpt-5"),
-                        adapter="responses",
-                        tools=True,
-                        streaming=True,
-                    ),
-                ),
+        "load_tool_plugins",
+        lambda *, config=None: {
+            "filesystem__read_text": _FakeLoadedTool(
+                plugin_name="filesystem",
+                leaf_name="read_text",
+                description="Read one text file.",
             ),
-            "ollama": _FakeModelProvider(
-                name="ollama",
-                description="Use local Ollama-hosted models.",
-                base_url="http://127.0.0.1:11434/v1",
-                models=(),
+            "shell__execute": _FakeLoadedTool(
+                plugin_name="shell",
+                leaf_name="execute",
+                description="Run one shell command.",
             ),
         },
     )
 
     def fake_list_plugin_infos(*, group: str) -> list[cli.agent_up.PluginInfo]:
-        infos = {
-            "toolang.model": [
-                cli.agent_up.PluginInfo(name="openai", source="built-in"),
-                cli.agent_up.PluginInfo(name="ollama", source="built-in"),
-            ],
-            "toolang.tool": [
-                cli.agent_up.PluginInfo(name="filesystem", source="built-in"),
-                cli.agent_up.PluginInfo(name="shell", source="external"),
-            ],
-            "toolang.channel": [cli.agent_up.PluginInfo(name="telegram", source="external")],
-            "toolang.sandbox": [
-                cli.agent_up.PluginInfo(name="docker", source="external"),
-                cli.agent_up.PluginInfo(name="none", source="built-in"),
-            ],
-        }
-        return list(infos[group])
+        assert group == "toolang.tool"
+        return [
+            cli.agent_up.PluginInfo(name="filesystem", source="built-in"),
+            cli.agent_up.PluginInfo(name="shell", source="external"),
+        ]
 
     monkeypatch.setattr(cli.agent_up, "list_plugin_infos", fake_list_plugin_infos)
 
-    result = runner.invoke(
-        cli.app,
-        ["plugin", "list"],
-        env={"OPENAI_API_KEY": "secret"},
-    )
+    result = runner.invoke(cli.app, ["tool", "list"])
 
     assert result.exit_code == 0
-    assert "FAMILY" in result.stdout
-    assert "NAME" in result.stdout
-    assert "SOURCE" in result.stdout
-    assert "CONFIG" in result.stdout
-    assert "model" in result.stdout
-    assert "openai" in result.stdout
-    assert "ollama" in result.stdout
-    assert "built-in" in result.stdout
-    assert "external" in result.stdout
-    assert "configured" in result.stdout
-    assert "available" in result.stdout
-    assert "base URL https://api.openai.com/v1" in result.stdout
-    assert "env OPENAI_API_KEY" in result.stdout
-    assert "1 discovered model" in result.stdout
-    assert "tool" in result.stdout
+    assert "NAMESPACE" in result.stdout
+    assert "TOOL" in result.stdout
+    assert "DESCRIPTION" in result.stdout
     assert "filesystem" in result.stdout
+    assert "read_text" in result.stdout
     assert "shell" in result.stdout
-    assert "channel" in result.stdout
-    assert "telegram" in result.stdout
-    assert "sandbox" in result.stdout
-    assert "docker" in result.stdout
-    assert "none" in result.stdout
+    assert "execute" in result.stdout
+    assert "PLUGIN" not in result.stdout
+    assert "SOURCE" not in result.stdout
+    assert "filesystem__read_text" not in result.stdout
+    assert "shell__execute" not in result.stdout
+    assert "2 tools, 2 namespaces" in result.stdout
+
+
+def test_cli_tool_list_filters_by_tool_selector(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli.agent_up,
+        "load_tool_plugins",
+        lambda *, config=None: {
+            "filesystem__read_text": _FakeLoadedTool(
+                plugin_name="filesystem",
+                leaf_name="read_text",
+                description="Read one text file.",
+            ),
+            "shell__execute": _FakeLoadedTool(
+                plugin_name="shell",
+                leaf_name="execute",
+                description="Run one shell command.",
+            ),
+        },
+    )
+    monkeypatch.setattr(
+        cli.agent_up,
+        "list_plugin_infos",
+        lambda *, group: [
+            cli.agent_up.PluginInfo(name="filesystem", source="built-in"),
+            cli.agent_up.PluginInfo(name="shell", source="external"),
+        ],
+    )
+
+    result = runner.invoke(cli.app, ["tool", "list", "--select", "shell/*"])
+
+    assert result.exit_code == 0
+    assert "shell" in result.stdout
+    assert "execute" in result.stdout
+    assert "filesystem" not in result.stdout
+    assert "read_text" not in result.stdout
+    assert "1 tool, 1 namespace" in result.stdout
+
+
+def test_cli_tool_list_filters_by_cross_namespace_tool_selector(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli.agent_up,
+        "load_tool_plugins",
+        lambda *, config=None: {
+            "filesystem__read_text": _FakeLoadedTool(
+                plugin_name="filesystem",
+                leaf_name="read_text",
+                description="Read one text file.",
+            ),
+            "shell__execute": _FakeLoadedTool(
+                plugin_name="shell",
+                leaf_name="execute",
+                description="Run one shell command.",
+            ),
+        },
+    )
+    monkeypatch.setattr(
+        cli.agent_up,
+        "list_plugin_infos",
+        lambda *, group: [
+            cli.agent_up.PluginInfo(name="filesystem", source="built-in"),
+            cli.agent_up.PluginInfo(name="shell", source="external"),
+        ],
+    )
+
+    result = runner.invoke(cli.app, ["tool", "list", "--select", "*/execute"])
+
+    assert result.exit_code == 0
+    assert "shell" in result.stdout
+    assert "execute" in result.stdout
+    assert "filesystem" not in result.stdout
+    assert "read_text" not in result.stdout
+    assert "1 tool, 1 namespace" in result.stdout
+
+
+def test_cli_tool_list_reports_no_matched_tools_for_empty_filter(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli.agent_up,
+        "load_tool_plugins",
+        lambda *, config=None: {
+            "filesystem__read_text": _FakeLoadedTool(
+                plugin_name="filesystem",
+                leaf_name="read_text",
+                description="Read one text file.",
+            ),
+        },
+    )
+    monkeypatch.setattr(
+        cli.agent_up,
+        "list_plugin_infos",
+        lambda *, group: [cli.agent_up.PluginInfo(name="filesystem", source="built-in")],
+    )
+
+    result = runner.invoke(cli.app, ["tool", "list", "--select", "shell/*"])
+
+    assert result.exit_code == 0
+    assert "No matched tools." in result.stdout
+    assert "toolang tool list --select <selector>" in result.stdout
 
 
 def test_cli_model_list_shows_discovered_models(monkeypatch) -> None:
@@ -2882,7 +3005,7 @@ def test_cli_model_list_filters_by_model_selector(monkeypatch) -> None:
 
     result = runner.invoke(
         cli.app,
-        ["model", "list", "--models", "[openrouter]"],
+        ["model", "list", "--select", "[openrouter]"],
         env={"OPENAI_API_KEY": "secret", "OPENROUTER_API_KEY": "secret"},
     )
 
@@ -2915,13 +3038,13 @@ def test_cli_model_list_reports_no_matched_models_for_empty_filter(monkeypatch) 
 
     result = runner.invoke(
         cli.app,
-        ["model", "list", "--models", "[openrouter]"],
+        ["model", "list", "--select", "[openrouter]"],
         env={"OPENAI_API_KEY": "secret"},
     )
 
     assert result.exit_code == 0
     assert "No matched models." in result.stdout
-    assert "toolang model list --models <selector>" in result.stdout
+    assert "toolang model list --select <selector>" in result.stdout
 
 
 def test_cli_model_list_filters_by_capability_selector(monkeypatch) -> None:
@@ -2960,7 +3083,7 @@ def test_cli_model_list_filters_by_capability_selector(monkeypatch) -> None:
 
     result = runner.invoke(
         cli.app,
-        ["model", "list", "--models", "[remote,streaming:y,tools=false]"],
+        ["model", "list", "--select", "[remote,streaming:y,tools=false]"],
         env={"OPENROUTER_API_KEY": "secret"},
     )
 
@@ -4549,7 +4672,7 @@ def test_cli_work_group_help_shows_required_prefix_agent() -> None:
 
 
 def test_cli_does_not_register_cap_commands() -> None:
-    for command in ("caps", "psyche", "skill", "service", "prompt"):
+    for command in ("caps", "psyche", "skill", "service", "prompt", "plugin"):
         result = runner.invoke(cli.app, [command, "--help"])
 
         assert result.exit_code != 0
@@ -4673,14 +4796,24 @@ def test_cli_run_help_mentions_how_to_select_agent() -> None:
     assert "remote URLs" in result.stdout
 
 
-def test_cli_models_option_help_is_consistent() -> None:
+def test_cli_models_option_help_is_consistent_for_run_commands() -> None:
     expected = "Limit available models. Repeat or pass CSV."
 
-    for command in (["run", "--help"], ["start", "--help"], ["model", "list", "--help"]):
+    for command in (["run", "--help"], ["start", "--help"]):
         result = runner.invoke(cli.app, command)
 
         assert result.exit_code == 0
         assert expected in result.stdout
+
+
+def test_cli_model_list_select_help() -> None:
+    result = runner.invoke(cli.app, ["model", "list", "--help"])
+
+    assert result.exit_code == 0
+    assert "--select" in result.stdout
+    assert "--models" not in result.stdout
+    assert "Select models by ref[filters], alias, or glob." in result.stdout
+    assert "or pass CSV." in result.stdout
 
 
 def test_cli_info_help_mentions_required_agent() -> None:
@@ -5338,6 +5471,10 @@ def test_cli_help_omits_cap_commands() -> None:
     assert "Show agents and their status." in result.stdout
     assert "Show agent info." in result.stdout
     assert "Run an agent in the foreground." in result.stdout
+    assert "Inspect models and model settings." in result.stdout
+    assert "Inspect available tools." in result.stdout
+    assert "Inspect available channels." in result.stdout
+    assert "Inspect available sandboxes." in result.stdout
     assert "Agent Commands" in result.stdout
     assert "Runtime Commands" in result.stdout
     assert "Runtime Components" not in result.stdout
@@ -5349,11 +5486,21 @@ def test_cli_help_omits_cap_commands() -> None:
     assert "prompt" not in result.stdout
     chore_index = result.stdout.index("chore")
     task_index = result.stdout.index("task")
-    plugin_index = result.stdout.index("plugin")
     model_index = result.stdout.index("model")
+    tool_index = result.stdout.index("tool")
+    channel_index = result.stdout.index("channel")
+    sandbox_index = result.stdout.index("sandbox")
+    assert "plugin" not in result.stdout
     assert result.stdout.index("Agent Commands") < chore_index
     assert chore_index < task_index
-    assert task_index < result.stdout.index("Runtime Commands") < plugin_index < model_index
+    assert (
+        task_index
+        < result.stdout.index("Runtime Commands")
+        < model_index
+        < tool_index
+        < channel_index
+        < sandbox_index
+    )
 
 
 def _write_roaming_program(tmp_path: Path, body_text: str, *, name: str = "demo") -> Path:

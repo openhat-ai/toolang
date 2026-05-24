@@ -25,6 +25,7 @@ from ..program import MessageBlock, ParamDecl, SourceSpan, Thunk, ThunkOverlay
 from ..state.live import LiveState
 from ..state.prepared import PreparedEntry
 from ..strategies import normalize_run_strategy_name
+from ..tools.registry import selected_tool_names, tool_ref_for_model_tool
 from .template import render_text_template
 from .db import utc_now
 from .model import resolve_model, select_model_selectors
@@ -131,7 +132,7 @@ Current task:
 {{#path}}
 - Path: {{path}}
 {{/path}}
-- Before finishing, update this task with agent_state_task_update.
+- Before finishing, update this task with agent_state__task_update.
 - Set stage=done only when the task acceptance criteria are actually complete.
 - Set stage=failed when the task is blocked, impossible, or incomplete after your attempt.
 - If this task mirrors a remote work item, follow the remote item's description and acceptance criteria. Do not mark the local task done just because you fetched or verified the remote item. For non-terminal remote statuses such as Backlog, Todo, or In Progress, keep the local stage runnable (`todo` or `running`), not `done`. Mark it done only after the remote work is complete or the remote status is terminal. Reply or comment on the remote item with the outcome when appropriate, update the remote status when supported, then set the local task stage to match the remote outcome.
@@ -441,11 +442,11 @@ def _tool_history_fact(
     call: ToolCallPart | None,
 ) -> _ToolHistoryFact | None:
     call_input = dict(call.input) if call is not None else {}
-    if result.tool_name == "service_use_init":
+    if result.tool_name == "service_use__init":
         return _service_use_init_fact(result, call_input)
-    if result.tool_name == "service_use_tool_list":
+    if result.tool_name == "service_use__tool_list":
         return _service_use_tool_list_fact(result, call_input)
-    if result.tool_name == "service_use_tool_call":
+    if result.tool_name == "service_use__tool_call":
         return _service_use_tool_call_fact(result, call_input)
     return _generic_tool_fact(result, call_input)
 
@@ -457,10 +458,10 @@ def _service_use_init_fact(
     service = _service_name(result.output, call_input)
     status = _tool_result_status(result.output)
     if status == "failed":
-        text = f"service_use_init service={service or '<unknown>'} failed: {_error_summary(result.output)}."
-        return _ToolHistoryFact(key=f"service_use_init:{service}:failed", text=text)
-    text = f"service_use_init service={service or '<unknown>'} succeeded; session is available."
-    return _ToolHistoryFact(key=f"service_use_init:{service}:success", text=text)
+        text = f"service_use__init service={service or '<unknown>'} failed: {_error_summary(result.output)}."
+        return _ToolHistoryFact(key=f"service_use__init:{service}:failed", text=text)
+    text = f"service_use__init service={service or '<unknown>'} succeeded; session is available."
+    return _ToolHistoryFact(key=f"service_use__init:{service}:success", text=text)
 
 
 def _service_use_tool_list_fact(
@@ -470,17 +471,17 @@ def _service_use_tool_list_fact(
     service = _service_name(result.output, call_input)
     status = _tool_result_status(result.output)
     if status == "failed":
-        text = f"service_use_tool_list service={service or '<unknown>'} failed: {_error_summary(result.output)}."
-        return _ToolHistoryFact(key=f"service_use_tool_list:{service}:failed", text=text)
+        text = f"service_use__tool_list service={service or '<unknown>'} failed: {_error_summary(result.output)}."
+        return _ToolHistoryFact(key=f"service_use__tool_list:{service}:failed", text=text)
     tools = _service_tool_summaries(result.output)
     if tools:
         text = (
-            f"service_use_tool_list service={service or '<unknown>'} succeeded; "
+            f"service_use__tool_list service={service or '<unknown>'} succeeded; "
             f"reuse these schemas unless stale: {_join_with_limit(tools, 5000)}."
         )
     else:
-        text = f"service_use_tool_list service={service or '<unknown>'} succeeded."
-    return _ToolHistoryFact(key=f"service_use_tool_list:{service}:success", text=text)
+        text = f"service_use__tool_list service={service or '<unknown>'} succeeded."
+    return _ToolHistoryFact(key=f"service_use__tool_list:{service}:success", text=text)
 
 
 def _service_use_tool_call_fact(
@@ -490,8 +491,8 @@ def _service_use_tool_call_fact(
     service = _optional_text(call_input.get("service"))
     service_tool = _optional_text(call_input.get("tool_name"))
     service_input = _as_mapping(call_input.get("input")) or {}
-    key_base = f"service_use_tool_call:{service}:{service_tool}:{_short_json(service_input, limit=240)}"
-    label = f"service_use_tool_call {service or '<unknown>'}.{service_tool or '<unknown>'}"
+    key_base = f"service_use__tool_call:{service}:{service_tool}:{_short_json(service_input, limit=240)}"
+    label = f"service_use__tool_call {service or '<unknown>'}.{service_tool or '<unknown>'}"
     status = _tool_result_status(result.output)
     if status == "failed":
         text = (
@@ -503,7 +504,7 @@ def _service_use_tool_call_fact(
         teams = _linear_team_summaries(result.output)
         if teams:
             text = f"{label} succeeded; known teams: {_join_with_limit(teams, 1200)}."
-            return _ToolHistoryFact(key=f"service_use_tool_call:{service}:list_teams:success", text=text)
+            return _ToolHistoryFact(key=f"service_use__tool_call:{service}:list_teams:success", text=text)
     if service_tool == "save_issue":
         issue = _linear_issue_summary(result.output)
         if issue:
@@ -958,12 +959,37 @@ def _select_tools(
     tools_base: dict[str, Tool],
     overlays: tuple[ThunkOverlay, ...],
 ) -> dict[str, Tool]:
-    names = _apply_string_overlays(tuple(tools_base), overlays)
+    names = _apply_tool_overlays(tools_base, overlays)
     return {
         name: tools_base[name]
         for name in names
         if name in tools_base
     }
+
+
+def _apply_tool_overlays(
+    tools_base: dict[str, Tool],
+    overlays: tuple[ThunkOverlay, ...],
+) -> tuple[str, ...]:
+    current = list(tools_base)
+    refs_by_model_name = {
+        name: tool_ref_for_model_tool(name, tool)
+        for name, tool in tools_base.items()
+    }
+    for overlay in overlays:
+        selectors = tuple(item for item in overlay.items if item)
+        if overlay.op == "set":
+            current = list(selected_tool_names(refs_by_model_name, selectors))
+            continue
+        if overlay.op == "add":
+            for name in selected_tool_names(refs_by_model_name, selectors):
+                if name not in current:
+                    current.append(name)
+            continue
+        if overlay.op == "remove":
+            blocked = set(selected_tool_names(refs_by_model_name, selectors))
+            current = [name for name in current if name not in blocked]
+    return tuple(current)
 
 
 def _select_entries(

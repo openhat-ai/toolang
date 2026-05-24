@@ -9,12 +9,18 @@ from ..error import ToolangError
 _TOOL_NAME_PART = re.compile(r"^[A-Za-z0-9_]+$")
 
 
+def encode_tool_name(namespace: str, tool_name: str) -> str:
+    """Return one model-facing tool name for one namespaced leaf tool."""
+
+    _require_tool_name_part(namespace, kind="namespace")
+    _require_tool_name_part(tool_name, kind="tool")
+    return f"{namespace}__{tool_name}"
+
+
 def join_tool_name(plugin_name: str, tool_name: str) -> str:
     """Return one model-facing tool name for one plugin leaf tool."""
 
-    _require_tool_name_part(plugin_name, kind="plugin")
-    _require_tool_name_part(tool_name, kind="tool")
-    return f"{plugin_name}_{tool_name}"
+    return encode_tool_name(plugin_name, tool_name)
 
 
 def _require_tool_name_part(value: str, *, kind: str) -> None:

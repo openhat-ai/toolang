@@ -37,7 +37,7 @@ from toolang.models.config import load_default_models, load_model_aliases
 
 
 class _FakeTool(Tool):
-    name = "shell_execute"
+    name = "shell__execute"
     plugin_name = "shell"
 
     def definition(self) -> ToolDefinition:
@@ -959,8 +959,8 @@ def test_responses_payload_uses_typed_input_items() -> None:
                         ToolCallPart(
                             tool_call_id="fc_1",
                             call_id="call_1",
-                            tool_name="shell_execute",
-                            tool_family="shell_execute",
+                            tool_name="shell__execute",
+                            tool_family="shell__execute",
                             input={"command": "pwd"},
                         ),
                     ),
@@ -971,8 +971,8 @@ def test_responses_payload_uses_typed_input_items() -> None:
                         ToolResultPart(
                             tool_call_id="fc_1",
                             call_id="call_1",
-                            tool_name="shell_execute",
-                            tool_family="shell_execute",
+                            tool_name="shell__execute",
+                            tool_family="shell__execute",
                             output={"ok": True, "stdout": "/tmp"},
                         ),
                     ),
@@ -998,13 +998,13 @@ def test_responses_payload_uses_typed_input_items() -> None:
             "type": "function_call",
             "id": "fc_1",
             "call_id": "call_1",
-            "name": "shell_execute",
+            "name": "shell__execute",
             "arguments": '{"command":"pwd"}',
         },
         {
             "type": "function_call_output",
             "call_id": "call_1",
-            "output": '{"ok":true,"name":"shell_execute","output":{"ok":true,"stdout":"/tmp"}}',
+            "output": '{"ok":true,"name":"shell__execute","output":{"ok":true,"stdout":"/tmp"}}',
         },
         {
             "type": "message",
@@ -1027,8 +1027,8 @@ def test_execute_run_input_reuses_provider_state_for_followups() -> None:
                         ToolCallPart(
                             tool_call_id="tool-1",
                             call_id="call-1",
-                            tool_name="shell_execute",
-                            tool_family="shell_execute",
+                            tool_name="shell__execute",
+                            tool_family="shell__execute",
                             input={"command": "pwd"},
                         ),
                     ),
@@ -1037,7 +1037,7 @@ def test_execute_run_input_reuses_provider_state_for_followups() -> None:
                     ToolCall(
                         tool_call_id="tool-1",
                         call_id="call-1",
-                        name="shell_execute",
+                        name="shell__execute",
                         input={"command": "pwd"},
                     ),
                 ),
@@ -1074,8 +1074,8 @@ def test_execute_run_input_reuses_provider_state_for_followups() -> None:
                     "type": "tool_call",
                     "tool_call_id": "tool-1",
                     "call_id": "call-1",
-                    "tool_name": "shell_execute",
-                    "tool_family": "shell_execute",
+                    "tool_name": "shell__execute",
+                    "tool_family": "shell__execute",
                     "input": {"command": "pwd"},
                 }
             ],
@@ -1087,8 +1087,8 @@ def test_execute_run_input_reuses_provider_state_for_followups() -> None:
                     "type": "tool_result",
                     "tool_call_id": "tool-1",
                     "call_id": "call-1",
-                    "tool_name": "shell_execute",
-                    "tool_family": "shell_execute",
+                    "tool_name": "shell__execute",
+                    "tool_family": "shell__execute",
                     "output": {"ok": True, "stdout": "ran:pwd"},
                 }
             ],
@@ -1107,8 +1107,8 @@ def test_execute_run_input_appends_provider_messages_for_stateless_providers() -
                         ToolCallPart(
                             tool_call_id="tool-1",
                             call_id="call-1",
-                            tool_name="shell_execute",
-                            tool_family="shell_execute",
+                            tool_name="shell__execute",
+                            tool_family="shell__execute",
                             input={"command": "pwd"},
                         ),
                     ),
@@ -1117,7 +1117,7 @@ def test_execute_run_input_appends_provider_messages_for_stateless_providers() -
                     ToolCall(
                         tool_call_id="tool-1",
                         call_id="call-1",
-                        name="shell_execute",
+                        name="shell__execute",
                         input={"command": "pwd"},
                     ),
                 ),
@@ -1153,8 +1153,8 @@ def test_execute_run_input_appends_provider_messages_for_stateless_providers() -
                     "type": "tool_call",
                     "tool_call_id": "tool-1",
                     "call_id": "call-1",
-                    "tool_name": "shell_execute",
-                    "tool_family": "shell_execute",
+                    "tool_name": "shell__execute",
+                    "tool_family": "shell__execute",
                     "input": {"command": "pwd"},
                 }
             ],
@@ -1166,8 +1166,8 @@ def test_execute_run_input_appends_provider_messages_for_stateless_providers() -
                     "type": "tool_result",
                     "tool_call_id": "tool-1",
                     "call_id": "call-1",
-                    "tool_name": "shell_execute",
-                    "tool_family": "shell_execute",
+                    "tool_name": "shell__execute",
+                    "tool_family": "shell__execute",
                     "output": {"ok": True, "stdout": "ran:pwd"},
                 }
             ],
@@ -1271,8 +1271,8 @@ def test_run_context_logs_model_and_tool_io_at_debug(caplog) -> None:
                         ToolCallPart(
                             tool_call_id="tool-1",
                             call_id="call-1",
-                            tool_name="shell_execute",
-                            tool_family="shell_execute",
+                            tool_name="shell__execute",
+                            tool_family="shell__execute",
                             input={"command": "pwd"},
                         ),
                     ),
@@ -1281,7 +1281,7 @@ def test_run_context_logs_model_and_tool_io_at_debug(caplog) -> None:
                     ToolCall(
                         tool_call_id="tool-1",
                         call_id="call-1",
-                        name="shell_execute",
+                        name="shell__execute",
                         input={"command": "pwd"},
                     ),
                 ),
@@ -1318,8 +1318,8 @@ def test_run_context_logs_model_and_tool_io_at_debug(caplog) -> None:
     assert '"command": "pwd"' in caplog.text
     assert "model call output message=" in caplog.text
     assert '"output_tokens": 7' in caplog.text
-    assert "tool call input name=shell_execute" in caplog.text
-    assert "tool call output name=shell_execute" in caplog.text
+    assert "tool call input name=shell__execute" in caplog.text
+    assert "tool call output name=shell__execute" in caplog.text
     assert '"stdout": "ran:pwd"' in caplog.text
 
 
@@ -1431,8 +1431,8 @@ def test_responses_skip_historical_tool_items_without_previous_response_id() -> 
                         ToolCallPart(
                             tool_call_id="fc_1",
                             call_id="call_1",
-                            tool_name="shell_execute",
-                            tool_family="shell_execute",
+                            tool_name="shell__execute",
+                            tool_family="shell__execute",
                             input={"command": "pwd"},
                         ),
                     ),
@@ -1443,8 +1443,8 @@ def test_responses_skip_historical_tool_items_without_previous_response_id() -> 
                         ToolResultPart(
                             tool_call_id="fc_1",
                             call_id="call_1",
-                            tool_name="shell_execute",
-                            tool_family="shell_execute",
+                            tool_name="shell__execute",
+                            tool_family="shell__execute",
                             output={"ok": True, "stdout": "/tmp"},
                         ),
                     ),
@@ -1496,8 +1496,8 @@ def test_responses_previous_response_id_replays_tool_output_without_item_id() ->
                         ToolCallPart(
                             tool_call_id="fc_1",
                             call_id="call_1",
-                            tool_name="shell_execute",
-                            tool_family="shell_execute",
+                            tool_name="shell__execute",
+                            tool_family="shell__execute",
                             input={"command": "pwd"},
                         ),
                     ),
@@ -1508,8 +1508,8 @@ def test_responses_previous_response_id_replays_tool_output_without_item_id() ->
                         ToolResultPart(
                             tool_call_id="fc_1",
                             call_id="call_1",
-                            tool_name="shell_execute",
-                            tool_family="shell_execute",
+                            tool_name="shell__execute",
+                            tool_family="shell__execute",
                             output={"ok": True, "stdout": "/tmp"},
                         ),
                     ),
@@ -1525,7 +1525,7 @@ def test_responses_previous_response_id_replays_tool_output_without_item_id() ->
         {
             "type": "function_call_output",
             "call_id": "call_1",
-            "output": '{"ok":true,"name":"shell_execute","output":{"ok":true,"stdout":"/tmp"}}',
+            "output": '{"ok":true,"name":"shell__execute","output":{"ok":true,"stdout":"/tmp"}}',
         }
     ]
 

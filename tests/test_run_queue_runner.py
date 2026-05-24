@@ -1323,8 +1323,8 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
             ToolResultPart(
                 tool_call_id="call-1",
                 call_id="call-1",
-                tool_name="service_use_tool_call",
-                tool_family="service_use_tool_call",
+                tool_name="service_use__tool_call",
+                tool_family="service_use__tool_call",
                 output={"ok": True},
             ),
         ),
@@ -3276,7 +3276,7 @@ def test_prepare_reload_refreshes_service_use_visible_services(tmp_path: Path) -
         )
 
         initial_fingerprint = context.live.fingerprint
-        service_schema = context.tools["service_use_bridge_start"].definition().parameters[
+        service_schema = context.tools["service_use__bridge_start"].definition().parameters[
             "properties"
         ]["service"]
         assert "enum" not in service_schema
@@ -3297,7 +3297,7 @@ def test_prepare_reload_refreshes_service_use_visible_services(tmp_path: Path) -
             refreshed = await _wait_for_fingerprint_change(context, initial_fingerprint)
             assert refreshed
 
-            service_schema = context.tools["service_use_bridge_start"].definition().parameters[
+            service_schema = context.tools["service_use__bridge_start"].definition().parameters[
                 "properties"
             ]["service"]
             assert service_schema["enum"] == ["linear"]
@@ -4655,7 +4655,7 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
     assert "- State: active" in instructions
     assert "- Stage: todo" in instructions
     assert f"- Path: {toolang_root / 'agents' / 'alice' / 'tasks' / 'review.md'}" in instructions
-    assert "- Before finishing, update this task with agent_state_task_update." in instructions
+    assert "- Before finishing, update this task with agent_state__task_update." in instructions
     assert "- Set stage=done only when the task acceptance criteria are actually complete." in instructions
     assert "- Set stage=failed when the task is blocked, impossible, or incomplete after your attempt." in instructions
     assert "If this task mirrors a remote work item" in instructions
@@ -4663,7 +4663,7 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
     assert "For non-terminal remote statuses such as Backlog, Todo, or In Progress" in instructions
     assert "keep the local stage runnable (`todo` or `running`), not `done`" in instructions
     assert "update the remote status when supported" in instructions
-    service_schema = bundle.tools()["service_use_bridge_start"].definition().parameters[
+    service_schema = bundle.tools()["service_use__bridge_start"].definition().parameters[
         "properties"
     ]["service"]
     assert service_schema["enum"] == ["linear"]
@@ -4739,8 +4739,8 @@ def test_pulse_marks_task_failed_when_finished_run_leaves_task_incomplete(tmp_pa
             ToolCallPart(
                 tool_call_id="tool-1",
                 call_id="call-1",
-                tool_name="service_use_bridge_start",
-                tool_family="service_use_bridge_start",
+                tool_name="service_use__bridge_start",
+                tool_family="service_use__bridge_start",
                 input={"service": "linear"},
             ),
         ),
@@ -5576,8 +5576,8 @@ def test_run_input_uses_text_history_and_prior_tool_context(tmp_path: Path) -> N
             ToolCallPart(
                 tool_call_id="tool-list-call",
                 call_id="call-list",
-                tool_name="service_use_tool_list",
-                tool_family="service_use_tool_list",
+                tool_name="service_use__tool_list",
+                tool_family="service_use__tool_list",
                 input={"service": "linear"},
             ),
         ),
@@ -5595,8 +5595,8 @@ def test_run_input_uses_text_history_and_prior_tool_context(tmp_path: Path) -> N
             ToolResultPart(
                 tool_call_id="tool-list-call",
                 call_id="call-list",
-                tool_name="service_use_tool_list",
-                tool_family="service_use_tool_list",
+                tool_name="service_use__tool_list",
+                tool_family="service_use__tool_list",
                 output={
                     "ok": True,
                     "result": {
@@ -5640,8 +5640,8 @@ def test_run_input_uses_text_history_and_prior_tool_context(tmp_path: Path) -> N
             ToolCallPart(
                 tool_call_id="empty-save-call",
                 call_id="call-save-empty",
-                tool_name="service_use_tool_call",
-                tool_family="service_use_tool_call",
+                tool_name="service_use__tool_call",
+                tool_family="service_use__tool_call",
                 input={"service": "linear", "tool_name": "save_issue"},
             ),
         ),
@@ -5659,8 +5659,8 @@ def test_run_input_uses_text_history_and_prior_tool_context(tmp_path: Path) -> N
             ToolResultPart(
                 tool_call_id="empty-save-call",
                 call_id="call-save-empty",
-                tool_name="service_use_tool_call",
-                tool_family="service_use_tool_call",
+                tool_name="service_use__tool_call",
+                tool_family="service_use__tool_call",
                 output={
                     "ok": True,
                     "result": {
@@ -5711,7 +5711,7 @@ def test_run_input_uses_text_history_and_prior_tool_context(tmp_path: Path) -> N
         {"role": "user", "parts": [{"type": "text", "text": "again"}]},
     ]
     assert "Prior Tool Results:" in instructions
-    assert "service_use_tool_list service=linear succeeded" in instructions
+    assert "service_use__tool_list service=linear succeeded" in instructions
     assert "save_issue(required: title, team; optional: description)" in instructions
     assert "list_teams(required: none; optional: none)" in instructions
     assert "title is required when creating an issue" in instructions
