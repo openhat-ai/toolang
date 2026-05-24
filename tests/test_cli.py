@@ -4626,7 +4626,7 @@ def test_cli_skill_add_help_mentions_agent_scope() -> None:
     result = runner.invoke(cli.app, ["skill", "add", "--help"])
 
     assert result.exit_code == 0
-    assert "Add a remote skill." in result.stdout
+    assert "Add a remote skill cap." in result.stdout
     assert "[AGENT] skill add" in result.stdout
 
 
@@ -4634,7 +4634,7 @@ def test_cli_skill_new_help_mentions_agent_scope() -> None:
     result = runner.invoke(cli.app, ["skill", "new", "--help"])
 
     assert result.exit_code == 0
-    assert "Create a local skill." in result.stdout
+    assert "Create a local skill cap." in result.stdout
     assert "[AGENT] skill new" in result.stdout
     assert "agent      TEXT" in result.stdout
     assert "Scope" in result.stdout
@@ -4655,7 +4655,7 @@ def test_cli_skill_remove_help_mentions_agent_scope() -> None:
     result = runner.invoke(cli.app, ["skill", "remove", "--help"])
 
     assert result.exit_code == 0
-    assert "Remove a remote skill." in result.stdout
+    assert "Remove a remote skill cap." in result.stdout
     assert "[AGENT] skill remove" in result.stdout
 
 
@@ -4663,7 +4663,7 @@ def test_cli_skill_edit_help_mentions_agent_scope() -> None:
     result = runner.invoke(cli.app, ["skill", "edit", "--help"])
 
     assert result.exit_code == 0
-    assert "Edit a local skill." in result.stdout
+    assert "Edit a local skill cap." in result.stdout
     assert "[AGENT] skill edit" in result.stdout
 
 
@@ -5051,7 +5051,7 @@ def test_standalone_cap_template_help_uses_inspect_description() -> None:
 
     assert result.exit_code == 0
     assert "caps [AGENT] psyche template [OPTIONS] [NAME]" in result.stdout
-    assert "Inspect psyche templates." in result.stdout
+    assert "Inspect psyche cap templates." in result.stdout
     assert "name      TEXT  Template name." in result.stdout
     assert "Scope" in result.stdout
     assert "agent      TEXT  Apply to this agent's caps instead of global caps." in result.stdout

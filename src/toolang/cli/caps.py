@@ -110,37 +110,37 @@ def _register_cap_kind_commands(
         ),
         CapCommandSpec(
             name="new",
-            help=lambda kind: f"Create a local {kind}.",
+            help=lambda kind: f"Create a local {kind} cap.",
             factory=_make_new_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="edit",
-            help=lambda kind: f"Edit a local {kind}.",
+            help=lambda kind: f"Edit a local {kind} cap.",
             factory=_make_edit_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="delete",
-            help=lambda kind: f"Delete a local {kind}.",
+            help=lambda kind: f"Delete a local {kind} cap.",
             factory=_make_delete_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="add",
-            help=lambda kind: f"Add a remote {kind}.",
+            help=lambda kind: f"Add a remote {kind} cap.",
             factory=_make_add_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="remove",
-            help=lambda kind: f"Remove a remote {kind}.",
+            help=lambda kind: f"Remove a remote {kind} cap.",
             factory=_make_remove_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="template",
-            help=lambda kind: f"Inspect {kind} templates.",
+            help=lambda kind: f"Inspect {kind} cap templates.",
             factory=_make_template_command,
         ),
     )
