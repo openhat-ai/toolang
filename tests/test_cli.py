@@ -3897,7 +3897,7 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     assert "reviewer" in list_remote_result.stdout
     assert "remote" in list_remote_result.stdout
     assert "agent" in list_remote_result.stdout
-    assert "github://acme/agents/skills/reviewer@main" in list_remote_result.stdout
+    assert "https://github.com/acme/agents/tree/main/skills/reviewer" in list_remote_result.stdout
 
     remove_result = _invoke_app(
         ["skill", "remove", "reviewer"],
@@ -3945,7 +3945,7 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     assert "agents/alice/skills/reviewer" in list_result.stdout
 
 
-def test_cli_cap_remote_list_shows_canonical_source_ref(tmp_path: Path, monkeypatch) -> None:
+def test_cli_cap_remote_list_shows_accessible_source_url(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
@@ -3971,8 +3971,35 @@ def test_cli_cap_remote_list_shows_canonical_source_ref(tmp_path: Path, monkeypa
     )
     assert list_result.exit_code == 0
     assert "SOURCE" in list_result.stdout
-    assert "github://acme/agents/skills/reviewer@main" in list_result.stdout
-    assert "https://github.com/acme/agents" not in list_result.stdout
+    assert "https://github.com/acme/agents/tree/main/skills/reviewer" in list_result.stdout
+    assert "github://acme/agents/skills/reviewer@main" not in list_result.stdout
+
+
+def test_cli_cap_remote_file_list_uses_github_blob_url(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        caps,
+        "_remote_materialized_files",
+        lambda *, relative_entry_path, kind, name, ref, progress=None: {
+            str(relative_entry_path): b"Prefer concise answers.\n"
+        },
+    )
+
+    add_result = _invoke_app(
+        ["psyche", "add", "github://acme/agents/psyches/concise.md@main"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    assert add_result.exit_code == 0
+
+    list_result = _invoke_app(
+        ["psyche", "list"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    assert list_result.exit_code == 0
+    assert "https://github.com/acme/agents/blob/main/psyches/concise.md" in list_result.stdout
 
 
 def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -> None:
@@ -4820,7 +4847,7 @@ def test_cli_cap_list_concept_filters_results(tmp_path: Path, monkeypatch) -> No
     assert "local-reviewer" not in result.stdout
     assert "remote" in result.stdout
     assert "agent" in result.stdout
-    assert "github://acme/agents/skills/remote-reviewer@main" in result.stdout
+    assert "https://github.com/acme/agents/tree/main/skills/remote-reviewer" in result.stdout
 
     union_result = _invoke_app(
         ["skill", "list", "--filter", "local,remote,agent"],
@@ -5211,7 +5238,7 @@ def test_standalone_cap_kind_list_summarizes_updated_remote_caps(tmp_path: Path,
 
     assert result.exit_code == 0
     assert "review" in result.stdout
-    assert "github://acme/agents/skills/review@main" in result.stdout
+    assert "https://github.com/acme/agents/tree/main/skills/review" in result.stdout
     assert "Resolved 1 caps" in result.stderr
     assert "Updated 1 caps" in result.stderr
 

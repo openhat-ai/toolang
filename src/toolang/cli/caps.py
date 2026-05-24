@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal, cast
+from urllib.parse import quote
 
 import click
 import typer
@@ -599,12 +600,30 @@ def _entry_matches_filters(
 def _entry_source(entry: PreparedEntry, *, agent_name: str) -> str:
     form = _entry_form(entry)
     if form in {"cited", "remote"}:
-        return cap_store.entry_ref(entry, agent_name=agent_name)
+        return _external_source_url(cap_store.entry_ref(entry, agent_name=agent_name), entry=entry)
     source = cap_store.entry_definition_file(entry)
     if form == "inline":
         line = cap_store.entry_line(entry)
         return f"{source}:{line}" if line is not None else source
     return source
+
+
+def _external_source_url(ref: str, *, entry: PreparedEntry) -> str:
+    if not ref.startswith("github://"):
+        return ref
+    body = ref.removeprefix("github://")
+    try:
+        repo_ref, rev = body.rsplit("@", 1)
+        owner, repo, path = repo_ref.split("/", 2)
+    except ValueError:
+        return ref
+    if not owner or not repo or not path or not rev:
+        return ref
+    view = "blob" if entry.shape == "file" else "tree"
+    return (
+        f"https://github.com/{quote(owner, safe='')}/{quote(repo, safe='')}"
+        f"/{view}/{quote(rev, safe='/')}/{quote(path, safe='/')}"
+    )
 
 
 def _entry_form(entry: PreparedEntry) -> CapForm:
