@@ -3897,6 +3897,13 @@ def test_prepare_materializes_remote_skill_from_program_use(tmp_path: Path, monk
     assert entry.source.path == "agents/alice/agent.too"
     assert entry.source.line == 3
     assert live.caps == ("agents/alice/.caps/cited/skills/fund/SKILL.md",)
+    lock_data = json.loads(
+        (toolang_root / "agents" / "alice" / ".caps" / "lock.json").read_text(encoding="utf-8")
+    )
+    program = cast(dict[str, object], cast(dict[str, object], lock_data["prepared"])["program"])
+    uses = cast(list[dict[str, object]], program["uses"])
+    assert uses[0]["cap"] == 0
+    assert "prepared" not in uses[0]
 
 
 def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None:
@@ -3966,6 +3973,17 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
         "agents/alice/.caps/inline/psyches/reviewer.md",
         "agents/alice/.caps/inline/services/github.md",
     )
+    lock_data = json.loads(
+        (toolang_root / "agents" / "alice" / ".caps" / "lock.json").read_text(encoding="utf-8")
+    )
+    program = cast(dict[str, object], cast(dict[str, object], lock_data["prepared"])["program"])
+    program_caps = cast(list[dict[str, object]], program["caps"])
+    assert {item["name"]: item["cap"] for item in program_caps} == {
+        "github": 2,
+        "reviewer": 1,
+        "summarize": 0,
+    }
+    assert all("prepared" not in item for item in program_caps)
 
     context = _build_context(
         toolang_root=toolang_root,
@@ -4049,6 +4067,9 @@ def test_prepare_builds_program_into_private_lock(tmp_path: Path) -> None:
 
     durable = scan_durable_state(toolang_root, "alice")
     prepared = watch.build_prepared_state(durable)
+    lock_data = json.loads(
+        (toolang_root / "agents" / "alice" / ".caps" / "lock.json").read_text(encoding="utf-8")
+    )
 
     assert prepared.program.agent_name == "alice"
     assert prepared.program.source_path == "agents/alice/agent.too"
@@ -4058,6 +4079,20 @@ def test_prepare_builds_program_into_private_lock(tmp_path: Path) -> None:
     assert thunks[0]["name"] == "main"
     program_snapshot = cast(dict[str, object], prepared.private_lock.to_snapshot()["program"])
     assert program_snapshot["agent_name"] == "alice"
+    assert lock_data["schema"] == 1
+    assert "visibility" not in lock_data
+    assert "entries" not in lock_data
+    lock_program = cast(dict[str, object], cast(dict[str, object], lock_data["prepared"])["program"])
+    assert list(lock_program) == [
+        "source",
+        "source_text",
+        "body_text",
+        "uses",
+        "structs",
+        "instructs",
+        "caps",
+        "thunks",
+    ]
 
 
 def test_prepare_skips_shared_caps_dir_without_root_inputs(tmp_path: Path) -> None:

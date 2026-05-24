@@ -153,12 +153,14 @@ A global lock uses `config.toml` and `skills/pdf/SKILL.md`.
   "prepared": {
     "program": {
       "source": "program",
+      "source_text": "agent alice\n\nuse skill github://coinbase/agentic-wallet-skills/skills/fund@<commit-sha>\n",
+      "body_text": "use skill github://coinbase/agentic-wallet-skills/skills/fund@<commit-sha>\n",
       "uses": [
         {
           "kind": "skill",
           "ref": "github://coinbase/agentic-wallet-skills/skills/fund@<commit-sha>",
           "line": 12,
-          "prepared": 2
+          "cap": 2
         }
       ],
       "structs": [
@@ -193,7 +195,7 @@ A global lock uses `config.toml` and `skills/pdf/SKILL.md`.
           "kind": "prompt",
           "name": "summary",
           "line": 8,
-          "prepared": 1
+          "cap": 1
         }
       ],
       "thunks": [
@@ -451,6 +453,8 @@ Program fields are:
 | Field | Meaning |
 | --- | --- |
 | `source` | Always `program`, referring to `sources.program` |
+| `source_text` | Full prepared program source text |
+| `body_text` | Program body after the optional agent header and shebang are removed |
 | `uses` | Program `use` items |
 | `structs` | Program `struct` items |
 | `instructs` | Top-level `instruct` items |
@@ -459,10 +463,10 @@ Program fields are:
 
 Program cap items use `caps`, not `declarations` or `definitions`, because the
 collection specifically describes program-level cap items. Each item may point
-to the corresponding runtime cap with `prepared`, an index into
+to the corresponding runtime cap with `cap`, an index into
 `prepared.caps`.
 
-Program `use` items may also point to the cited prepared cap with `prepared`,
+Program `use` items may also point to the cited prepared cap with `cap`,
 an index into `prepared.caps`.
 
 Thunk fields follow grammar names:

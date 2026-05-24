@@ -9,7 +9,18 @@ import shlex
 from re import Match
 
 from ..agents import agent_program_path
-from ..program import DeclBlock, MessageBlock, ParamDecl, Program, SourceSpan, Thunk, ThunkOverlay, parse
+from ..program import (
+    DeclBlock,
+    MessageBlock,
+    ParamDecl,
+    Program,
+    SourceSpan,
+    StructDecl,
+    Thunk,
+    ThunkOverlay,
+    UseDecl,
+    parse,
+)
 from .durable import DurableState
 from toolang.base.error import ToolangError
 
@@ -44,6 +55,20 @@ class PreparedProgram:
             "thunks": [_thunk_to_data(item) for item in _program_thunks(program)],
         }
 
+    def to_lock_data(self) -> dict[str, object]:
+        program = _parse_body_text(self.body_text)
+        line_offset = _body_line_offset(source_text=self.source_text, body_text=self.body_text)
+        return {
+            "source": "program",
+            "source_text": self.source_text,
+            "body_text": self.body_text,
+            "uses": [_use_to_lock_data(item, line_offset=line_offset) for item in program.uses],
+            "structs": [_struct_to_lock_data(item, line_offset=line_offset) for item in program.structs],
+            "instructs": [],
+            "caps": [_decl_to_lock_data(item, line_offset=line_offset) for item in program.declarations],
+            "thunks": [_thunk_to_lock_data(item, line_offset=line_offset) for item in _program_thunks(program)],
+        }
+
     def fingerprint(self) -> str:
         payload = json.dumps(
             self.to_data(),
@@ -56,8 +81,8 @@ class PreparedProgram:
     @classmethod
     def from_data(cls, data: dict[str, object]) -> "PreparedProgram":
         return cls(
-            agent_name=str(data["agent_name"]),
-            source_path=str(data["source_path"]),
+            agent_name=str(data.get("agent_name", "")),
+            source_path=str(data.get("source_path", "")),
             source_text=str(data["source_text"]),
             body_text=str(data["body_text"]),
         )
@@ -189,6 +214,18 @@ def _program_thunks(program: Program) -> tuple[Thunk, ...]:
     if program.thunks:
         return tuple(program.thunks)
     return (_default_thunk(),)
+
+
+def _body_line_offset(*, source_text: str, body_text: str) -> int:
+    body_lines = body_text.splitlines()
+    if not body_lines:
+        return 0
+    source_lines = source_text.splitlines()
+    body_len = len(body_lines)
+    for index in range(0, len(source_lines) - body_len + 1):
+        if source_lines[index : index + body_len] == body_lines:
+            return index
+    return 0
 
 
 def _default_thunk() -> Thunk:
@@ -405,6 +442,124 @@ def _message_block_to_data(block: MessageBlock) -> dict[str, object]:
         "line": block.span.line,
         "explicit": block.explicit,
     }
+
+
+def _use_to_lock_data(use: UseDecl, *, line_offset: int) -> dict[str, object]:
+    return {
+        "kind": use.kind,
+        "ref": use.reference,
+        "line": use.span.line + line_offset,
+    }
+
+
+def _struct_to_lock_data(struct: StructDecl, *, line_offset: int) -> dict[str, object]:
+    return {
+        "name": struct.name,
+        "line": struct.span.line + line_offset,
+        "fields": [
+            {
+                "name": field.name,
+                "type": _source_type_name(field.type_name),
+                "optional": False,
+                "line": field.span.line + line_offset,
+            }
+            for field in struct.fields
+        ],
+    }
+
+
+def _decl_to_lock_data(decl: DeclBlock, *, line_offset: int) -> dict[str, object]:
+    return {
+        "kind": decl.kind,
+        "name": decl.name,
+        "line": decl.span.line + line_offset,
+    }
+
+
+def _thunk_to_lock_data(thunk: Thunk, *, line_offset: int) -> dict[str, object]:
+    data: dict[str, object] = {
+        "name": _thunk_name(thunk),
+        "line": thunk.span.line + line_offset,
+        "params": _thunk_params_to_lock_data(thunk),
+        "directives": [_directive_to_lock_data(item, line_offset=line_offset) for item in thunk.overlays],
+        "blocks": [_block_to_lock_data(item, line_offset=line_offset) for item in thunk.messages],
+    }
+    if thunk.output is not None:
+        data["output"] = _source_type_name(thunk.output)
+    return data
+
+
+def _thunk_params_to_lock_data(thunk: Thunk) -> list[dict[str, object]]:
+    params: list[dict[str, object]] = []
+    if thunk.input is not None:
+        params.append(
+            {
+                "name": "input" if thunk.input.name == "_" else thunk.input.name,
+                "type": "Message",
+                "optional": False,
+            }
+        )
+    params.extend(_param_to_lock_data(item) for item in thunk.params)
+    return params
+
+
+def _param_to_lock_data(param: ParamDecl) -> dict[str, object]:
+    return {
+        "name": param.name,
+        "type": _source_type_name(param.type_name or "string"),
+        "optional": param.optional,
+    }
+
+
+def _directive_to_lock_data(overlay: ThunkOverlay, *, line_offset: int) -> dict[str, object]:
+    return {
+        "key": _directive_key(overlay.kind),
+        "op": _directive_op(overlay.op),
+        "values": list(overlay.items),
+        "line": overlay.span.line + line_offset,
+    }
+
+
+def _block_to_lock_data(block: MessageBlock, *, line_offset: int) -> dict[str, object]:
+    data: dict[str, object] = {
+        "kind": block.kind,
+        "line": block.span.line + line_offset,
+    }
+    if block.text in {"default", "none"}:
+        data["value"] = block.text
+    else:
+        data["content"] = block.text
+    if not block.explicit:
+        data["explicit"] = False
+    return data
+
+
+def _directive_key(kind: str) -> str:
+    if kind == "model":
+        return "models"
+    return f"{kind}s"
+
+
+def _directive_op(op: str) -> str:
+    return {"set": "=", "add": "+=", "remove": "-="}[op]
+
+
+def _source_type_name(type_name: str | None) -> str:
+    if not type_name:
+        return "Text"
+    suffix = "[]" if type_name.endswith("[]") else ""
+    base = type_name[:-2] if suffix else type_name
+    aliases = {
+        "string": "Text",
+        "text": "Text",
+        "number": "Number",
+        "boolean": "Boolean",
+        "json": "Json",
+        "message": "Message",
+        "path": "Path",
+        "artifact": "Artifact",
+    }
+    return f"{aliases.get(base, base)}{suffix}"
 
 
 def _default_span() -> SourceSpan:

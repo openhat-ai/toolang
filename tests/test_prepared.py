@@ -13,27 +13,58 @@ def test_load_shared_lock_reads_form_source_entries(tmp_path: Path) -> None:
     (prepared_dir / "lock.json").write_text(
         json.dumps(
             {
-                "visibility": "shared",
-                "updated_at": "2026-04-18T00:00:00Z",
-                "fingerprint": "abc",
-                "input_fingerprint": "input",
-                "entries": [
-                    {
-                        "kind": "skill",
-                        "name": "pdf-processing",
-                        "shape": "dir",
-                        "ref": "github://by3gus/agents/skills/pdf-processing@main",
-                        "path": ".caps/remote/skills/pdf-processing/SKILL.md",
-                        "source": {
-                            "origin": "remote",
-                            "form": "remote",
-                            "path": "config.toml",
-                            "updated_at": "2026-04-18T00:00:00Z",
-                            "fingerprint": "def",
-                        },
-                        "meta": {"remote": True},
+                "schema": 1,
+                "built_at": "2026-04-18T00:00:00Z",
+                "sources": {
+                    "config": {
+                        "path": "config.toml",
+                        "shape": "file",
+                        "mtime": 0,
+                        "size": 12,
+                        "fingerprint": "def",
                     }
-                ],
+                },
+                "artifacts": {
+                    "inline": {"path": ".caps/inline", "mtime": 0, "items": []},
+                    "cited": {"path": ".caps/cited", "mtime": 0, "items": []},
+                    "remote": {
+                        "path": ".caps/remote",
+                        "mtime": 0,
+                        "items": [
+                            {
+                                "path": ".caps/remote/skills/pdf-processing",
+                                "shape": "dir",
+                                "mtime": 0,
+                                "items": [
+                                    {
+                                        "path": ".caps/remote/skills/pdf-processing/SKILL.md",
+                                        "shape": "file",
+                                        "mtime": 0,
+                                        "size": 4,
+                                        "fingerprint": "abc",
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                },
+                "prepared": {
+                    "caps": [
+                        {
+                            "kind": "skill",
+                            "name": "pdf-processing",
+                            "form": "remote",
+                            "source": "config",
+                            "origin": {
+                                "ref": "github://by3gus/agents/skills/pdf-processing@main"
+                            },
+                            "artifact": 0,
+                            "object": {"meta": {"remote": True}, "content": ""},
+                        }
+                    ],
+                    "tasks": [],
+                    "chores": [],
+                },
             }
         ),
         encoding="utf-8",
