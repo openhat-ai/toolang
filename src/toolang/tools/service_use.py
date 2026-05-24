@@ -9,12 +9,6 @@ import os
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from dotenv import dotenv_values
-from mcat_cli import auth as mcat_auth
-from mcat_cli import bridge as mcat_bridge
-from mcat_cli import mcp as mcat_mcp
-from mcat_cli.util.connection_file import CURRENT_CONNECTION_VERSION, write_connection_file
-
 from toolang.base.error import ToolangError
 from toolang.base.protocols.tool import Tool, ToolPlugin
 from toolang.base.types.tool import ToolContext, ToolDefinition
@@ -60,7 +54,7 @@ class _LeafTool(Tool):
 class _ServiceUseAdapter:
     plugin_name: str
     services: Mapping[str, VisibleService]
-    connection_version: int
+    connection_version: int | None
     write_connection_file: ConnectionFileWriter
 
     def build_tools(self) -> dict[str, Tool]:
@@ -307,7 +301,7 @@ class _ServiceUseAdapter:
         return _with_service_env(
             runtime,
             lambda: _wrap_mcat_errors(
-                lambda: mcat_bridge.bridge_start(
+                lambda: _mcat_bridge().bridge_start(
                     connection_file=str(runtime.connection_path),
                     port=runtime.service.port,
                     command=list(runtime.service.command),
@@ -338,7 +332,7 @@ class _ServiceUseAdapter:
         return _with_service_env(
             runtime,
             lambda: _wrap_mcat_errors(
-                lambda: mcat_bridge.bridge_stop(connection_file=str(runtime.connection_path))
+                lambda: _mcat_bridge().bridge_stop(connection_file=str(runtime.connection_path))
             ),
         )
 
@@ -351,14 +345,14 @@ class _ServiceUseAdapter:
         _safe_unlink(runtime.session_path)
         if runtime.service.transport == "http":
             _ensure_http_connection(
-                runtime,
-                connection_version=self.connection_version,
-                write_connection_file=self.write_connection_file,
+            runtime,
+            connection_version=self.connection_version,
+            write_connection_file=self.write_connection_file,
             )
         return _with_service_env(
             runtime,
             lambda: _wrap_mcat_errors(
-                lambda: mcat_auth.run_auth(
+                lambda: _mcat_auth().run_auth(
                     endpoint=None,
                     connection_file=str(runtime.connection_path),
                     key_ref=None,
@@ -380,7 +374,7 @@ class _ServiceUseAdapter:
         return _with_service_env(
             runtime,
             lambda: _wrap_mcat_errors(
-                lambda: mcat_auth.run_auth(
+                lambda: _mcat_auth().run_auth(
                     endpoint=None,
                     connection_file=str(runtime.connection_path),
                     key_ref=None,
@@ -402,14 +396,14 @@ class _ServiceUseAdapter:
         runtime.session_path.parent.mkdir(parents=True, exist_ok=True)
         if runtime.service.transport == "http":
             _ensure_http_connection(
-                runtime,
-                connection_version=self.connection_version,
-                write_connection_file=self.write_connection_file,
+            runtime,
+            connection_version=self.connection_version,
+            write_connection_file=self.write_connection_file,
             )
         return _with_service_env(
             runtime,
             lambda: _wrap_mcat_errors(
-                lambda: mcat_mcp.init_session(
+                lambda: _mcat_mcp().init_session(
                     connection_file=str(runtime.connection_path),
                     sess_info_file=str(runtime.session_path),
                 )
@@ -425,7 +419,7 @@ class _ServiceUseAdapter:
         return _with_service_env(
             runtime,
             lambda: _wrap_mcat_errors(
-                lambda: mcat_mcp.list_tools(sess_info_file=str(runtime.session_path))
+                lambda: _mcat_mcp().list_tools(sess_info_file=str(runtime.session_path))
             ),
         )
 
@@ -439,7 +433,7 @@ class _ServiceUseAdapter:
         return _with_service_env(
             runtime,
             lambda: _wrap_mcat_errors(
-                lambda: mcat_mcp.call_tool(
+                lambda: _mcat_mcp().call_tool(
                     tool_name=tool_name,
                     arguments=payload,
                     sess_info_file=str(runtime.session_path),
@@ -455,7 +449,7 @@ class _ServiceUseAdapter:
         return _with_service_env(
             runtime,
             lambda: _wrap_mcat_errors(
-                lambda: mcat_mcp.list_resources(
+                lambda: _mcat_mcp().list_resources(
                     sess_info_file=str(runtime.session_path),
                     cursor=_optional_text(arguments.get("cursor")),
                 )
@@ -470,7 +464,7 @@ class _ServiceUseAdapter:
         return _with_service_env(
             runtime,
             lambda: _wrap_mcat_errors(
-                lambda: mcat_mcp.list_resource_templates(
+                lambda: _mcat_mcp().list_resource_templates(
                     sess_info_file=str(runtime.session_path),
                     cursor=_optional_text(arguments.get("cursor")),
                 )
@@ -486,7 +480,7 @@ class _ServiceUseAdapter:
         return _with_service_env(
             runtime,
             lambda: _wrap_mcat_errors(
-                lambda: mcat_mcp.read_resource(
+                lambda: _mcat_mcp().read_resource(
                     uri=resource_uri,
                     sess_info_file=str(runtime.session_path),
                 )
@@ -501,7 +495,7 @@ class _ServiceUseAdapter:
         return _with_service_env(
             runtime,
             lambda: _wrap_mcat_errors(
-                lambda: mcat_mcp.list_prompts(
+                lambda: _mcat_mcp().list_prompts(
                     sess_info_file=str(runtime.session_path),
                     cursor=_optional_text(arguments.get("cursor")),
                 )
@@ -518,7 +512,7 @@ class _ServiceUseAdapter:
         return _with_service_env(
             runtime,
             lambda: _wrap_mcat_errors(
-                lambda: mcat_mcp.get_prompt(
+                lambda: _mcat_mcp().get_prompt(
                     prompt_name=prompt_name,
                     arguments=payload,
                     sess_info_file=str(runtime.session_path),
@@ -532,7 +526,7 @@ class ServiceUsePlugin:
     """One service plugin backed by mcat_cli modules."""
 
     config: dict[str, Any]
-    connection_version: int
+    connection_version: int | None
     write_connection_file: ConnectionFileWriter
     name: str
     description: str | None = None
@@ -556,8 +550,8 @@ def create_tool(config: Mapping[str, Any]) -> ToolPlugin:
 
     return ServiceUsePlugin(
         config=dict(config),
-        connection_version=CURRENT_CONNECTION_VERSION,
-        write_connection_file=write_connection_file,
+        connection_version=None,
+        write_connection_file=_write_connection_file,
         name="service_use",
         description="Access visible MCP services through mcat.",
     )
@@ -638,6 +632,38 @@ def _with_service_env(runtime: ServiceRuntime, fn: Callable[[], dict[str, Any]])
         return fn()
 
 
+def _mcat_auth() -> Any:
+    from mcat_cli import auth
+
+    return auth
+
+
+def _mcat_bridge() -> Any:
+    from mcat_cli import bridge
+
+    return bridge
+
+
+def _mcat_mcp() -> Any:
+    from mcat_cli import mcp
+
+    return mcp
+
+
+def _connection_version(value: int | None) -> int:
+    if value is not None:
+        return value
+    from mcat_cli.util.connection_file import CURRENT_CONNECTION_VERSION
+
+    return cast(int, CURRENT_CONNECTION_VERSION)
+
+
+def _write_connection_file(path: str, payload: dict[str, Any]) -> None:
+    from mcat_cli.util.connection_file import write_connection_file
+
+    write_connection_file(path, payload)
+
+
 @contextmanager
 def patched_environ(values: Mapping[str, str]):
     previous = {key: os.environ.get(key) for key in values}
@@ -655,7 +681,7 @@ def patched_environ(values: Mapping[str, str]):
 def _ensure_http_connection(
     runtime: ServiceRuntime,
     *,
-    connection_version: int,
+    connection_version: int | None,
     write_connection_file: ConnectionFileWriter,
 ) -> None:
     if runtime.connection_path.exists():
@@ -664,7 +690,7 @@ def _ensure_http_connection(
     write_connection_file(
         str(runtime.connection_path),
         {
-            "version": connection_version,
+            "version": _connection_version(connection_version),
             "kind": "http",
             "endpoint": runtime.service.target,
             "key_ref": token_key_ref(runtime.token_path),
@@ -677,6 +703,8 @@ def _ensure_http_connection(
 def _service_env(home: Path, env_names: tuple[str, ...]) -> dict[str, str]:
     if not env_names:
         return {}
+    from dotenv import dotenv_values
+
     payload = {
         key: str(value)
         for key, value in dotenv_values(home / ".env").items()

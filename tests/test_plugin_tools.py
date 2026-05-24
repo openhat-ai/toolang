@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any
+
+from toolang.base.protocols.tool import Tool, ToolPlugin
+from toolang.base.utils.function_tools import create_function_tool, tool
+from toolang.tools.registry import ToolRef
 from toolang.up import PluginInfo, list_plugin_infos, list_plugin_names, load_plugin_factory, load_tool_plugins
 
 
@@ -87,23 +94,58 @@ def test_load_plugin_factory_loads_named_factory(monkeypatch) -> None:
     assert factory.__name__ == "create_echo_tool"
 
 
-def test_load_tool_plugins_uses_hyphenated_model_names(monkeypatch) -> None:
+def test_load_tool_plugins_uses_encoded_model_names(monkeypatch) -> None:
     _patch_tool_entry_points(monkeypatch)
 
     tools = load_tool_plugins()
 
-    assert "shell_execute" in tools
-    assert "web_search_search" in tools
-    assert "agent_chat_send" in tools
-    assert "agent_state_task_create" in tools
-    assert "agent_state_chore_create" in tools
-    assert "agent_state_skill_create" in tools
-    assert "agent_state_service_create" in tools
-    assert "service_use_bridge_start" in tools
-    assert "service_use_init" in tools
-    assert "service_use_auth_start" in tools
-    assert "service_use_tool_call" in tools
-    assert tools["service_use_bridge_start"].definition().name == "service_use_bridge_start"
-    assert tools["service_use_init"].definition().name == "service_use_init"
-    assert tools["service_use_auth_start"].definition().name == "service_use_auth_start"
-    assert tools["service_use_tool_call"].definition().name == "service_use_tool_call"
+    assert "shell__execute" in tools
+    assert "web_search__search" in tools
+    assert "agent_chat__send" in tools
+    assert "agent_state__task_create" in tools
+    assert "agent_state__chore_create" in tools
+    assert "agent_state__skill_create" in tools
+    assert "agent_state__service_create" in tools
+    assert "service_use__bridge_start" in tools
+    assert "service_use__init" in tools
+    assert "service_use__auth_start" in tools
+    assert "service_use__tool_call" in tools
+    assert tools["service_use__bridge_start"].definition().name == "service_use__bridge_start"
+    assert tools["service_use__init"].definition().name == "service_use__init"
+    assert tools["service_use__auth_start"].definition().name == "service_use__auth_start"
+    assert tools["service_use__tool_call"].definition().name == "service_use__tool_call"
+
+
+def test_load_tool_plugins_accepts_namespaced_plugin_keys(monkeypatch) -> None:
+    @tool(name="search", description="Search issues.")
+    def search() -> dict[str, object]:
+        return {}
+
+    @tool(name="create", description="Create issues.")
+    def create() -> dict[str, object]:
+        return {}
+
+    @dataclass(frozen=True, slots=True)
+    class Plugin(ToolPlugin):
+        name: str = "tracker"
+        description: str | None = None
+
+        def tools(self) -> Mapping[str, Tool]:
+            return {
+                "issues/search": create_function_tool(search),
+                "issues/create": create_function_tool(create),
+            }
+
+    def create_tool(config: Mapping[str, Any]) -> ToolPlugin:
+        del config
+        return Plugin()
+
+    monkeypatch.setattr(
+        "toolang.up.entry_points",
+        lambda *, group: [_FakeEntryPoint("tracker", create_tool)] if group == "toolang.tool" else [],
+    )
+
+    tools = load_tool_plugins()
+
+    assert sorted(tools) == ["issues__create", "issues__search"]
+    assert getattr(tools["issues__search"], "ref") == ToolRef(plugin="tracker", namespace="issues", name="search")

@@ -36,7 +36,7 @@ from toolang.base.types.model import ModelAlias
 from toolang.base.types.sandbox import SandboxSelector, SandboxStartRequest, SandboxState
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.base.utils.channels import bind_delivery
-from toolang.base.utils.tools import join_tool_name
+from toolang.tools.registry import ToolRef, parse_tool_registration_key
 from .config.log import (
     DEFAULT_LOG_LEVEL,
     build_uvicorn_log_config,
@@ -292,21 +292,26 @@ class _LoadedTool(Tool):
     """One model-facing tool loaded from one named plugin."""
 
     plugin_name: str
-    plugin_description: str | None
+    ref: ToolRef
     leaf_tool: Tool
 
     @property
     def name(self) -> str:
-        return join_tool_name(self.plugin_name, self.leaf_tool.name)
+        return self.ref.model_name
+
+    @property
+    def namespace(self) -> str:
+        return self.ref.namespace
+
+    @property
+    def public_name(self) -> str:
+        return self.ref.selector
 
     def definition(self) -> ToolDefinition:
         definition = self.leaf_tool.definition()
-        description = definition.description
-        if self.plugin_description and self.plugin_description not in description:
-            description = f"{self.plugin_description} {description}".strip()
         return ToolDefinition(
             name=self.name,
-            description=description,
+            description=definition.description,
             parameters=dict(definition.parameters),
         )
 
@@ -1491,18 +1496,14 @@ def load_tool_plugins(
         factory = cast(Callable[[Mapping[str, Any]], ToolPlugin], entry_point.load())
         plugin = factory(dict(plugin_config.get(entry_point.name, {})))
         for leaf_name, leaf_tool in plugin.tools().items():
-            if leaf_name != leaf_tool.name:
-                raise ValueError(
-                    f"tool plugin {plugin.name!r} returned mismatched leaf tool name: "
-                    f"{leaf_name!r} != {leaf_tool.name!r}"
-                )
+            ref = parse_tool_registration_key(plugin.name, leaf_name, leaf_tool.name)
             loaded = _LoadedTool(
                 plugin_name=plugin.name,
-                plugin_description=plugin.description,
+                ref=ref,
                 leaf_tool=leaf_tool,
             )
             if loaded.name in tools:
-                raise ValueError(f"duplicate tool name: {loaded.name}")
+                raise ValueError(f"duplicate tool name: {loaded.public_name}")
             tools[loaded.name] = loaded
     return tools
 

@@ -21,21 +21,16 @@ from typer.core import TyperCommand
 
 from .. import agents, caps as cap_store, templates, work
 from .. import up as agent_up
-from ..base.protocols.model import ModelProvider
+from ..config.plugins import load_tool_plugin_config
 from ..config.log import LoggingPlan, configure_logging, configure_logging_plan, resolve_agent_logging
 from ..execution.records import UpdateKind
-from ..models.discovery import (
-    default_provider_api_key_env,
-    default_provider_base_url,
-    missing_provider_env_vars,
-    model_infos,
-    required_provider_env_vars,
-)
 from ..models.config import load_model_aliases, load_model_provider_configs
-from ..models.errors import NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSAGE
+from ..models.errors import NO_AVAILABLE_MODELS_MESSAGE
 from ..models.resolution import DEFAULT_MODEL_SELECTOR
 from ..models.selectors import split_model_selectors
 from ..models.views import available_model_adapters, model_list_rows, model_provider_rows
+from ..tools.registry import split_tool_selectors
+from ..tools.views import tool_list_rows
 from . import invoke as cli_invoke
 from .progress import CliProgress, as_progress_sink, make_cli_progress
 from .utils import (
@@ -74,7 +69,9 @@ TOP_LEVEL_COMMANDS = frozenset(
         "list",
         "info",
         "model",
-        "plugin",
+        "tool",
+        "channel",
+        "sandbox",
         "run",
         "start",
         "stop",
@@ -731,8 +728,8 @@ def _info_models_summary(
     return DEFAULT_MODEL_SELECTOR
 
 
-plugin_app = typer.Typer(
-    help="Inspect installed plugins.",
+model_app = typer.Typer(
+    help="Inspect models and model settings.",
     add_completion=False,
     no_args_is_help=True,
     pretty_exceptions_enable=False,
@@ -740,8 +737,26 @@ plugin_app = typer.Typer(
 )
 
 
-model_app = typer.Typer(
-    help="Inspect models and settings.",
+tool_app = typer.Typer(
+    help="Inspect available tools.",
+    add_completion=False,
+    no_args_is_help=True,
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+)
+
+
+channel_app = typer.Typer(
+    help="Inspect available channels.",
+    add_completion=False,
+    no_args_is_help=True,
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+)
+
+
+sandbox_app = typer.Typer(
+    help="Inspect available sandboxes.",
     add_completion=False,
     no_args_is_help=True,
     pretty_exceptions_enable=False,
@@ -751,21 +766,22 @@ model_app = typer.Typer(
 
 @model_app.command("list", help="List available models.")
 def list_models(
-    models: Annotated[
+    select: Annotated[
         list[str] | None,
         typer.Option(
-            "--models",
-            help="Limit available models. Repeat or pass CSV.",
+            "--select",
+            help=r"Select models by ref\[filters], alias, or glob. Repeat or pass CSV.",
         ),
     ] = None,
 ) -> None:
     environ = dict(os.environ)
     root = _toolang_root(None)
-    selectors = split_model_selectors(tuple(models or ()))
+    selectors = split_model_selectors(tuple(select or ()))
     rows = _model_rows(root, environ, model_selectors=selectors)
     if not rows:
         if selectors and _model_rows(root, environ):
-            typer.echo(NO_MATCHED_MODELS_MESSAGE)
+            typer.echo("No matched models.")
+            typer.echo("Try: toolang model list --select <selector>")
         else:
             typer.echo(NO_AVAILABLE_MODELS_MESSAGE)
         return
@@ -792,14 +808,49 @@ def list_model_adapters() -> None:
     _echo_table(("ADAPTER",), rows)
 
 
-@plugin_app.command("list", help="List installed plugins.")
-def list_plugins() -> None:
+@tool_app.command("list", help="List available tools.")
+def list_tools(
+    select: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--select",
+            help="Select tools by namespace/name. Repeat or pass CSV.",
+        ),
+    ] = None,
+) -> None:
     environ = dict(os.environ)
-    rows = _plugin_rows(environ)
+    root = _toolang_root(None)
+    selectors = split_tool_selectors(tuple(select or ()))
+    rows = _tool_rows(root, environ, tool_selectors=selectors)
     if not rows:
-        typer.echo("No plugins found.")
+        if selectors and _tool_rows(root, environ):
+            typer.echo("No matched tools.")
+            typer.echo("Try: toolang tool list --select <selector>")
+        else:
+            typer.echo("No tools found.")
         return
-    _echo_table(("FAMILY", "NAME", "SOURCE", "CONFIG", "DETAILS"), rows)
+    _echo_table(("NAMESPACE", "TOOL", "DESCRIPTION"), rows)
+    typer.echo()
+    namespace_count = len({namespace for namespace, _tool, _description in rows})
+    typer.echo(f" {len(rows)} {'tool' if len(rows) == 1 else 'tools'}, {namespace_count} {'namespace' if namespace_count == 1 else 'namespaces'}")
+
+
+@channel_app.command("list", help="List installed channels.")
+def list_channels() -> None:
+    rows = _plugin_info_rows("toolang.channel")
+    if not rows:
+        typer.echo("No channels found.")
+        return
+    _echo_table(("CHANNEL", "SOURCE"), rows)
+
+
+@sandbox_app.command("list", help="List installed sandboxes.")
+def list_sandboxes() -> None:
+    rows = _plugin_info_rows("toolang.sandbox")
+    if not rows:
+        typer.echo("No sandboxes found.")
+        return
+    _echo_table(("SANDBOX", "SOURCE"), rows)
 
 
 def _model_rows(
@@ -830,77 +881,28 @@ def _model_provider_rows(root: Path, environ: dict[str, str]) -> list[tuple[str,
     )
 
 
-def _plugin_rows(environ: dict[str, str]) -> list[tuple[str, str, str, str, str]]:
-    rows: list[tuple[str, str, str, str, str]] = []
-    model_sources = _plugin_source_by_name("toolang.model")
-    for name, provider in sorted(agent_up.load_model_providers().items()):
-        rows.append(
-            (
-                "model",
-                name,
-                model_sources.get(name, _model_provider_source(provider)),
-                _model_provider_config(provider, environ=environ),
-                _model_plugin_details(provider, environ=environ),
-            )
-        )
-    for family, group in (
-        ("tool", "toolang.tool"),
-        ("channel", "toolang.channel"),
-        ("sandbox", "toolang.sandbox"),
-    ):
-        rows.extend(
-            (
-                family,
-                info.name,
-                info.source,
-                "available",
-                "Entry point is discoverable.",
-            )
-            for info in agent_up.list_plugin_infos(group=group)
-        )
-    return rows
+def _tool_rows(
+    root: Path,
+    environ: dict[str, str],
+    *,
+    tool_selectors: Sequence[str] = (),
+) -> list[tuple[str, str, str]]:
+    config = load_tool_plugin_config(root, "", environ=environ)
+    tools = agent_up.load_tool_plugins(config=config)
+    sources = _plugin_source_by_name("toolang.tool")
+    return tool_list_rows(
+        tools=tools,
+        plugin_sources=sources,
+        selectors=tool_selectors,
+    )
+
+
+def _plugin_info_rows(group: str) -> list[tuple[str, str]]:
+    return [(info.name, info.source) for info in agent_up.list_plugin_infos(group=group)]
 
 
 def _plugin_source_by_name(group: str) -> dict[str, str]:
     return {info.name: info.source for info in agent_up.list_plugin_infos(group=group)}
-
-
-def _model_provider_source(provider: ModelProvider) -> str:
-    return "built-in" if provider.__class__.__module__.startswith("toolang.") else "external"
-
-
-def _model_provider_config(
-    provider: ModelProvider,
-    *,
-    environ: dict[str, str],
-) -> str:
-    missing = missing_provider_env_vars(provider, environ=environ)
-    return "missing env" if missing else "configured"
-
-
-def _model_plugin_details(
-    provider: ModelProvider,
-    *,
-    environ: dict[str, str],
-) -> str:
-    missing = missing_provider_env_vars(provider, environ=environ)
-    required = required_provider_env_vars(provider)
-    base_url = default_provider_base_url(provider, environ=environ)
-    api_key_env = default_provider_api_key_env(provider)
-    models = model_infos(provider, environ=environ)
-    parts: list[str] = []
-    if base_url is not None:
-        parts.append(f"base URL {base_url}")
-    if required:
-        parts.append(f"env {', '.join(required)}")
-    elif api_key_env is not None:
-        parts.append(f"default auth {api_key_env}")
-    if missing:
-        parts.append(f"missing {', '.join(missing)}")
-    parts.append(f"{len(models)} discovered {'model' if len(models) == 1 else 'models'}")
-    if provider.description:
-        parts.append(provider.description)
-    return "; ".join(parts)
 
 def _append_work_update(
     toolang_root: Path,
@@ -1253,8 +1255,10 @@ def _work_location(toolang_root: Path, agent_name: str, path: Path) -> str:
     except ValueError:
         return str(path)
 
-app.add_typer(plugin_app, name="plugin", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
 app.add_typer(model_app, name="model", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
+app.add_typer(tool_app, name="tool", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
+app.add_typer(channel_app, name="channel", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
+app.add_typer(sandbox_app, name="sandbox", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
 register_work_commands()
 
 
