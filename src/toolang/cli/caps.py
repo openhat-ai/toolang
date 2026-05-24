@@ -51,7 +51,7 @@ def register_cap_commands(app: typer.Typer, *, rich_help_panel: str | None = Non
     )
     caps_app.command(
         "list",
-        help="List caps.",
+        help="List caps of all kinds.",
         cls=_OptionalPrefixAgentListCommand,
     )(_list_all_caps)
     app.add_typer(caps_app, name="caps", hidden=True)
@@ -60,7 +60,7 @@ def register_cap_commands(app: typer.Typer, *, rich_help_panel: str | None = Non
 def register_standalone_caps_commands(app: typer.Typer, *, rich_help_panel: str | None = None) -> None:
     app.command(
         "list",
-        help="List caps.",
+        help="List caps of all kinds.",
         cls=_OptionalPrefixAgentListCommand,
     )(_list_all_caps)
     _register_cap_kind_commands(
@@ -83,16 +83,16 @@ def _register_cap_kind_commands(
         "prompt": "Prompt",
     }
     cap_group_help: dict[CapKind, str] = {
-        "psyche": "Manage psyches.",
-        "skill": "Manage skills.",
-        "service": "Manage services.",
-        "prompt": "Manage prompts.",
+        "psyche": "Manage psyche caps.",
+        "skill": "Manage skill caps.",
+        "service": "Manage service caps.",
+        "prompt": "Manage prompt caps.",
     }
     cap_list_help: dict[CapKind, str] = {
-        "psyche": "List psyches.",
-        "skill": "List skills.",
-        "service": "List services.",
-        "prompt": "List prompts.",
+        "psyche": "List psyche caps.",
+        "skill": "List skill caps.",
+        "service": "List service caps.",
+        "prompt": "List prompt caps.",
     }
 
     @dataclass(frozen=True, slots=True)

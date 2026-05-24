@@ -41,7 +41,7 @@ class _PrefixAgentCommand(TyperCommand):
 
     prefix_agent_metavar = "[AGENT]"
     argument_metavar = "TEXT"
-    argument_help = "Apply to agent caps instead of global caps."
+    argument_help = "Apply to this agent's caps instead of global caps."
 
     def _real_params(self, ctx: click.Context) -> list[click.Parameter]:
         return TyperCommand.get_params(self, ctx)
@@ -99,7 +99,7 @@ class _OptionalPrefixAgentGroup(TyperGroup):
 
     prefix_agent_metavar = "[AGENT]"
     argument_metavar = "TEXT"
-    argument_help = "Apply to agent caps instead of global caps."
+    argument_help = "Apply to this agent's caps instead of global caps."
 
     def _real_params(self, ctx: click.Context) -> list[click.Parameter]:
         return TyperGroup.get_params(self, ctx)
@@ -136,7 +136,7 @@ class _OptionalPrefixAgentCommand(_PrefixAgentCommand):
 
 
 class _OptionalPrefixAgentListCommand(_OptionalPrefixAgentCommand):
-    argument_help = "Also include agent caps."
+    argument_help = "Also include this agent's caps."
 
 
 class _RequiredPrefixAgentCommand(_PrefixAgentCommand):
