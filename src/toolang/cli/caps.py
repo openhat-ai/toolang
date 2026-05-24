@@ -53,7 +53,7 @@ def register_cap_commands(app: typer.Typer, *, rich_help_panel: str | None = Non
     )
     caps_app.command(
         "list",
-        help="List all available caps.",
+        help="List caps.",
         cls=_OptionalPrefixAgentCommand,
     )(_list_all_caps)
     app.add_typer(caps_app, name="caps", hidden=True)
@@ -62,7 +62,7 @@ def register_cap_commands(app: typer.Typer, *, rich_help_panel: str | None = Non
 def register_standalone_caps_commands(app: typer.Typer, *, rich_help_panel: str | None = None) -> None:
     app.command(
         "list",
-        help="List available caps.",
+        help="List caps.",
         cls=_OptionalPrefixAgentCommand,
     )(_list_all_caps)
     _register_cap_kind_commands(
@@ -91,10 +91,10 @@ def _register_cap_kind_commands(
         "prompt": "Manage prompts.",
     }
     cap_list_help: dict[CapKind, str] = {
-        "psyche": "List available psyches.",
-        "skill": "List available skills.",
-        "service": "List available services.",
-        "prompt": "List available prompts.",
+        "psyche": "List psyches.",
+        "skill": "List skills.",
+        "service": "List services.",
+        "prompt": "List prompts.",
     }
 
     @dataclass(frozen=True, slots=True)
@@ -520,10 +520,13 @@ def _make_template_command(kind: CapKind, title: str) -> Callable[..., None]:
     del title
 
     def template(
-        template_name: Annotated[str | None, typer.Argument(help="Template name", hidden=True)] = None,
+        name: Annotated[
+            str | None,
+            typer.Argument(help="Template name", metavar="NAME", hidden=True),
+        ] = None,
     ) -> None:
-        if template_name is not None:
-            _echo_block(templates.load_template(kind, template_name).raw_text.rstrip("\n"))
+        if name is not None:
+            _echo_block(templates.load_template(kind, name).raw_text.rstrip("\n"))
             return
         specs = templates.list_templates(kind)
         if not specs:

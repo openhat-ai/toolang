@@ -4640,14 +4640,16 @@ def test_cli_skill_new_help_mentions_agent_scope() -> None:
     assert "[AGENT] skill new" in result.stdout
     assert "agent      TEXT" in result.stdout
     assert "Scope" in result.stdout
-    assert "Operate on this agent instead of globally." in result.stdout
+    assert "Apply to agent caps instead of global caps." in result.stdout
 
 
 def test_cli_skill_template_help_shows_plain_text_metavar() -> None:
     result = runner.invoke(cli.app, ["skill", "template", "--help"])
 
     assert result.exit_code == 0
-    assert "template      TEXT" in result.stdout
+    assert "Usage:" in result.stdout
+    assert "[AGENT] skill template [OPTIONS] [NAME]" in result.stdout
+    assert "name      TEXT" in result.stdout
     assert "Template name." in result.stdout
 
 
@@ -4671,7 +4673,7 @@ def test_cli_skill_list_help_mentions_agent_scope_concisely() -> None:
     result = runner.invoke(cli.app, ["skill", "list", "--help"])
 
     assert result.exit_code == 0
-    assert "List available skills." in result.stdout
+    assert "List skills." in result.stdout
     assert "[AGENT] skill list" in result.stdout
 
 
@@ -4988,7 +4990,7 @@ def test_standalone_caps_help_shows_agent_prefix_usage() -> None:
     assert "Manage caps — composable agent primitives." in result.stdout
     assert "caps [AGENT] [OPTIONS] COMMAND [ARGS]..." in result.stdout
     assert "Scope" in result.stdout
-    assert "agent      TEXT  Operate on this agent instead of globally." in result.stdout
+    assert "agent      TEXT  Apply to agent caps instead of global caps." in result.stdout
     assert "--agent" not in result.stdout
 
 
@@ -4999,7 +5001,9 @@ def test_standalone_cap_group_help_shows_agent_prefix_usage() -> None:
     assert "caps [AGENT] psyche [OPTIONS] COMMAND [ARGS]..." in result.stdout
     assert "caps [AGENT] TEXT psyche" not in result.stdout
     assert "Scope" in result.stdout
-    assert "agent      TEXT  Operate on this agent instead of globally." in result.stdout
+    assert "Manage psyches." in result.stdout
+    assert "List psyches." in result.stdout
+    assert "agent      TEXT  Apply to agent caps instead of global caps." in result.stdout
     assert "--agent" not in result.stdout
 
 
@@ -5007,9 +5011,11 @@ def test_standalone_cap_template_help_uses_inspect_description() -> None:
     result = runner.invoke(caps_cli.app, ["psyche", "template", "--help"])
 
     assert result.exit_code == 0
+    assert "caps [AGENT] psyche template [OPTIONS] [NAME]" in result.stdout
     assert "Inspect psyche templates." in result.stdout
+    assert "name      TEXT  Template name." in result.stdout
     assert "Scope" in result.stdout
-    assert "agent      TEXT  Operate on this agent instead of globally." in result.stdout
+    assert "agent      TEXT  Apply to agent caps instead of global caps." in result.stdout
 
 
 def test_standalone_caps_main_supports_agent_prefix(monkeypatch) -> None:
