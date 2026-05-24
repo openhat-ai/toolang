@@ -891,8 +891,7 @@ def _expanded_run_message(message: Message, *, input_text: str) -> Message:
 
 
 def _run_tools_base(context: UptimeContext, run: RunBinding) -> dict[str, Tool]:
-    if run.origin == "script":
-        return {}
+    del run
     return context.tools
 
 

@@ -386,9 +386,16 @@ def info_agent(
 def run_agent(
     ctx: typer.Context,
     agent: str | None = typer.Argument(None, help="Agent selector", hidden=True),
-    sandbox: Annotated[
-        str | None,
-        typer.Option(help="Sandbox to use: none or <driver>[:target]."),
+    features: Annotated[
+        list[str] | None,
+        typer.Option("--enable", help="Runtime feature to enable. Repeat or pass CSV."),
+    ] = None,
+    tools: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--tools",
+            help="Limit available tools. Repeat or pass CSV.",
+        ),
     ] = None,
     models: Annotated[
         list[str] | None,
@@ -397,12 +404,12 @@ def run_agent(
             help="Limit available models. Repeat or pass CSV.",
         ),
     ] = None,
-    features: Annotated[
-        list[str] | None,
-        typer.Option("--feature", help="Runtime feature to enable. Repeat or pass CSV."),
+    sandbox: Annotated[
+        str | None,
+        typer.Option(help="Sandbox to use: none or <driver>[:target]."),
     ] = None,
-    port: Annotated[int | None, typer.Option(help="Port to listen on.")] = None,
     host: Annotated[str, typer.Option(help="Host interface to bind.")] = "127.0.0.1",
+    port: Annotated[int | None, typer.Option(help="Port to listen on.")] = None,
     dev: Annotated[
         Path | None,
         typer.Option(
@@ -431,6 +438,7 @@ def run_agent(
                 target,
                 sandbox=sandbox,
                 models=models,
+                tools=tools,
                 features=normalized_features,
                 port=port,
                 host=host,
@@ -476,6 +484,7 @@ def _resolve_runtime_startup(
     *,
     sandbox: str | None,
     models: list[str] | None,
+    tools: list[str] | None,
     features: list[str] | None,
     port: int | None,
     host: str,
@@ -509,6 +518,7 @@ def _resolve_runtime_startup(
         port=port,
         sandbox=sandbox,
         models=models,
+        tools=tools,
         dev=dev,
         feature_names=features,
         log_spec=log_plan.spec,
@@ -534,9 +544,16 @@ def _resolve_runtime_startup(
 def start_agent(
     ctx: typer.Context,
     agent: str | None = typer.Argument(None, help="Agent name", hidden=True),
-    sandbox: Annotated[
-        str | None,
-        typer.Option(help="Sandbox to use: none or <driver>[:target]."),
+    features: Annotated[
+        list[str] | None,
+        typer.Option("--enable", help="Runtime feature to enable. Repeat or pass CSV."),
+    ] = None,
+    tools: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--tools",
+            help="Limit available tools. Repeat or pass CSV.",
+        ),
     ] = None,
     models: Annotated[
         list[str] | None,
@@ -545,12 +562,12 @@ def start_agent(
             help="Limit available models. Repeat or pass CSV.",
         ),
     ] = None,
-    features: Annotated[
-        list[str] | None,
-        typer.Option("--feature", help="Runtime feature to enable. Repeat or pass CSV."),
+    sandbox: Annotated[
+        str | None,
+        typer.Option(help="Sandbox to use: none or <driver>[:target]."),
     ] = None,
-    port: Annotated[int | None, typer.Option(help="Port to listen on.")] = None,
     host: Annotated[str, typer.Option(help="Host interface to bind.")] = "127.0.0.1",
+    port: Annotated[int | None, typer.Option(help="Port to listen on.")] = None,
     dev: Annotated[
         Path | None,
         typer.Option(
@@ -577,6 +594,7 @@ def start_agent(
                 target,
                 sandbox=sandbox,
                 models=models,
+                tools=tools,
                 features=normalized_features,
                 port=port,
                 host=host,
