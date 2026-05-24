@@ -3945,6 +3945,36 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     assert "agents/alice/skills/reviewer" in list_result.stdout
 
 
+def test_cli_cap_remote_list_shows_canonical_source_ref(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        caps,
+        "_remote_materialized_files",
+        lambda *, relative_entry_path, kind, name, ref, progress=None: {
+            str(relative_entry_path): b"---\ndescription: Review code\n---\n# Reviewer\n"
+        },
+    )
+
+    add_result = _invoke_app(
+        ["skill", "add", "https://github.com/acme/agents/tree/main/skills/reviewer"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    assert add_result.exit_code == 0
+    assert add_result.stdout.strip() == "Added skill reviewer: github://acme/agents/skills/reviewer@main"
+
+    list_result = _invoke_app(
+        ["skill", "list"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    assert list_result.exit_code == 0
+    assert "SOURCE" in list_result.stdout
+    assert "github://acme/agents/skills/reviewer@main" in list_result.stdout
+    assert "https://github.com/acme/agents" not in list_result.stdout
+
+
 def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
 
