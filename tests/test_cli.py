@@ -1588,7 +1588,9 @@ thunk summarize(_, style?):
     assert program_path.name in captured.out
     assert "Options" in captured.out
     assert "--models" in captured.out
-    assert "Limit available models. Repeat or pass CSV." in captured.out
+    assert "Limit available models. Pass CSV or repeat." in captured.out
+    assert "--tools" in captured.out
+    assert "Allow selected tools. Pass CSV or repeat." in captured.out
     assert "--quiet" in captured.out
     assert "Params" in captured.out
     assert "NAME=VALUE" in captured.out
@@ -1637,7 +1639,9 @@ thunk summarize(_, style?, audience?):
     assert "audience=TEXT" in captured.out
     assert "[INPUT]..." in captured.out
     assert "--models" in captured.out
-    assert "Limit available models. Repeat or pass CSV." in captured.out
+    assert "Limit available models. Pass CSV or repeat." in captured.out
+    assert "--tools" in captured.out
+    assert "Allow selected tools. Pass CSV or repeat." in captured.out
     assert "--quiet" in captured.out
     assert "Params" in captured.out
     assert "Input" in captured.out
@@ -1735,6 +1739,63 @@ thunk(_, tone?, retries?: number, dry_run?: boolean):
             {"type": "image", "path": str(attachment.resolve())},
         ],
     }
+
+
+def test_cli_roaming_invoke_passes_explicit_tool_selectors(tmp_path: Path, monkeypatch, capsys) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+thunk(_):
+  Reply directly.
+""".strip(),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_invoke(
+        *,
+        toolang_root: Path,
+        agent_name: str,
+        thunk_name: str | None,
+        input_text: str | None,
+        models: tuple[str, ...],
+        tools: tuple[str, ...],
+        metadata: dict[str, object] | None,
+        environ: dict[str, str],
+        response,
+        log_spec: str | None = None,
+        prepared_state=None,
+    ):
+        del toolang_root, agent_name, thunk_name, input_text, models
+        del metadata, environ, response, log_spec, prepared_state
+        captured["tools"] = tools
+
+        class _Outcome:
+            run_id = "run_test"
+            status = "finished"
+            output_text = "done"
+            error = None
+            log_path = None
+
+        return _Outcome()
+
+    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+
+    result = cli.main(
+        [
+            str(program_path),
+            "--tools",
+            "filesystem,shell",
+            "main",
+            "hello",
+            "--tools",
+            "service_use",
+        ]
+    )
+    output = capsys.readouterr()
+
+    assert result == 0
+    assert output.out.strip() == "done"
+    assert captured["tools"] == ("filesystem", "shell", "service_use")
 
 
 def test_cli_roaming_invoke_quiet_after_thunk_suppresses_progress_output(
@@ -3112,6 +3173,7 @@ def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
         captured["port"] = startup.port
         captured["sandbox"] = startup.selector.render()
         captured["models"] = startup.model_selectors
+        captured["tools"] = startup.tool_selectors
         captured["dev"] = startup.dev_artifact
         captured["sandbox_child"] = sandbox_child
         captured["feature_names"] = startup.enabled_features
@@ -3131,9 +3193,9 @@ def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
             "0.0.0.0",
             "--port",
             "9000",
-            "--feature",
+            "--enable",
             "chat",
-            "--feature",
+            "--enable",
             "inspect",
         ],
         env={"TOOLANG_ROOT": str(toolang_root)},
@@ -3147,6 +3209,7 @@ def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     assert captured["port"] == 9000
     assert captured["sandbox"] == "none"
     assert captured["models"] == ()
+    assert captured["tools"] is None
     assert captured["dev"] is None
     assert captured["sandbox_child"] is False
     assert captured["feature_names"] == ("chat", "inspect")
@@ -3188,7 +3251,7 @@ def test_cli_run_resolves_port_when_unspecified(tmp_path: Path, monkeypatch) -> 
 
     result = runner.invoke(
         cli.app,
-        ["run", "alice", "--feature", "chat"],
+        ["run", "alice", "--enable", "chat"],
         env={"TOOLANG_ROOT": str(toolang_root)},
     )
 
@@ -3228,7 +3291,7 @@ def test_cli_run_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
 
     result = runner.invoke(
         cli.app,
-        ["run", "alice", "--feature", "chat,inspect,poll"],
+        ["run", "alice", "--enable", "chat,inspect,poll"],
         env={"TOOLANG_ROOT": str(toolang_root)},
     )
 
@@ -3265,6 +3328,35 @@ def test_cli_run_passes_model_selectors_to_agent_up(tmp_path: Path, monkeypatch)
     assert captured["models"] == ("openai/gpt-5[openai]", "o3")
 
 
+def test_cli_run_passes_tool_selectors_to_agent_up(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    captured: dict[str, object] = {}
+
+    def fake_start_runtime(
+        startup: cli.agent_up.StartupSpec,
+        *,
+        environ: dict[str, str],
+        sandbox_child: bool = False,
+        progress=None,
+    ) -> int:
+        del environ, sandbox_child, progress
+        captured["tools"] = startup.tool_selectors
+        return 0
+
+    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
+
+    result = runner.invoke(
+        cli.app,
+        ["run", "alice", "--tools", "filesystem,shell", "--tools", "service_use"],
+        env={"TOOLANG_ROOT": str(toolang_root), "OPENAI_API_KEY": "secret"},
+    )
+
+    assert result.exit_code == 0
+    assert captured["tools"] == ("filesystem", "shell", "service_use")
+
+
 def test_cli_run_rejects_missing_default_model_env(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
@@ -3276,7 +3368,7 @@ def test_cli_run_rejects_missing_default_model_env(tmp_path: Path, monkeypatch) 
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(toolang_root), "run", "alice", "--feature", "chat"],
+        ["--root", str(toolang_root), "run", "alice", "--enable", "chat"],
         env={"OPENAI_API_KEY": "", "OPENROUTER_API_KEY": "", "OLLAMA_HOST": "http://127.0.0.1:9"},
     )
 
@@ -3329,8 +3421,7 @@ def test_cli_run_requires_agent(tmp_path: Path) -> None:
     assert "Usage:" in result.stdout
     assert "run [OPTIONS] AGENT" in result.stdout
     assert "agent      TEXT" in result.stdout
-    assert "Agent selector." in result.stdout
-    assert "remote URLs" in result.stdout
+    assert "Existing local agent name, remote agent ref, or URL." in result.stdout
 
 
 def test_cli_run_loads_root_and_agent_env_with_agent_override(tmp_path: Path, monkeypatch) -> None:
@@ -3366,7 +3457,7 @@ def test_cli_run_loads_root_and_agent_env_with_agent_override(tmp_path: Path, mo
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(toolang_root), "run", "alice", "--feature", "inspect"],
+        ["--root", str(toolang_root), "run", "alice", "--enable", "inspect"],
         env={},
     )
 
@@ -3425,7 +3516,7 @@ def test_cli_start_spawns_background_run_and_reports_status(tmp_path: Path, monk
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(toolang_root), "start", "alice", "--sandbox", "none", "--feature", "inspect"],
+        ["--root", str(toolang_root), "start", "alice", "--sandbox", "none", "--enable", "inspect"],
         env={},
     )
 
@@ -3447,7 +3538,7 @@ def test_cli_start_spawns_background_run_and_reports_status(tmp_path: Path, monk
         "8765",
         "--sandbox",
         "none",
-        "--feature",
+        "--enable",
         "inspect",
     ]
     assert cast(dict[str, str], captured["env"])["TOOLANG_ROOT"] == str(toolang_root)
@@ -3640,7 +3731,7 @@ def test_cli_start_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(toolang_root), "start", "alice", "--feature", "chat,inspect"],
+        ["--root", str(toolang_root), "start", "alice", "--enable", "chat,inspect"],
         env={"OPENAI_API_KEY": "secret"},
     )
 
@@ -3648,7 +3739,7 @@ def test_cli_start_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None
     command = cast(list[str], captured["command"])
     assert "--port" in command
     assert command[command.index("--port") + 1] == "8765"
-    assert command[-4:] == ["--feature", "chat", "--feature", "inspect"]
+    assert command[-4:] == ["--enable", "chat", "--enable", "inspect"]
 
 
 def test_cli_start_includes_model_selectors_in_background_command(tmp_path: Path, monkeypatch) -> None:
@@ -3706,6 +3797,65 @@ def test_cli_start_includes_model_selectors_in_background_command(tmp_path: Path
     assert command[first_flag + 1] == "gpt-5"
     second_flag = command.index("--models", first_flag + 1)
     assert command[second_flag + 1] == "o3"
+
+
+def test_cli_start_includes_tool_selectors_in_background_command(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(cli.agent_up, "resolve_runtime_port", lambda **_kwargs: 8765)
+
+    class FakeProcess:
+        def poll(self) -> None:
+            return None
+
+    def fake_popen(
+        command,
+        *,
+        stdin,
+        stdout,
+        stderr,
+        env,
+        cwd: str,
+        start_new_session: bool,
+        close_fds: bool,
+    ):
+        del stdin, stderr, env, cwd, start_new_session, close_fds
+        captured["command"] = command
+        agents.write_runtime_state(
+            toolang_root,
+            "alice",
+            endpoint="http://127.0.0.1:8765",
+            started_at="2026-04-07T11:00:01Z",
+            pid=os.getpid(),
+        )
+        return FakeProcess()
+
+    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(toolang_root),
+            "start",
+            "alice",
+            "--tools",
+            "filesystem,shell",
+            "--tools",
+            "service_use",
+        ],
+        env={"OPENAI_API_KEY": "secret"},
+    )
+
+    assert result.exit_code == 0
+    command = cast(list[str], captured["command"])
+    first_flag = command.index("--tools")
+    assert command[first_flag + 1] == "filesystem"
+    second_flag = command.index("--tools", first_flag + 1)
+    assert command[second_flag + 1] == "shell"
+    third_flag = command.index("--tools", second_flag + 1)
+    assert command[third_flag + 1] == "service_use"
 
 
 def test_cli_start_rejects_unconfigured_model_selector(tmp_path: Path, monkeypatch) -> None:
@@ -3876,11 +4026,11 @@ def test_cli_start_reuses_preferred_runtime_port(tmp_path: Path, monkeypatch) ->
     command = cast(list[str], captured["command"])
     assert "--port" in command
     assert command[command.index("--port") + 1] == "63295"
-    assert "--feature" in command
+    assert "--enable" in command
     feature_names = [
         command[index + 1]
         for index, value in enumerate(command[:-1])
-        if value == "--feature"
+        if value == "--enable"
     ]
     assert feature_names == ["chat", "pulse", "control", "inspect", "watch"]
 
@@ -3934,7 +4084,7 @@ def test_cli_start_requires_agent(tmp_path: Path) -> None:
     assert "Usage:" in result.stdout
     assert "AGENT start [OPTIONS]" in result.stdout
     assert "agent      TEXT" in result.stdout
-    assert "Agent name." in result.stdout
+    assert "Existing local agent name." in result.stdout
 
 
 def test_cli_stop_stops_sandboxed_agent(tmp_path: Path, monkeypatch) -> None:
@@ -4792,18 +4942,51 @@ def test_cli_run_help_mentions_how_to_select_agent() -> None:
     assert "Usage:" in result.stdout
     assert "run [OPTIONS] AGENT" in result.stdout
     assert "agent      TEXT" in result.stdout
-    assert "Agent selector." in result.stdout
-    assert "remote URLs" in result.stdout
+    assert "Existing local agent name, remote agent ref, or URL." in result.stdout
 
 
 def test_cli_models_option_help_is_consistent_for_run_commands() -> None:
-    expected = "Limit available models. Repeat or pass CSV."
+    expected = "Limit available models. Pass CSV or repeat."
 
     for command in (["run", "--help"], ["start", "--help"]):
         result = runner.invoke(cli.app, command)
 
         assert result.exit_code == 0
         assert expected in result.stdout
+
+
+def test_cli_tools_option_help_is_consistent_for_run_commands() -> None:
+    expected = "Allow selected tools. Pass CSV or repeat."
+
+    for command in (["run", "--help"], ["start", "--help"]):
+        result = runner.invoke(cli.app, command)
+
+        assert result.exit_code == 0
+        assert "--tools" in result.stdout
+        assert expected in result.stdout
+
+
+def test_cli_runtime_option_help_order_and_descriptions() -> None:
+    expected = (
+        ("--sandbox", "Run the agent in a sandbox."),
+        ("--tools", "Allow selected tools. Pass CSV or repeat."),
+        ("--models", "Limit available models. Pass CSV or repeat."),
+        ("--host", "Bind the agent API to this host."),
+        ("--port", "Bind the agent API to this port."),
+        ("--enable", "Enable runtime components. Pass CSV or repeat."),
+        ("--dev", "Use wheels from this file or directory"),
+    )
+
+    for command in (["run", "--help"], ["start", "--help"]):
+        result = runner.invoke(cli.app, command)
+
+        assert result.exit_code == 0
+        positions = [result.stdout.index(option) for option, description in expected]
+        assert positions == sorted(positions)
+        for _option, description in expected:
+            assert description in result.stdout
+        assert "[default: none]" in result.stdout
+        assert "starting a sandbox." in result.stdout
 
 
 def test_cli_model_list_select_help() -> None:
@@ -4813,7 +4996,8 @@ def test_cli_model_list_select_help() -> None:
     assert "--select" in result.stdout
     assert "--models" not in result.stdout
     assert "Select models by ref[filters], alias, or glob." in result.stdout
-    assert "or pass CSV." in result.stdout
+    assert "Pass" in result.stdout
+    assert "CSV or repeat." in result.stdout
 
 
 def test_cli_info_help_mentions_required_agent() -> None:

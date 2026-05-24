@@ -30,6 +30,7 @@ from ..models.errors import NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSA
 from ..program import ParamDecl, Thunk
 from ..state.prepared import PreparedState
 from ..state.program import LiveProgram, load_live_program
+from ..tools.registry import split_tool_selectors
 from .progress import CliProgress, as_progress_sink, make_cli_progress
 
 MarkupMode = Literal["markdown", "rich"]
@@ -59,6 +60,7 @@ class RoamingInvokeRequest:
     thunk_name: str | None
     input_text: str | None
     models: tuple[str, ...]
+    tools: tuple[str, ...]
     invoke_params: dict[str, object]
     invoke_parts: list[dict[str, str]]
     quiet: bool = False
@@ -187,7 +189,7 @@ def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name:
         return 1
     source_label = body[0]
     remaining = body[1:]
-    quiet, leading_models, normalized_remaining = _consume_roaming_control_options(remaining)
+    quiet, leading_models, leading_tools, normalized_remaining = _consume_roaming_control_options(remaining)
     prepare_progress = _prepare_progress(quiet=quiet, argv=remaining)
     script_progress: _ScriptProgressSink | None = None
     request: RoamingInvokeRequest | None = None
@@ -215,26 +217,46 @@ def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name:
             _show_roaming_help(source_label, program, thunk_name=_thunk_name(thunk), prog_name=prog_name)
             return 0
         try:
-            request = _parse_roaming_invoke_request(thunk, remainder, leading_models=leading_models)
+            request = _parse_roaming_invoke_request(
+                thunk,
+                remainder,
+                leading_models=leading_models,
+                leading_tools=leading_tools,
+            )
         except _MissingInvokeInput:
             _show_roaming_help(source_label, program, thunk_name=_thunk_name(thunk), prog_name=prog_name)
             return 0
         runtime_environ = load_runtime_environ(toolang_root, agent_name, base_environ=os.environ)
         script_progress = _script_progress_sink(thunk_name=request.thunk_name, quiet=quiet or request.quiet)
-        outcome = agent_up.invoke(
-            toolang_root=toolang_root,
-            agent_name=agent_name,
-            thunk_name=request.thunk_name,
-            input_text=request.input_text,
-            models=request.models,
-            metadata={
-                "invoke_params": request.invoke_params,
-                "invoke_parts": request.invoke_parts,
-            },
-            environ=runtime_environ,
-            response=script_progress,
-            prepared_state=prepared,
-        )
+        metadata = {
+            "invoke_params": request.invoke_params,
+            "invoke_parts": request.invoke_parts,
+        }
+        if request.tools:
+            outcome = agent_up.invoke(
+                toolang_root=toolang_root,
+                agent_name=agent_name,
+                thunk_name=request.thunk_name,
+                input_text=request.input_text,
+                models=request.models,
+                tools=request.tools,
+                metadata=metadata,
+                environ=runtime_environ,
+                response=script_progress,
+                prepared_state=prepared,
+            )
+        else:
+            outcome = agent_up.invoke(
+                toolang_root=toolang_root,
+                agent_name=agent_name,
+                thunk_name=request.thunk_name,
+                input_text=request.input_text,
+                models=request.models,
+                metadata=metadata,
+                environ=runtime_environ,
+                response=script_progress,
+                prepared_state=prepared,
+            )
     except KeyboardInterrupt:
         if script_progress is not None:
             script_progress.interrupt()
@@ -261,9 +283,10 @@ def _unsupported_roaming_global_args(global_args: list[str]) -> bool:
     return bool(global_args)
 
 
-def _consume_roaming_control_options(argv: list[str]) -> tuple[bool, tuple[str, ...], list[str]]:
+def _consume_roaming_control_options(argv: list[str]) -> tuple[bool, tuple[str, ...], tuple[str, ...], list[str]]:
     quiet = False
     models: list[str] = []
+    tools: list[str] = []
     remaining: list[str] = []
     index = 0
     while index < len(argv):
@@ -287,9 +310,21 @@ def _consume_roaming_control_options(argv: list[str]) -> tuple[bool, tuple[str, 
                 models.append(model)
                 index += 2
                 continue
+        if token.startswith("--tools="):
+            tool = token.partition("=")[2].strip()
+            if tool:
+                tools.append(tool)
+                index += 1
+                continue
+        if token == "--tools" and index + 1 < len(argv):
+            tool = argv[index + 1].strip()
+            if tool:
+                tools.append(tool)
+                index += 2
+                continue
         remaining.append(token)
         index += 1
-    return quiet, tuple(models), remaining
+    return quiet, tuple(models), split_tool_selectors(tuple(tools)), remaining
 
 
 def _prepare_progress(*, quiet: bool, argv: list[str]) -> "CliProgress | None":
@@ -323,12 +358,14 @@ def _parse_roaming_invoke_request(
     argv: list[str],
     *,
     leading_models: tuple[str, ...] = (),
+    leading_tools: tuple[str, ...] = (),
 ) -> RoamingInvokeRequest:
     thunk_params = tuple(thunk.params)
     param_index = {param.name: param for param in thunk_params}
     invoke_params: dict[str, object] = {}
     parts: list[str] = []
     models = list(leading_models)
+    tools = list(leading_tools)
     quiet = False
     index = 0
     while index < len(argv):
@@ -350,6 +387,22 @@ def _parse_roaming_invoke_request(
             if not model:
                 raise click.ClickException("--models requires a value")
             models.append(model)
+            index += 2
+            continue
+        if token.startswith("--tools="):
+            tool = token.partition("=")[2].strip()
+            if not tool:
+                raise click.ClickException("--tools requires a value")
+            tools.extend(split_tool_selectors((tool,)))
+            index += 1
+            continue
+        if token == "--tools":
+            if index + 1 >= len(argv):
+                raise click.ClickException("--tools requires a value")
+            tool = argv[index + 1].strip()
+            if not tool:
+                raise click.ClickException("--tools requires a value")
+            tools.extend(split_tool_selectors((tool,)))
             index += 2
             continue
         if token in {"--quiet", "-q"}:
@@ -383,6 +436,7 @@ def _parse_roaming_invoke_request(
         thunk_name=thunk_name,
         input_text=input_text,
         models=tuple(models),
+        tools=tuple(dict.fromkeys(tools)),
         invoke_params=invoke_params,
         invoke_parts=invoke_parts,
         quiet=quiet,
@@ -595,10 +649,15 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
 
     @app.callback()
     def _callback(
+        tools: list[str] | None = typer.Option(
+            None,
+            "--tools",
+            help="Allow selected tools. Pass CSV or repeat.",
+        ),
         model: list[str] | None = typer.Option(
             None,
             "--models",
-            help="Limit available models. Repeat or pass CSV.",
+            help="Limit available models. Pass CSV or repeat.",
         ),
         quiet: bool = typer.Option(
             False,
@@ -607,7 +666,7 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
             help="Suppress progress messages.",
         ),
     ) -> None:
-        del model, quiet
+        del tools, model, quiet
         return None
 
     for thunk in program.thunks:
@@ -639,10 +698,15 @@ def _make_roaming_thunk_help_command_class(thunk: Thunk) -> type[_RoamingThunkHe
 
 def _make_roaming_help_command() -> Callable[..., None]:
     def command(
+        tools: list[str] | None = typer.Option(
+            None,
+            "--tools",
+            help="Allow selected tools. Pass CSV or repeat.",
+        ),
         model: list[str] | None = typer.Option(
             None,
             "--models",
-            help="Limit available models. Repeat or pass CSV.",
+            help="Limit available models. Pass CSV or repeat.",
         ),
         quiet: bool = typer.Option(
             False,
@@ -651,7 +715,7 @@ def _make_roaming_help_command() -> Callable[..., None]:
             help="Suppress progress messages.",
         ),
     ) -> None:
-        del model, quiet
+        del tools, model, quiet
         return None
 
     return command

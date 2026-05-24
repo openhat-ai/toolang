@@ -2702,8 +2702,8 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
     assert "--sandbox" in request.run_command
     assert request.run_command[request.run_command.index("--sandbox") + 1] == "none"
     assert "--sandbox-child" in request.run_command
-    assert "--feature" in request.run_command
-    assert request.run_command[request.run_command.index("--feature") + 1] == "inspect"
+    assert "--enable" in request.run_command
+    assert request.run_command[request.run_command.index("--enable") + 1] == "inspect"
     runtime_state = json.loads(
         agents.agent_runtime_state_path(toolang_root, "alice").read_text(encoding="utf-8")
     )
@@ -4992,7 +4992,7 @@ def test_assemble_run_input_uses_activation_default_when_thunk_omits_one(tmp_pat
     assert bundle.debug["activation_default_model"] == "openai/gpt-5[openai]"
 
 
-def test_assemble_run_input_hides_tools_for_invoke_runs(tmp_path: Path) -> None:
+def test_assemble_run_input_hides_tools_when_activation_has_no_tools(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -5002,6 +5002,7 @@ def test_assemble_run_input_hides_tools_for_invoke_runs(tmp_path: Path) -> None:
         toolang_root=toolang_root,
         agent_name="alice",
         enabled_features=("chat",),
+        tool_selectors=(),
     )
     context.config.set("models.default_selector", "openai/gpt-5[openai]")
     invoke_bound = bind_run_request(
@@ -5030,10 +5031,41 @@ def test_assemble_run_input_hides_tools_for_invoke_runs(tmp_path: Path) -> None:
     assert invoke_bundle.snapshot is not None
     assert invoke_bundle.snapshot.tools == ()
     assert invoke_bundle.debug["tool_names"] == []
-    assert chat_bundle.tools()
+    assert chat_bundle.tools() == {}
     assert chat_bundle.snapshot is not None
-    assert chat_bundle.snapshot.tools
-    assert chat_bundle.debug["tool_names"]
+    assert chat_bundle.snapshot.tools == ()
+    assert chat_bundle.debug["tool_names"] == []
+
+
+def test_assemble_run_input_uses_explicit_activation_tools_for_script_runs(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        "agent alice\n\nthunk summarize(_):\n  Reply directly.\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat",),
+        tool_selectors=("shell",),
+    )
+    context.config.set("models.default_selector", "openai/gpt-5[openai]")
+    invoke_bound = bind_run_request(
+        context,
+        RunRequest(
+            group="script",
+            origin="script",
+            thunk_name="summarize",
+            thunk="hello",
+        ),
+    )
+
+    invoke_bundle = RunInput.from_binding(context, invoke_bound)
+
+    assert tuple(invoke_bundle.tools()) == ("shell__execute",)
+    assert invoke_bundle.snapshot is not None
+    assert invoke_bundle.snapshot.tools == ("shell__execute",)
+    assert invoke_bundle.debug["tool_names"] == ["shell__execute"]
 
 
 def test_assemble_run_input_uses_thunk_user_message_for_script_runs(tmp_path: Path) -> None:
@@ -5779,6 +5811,7 @@ def _build_context(
     runner: QueueRunner | None = None,
     channel_bindings: dict[str, ChannelBinding] | None = None,
     channel_plugins: dict[str, ChannelPlugin] | None = None,
+    tool_selectors: tuple[str, ...] | None = None,
 ) -> UptimeContext:
     durable = scan_durable_state(toolang_root, agent_name)
     prepared = watch.build_prepared_state(durable)
@@ -5793,6 +5826,7 @@ def _build_context(
             agent_name=agent_name,
             live=live,
             environ={},
+            selectors=tool_selectors,
         ),
         model_providers={
             name: provider

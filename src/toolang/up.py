@@ -36,7 +36,13 @@ from toolang.base.types.model import ModelAlias
 from toolang.base.types.sandbox import SandboxSelector, SandboxStartRequest, SandboxState
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.base.utils.channels import bind_delivery
-from toolang.tools.registry import ToolRef, parse_tool_registration_key
+from toolang.tools.registry import (
+    ToolRef,
+    parse_tool_registration_key,
+    selected_tool_names,
+    split_tool_selectors,
+    tool_ref_for_model_tool,
+)
 from .config.log import (
     DEFAULT_LOG_LEVEL,
     build_uvicorn_log_config,
@@ -276,6 +282,7 @@ class StartupSpec:
     sandbox_config: dict[str, object]
     dev_artifact: Path | None
     model_selectors: tuple[str, ...]
+    tool_selectors: tuple[str, ...] | None
     log_spec: str | None = None
 
 
@@ -371,6 +378,7 @@ def up(
     port: int | None = None,
     sandbox: str | None = None,
     models: Sequence[str] | None = None,
+    tools: Sequence[str] | None = None,
     dev: Path | None = None,
     sandbox_child: bool = False,
     feature_names: Sequence[str] | None = None,
@@ -388,6 +396,7 @@ def up(
         port=port,
         sandbox=sandbox,
         models=models,
+        tools=tools,
         dev=dev,
         feature_names=feature_names,
         log_spec=log_spec,
@@ -425,6 +434,7 @@ def start_runtime(
             environ=environ,
             dev_artifact=spec.dev_artifact,
             model_selectors=spec.model_selectors,
+            tool_selectors=spec.tool_selectors,
         )
     return _up_local(
         toolang_root=spec.toolang_root,
@@ -436,6 +446,7 @@ def start_runtime(
         environ=environ,
         sandbox_child=sandbox_child,
         model_selectors=spec.model_selectors,
+        tool_selectors=spec.tool_selectors,
         log_spec=spec.log_spec,
         progress=progress,
     )
@@ -462,6 +473,7 @@ def invoke(
     thunk_name: str | None = None,
     input_text: str | None = None,
     models: Sequence[str] | None = None,
+    tools: Sequence[str] | None = (),
     metadata: Mapping[str, object] | None = None,
     environ: Mapping[str, str],
     response: ResponseSink | None = None,
@@ -480,6 +492,7 @@ def invoke(
         enabled_features=(),
         environ=invoke_environ,
         model_selectors=_normalize_model_selectors(models),
+        tool_selectors=_normalize_tool_selectors(tools),
         prepared_state=prepared,
     )
     run_id = allocate_run_id(context)
@@ -554,6 +567,7 @@ def resolve_startup(
     port: int | None = None,
     sandbox: str | None = None,
     models: Sequence[str] | None = None,
+    tools: Sequence[str] | None = None,
     dev: Path | None = None,
     feature_names: Sequence[str] | None = None,
     log_spec: str | None = None,
@@ -604,6 +618,7 @@ def resolve_startup(
     )
     dev_artifact = _resolve_dev_artifact(dev) if dev is not None else None
     model_selectors = _normalize_model_selectors(models)
+    tool_selectors = _normalize_tool_selectors(tools)
     if _startup_requires_model(enabled_features):
         _validate_startup_models(
             toolang_root=toolang_root,
@@ -623,6 +638,7 @@ def resolve_startup(
         sandbox_config=sandbox_config,
         dev_artifact=dev_artifact,
         model_selectors=model_selectors,
+        tool_selectors=tool_selectors,
         log_spec=log_spec.strip() if isinstance(log_spec, str) and log_spec.strip() else None,
     )
 
@@ -659,6 +675,7 @@ def build_run_argv(
     endpoint_host: str | None = None,
     sandbox: str | None = None,
     models: Sequence[str] | None = None,
+    tools: Sequence[str] | None = None,
     sandbox_child: bool = False,
 ) -> tuple[str, ...]:
     """Build one explicit argv for the hidden managed-runtime run path."""
@@ -681,12 +698,17 @@ def build_run_argv(
     effective_models = _normalize_model_selectors(models) or spec.model_selectors
     for selector in effective_models:
         command.extend(["--models", selector])
+    effective_tools = _normalize_tool_selectors(tools)
+    if effective_tools is None:
+        effective_tools = spec.tool_selectors
+    for selector in effective_tools or ():
+        command.extend(["--tools", selector])
     if spec.dev_artifact is not None and not sandbox_child:
         command.extend(["--dev", str(spec.dev_artifact)])
     if sandbox_child:
         command.append("--sandbox-child")
     for feature_name in spec.enabled_features:
-        command.extend(["--feature", feature_name])
+        command.extend(["--enable", feature_name])
     return tuple(command)
 
 
@@ -707,6 +729,7 @@ def _up_local(
     environ: Mapping[str, str],
     sandbox_child: bool,
     model_selectors: tuple[str, ...],
+    tool_selectors: tuple[str, ...] | None,
     log_spec: str | None,
     progress: ProgressSink | None = None,
 ) -> int:
@@ -728,6 +751,7 @@ def _up_local(
         host=host,
         port=port,
         cors_allowed_origins=cors_allowed_origins or [],
+        tool_selectors=tool_selectors,
         progress=progress,
     )
     live = context.live
@@ -946,6 +970,7 @@ def _load_runtime_context(
     enabled_features: tuple[FeatureName, ...],
     environ: Mapping[str, str],
     model_selectors: Sequence[str] = (),
+    tool_selectors: Sequence[str] | None = None,
     host: str = "127.0.0.1",
     port: int = 0,
     cors_allowed_origins: Sequence[str] = (),
@@ -962,6 +987,7 @@ def _load_runtime_context(
         prepared_state = prepare_agent(toolang_root=toolang_root, agent_name=agent_name, progress=progress)
     live = load_live_state(prepared_state, enabled_features=enabled_features)
     normalized_model_selectors = _normalize_model_selectors(model_selectors)
+    normalized_tool_selectors = _normalize_tool_selectors(tool_selectors)
     default_model_selector = normalized_model_selectors[0] if normalized_model_selectors else None
     config = UptimeConfig(
         {
@@ -976,6 +1002,7 @@ def _load_runtime_context(
             "web.cors_allowed_origins": list(cors_allowed_origins),
             "models.default_selector": default_model_selector,
             "models.allowed_selectors": normalized_model_selectors,
+            "tools.allowed_selectors": normalized_tool_selectors,
             "runtime.sandbox": _runtime_sandbox_value(runtime_state),
         }
     )
@@ -989,6 +1016,7 @@ def _load_runtime_context(
             agent_name=agent_name,
             live=live,
             environ=environ,
+            selectors=normalized_tool_selectors,
         ),
         model_providers=load_model_providers(toolang_root, agent_name),
         model_aliases=load_model_aliases(toolang_root, agent_name),
@@ -1012,10 +1040,11 @@ def load_runtime_tool_plugins(
     agent_name: str,
     live: LiveState,
     environ: Mapping[str, str],
+    selectors: Sequence[str] | None = None,
 ) -> dict[str, Tool]:
     """Load tool plugins with runtime service caps exposed to service_use."""
 
-    return load_tool_plugins(
+    tools = load_tool_plugins(
         config=runtime_tool_plugin_config(
             toolang_root=toolang_root,
             agent_name=agent_name,
@@ -1023,6 +1052,7 @@ def load_runtime_tool_plugins(
             environ=environ,
         )
     )
+    return _select_runtime_tools(tools, selectors)
 
 
 def runtime_tool_plugin_config(
@@ -1151,6 +1181,7 @@ def _up_managed_sandbox(
     environ: Mapping[str, str],
     dev_artifact: Path | None,
     model_selectors: tuple[str, ...],
+    tool_selectors: tuple[str, ...] | None,
 ) -> int:
     endpoint = f"http://{endpoint_host}:{port}"
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -1167,6 +1198,7 @@ def _up_managed_sandbox(
         sandbox_config=dict(sandbox_config),
         dev_artifact=dev_artifact,
         model_selectors=model_selectors,
+        tool_selectors=tool_selectors,
     )
     agents.write_runtime_state(
         toolang_root,
@@ -1294,6 +1326,42 @@ def _normalize_model_selectors(models: Sequence[str] | None) -> tuple[str, ...]:
         seen.add(selector)
         result.append(selector)
     return tuple(result)
+
+
+def _normalize_tool_selectors(tools: Sequence[str] | None) -> tuple[str, ...] | None:
+    if tools is None:
+        return None
+    result: list[str] = []
+    seen: set[str] = set()
+    for raw in split_tool_selectors(tuple(tools)):
+        selector = raw.strip()
+        if not selector:
+            raise ValueError("tool selector cannot be empty")
+        if selector in seen:
+            continue
+        seen.add(selector)
+        result.append(selector)
+    return tuple(result)
+
+
+def _select_runtime_tools(
+    tools: dict[str, Tool],
+    selectors: Sequence[str] | None,
+) -> dict[str, Tool]:
+    if selectors is None:
+        return tools
+    if not selectors:
+        return {}
+    refs_by_model_name = {
+        name: tool_ref_for_model_tool(name, tool)
+        for name, tool in tools.items()
+    }
+    selected_names = selected_tool_names(refs_by_model_name, selectors)
+    return {
+        name: tools[name]
+        for name in selected_names
+        if name in tools
+    }
 
 
 def normalize_feature_names(feature_names: Sequence[str]) -> tuple[FeatureName, ...]:
