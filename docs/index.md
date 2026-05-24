@@ -27,6 +27,7 @@ Use this directory for:
 | [ids.md](./ids.md) | Toolang-owned id families, reversible encoding, and durable allocator model |
 | [program.md](./program.md) | Program syntax, including `struct`, `slash`, thunk signatures, directives, and surface rules |
 | [layout.md](./layout.md) | Layout and storage, including Toolang root, agent home, and runtime room paths |
+| [prepared-lock.md](./prepared-lock.md) | Prepared `lock.json` format and source/artifact comparison rules |
 | [caps.md](./caps.md) | Capability model, including form, scope, origin, refs, precedence, and effective-cap rules |
 | [tasks.md](./tasks.md) | Job model, including task, chore, will, and thread mapping |
 | [webui-jobs.md](./webui-jobs.md) | Web UI job board integration guide |

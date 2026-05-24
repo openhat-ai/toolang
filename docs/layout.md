@@ -106,7 +106,9 @@ Prepared directories:
 | Global | `${TOOLANG_ROOT}/.caps/` |
 | Per-agent | `${TOOLANG_ROOT}/agents/<agent>/.caps/` |
 
-Each prepared directory stores a `lock.json` and materialized files.
+Each prepared directory stores a `lock.json` and materialized files. See
+[prepared-lock.md](./prepared-lock.md) for the lock format and comparison
+rules.
 
 
 ## Durable State
