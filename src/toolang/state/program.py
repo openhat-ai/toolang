@@ -11,6 +11,7 @@ from re import Match
 from ..agents import agent_program_path
 from ..program import (
     DeclBlock,
+    InstructBlock,
     MessageBlock,
     ParamDecl,
     Program,
@@ -64,7 +65,7 @@ class PreparedProgram:
             "body_text": self.body_text,
             "uses": [_use_to_lock_data(item, line_offset=line_offset) for item in program.uses],
             "structs": [_struct_to_lock_data(item, line_offset=line_offset) for item in program.structs],
-            "instructs": [],
+            "instructs": [_instruct_to_lock_data(item, line_offset=line_offset) for item in program.instructs],
             "caps": [_decl_to_lock_data(item, line_offset=line_offset) for item in program.declarations],
             "thunks": [_thunk_to_lock_data(item, line_offset=line_offset) for item in _program_thunks(program)],
         }
@@ -123,6 +124,9 @@ class LiveProgram:
         if len(self.thunks) == 1:
             return self.thunks[0]
         raise ToolangError("No default thunk found in prepared program.")
+
+    def get_instruct(self, name: str | None) -> InstructBlock | None:
+        return self.parsed.get_instruct(name)
 
     def expand_input(self, raw_input: str) -> str:
         if not raw_input:
@@ -301,6 +305,7 @@ def _render_template_var(match: Match[str], bindings: dict[str, str]) -> str:
 
 def _validate_program(program: Program) -> None:
     seen_decl_names: set[tuple[str, str]] = set()
+    seen_instruct_names: set[str | None] = set()
     seen_struct_names: set[str] = set()
     seen_thunk_names: set[str] = set()
 
@@ -310,6 +315,14 @@ def _validate_program(program: Program) -> None:
             raise ToolangError(f"Duplicate {decl.kind} name {decl.name!r}.")
         seen_decl_names.add(decl_key)
         _validate_decl_params(decl)
+
+    for instruct in program.instructs:
+        if instruct.name in {"default", "none"}:
+            raise ToolangError(f"Instruct name {instruct.name!r} is reserved.")
+        if instruct.name in seen_instruct_names:
+            label = "default" if instruct.name is None else instruct.name
+            raise ToolangError(f"Duplicate instruct name {label!r}.")
+        seen_instruct_names.add(instruct.name)
 
     for struct in program.structs:
         if struct.name in seen_struct_names:
@@ -373,23 +386,28 @@ def _validate_thunk_messages(thunk: Thunk, *, thunk_name: str) -> None:
     if thunk.is_thread_thunk():
         if thunk.input is not None:
             raise ToolangError(f"Thread thunk {thunk_name!r} must not declare an input parameter.")
-        invalid = [block.kind for block in thunk.messages if block.kind != "system"]
+        invalid = [block.kind for block in thunk.messages if block.kind not in {"instruct", "system"}]
         if invalid:
             joined = ", ".join(invalid)
             raise ToolangError(
-                f"Thread thunk {thunk_name!r} may only declare system message blocks, not: {joined}."
+                f"Thread thunk {thunk_name!r} may only declare instruct or system blocks, not: {joined}."
             )
+        if len(thunk.message_blocks("instruct")) > 1:
+            raise ToolangError(f"Thread thunk {thunk_name!r} may declare at most one instruct block.")
         if len(thunk.message_blocks("system")) > 1:
             raise ToolangError(f"Thread thunk {thunk_name!r} may declare at most one system block.")
         return
 
+    instruct_count = len(thunk.message_blocks("instruct"))
+    if instruct_count > 1:
+        raise ToolangError(f"Thunk {thunk_name!r} may declare at most one instruct block.")
     system_count = len(thunk.message_blocks("system"))
     if system_count > 1:
         raise ToolangError(f"Thunk {thunk_name!r} may declare at most one system block.")
     user_count = len(thunk.message_blocks("user"))
     if user_count != 1:
         raise ToolangError(f"Thunk {thunk_name!r} must declare exactly one user block.")
-    unsupported = [block.kind for block in thunk.messages if block.kind not in {"system", "user"}]
+    unsupported = [block.kind for block in thunk.messages if block.kind not in {"instruct", "system", "user"}]
     if unsupported:
         joined = ", ".join(unsupported)
         raise ToolangError(
@@ -465,6 +483,14 @@ def _struct_to_lock_data(struct: StructDecl, *, line_offset: int) -> dict[str, o
             }
             for field in struct.fields
         ],
+    }
+
+
+def _instruct_to_lock_data(instruct: InstructBlock, *, line_offset: int) -> dict[str, object]:
+    return {
+        "name": instruct.name,
+        "line": instruct.span.line + line_offset,
+        "content": instruct.body,
     }
 
 

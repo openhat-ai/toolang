@@ -68,6 +68,33 @@ struct ReviewSummary:
     ]
 
 
+def test_program_parse_projects_instructs_into_ast() -> None:
+    program = parse(
+        """
+instruct: ```md
+You are {{runtime.agent.name}}.
+```
+
+instruct strict-json:
+  Return only JSON.
+
+thunk review:
+  instruct: strict-json
+
+  Review the target carefully.
+""".strip()
+    )
+
+    assert [(item.name, item.body) for item in program.instructs] == [
+        (None, "You are {{runtime.agent.name}}."),
+        ("strict-json", "Return only JSON."),
+    ]
+    assert [(item.kind, item.text, item.explicit) for item in program.thunks[0].messages] == [
+        ("instruct", "strict-json", True),
+        ("user", "Review the target carefully.", False),
+    ]
+
+
 def test_program_parse_accepts_compact_service_env_names() -> None:
     program = parse(
         """
@@ -157,6 +184,43 @@ def test_build_prepared_program_rejects_empty_thunk_body(tmp_path: Path) -> None
 
     durable = scan_durable_state(root, "alice")
     with pytest.raises(ToolangError, match="missing body text"):
+        build_prepared_program(durable)
+
+
+def test_build_prepared_program_rejects_duplicate_default_instruct(tmp_path: Path) -> None:
+    root = _write_program(
+        tmp_path,
+        """
+instruct:
+  First.
+
+instruct:
+  Second.
+
+thunk:
+  Reply directly.
+""".strip(),
+    )
+
+    durable = scan_durable_state(root, "alice")
+    with pytest.raises(ToolangError, match="Duplicate instruct name 'default'"):
+        build_prepared_program(durable)
+
+
+def test_build_prepared_program_rejects_reserved_instruct_name(tmp_path: Path) -> None:
+    root = _write_program(
+        tmp_path,
+        """
+instruct none:
+  Reserved.
+
+thunk:
+  Reply directly.
+""".strip(),
+    )
+
+    durable = scan_durable_state(root, "alice")
+    with pytest.raises(ToolangError, match="reserved"):
         build_prepared_program(durable)
 
 

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import frontmatter
 
+from toolang.base.error import ToolangError
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import (
     Message,
@@ -53,7 +54,7 @@ _TOOL_CONTEXT_RUN_LIMIT = 50
 _TOOL_CONTEXT_FACT_LIMIT = 50
 _TOOL_CONTEXT_CHAR_LIMIT = 8000
 _LOGGER = logging.getLogger("toolang.run")
-_DEFAULT_THREAD_SYSTEM_TEMPLATE = """
+_DEFAULT_INSTRUCT_TEMPLATE = """
 You are the {{runtime.agent.name}} Toolang agent.
 
 Runtime:
@@ -118,7 +119,13 @@ Tool Result Reuse:
 - Reuse applicable prior tool results instead of repeating the same tool call.
 - Call a tool again when the needed result is missing, failed, stale, expired, invalid for the current request, or the user explicitly asks to refresh it.
 """.strip()
-_DEFAULT_THREAD_SYSTEM_TAILS = {
+_DEFAULT_INSTRUCT_TAILS = {
+    "script": """
+Treat the user message as the current script input.
+Work directly against the thunk contract and keep the response focused on that invocation.
+Do not call tools or inspect files just to explore the environment.
+Use tools only when they materially help with the script invocation.
+""".strip(),
     "chat": """
 Respond helpfully, clearly, and directly to the user's message.
 Do not call tools or inspect files just to explore the environment.
@@ -339,8 +346,13 @@ class RunInput:
                 "service_names": [entry.name for entry in effective_services],
                 "set_math": set_math,
                 "tool_history_context": tool_history_context,
-                "instructions": _message_blocks_body(
-                    tuple(item for item in rendered_messages if item.kind == "system")
+                "instructions": _assembled_instructions(
+                    live_program=run.live.program,
+                    origin=run.origin,
+                    thunk=thunk,
+                    rendered_messages=rendered_messages,
+                    system_context=system_template_context,
+                    tool_history_context=tool_history_context,
                 ),
             },
         )
@@ -407,14 +419,14 @@ class RunInput:
     def instructions(self) -> str:
         """Return the assembled instruction text for this run."""
 
-        instructions = _message_blocks_body(
-            tuple(item for item in self.rendered_messages() if item.kind == "system")
+        return _assembled_instructions(
+            live_program=self.run.live.program,
+            origin=self.run.origin,
+            thunk=self.thunk,
+            rendered_messages=self.rendered_messages(),
+            system_context=self.system_template_context,
+            tool_history_context=self.tool_history_context,
         )
-        if not self.tool_history_context:
-            return instructions
-        if instructions:
-            return f"{instructions}\n\n{self.tool_history_context}"
-        return self.tool_history_context
 
 
 def _tool_history_context(context: UptimeContext, *, thread_id: str) -> str:
@@ -859,24 +871,15 @@ def _find_named_thunk(thunks: tuple[Thunk, ...], name: str) -> Thunk | None:
 
 
 def _default_thread_thunk(origin: str) -> Thunk:
-    template = _default_thread_system_template(origin)
     return Thunk(
         name=origin,
-        messages=(
-            MessageBlock(
-                kind="system",
-                text=template,
-                span=_synthetic_span(),
-                explicit=False,
-            ),
-        ),
         span=_synthetic_span(),
     )
 
 
-def _default_thread_system_template(origin: str) -> str:
-    tail = _DEFAULT_THREAD_SYSTEM_TAILS[origin]
-    return f"{_DEFAULT_THREAD_SYSTEM_TEMPLATE}\n\n{tail}".strip()
+def _default_instruct_template(origin: str) -> str:
+    tail = _DEFAULT_INSTRUCT_TAILS.get(origin) or _DEFAULT_INSTRUCT_TAILS["script"]
+    return f"{_DEFAULT_INSTRUCT_TEMPLATE}\n\n{tail}".strip()
 
 
 def _synthetic_span() -> SourceSpan:
@@ -1496,7 +1499,7 @@ def _render_thunk_messages(
 ) -> tuple[MessageBlock, ...]:
     rendered: list[MessageBlock] = []
     for block in blocks:
-        context = system_context if block.kind == "system" else user_context
+        context = system_context if block.kind in {"instruct", "system"} else user_context
         rendered.append(
             MessageBlock(
                 kind=block.kind,
@@ -1506,6 +1509,98 @@ def _render_thunk_messages(
             )
         )
     return tuple(rendered)
+
+
+def _assembled_instructions(
+    *,
+    live_program: LiveProgram,
+    origin: str,
+    thunk: Thunk,
+    rendered_messages: tuple[MessageBlock, ...],
+    system_context: dict[str, object],
+    tool_history_context: str,
+) -> str:
+    parts = [
+        _render_instruct_template(
+            live_program=live_program,
+            origin=origin,
+            thunk=thunk,
+            system_context=system_context,
+        ),
+        _message_blocks_body(tuple(item for item in rendered_messages if item.kind == "system")),
+    ]
+    instructions = _join_message_texts(*parts)
+    if not tool_history_context:
+        return instructions
+    if instructions:
+        return f"{instructions}\n\n{tool_history_context}"
+    return tool_history_context
+
+
+def _render_instruct_template(
+    *,
+    live_program: LiveProgram,
+    origin: str,
+    thunk: Thunk,
+    system_context: dict[str, object],
+) -> str:
+    template = _selected_instruct_template(
+        live_program=live_program,
+        origin=origin,
+        thunk=thunk,
+    )
+    if not template.strip():
+        return ""
+    return render_text_template(template, system_context).strip()
+
+
+def _selected_instruct_template(
+    *,
+    live_program: LiveProgram,
+    origin: str,
+    thunk: Thunk,
+) -> str:
+    blocks = thunk.message_blocks("instruct")
+    if not blocks:
+        return _default_program_instruct_template(live_program, origin=origin)
+    block = blocks[0]
+    value = block.text.strip()
+    if value == "none":
+        return ""
+    if value == "default":
+        return _default_program_instruct_template(live_program, origin=origin)
+    if _looks_like_instruct_name(value):
+        instruct = _program_instruct(live_program, value)
+        if instruct is None:
+            raise ToolangError(f"Instruct not found: {value}")
+        return instruct.body
+    return block.text
+
+
+def _default_program_instruct_template(live_program: LiveProgram, *, origin: str) -> str:
+    instruct = _program_instruct(live_program, None)
+    if instruct is not None:
+        return instruct.body
+    return _default_instruct_template(origin)
+
+
+def _program_instruct(live_program: LiveProgram, name: str | None) -> Any | None:
+    get_instruct = getattr(live_program, "get_instruct", None)
+    if not callable(get_instruct):
+        return None
+    return get_instruct(name)
+
+
+def _looks_like_instruct_name(value: str) -> bool:
+    if not value or any(char.isspace() for char in value):
+        return False
+    if "\n" in value:
+        return False
+    first = value[0]
+    return (first.isalpha() or first == "_") and all(
+        char.isalnum() or char in {"_", "-"}
+        for char in value
+    )
 
 
 def _runtime_snapshot(

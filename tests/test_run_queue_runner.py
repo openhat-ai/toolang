@@ -5207,7 +5207,8 @@ def test_assemble_run_input_keeps_thread_messages_out_of_system_instructions(tmp
         }
     ]
     instructions = bundle.instructions()
-    assert instructions == "Reply directly."
+    assert "You are the alice Toolang agent." in instructions
+    assert "Reply directly." in instructions
     assert "hello" not in instructions
 
 
@@ -5284,7 +5285,117 @@ def test_chat_run_prefers_named_chat_thunk_over_main(tmp_path: Path) -> None:
     bundle = RunInput.from_binding(context, bound)
 
     assert bundle.thunk.name == "chat"
-    assert bundle.instructions() == "Reply directly."
+    instructions = bundle.instructions()
+    assert "You are the alice Toolang agent." in instructions
+    assert "Reply directly." in instructions
+
+
+def test_program_default_instruct_overrides_runtime_default(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        (
+            "agent alice\n\n"
+            "instruct:\n"
+            "  Agent {{runtime.agent.name}} in sandbox {{runtime.sandbox}}.\n\n"
+            "thunk chat:\n"
+            "  Reply directly.\n"
+        ),
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat",),
+    )
+    bound = bind_run_request(
+        context,
+        RunRequest(group="chat", origin="chat", thunk="hello"),
+    )
+
+    instructions = RunInput.from_binding(context, bound).instructions()
+
+    assert instructions == "Agent alice in sandbox none.\n\nReply directly."
+
+
+def test_thunk_instruct_can_select_named_instruct(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        (
+            "agent alice\n\n"
+            "instruct reviewer:\n"
+            "  Review with {{runtime.thunk.name}}.\n\n"
+            "thunk review:\n"
+            "  instruct: reviewer\n\n"
+            "  Review the target carefully.\n"
+        ),
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=(),
+    )
+    bound = bind_run_request(
+        context,
+        RunRequest(group="script", origin="script", thunk_name="review", thunk="input"),
+    )
+
+    bundle = RunInput.from_binding(context, bound)
+
+    assert bundle.instructions() == "Review with review."
+
+
+def test_thunk_instruct_none_suppresses_developer_prompt(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        (
+            "agent alice\n\n"
+            "thunk quiet:\n"
+            "  instruct: none\n\n"
+            "  Reply directly.\n"
+        ),
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=(),
+    )
+    bound = bind_run_request(
+        context,
+        RunRequest(group="script", origin="script", thunk_name="quiet", thunk="input"),
+    )
+
+    bundle = RunInput.from_binding(context, bound)
+
+    assert bundle.instructions() == ""
+
+
+def test_thunk_instruct_block_renders_as_developer_prompt(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        (
+            "agent alice\n\n"
+            "thunk custom:\n"
+            "  instruct:\n"
+            "    Use {{runtime.agent.name}} and {{runtime.thunk.name}}.\n\n"
+            "  Reply directly.\n"
+        ),
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=(),
+    )
+    bound = bind_run_request(
+        context,
+        RunRequest(group="script", origin="script", thunk_name="custom", thunk="input"),
+    )
+
+    bundle = RunInput.from_binding(context, bound)
+
+    assert bundle.instructions() == "Use alice and custom."
 
 
 def test_chat_run_uses_default_template_when_chat_thunk_is_missing(tmp_path: Path) -> None:

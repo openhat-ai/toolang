@@ -12,6 +12,7 @@ Current program-level constructs are:
 | `agent` | Program header declaring the agent name |
 | `use` | One external cap reference |
 | `struct` | One named structured type |
+| `instruct` | One developer-prompt template |
 | `prompt` | One reusable prompt definition |
 | `thunk` | One callable program entrypoint |
 
@@ -47,6 +48,32 @@ surfaces before any thunk selects them. The prepared cap has `form=inline`,
 `scope=here`, and `origin=local`.
 
 
+## Instruct Declarations
+
+`instruct` defines a template for the model-facing developer prompt. Runtime
+renders the selected instruct with the current model, tool, cap, sandbox, agent,
+program, thunk, and job context before the adapter submits it to the model API.
+
+Toolang has one built-in default instruct. A program may customize that default
+with one unnamed declaration:
+
+```toolang
+instruct:
+  You are {{runtime.agent.name}}.
+  Use the selected tools only when they materially help.
+```
+
+Named instructs define reusable alternatives:
+
+```toolang
+instruct strict-json:
+  Return only JSON matching {{runtime.thunk.output}}.
+```
+
+`default` and `none` are reserved instruct names because thunk-level
+`instruct:` blocks use them as control values.
+
+
 ## Thunk
 
 A thunk is one callable entrypoint.
@@ -57,7 +84,7 @@ Each thunk has three parts:
 | --- | --- |
 | `signature` | Name, params, and return contract |
 | `directives` | Model and capability selection for that thunk |
-| `body` | Thunk-specific instructions |
+| `blocks` | Instruct selection and user/system text blocks |
 
 Recommended shape:
 
@@ -296,6 +323,46 @@ Rules:
 the current set.
 
 
+## Thunk Instruct Blocks
+
+Each thunk may declare at most one `instruct:` block. If it omits the block,
+Toolang behaves as if the thunk declared `instruct: default`.
+
+Supported forms are:
+
+| Form | Meaning |
+| --- | --- |
+| `instruct: default` | Use the program default instruct, or the runtime built-in default if the program has no unnamed instruct |
+| `instruct: none` | Do not generate a developer prompt for this thunk |
+| `instruct: name` | Use the named program instruct |
+| indented or fenced `instruct:` block | Use this block text as the instruct template for this thunk |
+
+Examples:
+
+```toolang
+thunk review(input):
+  instruct: strict-json
+
+  Review the target carefully.
+```
+
+```toolang
+thunk quiet(input):
+  instruct: none
+
+  Reply without a developer prompt.
+```
+
+```toolang
+thunk summarize(input, audience?):
+  instruct:
+    You are {{runtime.agent.name}}.
+    Summarize for {{audience}}.
+
+  Summarize the input.
+```
+
+
 ## Prompts
 
 A prompt is one reusable input expansion.
@@ -433,12 +500,13 @@ Toolang uses these contract and payload layers:
 | Layer | Role |
 | --- | --- |
 | `runtime instructions` | Execution protocol and hard constraints |
+| `instruct` | Template selected to produce the developer prompt |
 | `psyche text` | Long-lived default behavior |
 | `thunk body` | Entrypoint-specific execution behavior |
 | `user message` | Current chat objective |
 | `task body` | Current task objective |
 | `chore body` | Current chore objective |
-| `assembled instructions` | Final model-facing instruction text |
+| `assembled instructions` | Final model-facing developer prompt text |
 
 Recommended precedence:
 

@@ -34,7 +34,7 @@ TOP_LEVEL_RE = re.compile(
 )
 OverlayKind = Literal["model", "tool", "psyche", "skill", "service", "hand", "handoff"]
 OverlayOperator = Literal["set", "add", "remove"]
-MessageBlockKind = Literal["system", "user", "assistant", "tool"]
+MessageBlockKind = Literal["instruct", "system", "user", "assistant", "tool"]
 TREE_SITTER_TYPE_ALIASES = {
     "string": "Text",
     "text": "Text",
@@ -84,6 +84,14 @@ class DeclBlock:
     language: str | None = None
     meta: dict[str, Any] = field(default_factory=dict)
     params: list[ParamDecl] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class InstructBlock:
+    name: str | None
+    body: str
+    span: SourceSpan
+    language: str | None = None
 
 
 @dataclass(slots=True)
@@ -149,6 +157,7 @@ class Thunk:
 @dataclass(slots=True)
 class Program:
     uses: list[UseDecl] = field(default_factory=list)
+    instructs: list[InstructBlock] = field(default_factory=list)
     declarations: list[DeclBlock] = field(default_factory=list)
     structs: list[StructDecl] = field(default_factory=list)
     thunks: list[Thunk] = field(default_factory=list)
@@ -157,6 +166,12 @@ class Program:
     def get_decl(self, kind: str, name: str) -> DeclBlock | None:
         for item in self.declarations:
             if item.kind == kind and item.name == name:
+                return item
+        return None
+
+    def get_instruct(self, name: str | None) -> InstructBlock | None:
+        for item in self.instructs:
+            if item.name == name:
                 return item
         return None
 
@@ -207,6 +222,9 @@ def parse(source: str) -> Program:
         if node.type in {"fenced_declaration", "psyche", "skill", "service", "prompt"}:
             program.declarations.append(_decl_from_node(node, syntax_source))
             continue
+        if node.type == "instruct":
+            program.instructs.append(_instruct_from_node(node, syntax_source))
+            continue
         if node.type in {"struct", "struct_declaration"}:
             program.structs.append(_struct_from_node(node, lines, syntax_source))
             continue
@@ -256,6 +274,16 @@ def _decl_from_node(node: Node, syntax_source: _TreeSitterSource) -> DeclBlock:
         body=body,
         params=params,
         span=SourceSpan(line_number),
+    )
+
+
+def _instruct_from_node(node: Node, syntax_source: _TreeSitterSource) -> InstructBlock:
+    body_node = _required_child(node, "body")
+    return InstructBlock(
+        name=_optional_text(node.child_by_field_name("name")),
+        body=_block_value_text(body_node),
+        language=_cap_body_language(body_node),
+        span=SourceSpan(syntax_source.original_line_number(node.start_point.row)),
     )
 
 
@@ -503,7 +531,7 @@ def _block_message_from_node(node: Node, *, syntax_source: _TreeSitterSource) ->
 
 
 def _block_value_text(node: Node) -> str:
-    if node.type == "block_value" and node.named_child_count:
+    if node.type in {"block_value", "instruct_body"} and node.named_child_count:
         return _block_value_text(node.named_children[0])
     if node.type == "block_inline":
         content = node.child_by_field_name("content") or node.child_by_field_name("name")
