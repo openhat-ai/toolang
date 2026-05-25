@@ -84,8 +84,8 @@
   package exposed by that repository rather than compiling grammar sources at
   runtime.
 - `toolang.base` owns the shared plugin-facing protocols, value types, and
-  helper utilities used across model, strategy, tool, sandbox, and channel
-  plugins.
+  helper utilities used across tool, loop, channel, sandbox, model provider,
+  and model adapter plugins.
 - `toolang.program` owns `.too` parsing, authored source semantics, and source
   editing.
 - `toolang.agents` owns local agent home layout, runtime-state files, and
@@ -96,9 +96,11 @@
 - `toolang.state` owns durable, prepared, live, and pulse state models.
 - `toolang.execution` owns run binding, execution trace, durable run truth,
   response projection, and execution storage.
-- `toolang.models`, `toolang.strategies`, `toolang.tools`,
-  `toolang.channels`, and `toolang.sandboxes` own the built-in plugin-family
-  implementations and loaders.
+- `toolang.tools`, `toolang.loops`, `toolang.channels`, `toolang.sandboxes`,
+  `toolang.models.providers`, and `toolang.models.adapters` own the built-in
+  plugin-family implementations.
+- `toolang.plugin` owns generic entry point discovery and plugin
+  loading.
 - `toolang.config` owns runtime config resolution helpers.
 - `toolang.up` owns agent startup and FastAPI app assembly.
 - `toolang.cli` owns CLI orchestration and environment resolution.

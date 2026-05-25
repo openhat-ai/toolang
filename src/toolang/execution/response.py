@@ -9,7 +9,7 @@ import threading
 import time
 from typing import Any, Protocol
 
-from toolang.base.protocols.channel import ChannelPlugin
+from toolang.base.protocols.channel import AgentChannel
 from toolang.base.types.channel import ChannelContext, OutboundMessage, ReplyTarget
 from toolang.base.types.message import TextDelta, TextPart, ToolCallDelta, ToolCallPart, ToolResultPart, message_text
 from .events import RunEnd, RunStart, StepEnd, StepStart, PartStart, PartDelta, PartEnd, TraceEvent, message_data_for_step
@@ -250,7 +250,7 @@ class ChannelResponseSink:
     def __init__(
         self,
         *,
-        plugin: ChannelPlugin | None,
+        plugin: AgentChannel | None,
         target: ReplyTarget,
         channel_context: ChannelContext,
         binding_name: str,

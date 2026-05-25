@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from toolang.base.protocols.channel import ChannelPlugin
+from toolang.base.protocols.channel import AgentChannel
 from toolang.base.types.channel import (
     ChannelContext,
     ChannelState,
@@ -31,7 +31,7 @@ def test_create_experiments_telegram_channel_plugin() -> None:
         config={"token": "secret", "owner_chat_id": "123"},
     )
 
-    assert isinstance(plugin, ChannelPlugin)
+    assert isinstance(plugin, AgentChannel)
     assert plugin.health(_channel_context(Path("/tmp/alice"), "telegram")).ok is True
 
 

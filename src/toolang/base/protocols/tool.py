@@ -9,7 +9,7 @@ from ..types.tool import ToolContext, ToolDefinition
 
 
 @runtime_checkable
-class Tool(Protocol):
+class AgentTool(Protocol):
     """One model-facing tool exposed by one plugin."""
 
     name: str
@@ -22,11 +22,11 @@ class Tool(Protocol):
 
 
 @runtime_checkable
-class ToolPlugin(Protocol):
+class AgentToolSet(Protocol):
     """Minimal tool plugin contract."""
 
     name: str
     description: str | None
 
-    def tools(self) -> Mapping[str, Tool]:
+    def tools(self) -> Mapping[str, AgentTool]:
         """Return one stable mapping of leaf tools exposed by this plugin."""

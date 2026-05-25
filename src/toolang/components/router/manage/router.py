@@ -1,4 +1,4 @@
-"""Formal control API routes."""
+"""Formal management API routes."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from . import caps, jobs
 
 
 def create_router() -> APIRouter:
-    """Build the formal control route group."""
+    """Build the formal management route group."""
 
     router = APIRouter()
     router.include_router(caps.create_router())

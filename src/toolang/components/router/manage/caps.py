@@ -7,8 +7,8 @@ from typing import Literal, cast
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
 
-from ... import caps
-from ...state.prepared import EntryKind, PreparedEntry, PreparedVisibility
+from .... import caps
+from ....state.prepared import EntryKind, PreparedEntry, PreparedVisibility
 
 CapKind = Literal["psyche", "skill", "service", "prompt"]
 ApiVisibility = Literal["private", "shared"]

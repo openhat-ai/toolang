@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from fnmatch import fnmatchcase
 
 from toolang.base.error import ToolangError
-from toolang.base.protocols.tool import Tool
+from toolang.base.protocols.tool import AgentTool
 from toolang.base.utils.tools import encode_tool_name
 
 
@@ -65,7 +65,7 @@ def parse_tool_registration_key(
     return ToolRef(plugin=plugin_name, namespace=namespace, name=name)
 
 
-def tool_ref_for_model_tool(model_name: str, tool: Tool) -> ToolRef:
+def tool_ref_for_model_tool(model_name: str, tool: AgentTool) -> ToolRef:
     """Return the structured public ref for one loaded model-facing tool."""
 
     ref = getattr(tool, "ref", None)
@@ -126,7 +126,7 @@ def _has_glob(text: str) -> bool:
     return any(char in text for char in "*?[")
 
 
-def _tool_leaf_name(tool: Tool) -> str:
+def _tool_leaf_name(tool: AgentTool) -> str:
     leaf_tool = getattr(tool, "leaf_tool", None)
     leaf = getattr(leaf_tool, "name", None)
     if isinstance(leaf, str) and leaf:

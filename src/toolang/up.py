@@ -6,7 +6,6 @@ import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, replace
-from importlib.metadata import entry_points
 import logging
 import os
 from pathlib import Path
@@ -17,7 +16,7 @@ import sys
 import time
 import threading
 from types import FrameType
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 import click
@@ -27,10 +26,11 @@ import uvicorn
 from uvicorn.main import STARTUP_FAILURE
 
 from . import agents
-from toolang.base.protocols.channel import ChannelPlugin
+from toolang.base.protocols.channel import AgentChannel
 from toolang.base.protocols.model import ModelProvider
-from toolang.base.protocols.sandbox import SandboxPlugin
-from toolang.base.protocols.tool import Tool, ToolPlugin
+from toolang.base.protocols.model_adapter import ModelAdapter
+from toolang.base.protocols.sandbox import AgentSandbox
+from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.channel import ChannelContext, InboundDelivery
 from toolang.base.types.model import ModelAlias
 from toolang.base.types.sandbox import SandboxSelector, SandboxStartRequest, SandboxState
@@ -59,9 +59,19 @@ from .models.resolution import resolve_model, select_model_selectors
 from .execution.runner import QueueRunner, RunRequest, RunSubmission, RunOutcome
 from .execution.db import ExecutionStore, execution_db_path
 from .execution.stream import RuntimeEventBus
-from .features import chat, hook, poll, pulse, watch
-from .features.control import create_router as create_control_router
-from .features.inspect import create_router as create_inspect_router
+from .components.router import chat
+from .components.router.inspect import create_router as create_inspect_router
+from .components.router.manage import create_router as create_manage_router
+from .components.registry import (
+    DEFAULT_ENABLED_COMPONENTS,
+    RUNNER_COMPONENTS,
+    TRIGGER_COMPONENTS,
+    ComponentName,
+    component_group,
+    format_component_group,
+    normalize_component_names,
+)
+from .components.trigger import poll, pulse, watch
 from .progress import ProgressSink
 from .state.durable import scan_durable_state
 from .state.live import LiveState, load_live_state
@@ -69,39 +79,25 @@ from .state.prepared import PreparedEntry, PreparedState
 from .models.config import (
     load_default_models,
     load_model_aliases,
+    load_model_provider_configs,
 )
-from .models.providers.loader import load_model_providers
 from .models.selectors import split_model_selectors
-
-FeatureName = Literal[
-    "chat", "pulse", "poll", "hook", "control", "inspect", "watch"
-]
-
-ALL_FEATURES: tuple[FeatureName, ...] = (
-    "chat",
-    "pulse",
-    "poll",
-    "hook",
-    "control",
-    "inspect",
-    "watch",
+from .plugin import (
+    PluginInfo,
+    create_plugin,
+    list_plugin_infos,
+    list_plugin_names,
+    load_plugin_factory,
+    load_plugins,
 )
-DEFAULT_ENABLED_FEATURES: tuple[FeatureName, ...] = (
-    "chat",
-    "pulse",
-    "control",
-    "inspect",
-    "watch",
-)
-RUN_FEATURES = frozenset({"chat", "pulse", "poll", "hook"})
-HTTP_FEATURES = frozenset({"chat", "hook", "control", "inspect"})
-BACKGROUND_FEATURES: tuple[FeatureName, ...] = ("pulse", "poll", "watch")
 
-DEFAULT_FEATURE_INTERVAL_MS: dict[str, float] = {
+DEFAULT_TRIGGER_INTERVAL_MS: dict[str, float] = {
     "pulse": pulse.DEFAULT_INTERVAL_MS,
     "poll": poll.DEFAULT_INTERVAL_MS,
     "watch": watch.DEFAULT_INTERVAL_MS,
 }
+RUN_NAMES = frozenset(component_group(RUNNER_COMPONENTS, "runner"))
+RUN_FEATURES = RUN_NAMES | {"pulse", "poll"}
 DEFAULT_WATCH_DEBOUNCE_MS = watch.DEFAULT_DEBOUNCE_MS
 RUNTIME_SHUTDOWN_TASK_TIMEOUT_SEC = 1.0
 UVICORN_GRACEFUL_SHUTDOWN_SEC = 1
@@ -118,19 +114,14 @@ OPENAPI_TAGS = [
     {"name": "caps", "description": "Capability inspection and mutation endpoints."},
     {"name": "jobs", "description": "Task, chore, and will inspection endpoints."},
     {"name": "activity", "description": "Thread, run, and event history endpoints."},
-    {"name": "hook", "description": "Inbound hook submission endpoints."},
 ]
 logger = logging.getLogger("toolang.runtime")
-FactoryT = TypeVar("FactoryT")
-PluginSource = Literal["built-in", "external"]
-
-
-@dataclass(frozen=True, slots=True)
-class PluginInfo:
-    """One discoverable plugin entry point."""
-
-    name: str
-    source: PluginSource
+_PLUGIN_API_REEXPORTS = (
+    PluginInfo,
+    list_plugin_infos,
+    list_plugin_names,
+    load_plugin_factory,
+)
 
 
 class UptimeConfig:
@@ -138,6 +129,7 @@ class UptimeConfig:
 
     def __init__(self, values: Mapping[str, object] | None = None) -> None:
         self._values = dict(values or {})
+        self._migrate_component_keys()
 
     def get(self, key: str, default: object | None = None) -> object | None:
         return self._values.get(key, default)
@@ -149,9 +141,35 @@ class UptimeConfig:
 
     def set(self, key: str, value: object) -> None:
         self._values[key] = value
+        if key == "features.enabled":
+            self._values["components.enabled"] = value
+        elif key == "features.pulse.interval_ms":
+            self._values["components.trigger.pulse.interval_ms"] = value
+        elif key == "features.poll.interval_ms":
+            self._values["components.trigger.poll.interval_ms"] = value
+        elif key == "features.watch.interval_ms":
+            self._values["components.trigger.watch.interval_ms"] = value
+        elif key == "features.watch.debounce_ms":
+            self._values["components.trigger.watch.debounce_ms"] = value
+        self._migrate_component_keys()
 
     def snapshot(self) -> dict[str, object]:
         return dict(self._values)
+
+    def _migrate_component_keys(self) -> None:
+        if "components.enabled" not in self._values and "features.enabled" in self._values:
+            self._values["components.enabled"] = self._values["features.enabled"]
+        raw_components = self._values.get("components.enabled")
+        if isinstance(raw_components, tuple):
+            self._values["components.enabled"] = normalize_component_names(raw_components)
+        if "components.trigger.pulse.interval_ms" not in self._values and "features.pulse.interval_ms" in self._values:
+            self._values["components.trigger.pulse.interval_ms"] = self._values["features.pulse.interval_ms"]
+        if "components.trigger.poll.interval_ms" not in self._values and "features.poll.interval_ms" in self._values:
+            self._values["components.trigger.poll.interval_ms"] = self._values["features.poll.interval_ms"]
+        if "components.trigger.watch.interval_ms" not in self._values and "features.watch.interval_ms" in self._values:
+            self._values["components.trigger.watch.interval_ms"] = self._values["features.watch.interval_ms"]
+        if "components.trigger.watch.debounce_ms" not in self._values and "features.watch.debounce_ms" in self._values:
+            self._values["components.trigger.watch.debounce_ms"] = self._values["features.watch.debounce_ms"]
 
 
 class UptimeContext:
@@ -163,13 +181,14 @@ class UptimeContext:
         root: Path,
         name: str,
         live: LiveState,
-        tools: dict[str, Tool],
+        tools: dict[str, AgentTool],
         model_providers: dict[str, ModelProvider],
+        model_adapters: dict[str, ModelAdapter],
         model_aliases: dict[str, ModelAlias],
         default_models: tuple[str, ...],
         model_environ: Mapping[str, str],
         channel_bindings: dict[str, ChannelBinding],
-        channel_plugins: dict[str, ChannelPlugin],
+        channel_plugins: dict[str, AgentChannel],
         runner: QueueRunner,
         store: ExecutionStore,
         events: RuntimeEventBus,
@@ -182,6 +201,7 @@ class UptimeContext:
         self.live = live
         self.tools = dict(tools)
         self.model_providers = dict(model_providers)
+        self.model_adapters = dict(model_adapters)
         self.model_aliases = dict(model_aliases)
         self.default_models = tuple(default_models)
         self.model_environ = dict(model_environ)
@@ -215,21 +235,21 @@ class UptimeContext:
 
     def enqueue_run(
         self,
-        feature_name: str,
+        component_name: str,
         *,
         thunk: str,
         thread_id: str | None = None,
     ) -> int:
-        """Queue one run request for a run-producing feature."""
+        """Queue one run request for a run-producing component."""
 
-        if feature_name not in RUN_FEATURES:
-            raise ValueError(f"feature does not produce runs: {feature_name}")
+        if component_name not in RUN_FEATURES:
+            raise ValueError(f"component does not produce runs: run.{component_name}")
         from .execution.runner import RunRequest
 
         return self.runner.enqueue(
             RunRequest(
-                group=feature_name,
-                origin=feature_name,
+                group=component_name,
+                origin=component_name,
                 thread_id=thread_id,
                 thunk=thunk,
             )
@@ -237,14 +257,14 @@ class UptimeContext:
 
     def enqueue_delivery(
         self,
-        feature_name: str,
+        component_name: str,
         binding_name: str,
         delivery: InboundDelivery,
     ) -> int:
         """Queue one run request produced by one channel delivery."""
 
-        if feature_name not in RUN_FEATURES:
-            raise ValueError(f"feature does not produce runs: {feature_name}")
+        if component_name not in RUN_FEATURES:
+            raise ValueError(f"component does not produce runs: run.{component_name}")
         from .execution.runner import RunRequest
 
         bound = bind_delivery(binding_name, delivery)
@@ -253,7 +273,7 @@ class UptimeContext:
         metadata["sender"] = bound.sender
         return self.runner.enqueue(
             RunRequest(
-                group=feature_name,
+                group=component_name,
                 origin=bound.origin,
                 thread_id=bound.thread_id,
                 thunk=bound.text,
@@ -276,14 +296,18 @@ class StartupSpec:
     host: str
     endpoint_host: str
     port: int
-    enabled_features: tuple[FeatureName, ...]
-    sandbox_plugin: SandboxPlugin
+    enabled_components: tuple[ComponentName, ...]
+    sandbox_plugin: AgentSandbox
     selector: SandboxSelector
     sandbox_config: dict[str, object]
     dev_artifact: Path | None
     model_selectors: tuple[str, ...]
     tool_selectors: tuple[str, ...] | None
     log_spec: str | None = None
+
+    @property
+    def enabled_features(self) -> tuple[ComponentName, ...]:
+        return self.enabled_components
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,12 +319,12 @@ class _StartupModelSelection:
 
 
 @dataclass(frozen=True, slots=True)
-class _LoadedTool(Tool):
+class _LoadedTool(AgentTool):
     """One model-facing tool loaded from one named plugin."""
 
     plugin_name: str
     ref: ToolRef
-    leaf_tool: Tool
+    leaf_tool: AgentTool
 
     @property
     def name(self) -> str:
@@ -332,9 +356,9 @@ def create_app(
     lifespan: Callable[[FastAPI], AbstractAsyncContextManager[None]] | None = None,
     shutdown_signal: threading.Event | None = None,
 ) -> FastAPI:
-    """Create one FastAPI app for an existing feature context."""
+    """Create one FastAPI app for an existing runtime component context."""
 
-    enabled_features = cast(tuple[str, ...], context.config.require("features.enabled"))
+    enabled_components = cast(tuple[str, ...], context.config.require("components.enabled"))
     raw_cors_origins = context.config.get("web.cors_allowed_origins")
     cors_origins = (
         [item for item in raw_cors_origins if isinstance(item, str) and item.strip()]
@@ -351,20 +375,18 @@ def create_app(
         allow_origins=cors_origins or None,
     )
     app.state.runtime = context
-    app.state.enabled_features = enabled_features
+    app.state.enabled_components = enabled_components
     app.state.shutdown_signal = shutdown_signal
 
     @app.get("/healthz", tags=["agent"], summary="Health Check")
     def healthz() -> dict[str, object]:
-        return {"ok": True, "enabled_features": list(enabled_features)}
+        return {"ok": True, "enabled_components": list(enabled_components)}
 
-    if "chat" in enabled_features:
+    if "router.chat" in enabled_components:
         app.include_router(chat.create_router())
-    if "hook" in enabled_features:
-        app.include_router(hook.create_router())
-    if "control" in enabled_features:
-        app.include_router(create_control_router())
-    if "inspect" in enabled_features:
+    if "router.manage" in enabled_components:
+        app.include_router(create_manage_router())
+    if "router.inspect" in enabled_components:
         app.include_router(create_inspect_router())
     return app
 
@@ -381,6 +403,7 @@ def up(
     tools: Sequence[str] | None = None,
     dev: Path | None = None,
     sandbox_child: bool = False,
+    component_names: Sequence[str] | None = None,
     feature_names: Sequence[str] | None = None,
     log_spec: str | None = None,
     environ: Mapping[str, str],
@@ -398,6 +421,7 @@ def up(
         models=models,
         tools=tools,
         dev=dev,
+        component_names=component_names,
         feature_names=feature_names,
         log_spec=log_spec,
         environ=environ,
@@ -430,7 +454,7 @@ def start_runtime(
             host=spec.host,
             endpoint_host=spec.endpoint_host,
             port=spec.port,
-            enabled_features=spec.enabled_features,
+            enabled_components=spec.enabled_components,
             environ=environ,
             dev_artifact=spec.dev_artifact,
             model_selectors=spec.model_selectors,
@@ -442,7 +466,7 @@ def start_runtime(
         host=spec.host,
         endpoint_host=spec.endpoint_host,
         port=spec.port,
-        enabled_features=spec.enabled_features,
+        enabled_components=spec.enabled_components,
         environ=environ,
         sandbox_child=sandbox_child,
         model_selectors=spec.model_selectors,
@@ -489,7 +513,7 @@ def invoke(
     context = _load_runtime_context(
         toolang_root=toolang_root,
         agent_name=agent_name,
-        enabled_features=(),
+        enabled_components=(),
         environ=invoke_environ,
         model_selectors=_normalize_model_selectors(models),
         tool_selectors=_normalize_tool_selectors(tools),
@@ -569,6 +593,7 @@ def resolve_startup(
     models: Sequence[str] | None = None,
     tools: Sequence[str] | None = None,
     dev: Path | None = None,
+    component_names: Sequence[str] | None = None,
     feature_names: Sequence[str] | None = None,
     log_spec: str | None = None,
     temporary_port: bool = False,
@@ -576,7 +601,8 @@ def resolve_startup(
 ) -> StartupSpec:
     """Resolve one explicit startup request into stable runtime inputs."""
 
-    enabled_features = normalize_feature_names(feature_names or DEFAULT_ENABLED_FEATURES)
+    requested_components = component_names if component_names is not None else feature_names
+    enabled_components = normalize_component_names(requested_components or DEFAULT_ENABLED_COMPONENTS)
     endpoint_host = endpoint_host or _default_endpoint_host(host)
     resolved_port = resolve_runtime_port(
         host=host,
@@ -619,7 +645,7 @@ def resolve_startup(
     dev_artifact = _resolve_dev_artifact(dev) if dev is not None else None
     model_selectors = _normalize_model_selectors(models)
     tool_selectors = _normalize_tool_selectors(tools)
-    if _startup_requires_model(enabled_features):
+    if _startup_requires_model(enabled_components):
         _validate_startup_models(
             toolang_root=toolang_root,
             agent_name=agent_name,
@@ -632,7 +658,7 @@ def resolve_startup(
         host=host,
         endpoint_host=endpoint_host,
         port=resolved_port,
-        enabled_features=enabled_features,
+        enabled_components=enabled_components,
         sandbox_plugin=sandbox_plugin,
         selector=selector,
         sandbox_config=sandbox_config,
@@ -643,8 +669,8 @@ def resolve_startup(
     )
 
 
-def _startup_requires_model(enabled_features: Sequence[str]) -> bool:
-    return any(feature_name in RUN_FEATURES for feature_name in enabled_features)
+def _startup_requires_model(enabled_components: Sequence[str]) -> bool:
+    return any(component_name in RUNNER_COMPONENTS for component_name in enabled_components)
 
 
 def _validate_startup_models(
@@ -707,8 +733,8 @@ def build_run_argv(
         command.extend(["--dev", str(spec.dev_artifact)])
     if sandbox_child:
         command.append("--sandbox-child")
-    for feature_name in spec.enabled_features:
-        command.extend(["--enable", feature_name])
+    for component_name in spec.enabled_components:
+        command.extend(["--enable", component_name])
     return tuple(command)
 
 
@@ -725,7 +751,7 @@ def _up_local(
     host: str,
     endpoint_host: str,
     port: int,
-    enabled_features: tuple[FeatureName, ...],
+    enabled_components: tuple[ComponentName, ...],
     environ: Mapping[str, str],
     sandbox_child: bool,
     model_selectors: tuple[str, ...],
@@ -733,10 +759,10 @@ def _up_local(
     log_spec: str | None,
     progress: ProgressSink | None = None,
 ) -> int:
-    loop_intervals_ms = dict(DEFAULT_FEATURE_INTERVAL_MS)
-    for feature_name in BACKGROUND_FEATURES:
-        if feature_name in loop_intervals_ms and loop_intervals_ms[feature_name] <= 0:
-            raise ValueError(f"feature interval must be positive: {feature_name}")
+    loop_intervals_ms = dict(DEFAULT_TRIGGER_INTERVAL_MS)
+    for component_name in component_group(TRIGGER_COMPONENTS, "trigger"):
+        if component_name in loop_intervals_ms and loop_intervals_ms[component_name] <= 0:
+            raise ValueError(f"trigger interval must be positive: {component_name}")
     cors_allowed_origins = resolve_cors_allowed_origins(
         toolang_root,
         environ=environ,
@@ -745,7 +771,7 @@ def _up_local(
     context = _load_runtime_context(
         toolang_root=toolang_root,
         agent_name=agent_name,
-        enabled_features=enabled_features,
+        enabled_components=enabled_components,
         environ=environ,
         model_selectors=model_selectors,
         host=host,
@@ -758,7 +784,7 @@ def _up_local(
     context.store.append_update(
         kind="started",
         payload={
-            "features": list(enabled_features),
+            "components": list(enabled_components),
             "live_fingerprint": live.fingerprint,
         },
         created_at=started_at,
@@ -769,7 +795,7 @@ def _up_local(
         type="agent_start",
         payload={
             "agent": context.name,
-            "features": list(enabled_features),
+            "components": list(enabled_components),
             "live_fingerprint": live.fingerprint,
             "started_at": started_at,
         },
@@ -788,19 +814,19 @@ def _up_local(
                     endpoint=endpoint,
                     started_at=started_at,
                     pid=os.getpid(),
-                    features=enabled_features,
+                    components=enabled_components,
                     models=model_selectors,
                 )
             bg_tasks: list[asyncio.Task[None]] = []
-            if "pulse" in enabled_features:
+            if "trigger.pulse" in enabled_components:
                 bg_tasks.append(pulse.spawn(context, stop_signal=stop_signal))
-            if "poll" in enabled_features:
+            if "trigger.poll" in enabled_components:
                 bg_tasks.append(poll.spawn(context, stop_signal=stop_signal))
-            if "watch" in enabled_features:
+            if "trigger.watch" in enabled_components:
                 bg_tasks.append(watch.spawn(context, stop_signal=stop_signal))
 
             runner_task = None
-            if any(feature in RUN_FEATURES for feature in enabled_features):
+            if any(component in RUNNER_COMPONENTS for component in enabled_components):
                 runner_task = context.runner.spawn(context)
             yield
         finally:
@@ -840,14 +866,20 @@ def _up_local(
         log_config=build_uvicorn_log_config(level=log_spec or DEFAULT_LOG_LEVEL),
         shutdown_signal=shutdown_signal,
         on_starting=lambda: logger.info(
-            "Agent %s starting root=%s features=%s",
+            "Agent %s starting root=%s trigger=%s runner=%s router=%s",
             context.name,
             toolang_root,
-            ",".join(enabled_features),
+            format_component_group(enabled_components, "trigger"),
+            format_component_group(enabled_components, "runner"),
+            format_component_group(enabled_components, "router"),
             extra={
                 "color_message": "Agent %s starting root="
                 + click.style("%s", bold=True)
-                + " features="
+                + " trigger="
+                + click.style("%s", bold=True)
+                + " runner="
+                + click.style("%s", bold=True)
+                + " router="
                 + click.style("%s", bold=True)
             },
         ),
@@ -967,7 +999,7 @@ def _load_runtime_context(
     *,
     toolang_root: Path,
     agent_name: str,
-    enabled_features: tuple[FeatureName, ...],
+    enabled_components: tuple[ComponentName, ...],
     environ: Mapping[str, str],
     model_selectors: Sequence[str] = (),
     tool_selectors: Sequence[str] | None = None,
@@ -985,7 +1017,7 @@ def _load_runtime_context(
     runtime_state = agents.load_runtime_state(toolang_root, agent_name) or {}
     if prepared_state is None:
         prepared_state = prepare_agent(toolang_root=toolang_root, agent_name=agent_name, progress=progress)
-    live = load_live_state(prepared_state, enabled_features=enabled_features)
+    live = load_live_state(prepared_state, enabled_components=enabled_components)
     normalized_model_selectors = _normalize_model_selectors(model_selectors)
     normalized_tool_selectors = _normalize_tool_selectors(tool_selectors)
     default_model_selector = normalized_model_selectors[0] if normalized_model_selectors else None
@@ -994,11 +1026,11 @@ def _load_runtime_context(
             "server.host": host,
             "server.port": port,
             "server.endpoint": _runtime_endpoint_value(host=host, port=port, runtime_state=runtime_state),
-            "features.enabled": tuple(enabled_features),
-            "features.pulse.interval_ms": DEFAULT_FEATURE_INTERVAL_MS["pulse"],
-            "features.poll.interval_ms": DEFAULT_FEATURE_INTERVAL_MS["poll"],
-            "features.watch.interval_ms": DEFAULT_FEATURE_INTERVAL_MS["watch"],
-            "features.watch.debounce_ms": DEFAULT_WATCH_DEBOUNCE_MS,
+            "components.enabled": tuple(enabled_components),
+            "components.trigger.pulse.interval_ms": DEFAULT_TRIGGER_INTERVAL_MS["pulse"],
+            "components.trigger.poll.interval_ms": DEFAULT_TRIGGER_INTERVAL_MS["poll"],
+            "components.trigger.watch.interval_ms": DEFAULT_TRIGGER_INTERVAL_MS["watch"],
+            "components.trigger.watch.debounce_ms": DEFAULT_WATCH_DEBOUNCE_MS,
             "web.cors_allowed_origins": list(cors_allowed_origins),
             "models.default_selector": default_model_selector,
             "models.allowed_selectors": normalized_model_selectors,
@@ -1019,6 +1051,7 @@ def _load_runtime_context(
             selectors=normalized_tool_selectors,
         ),
         model_providers=load_model_providers(toolang_root, agent_name),
+        model_adapters=load_model_adapters(),
         model_aliases=load_model_aliases(toolang_root, agent_name),
         default_models=load_default_models(toolang_root, agent_name),
         model_environ=environ,
@@ -1041,7 +1074,7 @@ def load_runtime_tool_plugins(
     live: LiveState,
     environ: Mapping[str, str],
     selectors: Sequence[str] | None = None,
-) -> dict[str, Tool]:
+) -> dict[str, AgentTool]:
     """Load tool plugins with runtime service caps exposed to service_use."""
 
     tools = load_tool_plugins(
@@ -1169,7 +1202,7 @@ def _runtime_webui_url(
 
 def _up_managed_sandbox(
     *,
-    plugin: SandboxPlugin,
+    plugin: AgentSandbox,
     selector: SandboxSelector,
     sandbox_config: Mapping[str, object],
     toolang_root: Path,
@@ -1177,7 +1210,7 @@ def _up_managed_sandbox(
     host: str,
     endpoint_host: str,
     port: int,
-    enabled_features: tuple[FeatureName, ...],
+    enabled_components: tuple[ComponentName, ...],
     environ: Mapping[str, str],
     dev_artifact: Path | None,
     model_selectors: tuple[str, ...],
@@ -1192,7 +1225,7 @@ def _up_managed_sandbox(
         host=host,
         endpoint_host=endpoint_host,
         port=port,
-        enabled_features=enabled_features,
+        enabled_components=enabled_components,
         sandbox_plugin=plugin,
         selector=selector,
         sandbox_config=dict(sandbox_config),
@@ -1207,7 +1240,7 @@ def _up_managed_sandbox(
         started_at=started_at,
         pid=os.getpid(),
         sandbox=initial_sandbox_state,
-        features=enabled_features,
+        components=enabled_components,
         models=model_selectors,
         status="preparing",
     )
@@ -1232,7 +1265,7 @@ def _up_managed_sandbox(
         endpoint_host=endpoint_host,
         port=port,
         endpoint=endpoint,
-        feature_names=enabled_features,
+        component_names=enabled_components,
         run_command=(
             "toolang",
             *build_run_argv(
@@ -1257,7 +1290,7 @@ def _up_managed_sandbox(
             started_at=started_at,
             pid=os.getpid(),
             sandbox=plan.state.to_data() if plan.state is not None else initial_sandbox_state,
-            features=enabled_features,
+            components=enabled_components,
             models=model_selectors,
             status="starting",
         )
@@ -1284,7 +1317,7 @@ def _up_managed_sandbox(
             started_at=started_at,
             pid=os.getpid(),
             sandbox=failed_sandbox_state,
-            features=enabled_features,
+            components=enabled_components,
             models=model_selectors,
             status="failed",
             message=str(exc),
@@ -1297,7 +1330,7 @@ def _up_managed_sandbox(
         started_at=started_at,
         pid=None,
         sandbox=start.state.to_data(),
-        features=enabled_features,
+        components=enabled_components,
         models=model_selectors,
         status="running",
     )
@@ -1345,9 +1378,9 @@ def _normalize_tool_selectors(tools: Sequence[str] | None) -> tuple[str, ...] | 
 
 
 def _select_runtime_tools(
-    tools: dict[str, Tool],
+    tools: dict[str, AgentTool],
     selectors: Sequence[str] | None,
-) -> dict[str, Tool]:
+) -> dict[str, AgentTool]:
     if selectors is None:
         return tools
     if not selectors:
@@ -1362,20 +1395,6 @@ def _select_runtime_tools(
         for name in selected_names
         if name in tools
     }
-
-
-def normalize_feature_names(feature_names: Sequence[str]) -> tuple[FeatureName, ...]:
-    """Validate and de-duplicate feature names while preserving order."""
-
-    enabled: list[FeatureName] = []
-    for feature_name in feature_names:
-        if feature_name not in ALL_FEATURES:
-            raise ValueError(f"unknown feature: {feature_name}")
-        typed_name = cast(FeatureName, feature_name)
-        if typed_name not in enabled:
-            enabled.append(typed_name)
-    return tuple(enabled)
-
 
 def _pick_runtime_port(
     host: str,
@@ -1513,56 +1532,56 @@ def _add_cors(
     )
 
 
-def list_plugin_names(*, group: str) -> list[str]:
-    return sorted(entry_point.name for entry_point in entry_points(group=group))
+def load_model_providers(
+    toolang_root: Path | None = None,
+    agent_name: str | None = None,
+) -> dict[str, ModelProvider]:
+    """Load model provider plugins for one uptime."""
 
-
-def list_plugin_infos(*, group: str) -> list[PluginInfo]:
-    return sorted(
-        (
-            PluginInfo(
-                name=entry_point.name,
-                source=_entry_point_plugin_source(entry_point),
-            )
-            for entry_point in entry_points(group=group)
-        ),
-        key=lambda item: item.name,
+    provider_configs = (
+        load_model_provider_configs(toolang_root, agent_name)
+        if toolang_root is not None and agent_name is not None
+        else {}
+    )
+    config = {
+        name: _provider_config_payload(payload)
+        for name, payload in provider_configs.items()
+    }
+    return cast(
+        dict[str, ModelProvider],
+        load_plugins(group="toolang.model_provider", config=config),
     )
 
 
-def _entry_point_plugin_source(entry_point: object) -> PluginSource:
-    dist = getattr(entry_point, "dist", None)
-    metadata = getattr(dist, "metadata", None)
-    if metadata is not None:
-        name = metadata.get("Name")
-        if isinstance(name, str) and _normalize_distribution_name(name) == "toolang":
-            return "built-in"
-    value = getattr(entry_point, "value", None)
-    if isinstance(value, str) and value.startswith("toolang."):
-        return "built-in"
-    return "external"
+def load_model_adapters() -> dict[str, ModelAdapter]:
+    """Load model adapter plugins for one uptime."""
+
+    return cast(dict[str, ModelAdapter], load_plugins(group="toolang.model_adapter"))
 
 
-def _normalize_distribution_name(name: str) -> str:
-    return name.replace("_", "-").replace(".", "-").lower()
-
-
-def load_plugin_factory(name: str, *, group: str) -> FactoryT:
-    for entry_point in entry_points(group=group):
-        if entry_point.name == name:
-            return cast(FactoryT, entry_point.load())
-    raise ValueError(f"unknown {group} plugin: {name}")
+def _provider_config_payload(config: object | None) -> Mapping[str, Any]:
+    if config is None:
+        return {}
+    return {
+        "endpoint": getattr(config, "endpoint", None),
+        "key_env": getattr(config, "key_env", None),
+        "adapter": getattr(config, "adapter", None),
+        "scope": getattr(config, "scope", None),
+        "options": getattr(config, "options", {}),
+        "details": getattr(config, "details", None),
+    }
 
 
 def load_tool_plugins(
     *,
     config: Mapping[str, Mapping[str, Any]] | None = None,
-) -> dict[str, Tool]:
-    tools: dict[str, Tool] = {}
-    plugin_config = dict(config or {})
-    for entry_point in entry_points(group="toolang.tool"):
-        factory = cast(Callable[[Mapping[str, Any]], ToolPlugin], entry_point.load())
-        plugin = factory(dict(plugin_config.get(entry_point.name, {})))
+) -> dict[str, AgentTool]:
+    tools: dict[str, AgentTool] = {}
+    plugins = cast(
+        dict[str, AgentToolSet],
+        load_plugins(group="toolang.tool", config=config),
+    )
+    for plugin in plugins.values():
         for leaf_name, leaf_tool in plugin.tools().items():
             ref = parse_tool_registration_key(plugin.name, leaf_name, leaf_tool.name)
             loaded = _LoadedTool(
@@ -1580,18 +1599,22 @@ def create_channel_plugin(
     name: str,
     *,
     config: Mapping[str, Any] | None = None,
-) -> ChannelPlugin:
-    factory = cast(Callable[[Mapping[str, Any]], ChannelPlugin], load_plugin_factory(name, group="toolang.channel"))
-    return factory(dict(config or {}))
+) -> AgentChannel:
+    return cast(
+        AgentChannel,
+        create_plugin(name, group="toolang.channel", config=config),
+    )
 
 
 def create_sandbox_plugin(
     name: str,
     *,
     config: Mapping[str, Any] | None = None,
-) -> SandboxPlugin:
-    factory = cast(Callable[[Mapping[str, Any]], SandboxPlugin], load_plugin_factory(name, group="toolang.sandbox"))
-    return factory(dict(config or {}))
+) -> AgentSandbox:
+    return cast(
+        AgentSandbox,
+        create_plugin(name, group="toolang.sandbox", config=config),
+    )
 
 
 def create_model_provider(
@@ -1599,5 +1622,18 @@ def create_model_provider(
     *,
     config: Mapping[str, Any] | None = None,
 ) -> ModelProvider:
-    factory = cast(Callable[[Mapping[str, Any]], ModelProvider], load_plugin_factory(name, group="toolang.model"))
-    return factory(dict(config or {}))
+    return cast(
+        ModelProvider,
+        create_plugin(name, group="toolang.model_provider", config=config),
+    )
+
+
+def create_model_adapter(
+    name: str,
+    *,
+    config: Mapping[str, Any] | None = None,
+) -> ModelAdapter:
+    return cast(
+        ModelAdapter,
+        create_plugin(name, group="toolang.model_adapter", config=config),
+    )

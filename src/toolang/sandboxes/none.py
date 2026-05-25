@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from toolang.base.protocols.sandbox import SandboxPlugin
+from toolang.base.protocols.sandbox import AgentSandbox
 from toolang.base.types.sandbox import (
     SandboxPlan,
     SandboxSelector,
@@ -81,7 +81,7 @@ class NoneSandbox:
         return None
 
 
-def create_sandbox(config: Mapping[str, Any]) -> SandboxPlugin:
+def create_sandbox(config: Mapping[str, Any]) -> AgentSandbox:
     """Create the built-in direct sandbox plugin."""
 
     return NoneSandbox(dict(config))

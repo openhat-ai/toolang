@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from toolang.base.types.channel import ChannelState
 
 if TYPE_CHECKING:
-    from ..up import UptimeContext
+    from ...up import UptimeContext
 
 DEFAULT_INTERVAL_MS = 300.0
 logger = logging.getLogger("toolang.loop.poll")
@@ -33,9 +33,9 @@ async def run(
     stop_signal: asyncio.Event,
 ) -> None:
     """Enqueue poll runs until the runtime stops."""
-    interval_value = context.config.require("features.poll.interval_ms")
+    interval_value = context.config.require("components.trigger.poll.interval_ms")
     if not isinstance(interval_value, int | float):
-        raise TypeError("invalid config: features.poll.interval_ms")
+        raise TypeError("invalid config: components.trigger.poll.interval_ms")
     interval_timeout = float(interval_value) / 1000
     logger.debug(
         "poll loop started root=%s agent=%s interval_ms=%s bindings=%s",
@@ -75,6 +75,8 @@ async def _poll_binding(context: UptimeContext, binding_name: str) -> None:
     _write_state(state_path, result.next_state)
     if not result.deliveries:
         return
+    if not _chat_runner_enabled(context):
+        return
     logger.info(
         "poll received agent=%s binding=%s deliveries=%s cursor=%s",
         context.name,
@@ -83,7 +85,7 @@ async def _poll_binding(context: UptimeContext, binding_name: str) -> None:
         result.next_state.cursor or "-",
     )
     for delivery in result.deliveries:
-        context.enqueue_delivery("poll", binding_name, delivery)
+        context.enqueue_delivery("chat", binding_name, delivery)
 
 
 def _load_state(path: Path) -> ChannelState:
@@ -93,6 +95,17 @@ def _load_state(path: Path) -> ChannelState:
     if not isinstance(payload, dict):
         return ChannelState()
     return ChannelState.from_data(payload)
+
+
+def _chat_runner_enabled(context: UptimeContext) -> bool:
+    enabled_components = context.config.require("components.enabled")
+    legacy_enabled = context.config.get("features.enabled")
+    return (
+        isinstance(enabled_components, tuple)
+        and "runner.chat" in enabled_components
+        or isinstance(legacy_enabled, tuple)
+        and "poll" in legacy_enabled
+    )
 
 
 def _write_state(path: Path, state: ChannelState) -> None:

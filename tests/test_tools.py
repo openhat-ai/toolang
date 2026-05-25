@@ -10,11 +10,11 @@ from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.tool import ToolContext
 from toolang.execution.db import ExecutionStore, execution_db_path
 from toolang.execution.records import ThreadPeer
-from toolang.tools.agent_chat import create_tool as create_agent_chat_tool
-from toolang.tools.filesystem import create_tool as create_filesystem_tool
-from toolang.tools.service_use import create_tool as create_service_use_tool
-from toolang.tools.shell import create_tool as create_shell_tool
-from toolang.tools.web_search import create_tool as create_web_search_tool
+from toolang.tools.agent_chat import create_tool_set as create_agent_chat_tool
+from toolang.tools.filesystem import create_tool_set as create_filesystem_tool
+from toolang.tools.service_use import create_tool_set as create_service_use_tool
+from toolang.tools.shell import create_tool_set as create_shell_tool
+from toolang.tools.web_search import create_tool_set as create_web_search_tool
 
 
 def _tool_context(home: Path, plugin_name: str) -> ToolContext:

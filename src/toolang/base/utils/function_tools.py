@@ -8,7 +8,7 @@ import inspect
 from typing import Any, get_args, get_origin
 
 from ..error import ToolangError
-from ..protocols.tool import Tool
+from ..protocols.tool import AgentTool
 from ..types.tool import ToolContext, ToolDefinition
 
 
@@ -23,8 +23,8 @@ class _FunctionToolSpec:
 
 
 @dataclass(frozen=True, slots=True)
-class _FunctionTool(Tool):
-    """Tool backed by one Python callable."""
+class _FunctionTool(AgentTool):
+    """AgentTool backed by one Python callable."""
 
     spec: _FunctionToolSpec
 
@@ -74,7 +74,7 @@ def tool(
     return decorate
 
 
-def create_function_tool(func: Callable[..., Any]) -> Tool:
+def create_function_tool(func: Callable[..., Any]) -> AgentTool:
     """Build one tool from a callable annotated with `@tool`."""
 
     spec = getattr(func, "__tool_spec__", None)

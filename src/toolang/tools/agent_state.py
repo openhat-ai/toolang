@@ -11,7 +11,7 @@ import frontmatter
 
 from toolang import caps, work
 from toolang.base.error import ToolangError
-from toolang.base.protocols.tool import Tool, ToolPlugin
+from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.tool import ToolContext
 from toolang.base.utils.function_tools import create_function_tool, tool
 from toolang.state.prepared import PreparedEntry, PreparedVisibility
@@ -30,15 +30,15 @@ class AgentStatePlugin:
         "Inspect, create, and update this agent's tasks, chores, psyches, skills, "
         "services, and prompts."
     )
-    _tools: dict[str, Tool] = field(init=False, repr=False)
+    _tools: dict[str, AgentTool] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._tools = self._build_tools()
 
-    def tools(self) -> Mapping[str, Tool]:
+    def tools(self) -> Mapping[str, AgentTool]:
         return dict(self._tools)
 
-    def _build_tools(self) -> dict[str, Tool]:
+    def _build_tools(self) -> dict[str, AgentTool]:
         @tool(name="task_list", description="List task documents for the current agent.")
         def task_list(
             include_archived: bool = False,
@@ -456,7 +456,7 @@ class _AgentStateScope:
     agent_name: str
 
 
-def create_tool(config: Mapping[str, Any]) -> ToolPlugin:
+def create_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
     """Create the agent_state tool plugin."""
 
     return AgentStatePlugin(config=dict(config))

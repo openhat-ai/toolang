@@ -1,4 +1,4 @@
-"""Runtime inspect feature routes."""
+"""Runtime inspect component routes."""
 
 from .router import create_router
 from ._shared import _guarded_stream, snapshot_context

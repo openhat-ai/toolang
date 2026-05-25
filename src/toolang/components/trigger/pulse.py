@@ -8,13 +8,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from .. import agents, work
-from ..execution.runner import RunRequest
-from ..state.pulse import PulseItemState, PulseState
+from ... import agents, work
+from ...execution.runner import RunRequest
+from ...state.pulse import PulseItemState, PulseState
 
 if TYPE_CHECKING:
-    from ..up import UptimeContext
-    from ..execution.runner import RunOutcome
+    from ...up import UptimeContext
+    from ...execution.runner import RunOutcome
 
 DEFAULT_INTERVAL_MS = 30_000.0
 
@@ -45,9 +45,9 @@ async def run(
     stop_signal: asyncio.Event,
 ) -> None:
     """Scan live work items and enqueue due runs until the runtime stops."""
-    interval_value = context.config.require("features.pulse.interval_ms")
+    interval_value = context.config.require("components.trigger.pulse.interval_ms")
     if not isinstance(interval_value, int | float):
-        raise TypeError("invalid config: features.pulse.interval_ms")
+        raise TypeError("invalid config: components.trigger.pulse.interval_ms")
     interval_timeout = float(interval_value) / 1000
     state = _load_pulse_state(context)
     seen_completed: set[str] = set()
@@ -68,6 +68,8 @@ async def run(
             pending_keys=_pending_keys(context),
         )
         for submission in submissions:
+            if not _run_component_enabled(context, submission.kind):
+                continue
             context.runner.enqueue(
                 RunRequest(
                     group=f"pulse:{submission.kind}",
@@ -84,6 +86,17 @@ async def run(
             continue
         else:
             return
+
+
+def _run_component_enabled(context: UptimeContext, kind: str) -> bool:
+    enabled_components = context.config.require("components.enabled")
+    legacy_enabled = context.config.get("features.enabled")
+    return (
+        isinstance(enabled_components, tuple)
+        and f"run.{kind}" in enabled_components
+        or isinstance(legacy_enabled, tuple)
+        and "pulse" in legacy_enabled
+    )
 
 
 def collect_pulse_submissions(

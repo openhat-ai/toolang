@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 from .. import agents
 from toolang.base.error import ToolangError
-from toolang.base.protocols.model import ModelProvider
-from toolang.base.protocols.tool import Tool
+from toolang.base.protocols.model_adapter import ModelAdapter
+from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import (
     Message,
     Part,
@@ -64,13 +64,13 @@ _LOG_PREVIEW_LIMIT = 2_000
 
 
 class RunContext:
-    """One mutable run context used by one run strategy."""
+    """One mutable run context used by one run loop."""
 
     def __init__(
         self,
         run_input: RunInput,
         model: ModelTarget,
-        provider: ModelProvider,
+        adapter: ModelAdapter,
         *,
         on_event: TraceEventHandler | None = None,
         consume_inputs: Callable[[str], Sequence[InputRecord]] | None = None,
@@ -78,7 +78,7 @@ class RunContext:
     ) -> None:
         self._input = run_input
         self._model = model
-        self._provider = provider
+        self._adapter = adapter
         self._on_event = on_event
         self._consume_inputs = consume_inputs
         self._stream = stream
@@ -117,7 +117,7 @@ class RunContext:
         return self._on_event
 
     @property
-    def tools(self) -> Mapping[str, Tool]:
+    def tools(self) -> Mapping[str, AgentTool]:
         return self._input.tools()
 
     def call_model(self) -> ModelCallResult:
@@ -155,13 +155,13 @@ class RunContext:
         )
         _log_model_request(request)
         if self._stream and self._on_event is not None and self._model.streaming:
-            current = self._provider.stream(
+            current = self._adapter.stream(
                 self._model,
                 request,
                 on_event=self._handle_model_event,
             )
         else:
-            current = self._provider.invoke(self._model, request)
+            current = self._adapter.invoke(self._model, request)
         return self._apply_model_response(
             current,
             step_index=step_index,
@@ -476,7 +476,7 @@ class RunContext:
 def _invoke_tool_call(
     *,
     run_id: str,
-    tools: Mapping[str, Tool],
+    tools: Mapping[str, AgentTool],
     snapshot: RunSnapshot,
     call: ToolCall,
 ) -> ToolCallResult:
@@ -514,7 +514,7 @@ def _tool_context(
     run_id: str,
     snapshot: RunSnapshot,
     tool_name: str,
-    tools: Mapping[str, Tool],
+    tools: Mapping[str, AgentTool],
 ) -> ToolContext:
     if not snapshot.agent.root:
         raise ToolangError("run snapshot has no agent root")

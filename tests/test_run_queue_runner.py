@@ -22,8 +22,8 @@ from toolang import agents
 from toolang import caps
 from toolang import work
 from toolang.base.error import ToolangError
-from toolang.base.protocols.channel import ChannelPlugin
-from toolang.base.protocols.sandbox import SandboxPlugin
+from toolang.base.protocols.channel import AgentChannel
+from toolang.base.protocols.sandbox import AgentSandbox
 from toolang.base.types.channel import (
     ChannelState,
     DeliveryResult,
@@ -87,12 +87,14 @@ from toolang.execution.snapshot import (
 from toolang.execution.runner import QueueRunner, RunOutcome, RunRequest, RunSubmission
 from toolang.execution.db import ExecutionStore, execution_db_path
 from toolang.execution.stream import RuntimeEventBus
-from toolang.features import chat as chat_loop, inspect, poll, pulse, watch
-from toolang.features.streaming import ShutdownAwareStreamingResponse
+from toolang.components.router import chat as chat_loop, inspect
+from toolang.components.router._streaming import ShutdownAwareStreamingResponse
+from toolang.components.trigger import poll, pulse, watch
 from toolang.state.durable import scan_durable_state
 from toolang.state.live import load_live_state
 from toolang.state.prepared import load_prepared_state, write_prepared_lock
-from toolang.strategies.basic import BasicRunStrategy
+from toolang.loops.basic import BasicLoop
+from toolang.up import load_model_adapters
 from toolang import up as up_module
 from toolang.up import (
     RUN_FEATURES,
@@ -703,7 +705,7 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
     ]
 
 
-def test_basic_strategy_continues_when_steer_arrives_before_finish() -> None:
+def test_basic_loop_continues_when_steer_arrives_before_finish() -> None:
     class FakeContext:
         instructions = ""
         messages = ()
@@ -733,7 +735,7 @@ def test_basic_strategy_continues_when_steer_arrives_before_finish() -> None:
 
     context = FakeContext()
 
-    result = BasicRunStrategy().run(cast(Any, context))
+    result = BasicLoop().run(cast(Any, context))
 
     assert context.model_calls == 2
     assert result.output_text == "finished after 2"
@@ -850,7 +852,7 @@ def test_agent_events_include_cap_updates(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("control", "inspect"),
+        enabled_features=("manage", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -1574,29 +1576,19 @@ def test_create_app_is_pure_route_assembly(tmp_path: Path) -> None:
     context.store.close()
 
 
-def test_hook_routes_enqueue_runs(tmp_path: Path) -> None:
+def test_hook_routes_are_not_component_enabled(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("hook", "inspect"),
+        enabled_features=("inspect",),
     )
     app = _create_test_app(context)
 
-    with _patched_runner_execution():
-        with TestClient(app) as client:
-            response = client.post("/hook/runs", json={"thunk": "decode webhook"})
-            assert response.status_code == 202
-            snapshot = inspect.snapshot_context(context, enabled_features=("hook", "inspect"))
-            for _ in range(50):
-                if snapshot["completed_runs"]:
-                    break
-                time.sleep(0.01)
-                snapshot = inspect.snapshot_context(context, enabled_features=("hook", "inspect"))
-            completed_runs = cast(list[dict[str, object]], snapshot["completed_runs"])
-            assert [item["group"] for item in completed_runs] == ["hook"]
-            assert [item["input_text"] for item in completed_runs] == ["decode webhook"]
+    with TestClient(app) as client:
+        response = client.post("/hook/runs", json={"thunk": "decode webhook"})
+        assert response.status_code == 404
 
 
 def test_poll_loop_queues_channel_deliveries_and_delivers_reply(tmp_path: Path) -> None:
@@ -1643,7 +1635,7 @@ def test_poll_loop_queues_channel_deliveries_and_delivers_reply(tmp_path: Path) 
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("poll", "inspect"),
+        enabled_features=("poll", "chat", "inspect"),
         channel_bindings={
             "telegram": ChannelBinding(
                 name="telegram",
@@ -1658,7 +1650,7 @@ def test_poll_loop_queues_channel_deliveries_and_delivers_reply(tmp_path: Path) 
         async def run_test() -> None:
             async with _running_context(
                 context,
-                enabled_features=("poll", "inspect"),
+                enabled_features=("poll", "chat", "inspect"),
                 loop_intervals_ms={"poll": 10.0},
             ):
                 await _wait_for_completed_count(context, 1)
@@ -1710,7 +1702,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("poll",),
+        enabled_features=("poll", "chat"),
         channel_bindings={
             "telegram": ChannelBinding(
                 name="telegram",
@@ -1837,8 +1829,8 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
         patch.object(run_execute_module.RunInput, "from_binding", side_effect=fake_assemble),
         patch.object(
             run_execute_module,
-            "load_run_strategy",
-            return_value=_FakeStrategy(
+            "load_loop",
+            return_value=_FakeLoop(
                 run=lambda context: fake_execute_stream(None, None, on_event=context.on_event),
             ),
         ),
@@ -1889,7 +1881,7 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("poll",),
+        enabled_features=("poll", "chat"),
         channel_bindings={
             "telegram": ChannelBinding(
                 name="telegram",
@@ -1969,8 +1961,8 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
         patch.object(run_execute_module.RunInput, "from_binding", side_effect=fake_assemble),
         patch.object(
             run_execute_module,
-            "load_run_strategy",
-            return_value=_FakeStrategy(
+            "load_loop",
+            return_value=_FakeLoop(
                 run=lambda context: fake_execute_stream(None, None, on_event=context.on_event),
             ),
         ),
@@ -2002,7 +1994,7 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("control", "inspect"),
+        enabled_features=("manage", "inspect"),
     )
     initial_live_fingerprint = context.live.fingerprint
     initial_prepared_fingerprint = load_prepared_state(toolang_root, "alice").fingerprint
@@ -2019,7 +2011,7 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
         assert add_response.json()["item"]["form"] == "remote"
         assert add_response.json()["item"]["scope"] == "home"
 
-        snapshot = inspect.snapshot_context(context, enabled_features=("control", "inspect"))
+        snapshot = inspect.snapshot_context(context, enabled_features=("manage", "inspect"))
         durable = cast(dict[str, object], snapshot["durable"])
         prepared = cast(dict[str, object], snapshot["prepared"])
         live = cast(dict[str, object], snapshot["live"])
@@ -2035,7 +2027,7 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
         assert remove_response.status_code == 200
         assert remove_response.json() == {"ok": True}
 
-        snapshot = inspect.snapshot_context(context, enabled_features=("control", "inspect"))
+        snapshot = inspect.snapshot_context(context, enabled_features=("manage", "inspect"))
         durable = cast(dict[str, object], snapshot["durable"])
         definitions = cast(dict[str, object], durable["definitions"])
         assert definitions["private_entries"] == []
@@ -2205,7 +2197,7 @@ def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
         toolang_root=toolang_root,
         agent_name="alice",
         host="0.0.0.0",
-        feature_names=("inspect",),
+        component_names=("inspect",),
         environ={},
     )
 
@@ -2257,7 +2249,7 @@ def test_up_logs_runtime_urls_after_start_and_stop(tmp_path: Path, monkeypatch, 
     assert result == 0
     messages = [record.getMessage() for record in caplog.records if record.name == "toolang.runtime"]
     assert len(messages) == 4
-    assert messages[0] == f"Agent alice starting root={toolang_root} features=inspect"
+    assert messages[0] == f"Agent alice starting root={toolang_root} trigger=none runner=none router=inspect"
     assert messages[1] == "Agent alice started webui=https://agents.example.test/8765"
     assert messages[2] == "Agent alice stopping"
     assert messages[3] == "Agent alice stopped"
@@ -2267,7 +2259,7 @@ def test_up_logs_runtime_urls_after_start_and_stop(tmp_path: Path, monkeypatch, 
         if record.name == "toolang.runtime"
     ]
     assert color_messages[0] == (
-        "Agent %s starting root=\x1b[1m%s\x1b[0m features=\x1b[1m%s\x1b[0m"
+        "Agent %s starting root=\x1b[1m%s\x1b[0m trigger=\x1b[1m%s\x1b[0m runner=\x1b[1m%s\x1b[0m router=\x1b[1m%s\x1b[0m"
     )
     assert color_messages[1] == "Agent %s started webui=\x1b[1m%s\x1b[0m"
 
@@ -2703,7 +2695,7 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
     assert request.run_command[request.run_command.index("--sandbox") + 1] == "none"
     assert "--sandbox-child" in request.run_command
     assert "--enable" in request.run_command
-    assert request.run_command[request.run_command.index("--enable") + 1] == "inspect"
+    assert request.run_command[request.run_command.index("--enable") + 1] == "router.inspect"
     runtime_state = json.loads(
         agents.agent_runtime_state_path(toolang_root, "alice").read_text(encoding="utf-8")
     )
@@ -2797,7 +2789,7 @@ def test_up_marks_managed_sandbox_failed_when_ready_check_fails(tmp_path: Path, 
                 sandbox_root=request.sandbox_root,
                 sandbox_home=request.sandbox_home,
                 sandbox_working_directory=request.sandbox_home,
-                run_command=("too", "run"),
+                run_command=("too", "runner"),
                 state=SandboxState(
                     selector=request.selector,
                     runtime_id="sandbox-alice",
@@ -3168,7 +3160,7 @@ def test_stop_agent_stops_managed_sandbox_and_marks_state_stopped(tmp_path: Path
     stopped = agents.stop_agent(
         toolang_root,
         "alice",
-        sandbox_plugin=cast("SandboxPlugin", plugin),
+        sandbox_plugin=cast("AgentSandbox", plugin),
         force=True,
     )
 
@@ -4320,7 +4312,7 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect", "control"),
+        enabled_features=("inspect", "manage"),
         runner=QueueRunner(delay_sec=0.0),
     )
     app = _create_test_app(context)
@@ -4432,7 +4424,7 @@ def test_jobs_api_projects_active_run_tasks_as_running(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect", "control"),
+        enabled_features=("inspect", "manage"),
         runner=QueueRunner(delay_sec=0.0),
     )
     task = work.list_tasks(toolang_root, "alice")[0].document
@@ -4460,7 +4452,7 @@ def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect", "control"),
+        enabled_features=("inspect", "manage"),
         runner=QueueRunner(delay_sec=0.0),
     )
     app = _create_test_app(context)
@@ -5371,7 +5363,7 @@ def test_script_execute_run_logs_lifecycle_without_queue_runner(tmp_path: Path, 
     assert messages[-1].endswith(" status=finished")
 
 
-def test_script_strategy_cancel_does_not_wait_for_worker_thread() -> None:
+def test_script_loop_cancel_does_not_wait_for_worker_thread() -> None:
     started = threading.Event()
     release = threading.Event()
 
@@ -5382,7 +5374,7 @@ def test_script_strategy_cancel_does_not_wait_for_worker_thread() -> None:
 
     async def run_test() -> None:
         task = asyncio.create_task(
-            run_execute_module._run_script_strategy(
+            run_execute_module._run_script_loop(
                 blocking_run,
                 cast(Any, object()),
                 run_id="run_test",
@@ -5810,7 +5802,7 @@ def _build_context(
     enabled_features: tuple[str, ...],
     runner: QueueRunner | None = None,
     channel_bindings: dict[str, ChannelBinding] | None = None,
-    channel_plugins: dict[str, ChannelPlugin] | None = None,
+    channel_plugins: dict[str, AgentChannel] | None = None,
     tool_selectors: tuple[str, ...] | None = None,
 ) -> UptimeContext:
     durable = scan_durable_state(toolang_root, agent_name)
@@ -5833,6 +5825,7 @@ def _build_context(
             for name, provider in load_model_providers().items()
             if name == "openai"
         },
+        model_adapters=load_model_adapters(),
         model_aliases=load_model_aliases(toolang_root, agent_name),
         default_models=load_default_models(toolang_root, agent_name),
         model_environ={"OPENAI_API_KEY": "secret"},
@@ -5924,7 +5917,7 @@ def _fake_run_input(bound):
                     group=bound.group,
                     origin=bound.origin,
                     thread_id=bound.thread_id,
-                    run_strategy=bound.run_strategy,
+                    run_loop=bound.run_loop,
                     live_fingerprint="",
                 ),
                 program=SnapshotProgram(source_path="", thunk={}),
@@ -5949,7 +5942,7 @@ def _fake_run_input(bound):
     return RunInputStub()
 
 
-class _FakeStrategy:
+class _FakeLoop:
     def __init__(self, *, run) -> None:
         self.name = "basic"
         self._run = run
@@ -6079,8 +6072,8 @@ def _patched_runner_execution():
         patch.object(run_execute_module.RunInput, "from_binding", side_effect=fake_assemble),
         patch.object(
             run_execute_module,
-            "load_run_strategy",
-            return_value=_FakeStrategy(
+            "load_loop",
+            return_value=_FakeLoop(
                 run=fake_run,
             ),
         ),
@@ -6299,8 +6292,8 @@ def _patched_runner_execution_with_tools(*, output_text: str):
         patch.object(run_execute_module.RunInput, "from_binding", side_effect=fake_assemble),
         patch.object(
             run_execute_module,
-            "load_run_strategy",
-            return_value=_FakeStrategy(
+            "load_loop",
+            return_value=_FakeLoop(
                 run=fake_run_stream,
             ),
         ),
@@ -6320,8 +6313,8 @@ def _patched_runner_failure(message: str):
         patch.object(run_execute_module.RunInput, "from_binding", side_effect=fake_assemble),
         patch.object(
             run_execute_module,
-            "load_run_strategy",
-            return_value=_FakeStrategy(
+            "load_loop",
+            return_value=_FakeLoop(
                 run=fake_run,
             ),
         ),
@@ -6387,8 +6380,8 @@ def _patched_runner_streaming_text(release: threading.Event):
         patch.object(run_execute_module.RunInput, "from_binding", side_effect=fake_assemble),
         patch.object(
             run_execute_module,
-            "load_run_strategy",
-            return_value=_FakeStrategy(
+            "load_loop",
+            return_value=_FakeLoop(
                 run=fake_run_stream,
             ),
         ),

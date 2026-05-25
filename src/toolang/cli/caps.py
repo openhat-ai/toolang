@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from .. import caps as cap_store
     from .. import templates
     from ..execution.records import UpdateKind
-    from ..features import watch as watch_feature
+    from ..components.trigger import watch as watch_feature
     from ..state.prepared import PreparedEntry, PreparedState
     from .progress import CliProgress
 
@@ -76,7 +76,7 @@ class _LazyModule:
 if not TYPE_CHECKING:
     cap_store = _LazyModule("toolang.caps")
     templates = _LazyModule("toolang.templates")
-    watch_feature = _LazyModule("toolang.features.watch")
+    watch_feature = _LazyModule("toolang.components.trigger.watch")
 
 
 def register_standalone_caps_commands(app: typer.Typer, *, rich_help_panel: str | None = None) -> None:

@@ -1,4 +1,4 @@
-"""Shared run-strategy protocols."""
+"""Shared agent loop protocols."""
 
 from __future__ import annotations
 
@@ -8,12 +8,12 @@ from typing import Protocol, runtime_checkable
 from ..types.message import Message
 from ..types.model import ModelTarget
 from ..types.run import ModelCallResult, RunResult, ToolCall, ToolCallResult
-from ..protocols.tool import Tool
+from ..protocols.tool import AgentTool
 
 
 @runtime_checkable
 class RunContext(Protocol):
-    """Minimal run context contract exposed to run strategies."""
+    """Minimal run context contract exposed to agent loops."""
 
     @property
     def instructions(self) -> str:
@@ -28,7 +28,7 @@ class RunContext(Protocol):
         """Return the resolved model target for this run."""
 
     @property
-    def tools(self) -> Mapping[str, Tool]:
+    def tools(self) -> Mapping[str, AgentTool]:
         """Return the available tool mapping for this run."""
 
     def call_model(self) -> ModelCallResult:
@@ -48,8 +48,8 @@ class RunContext(Protocol):
 
 
 @runtime_checkable
-class StrategyPlugin(Protocol):
-    """Minimal run-strategy contract."""
+class AgentLoop(Protocol):
+    """Minimal agent loop contract."""
 
     name: str
 

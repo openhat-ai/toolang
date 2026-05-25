@@ -13,16 +13,16 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from toolang.base.types.message import Message, TextPart, message_summary, parts_to_data
-from ...execution.detail import (
+from ....execution.detail import (
     RunDetail,
     ThreadInfo,
     run_detail_from_record,
     thread_info_from_runs,
     thread_info_from_record,
 )
-from ...execution.events import MessageData, run_message_data
-from ...execution.input import allocate_run_id
-from ...execution.records import (
+from ....execution.events import MessageData, run_message_data
+from ....execution.input import allocate_run_id
+from ....execution.records import (
     InputMode,
     InputRecord,
     ModelCallStepPayload,
@@ -32,25 +32,26 @@ from ...execution.records import (
     step_input_items_to_data,
     step_payload_to_data,
 )
-from ...execution.runner import RunRequest
-from ...execution.stream import event_data
-from ... import agents, caps, templates, work
-from ...state.durable import scan_durable_state
-from ...state.prepared import PreparedEntry, load_prepared_state
-from ...state.pulse import PulseState
-from ..streaming import ShutdownAwareStreamingResponse
+from ....execution.runner import RunRequest
+from ....execution.stream import event_data
+from .... import agents, caps, templates, work
+from ....state.durable import scan_durable_state
+from ....state.prepared import PreparedEntry, load_prepared_state
+from ....state.pulse import PulseState
+from ...registry import ROUTER_COMPONENTS, RUNNER_COMPONENTS, TRIGGER_COMPONENTS, component_group, normalize_component_names
+from .._streaming import ShutdownAwareStreamingResponse
 
 if TYPE_CHECKING:
-    from ...up import UptimeContext
-    from ...execution.runner import RunOutcome
-    from ...execution.records import RunRecord
+    from ....up import UptimeContext
+    from ....execution.runner import RunOutcome
+    from ....execution.records import RunRecord
 
 CapKind = Literal["psyche", "skill", "service", "prompt"]
 JobKind = Literal["task", "chore"]
 JobWriteState = Literal["active", "inactive"]
-RUN_FEATURES = frozenset({"chat", "pulse", "poll", "hook"})
-HTTP_FEATURES = frozenset({"chat", "hook", "control", "inspect"})
-BACKGROUND_FEATURES = frozenset({"pulse", "poll", "watch"})
+ROUTER_COMPONENT_LEAVES = frozenset(component_group(ROUTER_COMPONENTS, "router"))
+RUNNER_COMPONENT_LEAVES = frozenset(component_group(RUNNER_COMPONENTS, "runner"))
+TRIGGER_COMPONENT_LEAVES = frozenset(component_group(TRIGGER_COMPONENTS, "trigger"))
 COLLECTION_TO_KIND: dict[str, CapKind] = {
     "psyches": "psyche",
     "skills": "skill",
@@ -613,10 +614,15 @@ def create_router() -> APIRouter:
 def snapshot_context(
     context: UptimeContext,
     *,
-    enabled_features: Sequence[str],
+    enabled_components: Sequence[str] | None = None,
+    enabled_features: Sequence[str] | None = None,
 ) -> dict[str, object]:
     """Return the internal runtime snapshot used by tests and diagnostics."""
 
+    components = enabled_components if enabled_components is not None else enabled_features
+    if components is None:
+        raise TypeError("enabled_components is required")
+    components = normalize_component_names(tuple(components))
     durable = scan_durable_state(context.root, context.name)
     prepared = load_prepared_state(context.root, context.name)
     runner_snapshot = context.runner.snapshot()
@@ -633,10 +639,10 @@ def snapshot_context(
     recent_steps = context.store.list_steps_for_runs(run_ids=tuple(item.run_id for item in recent_runs))
     recent_inputs = {run.run_id: context.store.list_inputs(run_id=run.run_id) for run in recent_runs}
     return {
-        "enabled_features": list(enabled_features),
-        "http_features": _select_loops(enabled_features, HTTP_FEATURES),
-        "run_features": _select_loops(enabled_features, RUN_FEATURES),
-        "background_features": _select_loops(enabled_features, BACKGROUND_FEATURES),
+        "enabled_components": list(components),
+        "router_components": _select_components(components, "router", ROUTER_COMPONENT_LEAVES),
+        "runner_components": _select_components(components, "runner", RUNNER_COMPONENT_LEAVES),
+        "trigger_components": _select_components(components, "trigger", TRIGGER_COMPONENT_LEAVES),
         "queue_pending": len(context.runner),
         "durable": {
             "toolang_root": str(durable.toolang_root),
@@ -1515,8 +1521,13 @@ def _authored_entries(context: UptimeContext, *, visibility: str) -> tuple[Prepa
     return caps.list_entries(context.root, context.name, visibility=cast(Literal["shared", "private"], visibility))
 
 
-def _select_loops(enabled_features: Sequence[str], allowed: Container[str]) -> list[str]:
-    return [loop for loop in enabled_features if loop in allowed]
+def _select_components(enabled_components: Sequence[str], namespace: str, allowed: Container[str]) -> list[str]:
+    prefix = f"{namespace}."
+    return [
+        component.removeprefix(prefix)
+        for component in enabled_components
+        if component.startswith(prefix) and component.removeprefix(prefix) in allowed
+    ]
 
 
 def _run_outcome_data(result: RunOutcome) -> dict[str, object]:

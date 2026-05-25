@@ -5,7 +5,7 @@ from typing import Any, cast
 
 import pytest
 
-from toolang.base.protocols.sandbox import SandboxPlugin
+from toolang.base.protocols.sandbox import AgentSandbox
 from toolang.base.types.sandbox import SandboxSelector, SandboxStartRequest
 from toolang.config.plugins import load_sandbox_binding
 from toolang.up import create_sandbox_plugin
@@ -14,7 +14,7 @@ from toolang.up import create_sandbox_plugin
 def test_create_none_sandbox_plugin_prepares_direct_plan(tmp_path: Path) -> None:
     plugin = create_sandbox_plugin("none", config={})
 
-    assert isinstance(plugin, SandboxPlugin)
+    assert isinstance(plugin, AgentSandbox)
     plan = plugin.prepare(
         SandboxStartRequest(
             selector=SandboxSelector(driver="none"),

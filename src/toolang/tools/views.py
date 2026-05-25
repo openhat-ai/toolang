@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from toolang.base.protocols.tool import Tool
+from toolang.base.protocols.tool import AgentTool
 from toolang.tools.registry import (
     ToolRef,
     tool_ref_for_model_tool,
@@ -23,7 +23,7 @@ class _ToolCandidate:
 
 def tool_list_rows(
     *,
-    tools: Mapping[str, Tool],
+    tools: Mapping[str, AgentTool],
     plugin_sources: Mapping[str, str],
     selectors: Sequence[str] = (),
 ) -> list[tuple[str, str, str]]:
@@ -45,7 +45,7 @@ def tool_list_rows(
 
 def _tool_candidate(
     name: str,
-    tool: Tool,
+    tool: AgentTool,
     *,
     plugin_sources: Mapping[str, str],
 ) -> _ToolCandidate:
@@ -59,7 +59,7 @@ def _tool_candidate(
 
 def _tool_ref(
     model_name: str,
-    tool: Tool,
+    tool: AgentTool,
     *,
     plugin_sources: Mapping[str, str],
 ) -> ToolRef:

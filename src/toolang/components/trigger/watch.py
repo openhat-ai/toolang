@@ -1,4 +1,4 @@
-"""Watch feature that prepares and loads live state after durable changes."""
+"""Watch trigger that prepares and loads live state after durable changes."""
 
 from __future__ import annotations
 
@@ -12,17 +12,17 @@ from typing import TYPE_CHECKING, cast
 
 from watchfiles import Change, awatch
 
-from ..caps import (
+from ...caps import (
     build_visibility_lock,
     visibility_input_fingerprint,
     visibility_lock_content_fingerprint,
 )
-from ..progress import ProgressSink, emit_progress
-from ..execution.records import UpdateKind
-from ..state.durable import DurableState, is_durable_path, scan_durable_state
-from ..state.live import load_live_state
-from ..state.program import build_prepared_program
-from ..state.prepared import (
+from ...progress import ProgressSink, emit_progress
+from ...execution.records import UpdateKind
+from ...state.durable import DurableState, is_durable_path, scan_durable_state
+from ...state.live import load_live_state
+from ...state.program import build_prepared_program
+from ...state.prepared import (
     PreparedLock,
     PreparedState,
     PreparedVisibility,
@@ -33,11 +33,11 @@ from ..state.prepared import (
 )
 
 if TYPE_CHECKING:
-    from ..up import UptimeContext
+    from ...up import UptimeContext
 
 DEFAULT_INTERVAL_MS = 1_000.0
 DEFAULT_DEBOUNCE_MS = 500.0
-logger = logging.getLogger("toolang.feature.watch")
+logger = logging.getLogger("toolang.component.watch")
 _EMPTY_INPUT_FINGERPRINT = hashlib.sha256().hexdigest()
 
 
@@ -46,7 +46,7 @@ def spawn(
     *,
     stop_signal: asyncio.Event,
 ) -> asyncio.Task[None]:
-    """Spawn the watch feature in one background task."""
+    """Spawn the watch trigger in one background task."""
 
     return asyncio.create_task(run(context, stop_signal=stop_signal))
 
@@ -86,9 +86,9 @@ async def _run_prepare_watch(
     reload_signal: asyncio.Event,
 ) -> None:
     """Watch durable inputs and produce new prepared locks."""
-    interval_value = context.config.require("features.watch.interval_ms")
+    interval_value = context.config.require("components.trigger.watch.interval_ms")
     if not isinstance(interval_value, int | float):
-        raise TypeError("invalid config: features.watch.interval_ms")
+        raise TypeError("invalid config: components.trigger.watch.interval_ms")
     interval_ms = float(interval_value)
     context.root.mkdir(parents=True, exist_ok=True)
     logger.debug(
@@ -117,9 +117,9 @@ async def _run_load_live(
 ) -> None:
     """Apply the latest prepared snapshot to live state after debounce."""
 
-    debounce_value = context.config.require("features.watch.debounce_ms")
+    debounce_value = context.config.require("components.trigger.watch.debounce_ms")
     if not isinstance(debounce_value, int | float):
-        raise TypeError("invalid config: features.watch.debounce_ms")
+        raise TypeError("invalid config: components.trigger.watch.debounce_ms")
     debounce_timeout = float(debounce_value) / 1000
     logger.debug(
         "watch load started root=%s agent=%s debounce_ms=%s live=%s",
@@ -146,11 +146,11 @@ async def _run_load_live(
                 context.name,
             )
             continue
-        enabled_features = context.config.require("features.enabled")
-        if not isinstance(enabled_features, tuple):
-            raise TypeError("invalid config: features.enabled")
-        live = load_live_state(prepared, enabled_features=cast(tuple[str, ...], enabled_features))
-        from ..up import load_runtime_tool_plugins
+        enabled_components = context.config.require("components.enabled")
+        if not isinstance(enabled_components, tuple):
+            raise TypeError("invalid config: components.enabled")
+        live = load_live_state(prepared, enabled_components=cast(tuple[str, ...], enabled_components))
+        from ...up import load_runtime_tool_plugins
 
         tools = load_runtime_tool_plugins(
             toolang_root=context.root,

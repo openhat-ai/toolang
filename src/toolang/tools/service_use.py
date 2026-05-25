@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from toolang.base.error import ToolangError
-from toolang.base.protocols.tool import Tool, ToolPlugin
+from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.tool import ToolContext, ToolDefinition
 
 ServiceTransport = Literal["http", "stdio"]
@@ -38,7 +38,7 @@ class ServiceRuntime:
 
 
 @dataclass(frozen=True, slots=True)
-class _LeafTool(Tool):
+class _LeafTool(AgentTool):
     name: str
     _definition: ToolDefinition
     _invoke: Callable[[Mapping[str, Any], ToolContext], dict[str, Any]]
@@ -57,7 +57,7 @@ class _ServiceUseAdapter:
     connection_version: int | None
     write_connection_file: ConnectionFileWriter
 
-    def build_tools(self) -> dict[str, Tool]:
+    def build_tools(self) -> dict[str, AgentTool]:
         service_schema = self._service_schema()
         tools = {
             "bridge_start": self._tool(
@@ -243,7 +243,7 @@ class _ServiceUseAdapter:
         description: str,
         parameters: dict[str, Any],
         invoke_fn: Callable[[ServiceRuntime, Mapping[str, Any]], dict[str, Any]],
-    ) -> Tool:
+    ) -> AgentTool:
         definition = ToolDefinition(
             name=name,
             description=description,
@@ -530,7 +530,7 @@ class ServiceUsePlugin:
     write_connection_file: ConnectionFileWriter
     name: str
     description: str | None = None
-    _tools: dict[str, Tool] = field(init=False, repr=False)
+    _tools: dict[str, AgentTool] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         adapter = _ServiceUseAdapter(
@@ -541,11 +541,11 @@ class ServiceUsePlugin:
         )
         self._tools = adapter.build_tools()
 
-    def tools(self) -> Mapping[str, Tool]:
+    def tools(self) -> Mapping[str, AgentTool]:
         return dict(self._tools)
 
 
-def create_tool(config: Mapping[str, Any]) -> ToolPlugin:
+def create_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
     """Create the service_use tool plugin."""
 
     return ServiceUsePlugin(

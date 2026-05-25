@@ -7,35 +7,35 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..protocols.tool import Tool, ToolPlugin
+from ..protocols.tool import AgentTool, AgentToolSet
 from ..types.tool import ToolContext
 from ..utils.function_tools import create_function_tool, tool
 
 
 @dataclass(frozen=True, slots=True)
-class _ExamplePlugin(ToolPlugin):
+class _ExamplePlugin(AgentToolSet):
     name: str
     description: str | None
-    _tools: dict[str, Tool]
+    _tools: dict[str, AgentTool]
 
-    def tools(self) -> Mapping[str, Tool]:
+    def tools(self) -> Mapping[str, AgentTool]:
         return dict(self._tools)
 
 
 def create_example_tool_plugins(
     config: Mapping[str, Mapping[str, Any]] | None = None,
-) -> dict[str, ToolPlugin]:
+) -> dict[str, AgentToolSet]:
     """Build the example tool set explicitly for tests or demos."""
 
     plugin_config = dict(config or {})
     return {
-        "echo": create_echo_tool(plugin_config.get("echo", {})),
-        "math_add": create_math_add_tool(plugin_config.get("math_add", {})),
-        "working_tree": create_working_tree_tool(plugin_config.get("working_tree", {})),
+        "echo": create_echo_tool_set(plugin_config.get("echo", {})),
+        "math_add": create_math_add_tool_set(plugin_config.get("math_add", {})),
+        "working_tree": create_working_tree_tool_set(plugin_config.get("working_tree", {})),
     }
 
 
-def create_echo_tool(config: Mapping[str, Any]) -> ToolPlugin:
+def create_echo_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
     """Build the example echo tool plugin."""
 
     prefix = str(config.get("prefix", ""))
@@ -56,7 +56,7 @@ def create_echo_tool(config: Mapping[str, Any]) -> ToolPlugin:
     )
 
 
-def create_math_add_tool(config: Mapping[str, Any]) -> ToolPlugin:
+def create_math_add_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
     """Build the example math-add tool plugin."""
 
     offset = _number(config.get("offset", 0))
@@ -78,7 +78,7 @@ def create_math_add_tool(config: Mapping[str, Any]) -> ToolPlugin:
     )
 
 
-def create_working_tree_tool(config: Mapping[str, Any]) -> ToolPlugin:
+def create_working_tree_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
     """Build the example working-tree tool plugin."""
 
     max_entries = _limit(config.get("max_entries"), fallback=10)

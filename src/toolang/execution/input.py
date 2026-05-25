@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import frontmatter
 
-from toolang.base.protocols.tool import Tool
+from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import (
     Message,
     TextPart,
@@ -24,12 +24,12 @@ from ..ids import LOCAL_ID_FAMILY, RUN_ID_FAMILY, allocate_id
 from ..program import MessageBlock, ParamDecl, SourceSpan, Thunk, ThunkOverlay
 from ..state.live import LiveState
 from ..state.prepared import PreparedEntry
-from ..strategies import normalize_run_strategy_name
+from ..plugin import normalize_run_loop_name
 from ..tools.registry import selected_tool_names, tool_ref_for_model_tool
 from .template import render_text_template
 from .db import utc_now
 from .model import resolve_model, select_model_selectors
-from .records import RunStrategy
+from .records import RunLoop
 from .records import ThreadPeer
 from .snapshot import (
     RunSnapshot,
@@ -176,7 +176,7 @@ class RunBinding:
     input_text: str
     message: Message | None
     model_selector: str | None
-    run_strategy: RunStrategy
+    run_loop: RunLoop
     metadata: dict[str, Any]
     live: LiveState
     created_at: str
@@ -201,7 +201,7 @@ class RunInput:
     system_template_context: dict[str, object]
     history: tuple[Message, ...]
     models_base: tuple[str, ...]
-    tools_base: dict[str, Tool]
+    tools_base: dict[str, AgentTool]
     snapshot: RunSnapshot
     psyches_base: tuple[PreparedEntry, ...] = field(default_factory=tuple)
     skills_base: tuple[PreparedEntry, ...] = field(default_factory=tuple)
@@ -351,7 +351,7 @@ class RunInput:
             models_base=self.models_base,
         )
 
-    def tools(self) -> dict[str, Tool]:
+    def tools(self) -> dict[str, AgentTool]:
         """Return the effective tool mapping for this run."""
 
         return _select_tools(self.tools_base, self.thunk.overlays_for("tool"))
@@ -744,7 +744,7 @@ def bind_run_request(
         origin=request.origin,
         peer=thread_peer,
     )
-    run_strategy = cast(RunStrategy, normalize_run_strategy_name(request.run_strategy))
+    run_loop = normalize_run_loop_name(request.run_loop)
     return RunBinding(
         run_id=request.run_id or allocate_run_id(context),
         group=request.group,
@@ -754,7 +754,7 @@ def bind_run_request(
         input_text=_request_input_text(request),
         message=request.message,
         model_selector=_request_model_selector(request),
-        run_strategy=run_strategy,
+        run_loop=run_loop,
         metadata=dict(request.metadata),
         live=bound_live,
         created_at=utc_now(),
@@ -890,7 +890,7 @@ def _expanded_run_message(message: Message, *, input_text: str) -> Message:
     )
 
 
-def _run_tools_base(context: UptimeContext, run: RunBinding) -> dict[str, Tool]:
+def _run_tools_base(context: UptimeContext, run: RunBinding) -> dict[str, AgentTool]:
     del run
     return context.tools
 
@@ -955,9 +955,9 @@ def _thunk_model_refs(thunk: Thunk) -> tuple[str, ...]:
 
 
 def _select_tools(
-    tools_base: dict[str, Tool],
+    tools_base: dict[str, AgentTool],
     overlays: tuple[ThunkOverlay, ...],
-) -> dict[str, Tool]:
+) -> dict[str, AgentTool]:
     names = _apply_tool_overlays(tools_base, overlays)
     return {
         name: tools_base[name]
@@ -967,7 +967,7 @@ def _select_tools(
 
 
 def _apply_tool_overlays(
-    tools_base: dict[str, Tool],
+    tools_base: dict[str, AgentTool],
     overlays: tuple[ThunkOverlay, ...],
 ) -> tuple[str, ...]:
     current = list(tools_base)
@@ -1067,7 +1067,7 @@ def _system_template_context(
     thunk: Thunk,
     params: dict[str, Any],
     models: tuple[ModelTarget, ...],
-    tools: dict[str, Tool],
+    tools: dict[str, AgentTool],
     psyches: tuple[PreparedEntry, ...],
     skills: tuple[PreparedEntry, ...],
     services: tuple[PreparedEntry, ...],
@@ -1178,7 +1178,7 @@ def _model_target_to_context(target: ModelTarget) -> dict[str, object]:
     }
 
 
-def _tool_to_context(tool: Tool) -> dict[str, object]:
+def _tool_to_context(tool: AgentTool) -> dict[str, object]:
     definition = tool.definition()
     return {
         "name": definition.name,
@@ -1233,7 +1233,7 @@ def _runtime_snapshot(
     run: RunBinding,
     thunk: Thunk,
     *,
-    tools: dict[str, Tool],
+    tools: dict[str, AgentTool],
 ) -> RunSnapshot:
     task_snapshot = _task_snapshot(context, run)
     return RunSnapshot(
@@ -1247,7 +1247,7 @@ def _runtime_snapshot(
             group=run.group,
             origin=run.origin,
             thread_id=run.thread_id,
-            run_strategy=run.run_strategy,
+            run_loop=run.run_loop,
             live_fingerprint=run.live.fingerprint,
             invoke_params=_invoke_params(run),
             invoke_parts=_invoke_parts(run),

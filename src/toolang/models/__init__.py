@@ -1,1 +1,1 @@
-"""Built-in model providers, adapters, config, discovery, and resolution."""
+"""Model config, discovery, selector resolution, display views, and built-ins."""

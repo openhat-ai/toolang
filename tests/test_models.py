@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 
 from toolang.base.protocols.model import ModelProvider
-from toolang.base.protocols.tool import Tool
+from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import (
     AudioPart,
     FilePart,
@@ -28,15 +28,16 @@ from toolang.execution.snapshot import RunSnapshot, SnapshotAgent, SnapshotProgr
 from toolang.models.providers import ollama as ollama_models
 from toolang.models.providers import openai as openai_models
 from toolang.models.providers import openrouter as openrouter_models
-from toolang.models.providers.loader import load_model_providers
+from toolang.up import load_model_adapters
+from toolang.up import load_model_providers
 from toolang.models.adapters import responses as responses_models
 from toolang.models.adapters.responses import encode_message, response_payload
 from toolang.program import MessageBlock, ParamDecl, SourceSpan, Thunk
-from toolang.strategies import load_run_strategy
+from toolang.plugin import load_loop, load_loops
 from toolang.models.config import load_default_models, load_model_aliases
 
 
-class _FakeTool(Tool):
+class _FakeTool(AgentTool):
     name = "shell__execute"
     plugin_name = "shell"
 
@@ -695,7 +696,7 @@ def test_ollama_provider_discovers_local_models(monkeypatch) -> None:
             }
 
     monkeypatch.setattr(ollama_models.httpx, "get", lambda url, timeout: _Response())
-    provider = ollama_models.create_model({})
+    provider = ollama_models.create_model_provider({})
 
     models = provider.list_models(environ={})
 
@@ -732,8 +733,22 @@ def test_builtin_model_provider_loader_includes_openrouter() -> None:
     assert providers["openrouter"].default_api_key_env() == "OPENROUTER_API_KEY"
 
 
+def test_builtin_model_adapter_loader_includes_responses() -> None:
+    adapters = load_model_adapters()
+
+    assert "responses" in adapters
+    assert adapters["responses"].name == "responses"
+
+
+def test_builtin_loop_loader_includes_basic() -> None:
+    loops = load_loops()
+
+    assert "basic" in loops
+    assert load_loop("basic").name == "basic"
+
+
 def test_openai_provider_lists_curated_common_model_profiles() -> None:
-    provider = openai_models.create_model({})
+    provider = openai_models.create_model_provider({})
 
     by_ref = {model.ref: model for model in provider.list_models(environ={})}
 
@@ -797,7 +812,7 @@ def test_openrouter_provider_discovers_remote_models(monkeypatch) -> None:
         return _Response()
 
     monkeypatch.setattr(openrouter_models.httpx, "get", fake_get)
-    provider = openrouter_models.create_model({})
+    provider = openrouter_models.create_model_provider({})
 
     models = provider.list_models(environ={"OPENROUTER_API_KEY": "secret"})
 
@@ -838,7 +853,7 @@ def test_openrouter_provider_discovers_remote_models(monkeypatch) -> None:
     )
 
 
-def test_openrouter_provider_invokes_with_stateless_responses(monkeypatch) -> None:
+def test_openrouter_provider_prepares_stateless_responses_target(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     def fake_invoke_response(target, request, *, stateful):
@@ -847,8 +862,9 @@ def test_openrouter_provider_invokes_with_stateless_responses(monkeypatch) -> No
         captured["stateful"] = stateful
         return ModelCallResult(message=Message.assistant("done"))
 
-    monkeypatch.setattr(openrouter_models.responses, "invoke_response", fake_invoke_response)
-    provider = openrouter_models.create_model({})
+    monkeypatch.setattr(responses_models, "invoke_response", fake_invoke_response)
+    provider = openrouter_models.create_model_provider({})
+    adapter = responses_models.create_model_adapter({})
     target = ModelTarget(
         ref="openai/gpt-5",
         provider="openrouter",
@@ -858,7 +874,7 @@ def test_openrouter_provider_invokes_with_stateless_responses(monkeypatch) -> No
     )
     request = ModelCall(instructions="dev", messages=[Message.user("hello")])
 
-    result = provider.invoke(target, request)
+    result = adapter.invoke(provider.prepare_target(target), request)
 
     assert result.message == Message.assistant("done")
     assert captured["request"] == request
@@ -877,12 +893,12 @@ def test_openrouter_provider_invokes_with_stateless_responses(monkeypatch) -> No
     )
 
 
-def test_openai_provider_rejects_audio_inputs_for_non_audio_models(monkeypatch) -> None:
+def test_responses_adapter_rejects_openai_audio_inputs_for_non_audio_models(monkeypatch) -> None:
     def fail_invoke_response(*args, **kwargs):
         raise AssertionError("responses.invoke_response should not be called")
 
-    monkeypatch.setattr(openai_models.responses, "invoke_response", fail_invoke_response)
-    provider = openai_models.create_model({})
+    monkeypatch.setattr(responses_models, "invoke_response", fail_invoke_response)
+    adapter = responses_models.create_model_adapter({})
     target = ModelTarget(
         ref="openai/gpt-5",
         provider="openai",
@@ -904,15 +920,15 @@ def test_openai_provider_rejects_audio_inputs_for_non_audio_models(monkeypatch) 
     )
 
     with pytest.raises(ToolangError, match="audio input is not supported for OpenAI model 'gpt-5'"):
-        provider.invoke(target, request)
+        adapter.invoke(target, request)
 
 
-def test_openai_provider_rejects_audio_inputs_for_non_audio_models_in_streaming(monkeypatch) -> None:
+def test_responses_adapter_rejects_openai_audio_inputs_for_non_audio_models_in_streaming(monkeypatch) -> None:
     def fail_stream_response(*args, **kwargs):
         raise AssertionError("responses.stream_response should not be called")
 
-    monkeypatch.setattr(openai_models.responses, "stream_response", fail_stream_response)
-    provider = openai_models.create_model({})
+    monkeypatch.setattr(responses_models, "stream_response", fail_stream_response)
+    adapter = responses_models.create_model_adapter({})
     target = ModelTarget(
         ref="openai/gpt-5",
         provider="openai",
@@ -934,7 +950,7 @@ def test_openai_provider_rejects_audio_inputs_for_non_audio_models_in_streaming(
     )
 
     with pytest.raises(ToolangError, match="audio input is not supported for OpenAI model 'gpt-5'"):
-        provider.stream(target, request, on_event=lambda _event: None)
+        adapter.stream(target, request, on_event=lambda _event: None)
 
 
 def test_openrouter_provider_preserves_route_header_overrides(monkeypatch) -> None:
@@ -946,8 +962,9 @@ def test_openrouter_provider_preserves_route_header_overrides(monkeypatch) -> No
         captured["stateful"] = stateful
         return ModelCallResult(message=Message.assistant("done"))
 
-    monkeypatch.setattr(openrouter_models.responses, "invoke_response", fake_invoke_response)
-    provider = openrouter_models.create_model({})
+    monkeypatch.setattr(responses_models, "invoke_response", fake_invoke_response)
+    provider = openrouter_models.create_model_provider({})
+    adapter = responses_models.create_model_adapter({})
     target = ModelTarget(
         ref="openai/gpt-5",
         provider="openrouter",
@@ -960,7 +977,10 @@ def test_openrouter_provider_preserves_route_header_overrides(monkeypatch) -> No
         },
     )
 
-    provider.invoke(target, ModelCall(instructions="dev", messages=[Message.user("hello")]))
+    adapter.invoke(
+        provider.prepare_target(target),
+        ModelCall(instructions="dev", messages=[Message.user("hello")]),
+    )
 
     resolved_target = cast(ModelTarget, captured["target"])
 
@@ -1079,7 +1099,7 @@ def test_execute_run_input_reuses_provider_state_for_followups() -> None:
     )
     run_input = _run_input()
 
-    result = load_run_strategy("basic").run(
+    result = load_loop("basic").run(
         RunContext(
             run_input,
             ModelTarget(
@@ -1158,7 +1178,7 @@ def test_execute_run_input_appends_provider_messages_for_stateless_providers() -
     )
     run_input = _run_input()
 
-    result = load_run_strategy("basic").run(
+    result = load_loop("basic").run(
         RunContext(
             run_input,
             ModelTarget(
@@ -1213,7 +1233,7 @@ def test_run_context_omits_tools_for_model_without_tool_support() -> None:
     )
     run_input = _run_input()
 
-    result = load_run_strategy("basic").run(
+    result = load_loop("basic").run(
         RunContext(
             run_input,
             ModelTarget(
@@ -1330,7 +1350,7 @@ def test_run_context_logs_model_and_tool_io_at_debug(caplog) -> None:
         caplog.at_level(logging.DEBUG, logger="toolang.run.model"),
         caplog.at_level(logging.DEBUG, logger="toolang.run.tool"),
     ):
-        result = load_run_strategy("basic").run(
+        result = load_loop("basic").run(
             RunContext(
                 _run_input(),
                 ModelTarget(
@@ -1580,7 +1600,7 @@ def _run_input() -> RunInput:
             input_text="hello",
             message=Message.user("hello"),
             model_selector=None,
-            run_strategy="basic",
+            run_loop="basic",
             metadata={},
             live=cast(Any, live),
             created_at="2026-04-10T00:00:00Z",
@@ -1605,7 +1625,7 @@ def _run_input() -> RunInput:
                 group="chat",
                 origin="chat",
                 thread_id="thread-1",
-                run_strategy="basic",
+                run_loop="basic",
                 live_fingerprint="",
             ),
             program=SnapshotProgram(source_path="", thunk={}),

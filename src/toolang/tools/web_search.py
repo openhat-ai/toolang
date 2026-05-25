@@ -8,7 +8,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from toolang.base.error import ToolangError
-from toolang.base.protocols.tool import Tool, ToolPlugin
+from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.utils.function_tools import create_function_tool, tool
 
 DEFAULT_TOP_K = 5
@@ -22,16 +22,16 @@ class WebSearchPlugin:
     name: str = "web_search"
     description: str | None = "Search the public web and return concise result snippets."
     _top_k: int = field(init=False, repr=False)
-    _tools: dict[str, Tool] = field(init=False, repr=False)
+    _tools: dict[str, AgentTool] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._top_k = _int_value(self.config.get("top_k"), default=DEFAULT_TOP_K)
         self._tools = self._build_tools()
 
-    def tools(self) -> Mapping[str, Tool]:
+    def tools(self) -> Mapping[str, AgentTool]:
         return dict(self._tools)
 
-    def _build_tools(self) -> dict[str, Tool]:
+    def _build_tools(self) -> dict[str, AgentTool]:
         @tool(name="search", description="Search the public web.")
         def search(query: str, top_k: int = self._top_k, domains: list[str] | None = None) -> dict[str, Any]:
             limit = _int_value(top_k, default=self._top_k)
@@ -62,7 +62,7 @@ class WebSearchPlugin:
         return {"search": create_function_tool(search)}
 
 
-def create_tool(config: Mapping[str, Any]) -> ToolPlugin:
+def create_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
     """Create the web_search tool plugin."""
 
     return WebSearchPlugin(config=dict(config))

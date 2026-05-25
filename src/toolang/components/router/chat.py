@@ -12,17 +12,17 @@ from pydantic import BaseModel, Field
 
 from toolang.base.error import ToolangError
 from toolang.base.types.message import Message
-from ..execution.detail import run_detail_from_record, thread_info_from_record, thread_info_from_runs
-from ..execution.input import effective_origin_model_selectors
-from ..models.resolution import resolve_model
-from ..execution.records import ThreadPeer
-from ..execution.response import BufferedResponseSink, SseResponseSink
-from ..execution.runner import RunRequest
-from ..execution.runner import RunOutcome
-from .streaming import ShutdownAwareStreamingResponse
+from ...execution.detail import run_detail_from_record, thread_info_from_record, thread_info_from_runs
+from ...execution.input import effective_origin_model_selectors
+from ...models.resolution import resolve_model
+from ...execution.records import ThreadPeer
+from ...execution.response import BufferedResponseSink, SseResponseSink
+from ...execution.runner import RunRequest
+from ...execution.runner import RunOutcome
+from ._streaming import ShutdownAwareStreamingResponse
 
 if TYPE_CHECKING:
-    from ..up import UptimeContext
+    from ...up import UptimeContext
 
 
 class ChatMessagePayload(BaseModel):
@@ -141,6 +141,7 @@ async def _submit_chat_run(
     *,
     thread_id: str | None,
 ) -> tuple[RunOutcome, BufferedResponseSink]:
+    _require_chat_runner(context)
     response = BufferedResponseSink()
     loop = asyncio.get_running_loop()
     completion: asyncio.Future[RunOutcome] = loop.create_future()
@@ -167,6 +168,7 @@ async def _stream_chat_run(
     *,
     thread_id: str | None,
 ):
+    _require_chat_runner(context)
     response = SseResponseSink(thread_id=thread_id)
     user_message = _chat_user_message(payload)
     context.runner.enqueue(
@@ -182,6 +184,12 @@ async def _stream_chat_run(
     )
     async for chunk in response.stream():
         yield chunk
+
+
+def _require_chat_runner(context: UptimeContext) -> None:
+    enabled_components = context.config.require("components.enabled")
+    if not isinstance(enabled_components, tuple) or "runner.chat" not in enabled_components:
+        raise HTTPException(status_code=403, detail="component is not enabled: runner.chat")
 
 
 async def _guarded_stream(

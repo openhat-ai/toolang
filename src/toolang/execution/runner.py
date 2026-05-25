@@ -37,7 +37,7 @@ class RunRequest:
     thunk_name: str | None = None
     thread_id: str | None = None
     model_selector: str | None = None
-    run_strategy: str = "basic"
+    run_loop: str = "basic"
     delay_sec: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
