@@ -25,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from uvicorn.main import STARTUP_FAILURE
 
-from . import agents
+from . import agents, caps as cap_store
 from toolang.base.protocols.channel import AgentChannel
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.protocols.model_adapter import ModelAdapter
@@ -303,6 +303,7 @@ class StartupSpec:
     dev_artifact: Path | None
     model_selectors: tuple[str, ...]
     tool_selectors: tuple[str, ...] | None
+    cap_selectors: tuple[str, ...]
     log_spec: str | None = None
 
     @property
@@ -401,6 +402,7 @@ def up(
     sandbox: str | None = None,
     models: Sequence[str] | None = None,
     tools: Sequence[str] | None = None,
+    caps: Sequence[str] | None = None,
     dev: Path | None = None,
     sandbox_child: bool = False,
     component_names: Sequence[str] | None = None,
@@ -420,6 +422,7 @@ def up(
         sandbox=sandbox,
         models=models,
         tools=tools,
+        caps=caps,
         dev=dev,
         component_names=component_names,
         feature_names=feature_names,
@@ -459,6 +462,7 @@ def start_runtime(
             dev_artifact=spec.dev_artifact,
             model_selectors=spec.model_selectors,
             tool_selectors=spec.tool_selectors,
+            cap_selectors=spec.cap_selectors,
         )
     return _up_local(
         toolang_root=spec.toolang_root,
@@ -471,6 +475,7 @@ def start_runtime(
         sandbox_child=sandbox_child,
         model_selectors=spec.model_selectors,
         tool_selectors=spec.tool_selectors,
+        cap_selectors=spec.cap_selectors,
         log_spec=spec.log_spec,
         progress=progress,
     )
@@ -498,6 +503,7 @@ def invoke(
     input_text: str | None = None,
     models: Sequence[str] | None = None,
     tools: Sequence[str] | None = (),
+    caps: Sequence[str] | None = None,
     metadata: Mapping[str, object] | None = None,
     environ: Mapping[str, str],
     response: ResponseSink | None = None,
@@ -517,6 +523,7 @@ def invoke(
         environ=invoke_environ,
         model_selectors=_normalize_model_selectors(models),
         tool_selectors=_normalize_tool_selectors(tools),
+        cap_selectors=_normalize_cap_selectors(caps),
         prepared_state=prepared,
     )
     run_id = allocate_run_id(context)
@@ -592,6 +599,7 @@ def resolve_startup(
     sandbox: str | None = None,
     models: Sequence[str] | None = None,
     tools: Sequence[str] | None = None,
+    caps: Sequence[str] | None = None,
     dev: Path | None = None,
     component_names: Sequence[str] | None = None,
     feature_names: Sequence[str] | None = None,
@@ -645,6 +653,7 @@ def resolve_startup(
     dev_artifact = _resolve_dev_artifact(dev) if dev is not None else None
     model_selectors = _normalize_model_selectors(models)
     tool_selectors = _normalize_tool_selectors(tools)
+    cap_selectors = _normalize_cap_selectors(caps)
     if _startup_requires_model(enabled_components):
         _validate_startup_models(
             toolang_root=toolang_root,
@@ -665,6 +674,7 @@ def resolve_startup(
         dev_artifact=dev_artifact,
         model_selectors=model_selectors,
         tool_selectors=tool_selectors,
+        cap_selectors=cap_selectors,
         log_spec=log_spec.strip() if isinstance(log_spec, str) and log_spec.strip() else None,
     )
 
@@ -702,6 +712,7 @@ def build_run_argv(
     sandbox: str | None = None,
     models: Sequence[str] | None = None,
     tools: Sequence[str] | None = None,
+    caps: Sequence[str] | None = None,
     sandbox_child: bool = False,
 ) -> tuple[str, ...]:
     """Build one explicit argv for the hidden managed-runtime run path."""
@@ -729,6 +740,9 @@ def build_run_argv(
         effective_tools = spec.tool_selectors
     for selector in effective_tools or ():
         command.extend(["--tools", selector])
+    effective_caps = _normalize_cap_selectors(caps) or spec.cap_selectors
+    for selector in effective_caps:
+        command.extend(["--caps", selector])
     if spec.dev_artifact is not None and not sandbox_child:
         command.extend(["--dev", str(spec.dev_artifact)])
     if sandbox_child:
@@ -756,6 +770,7 @@ def _up_local(
     sandbox_child: bool,
     model_selectors: tuple[str, ...],
     tool_selectors: tuple[str, ...] | None,
+    cap_selectors: tuple[str, ...],
     log_spec: str | None,
     progress: ProgressSink | None = None,
 ) -> int:
@@ -778,6 +793,7 @@ def _up_local(
         port=port,
         cors_allowed_origins=cors_allowed_origins or [],
         tool_selectors=tool_selectors,
+        cap_selectors=cap_selectors,
         progress=progress,
     )
     live = context.live
@@ -1003,6 +1019,7 @@ def _load_runtime_context(
     environ: Mapping[str, str],
     model_selectors: Sequence[str] = (),
     tool_selectors: Sequence[str] | None = None,
+    cap_selectors: Sequence[str] = (),
     host: str = "127.0.0.1",
     port: int = 0,
     cors_allowed_origins: Sequence[str] = (),
@@ -1020,6 +1037,8 @@ def _load_runtime_context(
     live = load_live_state(prepared_state, enabled_components=enabled_components)
     normalized_model_selectors = _normalize_model_selectors(model_selectors)
     normalized_tool_selectors = _normalize_tool_selectors(tool_selectors)
+    normalized_cap_selectors = _normalize_cap_selectors(cap_selectors)
+    live = _select_live_caps(live, normalized_cap_selectors, agent_name=agent_name)
     default_model_selector = normalized_model_selectors[0] if normalized_model_selectors else None
     config = UptimeConfig(
         {
@@ -1035,6 +1054,7 @@ def _load_runtime_context(
             "models.default_selector": default_model_selector,
             "models.allowed_selectors": normalized_model_selectors,
             "tools.allowed_selectors": normalized_tool_selectors,
+            "caps.allowed_selectors": normalized_cap_selectors,
             "runtime.sandbox": _runtime_sandbox_value(runtime_state),
         }
     )
@@ -1215,6 +1235,7 @@ def _up_managed_sandbox(
     dev_artifact: Path | None,
     model_selectors: tuple[str, ...],
     tool_selectors: tuple[str, ...] | None,
+    cap_selectors: tuple[str, ...],
 ) -> int:
     endpoint = f"http://{endpoint_host}:{port}"
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -1232,6 +1253,7 @@ def _up_managed_sandbox(
         dev_artifact=dev_artifact,
         model_selectors=model_selectors,
         tool_selectors=tool_selectors,
+        cap_selectors=cap_selectors,
     )
     agents.write_runtime_state(
         toolang_root,
@@ -1375,6 +1397,33 @@ def _normalize_tool_selectors(tools: Sequence[str] | None) -> tuple[str, ...] | 
         seen.add(selector)
         result.append(selector)
     return tuple(result)
+
+
+def _normalize_cap_selectors(caps: Sequence[str] | None) -> tuple[str, ...]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for raw in cap_store.split_cap_selectors(tuple(caps or ())):
+        selector = raw.strip()
+        if not selector:
+            raise ValueError("cap selector cannot be empty")
+        if selector in seen:
+            continue
+        seen.add(selector)
+        result.append(selector)
+    return tuple(result)
+
+
+def _select_live_caps(live: LiveState, selectors: Sequence[str], *, agent_name: str) -> LiveState:
+    if not selectors:
+        return live
+    return replace(
+        live,
+        cap_entries=cap_store.select_cap_entries(
+            live.cap_entries,
+            tuple(selectors),
+            agent_name=agent_name,
+        ),
+    )
 
 
 def _select_runtime_tools(

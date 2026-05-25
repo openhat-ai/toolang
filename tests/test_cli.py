@@ -1798,6 +1798,63 @@ thunk(_):
     assert captured["tools"] == ("filesystem", "shell", "service_use")
 
 
+def test_cli_roaming_invoke_passes_explicit_cap_selectors(tmp_path: Path, monkeypatch, capsys) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+thunk(_):
+  Reply directly.
+""".strip(),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_invoke(
+        *,
+        toolang_root: Path,
+        agent_name: str,
+        thunk_name: str | None,
+        input_text: str | None,
+        models: tuple[str, ...],
+        caps: tuple[str, ...],
+        metadata: dict[str, object] | None,
+        environ: dict[str, str],
+        response,
+        log_spec: str | None = None,
+        prepared_state=None,
+    ):
+        del toolang_root, agent_name, thunk_name, input_text, models
+        del metadata, environ, response, log_spec, prepared_state
+        captured["caps"] = caps
+
+        class _Outcome:
+            run_id = "run_test"
+            status = "finished"
+            output_text = "done"
+            error = None
+            log_path = None
+
+        return _Outcome()
+
+    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+
+    result = cli.main(
+        [
+            str(program_path),
+            "--caps",
+            "skill/reviewer,service/*[home]",
+            "main",
+            "hello",
+            "--caps",
+            "[here]",
+        ]
+    )
+    output = capsys.readouterr()
+
+    assert result == 0
+    assert output.out.strip() == "done"
+    assert captured["caps"] == ("skill/reviewer", "service/*[home]", "[here]")
+
+
 def test_cli_roaming_invoke_quiet_after_thunk_suppresses_progress_output(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -2907,6 +2964,41 @@ def test_cli_tool_list_filters_by_cross_namespace_tool_selector(monkeypatch) -> 
     assert "1 tool, 1 toolset" in result.stdout
 
 
+def test_cli_tool_list_filters_by_plugin_filter(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli.agent_up,
+        "load_tool_plugins",
+        lambda *, config=None: {
+            "issues__search": _FakeLoadedTool(
+                plugin_name="tracker",
+                leaf_name="search",
+                description="Search issues.",
+            ),
+            "shell__execute": _FakeLoadedTool(
+                plugin_name="shell",
+                leaf_name="execute",
+                description="Run one shell command.",
+            ),
+        },
+    )
+    monkeypatch.setattr(
+        cli.agent_up,
+        "list_plugin_infos",
+        lambda *, group: [
+            cli.agent_up.PluginInfo(name="tracker", source="external"),
+            cli.agent_up.PluginInfo(name="shell", source="external"),
+        ],
+    )
+
+    result = runner.invoke(cli.app, ["tool", "list", "--filter", "*[plugin:tracker]"])
+
+    assert result.exit_code == 0
+    assert "tracker" in result.stdout
+    assert "search" in result.stdout
+    assert "shell" not in result.stdout
+    assert "execute" not in result.stdout
+
+
 def test_cli_tool_list_reports_no_matched_tools_for_empty_filter(monkeypatch) -> None:
     monkeypatch.setattr(
         cli.agent_up,
@@ -3355,6 +3447,35 @@ def test_cli_run_passes_tool_selectors_to_agent_up(tmp_path: Path, monkeypatch) 
 
     assert result.exit_code == 0
     assert captured["tools"] == ("filesystem", "shell", "service_use")
+
+
+def test_cli_run_passes_cap_selectors_to_agent_up(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    captured: dict[str, object] = {}
+
+    def fake_start_runtime(
+        startup: cli.agent_up.StartupSpec,
+        *,
+        environ: dict[str, str],
+        sandbox_child: bool = False,
+        progress=None,
+    ) -> int:
+        del environ, sandbox_child, progress
+        captured["caps"] = startup.cap_selectors
+        return 0
+
+    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
+
+    result = runner.invoke(
+        cli.app,
+        ["run", "alice", "--caps", "skill/reviewer,service/*[home]", "--caps", "[here]"],
+        env={"TOOLANG_ROOT": str(toolang_root), "OPENAI_API_KEY": "secret"},
+    )
+
+    assert result.exit_code == 0
+    assert captured["caps"] == ("skill/reviewer", "service/*[home]", "[here]")
 
 
 def test_cli_run_rejects_missing_default_model_env(tmp_path: Path, monkeypatch) -> None:
@@ -5066,9 +5187,10 @@ def test_cli_model_list_select_help() -> None:
     result = runner.invoke(cli.app, ["model", "list", "--help"])
 
     assert result.exit_code == 0
+    assert "--filter" in result.stdout
     assert "--select" in result.stdout
     assert "--models" not in result.stdout
-    assert "Select models by ref[filters], alias, or glob." in result.stdout
+    assert "Filter models with selector-list syntax." in result.stdout
     assert "Pass" in result.stdout
     assert "CSV or repeat." in result.stdout
 
@@ -5371,7 +5493,7 @@ def test_standalone_caps_command_supports_concept_filters(tmp_path: Path) -> Non
     )
 
     result = _invoke_caps_app(
-        ["list", "--filter", "skill,file,home"],
+        ["list", "--filter", "skill/*[file,home]"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -5475,9 +5597,7 @@ def test_standalone_caps_list_help_mentions_agent_inclusion() -> None:
     assert "Inspect available caps." in result.stdout
     assert "caps [AGENT] list [OPTIONS]" in result.stdout
     assert "--filter" in result.stdout
-    assert "psyche, skill" in result.stdout
-    assert "service, prompt, inline" in result.stdout
-    assert "ref, wired, file, root" in result.stdout
+    assert "Filter caps with selector-list syntax." in result.stdout
     assert "--kind" not in result.stdout
     assert "--global" not in result.stdout
     assert "agent      TEXT  Also include this agent's caps." in result.stdout
@@ -5488,10 +5608,7 @@ def test_standalone_cap_kind_list_help_omits_kind_filters() -> None:
 
     assert result.exit_code == 0
     assert "List skills." in result.stdout
-    assert "Filter by form or scope CSV" in result.stdout
-    assert "inline, ref, wired" in result.stdout
-    assert "file," in result.stdout
-    assert "root, home, here" in result.stdout
+    assert "Filter caps with selector-list syntax." in result.stdout
     assert "psyche, skill" not in result.stdout
     assert "service, prompt" not in result.stdout
 
@@ -5683,12 +5800,12 @@ def test_cli_cap_list_rejects_invalid_filter(tmp_path: Path) -> None:
 
     result = runner.invoke(
         caps_cli.app,
-        ["--root", str(toolang_root), "psyche", "list", "--filter", "maybe"],
+        ["--root", str(toolang_root), "psyche", "list", "--filter", "[kind:psyche]"],
         env={},
     )
 
     assert result.exit_code == 1
-    assert "invalid --filter value" in result.stderr
+    assert "selector identity belongs in the pattern" in result.stderr
 
 
 def test_cli_version_option_exits_before_other_parsing(monkeypatch) -> None:

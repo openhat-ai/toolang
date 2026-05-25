@@ -995,14 +995,53 @@ def _select_entries(
     base: tuple[PreparedEntry, ...],
     overlays: tuple[ThunkOverlay, ...],
 ) -> tuple[PreparedEntry, ...]:
-    names = _apply_string_overlays(tuple(entry.name for entry in base), overlays)
-    selected: list[PreparedEntry] = []
-    by_name = {entry.name: entry for entry in base}
-    for name in names:
-        entry = by_name.get(name)
-        if entry is not None:
-            selected.append(entry)
-    return tuple(selected)
+    return _apply_cap_overlays(base, overlays)
+
+
+def _apply_cap_overlays(
+    base: tuple[PreparedEntry, ...],
+    overlays: tuple[ThunkOverlay, ...],
+) -> tuple[PreparedEntry, ...]:
+    current = list(base)
+    kind = base[0].kind if base else None
+    agent_name = _entry_agent_name(base)
+    for overlay in overlays:
+        selectors = tuple(item for item in overlay.items if item)
+        matches = cap_store.select_cap_entries(
+            base,
+            selectors,
+            agent_name=agent_name,
+            implicit_kind=kind,
+        )
+        if overlay.op == "set":
+            current = list(matches)
+            continue
+        if overlay.op == "add":
+            seen = {_entry_identity(entry) for entry in current}
+            for entry in matches:
+                identity = _entry_identity(entry)
+                if identity not in seen:
+                    current.append(entry)
+                    seen.add(identity)
+            continue
+        if overlay.op == "remove":
+            blocked = {_entry_identity(entry) for entry in matches}
+            current = [entry for entry in current if _entry_identity(entry) not in blocked]
+    return tuple(current)
+
+
+def _entry_identity(entry: PreparedEntry) -> tuple[str, str, str]:
+    return (entry.kind, entry.name, entry.ref)
+
+
+def _entry_agent_name(entries: tuple[PreparedEntry, ...]) -> str:
+    for entry in entries:
+        path = entry.path or entry.source.path
+        prefix, separator, rest = path.partition("agents/")
+        del prefix
+        if separator and "/" in rest:
+            return rest.split("/", 1)[0]
+    return "default"
 
 
 def _apply_string_overlays(

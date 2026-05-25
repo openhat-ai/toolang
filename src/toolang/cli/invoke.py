@@ -29,6 +29,7 @@ from ..execution.runner import RunOutcome
 from ..models.errors import NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSAGE
 from ..program import ParamDecl, Thunk
 from ..state.prepared import PreparedState
+from ..caps import split_cap_selectors
 from ..state.program import LiveProgram, load_live_program
 from ..tools.registry import split_tool_selectors
 from .progress import CliProgress, as_progress_sink, make_cli_progress
@@ -61,6 +62,7 @@ class RoamingInvokeRequest:
     input_text: str | None
     models: tuple[str, ...]
     tools: tuple[str, ...]
+    caps: tuple[str, ...]
     invoke_params: dict[str, object]
     invoke_parts: list[dict[str, str]]
     quiet: bool = False
@@ -189,7 +191,7 @@ def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name:
         return 1
     source_label = body[0]
     remaining = body[1:]
-    quiet, leading_models, leading_tools, normalized_remaining = _consume_roaming_control_options(remaining)
+    quiet, leading_models, leading_tools, leading_caps, normalized_remaining = _consume_roaming_control_options(remaining)
     prepare_progress = _prepare_progress(quiet=quiet, argv=remaining)
     script_progress: _ScriptProgressSink | None = None
     request: RoamingInvokeRequest | None = None
@@ -222,6 +224,7 @@ def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name:
                 remainder,
                 leading_models=leading_models,
                 leading_tools=leading_tools,
+                leading_caps=leading_caps,
             )
         except _MissingInvokeInput:
             _show_roaming_help(source_label, program, thunk_name=_thunk_name(thunk), prog_name=prog_name)
@@ -232,7 +235,7 @@ def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name:
             "invoke_params": request.invoke_params,
             "invoke_parts": request.invoke_parts,
         }
-        if request.tools:
+        if request.tools and request.caps:
             outcome = agent_up.invoke(
                 toolang_root=toolang_root,
                 agent_name=agent_name,
@@ -240,6 +243,33 @@ def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name:
                 input_text=request.input_text,
                 models=request.models,
                 tools=request.tools,
+                caps=request.caps,
+                metadata=metadata,
+                environ=runtime_environ,
+                response=script_progress,
+                prepared_state=prepared,
+            )
+        elif request.tools:
+            outcome = agent_up.invoke(
+                toolang_root=toolang_root,
+                agent_name=agent_name,
+                thunk_name=request.thunk_name,
+                input_text=request.input_text,
+                models=request.models,
+                tools=request.tools,
+                metadata=metadata,
+                environ=runtime_environ,
+                response=script_progress,
+                prepared_state=prepared,
+            )
+        elif request.caps:
+            outcome = agent_up.invoke(
+                toolang_root=toolang_root,
+                agent_name=agent_name,
+                thunk_name=request.thunk_name,
+                input_text=request.input_text,
+                models=request.models,
+                caps=request.caps,
                 metadata=metadata,
                 environ=runtime_environ,
                 response=script_progress,
@@ -283,10 +313,13 @@ def _unsupported_roaming_global_args(global_args: list[str]) -> bool:
     return bool(global_args)
 
 
-def _consume_roaming_control_options(argv: list[str]) -> tuple[bool, tuple[str, ...], tuple[str, ...], list[str]]:
+def _consume_roaming_control_options(
+    argv: list[str],
+) -> tuple[bool, tuple[str, ...], tuple[str, ...], tuple[str, ...], list[str]]:
     quiet = False
     models: list[str] = []
     tools: list[str] = []
+    caps: list[str] = []
     remaining: list[str] = []
     index = 0
     while index < len(argv):
@@ -322,9 +355,21 @@ def _consume_roaming_control_options(argv: list[str]) -> tuple[bool, tuple[str, 
                 tools.append(tool)
                 index += 2
                 continue
+        if token.startswith("--caps="):
+            cap = token.partition("=")[2].strip()
+            if cap:
+                caps.append(cap)
+                index += 1
+                continue
+        if token == "--caps" and index + 1 < len(argv):
+            cap = argv[index + 1].strip()
+            if cap:
+                caps.append(cap)
+                index += 2
+                continue
         remaining.append(token)
         index += 1
-    return quiet, tuple(models), split_tool_selectors(tuple(tools)), remaining
+    return quiet, tuple(models), split_tool_selectors(tuple(tools)), split_cap_selectors(tuple(caps)), remaining
 
 
 def _prepare_progress(*, quiet: bool, argv: list[str]) -> "CliProgress | None":
@@ -359,6 +404,7 @@ def _parse_roaming_invoke_request(
     *,
     leading_models: tuple[str, ...] = (),
     leading_tools: tuple[str, ...] = (),
+    leading_caps: tuple[str, ...] = (),
 ) -> RoamingInvokeRequest:
     thunk_params = tuple(thunk.params)
     param_index = {param.name: param for param in thunk_params}
@@ -366,6 +412,7 @@ def _parse_roaming_invoke_request(
     parts: list[str] = []
     models = list(leading_models)
     tools = list(leading_tools)
+    caps = list(leading_caps)
     quiet = False
     index = 0
     while index < len(argv):
@@ -405,6 +452,22 @@ def _parse_roaming_invoke_request(
             tools.extend(split_tool_selectors((tool,)))
             index += 2
             continue
+        if token.startswith("--caps="):
+            cap = token.partition("=")[2].strip()
+            if not cap:
+                raise click.ClickException("--caps requires a value")
+            caps.extend(split_cap_selectors((cap,)))
+            index += 1
+            continue
+        if token == "--caps":
+            if index + 1 >= len(argv):
+                raise click.ClickException("--caps requires a value")
+            cap = argv[index + 1].strip()
+            if not cap:
+                raise click.ClickException("--caps requires a value")
+            caps.extend(split_cap_selectors((cap,)))
+            index += 2
+            continue
         if token in {"--quiet", "-q"}:
             quiet = True
             index += 1
@@ -437,6 +500,7 @@ def _parse_roaming_invoke_request(
         input_text=input_text,
         models=tuple(models),
         tools=tuple(dict.fromkeys(tools)),
+        caps=tuple(dict.fromkeys(caps)),
         invoke_params=invoke_params,
         invoke_parts=invoke_parts,
         quiet=quiet,
@@ -654,6 +718,11 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
             "--tools",
             help="Allow selected tools. Pass CSV or repeat.",
         ),
+        caps: list[str] | None = typer.Option(
+            None,
+            "--caps",
+            help="Allow selected caps. Pass CSV or repeat.",
+        ),
         model: list[str] | None = typer.Option(
             None,
             "--models",
@@ -666,7 +735,7 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
             help="Suppress progress messages.",
         ),
     ) -> None:
-        del tools, model, quiet
+        del tools, caps, model, quiet
         return None
 
     for thunk in program.thunks:
@@ -703,6 +772,11 @@ def _make_roaming_help_command() -> Callable[..., None]:
             "--tools",
             help="Allow selected tools. Pass CSV or repeat.",
         ),
+        caps: list[str] | None = typer.Option(
+            None,
+            "--caps",
+            help="Allow selected caps. Pass CSV or repeat.",
+        ),
         model: list[str] | None = typer.Option(
             None,
             "--models",
@@ -715,7 +789,7 @@ def _make_roaming_help_command() -> Callable[..., None]:
             help="Suppress progress messages.",
         ),
     ) -> None:
-        del tools, model, quiet
+        del tools, caps, model, quiet
         return None
 
     return command

@@ -19,6 +19,7 @@ from toolang.models.discovery import (
 )
 from toolang.models.errors import NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSAGE
 from toolang.models.selectors import ModelSelector, parse_model_selector
+from toolang.selectors import filter_value_matches, selector_identity_matches
 
 DEFAULT_MODEL_SELECTOR = "gpt-5"
 CUSTOM_MODEL_PROVIDER = "custom"
@@ -350,8 +351,8 @@ def _candidate_matches(candidate: _Candidate, selector: ModelSelector) -> bool:
     if not _pattern_matches(candidate, selector.pattern):
         return False
     for key, values in selector.filters.items():
-        actual = _candidate_filter_value(candidate, key)
-        if actual is None or actual not in values:
+        actual_values = _candidate_filter_values(candidate, key)
+        if not actual_values or not any(filter_value_matches(actual, values) for actual in actual_values):
             return False
     return True
 
@@ -360,25 +361,34 @@ def _pattern_matches(candidate: _Candidate, pattern: str) -> bool:
     text = pattern.strip() or "*"
     if text == "*":
         return True
+    if "/" in text:
+        family, _, name = candidate.target.ref.partition("/")
+        if selector_identity_matches(
+            family=family,
+            name=name or candidate.target.model,
+            selector=ModelSelector(raw=text, pattern=text),
+            extra_values=candidate.match_values,
+        ):
+            return True
     return any(value == text or fnmatchcase(value, text) for value in candidate.match_values)
 
 
-def _candidate_filter_value(candidate: _Candidate, key: str) -> str | None:
+def _candidate_filter_values(candidate: _Candidate, key: str) -> tuple[str, ...]:
     if key == "provider":
-        return candidate.target.provider
+        return (candidate.target.provider,)
     if key == "scope":
-        return candidate.target.scope
+        return (candidate.target.scope,) if candidate.target.scope is not None else ()
     if key == "adapter":
-        return candidate.target.adapter
-    if key == "ref":
-        return candidate.target.ref
-    if key == "model":
-        return candidate.target.model
+        return (candidate.target.adapter,)
+    if key == "alias":
+        return (candidate.alias.name,) if candidate.alias is not None else ()
+    if key == "tag":
+        return tuple(candidate.target.tags)
     if key == "streaming":
-        return _bool_filter_value(candidate.target.streaming)
+        return (_bool_filter_value(candidate.target.streaming),)
     if key == "tools":
-        return _bool_filter_value(candidate.target.tools)
-    return None
+        return (_bool_filter_value(candidate.target.tools),)
+    return ()
 
 
 def _bool_filter_value(value: bool) -> str:

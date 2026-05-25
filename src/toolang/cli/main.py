@@ -453,6 +453,13 @@ def run_agent(
             help="Allow selected tools. Pass CSV or repeat.",
         ),
     ] = None,
+    caps: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--caps",
+            help="Allow selected caps. Pass CSV or repeat.",
+        ),
+    ] = None,
     models: Annotated[
         list[str] | None,
         typer.Option(
@@ -497,6 +504,7 @@ def run_agent(
                 sandbox=sandbox,
                 models=models,
                 tools=tools,
+                caps=caps,
                 components=normalized_components,
                 port=port,
                 host=host,
@@ -543,6 +551,7 @@ def _resolve_runtime_startup(
     sandbox: str | None,
     models: list[str] | None,
     tools: list[str] | None,
+    caps: list[str] | None,
     components: list[str] | None,
     port: int | None,
     host: str,
@@ -579,6 +588,7 @@ def _resolve_runtime_startup(
         sandbox=sandbox,
         models=models,
         tools=tools,
+        caps=caps,
         dev=dev,
         component_names=components,
         log_spec=log_plan.spec,
@@ -613,6 +623,13 @@ def start_agent(
         typer.Option(
             "--tools",
             help="Allow selected tools. Pass CSV or repeat.",
+        ),
+    ] = None,
+    caps: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--caps",
+            help="Allow selected caps. Pass CSV or repeat.",
         ),
     ] = None,
     models: Annotated[
@@ -657,6 +674,7 @@ def start_agent(
                 sandbox=sandbox,
                 models=models,
                 tools=tools,
+                caps=caps,
                 components=normalized_components,
                 port=port,
                 host=host,
@@ -850,11 +868,12 @@ sandbox_app = typer.Typer(
 
 @model_app.command("list", help="List available models.")
 def list_models(
-    select: Annotated[
+    filter_: Annotated[
         list[str] | None,
         typer.Option(
+            "--filter",
             "--select",
-            help=r"Select models by ref\[filters], alias, or glob. Pass CSV or repeat.",
+            help="Filter models with selector-list syntax. Pass CSV or repeat.",
         ),
     ] = None,
 ) -> None:
@@ -863,12 +882,13 @@ def list_models(
 
     environ = dict(os.environ)
     root = _toolang_root(None)
-    selectors = split_model_selectors(tuple(select or ()))
+    selectors = split_model_selectors(tuple(filter_ or ()))
     rows = _model_rows(root, environ, model_selectors=selectors)
     if not rows:
         if selectors and _model_rows(root, environ):
             typer.echo("No matched models.")
-            typer.echo("Try: toolang model list --select <selector>")
+            typer.echo("Try: toolang model list --filter <selector>")
+            typer.echo("Alias: toolang model list --select <selector>")
         else:
             typer.echo(NO_AVAILABLE_MODELS_MESSAGE)
         return
@@ -899,11 +919,12 @@ def list_model_adapters() -> None:
 
 @tool_app.command("list", help="List available tools.")
 def list_tools(
-    select: Annotated[
+    filter_: Annotated[
         list[str] | None,
         typer.Option(
+            "--filter",
             "--select",
-            help="Select tools by namespace/name. Pass CSV or repeat.",
+            help="Filter tools with selector-list syntax. Pass CSV or repeat.",
         ),
     ] = None,
 ) -> None:
@@ -911,12 +932,13 @@ def list_tools(
 
     environ = dict(os.environ)
     root = _toolang_root(None)
-    selectors = split_tool_selectors(tuple(select or ()))
+    selectors = split_tool_selectors(tuple(filter_ or ()))
     rows = _tool_rows(root, environ, tool_selectors=selectors)
     if not rows:
         if selectors and _tool_rows(root, environ):
             typer.echo("No matched tools.")
-            typer.echo("Try: toolang tool list --select <selector>")
+            typer.echo("Try: toolang tool list --filter <selector>")
+            typer.echo("Alias: toolang tool list --select <selector>")
         else:
             typer.echo("No tools found.")
         return
