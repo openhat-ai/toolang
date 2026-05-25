@@ -243,9 +243,12 @@ Recommended directives are:
 | `skills = ...` | Keep only matching skills from the current activation set |
 | `services = ...` | Keep only matching services from the current activation set |
 | `tools = ...` | Keep only matching tools from the current activation set |
+| `hands = ...` | Keep only matching sub-thunks this thunk may call |
+| `handoffs = ...` | Keep only matching thunks this thunk may transfer control to |
 
 Capability directives use names. `models = ...` uses model selectors such as
 route-neutral refs, aliases, globs, and bracket filters.
+Routing directives use thunk names.
 
 Example:
 
@@ -256,6 +259,7 @@ thunk review(input, path?: path) -> ReviewResult
   skills += review, patch
   services += github
   tools = shell, service_use
+  hands += summarize_findings
 
   Review the target and return actionable findings.
 ```
