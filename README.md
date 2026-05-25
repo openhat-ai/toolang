@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://toolang.ai/toolang-light.svg" alt="Toolang" height="72">
+  <img src="https://toolang.ai/toolang-light.svg" alt="Toolang" height="108" />
 </p>
 
 # Toolang
@@ -8,40 +8,41 @@ A programming language and runtime for agents.
 
 Tool calling turned LLMs from chatbots into agents. Toolang makes agents easy to build, run, and share.
 
-## Get Started
+## Try Now
 
-### Zero setup
-
-Run a shared agent directly from a URL:
+Start with a shared agent, no installation required:
 
 ```bash
 uvx toolang run https://toolang.ai/dev.too
 ```
 
-Or use a shared reference:
+Or use a GitHub shorthand:
 
 ```bash
 uvx toolang run briceyan/dev
 ```
 
-### Install the CLI
+## Get Started
 
-Use an installed CLI when you want to create and reuse local agents:
+Install Toolang to build and run your own agents:
 
 ```bash
 uv tool install toolang
 ```
 
-### Create or clone an agent
+Create a local agent:
 
 ```bash
 toolang new alice
+```
+
+Or clone a shared agent:
+
+```bash
 toolang clone briceyan/dev bob
 ```
 
-### Add caps
-
-Caps add behavior and integrations to an agent:
+Extend your agents with caps — composable agent primitives:
 
 ```bash
 caps alice skill add briceyan/codebase-navigation
@@ -49,32 +50,58 @@ caps alice psyche add briceyan/senior-engineer
 caps alice service add briceyan/github
 ```
 
-Create local caps when you want to author your own:
+Caps are typically Markdown files. To create your own cap, start one locally:
 
 ```bash
 caps alice skill new reviewer
-caps alice skill list
 ```
 
-### Run or start an agent
+Run in the foreground to watch the logs. Press `Ctrl+C` to stop. Use `PY_LOG` for more detail:
 
 ```bash
 toolang run alice
+PY_LOG=debug toolang run alice
 ```
 
-Keep it running in the background:
+Or start it in the background:
 
 ```bash
 toolang start alice
+```
+
+In either case, open the printed WebUI link to connect to the agent:
+
+```text
+Started agent alice: https://too.run/7001
+```
+
+To stop a background agent:
+
+```bash
 toolang stop alice
 ```
 
-### Open the WebUI
+## Common Commands
 
-`run` and `start` print a WebUI URL:
+```bash
+# Agents
+toolang new <agent>                  # Create a local agent
+toolang clone <ref> <agent>          # Clone a shared agent
+toolang run <agent-or-ref>           # Run an agent in the foreground
+toolang start <agent>                # Start an agent in the background
+toolang stop <agent>                 # Stop a running agent
 
-```text
-Agent alice started webui=https://too.run/54147
+# Runtime
+toolang model list                   # List available models
+toolang tool list                    # List available tools
+
+# Caps
+caps [agent] psyche add <ref>        # Add a psyche
+caps [agent] skill add <ref>         # Add a skill
+caps [agent] service add <ref>       # Add an MCP server
+caps [agent] prompt add <ref>        # Add a slash command
+caps [agent] skill list              # List skills
+caps [agent] list                    # List all caps
 ```
 
 ## Links
