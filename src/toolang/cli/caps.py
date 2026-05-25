@@ -5,20 +5,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Literal, cast
+from typing import TYPE_CHECKING, Annotated, Literal, cast
 from urllib.parse import quote
 
 import click
 import typer
 from typer.core import TyperGroup
 
-from .. import caps as cap_store
-from .. import templates
-from ..execution.records import UpdateKind
-from ..features import watch as watch_feature
-from ..state.durable import scan_durable_state
-from ..state.prepared import EntryKind, PreparedEntry, PreparedState, PreparedVisibility
-from .progress import CliProgress, as_progress_sink, make_cli_progress
 from .utils import (
     _OptionalPrefixAgentCommand,
     _OptionalPrefixAgentGroup,
@@ -32,12 +25,58 @@ from .utils import (
     _wrap_user_error,
 )
 
+if TYPE_CHECKING:
+    from .. import caps as cap_store
+    from .. import templates
+    from ..execution.records import UpdateKind
+    from ..features import watch as watch_feature
+    from ..state.prepared import PreparedEntry, PreparedState
+    from .progress import CliProgress
+
 CapKind = Literal["skill", "psyche", "prompt", "service"]
+EntryKind = Literal["psyche", "skill", "service", "prompt", "task", "chore"]
+PreparedVisibility = Literal["shared", "private"]
 CapForm = Literal["inline", "cited", "remote", "local"]
 CapScope = Literal["global", "agent"]
 CAP_KINDS: tuple[CapKind, ...] = ("psyche", "skill", "service", "prompt")
 CAP_FORMS: tuple[CapForm, ...] = ("inline", "cited", "remote", "local")
 CAP_SCOPES: tuple[CapScope, ...] = ("global", "agent")
+
+
+class _LazyModule:
+    """Import a module only when one of its attributes is used."""
+
+    def __init__(self, module_name: str) -> None:
+        self._module_name = module_name
+        self._module: object | None = None
+
+    def _load(self) -> object:
+        if self._module is None:
+            import importlib
+
+            self._module = importlib.import_module(self._module_name)
+        return self._module
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._load(), name)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name.startswith("_"):
+            object.__setattr__(self, name, value)
+            return
+        setattr(self._load(), name, value)
+
+    def __delattr__(self, name: str) -> None:
+        if name.startswith("_"):
+            object.__delattr__(self, name)
+            return
+        delattr(self._load(), name)
+
+
+if not TYPE_CHECKING:
+    cap_store = _LazyModule("toolang.caps")
+    templates = _LazyModule("toolang.templates")
+    watch_feature = _LazyModule("toolang.features.watch")
 
 
 def register_standalone_caps_commands(app: typer.Typer, *, rich_help_panel: str | None = None) -> None:
@@ -432,6 +471,8 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         ref: str = typer.Argument(..., help=f"{title} ref"),
     ) -> None:
+        from .progress import as_progress_sink
+
         visibility, agent_name = _target_visibility(ctx)
         selected_agent = _context_agent(ctx)
         progress = _make_cap_write_progress()
@@ -694,8 +735,12 @@ def _all_cap_entries(
     prepare: bool,
     kinds: set[EntryKind],
 ) -> tuple[PreparedEntry, ...]:
+    from ..state.durable import scan_durable_state
+
     durable = _wrap_user_error(scan_durable_state, toolang_root, agent_name)
     if prepare and durable.program_source is not None:
+        from .progress import as_progress_sink, make_cli_progress
+
         progress = make_cli_progress(
             prepare_summary_label="Resolved",
             show_materialize_summary=True,
@@ -787,7 +832,7 @@ def _append_cap_update(
     name: str,
     visibility: PreparedVisibility,
 ) -> None:
-    update_kind = cast(UpdateKind, f"{kind}_changed")
+    update_kind = cast("UpdateKind", f"{kind}_changed")
     _append_agent_update(
         toolang_root,
         agent_name,
@@ -800,6 +845,8 @@ def _append_cap_update(
 
 
 def _make_cap_write_progress() -> CliProgress:
+    from .progress import make_cli_progress
+
     return make_cli_progress(
         prepare_summary_label="Resolved",
         show_materialize_summary=True,
@@ -815,6 +862,9 @@ def _refresh_and_append_cap_update(
     visibility: PreparedVisibility,
     progress: CliProgress | None = None,
 ) -> None:
+    from ..state.durable import scan_durable_state
+    from .progress import as_progress_sink
+
     durable = _wrap_user_error(scan_durable_state, toolang_root, agent_name)
     prepared = _wrap_user_error(
         watch_feature.build_prepared_state,
