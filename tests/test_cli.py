@@ -3042,6 +3042,40 @@ def test_cli_tool_list_filters_by_plugin_filter(monkeypatch) -> None:
     assert "execute" not in result.stdout
 
 
+def test_cli_tool_list_supports_filter_short_option(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli.agent_up,
+        "load_tool_plugins",
+        lambda *, config=None: {
+            "filesystem__read_text": _FakeLoadedTool(
+                plugin_name="filesystem",
+                leaf_name="read_text",
+                description="Read one text file.",
+            ),
+            "shell__execute": _FakeLoadedTool(
+                plugin_name="shell",
+                leaf_name="execute",
+                description="Run one shell command.",
+            ),
+        },
+    )
+    monkeypatch.setattr(
+        cli.agent_up,
+        "list_plugin_infos",
+        lambda *, group: [
+            cli.agent_up.PluginInfo(name="filesystem", source="built-in"),
+            cli.agent_up.PluginInfo(name="shell", source="external"),
+        ],
+    )
+
+    result = runner.invoke(cli.app, ["tool", "list", "-f", "execute"])
+
+    assert result.exit_code == 0
+    assert "shell" in result.stdout
+    assert "execute" in result.stdout
+    assert "filesystem" not in result.stdout
+
+
 def test_cli_tool_list_reports_no_matched_tools_for_empty_filter(monkeypatch) -> None:
     monkeypatch.setattr(
         cli.agent_up,
@@ -3286,6 +3320,51 @@ def test_cli_model_list_filters_by_capability_selector(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "google/gemini-pro" in result.stdout
     assert "openai/gpt-5" not in result.stdout
+
+
+def test_cli_model_list_supports_filter_short_option(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli.agent_up,
+        "load_model_providers",
+        lambda *_args: {
+            "openrouter": _FakeModelProvider(
+                name="openrouter",
+                required_env=("OPENROUTER_API_KEY",),
+                models=(
+                    ModelInfo(
+                        ref="openai/gpt-5",
+                        provider="openrouter",
+                        name="gpt-5",
+                        model="openai/gpt-5",
+                        selectors=("gpt-5", "openai/gpt-5"),
+                        adapter="responses",
+                        tools=True,
+                        streaming=True,
+                    ),
+                    ModelInfo(
+                        ref="google/gemini-pro",
+                        provider="openrouter",
+                        name="gemini-pro",
+                        model="google/gemini-pro",
+                        selectors=("gemini-pro", "google/gemini-pro"),
+                        adapter="responses",
+                        tools=False,
+                        streaming=True,
+                    ),
+                ),
+            ),
+        },
+    )
+
+    result = runner.invoke(
+        cli.app,
+        ["model", "list", "-f", "gpt-*"],
+        env={"OPENROUTER_API_KEY": "secret"},
+    )
+
+    assert result.exit_code == 0
+    assert "openai/gpt-5" in result.stdout
+    assert "google/gemini-pro" not in result.stdout
 
 
 def test_cli_run_hands_to_agent_up(tmp_path: Path, monkeypatch) -> None:
@@ -5243,6 +5322,7 @@ def test_cli_model_list_select_help() -> None:
 
     assert result.exit_code == 0
     assert "--filter" in result.stdout
+    assert "-f" in result.stdout
     assert "--select" in result.stdout
     assert "--models" not in result.stdout
     assert "Filter models with selector-list syntax." in result.stdout
@@ -5463,6 +5543,36 @@ def test_cli_cap_list_bare_pattern_matches_cap_name_not_kind(tmp_path: Path) -> 
 
     result = _invoke_caps_app(
         ["skill", "list", "--filter", "*l*"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert result.exit_code == 0
+    assert "local-reviewer" in result.stdout
+    assert "patch" not in result.stdout
+
+
+def test_cli_cap_list_supports_filter_short_option(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="local-reviewer",
+        text="---\ndescription: Review local changes\n---\n# Local Reviewer\n",
+    )
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="patch",
+        text="---\ndescription: Patch changes\n---\n# Patch\n",
+    )
+
+    result = _invoke_caps_app(
+        ["skill", "list", "-f", "*l*"],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -5704,6 +5814,7 @@ def test_standalone_caps_list_help_mentions_agent_inclusion() -> None:
     assert "Inspect available caps." in result.stdout
     assert "caps [AGENT] list [OPTIONS]" in result.stdout
     assert "--filter" in result.stdout
+    assert "-f" in result.stdout
     assert "Filter caps with selector-list syntax." in result.stdout
     assert "--kind" not in result.stdout
     assert "--global" not in result.stdout

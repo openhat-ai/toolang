@@ -872,6 +872,7 @@ def list_models(
         list[str] | None,
         typer.Option(
             "--filter",
+            "-f",
             "--select",
             help="Filter models with selector-list syntax. Pass CSV or repeat.",
         ),
@@ -923,6 +924,7 @@ def list_tools(
         list[str] | None,
         typer.Option(
             "--filter",
+            "-f",
             "--select",
             help="Filter tools with selector-list syntax. Pass CSV or repeat.",
         ),

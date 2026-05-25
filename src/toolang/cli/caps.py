@@ -263,6 +263,7 @@ def _list_all_caps(
         str | None,
         typer.Option(
             "--filter",
+            "-f",
             help="Filter caps with selector-list syntax.",
         ),
     ] = None,
@@ -313,6 +314,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             str | None,
             typer.Option(
                 "--filter",
+                "-f",
                 help="Filter caps with selector-list syntax.",
             ),
         ] = None,
