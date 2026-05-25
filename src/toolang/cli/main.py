@@ -17,7 +17,7 @@ from typing import Annotated, Any, Literal, TYPE_CHECKING, cast
 
 import click
 import typer
-from typer.core import TyperCommand
+from typer.core import TyperCommand, TyperGroup
 
 from .. import agents
 from ..config.log import LoggingPlan, configure_logging, configure_logging_plan, resolve_agent_logging
@@ -117,6 +117,19 @@ TOP_LEVEL_COMMANDS = frozenset(
         "chore",
     }
 )
+
+_CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt", "caps")
+
+
+class _ToolangGroup(TyperGroup):
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        names = TyperGroup.list_commands(self, ctx)
+        cap_names = [name for name in _CAPS_PANEL_COMMAND_ORDER if name in names]
+        if len(cap_names) < 2:
+            return names
+        first_cap_index = min(names.index(name) for name in cap_names)
+        reordered = [name for name in names if name not in cap_names]
+        return reordered[:first_cap_index] + cap_names + reordered[first_cap_index:]
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,6 +231,7 @@ def _version_callback(value: bool) -> None:
 
 
 app = typer.Typer(
+    cls=_ToolangGroup,
     help="Run and manage Toolang agents.",
     add_completion=False,
     invoke_without_command=True,
@@ -799,7 +813,7 @@ def _info_models_summary(
 
 
 model_app = typer.Typer(
-    help="Inspect models and model settings.",
+    help="Inspect available models.",
     add_completion=False,
     no_args_is_help=True,
     pretty_exceptions_enable=False,

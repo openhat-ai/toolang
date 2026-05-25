@@ -47,7 +47,7 @@ Cap commands:
 - `caps [AGENT] <kind> template [template-name]`
 
 `<kind>` is one of `psyche`, `skill`, `service`, or `prompt`. Without `AGENT`,
-cap mutations target global caps. With `AGENT`, they target that agent's caps.
+cap mutations target root caps. With `AGENT`, they target the selected agent home's caps.
 
 List output uses:
 
@@ -59,12 +59,12 @@ List output uses:
 
 Kind-specific list commands omit `KIND`.
 
-`SOURCE` is the authored source location. Local sources are paths relative to
-the Toolang root. Inline caps use `<path-to-agent.too>:<line>`. Remote GitHub
+`SOURCE` is the authored source location. File sources are paths relative to
+the Toolang root. Inline caps use `<path-to-agent.too>:<line>`. External GitHub
 sources are shown as directly accessible `https://github.com/...` URLs.
 
-`FORM` accepts `inline`, `cited`, `remote`, and `local`. `SCOPE` accepts
-`global` and `agent`. `--filter` accepts kind, form, and scope values for
+`FORM` accepts `inline`, `ref`, `wired`, and `file`. `SCOPE` accepts
+`root`, `home`, and `here`. `--filter` accepts kind, form, and scope values for
 all-kind lists. Kind-specific lists accept only form and scope values. Values in
 one group are unioned; different groups are intersected.
 
@@ -303,32 +303,32 @@ Templates:
 
 Write:
 
-- `PUT /api/v1/psyches/{name}/local`
-- `PUT /api/v1/skills/{name}/local`
-- `PUT /api/v1/services/{name}/local`
-- `PUT /api/v1/prompts/{name}/local`
-- `DELETE /api/v1/psyches/{name}/local`
-- `DELETE /api/v1/skills/{name}/local`
-- `DELETE /api/v1/services/{name}/local`
-- `DELETE /api/v1/prompts/{name}/local`
-- `PUT /api/v1/psyches/{name}/remote`
-- `PUT /api/v1/skills/{name}/remote`
-- `PUT /api/v1/services/{name}/remote`
-- `PUT /api/v1/prompts/{name}/remote`
-- `DELETE /api/v1/psyches/{name}/remote`
-- `DELETE /api/v1/skills/{name}/remote`
-- `DELETE /api/v1/services/{name}/remote`
-- `DELETE /api/v1/prompts/{name}/remote`
+- `PUT /api/v1/psyches/{name}/file`
+- `PUT /api/v1/skills/{name}/file`
+- `PUT /api/v1/services/{name}/file`
+- `PUT /api/v1/prompts/{name}/file`
+- `DELETE /api/v1/psyches/{name}/file`
+- `DELETE /api/v1/skills/{name}/file`
+- `DELETE /api/v1/services/{name}/file`
+- `DELETE /api/v1/prompts/{name}/file`
+- `PUT /api/v1/psyches/{name}/wired`
+- `PUT /api/v1/skills/{name}/wired`
+- `PUT /api/v1/services/{name}/wired`
+- `PUT /api/v1/prompts/{name}/wired`
+- `DELETE /api/v1/psyches/{name}/wired`
+- `DELETE /api/v1/skills/{name}/wired`
+- `DELETE /api/v1/services/{name}/wired`
+- `DELETE /api/v1/prompts/{name}/wired`
 
-Local write bodies use:
+File write bodies use:
 
 - `visibility`: `private` or `shared`; defaults to `private`
 - `content`: raw cap content
 
-Remote write bodies use:
+Wired write bodies use:
 
 - `visibility`: `private` or `shared`; defaults to `private`
-- `ref`: remote cap ref
+- `ref`: external cap ref
 
 Delete routes accept `visibility=private|shared` as a query parameter. Cap read
 items include:
@@ -344,9 +344,9 @@ items include:
 - `editable`
 
 `visibility` is an HTTP write-placement field, not a CLI list concept:
-`shared` maps to globally authored caps and `private` maps to the current
+`shared` maps to root-authored caps and `private` maps to the current
 agent's authored caps. Read payloads expose runtime `form`, `scope`, and
-`origin`; CLI list commands project those into `SOURCE`, `FORM`, and display
+`origin`; CLI list commands project those into `SOURCE`, `FORM`, and runtime
 `SCOPE`.
 
 

@@ -21,7 +21,7 @@ Current program-level constructs are:
 `use` declares one external cap reference that belongs to the authored program.
 During prepare, Toolang resolves the reference and materializes it into the
 agent-specific prepared cap set, even when no thunk directive selects it yet.
-The prepared cap has `form=cited`, `scope=packed`, and `origin=remote`.
+The prepared cap has `form=ref`, `scope=here`, and `origin=remote`.
 
 ```toolang
 use skill https://github.com/coinbase/agentic-wallet-skills/tree/main/skills/fund
@@ -44,7 +44,7 @@ During prepare, Toolang materializes them into the agent-specific prepared cap
 set under `.caps/inline`, preserving the `.too` file as the definition
 source. This makes embedded declarations visible through cap APIs and WebUI
 surfaces before any thunk selects them. The prepared cap has `form=inline`,
-`scope=packed`, and `origin=local`.
+`scope=here`, and `origin=local`.
 
 
 ## Thunk

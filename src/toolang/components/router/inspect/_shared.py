@@ -1057,7 +1057,7 @@ def _cap_summary_item(context: UptimeContext, entry: PreparedEntry) -> dict[str,
         "form": caps.entry_form(entry),
         "ref": caps.entry_ref(entry, agent_name=context.name),
         "definition_file": caps.entry_definition_file(entry),
-        "editable": entry.source.form == "local",
+        "editable": entry.source.form == "file",
     }
     line = caps.entry_line(entry)
     if line is not None:
