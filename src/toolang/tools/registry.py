@@ -4,11 +4,17 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from fnmatch import fnmatchcase
 
 from toolang.base.error import ToolangError
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.utils.tools import encode_tool_name
+from toolang.selectors import (
+    Selector,
+    filter_value_matches,
+    parse_selector,
+    split_selector_list,
+    selector_identity_matches,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,13 +37,7 @@ class ToolRef:
 def split_tool_selectors(items: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
     """Split repeated and CSV tool selector inputs."""
 
-    values: list[str] = []
-    for item in items or ():
-        for value in str(item).split(","):
-            text = value.strip()
-            if text:
-                values.append(text)
-    return tuple(values)
+    return split_selector_list(items)
 
 
 def parse_tool_registration_key(
@@ -88,20 +88,26 @@ def tool_ref_for_model_tool(model_name: str, tool: AgentTool) -> ToolRef:
 def tool_ref_matches(ref: ToolRef, selector: str) -> bool:
     """Return whether one public tool ref matches a selector."""
 
-    text = selector.strip()
-    if not text:
+    if not selector.strip():
         return False
-    namespace, separator, name = text.partition("/")
-    if separator:
-        namespace_pattern = namespace.strip() or "*"
-        name_pattern = name.strip() or "*"
-        return fnmatchcase(ref.namespace, namespace_pattern) and fnmatchcase(ref.name, name_pattern)
-    return any(
-        value == text
-        or fnmatchcase(value, text)
-        or (not _has_glob(text) and text in value)
-        for value in (ref.selector, ref.namespace, ref.name)
-    )
+    parsed = parse_selector(selector, domain="tool")
+    return tool_ref_matches_selector(ref, parsed)
+
+
+def tool_ref_matches_selector(ref: ToolRef, selector: Selector) -> bool:
+    """Return whether one public tool ref matches a parsed selector."""
+
+    if not selector_identity_matches(
+        family=ref.namespace,
+        name=ref.name,
+        selector=selector,
+    ):
+        return False
+    for key, values in selector.filters.items():
+        actual = _tool_filter_value(ref, key)
+        if actual is None or not filter_value_matches(actual, values):
+            return False
+    return True
 
 
 def selected_tool_names(
@@ -112,18 +118,25 @@ def selected_tool_names(
 
     selected: list[str] = []
     seen: set[str] = set()
-    for selector in selectors:
+    parsed_selectors = [
+        parse_selector(selector, domain="tool")
+        for selector in selectors
+        if selector.strip()
+    ]
+    for selector in parsed_selectors:
         for model_name, ref in refs_by_model_name.items():
             if model_name in seen:
                 continue
-            if tool_ref_matches(ref, selector):
+            if tool_ref_matches_selector(ref, selector):
                 selected.append(model_name)
                 seen.add(model_name)
     return tuple(selected)
 
 
-def _has_glob(text: str) -> bool:
-    return any(char in text for char in "*?[")
+def _tool_filter_value(ref: ToolRef, key: str) -> str | None:
+    if key == "plugin":
+        return ref.plugin
+    return None
 
 
 def _tool_leaf_name(tool: AgentTool) -> str:

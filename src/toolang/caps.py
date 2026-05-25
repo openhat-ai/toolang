@@ -43,6 +43,7 @@ from .state.prepared import (
 )
 from .program import DeclBlock
 from .state.program import build_prepared_program, load_live_program
+from .selectors import Selector, filter_value_matches, parse_selector, split_selector_list, selector_identity_matches
 
 CAP_DIR_NAMES = ("psyches", "skills", "services", "prompts")
 JOB_DIR_NAMES = ("chores", "tasks")
@@ -355,6 +356,85 @@ def entry_line(entry: PreparedEntry) -> int | None:
     """Return the authored source line for one prepared entry when known."""
 
     return entry.source.line
+
+
+def split_cap_selectors(items: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
+    """Split repeated and CSV cap selector inputs."""
+
+    return split_selector_list(items)
+
+
+def cap_entry_matches_selector(
+    entry: PreparedEntry,
+    selector: str | Selector,
+    *,
+    agent_name: str,
+    implicit_kind: EntryKind | None = None,
+) -> bool:
+    """Return whether one cap entry matches a cap selector."""
+
+    parsed = (
+        selector
+        if isinstance(selector, Selector)
+        else parse_selector(selector, domain="cap", implicit_family=implicit_kind)
+    )
+    if implicit_kind is not None and entry.kind != implicit_kind:
+        return False
+    if not selector_identity_matches(family=entry.kind, name=entry.name, selector=parsed):
+        return False
+    for key, values in parsed.filters.items():
+        actual = _entry_selector_filter_value(entry, key, agent_name=agent_name)
+        if actual is None or not filter_value_matches(actual, values):
+            return False
+    return True
+
+
+def select_cap_entries(
+    entries: tuple[PreparedEntry, ...],
+    selectors: list[str] | tuple[str, ...] | None,
+    *,
+    agent_name: str,
+    implicit_kind: EntryKind | None = None,
+) -> tuple[PreparedEntry, ...]:
+    """Return entries selected by a selector list."""
+
+    parsed = tuple(
+        parse_selector(raw, domain="cap", implicit_family=implicit_kind)
+        for raw in split_cap_selectors(selectors)
+    )
+    if not parsed:
+        return entries
+    selected: list[PreparedEntry] = []
+    seen: set[tuple[str, str, str]] = set()
+    for selector in parsed:
+        for entry in entries:
+            identity = (entry.kind, entry.name, entry.ref)
+            if identity in seen:
+                continue
+            if cap_entry_matches_selector(
+                entry,
+                selector,
+                agent_name=agent_name,
+                implicit_kind=implicit_kind,
+            ):
+                selected.append(entry)
+                seen.add(identity)
+    return tuple(selected)
+
+
+def _entry_selector_filter_value(
+    entry: PreparedEntry,
+    key: str,
+    *,
+    agent_name: str,
+) -> str | None:
+    if key == "scope":
+        return entry_scope(entry, agent_name=agent_name)
+    if key == "form":
+        return entry_form(entry)
+    if key == "origin":
+        return entry_origin(entry)
+    return None
 
 
 def collect_local_entries(

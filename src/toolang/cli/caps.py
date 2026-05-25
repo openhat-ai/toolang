@@ -12,6 +12,7 @@ import click
 import typer
 from typer.core import TyperGroup
 
+from ..base.error import ToolangError
 from .utils import (
     _OptionalPrefixAgentCommand,
     _OptionalPrefixAgentGroup,
@@ -262,24 +263,29 @@ def _list_all_caps(
         str | None,
         typer.Option(
             "--filter",
-            help=(
-                "Filter by kind, form, or scope CSV: psyche, skill, service, prompt, "
-                "inline, ref, wired, file, root, home, here."
-            ),
+            "-f",
+            help="Filter caps with selector-list syntax.",
         ),
     ] = None,
 ) -> None:
     selected_agent = _context_agent(ctx)
     agent_name = selected_agent or "default"
     effective_visibility = "all" if selected_agent else "shared"
-    kind_filter, form_filter, scope_filter = _parse_cap_filter(filter_)
     entries = _all_cap_entries(
         _context_root(ctx),
         agent_name,
         visibility=effective_visibility,
         prepare=selected_agent is not None,
-        kinds=set(cast(tuple[EntryKind, ...], tuple(kind_filter or CAP_KINDS))),
+        kinds=set(cast(tuple[EntryKind, ...], CAP_KINDS)),
     )
+    try:
+        selected_entries = cap_store.select_cap_entries(
+            entries,
+            _cap_filter_selectors(filter_, implicit_kind=None),
+            agent_name=agent_name,
+        )
+    except ToolangError as exc:
+        raise click.ClickException(str(exc)) from exc
     rows = [
         (
             cast(CapKind, entry.kind),
@@ -288,14 +294,7 @@ def _list_all_caps(
             _entry_form(entry),
             _entry_scope_label(entry, agent_name=agent_name),
         )
-        for entry in entries
-        if _entry_matches_filters(
-            entry,
-            agent_name=agent_name,
-            kind_filter=kind_filter,
-            form_filter=form_filter,
-            scope_filter=scope_filter,
-        )
+        for entry in selected_entries
     ]
     if not rows:
         typer.echo("No caps found.")
@@ -315,16 +314,14 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             str | None,
             typer.Option(
                 "--filter",
-                help=(
-                    "Filter by form or scope CSV: inline, ref, wired, file, root, home, here."
-                ),
+                "-f",
+                help="Filter caps with selector-list syntax.",
             ),
         ] = None,
     ) -> None:
         selected_agent = _context_agent(ctx)
         agent_name = selected_agent or "default"
         effective_visibility = "all" if selected_agent else "shared"
-        _, form_filter, scope_filter = _parse_cap_filter(filter_)
         entries = _all_cap_entries(
             _context_root(ctx),
             agent_name,
@@ -332,6 +329,15 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             prepare=selected_agent is not None,
             kinds={cast(EntryKind, kind)},
         )
+        try:
+            selected_entries = cap_store.select_cap_entries(
+                entries,
+                _cap_filter_selectors(filter_, implicit_kind=cast(EntryKind, kind)),
+                agent_name=agent_name,
+                implicit_kind=cast(EntryKind, kind),
+            )
+        except ToolangError as exc:
+            raise click.ClickException(str(exc)) from exc
         rows = [
             (
                 entry.name,
@@ -339,14 +345,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
                 _entry_form(entry),
                 _entry_scope_label(entry, agent_name=agent_name),
             )
-            for entry in entries
-            if _entry_matches_filters(
-                entry,
-                agent_name=agent_name,
-                kind_filter=None,
-                form_filter=form_filter,
-                scope_filter=scope_filter,
-            )
+            for entry in selected_entries
         ]
         if not rows:
             typer.echo(f"No {kind}s found.")
@@ -641,21 +640,6 @@ def _target_visibility(ctx: typer.Context) -> tuple[PreparedVisibility, str]:
     return "shared", "default"
 
 
-def _entry_matches_filters(
-    entry: PreparedEntry,
-    *,
-    agent_name: str,
-    kind_filter: set[CapKind] | None,
-    form_filter: set[CapForm] | None,
-    scope_filter: set[CapScope] | None,
-) -> bool:
-    if kind_filter is not None and entry.kind not in kind_filter:
-        return False
-    if form_filter is not None and _entry_form(entry) not in form_filter:
-        return False
-    return scope_filter is None or _entry_scope_label(entry, agent_name=agent_name) in scope_filter
-
-
 def _entry_source(entry: PreparedEntry, *, agent_name: str) -> str:
     form = _entry_form(entry)
     if form in {"ref", "wired"}:
@@ -693,33 +677,25 @@ def _entry_scope_label(entry: PreparedEntry, *, agent_name: str) -> CapScope:
     return cap_store.entry_scope(entry, agent_name=agent_name)
 
 
-def _parse_cap_filter(
-    value: str | None,
-) -> tuple[set[CapKind] | None, set[CapForm] | None, set[CapScope] | None]:
+def _cap_filter_selectors(value: str | None, *, implicit_kind: EntryKind | None) -> tuple[str, ...]:
     if value is None:
-        return None, None, None
-    kinds: set[CapKind] = set()
-    forms: set[CapForm] = set()
-    scopes: set[CapScope] = set()
-    for item in _split_csv(value, option_name="--filter"):
-        if item in CAP_KINDS:
-            kinds.add(cast(CapKind, item))
-            continue
-        if item in CAP_FORMS:
-            forms.add(cast(CapForm, item))
-            continue
-        if item in CAP_SCOPES:
-            scopes.add(cast(CapScope, item))
-            continue
-        expected = ", ".join((*CAP_KINDS, *CAP_FORMS, *CAP_SCOPES))
-        raise click.ClickException(f"invalid --filter value: {item}; expected one of {expected}")
-    return kinds or None, forms or None, scopes or None
-
-
-def _split_csv(value: str, *, option_name: str) -> tuple[str, ...]:
-    items = tuple(item.strip().lower() for item in value.split(",") if item.strip())
+        return ()
+    items = cap_store.split_cap_selectors((value,))
     if not items:
-        raise click.ClickException(f"{option_name} requires at least one value")
+        raise click.ClickException("--filter requires at least one value")
+    legacy_tokens = tuple(item.lower() for item in items)
+    legacy_values = {*CAP_KINDS, *CAP_FORMS, *CAP_SCOPES}
+    if all(token in legacy_values for token in legacy_tokens):
+        forms = [token for token in legacy_tokens if token in CAP_FORMS]
+        scopes = [token for token in legacy_tokens if token in CAP_SCOPES]
+        filters = ",".join((*forms, *scopes))
+        filter_suffix = f"[{filters}]" if filters else ""
+        kinds = [token for token in legacy_tokens if token in CAP_KINDS]
+        if implicit_kind is not None:
+            return (f"*{filter_suffix}",)
+        if kinds:
+            return tuple(f"{kind}/*{filter_suffix}" for kind in kinds)
+        return (f"*{filter_suffix}",)
     return items
 
 
