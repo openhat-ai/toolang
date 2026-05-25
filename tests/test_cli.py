@@ -2821,7 +2821,7 @@ def test_cli_tool_list_shows_installed_tool_plugin_tools(monkeypatch) -> None:
     result = runner.invoke(cli.app, ["tool", "list"])
 
     assert result.exit_code == 0
-    assert "NAMESPACE" in result.stdout
+    assert "SET" in result.stdout
     assert "TOOL" in result.stdout
     assert "DESCRIPTION" in result.stdout
     assert "filesystem" in result.stdout
@@ -2832,7 +2832,7 @@ def test_cli_tool_list_shows_installed_tool_plugin_tools(monkeypatch) -> None:
     assert "SOURCE" not in result.stdout
     assert "filesystem__read_text" not in result.stdout
     assert "shell__execute" not in result.stdout
-    assert "2 tools, 2 namespaces" in result.stdout
+    assert "2 tools, 2 toolsets" in result.stdout
 
 
 def test_cli_tool_list_filters_by_tool_selector(monkeypatch) -> None:
@@ -2868,7 +2868,7 @@ def test_cli_tool_list_filters_by_tool_selector(monkeypatch) -> None:
     assert "execute" in result.stdout
     assert "filesystem" not in result.stdout
     assert "read_text" not in result.stdout
-    assert "1 tool, 1 namespace" in result.stdout
+    assert "1 tool, 1 toolset" in result.stdout
 
 
 def test_cli_tool_list_filters_by_cross_namespace_tool_selector(monkeypatch) -> None:
@@ -2904,7 +2904,7 @@ def test_cli_tool_list_filters_by_cross_namespace_tool_selector(monkeypatch) -> 
     assert "execute" in result.stdout
     assert "filesystem" not in result.stdout
     assert "read_text" not in result.stdout
-    assert "1 tool, 1 namespace" in result.stdout
+    assert "1 tool, 1 toolset" in result.stdout
 
 
 def test_cli_tool_list_reports_no_matched_tools_for_empty_filter(monkeypatch) -> None:

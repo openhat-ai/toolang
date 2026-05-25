@@ -906,10 +906,10 @@ def list_tools(
         else:
             typer.echo("No tools found.")
         return
-    _echo_table(("NAMESPACE", "TOOL", "DESCRIPTION"), rows)
+    _echo_table(("SET", "TOOL", "DESCRIPTION"), rows)
     typer.echo()
-    namespace_count = len({namespace for namespace, _tool, _description in rows})
-    typer.echo(f" {len(rows)} {'tool' if len(rows) == 1 else 'tools'}, {namespace_count} {'namespace' if namespace_count == 1 else 'namespaces'}")
+    toolset_count = len({namespace for namespace, _tool, _description in rows})
+    typer.echo(f" {len(rows)} {'tool' if len(rows) == 1 else 'tools'}, {toolset_count} {'toolset' if toolset_count == 1 else 'toolsets'}")
 
 
 @channel_app.command("list", help="List installed channels.")
