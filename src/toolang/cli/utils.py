@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 import subprocess
 import time
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import click
 from rich import box
@@ -19,21 +19,38 @@ import typer
 from typer import rich_utils as typer_rich_utils
 from typer.core import TyperArgument, TyperCommand, TyperGroup
 
-from .. import agents, templates
+from .. import agents
 from ..base.error import ToolangError
-from ..config.env import load_runtime_environ
-from ..config.web import resolve_ui_base_url
-from ..execution.db import ExecutionStore, execution_db_path
-from ..execution.records import UpdateKind
+
+if TYPE_CHECKING:
+    from ..execution.records import UpdateKind
 
 # Typer renders command help text in dim style by default. Keep it at normal
 # weight so usage notes remain easy to read in terminal help output.
 setattr(typer_rich_utils, "STYLE_HELPTEXT", "")
 _TABLE_CONSOLE = Console(highlight=False, width=4096)
 TableJustify = Literal["default", "left", "center", "right", "full"]
-_AGENT_AVATAR = templates.load_info_avatar()
-_PALETTE_STYLES_TOP, _PALETTE_STYLES_BOTTOM = templates.load_info_palette()
-_RAINBOW_STYLES = _PALETTE_STYLES_TOP
+_AGENT_AVATAR_CACHE: str | None = None
+_PALETTE_STYLES_CACHE: tuple[tuple[str, ...], tuple[str, ...]] | None = None
+
+
+def _agent_avatar() -> str:
+    global _AGENT_AVATAR_CACHE
+    if _AGENT_AVATAR_CACHE is None:
+        from .. import templates
+
+        _AGENT_AVATAR_CACHE = templates.load_info_avatar()
+    return _AGENT_AVATAR_CACHE
+
+
+def _palette_styles() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    global _PALETTE_STYLES_CACHE
+    if _PALETTE_STYLES_CACHE is None:
+        from .. import templates
+
+        top, bottom = templates.load_info_palette()
+        _PALETTE_STYLES_CACHE = (tuple(top), tuple(bottom))
+    return _PALETTE_STYLES_CACHE
 
 
 class _PrefixAgentCommand(TyperCommand):
@@ -258,6 +275,8 @@ def _append_agent_update(
     update_kind: UpdateKind,
     payload: dict[str, object] | None = None,
 ) -> None:
+    from ..execution.db import ExecutionStore, execution_db_path
+
     store = ExecutionStore(execution_db_path(toolang_root, agent_name))
     try:
         store.append_update(kind=update_kind, payload=payload or {})
@@ -309,6 +328,8 @@ def _toolang_root(explicit: Path | None) -> Path:
 
 
 def _ui_base_url() -> str:
+    from ..config.web import resolve_ui_base_url
+
     return resolve_ui_base_url(_toolang_root(None), environ=os.environ)
 
 
@@ -318,6 +339,8 @@ def _runtime_environ_for_agent(
     *,
     toolang_root: Path | None = None,
 ) -> dict[str, str]:
+    from ..config.env import load_runtime_environ
+
     root = toolang_root or _context_root(ctx)
     return load_runtime_environ(root, agent_name, base_environ=os.environ)
 
@@ -409,6 +432,7 @@ def _styled_info_value(key: str, value: str) -> Text:
 
 
 def _rainbow_avatar_text(avatar: str) -> Text:
+    rainbow_styles = _palette_styles()[0]
     lines = avatar.splitlines()
     text = Text()
     for row, line in enumerate(lines):
@@ -416,8 +440,8 @@ def _rainbow_avatar_text(avatar: str) -> Text:
             if char == " ":
                 text.append(char)
                 continue
-            style_index = (column + (row * 2)) % len(_RAINBOW_STYLES)
-            text.append(char, style=_RAINBOW_STYLES[style_index])
+            style_index = (column + (row * 2)) % len(rainbow_styles)
+            text.append(char, style=rainbow_styles[style_index])
         text.append("\n")
     if text.plain.endswith("\n"):
         text = text[:-1]
@@ -433,11 +457,12 @@ def _info_title_block(title: str) -> Table:
 
 
 def _palette_block() -> Text:
+    top_styles, bottom_styles = _palette_styles()
     palette = Text()
-    for style in _PALETTE_STYLES_TOP:
+    for style in top_styles:
         palette.append("██", style=style)
     palette.append("\n")
-    for style in _PALETTE_STYLES_BOTTOM:
+    for style in bottom_styles:
         palette.append("██", style=style)
     return palette
 

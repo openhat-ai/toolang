@@ -13,34 +13,22 @@ import subprocess
 import sys
 import time
 import tomllib
-from typing import Annotated, Literal, cast
+from typing import Annotated, Any, Literal, TYPE_CHECKING, cast
 
 import click
 import typer
 from typer.core import TyperCommand
 
-from .. import agents, caps as cap_store, templates, work
-from .. import up as agent_up
-from ..config.plugins import load_tool_plugin_config
+from .. import agents
 from ..config.log import LoggingPlan, configure_logging, configure_logging_plan, resolve_agent_logging
-from ..execution.records import UpdateKind
-from ..models.config import load_model_aliases, load_model_provider_configs
-from ..models.errors import NO_AVAILABLE_MODELS_MESSAGE
-from ..models.resolution import DEFAULT_MODEL_SELECTOR
-from ..models.selectors import split_model_selectors
-from ..models.views import available_model_adapters, model_list_rows, model_provider_rows
-from ..tools.registry import split_tool_selectors
-from ..tools.views import tool_list_rows
 from .caps import CAP_KINDS, register_toolang_caps_commands
-from . import invoke as cli_invoke
-from .progress import CliProgress, as_progress_sink, make_cli_progress
 from .utils import (
-    _AGENT_AVATAR,
     _PrefixAgentWorkGroup,
     _RequiredPrefixAgentCommand,
     _RunAgentCommand,
     _RuntimeAgentCommand,
     _StartAgentCommand,
+    _agent_avatar,
     _append_agent_update,
     _context_root,
     _created_time,
@@ -58,6 +46,51 @@ from .utils import (
     _wait_for_started_status,
     _wrap_user_error,
 )
+
+if TYPE_CHECKING:
+    from .. import caps as cap_store
+    from .. import templates
+    from .. import up as agent_up
+    from ..execution.records import UpdateKind
+    from . import invoke as cli_invoke
+    from .progress import CliProgress
+
+
+class _LazyModule:
+    """Import a module only when one of its attributes is used."""
+
+    def __init__(self, module_name: str) -> None:
+        self._module_name = module_name
+        self._module: Any | None = None
+
+    def _load(self) -> Any:
+        if self._module is None:
+            import importlib
+
+            self._module = importlib.import_module(self._module_name)
+        return self._module
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._load(), name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name.startswith("_"):
+            object.__setattr__(self, name, value)
+            return
+        setattr(self._load(), name, value)
+
+    def __delattr__(self, name: str) -> None:
+        if name.startswith("_"):
+            object.__delattr__(self, name)
+            return
+        delattr(self._load(), name)
+
+
+if not TYPE_CHECKING:
+    agent_up = _LazyModule("toolang.up")
+    cli_invoke = _LazyModule("toolang.cli.invoke")
+    cap_store = _LazyModule("toolang.caps")
+    templates = _LazyModule("toolang.templates")
 
 WorkKind = Literal["task", "chore"]
 _CLI_PREFIX_AGENT: str | None = None
@@ -355,7 +388,7 @@ def info_agent(
     ]
     if status.status == "stopped":
         rows.append(("Created", created_at))
-        _echo_pairs_table(rows, avatar=_AGENT_AVATAR, title=agent_name.upper())
+        _echo_pairs_table(rows, avatar=_agent_avatar(), title=agent_name.upper())
         return
     if status.sandbox:
         rows.append(("Sandbox", status.sandbox))
@@ -378,7 +411,7 @@ def info_agent(
         rows.append(("Updated", updated_at))
     if status.status != "running" and message != "-":
         rows.append(("Message", message))
-    _echo_pairs_table(rows, avatar=_AGENT_AVATAR, title=agent_name.upper())
+    _echo_pairs_table(rows, avatar=_agent_avatar(), title=agent_name.upper())
 
 
 @app.command(
@@ -435,6 +468,8 @@ def run_agent(
         typer.Option("--sandbox-child", hidden=True),
     ] = False,
 ) -> None:
+    from .progress import as_progress_sink, make_cli_progress
+
     selector = _required_runtime_agent(ctx, agent)
     normalized_features = _normalize_feature_option(features)
     root = _context_root(ctx)
@@ -502,6 +537,8 @@ def _resolve_runtime_startup(
     background: bool,
     progress: CliProgress | None,
 ) -> _RuntimeStartup:
+    from .progress import as_progress_sink
+
     run_root = target.toolang_root
     agent_name = target.agent_name
     if target.kind == "resident" and not agents.agent_home(run_root, agent_name).is_dir():
@@ -589,6 +626,8 @@ def start_agent(
         typer.Option("--endpoint-host", help="Endpoint host name.", hidden=True),
     ] = None,
 ) -> None:
+    from .progress import as_progress_sink, make_cli_progress
+
     selector = _required_runtime_agent(ctx, agent)
     parsed_selector = _wrap_user_error(agents.parse_agent_selector, selector)
     if parsed_selector.form != "name":
@@ -724,6 +763,8 @@ def _info_caps_summary(toolang_root: Path, agent_name: str) -> str:
 
 
 def _info_jobs_summary(toolang_root: Path, agent_name: str) -> str:
+    from .. import work
+
     chore_count = len(work.list_chores(toolang_root, agent_name))
     task_count = len(work.list_tasks(toolang_root, agent_name))
     return (
@@ -752,6 +793,8 @@ def _info_models_summary(
     configured = agent_up.load_default_models(toolang_root, agent_name)
     if configured:
         return ", ".join(configured)
+    from ..models.resolution import DEFAULT_MODEL_SELECTOR
+
     return DEFAULT_MODEL_SELECTOR
 
 
@@ -801,6 +844,9 @@ def list_models(
         ),
     ] = None,
 ) -> None:
+    from ..models.errors import NO_AVAILABLE_MODELS_MESSAGE
+    from ..models.selectors import split_model_selectors
+
     environ = dict(os.environ)
     root = _toolang_root(None)
     selectors = split_model_selectors(tuple(select or ()))
@@ -831,6 +877,8 @@ def list_model_providers() -> None:
 
 @model_app.command("adapters", help="List available model API adapters.")
 def list_model_adapters() -> None:
+    from ..models.views import available_model_adapters
+
     rows = [(name,) for name in available_model_adapters()]
     _echo_table(("ADAPTER",), rows)
 
@@ -845,6 +893,8 @@ def list_tools(
         ),
     ] = None,
 ) -> None:
+    from ..tools.registry import split_tool_selectors
+
     environ = dict(os.environ)
     root = _toolang_root(None)
     selectors = split_tool_selectors(tuple(select or ()))
@@ -886,6 +936,9 @@ def _model_rows(
     *,
     model_selectors: Sequence[str] = (),
 ) -> list[tuple[str, str, str]]:
+    from ..models.config import load_model_aliases
+    from ..models.views import model_list_rows
+
     providers = agent_up.load_model_providers(root, "")
     aliases = load_model_aliases(root, "")
     return model_list_rows(
@@ -897,6 +950,9 @@ def _model_rows(
 
 
 def _model_provider_rows(root: Path, environ: dict[str, str]) -> list[tuple[str, str, str]]:
+    from ..models.config import load_model_aliases, load_model_provider_configs
+    from ..models.views import model_provider_rows
+
     provider_configs = load_model_provider_configs(root, "")
     providers = agent_up.load_model_providers(root, "")
     aliases = load_model_aliases(root, "")
@@ -914,6 +970,9 @@ def _tool_rows(
     *,
     tool_selectors: Sequence[str] = (),
 ) -> list[tuple[str, str, str]]:
+    from ..config.plugins import load_tool_plugin_config
+    from ..tools.views import tool_list_rows
+
     config = load_tool_plugin_config(root, "", environ=environ)
     tools = agent_up.load_tool_plugins(config=config)
     sources = _plugin_source_by_name("toolang.tool")
@@ -939,7 +998,7 @@ def _append_work_update(
     job_id: str,
     path: Path,
 ) -> None:
-    update_kind = cast(UpdateKind, f"{kind}_changed")
+    update_kind = cast("UpdateKind", f"{kind}_changed")
     _append_agent_update(
         toolang_root,
         agent_name,
@@ -1054,6 +1113,8 @@ def _make_work_list_command(kind: WorkKind, title: str) -> Callable[..., None]:
             typer.Option("--all", help="Include archived items."),
         ] = False,
     ) -> None:
+        from .. import work
+
         agent_name = _required_prefix_agent(ctx, command_name=kind)
         root = _context_root(ctx)
         if kind == "task":
@@ -1096,6 +1157,8 @@ def _make_new_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
     def new_work(
         ctx: typer.Context,
     ) -> None:
+        from .. import work
+
         agent_name = _required_prefix_agent(ctx, command_name=kind)
         text = click.edit(
             templates.render_template(kind, "default", agent_name=agent_name),
@@ -1122,6 +1185,8 @@ def _make_edit_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
+        from .. import work
+
         job_id = id
         agent_name = _required_prefix_agent(ctx, command_name=kind)
         text = _wrap_user_error(
@@ -1155,6 +1220,8 @@ def _make_pause_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
+        from .. import work
+
         job_id = id
         agent_name = _required_prefix_agent(ctx, command_name=kind)
         path = _wrap_user_error(
@@ -1176,6 +1243,8 @@ def _make_resume_work_command(kind: WorkKind, title: str) -> Callable[..., None]
         ctx: typer.Context,
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
+        from .. import work
+
         job_id = id
         agent_name = _required_prefix_agent(ctx, command_name=kind)
         path = _wrap_user_error(
@@ -1197,6 +1266,8 @@ def _make_archive_work_command(kind: WorkKind, title: str) -> Callable[..., None
         ctx: typer.Context,
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
+        from .. import work
+
         job_id = id
         agent_name = _required_prefix_agent(ctx, command_name=kind)
         path = _wrap_user_error(
@@ -1222,6 +1293,8 @@ def _make_restore_work_command(kind: WorkKind, title: str) -> Callable[..., None
             typer.Option("--inactive", help="Restore as inactive instead of active."),
         ] = False,
     ) -> None:
+        from .. import work
+
         job_id = id
         agent_name = _required_prefix_agent(ctx, command_name=kind)
         state: Literal["active", "inactive"] = "inactive" if inactive else "active"
@@ -1245,6 +1318,8 @@ def _make_delete_work_command(kind: WorkKind, title: str) -> Callable[..., None]
         ctx: typer.Context,
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
+        from .. import work
+
         job_id = id
         agent_name = _required_prefix_agent(ctx, command_name=kind)
         active_entry = (
@@ -1295,7 +1370,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     raw_args = list(argv) if argv is not None else sys.argv[1:]
     global_args, body = _extract_global_args(raw_args)
     if body:
-        roaming_source = cli_invoke.roaming_source_path(body[0])
+        roaming_source = _roaming_source_path(body[0])
         if roaming_source is not None:
             try:
                 configure_logging(spec=None, environ={})
@@ -1324,6 +1399,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         _CLI_PREFIX_AGENT = previous_prefix_agent
     return 0
+
+
+def _roaming_source_path(token: str) -> Path | None:
+    text = token.strip()
+    if not text or text.startswith("-"):
+        return None
+    candidate = Path(text).expanduser()
+    try:
+        resolved = candidate.resolve()
+    except OSError:
+        return None
+    if not resolved.is_file() or resolved.suffix != ".too":
+        return None
+    return resolved
 
 
 def _prog_name(argv0: str) -> str:

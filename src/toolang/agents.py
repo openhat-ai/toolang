@@ -23,8 +23,6 @@ from typing import Iterator, Literal
 from toolang.base.protocols.sandbox import SandboxPlugin
 from toolang.base.types.sandbox import SandboxState
 from .progress import ProgressSink, emit_progress
-from .sandboxes.docker import docker_container_identity, docker_container_running
-from . import templates
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +167,22 @@ def agent_id_state_path(toolang_root: Path, agent_name: str) -> Path:
     return agent_room(toolang_root, agent_name) / "ids.json"
 
 
+def docker_container_identity(container_name: str) -> tuple[str, int] | None:
+    """Return Docker container identity details."""
+
+    from .sandboxes.docker import docker_container_identity as resolve_identity
+
+    return resolve_identity(container_name)
+
+
+def docker_container_running(container_name: str) -> bool:
+    """Return whether a Docker container is running."""
+
+    from .sandboxes.docker import docker_container_running as is_running
+
+    return is_running(container_name)
+
+
 def tool_room(toolang_root: Path, agent_name: str, plugin_name: str) -> Path:
     """Return one tool-plugin room path."""
 
@@ -186,6 +200,8 @@ def _sandbox_stage_dir(toolang_root: Path, agent_name: str) -> Path:
 
 
 def _default_program_source(agent_name: str, *, template_name: str) -> str:
+    from . import templates
+
     return templates.render_template("agent", template_name, agent_name=agent_name, name=agent_name)
 
 
