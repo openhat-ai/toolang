@@ -413,6 +413,31 @@ def test_select_model_selectors_preserves_activation_order_for_intersection() ->
     assert selectors == ("openai/o3[openrouter]", "openai/gpt-5[openrouter]")
 
 
+def test_select_model_selectors_supports_name_glob_without_matching_family() -> None:
+    provider = _FakeModelProvider(
+        name="openrouter",
+        models=(
+            ModelInfo(ref="openai/gpt-5", provider="openrouter", name="gpt-5", model="gpt-5", selectors=("gpt-5", "openai/gpt-5"), adapter="responses"),
+            ModelInfo(ref="anthropic/claude-sonnet", provider="openrouter", name="claude-sonnet", model="claude-sonnet", selectors=("claude-sonnet", "anthropic/claude-sonnet"), adapter="responses"),
+        ),
+    )
+    context = SimpleNamespace(
+        model_providers={"openrouter": provider},
+        model_aliases={},
+        default_models=(),
+        model_environ={},
+    )
+
+    assert select_model_selectors(context, activation_selectors=("gpt-*",)) == (
+        "openai/gpt-5[openrouter]",
+    )
+    assert select_model_selectors(context, activation_selectors=("openai/*",)) == (
+        "openai/gpt-5[openrouter]",
+    )
+    with pytest.raises(ToolangError, match="No matched models."):
+        select_model_selectors(context, activation_selectors=("openai",))
+
+
 def test_select_model_selectors_expands_route_neutral_thunk_refs_from_discovery() -> None:
     openai = _FakeModelProvider(
         name="openai",

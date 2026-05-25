@@ -56,6 +56,25 @@ def test_bare_pattern_matches_name_not_family() -> None:
     assert selector_identity_matches(family="skill", name="review", selector=selector) is False
 
 
+def test_family_pattern_requires_explicit_family_separator() -> None:
+    bare = Selector(raw="skill", pattern="skill")
+    explicit = Selector(raw="skill/*", pattern="skill/*")
+
+    assert selector_identity_matches(family="skill", name="review", selector=bare) is False
+    assert selector_identity_matches(family="skill", name="review", selector=explicit) is True
+
+
+def test_bare_pattern_can_match_extra_domain_values() -> None:
+    selector = Selector(raw="gpt-*", pattern="gpt-*")
+
+    assert selector_identity_matches(
+        family="openai",
+        name="openai/gpt-5",
+        selector=selector,
+        extra_values=("gpt-5",),
+    ) is True
+
+
 def test_parse_selector_rejects_family_in_implicit_family_context() -> None:
     with pytest.raises(ToolangError, match="must not include a family"):
         parse_selector("skill/reviewer", domain="cap", implicit_family="skill")

@@ -2964,6 +2964,43 @@ def test_cli_tool_list_filters_by_cross_namespace_tool_selector(monkeypatch) -> 
     assert "1 tool, 1 toolset" in result.stdout
 
 
+def test_cli_tool_list_bare_pattern_matches_tool_name_not_toolset(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli.agent_up,
+        "load_tool_plugins",
+        lambda *, config=None: {
+            "filesystem__read_text": _FakeLoadedTool(
+                plugin_name="filesystem",
+                leaf_name="read_text",
+                description="Read one text file.",
+            ),
+            "shell__execute": _FakeLoadedTool(
+                plugin_name="shell",
+                leaf_name="execute",
+                description="Run one shell command.",
+            ),
+        },
+    )
+    monkeypatch.setattr(
+        cli.agent_up,
+        "list_plugin_infos",
+        lambda *, group: [
+            cli.agent_up.PluginInfo(name="filesystem", source="built-in"),
+            cli.agent_up.PluginInfo(name="shell", source="external"),
+        ],
+    )
+
+    bare_result = runner.invoke(cli.app, ["tool", "list", "--filter", "shell"])
+    name_result = runner.invoke(cli.app, ["tool", "list", "--filter", "execute"])
+
+    assert bare_result.exit_code == 0
+    assert "No matched tools." in bare_result.stdout
+    assert name_result.exit_code == 0
+    assert "shell" in name_result.stdout
+    assert "execute" in name_result.stdout
+    assert "filesystem" not in name_result.stdout
+
+
 def test_cli_tool_list_filters_by_plugin_filter(monkeypatch) -> None:
     monkeypatch.setattr(
         cli.agent_up,
@@ -5385,6 +5422,58 @@ def test_cli_cap_list_concept_filters_results(tmp_path: Path, monkeypatch) -> No
     assert "remote-reviewer" in union_result.stdout
     assert "local-reviewer" in union_result.stdout
     assert "home" in union_result.stdout
+
+
+def test_cli_cap_list_bare_pattern_matches_cap_name_not_kind(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="local-reviewer",
+        text="---\ndescription: Review local changes\n---\n# Local Reviewer\n",
+    )
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="patch",
+        text="---\ndescription: Patch changes\n---\n# Patch\n",
+    )
+
+    result = _invoke_caps_app(
+        ["skill", "list", "--filter", "*l*"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert result.exit_code == 0
+    assert "local-reviewer" in result.stdout
+    assert "patch" not in result.stdout
+
+
+def test_cli_cap_kind_list_rejects_explicit_family_pattern(tmp_path: Path) -> None:
+    result = _invoke_caps_app(
+        ["skill", "list", "--filter", "skill/*"],
+        env={"TOOLANG_ROOT": str(tmp_path / "toolang")},
+        prefix_agent="alice",
+    )
+
+    assert result.exit_code == 1
+    assert "must not include a family" in result.stderr
+
+
+def test_cli_cap_list_rejects_empty_filter_list(tmp_path: Path) -> None:
+    result = _invoke_caps_app(
+        ["skill", "list", "--filter", "[]"],
+        env={"TOOLANG_ROOT": str(tmp_path / "toolang")},
+        prefix_agent="alice",
+    )
+
+    assert result.exit_code == 1
+    assert "filter list cannot be empty" in result.stderr
 
 
 def test_standalone_caps_command_lists_all_cap_kinds(tmp_path: Path) -> None:
