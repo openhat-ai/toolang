@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from toolang.base.error import ToolangError
-from toolang.base.protocols.tool import Tool, ToolPlugin
+from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.tool import ToolContext
 from toolang.base.utils.function_tools import create_function_tool, tool
 
@@ -26,7 +26,7 @@ class ShellPlugin:
     description: str | None = "Run non-interactive shell commands inside the current agent home."
     _timeout_sec: int = field(init=False, repr=False)
     _max_output_chars: int = field(init=False, repr=False)
-    _tools: dict[str, Tool] = field(init=False, repr=False)
+    _tools: dict[str, AgentTool] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._timeout_sec = _int_value(self.config.get("timeout_sec"), default=DEFAULT_TIMEOUT_SEC)
@@ -36,10 +36,10 @@ class ShellPlugin:
         )
         self._tools = self._build_tools()
 
-    def tools(self) -> Mapping[str, Tool]:
+    def tools(self) -> Mapping[str, AgentTool]:
         return dict(self._tools)
 
-    def _build_tools(self) -> dict[str, Tool]:
+    def _build_tools(self) -> dict[str, AgentTool]:
         @tool(
             name="execute",
             description="Run one shell command and capture stdout and stderr.",
@@ -78,7 +78,7 @@ class ShellPlugin:
         return {"execute": create_function_tool(execute)}
 
 
-def create_tool(config: Mapping[str, Any]) -> ToolPlugin:
+def create_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
     """Create the shell tool plugin."""
 
     return ShellPlugin(config=dict(config))

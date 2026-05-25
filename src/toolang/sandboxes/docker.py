@@ -12,7 +12,7 @@ import subprocess
 from typing import Any
 
 from toolang.base.error import ToolangError
-from toolang.base.protocols.sandbox import SandboxPlugin
+from toolang.base.protocols.sandbox import AgentSandbox
 from toolang.base.types.sandbox import (
     SandboxMount,
     SandboxPlan,
@@ -107,7 +107,7 @@ class DockerSandbox:
                     "endpoint_host": request.endpoint_host,
                     "port": request.port,
                     "endpoint": request.endpoint,
-                    "feature_names": list(request.feature_names),
+                    "component_names": list(request.component_names or request.feature_names),
                     "sandbox": {
                         "driver": request.selector.driver,
                         "target": request.selector.target,
@@ -209,7 +209,7 @@ class DockerSandbox:
             docker_remove_container(state.runtime_id)
 
 
-def create_sandbox(config: Mapping[str, Any]) -> SandboxPlugin:
+def create_sandbox(config: Mapping[str, Any]) -> AgentSandbox:
     """Create the built-in Docker sandbox plugin."""
 
     return DockerSandbox(dict(config))

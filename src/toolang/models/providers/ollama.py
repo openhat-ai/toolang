@@ -7,11 +7,8 @@ from dataclasses import dataclass
 
 import httpx
 
-from toolang.base.error import ToolangError
 from toolang.base.protocols.model import ModelProvider
-from toolang.base.types.model import ModelInfo, ModelTarget
-from toolang.base.types.run import ModelCall, ModelCallResult, ModelEventHandler
-from ..adapters import responses
+from toolang.base.types.model import ModelInfo
 
 _NAMESPACE_BY_PREFIX: tuple[tuple[str, str], ...] = (
     ("qwen", "qwen"),
@@ -86,36 +83,6 @@ class OllamaModelProvider(ModelProvider):
             )
         return tuple(sorted(discovered, key=lambda item: item.name))
 
-    def invoke(
-        self,
-        target: ModelTarget,
-        request: ModelCall,
-    ) -> ModelCallResult:
-        if target.adapter != _OLLAMA_ADAPTER:
-            raise ToolangError(f"unsupported ollama adapter: {target.adapter}")
-        return responses.invoke_response(
-            target,
-            request,
-            stateful=False,
-        )
-
-    def stream(
-        self,
-        target: ModelTarget,
-        request: ModelCall,
-        *,
-        on_event: ModelEventHandler,
-    ) -> ModelCallResult:
-        if target.adapter != _OLLAMA_ADAPTER:
-            raise ToolangError(f"unsupported ollama adapter: {target.adapter}")
-        return responses.stream_response(
-            target,
-            request,
-            stateful=False,
-            on_event=on_event,
-        )
-
-
 def _canonical_ollama_ref(selector: str) -> tuple[str | None, str | None]:
     if "/" in selector:
         namespace, _, model_name = selector.partition("/")
@@ -148,7 +115,7 @@ def _ollama_capabilities(ref: str) -> tuple[bool, bool]:
     return False, True
 
 
-def create_model(config: Mapping[str, object]) -> ModelProvider:
+def create_model_provider(config: Mapping[str, object]) -> ModelProvider:
     """Create the built-in Ollama model provider."""
 
     return OllamaModelProvider(base_url=_config_str(config, "endpoint"))

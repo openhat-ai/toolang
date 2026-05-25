@@ -8,6 +8,8 @@
 # Expected failure because the thunk only allows openai/gpt-5:
 #   toolang examples/invoke.fixed-model.too gpt_only "Rewrite this sentence." --model anthropic/claude-sonnet-4.5@openrouter
 
+use skill briceyan/review
+
 thunk gpt_only(_):
   model = openai/gpt-5
 

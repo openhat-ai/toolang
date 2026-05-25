@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 
 from toolang.base.error import ToolangError
-from toolang.base.protocols.tool import Tool, ToolPlugin
+from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.tool import ToolContext
 from toolang.base.utils.function_tools import create_function_tool, tool
@@ -40,7 +40,7 @@ class AgentChatPlugin:
     _peers: dict[str, AgentPeer] = field(init=False, repr=False)
     _timeout_sec: float = field(init=False, repr=False)
     _max_response_chars: int = field(init=False, repr=False)
-    _tools: dict[str, Tool] = field(init=False, repr=False)
+    _tools: dict[str, AgentTool] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._peers = _parse_peers(self.config.get("peers"))
@@ -51,10 +51,10 @@ class AgentChatPlugin:
         )
         self._tools = self._build_tools()
 
-    def tools(self) -> Mapping[str, Tool]:
+    def tools(self) -> Mapping[str, AgentTool]:
         return dict(self._tools)
 
-    def _build_tools(self) -> dict[str, Tool]:
+    def _build_tools(self) -> dict[str, AgentTool]:
         @tool(name="peers", description="List configured peer agents available for agent_chat.")
         def peers() -> dict[str, Any]:
             return {
@@ -210,7 +210,7 @@ class AgentChatPlugin:
         return peer
 
 
-def create_tool(config: Mapping[str, Any]) -> ToolPlugin:
+def create_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
     """Create the agent_chat tool plugin."""
 
     return AgentChatPlugin(config=dict(config))

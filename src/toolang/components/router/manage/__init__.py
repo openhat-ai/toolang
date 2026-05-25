@@ -1,4 +1,4 @@
-"""Runtime control feature routes."""
+"""Runtime management API routes."""
 
 from .router import create_router
 

@@ -14,7 +14,7 @@ from ..types.sandbox import (
 
 
 @runtime_checkable
-class SandboxPlugin(Protocol):
+class AgentSandbox(Protocol):
     """Protocol implemented by one sandbox plugin instance."""
 
     name: str

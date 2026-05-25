@@ -13,7 +13,7 @@ Toolang separates model identity, discovery, and execution:
 | `selector` | One operational input string such as `gpt-5`, `openai/gpt-5`, `openai/gpt-5@openai`, or `gateway` |
 | `ref` | One route-neutral canonical identity such as `openai/gpt-5` |
 | `provider` | One execution backend such as `openai` or `ollama` |
-| `adapter` | One provider-internal request and response adapter such as `responses` |
+| `adapter` | One model adapter plugin such as `responses` |
 | `model info` | One provider-scoped model entry used for discovery, selector matching, and capability display |
 | `model route` | One local named route that binds one `ref` to one provider and optional execution overrides |
 | `model target` | One fully resolved execution target used for one runtime call |
@@ -185,7 +185,7 @@ The Ollama provider uses the local Ollama HTTP API and defaults to:
 
 ## Resolution Rule
 
-One run resolves exactly one model target before strategy execution starts.
+One run resolves exactly one model target before loop execution starts.
 
 Resolution proceeds in this order:
 

@@ -6,7 +6,6 @@ from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
 from ..types.model import ModelInfo, ModelTarget
-from ..types.run import ModelCall, ModelCallResult, ModelEventHandler
 
 
 @runtime_checkable
@@ -28,18 +27,7 @@ class ModelProvider(Protocol):
     def list_models(self, *, environ: Mapping[str, str]) -> tuple[ModelInfo, ...]:
         """Return model infos exposed by this provider."""
 
-    def invoke(
-        self,
-        target: ModelTarget,
-        request: ModelCall,
-    ) -> ModelCallResult:
-        """Execute one non-streaming model turn."""
+    def prepare_target(self, target: ModelTarget) -> ModelTarget:
+        """Return a provider-adjusted model target before adapter execution."""
 
-    def stream(
-        self,
-        target: ModelTarget,
-        request: ModelCall,
-        *,
-        on_event: ModelEventHandler,
-    ) -> ModelCallResult:
-        """Execute one streaming model turn."""
+        return target

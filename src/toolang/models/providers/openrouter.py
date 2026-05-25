@@ -8,11 +8,8 @@ from typing import cast
 
 import httpx
 
-from toolang.base.error import ToolangError
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.types.model import ModelInfo, ModelTarget
-from toolang.base.types.run import ModelCall, ModelCallResult, ModelEventHandler
-from ..adapters import responses
 
 _DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 _DEFAULT_API_KEY_ENV = "OPENROUTER_API_KEY"
@@ -74,34 +71,8 @@ class OpenRouterModelProvider(ModelProvider):
             discovered.append(info)
         return tuple(sorted(discovered, key=lambda item: (item.ref, item.name)))
 
-    def invoke(
-        self,
-        target: ModelTarget,
-        request: ModelCall,
-    ) -> ModelCallResult:
-        if target.adapter != _OPENROUTER_ADAPTER:
-            raise ToolangError(f"unsupported openrouter adapter: {target.adapter}")
-        return responses.invoke_response(
-            _target_with_app_attribution(target),
-            request,
-            stateful=False,
-        )
-
-    def stream(
-        self,
-        target: ModelTarget,
-        request: ModelCall,
-        *,
-        on_event: ModelEventHandler,
-    ) -> ModelCallResult:
-        if target.adapter != _OPENROUTER_ADAPTER:
-            raise ToolangError(f"unsupported openrouter adapter: {target.adapter}")
-        return responses.stream_response(
-            _target_with_app_attribution(target),
-            request,
-            stateful=False,
-            on_event=on_event,
-        )
+    def prepare_target(self, target: ModelTarget) -> ModelTarget:
+        return _target_with_app_attribution(target)
 
 
 def _parse_model_info(item: object) -> ModelInfo | None:
@@ -227,7 +198,7 @@ def _merge_headers(defaults: Mapping[str, str], overrides: Mapping[str, str]) ->
     return merged
 
 
-def create_model(config: Mapping[str, object]) -> ModelProvider:
+def create_model_provider(config: Mapping[str, object]) -> ModelProvider:
     """Create the built-in OpenRouter model provider."""
 
     return OpenRouterModelProvider(

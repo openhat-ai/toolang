@@ -9,6 +9,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from toolang.base.error import ToolangError
 from toolang.base.types.message import message_summary
 from .context import RunContext
 from .db import PersistSink
@@ -16,7 +17,7 @@ from .events import RunEnd, RunStart, TraceEvent, TraceEventHandler
 from .input import RunInput, bind_run_request
 from .model import resolve_model
 from .runner import RunOutcome, RunOutcomeStatus, RunRequest, RunSubmission
-from ..strategies import load_run_strategy
+from ..plugin import load_loop
 
 if TYPE_CHECKING:
     from ..up import UptimeContext
@@ -33,7 +34,7 @@ async def execute_run(
     delay_sec: float,
     sleep: Callable[[float], Awaitable[None]],
 ) -> RunOutcome:
-    """Execute one run request through bind/assemble/resolve/strategy/persist."""
+    """Execute one run request through bind/assemble/resolve/loop/persist."""
 
     await sleep(delay_sec)
     request = submission.request
@@ -68,19 +69,23 @@ async def execute_run(
             allowed_selectors=allowed_model_selectors,
         )
         provider = context.model_providers[model.provider]
-        strategy = load_run_strategy(bound.run_strategy)
+        model = provider.prepare_target(model)
+        adapter = context.model_adapters.get(model.adapter)
+        if adapter is None:
+            raise ToolangError(f"unknown model adapter: {model.adapter}")
+        loop = load_loop(bound.run_loop)
         run_context = RunContext(
             run_input,
             model,
-            provider,
+            adapter,
             on_event=_event_handler(context, persist, response),
             consume_inputs=lambda run_id: context.store.pending_inputs(run_id=run_id, action="steer"),
             stream=bool(response is not None and response.wants_stream),
         )
         if bound.origin == "script":
-            execution = await _run_script_strategy(strategy.run, run_context, run_id=bound.run_id)
+            execution = await _run_script_loop(loop.run, run_context, run_id=bound.run_id)
         else:
-            execution = await asyncio.to_thread(strategy.run, run_context)
+            execution = await asyncio.to_thread(loop.run, run_context)
     except Exception as exc:
         error = str(exc)
         if bound is not None and started:
@@ -224,13 +229,13 @@ def _finish_outcome(
     return outcome
 
 
-async def _run_script_strategy(
+async def _run_script_loop(
     run: Callable[[RunContext], Any],
     run_context: RunContext,
     *,
     run_id: str,
 ) -> Any:
-    """Run a blocking script strategy without making Ctrl+C wait for threadpool shutdown."""
+    """Run a blocking script loop without making Ctrl+C wait for threadpool shutdown."""
 
     loop = asyncio.get_running_loop()
     future: asyncio.Future[Any] = loop.create_future()

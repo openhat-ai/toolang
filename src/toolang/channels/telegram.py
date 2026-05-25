@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 
 from toolang.base.error import ToolangError
-from toolang.base.protocols.channel import ChannelPlugin
+from toolang.base.protocols.channel import AgentChannel
 from toolang.base.types.channel import (
     ChannelContext,
     ChannelState,
@@ -241,7 +241,7 @@ class TelegramChannel:
         return "guest"
 
 
-def create_channel(config: dict[str, Any]) -> ChannelPlugin:
+def create_channel(config: dict[str, Any]) -> AgentChannel:
     """Create one Telegram channel plugin instance."""
 
     return TelegramChannel(config=dict(config))

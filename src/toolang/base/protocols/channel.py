@@ -18,7 +18,7 @@ from ..types.channel import (
 
 
 @runtime_checkable
-class ChannelPlugin(Protocol):
+class AgentChannel(Protocol):
     """Protocol implemented by one loaded channel plugin instance."""
 
     def poll(self, state: ChannelState, context: ChannelContext) -> PollResult:

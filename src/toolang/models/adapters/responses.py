@@ -1,12 +1,15 @@
-"""Helpers shared by Responses-compatible model providers and adapters."""
+"""Responses-compatible model adapter."""
 
 from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from toolang.base.error import ToolangError
+from toolang.base.protocols.model_adapter import ModelAdapter
 from toolang.base.types.message import (
     AudioPart,
     FilePart,
@@ -33,6 +36,99 @@ from toolang.base.types.tool import ToolDefinition
 
 _API_LOGGER = logging.getLogger("toolang.model.api")
 _LOG_PREVIEW_LIMIT = 4_000
+_STATEFUL_PROVIDERS = frozenset({"openai"})
+_AUDIO_MODEL_PREFIXES: tuple[str, ...] = (
+    "gpt-audio",
+    "gpt-4o-audio-preview",
+    "gpt-4o-mini-audio-preview",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ResponsesModelAdapter(ModelAdapter):
+    """OpenAI Responses API compatible adapter."""
+
+    name: str = "responses"
+    description: str | None = "Use the OpenAI Responses-compatible API shape."
+
+    def invoke(
+        self,
+        target: ModelTarget,
+        request: ModelCall,
+    ) -> ModelCallResult:
+        """Execute one non-streaming Responses API call."""
+
+        _require_supported_inputs(target, request)
+        return invoke_response(
+            target,
+            request,
+            stateful=_stateful_target(target),
+        )
+
+    def stream(
+        self,
+        target: ModelTarget,
+        request: ModelCall,
+        *,
+        on_event: ModelEventHandler,
+    ) -> ModelCallResult:
+        """Execute one streaming Responses API call."""
+
+        _require_supported_inputs(target, request)
+        return stream_response(
+            target,
+            request,
+            stateful=_stateful_target(target),
+            on_event=on_event,
+        )
+
+
+def create_model_adapter(config: Mapping[str, object]) -> ModelAdapter:
+    """Create the built-in Responses model adapter."""
+
+    del config
+    return ResponsesModelAdapter()
+
+
+def _stateful_target(target: ModelTarget) -> bool:
+    return target.provider in _STATEFUL_PROVIDERS
+
+
+def _require_supported_inputs(
+    target: ModelTarget,
+    request: ModelCall,
+) -> None:
+    if target.provider != "openai":
+        return
+    if _supports_openai_audio_input(target):
+        return
+    if not _request_has_audio_input(request):
+        return
+    raise ToolangError(
+        f"audio input is not supported for OpenAI model '{target.model}' via the Responses adapter; "
+        "transcribe audio first, send it as a generic file to a route that supports audio files, or use an audio-capable model route"
+    )
+
+
+def _supports_openai_audio_input(target: ModelTarget) -> bool:
+    candidates = (
+        target.model.strip().lower(),
+        target.ref.strip().lower(),
+        target.name.strip().lower(),
+    )
+    return any(
+        candidate.startswith(prefix)
+        for candidate in candidates
+        for prefix in _AUDIO_MODEL_PREFIXES
+    )
+
+
+def _request_has_audio_input(request: ModelCall) -> bool:
+    return any(
+        isinstance(part, AudioPart)
+        for message in request.messages
+        for part in message.parts
+    )
 
 
 def create_client(target: ModelTarget) -> Any:
@@ -262,7 +358,7 @@ def encode_message(
     replay_tool_items: bool = True,
     message_index: int | None = None,
 ) -> dict[str, Any] | list[dict[str, Any]] | None:
-    """Encode one run-strategy message into typed Responses API input items."""
+    """Encode one run-loop message into typed Responses API input items."""
 
     role = message.role.strip()
     if role in {"user", "assistant"}:

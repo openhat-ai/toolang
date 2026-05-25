@@ -34,12 +34,12 @@ from .utils import (
     _created_time,
     _echo_pairs_table,
     _echo_table,
-    _normalize_feature_option,
+    _normalize_component_option,
     _parse_utc_timestamp,
     _required_prefix_agent,
     _required_runtime_agent,
     _runtime_environ_for_agent,
-    _runtime_features,
+    _runtime_components,
     _runtime_value,
     _toolang_root,
     _ui_base_url,
@@ -393,9 +393,9 @@ def info_agent(
     if status.sandbox:
         rows.append(("Sandbox", status.sandbox))
     if status.status == "running":
-        loops_text = _runtime_features(runtime_state)
+        loops_text = _runtime_components(runtime_state)
         if loops_text is not None:
-            rows.append(("Features", loops_text))
+            rows.append(("Components", loops_text))
     message = _runtime_value(runtime_state.get("message"))
     pid_text = agents.runtime_pid_label(runtime_state)
     if pid_text is not None and status.status != "stopped":
@@ -448,7 +448,7 @@ def run_agent(
     ] = None,
     host: Annotated[str, typer.Option(help="Bind the agent API to this host.")] = "127.0.0.1",
     port: Annotated[int | None, typer.Option(help="Bind the agent API to this port.")] = None,
-    features: Annotated[
+    components: Annotated[
         list[str] | None,
         typer.Option("--enable", help="Enable runtime components. Pass CSV or repeat."),
     ] = None,
@@ -471,7 +471,7 @@ def run_agent(
     from .progress import as_progress_sink, make_cli_progress
 
     selector = _required_runtime_agent(ctx, agent)
-    normalized_features = _normalize_feature_option(features)
+    normalized_components = _normalize_component_option(components)
     root = _context_root(ctx)
     progress = make_cli_progress()
     progress_finished = False
@@ -483,7 +483,7 @@ def run_agent(
                 sandbox=sandbox,
                 models=models,
                 tools=tools,
-                features=normalized_features,
+                components=normalized_components,
                 port=port,
                 host=host,
                 endpoint_host=endpoint_host,
@@ -529,7 +529,7 @@ def _resolve_runtime_startup(
     sandbox: str | None,
     models: list[str] | None,
     tools: list[str] | None,
-    features: list[str] | None,
+    components: list[str] | None,
     port: int | None,
     host: str,
     endpoint_host: str | None,
@@ -566,7 +566,7 @@ def _resolve_runtime_startup(
         models=models,
         tools=tools,
         dev=dev,
-        feature_names=features,
+        component_names=components,
         log_spec=log_plan.spec,
         temporary_port=target.kind == "visiting" and port is None,
         environ=log_plan.environ,
@@ -610,7 +610,7 @@ def start_agent(
     ] = None,
     host: Annotated[str, typer.Option(help="Bind the agent API to this host.")] = "127.0.0.1",
     port: Annotated[int | None, typer.Option(help="Bind the agent API to this port.")] = None,
-    features: Annotated[
+    components: Annotated[
         list[str] | None,
         typer.Option("--enable", help="Enable runtime components. Pass CSV or repeat."),
     ] = None,
@@ -633,7 +633,7 @@ def start_agent(
     if parsed_selector.form != "name":
         raise click.ClickException("start only supports local agent names; clone the remote source first")
     root = _context_root(ctx)
-    normalized_features = _normalize_feature_option(features)
+    normalized_components = _normalize_component_option(components)
     progress = make_cli_progress()
     try:
         with agents.resolved_run_target(root, selector, progress=as_progress_sink(progress)) as target:
@@ -643,7 +643,7 @@ def start_agent(
                 sandbox=sandbox,
                 models=models,
                 tools=tools,
-                features=normalized_features,
+                components=normalized_components,
                 port=port,
                 host=host,
                 endpoint_host=endpoint_host,

@@ -1,4 +1,4 @@
-"""Formal job control API routes."""
+"""Formal job management API routes."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from ..inspect import _shared
 
 
 def create_router() -> APIRouter:
-    """Build the formal job control route group."""
+    """Build the formal job management route group."""
 
     router = APIRouter(prefix="/api/v1")
 

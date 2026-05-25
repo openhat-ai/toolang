@@ -5,11 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from toolang.base.error import ToolangError
 from toolang.base.protocols.model import ModelProvider
-from toolang.base.types.model import ModelInfo, ModelTarget
-from toolang.base.types.run import ModelCall, ModelCallResult, ModelEventHandler
-from ..adapters import responses
+from toolang.base.types.model import ModelInfo
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,33 +30,7 @@ class CustomModelProvider(ModelProvider):
         del environ
         return ()
 
-    def invoke(
-        self,
-        target: ModelTarget,
-        request: ModelCall,
-    ) -> ModelCallResult:
-        if target.adapter != "responses":
-            raise ToolangError(f"unsupported custom adapter: {target.adapter}")
-        return responses.invoke_response(target, request, stateful=False)
-
-    def stream(
-        self,
-        target: ModelTarget,
-        request: ModelCall,
-        *,
-        on_event: ModelEventHandler,
-    ) -> ModelCallResult:
-        if target.adapter != "responses":
-            raise ToolangError(f"unsupported custom adapter: {target.adapter}")
-        return responses.stream_response(
-            target,
-            request,
-            stateful=False,
-            on_event=on_event,
-        )
-
-
-def create_model(config: Mapping[str, object]) -> ModelProvider:
+def create_model_provider(config: Mapping[str, object]) -> ModelProvider:
     """Create the built-in custom alias provider."""
 
     del config

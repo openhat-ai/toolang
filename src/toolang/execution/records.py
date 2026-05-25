@@ -11,7 +11,7 @@ from toolang.base.types.message import Message, Part
 
 RunStatus = Literal["running", "finished", "failed", "canceled"]
 StepStatus = Literal["finished", "failed", "canceled"]
-RunStrategy = Literal["basic", "react"]
+RunLoop = str
 StepKind = Literal["model_call", "tool_call", "runtime"]
 ThreadPeerType = Literal["user", "agent"]
 InputAction = Literal["start", "steer", "stop"]

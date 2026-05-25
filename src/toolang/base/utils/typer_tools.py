@@ -12,7 +12,7 @@ import json
 from typing import TYPE_CHECKING, Any, cast
 
 from ..error import ToolangError
-from ..protocols.tool import Tool
+from ..protocols.tool import AgentTool
 from ..types.tool import ToolContext, ToolDefinition
 
 if TYPE_CHECKING:
@@ -179,8 +179,8 @@ class _LeafCommandSpec:
 
 
 @dataclass(frozen=True, slots=True)
-class _TyperTool(Tool):
-    """Tool backed by one Typer leaf command."""
+class _TyperTool(AgentTool):
+    """AgentTool backed by one Typer leaf command."""
 
     spec: _LeafCommandSpec
 
@@ -202,7 +202,7 @@ def create_typer_tools(
     name_prefix: str | None = None,
     include_paths: Iterable[tuple[str, ...]] | None = None,
     configs: Mapping[tuple[str, ...], TyperToolConfig] | None = None,
-) -> dict[str, Tool]:
+) -> dict[str, AgentTool]:
     """Build tools for each leaf command in one Typer app."""
 
     root = _require_get_command()(app)

@@ -9,7 +9,7 @@ import shutil
 from typing import Any
 
 from toolang.base.error import ToolangError
-from toolang.base.protocols.tool import Tool, ToolPlugin
+from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.tool import ToolContext
 from toolang.base.utils.function_tools import create_function_tool, tool
 
@@ -24,16 +24,16 @@ class FilesystemPlugin:
     name: str = "filesystem"
     description: str | None = "Inspect and edit files inside the current agent home."
     _max_chars: int = field(init=False, repr=False)
-    _tools: dict[str, Tool] = field(init=False, repr=False)
+    _tools: dict[str, AgentTool] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._max_chars = _int_value(self.config.get("max_chars"), default=DEFAULT_MAX_CHARS)
         self._tools = self._build_tools()
 
-    def tools(self) -> Mapping[str, Tool]:
+    def tools(self) -> Mapping[str, AgentTool]:
         return dict(self._tools)
 
-    def _build_tools(self) -> dict[str, Tool]:
+    def _build_tools(self) -> dict[str, AgentTool]:
         @tool(name="list", description="List one directory inside the current agent home.")
         def list_dir(path: str = ".", context: ToolContext | None = None) -> dict[str, Any]:
             resolved = _resolve_path(path, context=context)
@@ -149,7 +149,7 @@ class FilesystemPlugin:
         }
 
 
-def create_tool(config: Mapping[str, Any]) -> ToolPlugin:
+def create_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
     """Create the filesystem tool plugin."""
 
     return FilesystemPlugin(config=dict(config))

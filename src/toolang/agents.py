@@ -20,7 +20,7 @@ from urllib.request import Request, urlopen
 from collections.abc import Sequence
 from typing import Iterator, Literal
 
-from toolang.base.protocols.sandbox import SandboxPlugin
+from toolang.base.protocols.sandbox import AgentSandbox
 from toolang.base.types.sandbox import SandboxState
 from .progress import ProgressSink, emit_progress
 
@@ -754,6 +754,7 @@ def write_runtime_state(
     started_at: str,
     pid: int | None,
     sandbox: dict[str, object] | None = None,
+    components: Sequence[str] | None = None,
     features: Sequence[str] | None = None,
     models: Sequence[str] | None = None,
     status: str = "running",
@@ -772,7 +773,7 @@ def write_runtime_state(
             "updated_at": started_at,
             "pid": pid,
             "sandbox": sandbox,
-            "features": list(features or ()),
+            "components": list(components if components is not None else features or ()),
             "models": list(models or ()),
             "message": message,
         },
@@ -809,7 +810,7 @@ def stop_agent(
     toolang_root: Path,
     agent_name: str,
     *,
-    sandbox_plugin: SandboxPlugin | None = None,
+    sandbox_plugin: AgentSandbox | None = None,
     force: bool = False,
 ) -> bool:
     """Stop one running agent and mark its runtime state as stopped."""

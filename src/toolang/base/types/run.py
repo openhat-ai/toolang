@@ -1,4 +1,4 @@
-"""Shared run and strategy value types."""
+"""Shared run and loop value types."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from .tool import ToolDefinition
 
 @dataclass(frozen=True, slots=True)
 class RunResult:
-    """Final run-strategy result."""
+    """Final run-loop result."""
 
     message: Message | None = None
     output_text: str = ""

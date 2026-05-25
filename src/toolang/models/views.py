@@ -78,9 +78,11 @@ def model_provider_rows(
 
 
 def available_model_adapters() -> tuple[str, ...]:
-    """Return built-in adapter names."""
+    """Return available model adapter names."""
 
-    return ("responses",)
+    from toolang.plugin import list_plugin_names
+
+    return tuple(list_plugin_names(group="toolang.model_adapter"))
 
 
 def model_target_profile(

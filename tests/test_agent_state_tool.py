@@ -6,7 +6,7 @@ import pytest
 
 from toolang import caps, work
 from toolang.base.types.tool import ToolContext
-from toolang.tools.agent_state import create_tool as create_agent_state_tool
+from toolang.tools.agent_state import create_tool_set as create_agent_state_tool
 
 
 def _tool_context(toolang_root: Path, agent_name: str = "alice") -> ToolContext:
