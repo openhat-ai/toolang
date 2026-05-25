@@ -446,6 +446,13 @@ def run_agent(
         str,
         typer.Option(help="Run the agent in a sandbox."),
     ] = "none",
+    models: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--models",
+            help="Limit available models. Pass CSV or repeat.",
+        ),
+    ] = None,
     tools: Annotated[
         list[str] | None,
         typer.Option(
@@ -458,13 +465,6 @@ def run_agent(
         typer.Option(
             "--caps",
             help="Allow selected caps. Pass CSV or repeat.",
-        ),
-    ] = None,
-    models: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--models",
-            help="Limit available models. Pass CSV or repeat.",
         ),
     ] = None,
     host: Annotated[str, typer.Option(help="Bind the agent API to this host.")] = "127.0.0.1",
@@ -618,6 +618,13 @@ def start_agent(
         str,
         typer.Option(help="Run the agent in a sandbox."),
     ] = "none",
+    models: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--models",
+            help="Limit available models. Pass CSV or repeat.",
+        ),
+    ] = None,
     tools: Annotated[
         list[str] | None,
         typer.Option(
@@ -630,13 +637,6 @@ def start_agent(
         typer.Option(
             "--caps",
             help="Allow selected caps. Pass CSV or repeat.",
-        ),
-    ] = None,
-    models: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--models",
-            help="Limit available models. Pass CSV or repeat.",
         ),
     ] = None,
     host: Annotated[str, typer.Option(help="Bind the agent API to this host.")] = "127.0.0.1",

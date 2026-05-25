@@ -1591,6 +1591,9 @@ thunk summarize(_, style?):
     assert "Limit available models. Pass CSV or repeat." in captured.out
     assert "--tools" in captured.out
     assert "Allow selected tools. Pass CSV or repeat." in captured.out
+    assert "--caps" in captured.out
+    assert "Allow selected caps. Pass CSV or repeat." in captured.out
+    assert captured.out.index("--models") < captured.out.index("--tools") < captured.out.index("--caps")
     assert "--quiet" in captured.out
     assert "Params" in captured.out
     assert "NAME=VALUE" in captured.out
@@ -1642,6 +1645,9 @@ thunk summarize(_, style?, audience?):
     assert "Limit available models. Pass CSV or repeat." in captured.out
     assert "--tools" in captured.out
     assert "Allow selected tools. Pass CSV or repeat." in captured.out
+    assert "--caps" in captured.out
+    assert "Allow selected caps. Pass CSV or repeat." in captured.out
+    assert captured.out.index("--models") < captured.out.index("--tools") < captured.out.index("--caps")
     assert "--quiet" in captured.out
     assert "Params" in captured.out
     assert "Input" in captured.out
@@ -5197,11 +5203,23 @@ def test_cli_tools_option_help_is_consistent_for_run_commands() -> None:
         assert expected in result.stdout
 
 
+def test_cli_caps_option_help_is_consistent_for_run_commands() -> None:
+    expected = "Allow selected caps. Pass CSV or repeat."
+
+    for command in (["run", "--help"], ["start", "--help"]):
+        result = runner.invoke(cli.app, command)
+
+        assert result.exit_code == 0
+        assert "--caps" in result.stdout
+        assert expected in result.stdout
+
+
 def test_cli_runtime_option_help_order_and_descriptions() -> None:
     expected = (
         ("--sandbox", "Run the agent in a sandbox."),
-        ("--tools", "Allow selected tools. Pass CSV or repeat."),
         ("--models", "Limit available models. Pass CSV or repeat."),
+        ("--tools", "Allow selected tools. Pass CSV or repeat."),
+        ("--caps", "Allow selected caps. Pass CSV or repeat."),
         ("--host", "Bind the agent API to this host."),
         ("--port", "Bind the agent API to this port."),
         ("--enable", "Enable runtime components. Pass CSV or repeat."),

@@ -713,6 +713,11 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
 
     @app.callback()
     def _callback(
+        model: list[str] | None = typer.Option(
+            None,
+            "--models",
+            help="Limit available models. Pass CSV or repeat.",
+        ),
         tools: list[str] | None = typer.Option(
             None,
             "--tools",
@@ -723,11 +728,6 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
             "--caps",
             help="Allow selected caps. Pass CSV or repeat.",
         ),
-        model: list[str] | None = typer.Option(
-            None,
-            "--models",
-            help="Limit available models. Pass CSV or repeat.",
-        ),
         quiet: bool = typer.Option(
             False,
             "--quiet",
@@ -735,7 +735,7 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
             help="Suppress progress messages.",
         ),
     ) -> None:
-        del tools, caps, model, quiet
+        del model, tools, caps, quiet
         return None
 
     for thunk in program.thunks:
@@ -767,6 +767,11 @@ def _make_roaming_thunk_help_command_class(thunk: Thunk) -> type[_RoamingThunkHe
 
 def _make_roaming_help_command() -> Callable[..., None]:
     def command(
+        model: list[str] | None = typer.Option(
+            None,
+            "--models",
+            help="Limit available models. Pass CSV or repeat.",
+        ),
         tools: list[str] | None = typer.Option(
             None,
             "--tools",
@@ -777,11 +782,6 @@ def _make_roaming_help_command() -> Callable[..., None]:
             "--caps",
             help="Allow selected caps. Pass CSV or repeat.",
         ),
-        model: list[str] | None = typer.Option(
-            None,
-            "--models",
-            help="Limit available models. Pass CSV or repeat.",
-        ),
         quiet: bool = typer.Option(
             False,
             "--quiet",
@@ -789,7 +789,7 @@ def _make_roaming_help_command() -> Callable[..., None]:
             help="Suppress progress messages.",
         ),
     ) -> None:
-        del tools, caps, model, quiet
+        del model, tools, caps, quiet
         return None
 
     return command
