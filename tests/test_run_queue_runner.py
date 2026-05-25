@@ -278,7 +278,7 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
             assert body["message"]["parts"][0]["text"] == "say hello"
             assert body["assistant"]["parts"][0]["text"] == "assistant:say hello"
             assert client.put(
-                "/api/v1/skills/reviewer/remote",
+                "/api/v1/skills/reviewer/wired",
                 json={"visibility": "private", "ref": "acme/reviewer"},
             ).status_code == 404
 
@@ -858,7 +858,7 @@ def test_agent_events_include_cap_updates(tmp_path: Path) -> None:
 
     with TestClient(app) as client:
         put_response = client.put(
-            "/api/v1/psyches/reviewer/local",
+            "/api/v1/psyches/reviewer/file",
             json={"visibility": "private", "content": "Prefer direct answers."},
         )
         response = client.get("/api/v1/agent/events").json()
@@ -2002,13 +2002,13 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
 
     with TestClient(app) as client:
         add_response = client.put(
-            "/api/v1/skills/reviewer/remote",
+            "/api/v1/skills/reviewer/wired",
             json={"visibility": "private", "ref": "acme/reviewer"},
         )
         assert add_response.status_code == 200
         assert add_response.json()["item"]["name"] == "reviewer"
         assert add_response.json()["item"]["origin"] == "remote"
-        assert add_response.json()["item"]["form"] == "remote"
+        assert add_response.json()["item"]["form"] == "wired"
         assert add_response.json()["item"]["scope"] == "home"
 
         snapshot = inspect.snapshot_context(context, enabled_features=("manage", "inspect"))
@@ -2023,7 +2023,7 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
         assert live["caps"] == []
         assert client.get("/api/v1/skills").json()["items"] == []
 
-        remove_response = client.delete("/api/v1/skills/reviewer/remote?visibility=private")
+        remove_response = client.delete("/api/v1/skills/reviewer/wired?visibility=private")
         assert remove_response.status_code == 200
         assert remove_response.json() == {"ok": True}
 
@@ -2033,16 +2033,16 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
         assert definitions["private_entries"] == []
 
         local_response = client.put(
-            "/api/v1/prompts/rewrite/local",
+            "/api/v1/prompts/rewrite/file",
             json={"visibility": "private", "content": "Rewrite the request.\n"},
         )
         assert local_response.status_code == 200
         assert local_response.json()["item"]["name"] == "rewrite"
         assert local_response.json()["item"]["origin"] == "local"
-        assert local_response.json()["item"]["form"] == "local"
+        assert local_response.json()["item"]["form"] == "file"
         assert local_response.json()["item"]["scope"] == "home"
 
-        delete_local_response = client.delete("/api/v1/prompts/rewrite/local?visibility=private")
+        delete_local_response = client.delete("/api/v1/prompts/rewrite/file?visibility=private")
         assert delete_local_response.status_code == 200
         assert delete_local_response.json() == {"ok": True}
 
@@ -3446,12 +3446,12 @@ def test_prepare_materializes_remote_entries_from_config(tmp_path: Path, monkeyp
     prepared = watch.build_prepared_state(durable)
     live = load_live_state(prepared, enabled_features=("watch",))
 
-    assert (toolang_root / ".caps" / "remote" / "prompts" / "rewrite.md").is_file()
+    assert (toolang_root / ".caps" / "wired" / "prompts" / "rewrite.md").is_file()
     assert [entry.source.origin for entry in prepared.shared_lock.entries] == ["remote"]
-    assert [entry.source.form for entry in prepared.shared_lock.entries] == ["remote"]
-    assert prepared.shared_lock.entries[0].path == ".caps/remote/prompts/rewrite.md"
+    assert [entry.source.form for entry in prepared.shared_lock.entries] == ["wired"]
+    assert prepared.shared_lock.entries[0].path == ".caps/wired/prompts/rewrite.md"
     assert prepared.shared_lock.entries[0].ref == "github://acme/agents/prompts/rewrite.md@main"
-    assert live.caps == (".caps/remote/prompts/rewrite.md",)
+    assert live.caps == (".caps/wired/prompts/rewrite.md",)
 
 
 def test_remote_skill_shorthand_probes_agent_skills_and_skills_repos(
@@ -3541,7 +3541,7 @@ def test_remote_skill_add_canonicalizes_github_tree_url(tmp_path: Path, monkeypa
     assert 'answers = { ref = "github://brave/brave-search-skills/skills/answers@main" }' in config_text
     assert prepared.private_lock.entries[0].ref == "github://brave/brave-search-skills/skills/answers@main"
     assert (
-        toolang_root / "agents" / "alice" / ".caps" / "remote" / "skills" / "answers" / "SKILL.md"
+        toolang_root / "agents" / "alice" / ".caps" / "wired" / "skills" / "answers" / "SKILL.md"
     ).is_file()
 
 
@@ -3710,7 +3710,7 @@ def test_prepare_rebuilds_stale_lock_schema_as_cache_miss(
                         "name": "pdf",
                         "shape": "dir",
                         "ref": "github://acme/agents/skills/pdf@main",
-                        "path": "agents/alice/.caps/remote/skills/pdf/SKILL.md",
+                        "path": "agents/alice/.caps/wired/skills/pdf/SKILL.md",
                         "source": {
                             "origin": "remote",
                             "path": "agents/alice/config.toml",
@@ -3739,8 +3739,8 @@ def test_prepare_rebuilds_stale_lock_schema_as_cache_miss(
 
     prepared = watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
 
-    assert prepared.private_lock.entries[0].source.form == "remote"
-    assert '"form": "remote"' in lock_path.read_text(encoding="utf-8")
+    assert prepared.private_lock.entries[0].source.form == "wired"
+    assert '"form": "wired"' in lock_path.read_text(encoding="utf-8")
 
 
 def test_prepare_reuses_private_remote_caps_when_shared_inputs_change(
@@ -3804,7 +3804,7 @@ def test_prepare_refetches_remote_caps_when_prepared_output_does_not_match_lock(
         ref="acme/pdf",
     )
     watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
-    prepared_file = toolang_root / "agents" / "alice" / ".caps" / "remote" / "skills" / "pdf" / "SKILL.md"
+    prepared_file = toolang_root / "agents" / "alice" / ".caps" / "wired" / "skills" / "pdf" / "SKILL.md"
     prepared_file.write_text("---\ndescription: Corrupt\n---\n# Corrupt\n", encoding="utf-8")
 
     watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
@@ -3852,13 +3852,13 @@ def test_prepare_materializes_remote_skill_directory(tmp_path: Path, monkeypatch
     prepared = watch.build_prepared_state(durable)
 
     assert (
-        toolang_root / "agents" / "alice" / ".caps" / "remote" / "skills" / "pdf" / "SKILL.md"
+        toolang_root / "agents" / "alice" / ".caps" / "wired" / "skills" / "pdf" / "SKILL.md"
     ).read_text(encoding="utf-8") == "---\ndescription: PDF work\n---\n# PDF\n"
     assert (
-        toolang_root / "agents" / "alice" / ".caps" / "remote" / "skills" / "pdf" / "REFERENCE.md"
+        toolang_root / "agents" / "alice" / ".caps" / "wired" / "skills" / "pdf" / "REFERENCE.md"
     ).read_text(encoding="utf-8") == "# Reference\n"
     assert prepared.private_lock.entries[0].meta["description"] == "PDF work"
-    assert prepared.private_lock.entries[0].source.form == "remote"
+    assert prepared.private_lock.entries[0].source.form == "wired"
 
 
 def test_prepare_materializes_remote_skill_from_program_use(tmp_path: Path, monkeypatch) -> None:
@@ -3879,16 +3879,16 @@ def test_prepare_materializes_remote_skill_from_program_use(tmp_path: Path, monk
     prepared = watch.build_prepared_state(durable)
     live = load_live_state(prepared, enabled_features=("watch",))
 
-    skill_path = toolang_root / "agents" / "alice" / ".caps" / "cited" / "skills" / "fund" / "SKILL.md"
+    skill_path = toolang_root / "agents" / "alice" / ".caps" / "ref" / "skills" / "fund" / "SKILL.md"
     assert skill_path.read_text(encoding="utf-8").startswith("---\ndescription: github://coinbase/")
     entry = prepared.private_lock.entries[0]
     assert entry.name == "fund"
     assert entry.ref == "github://coinbase/agentic-wallet-skills/skills/fund@main"
     assert entry.source.origin == "remote"
-    assert entry.source.form == "cited"
+    assert entry.source.form == "ref"
     assert entry.source.path == "agents/alice/agent.too"
     assert entry.source.line == 3
-    assert live.caps == ("agents/alice/.caps/cited/skills/fund/SKILL.md",)
+    assert live.caps == ("agents/alice/.caps/ref/skills/fund/SKILL.md",)
     lock_data = json.loads(
         (toolang_root / "agents" / "alice" / ".caps" / "lock.json").read_text(encoding="utf-8")
     )
@@ -3989,7 +3989,7 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
         psyche_detail = psyche_response.json()["item"]
         assert psyche_detail["origin"] == "local"
         assert psyche_detail["form"] == "inline"
-        assert psyche_detail["scope"] == "packed"
+        assert psyche_detail["scope"] == "here"
         assert psyche_detail["definition_file"] == "agents/alice/agent.too"
         assert psyche_detail["line"] == 3
         assert psyche_detail["content"] == "Prefer concrete findings."
@@ -4000,7 +4000,7 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
         assert service_detail["description"] == "Use when the agent needs GitHub MCP access."
         assert service_detail["origin"] == "local"
         assert service_detail["form"] == "inline"
-        assert service_detail["scope"] == "packed"
+        assert service_detail["scope"] == "here"
         assert service_detail["definition_file"] == "agents/alice/agent.too"
         assert service_detail["line"] == 7
         assert service_detail["content"] == service_content
@@ -4011,7 +4011,7 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
             {
                 "name": "summarize",
                 "description": None,
-                "scope": "packed",
+                "scope": "here",
                 "origin": "local",
                 "form": "inline",
                 "ref": "inline://prompts/summarize",
@@ -4153,8 +4153,8 @@ def test_prepare_fetches_remote_caps_with_bounded_concurrency(tmp_path: Path, mo
     assert max_active == 2
     assert [entry.name for entry in lock_record.entries] == ["alpha", "bravo"]
     assert sorted(files) == [
-        ".caps/remote/psyches/alpha.md",
-        ".caps/remote/psyches/bravo.md",
+        ".caps/wired/psyches/alpha.md",
+        ".caps/wired/psyches/bravo.md",
     ]
 
 
@@ -4195,7 +4195,7 @@ def test_caps_list_and_remove_remote_entries(tmp_path: Path, monkeypatch) -> Non
     entries = list_entries(toolang_root, "alice", visibility="private", kinds={"skill"})
 
     assert [(entry.source.origin, entry.source.form, entry.path) for entry in entries] == [
-        ("remote", "remote", "agents/alice/.caps/remote/skills/reviewer/SKILL.md")
+        ("remote", "wired", "agents/alice/.caps/wired/skills/reviewer/SKILL.md")
     ]
     assert remove_remote_entry(toolang_root, "alice", visibility="private", kind="skill", name="reviewer") is True
     assert list_entries(toolang_root, "alice", visibility="private", kinds={"skill"}) == ()

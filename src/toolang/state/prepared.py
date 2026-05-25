@@ -19,7 +19,7 @@ PreparedVisibility = Literal["shared", "private"]
 EntryKind = Literal["psyche", "skill", "service", "prompt", "task", "chore"]
 EntryShape = Literal["file", "dir"]
 SourceOrigin = Literal["local", "remote"]
-SourceForm = Literal["inline", "cited", "remote", "local"]
+SourceForm = Literal["inline", "ref", "wired", "file"]
 
 _EMPTY_INPUT_FINGERPRINT = sha256().hexdigest()
 _EMPTY_LOCK_FINGERPRINT = sha256(b"[]").hexdigest()
@@ -45,7 +45,7 @@ _SOURCE_BUCKET_BY_KIND: dict[EntryKind, str] = {
 }
 _SOURCE_DIRS_SHARED = ("psyches", "skills", "services", "prompts")
 _SOURCE_DIRS_PRIVATE = (*_SOURCE_DIRS_SHARED, "tasks", "chores", "archive")
-_ARTIFACT_BUCKETS = ("inline", "cited", "remote")
+_ARTIFACT_BUCKETS = ("inline", "ref", "wired")
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,7 +243,7 @@ def write_prepared_lock(
 
     prepared_dir = lock.prepared_dir
     prepared_dir.mkdir(parents=True, exist_ok=True)
-    for directory_name in ("inline", "cited", "remote"):
+    for directory_name in _ARTIFACT_BUCKETS:
         (prepared_dir / directory_name).mkdir(parents=True, exist_ok=True)
     for relative_path, content in sorted((files or {}).items()):
         target = toolang_root / relative_path
@@ -416,7 +416,7 @@ def _artifacts_manifest(
     refs: dict[str, int] = {}
     seen_paths: dict[str, set[str]] = {name: set() for name in _ARTIFACT_BUCKETS}
     for entry in entries:
-        if entry.source.form == "local":
+        if entry.source.form == "file":
             continue
         bucket = entry.source.form
         item = _artifact_item_manifest(entry, base=base, toolang_root=toolang_root)
@@ -531,9 +531,9 @@ def _prepared_source_ref(
     base: Path,
     toolang_root: Path,
 ) -> int | str:
-    if entry.source.form in {"inline", "cited"}:
+    if entry.source.form in {"inline", "ref"}:
         return "program"
-    if entry.source.form == "remote":
+    if entry.source.form == "wired":
         return "config"
     bucket_name = _SOURCE_BUCKET_BY_KIND[entry.kind]
     bucket = cast(dict[str, object], sources[bucket_name])
@@ -546,12 +546,12 @@ def _prepared_source_ref(
 
 
 def _origin_manifest(entry: PreparedEntry) -> dict[str, object]:
-    if entry.source.form == "local":
+    if entry.source.form == "file":
         return {}
     data: dict[str, object] = {}
     if entry.source.line is not None:
         data["line"] = entry.source.line
-    if entry.source.form in {"remote", "cited"}:
+    if entry.source.form in {"wired", "ref"}:
         data["ref"] = entry.ref
         if entry.ref.startswith("github://"):
             github = _parse_github_ref(entry.ref)
@@ -660,7 +660,7 @@ def _entry_from_prepared_item(
         ref=_manifest_entry_ref(item, form=form, kind=kind, base=base, toolang_root=toolang_root),
         path=path,
         source=PreparedSource(
-            origin="remote" if form in {"cited", "remote"} else "local",
+            origin="remote" if form in {"ref", "wired"} else "local",
             form=form,
             path=source_path,
             updated_at=_manifest_updated_at(source_item),
@@ -722,7 +722,7 @@ def _manifest_entry_path(
     base: Path,
     toolang_root: Path,
 ) -> tuple[str, EntryShape]:
-    if form == "local":
+    if form == "file":
         if kind == "skill" and source_item.get("shape") == "dir":
             return _root_relative(base / str(source_item["path"]) / "SKILL.md", toolang_root=toolang_root), "dir"
         return _root_relative(base / str(source_item["path"]), toolang_root=toolang_root), cast(EntryShape, source_item.get("shape", "file"))
@@ -742,7 +742,7 @@ def _manifest_entry_ref(
     base: Path,
     toolang_root: Path,
 ) -> str:
-    if form in {"cited", "remote"}:
+    if form in {"ref", "wired"}:
         origin = cast(dict[str, object], item.get("origin", {}))
         return str(origin["ref"])
     if form == "inline":

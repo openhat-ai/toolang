@@ -26,18 +26,18 @@ def test_load_shared_lock_reads_form_source_entries(tmp_path: Path) -> None:
                 },
                 "artifacts": {
                     "inline": {"path": ".caps/inline", "mtime": 0, "items": []},
-                    "cited": {"path": ".caps/cited", "mtime": 0, "items": []},
-                    "remote": {
-                        "path": ".caps/remote",
+                    "ref": {"path": ".caps/ref", "mtime": 0, "items": []},
+                    "wired": {
+                        "path": ".caps/wired",
                         "mtime": 0,
                         "items": [
                             {
-                                "path": ".caps/remote/skills/pdf-processing",
+                                "path": ".caps/wired/skills/pdf-processing",
                                 "shape": "dir",
                                 "mtime": 0,
                                 "items": [
                                     {
-                                        "path": ".caps/remote/skills/pdf-processing/SKILL.md",
+                                        "path": ".caps/wired/skills/pdf-processing/SKILL.md",
                                         "shape": "file",
                                         "mtime": 0,
                                         "size": 4,
@@ -53,7 +53,7 @@ def test_load_shared_lock_reads_form_source_entries(tmp_path: Path) -> None:
                         {
                             "kind": "skill",
                             "name": "pdf-processing",
-                            "form": "remote",
+                            "form": "wired",
                             "source": "config",
                             "origin": {
                                 "ref": "github://by3gus/agents/skills/pdf-processing@main"
@@ -74,4 +74,4 @@ def test_load_shared_lock_reads_form_source_entries(tmp_path: Path) -> None:
 
     assert len(lock.entries) == 1
     assert lock.entries[0].ref == "github://by3gus/agents/skills/pdf-processing@main"
-    assert lock.entries[0].source.form == "remote"
+    assert lock.entries[0].source.form == "wired"

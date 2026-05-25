@@ -36,11 +36,11 @@ if TYPE_CHECKING:
 CapKind = Literal["skill", "psyche", "prompt", "service"]
 EntryKind = Literal["psyche", "skill", "service", "prompt", "task", "chore"]
 PreparedVisibility = Literal["shared", "private"]
-CapForm = Literal["inline", "cited", "remote", "local"]
-CapScope = Literal["global", "agent"]
+CapForm = Literal["inline", "ref", "wired", "file"]
+CapScope = Literal["root", "home", "here"]
 CAP_KINDS: tuple[CapKind, ...] = ("psyche", "skill", "service", "prompt")
-CAP_FORMS: tuple[CapForm, ...] = ("inline", "cited", "remote", "local")
-CAP_SCOPES: tuple[CapScope, ...] = ("global", "agent")
+CAP_FORMS: tuple[CapForm, ...] = ("inline", "ref", "wired", "file")
+CAP_SCOPES: tuple[CapScope, ...] = ("root", "home", "here")
 
 
 class _LazyModule:
@@ -82,7 +82,7 @@ if not TYPE_CHECKING:
 def register_standalone_caps_commands(app: typer.Typer, *, rich_help_panel: str | None = None) -> None:
     app.command(
         "list",
-        help="List caps of all kinds.",
+        help="Inspect available caps.",
         cls=_OptionalPrefixAgentListCommand,
     )(_list_all_caps)
     _register_cap_kind_commands(
@@ -93,24 +93,24 @@ def register_standalone_caps_commands(app: typer.Typer, *, rich_help_panel: str 
 
 
 def register_toolang_caps_commands(app: typer.Typer, *, rich_help_panel: str | None = None) -> None:
-    app.command(
-        "caps",
-        help="List caps of all kinds.",
-        cls=_OptionalPrefixAgentListCommand,
-        rich_help_panel=rich_help_panel,
-    )(_list_all_caps)
     _register_cap_kind_commands(
         app,
         rich_help_panel=rich_help_panel,
         group_cls=_OptionalPrefixAgentGroup,
     )
+    app.command(
+        "caps",
+        help="Inspect available caps.",
+        cls=_OptionalPrefixAgentListCommand,
+        rich_help_panel=rich_help_panel,
+    )(_list_all_caps)
 
 
 def _kind_command_cls(label: str) -> type[_OptionalPrefixAgentCommand]:
     return type(
         f"{label.title().replace(' ', '')}ScopeCommand",
         (_OptionalPrefixAgentCommand,),
-        {"argument_help": f"Apply to this agent's {label} instead of global {label}."},
+        {"argument_help": f"Apply to this agent's {label} instead of root {label}."},
     )
 
 
@@ -126,7 +126,7 @@ def _kind_template_command_cls(label: str) -> type[_OptionalPrefixAgentTemplateC
     return type(
         f"{label.title().replace(' ', '')}TemplateScopeCommand",
         (_OptionalPrefixAgentTemplateCommand,),
-        {"argument_help": f"Apply to this agent's {label} instead of global {label}."},
+        {"argument_help": f"Apply to this agent's {label} instead of root {label}."},
     )
 
 
@@ -136,7 +136,7 @@ def _kind_group_cls(group_cls: type[TyperGroup] | None, label: str) -> type[Type
     return type(
         f"{label.title().replace(' ', '')}ScopeGroup",
         (group_cls,),
-        {"argument_help": f"Apply to this agent's {label} instead of global {label}."},
+        {"argument_help": f"Apply to this agent's {label} instead of root {label}."},
     )
 
 
@@ -186,31 +186,31 @@ def _register_cap_kind_commands(
         ),
         CapCommandSpec(
             name="new",
-            help=lambda kind: f"Create a local {kind}.",
+            help=lambda kind: f"Create a file-backed {kind}.",
             factory=_make_new_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="edit",
-            help=lambda kind: f"Edit a local {kind}.",
+            help=lambda kind: f"Edit a file-backed {kind}.",
             factory=_make_edit_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="delete",
-            help=lambda kind: f"Delete a local {kind}.",
+            help=lambda kind: f"Delete a file-backed {kind}.",
             factory=_make_delete_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="add",
-            help=lambda kind: f"Add a remote {kind}.",
+            help=lambda kind: f"Wire a {kind} ref.",
             factory=_make_add_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="remove",
-            help=lambda kind: f"Remove a remote {kind}.",
+            help=lambda kind: f"Unwire a {kind}.",
             factory=_make_remove_cap_command,
             no_args_is_help=True,
         ),
@@ -264,7 +264,7 @@ def _list_all_caps(
             "--filter",
             help=(
                 "Filter by kind, form, or scope CSV: psyche, skill, service, prompt, "
-                "inline, cited, remote, local, global, agent."
+                "inline, ref, wired, file, root, home, here."
             ),
         ),
     ] = None,
@@ -316,7 +316,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             typer.Option(
                 "--filter",
                 help=(
-                    "Filter by form or scope CSV: inline, cited, remote, local, global, agent."
+                    "Filter by form or scope CSV: inline, ref, wired, file, root, home, here."
                 ),
             ),
         ] = None,
@@ -492,7 +492,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 raise click.ClickException(
                     f"{title} {cap_store.remote_entry_name(cast(EntryKind, kind), ref)} already exists"
                 ) from exc
-            raise click.ClickException(f"Remote {kind} {ref} not found") from exc
+            raise click.ClickException(f"Wired {kind} {ref} not found") from exc
         entry = _named_entry(
             _context_root(ctx),
             agent_name,
@@ -500,7 +500,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             kind=cast(EntryKind, kind),
             name=cap_store.remote_entry_name(cast(EntryKind, kind), ref),
             source_origin="remote",
-            source_form="remote",
+            source_form="wired",
         )
         if selected_agent:
             try:
@@ -536,7 +536,7 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             kind=cast(EntryKind, kind),
             name=name,
             source_origin="remote",
-            source_form="remote",
+            source_form="wired",
         )
         removed = _wrap_user_error(
             cap_store.remove_remote_entry,
@@ -658,7 +658,7 @@ def _entry_matches_filters(
 
 def _entry_source(entry: PreparedEntry, *, agent_name: str) -> str:
     form = _entry_form(entry)
-    if form in {"cited", "remote"}:
+    if form in {"ref", "wired"}:
         return _external_source_url(cap_store.entry_ref(entry, agent_name=agent_name), entry=entry)
     source = cap_store.entry_definition_file(entry)
     if form == "inline":
@@ -689,12 +689,8 @@ def _entry_form(entry: PreparedEntry) -> CapForm:
     return cap_store.entry_form(entry)
 
 
-def _entry_is_global(entry: PreparedEntry, *, agent_name: str) -> bool:
-    return cap_store.entry_scope(entry, agent_name=agent_name) == "global"
-
-
 def _entry_scope_label(entry: PreparedEntry, *, agent_name: str) -> CapScope:
-    return "global" if _entry_is_global(entry, agent_name=agent_name) else "agent"
+    return cap_store.entry_scope(entry, agent_name=agent_name)
 
 
 def _parse_cap_filter(

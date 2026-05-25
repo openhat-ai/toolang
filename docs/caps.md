@@ -17,27 +17,25 @@ Current cap kinds are:
 
 Prepared cap entries use runtime scope:
 
-- `global`: available to all agents under the Toolang root
+- `root`: provided by the current Toolang root
 - `home`: available to one agent home
-- `packed`: follows one authored agent program
+- `here`: declared or referenced in the current source and travels with it
 
 Precedence is:
 
-1. `packed`
+1. `here`
 2. `home`
-3. `global`
+3. `root`
 
 One effective cap set is built by applying this precedence to all visible cap
 definitions.
 
-User-facing CLI list commands collapse `home` and `packed` into one `agent`
-scope, because both are only available through the selected agent. HTTP read
-APIs expose the runtime `scope` values.
+CLI and HTTP read APIs expose these runtime `scope` values directly.
 
 HTTP write payloads and internal storage still use `shared` and `private` to
 choose authored placement. CLI write commands expose that placement as command
-shape instead: without `AGENT`, they write global caps; with `AGENT`, they write
-that agent's caps.
+shape instead: without `AGENT`, they write root caps; with `AGENT`, they write
+that agent's home caps.
 
 
 ## Form, Scope, And Origin
@@ -50,17 +48,17 @@ Form tells how a cap is attached:
 | Form | Meaning |
 | --- | --- |
 | `inline` | Defined directly in `agent.too` |
-| `cited` | Referenced by `use ...` in `agent.too` |
-| `remote` | Connected through `config.toml` |
-| `local` | Mounted from local files or folders |
+| `ref` | Referenced by `use ...` in `agent.too` |
+| `wired` | Wired in by `config.toml` |
+| `file` | Backed by files or folders in cap directories |
 
 Scope tells where a cap is available:
 
 | Scope | Meaning |
 | --- | --- |
-| `global` | Available to all agents under the Toolang root |
-| `home` | Available to one agent home |
-| `packed` | Packed with one authored agent program |
+| `root` | Provided by the current Toolang root |
+| `home` | Provided by the current agent home |
+| `here` | Declared or referenced in the current source and travels with it |
 
 `origin` describes where the cap content is authored:
 
@@ -73,10 +71,10 @@ Runtime APIs expose effective caps. They do not expose every authored source
 variant as a separate history object.
 
 HTTP write payloads default to `private` placement. CLI write commands default
-to global caps when `AGENT` is omitted. Only `local` and `remote` forms can
-be authored at shared placement and surface as `global`, because they can be
-authored at the Toolang root. `cited` and `inline` forms are tied to one
-agent program and surface as `packed`.
+to root caps when `AGENT` is omitted. Only `file` and `wired` forms can
+be authored at shared placement and surface as `root`, because they can be
+authored at the Toolang root. `ref` and `inline` forms are tied to one
+source program and surface as `here`.
 
 Authored placement, such as `config.toml`, `agent.too`, or a cap file path, is
 exposed separately as `definition_file`. When known, APIs may also include
@@ -91,21 +89,13 @@ view:
 | Column | Meaning |
 | --- | --- |
 | `SOURCE` | Authored file path, `agent.too` line reference, or directly accessible remote URL |
-| `FORM` | Source form: `inline`, `cited`, `remote`, or `local` |
-| `SCOPE` | Display scope: `global` or `agent` |
+| `FORM` | Source form: `inline`, `ref`, `wired`, or `file` |
+| `SCOPE` | Runtime scope: `root`, `home`, or `here` |
 
 `FORM` uses the same values as the runtime source form. It is not remapped for
 display.
 
-`SCOPE` is also projected for CLI readability:
-
-| Runtime scope | CLI `SCOPE` |
-| --- | --- |
-| `global` | `global` |
-| `home` | `agent` |
-| `packed` | `agent` |
-
-The `--filter` option accepts kind, form, and display-scope values. Values in
+The `--filter` option accepts kind, form, and scope values. Values in
 the same group are unioned; conditions across groups are intersected.
 
 
@@ -168,11 +158,11 @@ Private local caps:
 Prepared materialized caps live under `.caps` roots:
 
 - `inline` caps are materialized under `.caps/inline`
-- `cited` remote caps are materialized under `.caps/cited`
-- `remote` caps are materialized under `.caps/remote`
+- `ref` caps are materialized under `.caps/ref`
+- `wired` caps are materialized under `.caps/wired`
 
 For agent-specific prepared caps, the `.caps` root is
-`${TOOLANG_ROOT}/agents/<agent>/.caps`. For global prepared caps, the `.caps` root is
+`${TOOLANG_ROOT}/agents/<agent>/.caps`. For root prepared caps, the `.caps` root is
 `${TOOLANG_ROOT}/.caps`.
 
 
@@ -216,8 +206,8 @@ One activation sees one effective cap set.
 
 The runtime:
 
-1. collects global and agent definitions
-2. resolves remote entries
+1. collects root and home definitions
+2. resolves wired and ref entries
 3. materializes runtime-ready artifacts when needed
 4. selects the winning definition for each `(kind, name)`
 
@@ -248,29 +238,29 @@ Read endpoints:
 
 Write endpoints:
 
-- `PUT /api/v1/psyches/{name}/local`
-- `PUT /api/v1/skills/{name}/local`
-- `PUT /api/v1/services/{name}/local`
-- `PUT /api/v1/prompts/{name}/local`
-- `DELETE /api/v1/psyches/{name}/local`
-- `DELETE /api/v1/skills/{name}/local`
-- `DELETE /api/v1/services/{name}/local`
-- `DELETE /api/v1/prompts/{name}/local`
-- `PUT /api/v1/psyches/{name}/remote`
-- `PUT /api/v1/skills/{name}/remote`
-- `PUT /api/v1/services/{name}/remote`
-- `PUT /api/v1/prompts/{name}/remote`
-- `DELETE /api/v1/psyches/{name}/remote`
-- `DELETE /api/v1/skills/{name}/remote`
-- `DELETE /api/v1/services/{name}/remote`
-- `DELETE /api/v1/prompts/{name}/remote`
+- `PUT /api/v1/psyches/{name}/file`
+- `PUT /api/v1/skills/{name}/file`
+- `PUT /api/v1/services/{name}/file`
+- `PUT /api/v1/prompts/{name}/file`
+- `DELETE /api/v1/psyches/{name}/file`
+- `DELETE /api/v1/skills/{name}/file`
+- `DELETE /api/v1/services/{name}/file`
+- `DELETE /api/v1/prompts/{name}/file`
+- `PUT /api/v1/psyches/{name}/wired`
+- `PUT /api/v1/skills/{name}/wired`
+- `PUT /api/v1/services/{name}/wired`
+- `PUT /api/v1/prompts/{name}/wired`
+- `DELETE /api/v1/psyches/{name}/wired`
+- `DELETE /api/v1/skills/{name}/wired`
+- `DELETE /api/v1/services/{name}/wired`
+- `DELETE /api/v1/prompts/{name}/wired`
 
-Local write requests carry `visibility` and `content`. Remote write requests
+File write requests carry `visibility` and `content`. Wired write requests
 carry `visibility` and `ref`. Deletes use a `visibility` query parameter.
-`visibility` is the HTTP write-placement field: `shared` maps to globally
+`visibility` is the HTTP write-placement field: `shared` maps to root
 authored caps and `private` maps to the current agent's authored caps.
 
 Template detail responses include template metadata and raw content. Cap read
 requests return the effective runtime view with `scope`, `origin`, `form`,
 `ref`, `definition_file`, and optional `line`. CLI list commands project that
-runtime view into `SOURCE`, `FORM`, and display `SCOPE`.
+runtime view into `SOURCE`, `FORM`, and runtime `SCOPE`.

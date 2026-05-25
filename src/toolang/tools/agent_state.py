@@ -541,7 +541,7 @@ def _create_cap(
         name=name,
         text=text,
     )
-    entry = _find_cap_entry(scope, kind, name, visibility=cap_visibility, source_form="local")
+    entry = _find_cap_entry(scope, kind, name, visibility=cap_visibility, source_form="file")
     return _cap_payload(scope, entry, include_content=True)
 
 
@@ -555,7 +555,7 @@ def _update_cap(
 ) -> dict[str, Any]:
     scope = _scope(context)
     cap_visibility = _visibility(visibility)
-    _find_cap_entry(scope, kind, name, visibility=cap_visibility, source_form="local")
+    _find_cap_entry(scope, kind, name, visibility=cap_visibility, source_form="file")
     caps.put_local_entry_text(
         scope.toolang_root,
         scope.agent_name,
@@ -564,7 +564,7 @@ def _update_cap(
         name=name,
         text=text,
     )
-    entry = _find_cap_entry(scope, kind, name, visibility=cap_visibility, source_form="local")
+    entry = _find_cap_entry(scope, kind, name, visibility=cap_visibility, source_form="file")
     return _cap_payload(scope, entry, include_content=True)
 
 
@@ -577,7 +577,7 @@ def _delete_cap(
 ) -> dict[str, Any]:
     scope = _scope(context)
     cap_visibility = _visibility(visibility)
-    entry = _find_cap_entry(scope, kind, name, visibility=cap_visibility, source_form="local")
+    entry = _find_cap_entry(scope, kind, name, visibility=cap_visibility, source_form="file")
     deleted_path = scope.toolang_root / entry.path
     if entry.shape == "dir":
         deleted_path = deleted_path.parent
@@ -638,7 +638,7 @@ def _local_cap_exists(
     visibility: PreparedVisibility,
 ) -> bool:
     try:
-        _find_cap_entry(scope, kind, name, visibility=visibility, source_form="local")
+        _find_cap_entry(scope, kind, name, visibility=visibility, source_form="file")
     except ToolangError:
         return False
     return True
@@ -665,7 +665,7 @@ def _cap_payload(
     line = caps.entry_line(entry)
     if line is not None:
         item["line"] = line
-    if include_content and entry.source.form == "local":
+    if include_content and entry.source.form == "file":
         item["content"] = caps.load_local_entry_text(
             scope.toolang_root,
             scope.agent_name,

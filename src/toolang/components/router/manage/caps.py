@@ -30,8 +30,8 @@ class PutCapRequest(BaseModel):
     content: str | None = None
 
 
-class RemoteCapRequest(BaseModel):
-    """One remote cap ref mutation request."""
+class WiredCapRequest(BaseModel):
+    """One wired cap ref mutation request."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -44,11 +44,11 @@ def create_router() -> APIRouter:
 
     router = APIRouter(prefix="/api/v1", tags=["caps"])
 
-    @router.put("/psyches/{name}/local", summary="Upsert Local Psyche")
-    @router.put("/skills/{name}/local", summary="Upsert Local Skill")
-    @router.put("/services/{name}/local", summary="Upsert Local Service")
-    @router.put("/prompts/{name}/local", summary="Upsert Local Prompt")
-    async def put_local_cap(
+    @router.put("/psyches/{name}/file", summary="Upsert File Psyche")
+    @router.put("/skills/{name}/file", summary="Upsert File Skill")
+    @router.put("/services/{name}/file", summary="Upsert File Service")
+    @router.put("/prompts/{name}/file", summary="Upsert File Prompt")
+    async def put_file_cap(
         request: Request,
         name: str,
         payload: PutCapRequest,
@@ -72,14 +72,14 @@ def create_router() -> APIRouter:
         entry = _find_authored_entry(context, visibility=visibility, kind=kind, name=name)
         return {"item": _cap_detail_item(context, entry)}
 
-    @router.put("/psyches/{name}/remote", summary="Add Remote Psyche")
-    @router.put("/skills/{name}/remote", summary="Add Remote Skill")
-    @router.put("/services/{name}/remote", summary="Add Remote Service")
-    @router.put("/prompts/{name}/remote", summary="Add Remote Prompt")
-    async def put_remote_cap(
+    @router.put("/psyches/{name}/wired", summary="Wire Psyche")
+    @router.put("/skills/{name}/wired", summary="Wire Skill")
+    @router.put("/services/{name}/wired", summary="Wire Service")
+    @router.put("/prompts/{name}/wired", summary="Wire Prompt")
+    async def put_wired_cap(
         request: Request,
         name: str,
-        payload: RemoteCapRequest,
+        payload: WiredCapRequest,
     ) -> dict[str, object]:
         context = request.app.state.runtime
         kind = _collection_kind(_collection_from_path(str(request.url.path)))
@@ -87,7 +87,7 @@ def create_router() -> APIRouter:
         if caps.remote_entry_name(cast(EntryKind, kind), payload.ref) != name:
             raise HTTPException(
                 status_code=400,
-                detail=f"Remote {kind} ref {payload.ref!r} does not match requested name {name!r}.",
+                detail=f"Wired {kind} ref {payload.ref!r} does not match requested name {name!r}.",
             )
         _wrap_user_error(
             caps.add_remote_entry,
@@ -101,11 +101,11 @@ def create_router() -> APIRouter:
         entry = _find_authored_entry(context, visibility=visibility, kind=kind, name=name)
         return {"item": _cap_detail_item(context, entry)}
 
-    @router.delete("/psyches/{name}/local", summary="Delete Local Psyche")
-    @router.delete("/skills/{name}/local", summary="Delete Local Skill")
-    @router.delete("/services/{name}/local", summary="Delete Local Service")
-    @router.delete("/prompts/{name}/local", summary="Delete Local Prompt")
-    async def delete_local_cap(
+    @router.delete("/psyches/{name}/file", summary="Delete File Psyche")
+    @router.delete("/skills/{name}/file", summary="Delete File Skill")
+    @router.delete("/services/{name}/file", summary="Delete File Service")
+    @router.delete("/prompts/{name}/file", summary="Delete File Prompt")
+    async def delete_file_cap(
         request: Request,
         name: str,
         visibility: ApiVisibility = Query(default="private"),
@@ -122,15 +122,15 @@ def create_router() -> APIRouter:
             name=name,
         )
         if not removed:
-            raise HTTPException(status_code=404, detail=f"local {kind} not found: {name}")
+            raise HTTPException(status_code=404, detail=f"file {kind} not found: {name}")
         _append_cap_update(context, kind=kind, name=name, visibility=requested_visibility)
         return {"ok": True}
 
-    @router.delete("/psyches/{name}/remote", summary="Remove Remote Psyche")
-    @router.delete("/skills/{name}/remote", summary="Remove Remote Skill")
-    @router.delete("/services/{name}/remote", summary="Remove Remote Service")
-    @router.delete("/prompts/{name}/remote", summary="Remove Remote Prompt")
-    async def delete_remote_cap(
+    @router.delete("/psyches/{name}/wired", summary="Unwire Psyche")
+    @router.delete("/skills/{name}/wired", summary="Unwire Skill")
+    @router.delete("/services/{name}/wired", summary="Unwire Service")
+    @router.delete("/prompts/{name}/wired", summary="Unwire Prompt")
+    async def delete_wired_cap(
         request: Request,
         name: str,
         visibility: ApiVisibility = Query(default="private"),
@@ -147,7 +147,7 @@ def create_router() -> APIRouter:
             name=name,
         )
         if not removed:
-            raise HTTPException(status_code=404, detail=f"remote {kind} not found: {name}")
+            raise HTTPException(status_code=404, detail=f"wired {kind} not found: {name}")
         _append_cap_update(context, kind=kind, name=name, visibility=requested_visibility)
         return {"ok": True}
 

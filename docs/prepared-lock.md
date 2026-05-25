@@ -25,7 +25,7 @@ The lock file does not store scope or agent name. Its location defines both.
 
 All paths inside one lock are relative to that lock's path base. For example,
 an agent lock uses `agent.too`, `config.toml`, and `skills/pdf/SKILL.md`.
-A global lock uses `config.toml` and `skills/pdf/SKILL.md`.
+A root lock uses `config.toml` and `skills/pdf/SKILL.md`.
 
 
 ## Format
@@ -124,17 +124,17 @@ A global lock uses `config.toml` and `skills/pdf/SKILL.md`.
         }
       ]
     },
-    "cited": {
-      "path": ".caps/cited",
+    "ref": {
+      "path": ".caps/ref",
       "mtime": 1779616800000000000,
       "items": [
         {
-          "path": ".caps/cited/skills/fund",
+          "path": ".caps/ref/skills/fund",
           "shape": "dir",
           "mtime": 1779616800000000000,
           "items": [
             {
-              "path": ".caps/cited/skills/fund/SKILL.md",
+              "path": ".caps/ref/skills/fund/SKILL.md",
               "mtime": 1779616800000000000,
               "size": 900,
               "fingerprint": "sha256"
@@ -143,8 +143,8 @@ A global lock uses `config.toml` and `skills/pdf/SKILL.md`.
         }
       ]
     },
-    "remote": {
-      "path": ".caps/remote",
+    "wired": {
+      "path": ".caps/wired",
       "mtime": 1779616800000000000,
       "items": []
     }
@@ -259,7 +259,7 @@ A global lock uses `config.toml` and `skills/pdf/SKILL.md`.
       {
         "kind": "skill",
         "name": "pdf",
-        "form": "local",
+        "form": "file",
         "source": 0,
         "object": {
           "meta": {
@@ -285,7 +285,7 @@ A global lock uses `config.toml` and `skills/pdf/SKILL.md`.
       {
         "kind": "skill",
         "name": "fund",
-        "form": "cited",
+        "form": "ref",
         "source": "program",
         "origin": {
           "line": 12,
@@ -306,7 +306,7 @@ A global lock uses `config.toml` and `skills/pdf/SKILL.md`.
       {
         "kind": "skill",
         "name": "web",
-        "form": "remote",
+        "form": "wired",
         "source": "config",
         "origin": {
           "ref": "github://acme/agents/skills/web@<commit-sha>",
@@ -329,7 +329,7 @@ A global lock uses `config.toml` and `skills/pdf/SKILL.md`.
       {
         "kind": "task",
         "name": "daily-review",
-        "form": "local",
+        "form": "file",
         "source": 0,
         "object": {
           "meta": {
@@ -345,7 +345,7 @@ A global lock uses `config.toml` and `skills/pdf/SKILL.md`.
       {
         "kind": "chore",
         "name": "sync-inbox",
-        "form": "local",
+        "form": "file",
         "source": 0,
         "object": {
           "meta": {
@@ -363,7 +363,7 @@ A global lock uses `config.toml` and `skills/pdf/SKILL.md`.
 }
 ```
 
-Keys may be omitted when they do not apply to a scope. For example, a global
+Keys may be omitted when they do not apply to a scope. For example, a root
 lock normally omits `sources.program`, `sources.tasks`, and `sources.chores`.
 An absent source directory may be omitted or represented with an empty
 `items` array.
@@ -432,8 +432,8 @@ Artifact buckets are:
 | Bucket | Meaning |
 | --- | --- |
 | `inline` | Files materialized from inline program declarations |
-| `cited` | Files materialized from program `use` refs |
-| `remote` | Files materialized from config remote refs |
+| `ref` | Files materialized from program `use` refs |
+| `wired` | Files materialized from config refs |
 
 Artifact items use the same `shape` model as source items. A directory
 artifact owns a nested file manifest. This lets one prepared cap point to one
@@ -466,7 +466,7 @@ collection specifically describes program-level cap items. Each item may point
 to the corresponding runtime cap with `cap`, an index into
 `prepared.caps`.
 
-Program `use` items may also point to the cited prepared cap with `cap`,
+Program `use` items may also point to the ref prepared cap with `cap`,
 an index into `prepared.caps`.
 
 Thunk fields follow grammar names:
@@ -509,9 +509,9 @@ kind, name, form, source, origin, artifact, object
 
 Only meaningful fields are stored:
 
-- `local` items omit `origin` and `artifact`.
-- `inline`, `cited`, and `remote` items include `origin` when source
-  positioning or remote resolution matters.
+- `file` items omit `origin` and `artifact`.
+- `inline`, `ref`, and `wired` items include `origin` when source
+  positioning or ref resolution matters.
 - Items with `.caps` output include `artifact`.
 
 
@@ -519,7 +519,7 @@ Only meaningful fields are stored:
 
 `source` identifies the source that rebuilds a prepared item.
 
-For local caps, numeric `source` values select an item from the source bucket
+For file caps, numeric `source` values select an item from the source bucket
 implied by `kind`:
 
 | Kind | Source bucket |
@@ -545,9 +545,9 @@ String source values select top-level sources:
 
 Examples:
 
-- A local skill with `"source": 0` depends on `sources.skills.items[0]`.
-- A cited cap with `"source": "program"` depends on `sources.program`.
-- A remote config cap with `"source": "config"` depends on `sources.config`.
+- A file skill with `"source": 0` depends on `sources.skills.items[0]`.
+- A ref cap with `"source": "program"` depends on `sources.program`.
+- A wired config cap with `"source": "config"` depends on `sources.config`.
 
 
 ## Artifact References
@@ -560,14 +560,14 @@ The artifact bucket is implied by `form`:
 | Form | Artifact bucket |
 | --- | --- |
 | `inline` | `artifacts.inline.items` |
-| `cited` | `artifacts.cited.items` |
-| `remote` | `artifacts.remote.items` |
+| `ref` | `artifacts.ref.items` |
+| `wired` | `artifacts.wired.items` |
 
 Examples:
 
 - An inline prompt with `"artifact": 0` owns `artifacts.inline.items[0]`.
-- A cited skill with `"artifact": 0` owns `artifacts.cited.items[0]`.
-- A remote skill with `"artifact": 0` owns `artifacts.remote.items[0]`.
+- A ref skill with `"artifact": 0` owns `artifacts.ref.items[0]`.
+- A wired skill with `"artifact": 0` owns `artifacts.wired.items[0]`.
 
 
 ## Origin
@@ -618,7 +618,7 @@ First compare actual authored files with `sources`:
 
 Then compare actual `.caps` files with `artifacts`:
 
-1. Scan `.caps/inline`, `.caps/cited`, and `.caps/remote`.
+1. Scan `.caps/inline`, `.caps/ref`, and `.caps/wired`.
 2. Compare path sets to find added and deleted artifact files.
 3. For paths present in both manifests, compare `mtime` and `size`.
 4. Recompute `fingerprint` only for added files or files whose `mtime` or
