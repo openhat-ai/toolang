@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from toolang.base.error import ToolangError
-from toolang.selectors import parse_selector, split_selector_list
+from toolang.selectors import Selector, parse_selector, selector_identity_matches, split_selector_list
 
 
 def test_split_selector_list_treats_top_level_csv_as_union() -> None:
@@ -47,6 +47,13 @@ def test_parse_selector_rejects_identity_filters() -> None:
 def test_parse_selector_rejects_empty_filter_list() -> None:
     with pytest.raises(ToolangError, match="filter list cannot be empty"):
         parse_selector("[]", domain="cap")
+
+
+def test_bare_pattern_matches_name_not_family() -> None:
+    selector = Selector(raw="*l*", pattern="*l*")
+
+    assert selector_identity_matches(family="skill", name="implementation", selector=selector) is True
+    assert selector_identity_matches(family="skill", name="review", selector=selector) is False
 
 
 def test_parse_selector_rejects_family_in_implicit_family_context() -> None:

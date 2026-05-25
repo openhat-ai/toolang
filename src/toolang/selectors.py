@@ -122,7 +122,8 @@ def selector_identity_matches(
     if "/" in pattern:
         family_pattern, _, name_pattern = pattern.partition("/")
         return fnmatchcase(family, family_pattern or "*") and fnmatchcase(name, name_pattern or "*")
-    values = (name, family, f"{family}/{name}", *extra_values)
+    del family
+    values = (name, *extra_values)
     return any(value == pattern or fnmatchcase(value, pattern) for value in values if value)
 
 

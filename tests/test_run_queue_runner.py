@@ -5039,7 +5039,7 @@ def test_assemble_run_input_uses_explicit_activation_tools_for_script_runs(tmp_p
         toolang_root=toolang_root,
         agent_name="alice",
         enabled_features=("chat",),
-        tool_selectors=("shell",),
+        tool_selectors=("shell/*",),
     )
     context.config.set("models.default_selector", "openai/gpt-5[openai]")
     invoke_bound = bind_run_request(
