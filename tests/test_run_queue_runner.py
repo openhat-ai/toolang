@@ -5060,6 +5060,92 @@ def test_assemble_run_input_uses_explicit_activation_tools_for_script_runs(tmp_p
     assert invoke_bundle.debug["tool_names"] == ["shell__execute"]
 
 
+def test_assemble_run_input_logs_activation_set_math(tmp_path: Path, caplog) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        (
+            "agent alice\n\n"
+            "thunk summarize(_):\n"
+            "  models = openai/gpt-5\n"
+            "  tools -= service_use/bridge_start, service_use/init, service_use/auth_start, service_use/tool_call\n"
+            "  skills = local-reviewer\n\n"
+            "  Reply directly.\n"
+        ),
+    )
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="local-reviewer",
+        text="---\ndescription: Review local changes\n---\n# Local Reviewer\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat",),
+    )
+    context.config.set("models.allowed_selectors", ("openai/gpt-5[openai]", "openai/o3[openai]"))
+    bound = bind_run_request(
+        context,
+        RunRequest(
+            group="script",
+            origin="script",
+            thunk_name="summarize",
+            thunk="hello",
+        ),
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="toolang.run"):
+        bundle = RunInput.from_binding(context, bound)
+
+    set_math = cast(dict[str, object], bundle.debug["set_math"])
+    model_math = cast(dict[str, object], set_math["models"])
+    tool_math = cast(dict[str, object], set_math["tools"])
+    skill_math = cast(dict[str, object], set_math["skills"])
+    tool_steps = cast(list[dict[str, object]], tool_math["overlay_steps"])
+    skill_steps = cast(list[dict[str, object]], skill_math["overlay_steps"])
+
+    assert model_math["activation_ceiling"] == ["openai/gpt-5[openai]", "openai/o3[openai]"]
+    assert model_math["thunk_selectors"] == ["openai/gpt-5"]
+    assert model_math["effective"] == ["openai/gpt-5[openai]"]
+    assert tool_steps[0]["op"] == "remove"
+    assert tool_steps[0]["selectors"] == [
+        "service_use/bridge_start",
+        "service_use/init",
+        "service_use/auth_start",
+        "service_use/tool_call",
+    ]
+    assert any(str(item).startswith("service_use__") for item in cast(list[object], tool_steps[0]["matches"]))
+    for removed_tool in cast(list[object], tool_steps[0]["matches"]):
+        assert removed_tool not in cast(list[object], tool_math["effective"])
+    assert skill_steps == [
+        {
+            "op": "set",
+            "line": 4,
+            "selectors": ["local-reviewer"],
+            "matches": ["skill/local-reviewer"],
+            "before": ["skill/local-reviewer"],
+            "after": ["skill/local-reviewer"],
+        }
+    ]
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "toolang.run"
+    ]
+    info_line = next(message for message in messages if message.startswith("activation set math "))
+    assert "models 2 = openai/gpt-5 -> 1" in info_line
+    assert "skills 1 = local-reviewer -> 1" in info_line
+    assert "activation_ceiling" not in info_line
+    detail_line = next(message for message in messages if message.startswith("activation set math detail "))
+    logged_math = json.loads(detail_line.split(" math=", 1)[1])
+    assert logged_math["models"]["effective"] == ["openai/gpt-5[openai]"]
+    assert logged_math["skills"]["effective"] == ["skill/local-reviewer"]
+
+
 def test_assemble_run_input_uses_thunk_user_message_for_script_runs(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
