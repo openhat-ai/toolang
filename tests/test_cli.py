@@ -3153,7 +3153,7 @@ def test_cli_model_list_filters_by_capability_selector(monkeypatch) -> None:
     assert "openai/gpt-5" not in result.stdout
 
 
-def test_cli_run_delegates_to_agent_up(tmp_path: Path, monkeypatch) -> None:
+def test_cli_run_hands_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     captured: dict[str, object] = {}

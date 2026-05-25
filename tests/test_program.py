@@ -247,6 +247,37 @@ thunk review():
         ("model", "set", ("gpt-5", "o3")),
     ]
 
+
+def test_program_parse_projects_thunk_routing_directives_into_ast() -> None:
+    program = parse(
+        """
+thunk plan():
+  hands += research, summarize
+  handoffs = execute
+
+  Plan the work.
+""".strip()
+    )
+
+    thunk = program.thunks[0]
+    assert [(item.kind, item.op, item.items) for item in thunk.overlays] == [
+        ("hand", "add", ("research", "summarize")),
+        ("handoff", "set", ("execute",)),
+    ]
+
+
+def test_program_parse_rejects_legacy_delegates_directive() -> None:
+    with pytest.raises(ToolangError, match="line 2"):
+        parse(
+            """
+thunk plan():
+  delegates += research
+
+  Plan the work.
+""".strip()
+        )
+
+
 def test_program_parse_projects_explicit_message_blocks_into_ast() -> None:
     program = parse(
         """

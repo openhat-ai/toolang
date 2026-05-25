@@ -26,12 +26,13 @@ FIELD_RE = re.compile(
 )
 DIRECTIVE_RE = re.compile(
     r"^(?P<indent>[ \t]*)(?P<key>model|models|tool|tools|skill|skills|service|services|"
-    r"psyche|psyches|handoffs|delegates)(?P<space>[ \t]*)(?P<op>=|\+=|-=)"
+    r"psyche|psyches|hands|handoffs)(?P<space>[ \t]*)(?P<op>=|\+=|-=)"
 )
+LEGACY_DELEGATES_RE = re.compile(r"^[ \t]*delegates[ \t]*(?:=|\+=|-=)")
 TOP_LEVEL_RE = re.compile(
     r"^(use|struct|psyche|skill|service|prompt|instruct|thunk)\b"
 )
-OverlayKind = Literal["model", "tool", "psyche", "skill", "service"]
+OverlayKind = Literal["model", "tool", "psyche", "skill", "service", "hand", "handoff"]
 OverlayOperator = Literal["set", "add", "remove"]
 MessageBlockKind = Literal["system", "user", "assistant", "tool"]
 TREE_SITTER_TYPE_ALIASES = {
@@ -426,6 +427,10 @@ def _overlay_kind(subject: str, *, line_number: int) -> OverlayKind:
         return "skill"
     if normalized in {"service", "services"}:
         return "service"
+    if normalized == "hands":
+        return "hand"
+    if normalized == "handoffs":
+        return "handoff"
     raise ToolangError(f"Unsupported thunk directive {subject!r} at line {line_number}.")
 
 
@@ -965,6 +970,8 @@ def _is_implicit_message_line(line: str) -> bool:
         return False
     stripped = line.lstrip(" \t")
     if stripped.startswith("#"):
+        return False
+    if LEGACY_DELEGATES_RE.match(line):
         return False
     if DIRECTIVE_RE.match(line):
         return False
