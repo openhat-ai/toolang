@@ -44,6 +44,11 @@ def test_parse_selector_rejects_identity_filters() -> None:
         parse_selector("[kind:skill]", domain="cap")
 
 
+def test_parse_selector_rejects_empty_filter_list() -> None:
+    with pytest.raises(ToolangError, match="filter list cannot be empty"):
+        parse_selector("[]", domain="cap")
+
+
 def test_parse_selector_rejects_family_in_implicit_family_context() -> None:
     with pytest.raises(ToolangError, match="must not include a family"):
         parse_selector("skill/reviewer", domain="cap", implicit_family="skill")

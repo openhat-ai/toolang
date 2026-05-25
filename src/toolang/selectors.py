@@ -90,6 +90,8 @@ def parse_selector(
             raise ToolangError(f"invalid selector: {raw}")
         pattern = text[:bracket_index].strip() or "*"
         filters_text = text[bracket_index + 1 : -1].strip()
+        if not filters_text:
+            raise ToolangError(f"selector filter list cannot be empty: {raw}")
     if implicit_family is not None and "/" in pattern.strip("* "):
         raise ToolangError(
             f"{domain} selector must not include a family in this context: {raw}"
