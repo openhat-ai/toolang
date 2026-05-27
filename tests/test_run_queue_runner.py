@@ -5314,7 +5314,11 @@ def test_program_default_instruct_overrides_runtime_default(tmp_path: Path) -> N
 
     instructions = RunInput.from_binding(context, bound).instructions()
 
-    assert instructions == "Agent alice in sandbox none.\n\nReply directly."
+    assert "Runtime Instructions:" in instructions
+    assert "Agent Instructions:" in instructions
+    assert "Agent alice in sandbox none." in instructions
+    assert "Reply directly." in instructions
+    assert "You are the alice Toolang agent." not in instructions
 
 
 def test_thunk_instruct_can_select_named_instruct(tmp_path: Path) -> None:
@@ -5342,10 +5346,14 @@ def test_thunk_instruct_can_select_named_instruct(tmp_path: Path) -> None:
 
     bundle = RunInput.from_binding(context, bound)
 
-    assert bundle.instructions() == "Review with review."
+    instructions = bundle.instructions()
+    assert "Runtime Instructions:" in instructions
+    assert "Agent Instructions:" in instructions
+    assert "Review with review." in instructions
+    assert "You are the alice Toolang agent." not in instructions
 
 
-def test_thunk_instruct_none_suppresses_developer_prompt(tmp_path: Path) -> None:
+def test_thunk_instruct_none_suppresses_agent_instruct_layer(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -5368,10 +5376,13 @@ def test_thunk_instruct_none_suppresses_developer_prompt(tmp_path: Path) -> None
 
     bundle = RunInput.from_binding(context, bound)
 
-    assert bundle.instructions() == ""
+    instructions = bundle.instructions()
+    assert "Runtime Instructions:" in instructions
+    assert "Agent Instructions:" not in instructions
+    assert "You are the alice Toolang agent." not in instructions
 
 
-def test_thunk_instruct_block_renders_as_developer_prompt(tmp_path: Path) -> None:
+def test_thunk_instruct_block_renders_as_agent_instruction(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -5395,7 +5406,35 @@ def test_thunk_instruct_block_renders_as_developer_prompt(tmp_path: Path) -> Non
 
     bundle = RunInput.from_binding(context, bound)
 
-    assert bundle.instructions() == "Use alice and custom."
+    instructions = bundle.instructions()
+    assert "Runtime Instructions:" in instructions
+    assert "Agent Instructions:" in instructions
+    assert "Use alice and custom." in instructions
+
+
+def test_agent_markdown_psyche_files_change_default_behavior(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
+    _write_text(toolang_root / "psyches" / "root-style.md", "Use concise root defaults.\n")
+    _write_text(
+        toolang_root / "agents" / "alice" / "psyches" / "home-style.md",
+        "Prefer agent-home behavior.\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat",),
+    )
+    bound = bind_run_request(
+        context,
+        RunRequest(group="chat", origin="chat", thunk="hello"),
+    )
+
+    instructions = RunInput.from_binding(context, bound).instructions()
+
+    assert "Agent Instructions:" in instructions
+    assert "Use concise root defaults." in instructions
+    assert "Prefer agent-home behavior." in instructions
 
 
 def test_chat_run_uses_default_template_when_chat_thunk_is_missing(tmp_path: Path) -> None:
