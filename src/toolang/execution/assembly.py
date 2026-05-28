@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import Message, MessageRole, TextPart, message_summary, message_text
+from toolang.base.types.model import ModelTarget
 
 from ..program import MessageBlock, Thunk
 from ..state.prepared import PreparedEntry
@@ -91,6 +92,12 @@ class RunInput:
             model_math = dict(model_math)
             model_math["requested"] = run_selected_model_selector(run)
             sets.set_math["models"] = model_math
+        model_context_targets = _model_context_targets(
+            context,
+            run=run,
+            model_selectors=sets.model_selectors,
+            models=sets.models,
+        )
         log_set_math(run=run, thunk=thunk, set_math=sets.set_math)
         call = build_model_call_assembly(
             context,
@@ -98,7 +105,7 @@ class RunInput:
             thunk=thunk,
             input_text=input_text,
             params=params,
-            models=sets.models,
+            models=model_context_targets,
             tools=sets.tools,
             psyches=sets.psyches,
             skills=sets.skills,
@@ -241,6 +248,37 @@ class RunInput:
         """Return the assembled context text for this run."""
 
         return self.context_text
+
+
+def _model_context_targets(
+    context: UptimeContext,
+    *,
+    run: RunBinding,
+    model_selectors: tuple[str, ...],
+    models: tuple[ModelTarget, ...],
+) -> tuple[ModelTarget, ...]:
+    selector = run_selected_model_selector(run)
+    if selector is None:
+        return models
+    selected = resolve_model(context, selector=selector, allowed_selectors=model_selectors)
+    selected_identity = _model_context_identity(selected)
+    return (
+        selected,
+        *(
+            model
+            for model in models
+            if _model_context_identity(model) != selected_identity
+        ),
+    )
+
+
+def _model_context_identity(model: ModelTarget) -> tuple[str, str, str, str | None]:
+    return (
+        model.ref,
+        model.provider,
+        model.model,
+        model.base_url,
+    )
 
 
 def _log_model_call_assembly(

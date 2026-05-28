@@ -24,11 +24,15 @@ from toolang.base.error import ToolangError
 from toolang.execution.context import RunContext, RunSnapshot, SnapshotAgent, SnapshotProgram, SnapshotRun
 from toolang.execution.input import RunBinding, RunInput
 from toolang.models.resolution import resolve_model, select_model_selectors
+from toolang.models.views import model_target_profile
+from toolang.models.providers import deepseek as deepseek_models
+from toolang.models.providers import google as google_models
 from toolang.models.providers import ollama as ollama_models
 from toolang.models.providers import openai as openai_models
 from toolang.models.providers import openrouter as openrouter_models
 from toolang.up import load_model_adapters
 from toolang.up import load_model_providers
+from toolang.models.adapters import chat_completions as chat_completions_models
 from toolang.models.adapters import responses as responses_models
 from toolang.models.adapters.responses import encode_message, response_payload
 from toolang.program import MessageBlock, ParamDecl, SourceSpan, Thunk
@@ -673,6 +677,7 @@ def test_model_alias_uses_provider_default_key_env(tmp_path: Path) -> None:
     assert target.ref == "qwen/qwen3-coder"
     assert target.provider == "openrouter"
     assert target.model == "qwen/qwen3-coder"
+    assert target.adapter == "chat_completions"
     assert target.base_url == "https://openrouter.ai/api/v1"
     assert target.api_key == "secret"
 
@@ -750,16 +755,20 @@ def test_ollama_provider_discovers_local_models(monkeypatch) -> None:
     )
 
 
-def test_builtin_model_provider_loader_includes_openrouter() -> None:
+def test_builtin_model_provider_loader_includes_deepseek_google_and_openrouter() -> None:
     providers = load_model_providers()
 
-    assert {"custom", "ollama", "openai", "openrouter"} <= set(providers)
+    assert {"custom", "deepseek", "google", "ollama", "openai", "openrouter"} <= set(providers)
+    assert providers["deepseek"].default_api_key_env() == "DEEPSEEK_API_KEY"
+    assert providers["google"].default_api_key_env() == "GEMINI_API_KEY"
     assert providers["openrouter"].default_api_key_env() == "OPENROUTER_API_KEY"
 
 
-def test_builtin_model_adapter_loader_includes_responses() -> None:
+def test_builtin_model_adapter_loader_includes_chat_completions_and_responses() -> None:
     adapters = load_model_adapters()
 
+    assert "chat_completions" in adapters
+    assert adapters["chat_completions"].name == "chat_completions"
     assert "responses" in adapters
     assert adapters["responses"].name == "responses"
 
@@ -798,6 +807,133 @@ def test_openai_provider_lists_curated_common_model_profiles() -> None:
     assert by_ref["openai/gpt-5-codex"].context_window == 400_000
     assert by_ref["openai/gpt-4.1"].context_window == 1_047_576
     assert by_ref["openai/gpt-4o-mini"].max_output_tokens == 16_384
+
+
+def test_deepseek_provider_lists_curated_model_profiles() -> None:
+    provider = deepseek_models.create_model_provider({})
+
+    by_ref = {model.ref: model for model in provider.list_models(environ={})}
+
+    assert by_ref["deepseek/deepseek-v4-flash"] == ModelInfo(
+        ref="deepseek/deepseek-v4-flash",
+        provider="deepseek",
+        name="deepseek-v4-flash",
+        model="deepseek-v4-flash",
+        selectors=("deepseek-v4-flash", "deepseek/deepseek-v4-flash"),
+        adapter="chat_completions",
+        tools=True,
+        streaming=True,
+        context_window=1_000_000,
+        max_output_tokens=384_000,
+        input_price=0.00000014,
+        output_price=0.00000028,
+        details="Built-in DeepSeek V4 Flash model.",
+    )
+    assert by_ref["deepseek/deepseek-v4-pro"].adapter == "chat_completions"
+    assert by_ref["deepseek/deepseek-v4-pro"].input_price == 0.000000435
+    assert by_ref["deepseek/deepseek-chat"].details == (
+        "Deprecated DeepSeek compatibility model for non-thinking V4 Flash."
+    )
+    assert by_ref["deepseek/deepseek-reasoner"].tools is False
+
+
+def test_deepseek_provider_resolves_chat_completions_target() -> None:
+    provider = deepseek_models.create_model_provider({})
+    context = SimpleNamespace(
+        model_providers={"deepseek": provider},
+        model_aliases={},
+        default_models=(),
+        model_environ={"DEEPSEEK_API_KEY": "secret"},
+    )
+
+    target = resolve_model(context, selector="deepseek-v4-pro")
+
+    assert target == ModelTarget(
+        ref="deepseek/deepseek-v4-pro",
+        provider="deepseek",
+        name="deepseek-v4-pro",
+        model="deepseek-v4-pro",
+        adapter="chat_completions",
+        base_url="https://api.deepseek.com",
+        api_key="secret",
+        scope="remote",
+        tools=True,
+        streaming=True,
+    )
+
+
+def test_google_provider_lists_curated_gemini_model_profiles() -> None:
+    provider = google_models.create_model_provider({})
+
+    by_ref = {model.ref: model for model in provider.list_models(environ={})}
+
+    assert by_ref["google/gemini-3.5-flash"] == ModelInfo(
+        ref="google/gemini-3.5-flash",
+        provider="google",
+        name="gemini-3.5-flash",
+        model="gemini-3.5-flash",
+        selectors=("gemini-3.5-flash", "google/gemini-3.5-flash"),
+        adapter="chat_completions",
+        tools=True,
+        streaming=True,
+        context_window=1_048_576,
+        max_output_tokens=65_536,
+        details="Built-in Google Gemini 3.5 Flash model.",
+    )
+    assert by_ref["google/gemini-3.1-pro-preview"].tools is True
+    assert by_ref["google/gemini-3-flash-preview"].streaming is True
+    assert by_ref["google/gemini-2.5-flash-lite"].adapter == "chat_completions"
+
+
+def test_google_provider_resolves_chat_completions_target() -> None:
+    provider = google_models.create_model_provider({})
+    context = SimpleNamespace(
+        model_providers={"google": provider},
+        model_aliases={},
+        default_models=(),
+        model_environ={"GEMINI_API_KEY": "secret"},
+    )
+
+    target = resolve_model(context, selector="gemini-3.5-flash")
+
+    assert target == ModelTarget(
+        ref="google/gemini-3.5-flash",
+        provider="google",
+        name="gemini-3.5-flash",
+        model="gemini-3.5-flash",
+        adapter="chat_completions",
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        api_key="secret",
+        scope="remote",
+        tools=True,
+        streaming=True,
+    )
+
+
+def test_model_target_profile_formats_token_counts_as_decimal_units() -> None:
+    provider = deepseek_models.create_model_provider({})
+    target = ModelTarget(
+        ref="deepseek/deepseek-v4-flash",
+        provider="deepseek",
+        name="deepseek-v4-flash",
+        model="deepseek-v4-flash",
+        adapter="chat_completions",
+    )
+
+    assert model_target_profile(target, provider=provider, environ={}) == (
+        "streaming=y, tools=y, ctx=1M, max_out=384k, price=$0.14/$0.28"
+    )
+    assert model_target_profile(
+        ModelTarget(
+            ref="openai/gpt-5.3-chat-latest",
+            provider="openai",
+            name="gpt-5.3-chat-latest",
+            model="gpt-5.3-chat-latest",
+            adapter="responses",
+        ),
+        provider=openai_models.create_model_provider({}),
+        environ={},
+    ) == "streaming=y, tools=y, ctx=128k, max_out=16.4k, price=$1.75/$14"
 
 
 def test_openrouter_provider_discovers_remote_models(monkeypatch) -> None:
@@ -854,7 +990,7 @@ def test_openrouter_provider_discovers_remote_models(monkeypatch) -> None:
             name="claude-sonnet-4",
             model="anthropic/claude-sonnet-4",
             selectors=("claude-sonnet-4", "anthropic/claude-sonnet-4"),
-            adapter="responses",
+            adapter="chat_completions",
             tools=False,
             streaming=True,
             details="Built-in OpenRouter route.",
@@ -865,7 +1001,7 @@ def test_openrouter_provider_discovers_remote_models(monkeypatch) -> None:
             name="gpt-5",
             model="openai/gpt-5",
             selectors=("gpt-5", "openai/gpt-5"),
-            adapter="responses",
+            adapter="chat_completions",
             tools=True,
             streaming=True,
             context_window=400000,
@@ -877,24 +1013,23 @@ def test_openrouter_provider_discovers_remote_models(monkeypatch) -> None:
     )
 
 
-def test_openrouter_provider_prepares_stateless_responses_target(monkeypatch) -> None:
+def test_openrouter_provider_prepares_chat_completions_target(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_invoke_response(target, request, *, stateful):
+    def fake_invoke_chat_completion(target, request):
         captured["target"] = target
         captured["request"] = request
-        captured["stateful"] = stateful
         return ModelCallResult(message=Message.assistant("done"))
 
-    monkeypatch.setattr(responses_models, "invoke_response", fake_invoke_response)
+    monkeypatch.setattr(chat_completions_models, "invoke_chat_completion", fake_invoke_chat_completion)
     provider = openrouter_models.create_model_provider({})
-    adapter = responses_models.create_model_adapter({})
+    adapter = chat_completions_models.create_model_adapter({})
     target = ModelTarget(
         ref="openai/gpt-5",
         provider="openrouter",
         name="gpt-5",
         model="openai/gpt-5",
-        adapter="responses",
+        adapter="chat_completions",
     )
     request = ModelCall(instructions="dev", messages=[Message.user("hello")])
 
@@ -902,19 +1037,304 @@ def test_openrouter_provider_prepares_stateless_responses_target(monkeypatch) ->
 
     assert result.message == Message.assistant("done")
     assert captured["request"] == request
-    assert captured["stateful"] is False
     assert captured["target"] == ModelTarget(
         ref="openai/gpt-5",
         provider="openrouter",
         name="gpt-5",
         model="openai/gpt-5",
-        adapter="responses",
+        adapter="chat_completions",
         headers={
             "HTTP-Referer": "https://toolang.ai",
             "X-OpenRouter-Title": "Toolang",
             "X-OpenRouter-Categories": "cli-agent",
         },
     )
+
+
+def test_chat_completions_adapter_invokes_openai_compatible_client(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _Completions:
+        def create(self, **payload):
+            captured["payload"] = payload
+            return SimpleNamespace(
+                choices=(
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content="done",
+                            tool_calls=(
+                                SimpleNamespace(
+                                    id="call_1",
+                                    function=SimpleNamespace(
+                                        name="shell__execute",
+                                        arguments='{"command":"pwd"}',
+                                    ),
+                                ),
+                            ),
+                        )
+                    ),
+                ),
+                usage=SimpleNamespace(prompt_tokens=11, completion_tokens=7),
+            )
+
+    class _Client:
+        chat = SimpleNamespace(completions=_Completions())
+
+    monkeypatch.setattr(chat_completions_models, "create_client", lambda target: _Client())
+    adapter = chat_completions_models.create_model_adapter({})
+    target = ModelTarget(
+        ref="deepseek/deepseek-v4-pro",
+        provider="deepseek",
+        name="deepseek-v4-pro",
+        model="deepseek-v4-pro",
+        adapter="chat_completions",
+        options={"temperature": 0},
+    )
+    request = ModelCall(
+        instructions="dev",
+        messages=[Message.user("hello")],
+        tools=(
+            ToolDefinition(
+                name="shell__execute",
+                description="Run a shell command.",
+                parameters={"type": "object"},
+            ),
+        ),
+    )
+
+    result = adapter.invoke(target, request)
+
+    assert captured["payload"] == {
+        "model": "deepseek-v4-pro",
+        "messages": [
+            {"role": "system", "content": "dev"},
+            {"role": "user", "content": "hello"},
+        ],
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "shell__execute",
+                    "description": "Run a shell command.",
+                    "parameters": {"type": "object"},
+                },
+            }
+        ],
+        "temperature": 0,
+        "stream": False,
+    }
+    assert result.message == Message(
+        role="assistant",
+        parts=(
+            Message.assistant("done").parts[0],
+            ToolCallPart(
+                tool_call_id="call_1",
+                call_id="call_1",
+                tool_name="shell__execute",
+                tool_family="shell__execute",
+                input={"command": "pwd"},
+            ),
+        ),
+    )
+    assert result.tool_calls == (
+        ToolCall(
+            tool_call_id="call_1",
+            call_id="call_1",
+            name="shell__execute",
+            input={"command": "pwd"},
+        ),
+    )
+    assert result.usage == ModelUsage(input_tokens=11, output_tokens=7)
+
+
+def test_chat_completions_adapter_replays_deepseek_reasoning_content() -> None:
+    response = SimpleNamespace(
+        choices=(
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content="I need to inspect the directory.",
+                    reasoning_content="The user asked for the directory, so list the current folder.",
+                    tool_calls=(
+                        SimpleNamespace(
+                            id="call_1",
+                            function=SimpleNamespace(
+                                name="filesystem__list",
+                                arguments='{"path":"."}',
+                            ),
+                        ),
+                    ),
+                )
+            ),
+        ),
+        usage=SimpleNamespace(prompt_tokens=11, completion_tokens=7),
+    )
+
+    result = chat_completions_models.parse_chat_completion(response)
+
+    assert result.message is not None
+    assert result.message.meta == {
+        "reasoning_content": "The user asked for the directory, so list the current folder."
+    }
+
+    payload = chat_completions_models.chat_completion_payload(
+        ModelTarget(
+            ref="deepseek/deepseek-v4-flash",
+            provider="deepseek",
+            name="deepseek-v4-flash",
+            model="deepseek-v4-flash",
+            adapter="chat_completions",
+        ),
+        ModelCall(
+            instructions="",
+            messages=[
+                result.message,
+                Message(
+                    role="tool",
+                    parts=(
+                        ToolResultPart(
+                            tool_call_id="call_1",
+                            call_id="call_1",
+                            tool_name="filesystem__list",
+                            tool_family="filesystem__list",
+                            output={"entries": []},
+                        ),
+                    ),
+                ),
+            ],
+        ),
+        stream=False,
+    )
+
+    assert payload["messages"][0]["reasoning_content"] == (
+        "The user asked for the directory, so list the current folder."
+    )
+    assert payload["messages"][0]["tool_calls"][0]["function"]["name"] == "filesystem__list"
+
+
+def test_chat_completions_adapter_rejects_tool_calls_without_names() -> None:
+    raw_tool_calls = (
+        SimpleNamespace(
+            id=None,
+            function=SimpleNamespace(name=None, arguments='{"path":"."}'),
+        ),
+    )
+
+    with pytest.raises(ToolangError, match="tool call without a function name"):
+        chat_completions_models.parse_tool_calls(raw_tool_calls)
+
+
+def test_chat_completions_stream_rejects_tool_deltas_without_names(monkeypatch) -> None:
+    class _Stream:
+        def __iter__(self):
+            yield SimpleNamespace(
+                choices=(
+                    SimpleNamespace(
+                        delta=SimpleNamespace(
+                            tool_calls=(
+                                SimpleNamespace(
+                                    index=0,
+                                    id=None,
+                                    function=SimpleNamespace(name=None, arguments='{"path":"."}'),
+                                ),
+                            )
+                        )
+                    ),
+                )
+            )
+
+        def close(self) -> None:
+            return None
+
+    class _Completions:
+        def create(self, **payload):
+            del payload
+            return _Stream()
+
+    class _Client:
+        chat = SimpleNamespace(completions=_Completions())
+
+    monkeypatch.setattr(chat_completions_models, "create_client", lambda target: _Client())
+    adapter = chat_completions_models.create_model_adapter({})
+
+    with pytest.raises(ToolangError, match="tool call without a function name"):
+        adapter.stream(
+            ModelTarget(
+                ref="deepseek/deepseek-reasoner",
+                provider="deepseek",
+                name="deepseek-reasoner",
+                model="deepseek-reasoner",
+                adapter="chat_completions",
+            ),
+            ModelCall(instructions="", messages=[Message.user("hello")]),
+            on_event=lambda _event: None,
+        )
+
+
+def test_chat_completions_stream_collects_deepseek_usage(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _Stream:
+        def __iter__(self):
+            yield SimpleNamespace(
+                choices=(
+                    SimpleNamespace(
+                        delta=SimpleNamespace(
+                            reasoning_content="Thinking.",
+                            content=None,
+                            tool_calls=(),
+                        )
+                    ),
+                ),
+                usage=None,
+            )
+            yield SimpleNamespace(
+                choices=(
+                    SimpleNamespace(
+                        delta=SimpleNamespace(
+                            reasoning_content=None,
+                            content="done",
+                            tool_calls=(),
+                        )
+                    ),
+                ),
+                usage=None,
+            )
+            yield SimpleNamespace(
+                choices=(),
+                usage=SimpleNamespace(prompt_tokens=13, completion_tokens=8),
+            )
+
+        def close(self) -> None:
+            return None
+
+    class _Completions:
+        def create(self, **payload):
+            captured["payload"] = payload
+            return _Stream()
+
+    class _Client:
+        chat = SimpleNamespace(completions=_Completions())
+
+    monkeypatch.setattr(chat_completions_models, "create_client", lambda target: _Client())
+    adapter = chat_completions_models.create_model_adapter({})
+
+    result = adapter.stream(
+        ModelTarget(
+            ref="deepseek/deepseek-v4-flash",
+            provider="deepseek",
+            name="deepseek-v4-flash",
+            model="deepseek-v4-flash",
+            adapter="chat_completions",
+        ),
+        ModelCall(instructions="", messages=[Message.user("hello")]),
+        on_event=lambda _event: None,
+    )
+
+    payload = cast(dict[str, object], captured["payload"])
+
+    assert payload["stream_options"] == {"include_usage": True}
+    assert result.message == Message.assistant("done")
+    assert result.usage == ModelUsage(input_tokens=13, output_tokens=8)
 
 
 def test_responses_adapter_rejects_openai_audio_inputs_for_non_audio_models(monkeypatch) -> None:
@@ -980,21 +1400,20 @@ def test_responses_adapter_rejects_openai_audio_inputs_for_non_audio_models_in_s
 def test_openrouter_provider_preserves_route_header_overrides(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_invoke_response(target, request, *, stateful):
+    def fake_invoke_chat_completion(target, request):
         captured["target"] = target
         captured["request"] = request
-        captured["stateful"] = stateful
         return ModelCallResult(message=Message.assistant("done"))
 
-    monkeypatch.setattr(responses_models, "invoke_response", fake_invoke_response)
+    monkeypatch.setattr(chat_completions_models, "invoke_chat_completion", fake_invoke_chat_completion)
     provider = openrouter_models.create_model_provider({})
-    adapter = responses_models.create_model_adapter({})
+    adapter = chat_completions_models.create_model_adapter({})
     target = ModelTarget(
         ref="openai/gpt-5",
         provider="openrouter",
         name="gpt-5",
         model="openai/gpt-5",
-        adapter="responses",
+        adapter="chat_completions",
         headers={
             "http-referer": "https://example.com/toolang-dev",
             "x-openrouter-title": "Toolang Dev",

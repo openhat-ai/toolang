@@ -160,6 +160,7 @@ class ModelCallStepPayload:
     base_url: str | None = None
     instruct: str | None = None
     context: str | None = None
+    reasoning_content: str | None = None
 
     @classmethod
     def from_data(cls, payload: Mapping[str, Any]) -> ModelCallStepPayload:
@@ -184,6 +185,11 @@ class ModelCallStepPayload:
             context=(
                 str(payload.get("context"))
                 if payload.get("context") is not None
+                else None
+            ),
+            reasoning_content=(
+                str(payload.get("reasoning_content"))
+                if payload.get("reasoning_content") is not None
                 else None
             ),
         )

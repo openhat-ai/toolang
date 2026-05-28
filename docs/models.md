@@ -140,9 +140,46 @@ Streaming providers emit:
 
 Current built-in model providers are:
 
+- `deepseek`
+- `google`
 - `openai`
 - `openrouter`
 - `ollama`
+
+### DeepSeek
+
+Built-in DeepSeek resolution supports:
+
+- canonical selectors such as `deepseek/deepseek-v4-flash`
+- shorthand selectors such as `deepseek-v4-flash` and `deepseek-v4-pro`
+- compatibility selectors such as `deepseek-chat` and `deepseek-reasoner`
+- explicit provider-qualified selectors such as `deepseek/deepseek-v4-pro@deepseek`
+
+The DeepSeek provider uses:
+
+- `https://api.deepseek.com`
+- `DEEPSEEK_API_KEY`
+- one stateless chat-completions adapter for execution
+- tools are disabled for `deepseek-reasoner`; use `deepseek-v4-flash` or
+  `deepseek-v4-pro` for runs that need function calling
+- thinking-mode tool calls preserve DeepSeek `reasoning_content` internally and
+  replay it on later Chat Completions requests, as required by the DeepSeek API
+
+### Google Gemini
+
+Built-in Google Gemini resolution supports:
+
+- canonical selectors such as `google/gemini-3.5-flash`
+- shorthand selectors such as `gemini-3.5-flash` and `gemini-2.5-flash`
+- explicit provider-qualified selectors such as
+  `google/gemini-3.5-flash@google`
+
+The Google Gemini provider uses:
+
+- `https://generativelanguage.googleapis.com/v1beta/openai/`
+- `GEMINI_API_KEY`
+- one stateless chat-completions adapter for execution through the Gemini
+  OpenAI-compatible API
 
 ### OpenAI
 
@@ -165,7 +202,7 @@ The OpenRouter provider uses:
 - `https://openrouter.ai/api/v1`
 - `OPENROUTER_API_KEY`
 - `GET /api/v1/models` for discovery
-- one stateless responses adapter for execution
+- one stateless chat-completions adapter for execution by default
 - default OpenRouter app attribution headers so requests appear as `Toolang`
   in OpenRouter analytics and rankings
 
