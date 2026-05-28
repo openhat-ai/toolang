@@ -40,6 +40,7 @@ from toolang.base.types.message import (
     ToolCallDelta,
     ToolCallPart,
     ToolResultPart,
+    message_text,
 )
 from toolang.execution.events import (
     PartDelta,
@@ -49,6 +50,14 @@ from toolang.execution.events import (
     RunStart,
     StepEnd,
     StepStart,
+)
+from toolang.execution.context import (
+    RunSnapshot,
+    SnapshotAgent,
+    SnapshotProgram,
+    SnapshotRun,
+    SnapshotTask,
+    SnapshotTaskServices,
 )
 from toolang.execution.records import (
     ModelCallStepPayload,
@@ -76,14 +85,6 @@ from toolang.caps import (
 from toolang.config.plugins import ChannelBinding
 from toolang.execution import execute as run_execute_module
 from toolang.execution.input import RunInput, bind_run_request
-from toolang.execution.snapshot import (
-    RunSnapshot,
-    SnapshotAgent,
-    SnapshotProgram,
-    SnapshotRun,
-    SnapshotTask,
-    SnapshotTaskServices,
-)
 from toolang.execution.runner import QueueRunner, RunOutcome, RunRequest, RunSubmission
 from toolang.execution.db import ExecutionStore, execution_db_path
 from toolang.execution.stream import RuntimeEventBus
@@ -4081,6 +4082,7 @@ def test_prepare_builds_program_into_private_lock(tmp_path: Path) -> None:
         "body_text",
         "uses",
         "structs",
+        "contexts",
         "instructs",
         "caps",
         "thunks",
@@ -5169,17 +5171,15 @@ def test_assemble_run_input_uses_thunk_user_message_for_script_runs(tmp_path: Pa
 
     bundle = RunInput.from_binding(context, bound)
 
-    assert [item.to_data() for item in bundle.messages()] == [
-        {
-            "role": "user",
-            "parts": [
-                {
-                    "type": "text",
-                    "text": "Rewrite the input for a technical audience.\n\nhello world",
-                }
-            ],
-        }
-    ]
+    messages = bundle.messages()
+    assert [item.role for item in messages] == ["user"]
+    text = message_text(messages[0].parts)
+    assert text.startswith("<context>")
+    assert f"agent_home: {toolang_root / 'agents' / 'alice'}" in text
+    assert "model_provider: openai" in text
+    assert "model_family: openai" in text
+    assert "model_name: gpt-5" in text
+    assert text.endswith("Rewrite the input for a technical audience.\n\nhello world")
 
 
 def test_assemble_run_input_keeps_thread_messages_out_of_system_instructions(tmp_path: Path) -> None:
@@ -5200,14 +5200,17 @@ def test_assemble_run_input_keeps_thread_messages_out_of_system_instructions(tmp
 
     bundle = RunInput.from_binding(context, bound)
 
-    assert [item.to_data() for item in bundle.messages()] == [
-        {
-            "role": "user",
-            "parts": [{"type": "text", "text": "hello"}],
-        }
-    ]
+    messages = bundle.messages()
+    assert [item.role for item in messages] == ["user"]
+    text = message_text(messages[0].parts)
+    assert text.startswith("<context>")
+    assert "agent_name: alice" in text
+    assert text.endswith("hello")
     instructions = bundle.instructions()
-    assert instructions == "Reply directly."
+    assert "You are the alice Toolang agent." in instructions
+    assert "Reply directly." in instructions
+    assert "<skills>" not in instructions
+    assert "<services>" not in instructions
     assert "hello" not in instructions
 
 
@@ -5242,21 +5245,80 @@ def test_assemble_run_input_expands_embedded_prompt_for_chat_message(tmp_path: P
 
     bundle = RunInput.from_binding(context, bound)
 
+    messages = bundle.messages()
+    assert [item.role for item in messages] == ["user"]
+    text = message_text(messages[0].parts)
+    assert text.startswith("<context>")
+    assert text.endswith(
+        "Summarize the user's request in a concise style.\n"
+        "Target audience: developers\n\n"
+        "Add a remote skill."
+    )
+
+
+def test_run_input_prepends_selected_context_to_user_message(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        (
+            "agent alice\n\n"
+            "context report:\n"
+            "  Agent {{runtime.agent.name}} is preparing a report.\n\n"
+            "thunk chat:\n"
+            "  context: report\n"
+        ),
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat",),
+    )
+    bound = bind_run_request(
+        context,
+        RunRequest(group="chat", origin="chat", thunk="hello"),
+    )
+
+    bundle = RunInput.from_binding(context, bound)
+
     assert [item.to_data() for item in bundle.messages()] == [
         {
             "role": "user",
             "parts": [
                 {
                     "type": "text",
-                    "text": (
-                        "Summarize the user's request in a concise style.\n"
-                        "Target audience: developers\n\n"
-                        "Add a remote skill."
-                    ),
+                    "text": "Agent alice is preparing a report.\n\nhello",
                 }
             ],
         }
     ]
+    assert bundle.debug["context_text"] == "Agent alice is preparing a report."
+
+
+def test_run_input_debug_logs_computed_prompt_bundle(tmp_path: Path, caplog) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        "agent alice\n\nthunk chat:\n  user: hello\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat",),
+    )
+    bound = bind_run_request(
+        context,
+        RunRequest(group="chat", origin="chat", thunk="hi"),
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="toolang.run"):
+        RunInput.from_binding(context, bound)
+
+    messages = [record.getMessage() for record in caplog.records if record.name == "toolang.run"]
+    assert any(message.startswith("computed prompt bundle run_id=") for message in messages)
+    assert any(message.startswith("computed prompt tools=") for message in messages)
+    assert any(message.startswith("computed prompt instructions=<runtime-instructions>") for message in messages)
+    assert any(message.startswith("computed prompt context=<context>") for message in messages)
+    assert any(message.startswith("computed prompt messages=") and '"role": "user"' in message and "hi" in message for message in messages)
 
 
 def test_chat_run_prefers_named_chat_thunk_over_main(tmp_path: Path) -> None:
@@ -5284,7 +5346,150 @@ def test_chat_run_prefers_named_chat_thunk_over_main(tmp_path: Path) -> None:
     bundle = RunInput.from_binding(context, bound)
 
     assert bundle.thunk.name == "chat"
-    assert bundle.instructions() == "Reply directly."
+    instructions = bundle.instructions()
+    assert "You are the alice Toolang agent." in instructions
+    assert "Reply directly." in instructions
+
+
+def test_program_default_instruct_overrides_runtime_default(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        (
+            "agent alice\n\n"
+            "instruct:\n"
+            "  Agent {{runtime.agent.name}} in sandbox {{runtime.sandbox}}.\n\n"
+            "thunk chat:\n"
+            "  Reply directly.\n"
+        ),
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat",),
+    )
+    bound = bind_run_request(
+        context,
+        RunRequest(group="chat", origin="chat", thunk="hello"),
+    )
+
+    instructions = RunInput.from_binding(context, bound).instructions()
+
+    assert "Agent alice in sandbox none." in instructions
+    assert "Reply directly." in instructions
+    assert "You are the alice Toolang agent." not in instructions
+
+
+def test_thunk_instruct_can_select_named_instruct(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        (
+            "agent alice\n\n"
+            "instruct reviewer:\n"
+            "  Review with {{runtime.thunk.name}}.\n\n"
+            "thunk review:\n"
+            "  instruct: reviewer\n\n"
+            "  Review the target carefully.\n"
+        ),
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=(),
+    )
+    bound = bind_run_request(
+        context,
+        RunRequest(group="script", origin="script", thunk_name="review", thunk="input"),
+    )
+
+    bundle = RunInput.from_binding(context, bound)
+
+    instructions = bundle.instructions()
+    assert "Review with review." in instructions
+    assert "You are the alice Toolang agent." not in instructions
+
+
+def test_thunk_instruct_none_suppresses_agent_instruct_layer(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        (
+            "agent alice\n\n"
+            "thunk quiet:\n"
+            "  instruct: none\n\n"
+            "  Reply directly.\n"
+        ),
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=(),
+    )
+    bound = bind_run_request(
+        context,
+        RunRequest(group="script", origin="script", thunk_name="quiet", thunk="input"),
+    )
+
+    bundle = RunInput.from_binding(context, bound)
+
+    instructions = bundle.instructions()
+    assert "<agent-instructions>" not in instructions
+    assert instructions == ""
+    assert "You are the alice Toolang agent." not in instructions
+
+
+def test_thunk_instruct_block_renders_as_agent_instruction(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        (
+            "agent alice\n\n"
+            "thunk custom:\n"
+            "  instruct:\n"
+            "    Use {{runtime.agent.name}} and {{runtime.thunk.name}}.\n\n"
+            "  Reply directly.\n"
+        ),
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=(),
+    )
+    bound = bind_run_request(
+        context,
+        RunRequest(group="script", origin="script", thunk_name="custom", thunk="input"),
+    )
+
+    bundle = RunInput.from_binding(context, bound)
+
+    instructions = bundle.instructions()
+    assert "Use alice and custom." in instructions
+
+
+def test_agent_markdown_psyche_files_change_default_behavior(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
+    _write_text(toolang_root / "psyches" / "root-style.md", "Use concise root defaults.\n")
+    _write_text(
+        toolang_root / "agents" / "alice" / "psyches" / "home-style.md",
+        "Prefer agent-home behavior.\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat",),
+    )
+    bound = bind_run_request(
+        context,
+        RunRequest(group="chat", origin="chat", thunk="hello"),
+    )
+
+    instructions = RunInput.from_binding(context, bound).instructions()
+
+    assert "<agent-instructions>" in instructions
+    assert "Use concise root defaults." in instructions
+    assert "Prefer agent-home behavior." in instructions
 
 
 def test_chat_run_uses_default_template_when_chat_thunk_is_missing(tmp_path: Path) -> None:
@@ -5317,6 +5522,9 @@ def test_chat_run_uses_default_template_when_chat_thunk_is_missing(tmp_path: Pat
         agent_name="alice",
         enabled_features=("chat",),
     )
+    (toolang_root / "psyches" / "reviewer.md").unlink()
+    (toolang_root / "skills" / "reviewer" / "SKILL.md").unlink()
+    (toolang_root / "services" / "github.md").unlink()
     bound = bind_run_request(
         context,
         RunRequest(group="chat", origin="chat", thunk="hello"),
@@ -5327,15 +5535,20 @@ def test_chat_run_uses_default_template_when_chat_thunk_is_missing(tmp_path: Pat
 
     assert bundle.thunk.name == "chat"
     assert "Script default." not in instructions
+    assert "<psyches>" in instructions
     assert "Be precise." in instructions
+    assert "<skills>" in instructions
     assert "Review carefully" in instructions
+    assert "<services>" in instructions
     assert "GitHub MCP" in instructions
-    assert "transport=http" in instructions
     assert "https://example.com/mcp" in instructions
-    assert f"- Agent home: {toolang_root / 'agents' / 'alice'}" in instructions
-    assert "- Sandbox: none" in instructions
+    assert "<tools>" not in instructions
+    assert "List configured peer agents available for agent_chat" not in instructions
+    assert "agent_chat__peers" in bundle.tools()
+    assert f"agent_home: {toolang_root / 'agents' / 'alice'}" in instructions
+    assert "sandbox: none" in instructions
     assert "Do not call tools or inspect files just to explore the environment." in instructions
-    assert "Tool Result Reuse:" in instructions
+    assert "<tool-result-reuse>" in instructions
     assert "Reuse applicable prior tool results instead of repeating the same tool call." in instructions
     assert "missing, failed, stale, expired, invalid for the current request" in instructions
 
@@ -5662,7 +5875,7 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
         store.close()
 
 
-def test_run_input_uses_text_history_and_prior_tool_context(tmp_path: Path) -> None:
+def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
@@ -5814,18 +6027,71 @@ def test_run_input_uses_text_history_and_prior_tool_context(tmp_path: Path) -> N
     messages = bundle.messages()
     instructions = bundle.instructions()
 
-    assert [item.role for item in messages] == ["user", "assistant", "user"]
-    assert [item.to_data() for item in messages] == [
-        {"role": "user", "parts": [{"type": "text", "text": "create a Linear issue"}]},
-        {"role": "assistant", "parts": [{"type": "text", "text": "created XBY-31"}]},
-        {"role": "user", "parts": [{"type": "text", "text": "again"}]},
+    assert [item.role for item in messages] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+        "tool",
+        "assistant",
+        "user",
     ]
-    assert "Prior Tool Results:" in instructions
-    assert "service_use__tool_list service=linear succeeded" in instructions
-    assert "save_issue(required: title, team; optional: description)" in instructions
-    assert "list_teams(required: none; optional: none)" in instructions
-    assert "title is required when creating an issue" in instructions
-    assert "Do not repeat this shape unless corrected" in instructions
+    assert message_text(messages[0].parts) == "create a Linear issue"
+    assert isinstance(messages[1].parts[0], ToolCallPart)
+    assert isinstance(messages[2].parts[0], ToolResultPart)
+    assert isinstance(messages[3].parts[0], ToolCallPart)
+    assert isinstance(messages[4].parts[0], ToolResultPart)
+    assert message_text(messages[5].parts) == "created XBY-31"
+    current_message = message_text(messages[6].parts)
+    assert current_message.startswith("<context>")
+    assert current_message.endswith("again")
+    assert "Prior Tool Results:" not in instructions
+    assert "service_use__tool_list service=linear succeeded" not in instructions
+
+
+def test_run_input_recall_none_disables_thread_history_and_tool_context(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        "agent alice\n\nthunk chat:\n  recall = none\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat",),
+    )
+    previous = context.store.start_run(
+        run_id="run-previous",
+        thread_id="thread-1",
+        origin="chat",
+        input=Message.user("previous"),
+    )
+    context.store.append_step(
+        run_id=previous.run_id,
+        step_index=1,
+        kind="model_call",
+        status="finished",
+        input=(RunInputRef(),),
+        output=(TextPart(text="old answer"),),
+        payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
+        started_at="2026-01-01T00:00:01Z",
+        finished_at="2026-01-01T00:00:02Z",
+    )
+    context.store.finish_run(run_id=previous.run_id, finished_at="2026-01-01T00:00:03Z")
+
+    bound = bind_run_request(
+        context,
+        RunRequest(group="chat", origin="chat", thread_id="thread-1", thunk="again"),
+    )
+    bundle = RunInput.from_binding(context, bound)
+
+    messages = bundle.messages()
+    assert [item.role for item in messages] == ["user"]
+    text = message_text(messages[0].parts)
+    assert text.startswith("<context>")
+    assert text.endswith("again")
+    assert bundle.history == ()
+    assert bundle.debug["recall"] == ["none"]
 
 
 @asynccontextmanager

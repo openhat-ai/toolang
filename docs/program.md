@@ -12,6 +12,8 @@ Current program-level constructs are:
 | `agent` | Program header declaring the agent name |
 | `use` | One external cap reference |
 | `struct` | One named structured type |
+| `context` | One context prompt template |
+| `instruct` | One agent instruction profile |
 | `prompt` | One reusable prompt definition |
 | `thunk` | One callable program entrypoint |
 
@@ -47,6 +49,72 @@ surfaces before any thunk selects them. The prepared cap has `form=inline`,
 `scope=here`, and `origin=local`.
 
 
+## Instruct Declarations
+
+`instruct` defines an agent instruction profile. It belongs to Toolang's
+provider-neutral prompt model, not to one provider's `system` or `developer`
+role. Runtime renders the selected instruct with the current model, tool, cap,
+sandbox, agent, program, thunk, and job context, then the model adapter maps the
+assembled prompt frame to the target provider API.
+
+Toolang has one built-in default agent instruct, so an empty program still has
+useful behavior. The built-in default includes selected psyches, skills,
+and services in XML-delimited sections so their
+boundaries stay explicit. Each selected capability family is split into an
+`instruction` part and an `available` list, and the whole family section is
+omitted when the selected set is empty. A program may customize that default
+with one unnamed declaration:
+
+```toolang
+instruct:
+  You are {{runtime.agent.name}}.
+  Use the selected tools only when they materially help.
+```
+
+Named instructs define reusable alternatives:
+
+```toolang
+instruct strict-json:
+  Return only JSON matching {{runtime.thunk.output}}.
+```
+
+`default` and `none` are reserved instruct names because thunk-level
+`instruct:` blocks use them as control values.
+
+`psyche` files are persistent agent-instruction fragments. To change default
+agent behavior without editing `agent.too`, add Markdown files under
+`${TOOLANG_ROOT}/psyches/` or `${TOOLANG_ROOT}/agents/<agent>/psyches/`.
+Those psyche prompts are exposed in the run template context whenever they are
+selected by the current activation and thunk cap directives. The built-in
+default instruct renders them in the agent instruction layer.
+
+
+## Context Declarations
+
+`context` defines a reusable context prompt template. Runtime renders the
+selected context with the same run context used for instruct rendering, then
+prepends it to the final user message as data. The built-in default context
+uses an XML-delimited `<context>` section and includes agent name, agent home,
+sandbox, and model identity.
+
+An unnamed declaration is the program default:
+
+```toolang
+context:
+  Current agent: {{runtime.agent.name}}
+```
+
+Named contexts define reusable alternatives:
+
+```toolang
+context report:
+  Include report constraints before the current request.
+```
+
+`default` and `none` are reserved context names because thunk-level `context:`
+blocks use them as control values.
+
+
 ## Thunk
 
 A thunk is one callable entrypoint.
@@ -57,14 +125,17 @@ Each thunk has three parts:
 | --- | --- |
 | `signature` | Name, params, and return contract |
 | `directives` | Model and capability selection for that thunk |
-| `body` | Thunk-specific instructions |
+| `blocks` | Instruct, context, user, assistant, and tool blocks |
 
 Recommended shape:
 
 ```toolang
-thunk [name](params...) [-> ReturnType]
+thunk [name](params...) [-> ReturnType]:
   directives...
-  ...
+  context: default
+  instruct: default
+  user:
+    ...
 ```
 
 
@@ -83,13 +154,15 @@ Thunk names follow these rules:
 Examples:
 
 ```toolang
-thunk main(input)
-  Help the user directly.
+thunk main(input: Message):
+  user:
+    Help the user directly.
 ```
 
 ```toolang
-thunk(input)
-  Help the user directly.
+thunk(input: Message):
+  user:
+    Help the user directly.
 ```
 
 These two forms are equivalent.
@@ -113,13 +186,15 @@ When present, it means the thunk accepts one canonical `Message`.
 Examples:
 
 ```toolang
-thunk chat(input)
-  Reply to the current user message.
+thunk chat(input: Message):
+  user:
+    Reply to the current user message.
 ```
 
 ```toolang
-thunk diagnose(input, target?, mode?)
-  Use the message together with named params.
+thunk diagnose(input: Message, target?: Text, mode?: Text):
+  user:
+    Use the message together with named params.
 ```
 
 ### Named Params
@@ -130,20 +205,21 @@ Parameter rules:
 
 | Rule | Meaning |
 | --- | --- |
-| no type annotation | default type is `string` |
 | `?` suffix | optional param |
-| explicit type | overrides the default `string` type |
+| explicit type | required for every parameter |
 
 Examples:
 
 ```toolang
-thunk deploy(env, version?)
-  Deploy the current project.
+thunk deploy(env: Text, version?: Text):
+  user:
+    Deploy the current project.
 ```
 
 ```toolang
-thunk deploy(env, dry_run?: boolean, retries?: number)
-  Deploy the current project.
+thunk deploy(env: Text, dry_run?: Boolean, retries?: Number):
+  user:
+    Deploy the current project.
 ```
 
 
@@ -153,45 +229,47 @@ Built-in parameter types are:
 
 | Type | Meaning |
 | --- | --- |
-| `string` | One string value |
-| `number` | One JSON number |
-| `boolean` | One boolean value |
-| `json` | One arbitrary JSON-compatible value |
-| `path` | One filesystem path |
-| `artifact` | One saved artifact descriptor |
+| `Text` | One string value |
+| `Number` | One JSON number |
+| `Boolean` | One boolean value |
+| `Json` | One arbitrary JSON-compatible value |
+| `Path` | One filesystem path |
+| `Artifact` | One saved artifact descriptor |
+| `Message` | One full canonical message |
 | `T[]` | One array of `T` |
 | `StructName` | One structured value validated against a declared `struct` |
 
-`input` is not typed with these forms. It always means one canonical
-`Message`.
+`input` must be typed as `Message`.
 
 
 ### Returns
 
-The default thunk return type is `message`.
+The default thunk return type is `Message`.
 
 That means:
 
 ```toolang
-thunk chat(input)
-  Reply directly.
+thunk chat(input: Message):
+  user:
+    Reply directly.
 ```
 
 is equivalent to:
 
 ```toolang
-thunk chat(input) -> message
-  Reply directly.
+thunk chat(input: Message) -> Message:
+  user:
+    Reply directly.
 ```
 
 Recommended return contracts are:
 
 | Return Type | Meaning |
 | --- | --- |
-| `message` | One full canonical message |
-| `text` | One text projection |
-| `json` | One arbitrary JSON value |
-| `artifact` | One saved artifact descriptor |
+| `Message` | One full canonical message |
+| `Text` | One text projection |
+| `Json` | One arbitrary JSON value |
+| `Artifact` | One saved artifact descriptor |
 | `StructName` | One structured output value |
 
 
@@ -202,16 +280,16 @@ Recommended return contracts are:
 Example:
 
 ```toolang
-struct ReviewFinding
-  path: string
-  line: number?
-  severity: string
-  message: string
+struct ReviewFinding:
+  path: Text
+  line?: Number
+  severity: Text
+  message: Text
 
-struct ReviewResult
-  summary: string
+struct ReviewResult:
+  summary: Text
   findings: ReviewFinding[]
-  patch: artifact?
+  patch?: Artifact
 ```
 
 Structs are used by:
@@ -226,7 +304,7 @@ Struct field rules:
 | Rule | Meaning |
 | --- | --- |
 | `name: Type` | Required field |
-| `name: Type?` | Optional field |
+| `name?: Type` | Optional field |
 
 
 ## Thunk Directives
@@ -245,6 +323,7 @@ Recommended directives are:
 | `tools = ...` | Keep only matching tools from the current activation set |
 | `hands = ...` | Keep only matching sub-thunks this thunk may call |
 | `handoffs = ...` | Keep only matching thunks this thunk may transfer control to |
+| `recall = ...` | Select retrieved message sources for model-call assembly |
 
 Capability directives use names. `models = ...` uses model selectors such as
 route-neutral refs, aliases, globs, and bracket filters.
@@ -253,15 +332,17 @@ Routing directives use thunk names.
 Example:
 
 ```toolang
-thunk review(input, path?: path) -> ReviewResult
+thunk review(input: Message, path?: Path) -> ReviewResult:
   models = gpt-5
   psyches += rigorous
   skills += review, patch
   services += github
   tools = shell, service_use
   hands += summarize_findings
+  recall = history, memory
 
-  Review the target and return actionable findings.
+  user:
+    Review the target and return actionable findings.
 ```
 
 ### Scalar and Set Directives
@@ -294,6 +375,105 @@ Rules:
 
 `=` is a keep-only filter. It does not add resources that were not already in
 the current set.
+
+`models` and `recall` are scalar directives and support only `=`.
+
+`recall` values are:
+
+| Value | Meaning |
+| --- | --- |
+| `default` | Use runtime recall policy |
+| `none` | Disable retrieved history and memory for this thunk |
+| `history` | Include thread history |
+| `memory` | Include memory retrieval |
+| `history, memory` | Include both explicit sources |
+
+
+## Thunk Instruct Blocks
+
+Each thunk may declare at most one `instruct:` block. If it omits the block,
+Toolang behaves as if the thunk declared `instruct: default`.
+
+Supported forms are:
+
+| Form | Meaning |
+| --- | --- |
+| `instruct: default` | Use the program default agent instruct, or the runtime built-in default if the program has no unnamed instruct. The runtime built-in default includes selected psyches, skills, and services in XML-delimited sections |
+| `instruct: none` | Do not apply an agent instruct profile for this thunk; runtime instructions, messages, and context still apply |
+| `instruct: name` | Use the named program instruct as this thunk's agent instruct profile |
+| indented or fenced `instruct:` block | Use this block text as a thunk-local agent instruct profile |
+
+Examples:
+
+```toolang
+thunk review(input: Message):
+  instruct: strict-json
+
+  user:
+    Review the target carefully.
+```
+
+```toolang
+thunk quiet(input: Message):
+  instruct: none
+
+  user:
+    Reply without an agent instruct profile.
+```
+
+```toolang
+thunk summarize(input: Message, audience?: Text):
+  instruct:
+    You are {{runtime.agent.name}}.
+    Summarize for {{audience}}.
+
+  user:
+    Summarize the input.
+```
+
+`system:` is intentionally not a Toolang block. Use `instruct:` for agent
+instructions and `context:` for data. Adapters decide whether assembled
+instructions map to OpenAI `developer`, Anthropic `system`, Gemini
+`system_instruction`, Mistral `system`, or another provider-specific shape.
+`user:` is a user-message template, not an instruction layer.
+
+
+## Thunk Context Blocks
+
+Each thunk may declare at most one `context:` block. If it omits the block,
+Toolang behaves as if the thunk declared `context: default`.
+
+Supported forms are:
+
+| Form | Meaning |
+| --- | --- |
+| `context: default` | Use the program default context, or the runtime built-in default context if the program has no unnamed context |
+| `context: none` | Do not prepend a context prompt for this thunk |
+| `context: name` | Use the named program context |
+| indented or fenced `context:` block | Use this block text as a thunk-local context prompt |
+
+Example:
+
+```toolang
+thunk report(input: Message):
+  context: report
+  user:
+    Write the report.
+```
+
+
+## Thunk Message Blocks
+
+Message blocks are appended after recall-selected history in declaration order.
+A thunk may declare any number of `user:`, `assistant:`, and `tool:` blocks.
+
+```toolang
+thunk simulate(input: Message):
+  recall = none
+  user: hello
+  assistant: hi
+  tool: cached result
+```
 
 
 ## Prompts
@@ -433,12 +613,13 @@ Toolang uses these contract and payload layers:
 | Layer | Role |
 | --- | --- |
 | `runtime instructions` | Execution protocol and hard constraints |
-| `psyche text` | Long-lived default behavior |
-| `thunk body` | Entrypoint-specific execution behavior |
+| `agent instructions` | Built-in defaults or the selected instruct profile. The built-in default consumes selected psyche, skill, and service instruction fragments from the run template context |
+| `tool definitions` | Selected tool names, descriptions, and JSON schemas passed separately through the model API |
+| `context blocks` | Files, retrieved docs, prior tool results, and other data; untrusted by default |
 | `user message` | Current chat objective |
 | `task body` | Current task objective |
 | `chore body` | Current chore objective |
-| `assembled instructions` | Final model-facing instruction text |
+| `assembled prompt frame` | Provider-neutral runtime payload before adapter mapping |
 
 Recommended precedence:
 
@@ -446,7 +627,9 @@ Recommended precedence:
 | --- | --- |
 | runtime over thunk | Runtime protocol cannot be overridden by one thunk |
 | thunk directives over activation defaults | One thunk may narrow or override inherited execution config |
-| thunk over psyche | One thunk may be more specific than one psyche |
+| instruct over built-in default | A program or thunk instruct customizes the default agent profile |
+| template controls selected caps | Selected psyches, skills, and services are available in the run template context; the selected instruct or context template decides whether to render them |
+| context is data | Context blocks must not be treated as executable instructions |
 | objective payload is separate | `user message`, `task body`, and `chore body` define the current objective, not the execution protocol |
 
 This gives these practical roles:
@@ -464,30 +647,33 @@ This gives these practical roles:
 One conversational thunk:
 
 ```toolang
-thunk chat(input)
-  Help the user in an ongoing conversation.
+thunk chat(input: Message):
+  user:
+    Help the user in an ongoing conversation.
 ```
 
 One structured script thunk:
 
 ```toolang
-struct DeployResult
-  url: string
-  version: string
-  notes: string[]
+struct DeployResult:
+  url: Text
+  version: Text
+  notes: Text[]
 
-thunk deploy(env, version?, dry_run?: boolean) -> DeployResult
+thunk deploy(env: Text, version?: Text, dry_run?: Boolean) -> DeployResult:
   models = gpt-5
   tools = shell
 
-  Deploy the current project.
+  user:
+    Deploy the current project.
 ```
 
 One mixed thunk:
 
 ```toolang
-thunk diagnose(input, target?: path, mode?) -> json
+thunk diagnose(input: Message, target?: Path, mode?: Text) -> Json:
   skills += review
 
-  Use the current message and named params together.
+  user:
+    Use the current message and named params together.
 ```

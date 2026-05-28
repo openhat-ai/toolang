@@ -22,7 +22,7 @@ from typing import Iterator, Literal
 
 from toolang.base.protocols.sandbox import AgentSandbox
 from toolang.base.types.sandbox import SandboxState
-from .progress import ProgressSink, emit_progress
+from .common.progress import ProgressSink, emit_progress
 
 
 @dataclass(frozen=True, slots=True)

@@ -24,7 +24,7 @@ from toolang.cli.progress import CliProgress
 from toolang.config.log import DEFAULT_AGENT_LOG_SPEC
 from toolang.config.log_spec import PY_LOG_ENV_VAR
 from toolang.execution.events import RunStart
-from toolang.progress import ProgressEvent
+from toolang.common.progress import ProgressEvent
 from toolang import work
 from toolang.execution.db import ExecutionStore, execution_db_path
 runner = CliRunner()
@@ -2709,6 +2709,92 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
     assert result.stdout.index("PID") < result.stdout.index("API")
     assert result.stdout.index("WebUI") < result.stdout.index("Started")
     assert result.stdout.index("Started") < result.stdout.index("Created")
+
+
+def test_cli_info_reads_cap_counts_from_prepared_locks(tmp_path: Path, monkeypatch) -> None:
+    from toolang.state.prepared import write_prepared_lock
+
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="shared",
+        kind="skill",
+        name="hello",
+        text="---\ndescription: Say hello.\n---\n# Hello\n",
+    )
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="service",
+        name="github",
+        text=(
+            "---\n"
+            "description: Example MCP service\n"
+            "transport: http\n"
+            "target: https://example.com/mcp\n"
+            "---\n"
+        ),
+    )
+    durable = caps.scan_durable_state(toolang_root, "alice")
+    shared_lock, shared_files = caps.build_visibility_lock(durable, visibility="shared")
+    private_lock, private_files = caps.build_visibility_lock(durable, visibility="private")
+    write_prepared_lock(toolang_root, shared_lock, files=shared_files)
+    write_prepared_lock(toolang_root, private_lock, files=private_files)
+
+    def fail_list_entries(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("info should use prepared locks for cap counts")
+
+    monkeypatch.setattr(caps, "list_entries", fail_list_entries)
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(toolang_root), "info", "alice"],
+        env={},
+    )
+
+    assert result.exit_code == 0
+    assert "0 psyches" in result.stdout
+    assert "1 skill" in result.stdout
+    assert "1 service" in result.stdout
+    assert "0 prompts" in result.stdout
+
+
+def test_cli_info_rebuilds_missing_prepared_lock(tmp_path: Path, monkeypatch) -> None:
+    import shutil
+
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="hello",
+        text="---\ndescription: Say hello.\n---\n# Hello\n",
+    )
+    prepared = cli.agent_up.prepare_agent(toolang_root=toolang_root, agent_name="alice")
+    private_lock_path = prepared.private_lock.lock_path
+    assert private_lock_path.is_file()
+    shutil.rmtree(private_lock_path.parent)
+
+    def fail_list_entries(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("info should rebuild prepared locks instead of scanning entries")
+
+    monkeypatch.setattr(caps, "list_entries", fail_list_entries)
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(toolang_root), "info", "alice"],
+        env={},
+    )
+
+    assert result.exit_code == 0
+    assert "1 skill" in result.stdout
+    assert private_lock_path.is_file()
+    assert "Prepared 1 cap" in result.stderr
 
 
 def test_cli_info_for_stopped_agent_shows_created_only(tmp_path: Path) -> None:

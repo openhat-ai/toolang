@@ -75,3 +75,4 @@ def test_load_shared_lock_reads_form_source_entries(tmp_path: Path) -> None:
     assert len(lock.entries) == 1
     assert lock.entries[0].ref == "github://by3gus/agents/skills/pdf-processing@main"
     assert lock.entries[0].source.form == "wired"
+    assert lock.entries[0].content == ""

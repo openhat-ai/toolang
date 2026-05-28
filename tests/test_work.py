@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from toolang import work
-from toolang.ids import LOCAL_ID_FAMILY, decode_id
+from toolang.common.ids import LOCAL_ID_FAMILY, decode_id
 
 
 def test_task_defaults_to_active_todo_and_stays_active_after_finish(tmp_path) -> None:

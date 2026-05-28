@@ -16,7 +16,7 @@ from toolang.base.types.tool import ToolContext
 from toolang.base.utils.function_tools import create_function_tool, tool
 from toolang.execution.db import ExecutionStore, utc_now
 from toolang.execution.records import ModelCallStepPayload, RunInputRef, ThreadPeer, ThreadRecord
-from toolang.ids import LOCAL_ID_FAMILY, RUN_ID_FAMILY, allocate_id
+from toolang.common.ids import LOCAL_ID_FAMILY, RUN_ID_FAMILY, allocate_id
 
 DEFAULT_TIMEOUT_SEC = 60
 DEFAULT_MAX_RESPONSE_CHARS = 20_000

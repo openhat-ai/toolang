@@ -96,6 +96,7 @@ class PreparedEntry:
     path: str
     source: PreparedSource
     meta: dict[str, object]
+    content: str = ""
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -106,6 +107,7 @@ class PreparedEntry:
             "path": self.path,
             "source": self.source.to_data(),
             "meta": dict(self.meta),
+            "content": self.content,
         }
 
     def to_snapshot(self) -> dict[str, object]:
@@ -121,6 +123,7 @@ class PreparedEntry:
             path=str(data["path"]),
             source=PreparedSource.from_data(cast(dict[str, object], data["source"])),
             meta=dict(cast(dict[str, object], data.get("meta", {}))),
+            content=str(data.get("content", "")),
         )
 
 
@@ -576,7 +579,7 @@ def _parse_github_ref(ref: str) -> dict[str, object]:
 def _object_manifest(entry: PreparedEntry, *, toolang_root: Path) -> dict[str, object]:
     return {
         "meta": dict(entry.meta),
-        "content": _entry_content(entry, toolang_root=toolang_root),
+        "content": entry.content or _entry_content(entry, toolang_root=toolang_root),
     }
 
 
@@ -650,6 +653,7 @@ def _entry_from_prepared_item(
     )
     object_data = cast(dict[str, object], item.get("object", {}))
     meta = dict(cast(dict[str, object], object_data.get("meta", {})))
+    content = object_data.get("content")
     origin = cast(dict[str, object], item.get("origin", {}))
     raw_line = origin.get("line")
     line = raw_line if isinstance(raw_line, int) else None
@@ -668,6 +672,7 @@ def _entry_from_prepared_item(
             line=line,
         ),
         meta=meta,
+        content=content if isinstance(content, str) else "",
     )
 
 

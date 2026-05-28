@@ -2,7 +2,7 @@
 
 This document defines the Toolang-owned id families and allocator model.
 
-This design is implemented in `toolang.ids` and is used for local task ids,
+This design is implemented in `toolang.common.ids` and is used for local task ids,
 chore ids, Toolang-owned local thread ids, and run ids.
 
 
@@ -177,7 +177,7 @@ keeping the directory compact.
 
 ## Current API
 
-`toolang.ids` currently exposes:
+`toolang.common.ids` currently exposes:
 
 - `IdFamily`
 - `LOCAL_ID_FAMILY`

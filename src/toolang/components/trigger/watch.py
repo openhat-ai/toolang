@@ -17,7 +17,7 @@ from ...caps import (
     visibility_input_fingerprint,
     visibility_lock_content_fingerprint,
 )
-from ...progress import ProgressSink, emit_progress
+from ...common.progress import ProgressSink, emit_progress
 from ...execution.records import UpdateKind
 from ...state.durable import DurableState, is_durable_path, scan_durable_state
 from ...state.live import load_live_state
