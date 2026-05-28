@@ -94,7 +94,7 @@ from toolang.components.router._streaming import ShutdownAwareStreamingResponse
 from toolang.components.trigger import poll, pulse, watch
 from toolang.state.durable import scan_durable_state
 from toolang.state.live import load_live_state
-from toolang.state.prepared import load_prepared_state, write_prepared_lock
+from toolang.state.prepared import PreparedState, load_prepared_state, write_prepared_lock
 from toolang.loops.basic import BasicLoop
 from toolang.up import load_model_adapters
 from toolang import up as up_module
@@ -3996,6 +3996,218 @@ def test_prepare_reuses_private_remote_caps_when_shared_inputs_change(
     watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
 
     assert fetches == ["github://acme/agents/skills/pdf@main"]
+
+
+def test_prepare_reuses_private_remote_caps_when_local_cap_changes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    fetches: list[str] = []
+
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+
+    def fake_fetch(ref):
+        fetches.append(ref.render())
+        return {"SKILL.md": b"---\ndescription: PDF\n---\n# PDF\n"}
+
+    monkeypatch.setattr(caps, "_fetch_github_directory", fake_fetch)
+    add_remote_entry(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        ref="acme/pdf",
+    )
+    watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+
+    monkeypatch.setattr(
+        caps,
+        "_fetch_github_directory",
+        lambda ref: pytest.fail(f"unexpected remote fetch: {ref.render()}"),
+    )
+    put_local_entry(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="prompt",
+        name="style",
+        body="Use a direct style.",
+    )
+    prepared = watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+
+    assert fetches == ["github://acme/agents/skills/pdf@main"]
+    assert [(entry.kind, entry.name) for entry in prepared.private_lock.entries] == [
+        ("prompt", "style"),
+        ("skill", "pdf"),
+    ]
+
+
+def test_concurrent_agent_prepare_reuses_shared_lock_after_another_agent_updates(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    fetches: list[str] = []
+    fetch_lock = threading.Lock()
+
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+
+    agents.create_agent(toolang_root, "alice")
+    agents.create_agent(toolang_root, "bob")
+    watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+    watch.build_prepared_state(scan_durable_state(toolang_root, "bob"))
+    add_remote_entry(
+        toolang_root,
+        "default",
+        visibility="shared",
+        kind="prompt",
+        ref="acme/style",
+    )
+
+    def fake_fetch(ref) -> bytes:
+        with fetch_lock:
+            fetches.append(ref.render())
+        time.sleep(0.05)
+        return b"Use direct language.\n"
+
+    original_load_prepared_optional = watch._load_prepared_optional
+    ready = threading.Barrier(2)
+
+    def delayed_load_prepared_optional(root: Path, agent_name: str):
+        prepared = original_load_prepared_optional(root, agent_name)
+        if agent_name in {"alice", "bob"}:
+            ready.wait(timeout=2.0)
+        return prepared
+
+    monkeypatch.setattr(caps, "_fetch_github_file", fake_fetch)
+    monkeypatch.setattr(watch, "_load_prepared_optional", delayed_load_prepared_optional)
+
+    results: list[object] = []
+    errors: list[BaseException] = []
+
+    def prepare(agent_name: str) -> None:
+        try:
+            results.append(watch.build_prepared_state(scan_durable_state(toolang_root, agent_name)))
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=prepare, args=(agent_name,)) for agent_name in ("alice", "bob")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2.0)
+
+    assert not any(thread.is_alive() for thread in threads)
+    assert errors == []
+    assert fetches == ["github://acme/agents/prompts/style.md@main"]
+    assert len(results) == 2
+    assert all(len(cast(PreparedState, result).shared_lock.entries) == 1 for result in results)
+
+
+def test_prepare_reuses_program_ref_caps_when_inline_program_changes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    fetches: list[str] = []
+
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+
+    def fake_fetch(ref):
+        fetches.append(ref.render())
+        return b"Remote psyche body.\n"
+
+    monkeypatch.setattr(caps, "_fetch_github_file", fake_fetch)
+    agents.create_agent(toolang_root, "alice")
+    program_path = toolang_root / "agents" / "alice" / "agent.too"
+    program_path.write_text(
+        "agent alice\n\nuse psyche github://acme/agents/psyches/steady.md@main\n",
+        encoding="utf-8",
+    )
+    watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+    assert fetches == ["github://acme/agents/psyches/steady.md@main"]
+
+    fetches.clear()
+    program_path.write_text(
+        program_path.read_text(encoding="utf-8") + "\npsyche local:\n  Inline body.\n",
+        encoding="utf-8",
+    )
+    watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+
+    assert fetches == []
+
+
+def test_prepare_fetches_only_changed_program_ref_cap(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    fetches: list[str] = []
+
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+
+    def fake_fetch(ref):
+        fetches.append(ref.render())
+        return b"Remote psyche body.\n"
+
+    monkeypatch.setattr(caps, "_fetch_github_file", fake_fetch)
+    agents.create_agent(toolang_root, "alice")
+    program_path = toolang_root / "agents" / "alice" / "agent.too"
+    program_path.write_text(
+        "agent alice\n\n"
+        "use psyche github://acme/agents/psyches/steady.md@main\n"
+        "use psyche github://acme/agents/psyches/change.md@main\n",
+        encoding="utf-8",
+    )
+    watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+    assert sorted(fetches) == [
+        "github://acme/agents/psyches/change.md@main",
+        "github://acme/agents/psyches/steady.md@main",
+    ]
+
+    fetches.clear()
+    program_path.write_text(
+        program_path.read_text(encoding="utf-8").replace(
+            "github://acme/agents/psyches/change.md@main",
+            "github://acme/agents/psyches/changed.md@main",
+        ),
+        encoding="utf-8",
+    )
+    watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+
+    assert fetches == ["github://acme/agents/psyches/changed.md@main"]
+
+
+def test_list_entries_reuses_prepared_program_ref_resolution(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_fetch_github_file", lambda ref: b"Remote psyche body.\n")
+    agents.create_agent(toolang_root, "alice")
+    program_path = toolang_root / "agents" / "alice" / "agent.too"
+    program_path.write_text(
+        "agent alice\n\nuse psyche acme/steady\n",
+        encoding="utf-8",
+    )
+    watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+
+    monkeypatch.setattr(
+        caps,
+        "_github_repo_default_branch",
+        lambda owner, repo: pytest.fail(f"unexpected remote branch lookup: {owner}/{repo}"),
+    )
+    entries = caps.list_entries(toolang_root, "alice", visibility="private", kinds={"psyche"})
+
+    assert [(entry.name, entry.ref) for entry in entries] == [
+        ("steady", "github://acme/agents/psyches/steady.md@main")
+    ]
 
 
 def test_prepare_refetches_remote_caps_when_prepared_output_does_not_match_lock(

@@ -21,6 +21,7 @@ import toolang.cli.main as cli
 import toolang.cli.caps_main as caps_cli
 import toolang.cli.caps as caps_commands
 from toolang.cli.progress import CliProgress
+from toolang.components.trigger import watch
 from toolang.config.log import DEFAULT_AGENT_LOG_SPEC
 from toolang.config.log_spec import PY_LOG_ENV_VAR
 from toolang.execution.events import RunStart
@@ -4722,7 +4723,7 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     assert new_result.stdout.strip() == (
         f"Created skill reviewer: {toolang_root / 'agents' / 'alice' / 'skills' / 'reviewer' / 'SKILL.md'}"
     )
-    assert "Resolved 1 caps" in new_result.stderr
+    assert new_result.stderr == ""
     assert (
         toolang_root / "agents" / "alice" / "skills" / "reviewer" / "SKILL.md"
     ).read_text(encoding="utf-8").startswith(
@@ -4761,7 +4762,7 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     assert edit_result.stdout.strip() == (
         f"Updated skill reviewer: {toolang_root / 'agents' / 'alice' / 'skills' / 'reviewer' / 'SKILL.md'}"
     )
-    assert "Resolved 1 caps" in edit_result.stderr
+    assert edit_result.stderr == ""
     assert (
         toolang_root / "agents" / "alice" / "skills" / "reviewer" / "SKILL.md"
     ).read_text(encoding="utf-8") == edited_text
@@ -4792,7 +4793,7 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     assert delete_result.stdout.strip() == (
         f"Deleted skill reviewer: {toolang_root / 'agents' / 'alice' / 'skills' / 'reviewer'}"
     )
-    assert "Resolved 0 caps" in delete_result.stderr
+    assert delete_result.stderr == ""
     assert not (toolang_root / "agents" / "alice" / "skills" / "reviewer").exists()
 
     missing_result = _invoke_caps_app(
@@ -4802,6 +4803,52 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     )
     assert missing_result.exit_code == 1
     assert "Skill reviewer not found" in missing_result.stderr
+
+
+def test_cli_cap_local_new_reuses_existing_remote_cap_outputs(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    fetches: list[str] = []
+
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+
+    def fake_fetch(ref):
+        fetches.append(ref.render())
+        return {"SKILL.md": b"---\ndescription: PDF\n---\n# PDF\n"}
+
+    monkeypatch.setattr(caps, "_fetch_github_directory", fake_fetch)
+    add_result = _invoke_caps_app(
+        ["skill", "add", "acme/pdf"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    assert add_result.exit_code == 0
+    assert fetches == ["github://acme/agents/skills/pdf@main"]
+
+    monkeypatch.setattr(
+        caps,
+        "_fetch_github_directory",
+        lambda ref: pytest.fail(f"unexpected remote fetch: {ref.render()}"),
+    )
+    monkeypatch.setattr(
+        cli.click,
+        "edit",
+        lambda *_args, **_kwargs: (
+            "---\n"
+            "description: Review code\n"
+            "---\n"
+            "# Reviewer\n\n"
+            "Review code carefully.\n"
+        ),
+    )
+    new_result = _invoke_caps_app(
+        ["skill", "new", "reviewer"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert new_result.exit_code == 0
+    assert new_result.stderr == ""
 
 
 def test_cli_cap_remote_add_reports_not_found(tmp_path: Path, monkeypatch) -> None:
@@ -4851,6 +4898,57 @@ def test_cli_cap_add_preserves_unrelated_config_sections(tmp_path: Path, monkeyp
     )
 
 
+def test_cli_remote_cap_add_remove_reuses_existing_wired_outputs(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    fetches: list[str] = []
+
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+
+    def fake_fetch(ref):
+        fetches.append(ref.render())
+        return b"Remote psyche body.\n"
+
+    monkeypatch.setattr(caps, "_fetch_github_file", fake_fetch)
+    caps.add_remote_entry(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="psyche",
+        ref="github://bench/agents/psyches/old.md@main",
+    )
+    prepared_result = _invoke_caps_app(
+        ["psyche", "list"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    assert prepared_result.exit_code == 0
+    assert fetches == ["github://bench/agents/psyches/old.md@main"]
+
+    fetches.clear()
+    add_result = _invoke_caps_app(
+        ["psyche", "add", "github://bench/agents/psyches/new.md@main"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert add_result.exit_code == 0
+    assert "Resolved 1 caps" in add_result.stderr
+    assert "Updated 1 caps" in add_result.stderr
+    assert fetches == ["github://bench/agents/psyches/new.md@main"]
+
+    fetches.clear()
+    remove_result = _invoke_caps_app(
+        ["psyche", "remove", "old"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert remove_result.exit_code == 0
+    assert remove_result.stderr == ""
+    assert fetches == []
+
+
 def test_cli_cap_new_cancel_does_not_create(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     captured: dict[str, object] = {}
@@ -4886,6 +4984,69 @@ def test_cli_cap_new_unchanged_template_does_not_create(tmp_path: Path, monkeypa
     assert result.exit_code == 0
     assert result.stdout == "No changes\n"
     assert not (toolang_root / "prompts" / "rewrite.md").exists()
+
+
+def test_cli_cap_new_cancel_does_not_resolve_program_remote_uses(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    (toolang_root / "agents" / "alice").mkdir(parents=True)
+    (toolang_root / "agents" / "alice" / "agent.too").write_text(
+        "agent alice\n\nuse skill briceyan/pdf-processing\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cli.click, "edit", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        caps,
+        "_github_repo_default_branch",
+        lambda owner, repo: pytest.fail(f"unexpected remote branch lookup: {owner}/{repo}"),
+    )
+
+    result = _invoke_caps_app(
+        ["psyche", "new", "add3"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == "No changes\n"
+    assert not (toolang_root / "agents" / "alice" / "psyches" / "add3.md").exists()
+
+
+def test_cli_cap_new_save_does_not_resolve_program_remote_uses(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    (toolang_root / "agents" / "alice").mkdir(parents=True)
+    (toolang_root / "agents" / "alice" / "agent.too").write_text(
+        "agent alice\n\nuse skill briceyan/pdf-processing\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        caps,
+        "_fetch_github_directory",
+        lambda ref: {"SKILL.md": b"---\ndescription: PDF\n---\n# PDF\n"},
+    )
+    watch.build_prepared_state(caps.scan_durable_state(toolang_root, "alice"))
+
+    monkeypatch.setattr(cli.click, "edit", lambda *_args, **_kwargs: "Saved psyche.\n")
+    monkeypatch.setattr(
+        caps,
+        "_github_repo_default_branch",
+        lambda owner, repo: pytest.fail(f"unexpected remote branch lookup: {owner}/{repo}"),
+    )
+
+    result = _invoke_caps_app(
+        ["psyche", "new", "add4"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == (
+        f"Created psyche add4: {toolang_root / 'agents' / 'alice' / 'psyches' / 'add4.md'}"
+    )
+    assert (toolang_root / "agents" / "alice" / "psyches" / "add4.md").read_text(
+        encoding="utf-8"
+    ) == "Saved psyche.\n"
 
 
 def test_cli_cap_new_supports_named_template(tmp_path: Path, monkeypatch) -> None:
