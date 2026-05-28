@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from toolang.base.error import ToolangError
-from toolang.base.protocols.model_adapter import ModelAdapter
+from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.message import (
     AudioPart,
     FilePart,

@@ -28,7 +28,7 @@ from uvicorn.main import STARTUP_FAILURE
 from . import agents, caps as cap_store
 from toolang.base.protocols.channel import AgentChannel
 from toolang.base.protocols.model import ModelProvider
-from toolang.base.protocols.model_adapter import ModelAdapter
+from toolang.base.protocols.model import ModelAdapter
 from toolang.base.protocols.sandbox import AgentSandbox
 from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.channel import ChannelContext, InboundDelivery
@@ -72,7 +72,7 @@ from .components.registry import (
     normalize_component_names,
 )
 from .components.trigger import poll, pulse, watch
-from .progress import ProgressSink
+from .common.progress import ProgressSink
 from .state.durable import scan_durable_state
 from .state.live import LiveState, load_live_state
 from .state.prepared import PreparedEntry, PreparedState
@@ -81,7 +81,7 @@ from .models.config import (
     load_model_aliases,
     load_model_provider_configs,
 )
-from .models.selectors import split_model_selectors
+from .models.resolution import split_model_selectors
 from .plugin import (
     PluginInfo,
     create_plugin,

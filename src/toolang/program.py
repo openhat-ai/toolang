@@ -26,15 +26,15 @@ FIELD_RE = re.compile(
 )
 DIRECTIVE_RE = re.compile(
     r"^(?P<indent>[ \t]*)(?P<key>model|models|tool|tools|skill|skills|service|services|"
-    r"psyche|psyches|hands|handoffs)(?P<space>[ \t]*)(?P<op>=|\+=|-=)"
+    r"psyche|psyches|hands|handoffs|recall)(?P<space>[ \t]*)(?P<op>=|\+=|-=)"
 )
 LEGACY_DELEGATES_RE = re.compile(r"^[ \t]*delegates[ \t]*(?:=|\+=|-=)")
 TOP_LEVEL_RE = re.compile(
-    r"^(use|struct|psyche|skill|service|prompt|instruct|thunk)\b"
+    r"^(use|struct|psyche|skill|service|prompt|context|instruct|thunk)\b"
 )
-OverlayKind = Literal["model", "tool", "psyche", "skill", "service", "hand", "handoff"]
+OverlayKind = Literal["model", "tool", "psyche", "skill", "service", "hand", "handoff", "recall"]
 OverlayOperator = Literal["set", "add", "remove"]
-MessageBlockKind = Literal["instruct", "system", "user", "assistant", "tool"]
+MessageBlockKind = Literal["context", "instruct", "user", "assistant", "tool"]
 TREE_SITTER_TYPE_ALIASES = {
     "string": "Text",
     "text": "Text",
@@ -95,6 +95,14 @@ class InstructBlock:
 
 
 @dataclass(slots=True)
+class ContextBlock:
+    name: str | None
+    body: str
+    span: SourceSpan
+    language: str | None = None
+
+
+@dataclass(slots=True)
 class StructFieldDecl:
     name: str
     type_name: str
@@ -131,6 +139,8 @@ class Thunk:
     params: list[ParamDecl] = field(default_factory=list)
     output: str | None = None
     overlays: tuple[ThunkOverlay, ...] = ()
+    context: MessageBlock | None = None
+    instruct: MessageBlock | None = None
     messages: tuple[MessageBlock, ...] = ()
     span: SourceSpan = field(default_factory=lambda: SourceSpan(0))
 
@@ -144,7 +154,20 @@ class Thunk:
         return tuple(item for item in self.overlays if item.kind == kind)
 
     def message_blocks(self, kind: MessageBlockKind) -> tuple[MessageBlock, ...]:
-        return tuple(item for item in self.messages if item.kind == kind)
+        blocks: list[MessageBlock] = []
+        if self.context is not None and kind == "context":
+            blocks.append(self.context)
+        if self.instruct is not None and kind == "instruct":
+            blocks.append(self.instruct)
+        blocks.extend(item for item in self.messages if item.kind == kind)
+        return tuple(blocks)
+
+    @property
+    def directives(self) -> tuple[ThunkOverlay, ...]:
+        return self.overlays
+
+    def directives_for(self, kind: OverlayKind) -> tuple[ThunkOverlay, ...]:
+        return self.overlays_for(kind)
 
     def messages_text(self) -> str:
         return "\n\n".join(
@@ -157,6 +180,7 @@ class Thunk:
 @dataclass(slots=True)
 class Program:
     uses: list[UseDecl] = field(default_factory=list)
+    contexts: list[ContextBlock] = field(default_factory=list)
     instructs: list[InstructBlock] = field(default_factory=list)
     declarations: list[DeclBlock] = field(default_factory=list)
     structs: list[StructDecl] = field(default_factory=list)
@@ -171,6 +195,12 @@ class Program:
 
     def get_instruct(self, name: str | None) -> InstructBlock | None:
         for item in self.instructs:
+            if item.name == name:
+                return item
+        return None
+
+    def get_context(self, name: str | None) -> ContextBlock | None:
+        for item in self.contexts:
             if item.name == name:
                 return item
         return None
@@ -224,6 +254,9 @@ def parse(source: str) -> Program:
             continue
         if node.type == "instruct":
             program.instructs.append(_instruct_from_node(node, syntax_source))
+            continue
+        if node.type == "context":
+            program.contexts.append(_context_from_node(node, syntax_source))
             continue
         if node.type in {"struct", "struct_declaration"}:
             program.structs.append(_struct_from_node(node, lines, syntax_source))
@@ -287,6 +320,16 @@ def _instruct_from_node(node: Node, syntax_source: _TreeSitterSource) -> Instruc
     )
 
 
+def _context_from_node(node: Node, syntax_source: _TreeSitterSource) -> ContextBlock:
+    body_node = _required_child(node, "body")
+    return ContextBlock(
+        name=_optional_text(node.child_by_field_name("name")),
+        body=_block_value_text(body_node),
+        language=_cap_body_language(body_node),
+        span=SourceSpan(syntax_source.original_line_number(node.start_point.row)),
+    )
+
+
 def _struct_from_node(
     node: Node,
     lines: list[str],
@@ -343,6 +386,8 @@ def _thunk_from_node(
         else _params_from_node(params_node)
     )
     overlays: list[ThunkOverlay] = []
+    context_block: MessageBlock | None = None
+    instruct_block: MessageBlock | None = None
     messages: list[MessageBlock] = []
     if header is None:
         signature_node = signature if signature is not None else _required_child(node, "signature")
@@ -366,13 +411,17 @@ def _thunk_from_node(
         if child.type in {"blank_line", "comment_line"}:
             continue
         if child.type in {"message", "block"}:
-            messages.append(
-                _message_from_node(
-                    child,
-                    thunk_name=thunk.thunk_name(),
-                    syntax_source=syntax_source,
-                )
+            block = _message_from_node(
+                child,
+                thunk_name=thunk.thunk_name(),
+                syntax_source=syntax_source,
             )
+            if block.kind == "context":
+                context_block = block
+            elif block.kind == "instruct":
+                instruct_block = block
+            else:
+                messages.append(block)
             continue
         raise ToolangError(
             f"Unsupported thunk content at line {syntax_source.original_line_number(child.start_point.row)}: "
@@ -380,6 +429,8 @@ def _thunk_from_node(
         )
 
     thunk.overlays = tuple(overlays)
+    thunk.context = context_block
+    thunk.instruct = instruct_block
     thunk.messages = tuple(messages)
     if implicit_input and thunk.is_thread_thunk():
         thunk.input = None
@@ -459,6 +510,8 @@ def _overlay_kind(subject: str, *, line_number: int) -> OverlayKind:
         return "hand"
     if normalized == "handoffs":
         return "handoff"
+    if normalized == "recall":
+        return "recall"
     raise ToolangError(f"Unsupported thunk directive {subject!r} at line {line_number}.")
 
 
@@ -491,7 +544,7 @@ def _message_from_node(
                 continue
             if child.type == "blank_line":
                 lines.append((child.start_point.row + 1, ""))
-        implicit_kind: MessageBlockKind = "system" if thunk_name in {"chat", "task", "chore"} else "user"
+        implicit_kind: MessageBlockKind = _implicit_message_kind(thunk_name)
         return MessageBlock(
             kind=implicit_kind,
             text="\n".join(text for _, text in lines).strip(),
@@ -531,7 +584,7 @@ def _block_message_from_node(node: Node, *, syntax_source: _TreeSitterSource) ->
 
 
 def _block_value_text(node: Node) -> str:
-    if node.type in {"block_value", "instruct_body"} and node.named_child_count:
+    if node.type in {"block_value", "context_body", "instruct_body"} and node.named_child_count:
         return _block_value_text(node.named_children[0])
     if node.type == "block_inline":
         content = node.child_by_field_name("content") or node.child_by_field_name("name")
@@ -782,7 +835,10 @@ def _tree_sitter_source(source: str) -> _TreeSitterSource:
             body_line = original_lines[index]
             if TOP_LEVEL_RE.match(body_line):
                 break
-            explicit_block_match = re.match(r"^(?P<indent>[ \t]*)(system|user|instruct):", body_line)
+            explicit_block_match = re.match(
+                r"^(?P<indent>[ \t]*)(context|instruct|user|assistant|tool):",
+                body_line,
+            )
             if explicit_block_match is not None:
                 block_indent = len(explicit_block_match.group("indent"))
                 transformed.append(body_line)
@@ -918,7 +974,7 @@ def _parse_thunk_header(line: str, *, line_number: int) -> tuple[str | None, str
     output: str | None = None
     if "->" in rest:
         rest, raw_output = rest.rsplit("->", 1)
-        output = raw_output.strip() or None
+        output = _ast_type_name(raw_output.strip()) or None
     name, params = _parse_thunk_rest(rest)
     if name == "main":
         name = "main"
@@ -976,7 +1032,7 @@ def _params_from_signature(raw: str | None, *, line_number: int) -> tuple[ParamD
             )
         name = match.group("name")
         optional = match.group("optional") is not None
-        type_name = match.group("type")
+        type_name = _ast_type_name(match.group("type"))
         if name == "input":
             if input_param is not None:
                 raise ToolangError(f"Parameter signature at line {line_number} repeats input parameter.")
@@ -1003,13 +1059,13 @@ def _is_implicit_message_line(line: str) -> bool:
         return False
     if DIRECTIVE_RE.match(line):
         return False
-    if re.match(r"^[ \t]*(system|user|instruct):", line):
+    if re.match(r"^[ \t]*(context|instruct|system|user|assistant|tool):", line):
         return False
     return line.startswith((" ", "\t"))
 
 
-def _implicit_message_kind(thunk_name: str) -> str:
-    return "system" if thunk_name in {"chat", "task", "chore"} else "user"
+def _implicit_message_kind(thunk_name: str) -> MessageBlockKind:
+    return "instruct" if thunk_name in {"chat", "task", "chore"} else "user"
 
 
 def _leading_whitespace(line: str) -> str:

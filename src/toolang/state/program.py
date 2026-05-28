@@ -10,6 +10,7 @@ from re import Match
 
 from ..agents import agent_program_path
 from ..program import (
+    ContextBlock,
     DeclBlock,
     InstructBlock,
     MessageBlock,
@@ -25,7 +26,6 @@ from ..program import (
 from .durable import DurableState
 from toolang.base.error import ToolangError
 
-DEFAULT_THUNK_BODY = "Respond helpfully, clearly, and directly to the user's message."
 AGENT_HEADER_RE = re.compile(r"^agent\s+[A-Za-z_][\w-]*\s*$")
 PROMPT_CALL_RE = re.compile(r"^/([A-Za-z_][\w-]*)(?:\s+(.*))?$")
 TEMPLATE_VAR_RE = re.compile(r"\{\{\s*([A-Za-z_][\w-]*)\s*\}\}")
@@ -65,6 +65,7 @@ class PreparedProgram:
             "body_text": self.body_text,
             "uses": [_use_to_lock_data(item, line_offset=line_offset) for item in program.uses],
             "structs": [_struct_to_lock_data(item, line_offset=line_offset) for item in program.structs],
+            "contexts": [_context_to_lock_data(item, line_offset=line_offset) for item in program.contexts],
             "instructs": [_instruct_to_lock_data(item, line_offset=line_offset) for item in program.instructs],
             "caps": [_decl_to_lock_data(item, line_offset=line_offset) for item in program.declarations],
             "thunks": [_thunk_to_lock_data(item, line_offset=line_offset) for item in _program_thunks(program)],
@@ -127,6 +128,9 @@ class LiveProgram:
 
     def get_instruct(self, name: str | None) -> InstructBlock | None:
         return self.parsed.get_instruct(name)
+
+    def get_context(self, name: str | None) -> ContextBlock | None:
+        return self.parsed.get_context(name)
 
     def expand_input(self, raw_input: str) -> str:
         if not raw_input:
@@ -236,14 +240,7 @@ def _default_thunk() -> Thunk:
     return Thunk(
         name="main",
         input=ParamDecl(name="_"),
-        messages=(
-            MessageBlock(
-                kind="user",
-                text=DEFAULT_THUNK_BODY,
-                span=_default_span(),
-                explicit=False,
-            ),
-        ),
+        span=_default_span(),
     )
 
 
@@ -305,6 +302,7 @@ def _render_template_var(match: Match[str], bindings: dict[str, str]) -> str:
 
 def _validate_program(program: Program) -> None:
     seen_decl_names: set[tuple[str, str]] = set()
+    seen_context_names: set[str | None] = set()
     seen_instruct_names: set[str | None] = set()
     seen_struct_names: set[str] = set()
     seen_thunk_names: set[str] = set()
@@ -315,6 +313,14 @@ def _validate_program(program: Program) -> None:
             raise ToolangError(f"Duplicate {decl.kind} name {decl.name!r}.")
         seen_decl_names.add(decl_key)
         _validate_decl_params(decl)
+
+    for context in program.contexts:
+        if context.name in {"default", "none"}:
+            raise ToolangError(f"Context name {context.name!r} is reserved.")
+        if context.name in seen_context_names:
+            label = "default" if context.name is None else context.name
+            raise ToolangError(f"Duplicate context name {label!r}.")
+        seen_context_names.add(context.name)
 
     for instruct in program.instructs:
         if instruct.name in {"default", "none"}:
@@ -365,49 +371,44 @@ def _validate_thunk_overlays(thunk: Thunk, *, thunk_name: str) -> None:
     model_overlays = [overlay for overlay in thunk.overlays if overlay.kind == "model"]
     if len(model_overlays) > 1:
         raise ToolangError(f"Thunk {thunk_name!r} may declare at most one models directive.")
-    if not model_overlays:
+    if model_overlays:
+        overlay = model_overlays[0]
+        if overlay.op != "set":
+            raise ToolangError(f"Thunk {thunk_name!r} must use '=' for its models directive.")
+        if not overlay.items:
+            raise ToolangError(f"Thunk {thunk_name!r} must declare at least one model selector.")
+        routed = [selector for selector in overlay.items if "@" in selector]
+        if routed:
+            joined = ", ".join(routed)
+            raise ToolangError(
+                f"Thunk {thunk_name!r} must declare route-neutral model refs, not routed selectors: {joined}"
+            )
+
+    recall_overlays = [overlay for overlay in thunk.overlays if overlay.kind == "recall"]
+    if len(recall_overlays) > 1:
+        raise ToolangError(f"Thunk {thunk_name!r} may declare at most one recall directive.")
+    if not recall_overlays:
         return
-    overlay = model_overlays[0]
-    if overlay.op != "set":
-        raise ToolangError(f"Thunk {thunk_name!r} must use '=' for its models directive.")
-    if not overlay.items:
-        raise ToolangError(f"Thunk {thunk_name!r} must declare at least one model selector.")
-    routed = [selector for selector in overlay.items if "@" in selector]
-    if routed:
-        joined = ", ".join(routed)
-        raise ToolangError(
-            f"Thunk {thunk_name!r} must declare route-neutral model refs, not routed selectors: {joined}"
-        )
+    recall = recall_overlays[0]
+    if recall.op != "set":
+        raise ToolangError(f"Thunk {thunk_name!r} must use '=' for its recall directive.")
+    values = set(recall.items)
+    if not values:
+        raise ToolangError(f"Thunk {thunk_name!r} must declare at least one recall source.")
+    if values in ({"none"}, {"default"}, {"history"}, {"memory"}, {"history", "memory"}):
+        return
+    joined = ", ".join(recall.items)
+    raise ToolangError(f"Thunk {thunk_name!r} has unsupported recall directive values: {joined}.")
 
 
 def _validate_thunk_messages(thunk: Thunk, *, thunk_name: str) -> None:
-    if not thunk.messages or not any(block.text.strip() for block in thunk.messages):
-        raise ToolangError(f"Thunk {thunk_name!r} is missing body text.")
-    if thunk.is_thread_thunk():
-        if thunk.input is not None:
-            raise ToolangError(f"Thread thunk {thunk_name!r} must not declare an input parameter.")
-        invalid = [block.kind for block in thunk.messages if block.kind not in {"instruct", "system"}]
-        if invalid:
-            joined = ", ".join(invalid)
-            raise ToolangError(
-                f"Thread thunk {thunk_name!r} may only declare instruct or system blocks, not: {joined}."
-            )
-        if len(thunk.message_blocks("instruct")) > 1:
-            raise ToolangError(f"Thread thunk {thunk_name!r} may declare at most one instruct block.")
-        if len(thunk.message_blocks("system")) > 1:
-            raise ToolangError(f"Thread thunk {thunk_name!r} may declare at most one system block.")
-        return
-
     instruct_count = len(thunk.message_blocks("instruct"))
     if instruct_count > 1:
         raise ToolangError(f"Thunk {thunk_name!r} may declare at most one instruct block.")
-    system_count = len(thunk.message_blocks("system"))
-    if system_count > 1:
-        raise ToolangError(f"Thunk {thunk_name!r} may declare at most one system block.")
-    user_count = len(thunk.message_blocks("user"))
-    if user_count != 1:
-        raise ToolangError(f"Thunk {thunk_name!r} must declare exactly one user block.")
-    unsupported = [block.kind for block in thunk.messages if block.kind not in {"instruct", "system", "user"}]
+    context_count = len(thunk.message_blocks("context"))
+    if context_count > 1:
+        raise ToolangError(f"Thunk {thunk_name!r} may declare at most one context block.")
+    unsupported = [block.kind for block in thunk.messages if block.kind not in {"user", "assistant", "tool"}]
     if unsupported:
         joined = ", ".join(unsupported)
         raise ToolangError(
@@ -439,7 +440,9 @@ def _thunk_to_data(thunk: Thunk) -> dict[str, object]:
         "input": _param_to_data(thunk.input) if thunk.input is not None else None,
         "params": [_param_to_data(item) for item in thunk.params],
         "output": thunk.output,
-        "overlays": [_overlay_to_data(item) for item in thunk.overlays],
+        "directives": [_overlay_to_data(item) for item in thunk.overlays],
+        "context": _message_block_to_data(thunk.context) if thunk.context is not None else None,
+        "instruct": _message_block_to_data(thunk.instruct) if thunk.instruct is not None else None,
         "messages": [_message_block_to_data(item) for item in thunk.messages],
     }
 
@@ -494,6 +497,14 @@ def _instruct_to_lock_data(instruct: InstructBlock, *, line_offset: int) -> dict
     }
 
 
+def _context_to_lock_data(context: ContextBlock, *, line_offset: int) -> dict[str, object]:
+    return {
+        "name": context.name,
+        "line": context.span.line + line_offset,
+        "content": context.body,
+    }
+
+
 def _decl_to_lock_data(decl: DeclBlock, *, line_offset: int) -> dict[str, object]:
     return {
         "kind": decl.kind,
@@ -503,12 +514,13 @@ def _decl_to_lock_data(decl: DeclBlock, *, line_offset: int) -> dict[str, object
 
 
 def _thunk_to_lock_data(thunk: Thunk, *, line_offset: int) -> dict[str, object]:
+    blocks = tuple(item for item in (thunk.context, thunk.instruct) if item is not None) + thunk.messages
     data: dict[str, object] = {
         "name": _thunk_name(thunk),
         "line": thunk.span.line + line_offset,
         "params": _thunk_params_to_lock_data(thunk),
         "directives": [_directive_to_lock_data(item, line_offset=line_offset) for item in thunk.overlays],
-        "blocks": [_block_to_lock_data(item, line_offset=line_offset) for item in thunk.messages],
+        "blocks": [_block_to_lock_data(item, line_offset=line_offset) for item in blocks],
     }
     if thunk.output is not None:
         data["output"] = _source_type_name(thunk.output)
@@ -563,6 +575,8 @@ def _block_to_lock_data(block: MessageBlock, *, line_offset: int) -> dict[str, o
 def _directive_key(kind: str) -> str:
     if kind == "model":
         return "models"
+    if kind == "recall":
+        return "recall"
     return f"{kind}s"
 
 

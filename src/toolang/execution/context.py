@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 import json
 import logging
 from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Any
 
-from .. import agents
+from .. import agents, work
+from ..program import Thunk
 from toolang.base.error import ToolangError
-from toolang.base.protocols.model_adapter import ModelAdapter
+from toolang.base.protocols.model import ModelAdapter
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import (
     Message,
@@ -53,14 +55,132 @@ from .records import (
     StepOutputRef,
     ToolCallStepPayload,
 )
-from .snapshot import RunSnapshot
+from .binding import RunBinding, invoke_params, invoke_parts
 
 if TYPE_CHECKING:
+    from ..up import UptimeContext
     from .input import RunInput
 
 _MODEL_LOGGER = logging.getLogger("toolang.run.model")
 _TOOL_LOGGER = logging.getLogger("toolang.run.tool")
 _LOG_PREVIEW_LIMIT = 2_000
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotAgent:
+    """Agent section of one assembled run snapshot."""
+
+    name: str
+    root: str
+    home: str
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotRun:
+    """Run section of one assembled run snapshot."""
+
+    run_id: str
+    group: str
+    origin: str
+    thread_id: str
+    run_loop: str
+    live_fingerprint: str
+    invoke_params: dict[str, Any] = field(default_factory=dict)
+    invoke_parts: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotProgram:
+    """Program section of one assembled run snapshot."""
+
+    source_path: str
+    thunk: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotEntry:
+    """Stable wrapper around one prepared snapshot entry payload."""
+
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotTask:
+    """Task section of one assembled run snapshot."""
+
+    provider: str
+    ref: str
+    name: str
+    body: str
+    state: str
+    stage: str
+    thread_id: str
+    path: str
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotTaskServices:
+    """Task-service section of one assembled run snapshot."""
+
+    provider: str
+    read: bool
+    write: bool
+    comment: bool
+    path: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RunSnapshot:
+    """Stable assembled runtime view captured for one run context."""
+
+    agent: SnapshotAgent
+    run: SnapshotRun
+    program: SnapshotProgram
+    caps: tuple[SnapshotEntry, ...] = field(default_factory=tuple)
+    jobs: tuple[SnapshotEntry, ...] = field(default_factory=tuple)
+    tools: tuple[str, ...] = field(default_factory=tuple)
+    task: SnapshotTask | None = None
+    task_services: SnapshotTaskServices | None = None
+
+
+def build_run_snapshot(
+    context: UptimeContext,
+    run: RunBinding,
+    thunk: Thunk,
+    *,
+    tools: dict[str, AgentTool],
+) -> RunSnapshot:
+    """Build the stable runtime view carried by one run context."""
+
+    task_snapshot = _task_snapshot(context, run)
+    return RunSnapshot(
+        agent=SnapshotAgent(
+            name=context.name,
+            root=str(context.root),
+            home=str(context.home),
+        ),
+        run=SnapshotRun(
+            run_id=run.run_id,
+            group=run.group,
+            origin=run.origin,
+            thread_id=run.thread_id,
+            run_loop=run.run_loop,
+            live_fingerprint=run.live.fingerprint,
+            invoke_params=invoke_params(run),
+            invoke_parts=invoke_parts(run),
+        ),
+        program=SnapshotProgram(
+            source_path=run.live.program.source_path,
+            thunk=_thunk_to_data(thunk),
+        ),
+        caps=tuple(SnapshotEntry(payload=entry.to_snapshot()) for entry in run.live.cap_entries),
+        jobs=tuple(SnapshotEntry(payload=entry.to_snapshot()) for entry in run.live.job_entries),
+        tools=tuple(
+            tool.definition().name for tool in sorted(tools.values(), key=lambda item: item.name)
+        ),
+        task=task_snapshot[0] if task_snapshot is not None else None,
+        task_services=task_snapshot[1] if task_snapshot is not None else None,
+    )
 
 
 class RunContext:
@@ -536,6 +656,80 @@ def _tool_context(
         room=agents.tool_room(root, snapshot.agent.name, plugin_name),
         wd=home,
     )
+
+
+def _task_snapshot(
+    context: UptimeContext, run: RunBinding
+) -> tuple[SnapshotTask, SnapshotTaskServices] | None:
+    if run.origin != "task":
+        return None
+    task_id = work.task_id_from_thread_id(run.thread_id)
+    if task_id is None:
+        return None
+    task = work.find_task(context.root, context.name, task_id)
+    if task is None:
+        return None
+    return (
+        SnapshotTask(
+            provider="local",
+            ref=task.document.thread_id(),
+            name=task.name.rsplit("/", 1)[-1],
+            body=task.document.body,
+            state=task.document.state,
+            stage=task.document.stage,
+            thread_id=task.document.thread_id(),
+            path=str(task.path),
+        ),
+        SnapshotTaskServices(
+            provider="local",
+            read=True,
+            write=True,
+            comment=False,
+            path=str(task.path),
+        ),
+    )
+
+
+def _thunk_to_data(thunk: Thunk) -> dict[str, object]:
+    return {
+        "name": thunk.thunk_name(),
+        "input": (
+            {
+                "name": param.name,
+                "optional": param.optional,
+                "type_name": param.type_name,
+            }
+            if (param := thunk.input) is not None
+            else None
+        ),
+        "params": [
+            {
+                "name": item.name,
+                "optional": item.optional,
+                "type_name": item.type_name,
+            }
+            for item in thunk.params
+        ],
+        "output": thunk.output,
+        "overlays": [
+            {
+                "kind": item.kind,
+                "op": item.op,
+                "items": list(item.items),
+                "line": item.span.line,
+            }
+            for item in thunk.overlays
+        ],
+        "messages": [
+            {
+                "kind": item.kind,
+                "text": item.text,
+                "line": item.span.line,
+                "explicit": item.explicit,
+            }
+            for item in thunk.messages
+        ],
+    }
 
 
 def _log_model_request(request: ModelCall) -> None:

@@ -89,10 +89,104 @@ thunk review:
         (None, "You are {{runtime.agent.name}}."),
         ("strict-json", "Return only JSON."),
     ]
+    instruct = program.thunks[0].instruct
+    assert instruct is not None
+    assert (instruct.kind, instruct.text) == (
+        "instruct",
+        "strict-json",
+    )
     assert [(item.kind, item.text, item.explicit) for item in program.thunks[0].messages] == [
-        ("instruct", "strict-json", True),
         ("user", "Review the target carefully.", False),
     ]
+
+
+def test_program_parse_projects_new_context_recall_and_message_block_syntax_into_ast() -> None:
+    program = parse(
+        """
+context: ```md
+Default context for {{runtime.agent.name}}.
+```
+
+context report:
+  Include report-specific run context.
+
+instruct strict-json:
+  Return strict JSON.
+
+thunk review(input: Message, path: Path, focus?: Text, labels: Text[]) -> Json:
+  models = gpt-5
+  recall = history, memory
+
+  context: report
+
+  instruct: strict-json
+
+  user:
+    Review {{path}} with {{focus}}.
+
+  assistant: Ready to review.
+
+  tool:
+    {"status":"cached"}
+
+thunk isolated:
+  recall = none
+  context: none
+  instruct: none
+  user: hello
+""".strip()
+    )
+
+    assert [(item.name, item.body) for item in program.contexts] == [
+        (None, "Default context for {{runtime.agent.name}}."),
+        ("report", "Include report-specific run context."),
+    ]
+
+    review = program.thunks[0]
+    assert review.name == "review"
+    assert review.input is not None
+    assert (review.input.name, review.input.type_name, review.input.optional) == (
+        "_",
+        None,
+        False,
+    )
+    assert [(item.name, item.type_name, item.optional) for item in review.params] == [
+        ("path", "path", False),
+        ("focus", "string", True),
+        ("labels", "string[]", False),
+    ]
+    assert review.output == "json"
+    assert [(item.kind, item.op, item.items) for item in review.directives] == [
+        ("model", "set", ("gpt-5",)),
+        ("recall", "set", ("history", "memory")),
+    ]
+    assert review.context is not None
+    assert (review.context.kind, review.context.text, review.context.explicit) == (
+        "context",
+        "report",
+        True,
+    )
+    assert review.instruct is not None
+    assert (review.instruct.kind, review.instruct.text, review.instruct.explicit) == (
+        "instruct",
+        "strict-json",
+        True,
+    )
+    assert [(item.kind, item.text, item.explicit) for item in review.messages] == [
+        ("user", "Review {{path}} with {{focus}}.", True),
+        ("assistant", "Ready to review.", True),
+        ("tool", '{"status":"cached"}', True),
+    ]
+
+    isolated = program.thunks[1]
+    assert [(item.kind, item.op, item.items) for item in isolated.directives] == [
+        ("recall", "set", ("none",)),
+    ]
+    assert isolated.context is not None
+    assert isolated.context.text == "none"
+    assert isolated.instruct is not None
+    assert isolated.instruct.text == "none"
+    assert [(item.kind, item.text) for item in isolated.messages] == [("user", "hello")]
 
 
 def test_program_parse_accepts_compact_service_env_names() -> None:
@@ -176,15 +270,18 @@ Use this service when the agent needs GitHub access.
         build_prepared_program(durable)
 
 
-def test_build_prepared_program_rejects_empty_thunk_body(tmp_path: Path) -> None:
+def test_build_prepared_program_accepts_thunk_without_message_blocks(tmp_path: Path) -> None:
     root = _write_program(
         tmp_path,
         "thunk review():\n  models = gpt-5\n\n",
     )
 
     durable = scan_durable_state(root, "alice")
-    with pytest.raises(ToolangError, match="missing body text"):
-        build_prepared_program(durable)
+    prepared = build_prepared_program(durable)
+    thunk = load_live_program(prepared).thunks[0]
+
+    assert thunk.name == "review"
+    assert thunk.messages == ()
 
 
 def test_build_prepared_program_rejects_duplicate_default_instruct(tmp_path: Path) -> None:
@@ -342,25 +439,62 @@ thunk plan():
         )
 
 
-def test_program_parse_projects_explicit_message_blocks_into_ast() -> None:
+def test_program_parse_projects_template_and_message_blocks_into_ast() -> None:
     program = parse(
         """
 thunk rewrite(_, tone?: string):
   models = gpt-5
+  recall = history, memory
 
-  system:
+  instruct:
     Rewrite the input for the requested tone.
+
+  context: default
 
   user:
     Rewrite the message faithfully.
+
+  assistant: Draft ready.
+
+  tool: Rewrite result.
 """.strip()
     )
 
     thunk = program.thunks[0]
-    assert [(item.kind, item.text, item.explicit) for item in thunk.messages] == [
-        ("system", "Rewrite the input for the requested tone.", True),
-        ("user", "Rewrite the message faithfully.", True),
+    assert [(item.kind, item.op, item.items) for item in thunk.overlays] == [
+        ("model", "set", ("gpt-5",)),
+        ("recall", "set", ("history", "memory")),
     ]
+    instruct = thunk.instruct
+    assert instruct is not None
+    assert (instruct.kind, instruct.text, instruct.explicit) == (
+        "instruct",
+        "Rewrite the input for the requested tone.",
+        True,
+    )
+    context = thunk.context
+    assert context is not None
+    assert (context.kind, context.text, context.explicit) == (
+        "context",
+        "default",
+        True,
+    )
+    assert [(item.kind, item.text, item.explicit) for item in thunk.messages] == [
+        ("user", "Rewrite the message faithfully.", True),
+        ("assistant", "Draft ready.", True),
+        ("tool", "Rewrite result.", True),
+    ]
+
+
+def test_program_parse_rejects_thunk_local_system_block() -> None:
+    with pytest.raises(ToolangError, match="line 2"):
+        parse(
+            """
+thunk rewrite:
+  system:
+    Removed syntax.
+""".strip()
+        )
 
 
 def test_build_prepared_program_rejects_multiple_model_directives(tmp_path: Path) -> None:

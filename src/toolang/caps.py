@@ -27,7 +27,7 @@ from tomli_w._writer import Context as TomlContext
 from tomli_w._writer import format_inline_table, format_key_part, format_literal
 
 from .state.durable import DurableFile, DurableState, scan_durable_state
-from .progress import ProgressSink, emit_progress
+from .common.progress import ProgressSink, emit_progress
 from .state.prepared import (
     EntryKind,
     PreparedEntry,

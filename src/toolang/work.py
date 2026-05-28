@@ -15,7 +15,7 @@ from dateutil.rrule import rrulestr
 import frontmatter
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from .ids import LOCAL_ID_FAMILY, allocate_id, decode_id
+from .common.ids import LOCAL_ID_FAMILY, allocate_id, decode_id
 
 JobState = Literal["active", "inactive", "archived"]
 TaskStage = Literal["todo", "running", "done", "failed"]

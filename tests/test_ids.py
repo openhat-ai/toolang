@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from toolang.ids import (
+from toolang.common.ids import (
     AllocatorSnapshot,
     AllocatorState,
     LOCAL_ID_FAMILY,

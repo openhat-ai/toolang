@@ -21,6 +21,7 @@ from typer.core import TyperArgument, TyperCommand, TyperGroup
 
 from .. import agents
 from ..base.error import ToolangError
+from .logo import info_avatar, info_palette_styles
 
 if TYPE_CHECKING:
     from ..execution.records import UpdateKind
@@ -37,19 +38,14 @@ _PALETTE_STYLES_CACHE: tuple[tuple[str, ...], tuple[str, ...]] | None = None
 def _agent_avatar() -> str:
     global _AGENT_AVATAR_CACHE
     if _AGENT_AVATAR_CACHE is None:
-        from .. import templates
-
-        _AGENT_AVATAR_CACHE = templates.load_info_avatar()
+        _AGENT_AVATAR_CACHE = info_avatar()
     return _AGENT_AVATAR_CACHE
 
 
 def _palette_styles() -> tuple[tuple[str, ...], tuple[str, ...]]:
     global _PALETTE_STYLES_CACHE
     if _PALETTE_STYLES_CACHE is None:
-        from .. import templates
-
-        top, bottom = templates.load_info_palette()
-        _PALETTE_STYLES_CACHE = (tuple(top), tuple(bottom))
+        _PALETTE_STYLES_CACHE = info_palette_styles()
     return _PALETTE_STYLES_CACHE
 
 

@@ -18,11 +18,28 @@ from toolang.models.discovery import (
     required_provider_env_vars,
 )
 from toolang.models.errors import NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSAGE
-from toolang.models.selectors import ModelSelector, parse_model_selector
-from toolang.selectors import filter_value_matches, selector_identity_matches
+from toolang.selectors import (
+    Selector as ModelSelector,
+    filter_value_matches,
+    parse_selector,
+    selector_identity_matches,
+    split_selector_list,
+)
 
 DEFAULT_MODEL_SELECTOR = "gpt-5"
 CUSTOM_MODEL_PROVIDER = "custom"
+
+
+def split_model_selectors(items: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
+    """Split repeated and CSV model selector inputs."""
+
+    return split_selector_list(items)
+
+
+def parse_model_selector(raw: str) -> ModelSelector:
+    """Parse one model selector."""
+
+    return parse_selector(raw, domain="model")
 
 
 class SupportsModelSelection(Protocol):

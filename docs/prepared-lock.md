@@ -232,6 +232,12 @@ A root lock uses `config.toml` and `skills/pdf/SKILL.md`.
               "op": "+=",
               "values": ["review", "patch"],
               "line": 42
+            },
+            {
+              "key": "recall",
+              "op": "=",
+              "values": ["history", "memory"],
+              "line": 43
             }
           ],
           "blocks": [
@@ -241,8 +247,8 @@ A root lock uses `config.toml` and `skills/pdf/SKILL.md`.
               "line": 44
             },
             {
-              "kind": "system",
-              "content": "Review correctness issues only.",
+              "kind": "context",
+              "content": "Use the current review context.",
               "line": 46
             },
             {
@@ -457,6 +463,7 @@ Program fields are:
 | `body_text` | Program body after the optional agent header and shebang are removed |
 | `uses` | Program `use` items |
 | `structs` | Program `struct` items |
+| `contexts` | Top-level `context` items |
 | `instructs` | Top-level `instruct` items |
 | `caps` | Program `psyche`, `skill`, `service`, and `prompt` items |
 | `thunks` | Program `thunk` items |

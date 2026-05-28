@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from .. import templates
     from .. import up as agent_up
     from ..execution.records import UpdateKind
+    from ..state.prepared import PreparedLock
     from . import invoke as cli_invoke
     from .progress import CliProgress
 
@@ -776,12 +777,9 @@ def stop_agent(
 
 
 def _info_caps_summary(toolang_root: Path, agent_name: str) -> str:
-    counts = {
-        "psyches": len(cap_store.list_entries(toolang_root, agent_name, visibility=None, kinds={"psyche"})),
-        "skills": len(cap_store.list_entries(toolang_root, agent_name, visibility=None, kinds={"skill"})),
-        "services": len(cap_store.list_entries(toolang_root, agent_name, visibility=None, kinds={"service"})),
-        "prompts": len(cap_store.list_entries(toolang_root, agent_name, visibility=None, kinds={"prompt"})),
-    }
+    counts = _prepared_info_cap_counts(toolang_root, agent_name)
+    if counts is None:
+        counts = _prepare_info_cap_counts(toolang_root, agent_name)
     singular = {
         "psyches": "psyche",
         "skills": "skill",
@@ -792,6 +790,58 @@ def _info_caps_summary(toolang_root: Path, agent_name: str) -> str:
         f"{count} {singular[label] if count == 1 else label}"
         for label, count in counts.items()
     )
+
+
+def _prepared_info_cap_counts(toolang_root: Path, agent_name: str) -> dict[str, int] | None:
+    from ..state.prepared import load_private_lock, load_shared_lock
+
+    try:
+        shared_lock = load_shared_lock(toolang_root)
+        private_lock = load_private_lock(toolang_root, agent_name)
+    except (FileNotFoundError, OSError, TypeError, ValueError, KeyError):
+        return None
+    return _prepared_lock_info_cap_counts(shared_lock, private_lock)
+
+
+def _prepared_lock_info_cap_counts(
+    shared_lock: "PreparedLock",
+    private_lock: "PreparedLock",
+) -> dict[str, int]:
+    counts = {
+        "psyches": 0,
+        "skills": 0,
+        "services": 0,
+        "prompts": 0,
+    }
+    for entry in cap_store.effective_cap_entries(shared_lock, private_lock):
+        if entry.kind == "psyche":
+            counts["psyches"] += 1
+        elif entry.kind == "skill":
+            counts["skills"] += 1
+        elif entry.kind == "service":
+            counts["services"] += 1
+        elif entry.kind == "prompt":
+            counts["prompts"] += 1
+    return counts
+
+
+def _prepare_info_cap_counts(toolang_root: Path, agent_name: str) -> dict[str, int]:
+    from .progress import as_progress_sink, make_cli_progress
+
+    progress = make_cli_progress(show_materialize_summary=True)
+    try:
+        prepared = _wrap_user_error(
+            agent_up.prepare_agent,
+            toolang_root=toolang_root,
+            agent_name=agent_name,
+            progress=as_progress_sink(progress),
+        )
+        progress.set_prepare_total(
+            len(cap_store.effective_cap_entries(prepared.shared_lock, prepared.private_lock))
+        )
+        return _prepared_lock_info_cap_counts(prepared.shared_lock, prepared.private_lock)
+    finally:
+        progress.finish(details=False)
 
 
 def _info_jobs_summary(toolang_root: Path, agent_name: str) -> str:
@@ -879,7 +929,7 @@ def list_models(
     ] = None,
 ) -> None:
     from ..models.errors import NO_AVAILABLE_MODELS_MESSAGE
-    from ..models.selectors import split_model_selectors
+    from ..models.resolution import split_model_selectors
 
     environ = dict(os.environ)
     root = _toolang_root(None)

@@ -72,25 +72,6 @@ def render_template(kind: TemplateKind, template_name: str = "default", **bindin
     return text
 
 
-def load_info_avatar() -> str:
-    """Load the bundled info avatar art."""
-
-    return _read_resource_text("info.avatar.txt").rstrip("\n")
-
-
-def load_info_palette() -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Load the bundled two-row info palette."""
-
-    rows = [
-        tuple(f"bold #{token}" for token in line.split())
-        for line in _read_resource_text("info.palette.txt").splitlines()
-        if line.strip()
-    ]
-    if len(rows) != 2:
-        raise ValueError("info palette must contain exactly two rows")
-    return rows[0], rows[1]
-
-
 def _template_description(kind: TemplateKind, raw_text: str) -> str | None:
     if not raw_text.lstrip().startswith("---"):
         return None

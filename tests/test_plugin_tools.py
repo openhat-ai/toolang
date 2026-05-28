@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from toolang.base.protocols.loop import RunContext
-from toolang.base.protocols.model_adapter import ModelAdapter
+from toolang.base.protocols.model import ModelAdapter
 from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.model import ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult, RunResult

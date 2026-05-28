@@ -1,4 +1,4 @@
-"""Shared model provider protocols."""
+"""Shared model provider and adapter protocols."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
 from ..types.model import ModelInfo, ModelTarget
+from ..types.run import ModelCall, ModelCallResult, ModelEventHandler
 
 
 @runtime_checkable
@@ -31,3 +32,27 @@ class ModelProvider(Protocol):
         """Return a provider-adjusted model target before adapter execution."""
 
         return target
+
+
+@runtime_checkable
+class ModelAdapter(Protocol):
+    """Minimal model adapter contract."""
+
+    name: str
+    description: str | None
+
+    def invoke(
+        self,
+        target: ModelTarget,
+        request: ModelCall,
+    ) -> ModelCallResult:
+        """Execute one non-streaming model turn."""
+
+    def stream(
+        self,
+        target: ModelTarget,
+        request: ModelCall,
+        *,
+        on_event: ModelEventHandler,
+    ) -> ModelCallResult:
+        """Execute one streaming model turn."""
