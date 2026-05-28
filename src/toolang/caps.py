@@ -36,6 +36,8 @@ from .state.prepared import (
     SourceOrigin,
     PreparedVisibility,
     PreparedSource,
+    load_private_lock,
+    load_shared_lock,
     private_lock_path,
     private_prepared_dir,
     shared_lock_path,
@@ -107,6 +109,18 @@ class _RemoteEntryRequest:
     config_path: Path
     form: Literal["wired", "ref"]
     source_line: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _CachedRemoteEntry:
+    ref: str
+    authored_ref: str | None
+    source_fingerprint: str
+    files: tuple[tuple[str, bytes], ...]
+
+
+_RemoteEntryCacheKey = tuple[PreparedVisibility, EntryKind, str, str | None, int | None]
+_RemoteEntryCache = Mapping[_RemoteEntryCacheKey, _CachedRemoteEntry]
 
 
 def list_entries(
@@ -465,8 +479,12 @@ def _collect_visibility_entries_with_files(
     visibility: PreparedVisibility | None = None,
     kinds: set[EntryKind] | None = None,
     materialize_remote: bool = False,
+    remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
 ) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
+    effective_remote_cache = remote_cache
+    if effective_remote_cache is None and not materialize_remote:
+        effective_remote_cache = _existing_remote_cache(durable, visibility=visibility)
     local_entries = collect_local_entries(durable, visibility=visibility, kinds=kinds)
     remote_entries, files = _collect_remote_entries(
         durable.toolang_root,
@@ -474,6 +492,7 @@ def _collect_visibility_entries_with_files(
         visibility=visibility,
         kinds=kinds,
         materialize=materialize_remote,
+        remote_cache=effective_remote_cache,
         progress=progress,
     )
     embedded_entries, embedded_files = _collect_program_embedded_entries(
@@ -487,6 +506,7 @@ def _collect_visibility_entries_with_files(
         visibility=visibility,
         kinds=kinds,
         materialize=materialize_remote,
+        remote_cache=effective_remote_cache,
         progress=progress,
     )
     files.update(embedded_files)
@@ -495,10 +515,31 @@ def _collect_visibility_entries_with_files(
     return entries, files
 
 
+def _existing_remote_cache(
+    durable: DurableState,
+    *,
+    visibility: PreparedVisibility | None,
+) -> _RemoteEntryCache | None:
+    cache: dict[_RemoteEntryCacheKey, _CachedRemoteEntry] = {}
+    visibilities = ("shared", "private") if visibility is None else (visibility,)
+    for item_visibility in visibilities:
+        try:
+            lock = (
+                load_shared_lock(durable.toolang_root)
+                if item_visibility == "shared"
+                else load_private_lock(durable.toolang_root, durable.agent_name)
+            )
+        except (FileNotFoundError, KeyError, TypeError, ValueError):
+            continue
+        cache.update(remote_entry_cache(durable.toolang_root, lock))
+    return cache or None
+
+
 def build_visibility_lock(
     durable: DurableState,
     *,
     visibility: PreparedVisibility,
+    remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
 ) -> tuple[PreparedLock, dict[str, bytes]]:
     """Build one prepared lock and any materialized files for one visibility."""
@@ -515,6 +556,7 @@ def build_visibility_lock(
         durable,
         visibility=visibility,
         materialize_remote=True,
+        remote_cache=remote_cache,
         progress=progress,
     )
     _ensure_no_conflicts(entries)
@@ -548,6 +590,208 @@ def build_visibility_lock(
         detail=f"{len(entries)} entries",
     )
     return result
+
+
+def remote_entry_cache(
+    toolang_root: Path,
+    lock: PreparedLock,
+) -> dict[_RemoteEntryCacheKey, _CachedRemoteEntry]:
+    """Return reusable remote artifacts from one existing prepared lock."""
+
+    cache: dict[_RemoteEntryCacheKey, _CachedRemoteEntry] = {}
+    manifest = _load_lock_manifest_optional(lock)
+    for entry in lock.entries:
+        if entry.source.origin != "remote":
+            continue
+        if manifest is not None and not _entry_artifact_matches_manifest(toolang_root, entry, manifest):
+            continue
+        key = _remote_entry_cache_key(
+            visibility=lock.visibility,
+            kind=entry.kind,
+            form=entry.source.form,
+            name=entry.name if entry.source.form == "wired" else None,
+            source_line=entry.source.line,
+        )
+        files = _cache_entry_files(toolang_root, entry)
+        if files is None:
+            continue
+        cache[key] = _CachedRemoteEntry(
+            ref=entry.ref,
+            authored_ref=_entry_authored_ref(manifest, entry) if manifest is not None else None,
+            source_fingerprint=entry.source.fingerprint,
+            files=files,
+        )
+    return cache
+
+
+def _load_lock_manifest_optional(lock: PreparedLock) -> dict[str, object] | None:
+    try:
+        return cast(dict[str, object], json.loads(lock.lock_path.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _entry_artifact_matches_manifest(
+    toolang_root: Path,
+    entry: PreparedEntry,
+    manifest: dict[str, object],
+) -> bool:
+    item = _entry_artifact_manifest(entry, manifest)
+    if item is None:
+        return False
+    entry_path = toolang_root / entry.path
+    if entry.shape == "file":
+        return entry_path.is_file() and item.get("fingerprint") == _file_fingerprint(entry_path)
+    if not entry_path.parent.is_dir():
+        return False
+    expected = _artifact_child_fingerprints(item)
+    actual = {
+        str(path.relative_to(entry_path.parent)): _file_fingerprint(path)
+        for path in sorted(child for child in entry_path.parent.rglob("*") if child.is_file())
+    }
+    return actual == expected
+
+
+def _entry_authored_ref(
+    manifest: dict[str, object],
+    entry: PreparedEntry,
+) -> str | None:
+    if entry.source.form != "ref" or entry.source.line is None:
+        return None
+    prepared = cast(dict[str, object], manifest.get("prepared", {}))
+    program = cast(dict[str, object], prepared.get("program", {}))
+    for item in cast(list[dict[str, object]], program.get("uses", [])):
+        if item.get("kind") == entry.kind and item.get("line") == entry.source.line:
+            ref = item.get("ref")
+            return ref if isinstance(ref, str) else None
+    return None
+
+
+def _entry_artifact_manifest(
+    entry: PreparedEntry,
+    manifest: dict[str, object],
+) -> dict[str, object] | None:
+    prepared = cast(dict[str, object], manifest.get("prepared", {}))
+    for collection_name in ("caps", "tasks", "chores"):
+        for item in cast(list[dict[str, object]], prepared.get(collection_name, [])):
+            if item.get("kind") != entry.kind or item.get("name") != entry.name:
+                continue
+            origin = item.get("origin")
+            if isinstance(origin, dict) and cast(dict[str, object], origin).get("ref") != entry.ref:
+                continue
+            artifact_index = item.get("artifact")
+            if not isinstance(artifact_index, int):
+                return None
+            bucket = cast(dict[str, object], cast(dict[str, object], manifest.get("artifacts", {})).get(entry.source.form, {}))
+            artifacts = cast(list[dict[str, object]], bucket.get("items", []))
+            if artifact_index >= len(artifacts):
+                return None
+            return artifacts[artifact_index]
+    return None
+
+
+def _artifact_child_fingerprints(item: dict[str, object]) -> dict[str, str]:
+    root = Path(str(item.get("path", "")))
+    result: dict[str, str] = {}
+    for child in cast(list[dict[str, object]], item.get("items", [])):
+        child_path = Path(str(child.get("path", "")))
+        try:
+            relative_path = child_path.relative_to(root)
+        except ValueError:
+            return {}
+        result[str(relative_path)] = str(child.get("fingerprint", ""))
+    return result
+
+
+def _remote_entry_cache_key(
+    *,
+    visibility: PreparedVisibility,
+    kind: EntryKind,
+    form: SourceForm,
+    name: str | None,
+    source_line: int | None,
+) -> _RemoteEntryCacheKey:
+    return (visibility, kind, form, name if form == "wired" else None, source_line)
+
+
+def _cache_entry_files(
+    toolang_root: Path,
+    entry: PreparedEntry,
+) -> tuple[tuple[str, bytes], ...] | None:
+    entry_path = toolang_root / entry.path
+    if entry.shape == "dir":
+        root = entry_path.parent
+        if not root.is_dir():
+            return None
+        return tuple(
+            (str(path.relative_to(root)), path.read_bytes())
+            for path in sorted(item for item in root.rglob("*") if item.is_file())
+        )
+    if not entry_path.is_file():
+        return None
+    return (("", entry_path.read_bytes()),)
+
+
+def _cached_remote_entry(
+    remote_cache: _RemoteEntryCache | None,
+    request: _RemoteEntryRequest,
+) -> _CachedRemoteEntry | None:
+    if remote_cache is None:
+        return None
+    key = _remote_entry_cache_key(
+        visibility=request.visibility,
+        kind=request.kind,
+        form=request.form,
+        name=request.name,
+        source_line=request.source_line,
+    )
+    cached = remote_cache.get(key)
+    if cached is None:
+        return None
+    if "://" in request.ref and _canonicalize_remote_ref(request.kind, request.ref) == cached.ref:
+        return cached
+    if request.form == "ref" and request.ref in {cached.ref, cached.authored_ref}:
+        return cached
+    if cached.source_fingerprint != _file_fingerprint(request.config_path):
+        return None
+    return cached
+
+
+def _remap_cached_remote_files(
+    cached: _CachedRemoteEntry,
+    relative_entry_path: Path,
+) -> dict[str, bytes]:
+    if len(cached.files) == 1 and cached.files[0][0] == "":
+        return {str(relative_entry_path): cached.files[0][1]}
+    root = relative_entry_path.parent
+    return {str(root / relative_path): content for relative_path, content in cached.files}
+
+
+def _emit_cached_remote_progress(
+    request: _RemoteEntryRequest,
+    canonical_ref: str,
+    *,
+    progress: ProgressSink | None,
+) -> None:
+    text = request.ref.strip()
+    if "://" not in text:
+        emit_progress(
+            progress,
+            id=f"cap.resolve:{request.kind}:{text}",
+            phase="cap.resolve",
+            label=f"Resolve {request.kind}",
+            status="ok",
+            detail=canonical_ref,
+        )
+        return
+    emit_progress(
+        progress,
+        id=f"cap.fetch:{request.kind}:{canonical_ref}",
+        phase="cap.fetch",
+        label=f"Fetch {request.kind}",
+        status="ok",
+        detail="cached",
+    )
 
 
 def visibility_input_fingerprint(
@@ -700,7 +944,7 @@ def _source_record(
     shape: Literal["file", "dir"],
     line: int | None = None,
 ) -> PreparedSource:
-    fingerprint = _dir_fingerprint(absolute_path) if shape == "dir" else hashlib.sha256(absolute_path.read_bytes()).hexdigest()
+    fingerprint = _dir_fingerprint(absolute_path) if shape == "dir" else _file_fingerprint(absolute_path)
     return PreparedSource(
         origin=origin,
         form=form,
@@ -709,6 +953,10 @@ def _source_record(
         fingerprint=fingerprint,
         line=line,
     )
+
+
+def _file_fingerprint(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _ensure_no_conflicts(entries: tuple[PreparedEntry, ...]) -> None:
@@ -976,9 +1224,65 @@ def _ensure_name_available(
     name: str,
     ref: str,
 ) -> None:
-    for entry in list_entries(toolang_root, agent_name, visibility=visibility, kinds={kind}):
-        if entry.name == name and entry.ref != ref:
+    for existing_name, existing_ref in _existing_name_refs(
+        toolang_root,
+        agent_name,
+        visibility=visibility,
+        kind=kind,
+    ):
+        if existing_name == name and existing_ref != ref:
             raise ValueError(f"conflicting entries in one visibility: kind={kind} name={name}")
+
+
+def _existing_name_refs(
+    toolang_root: Path,
+    agent_name: str,
+    *,
+    visibility: PreparedVisibility,
+    kind: EntryKind,
+) -> tuple[tuple[str, str], ...]:
+    durable = scan_durable_state(toolang_root, agent_name)
+    items = [
+        (entry.name, entry.ref)
+        for entry in collect_local_entries(durable, visibility=visibility, kinds={kind})
+    ]
+    items.extend(_configured_remote_name_refs(toolang_root, agent_name, visibility=visibility, kind=kind))
+    items.extend(_prepared_name_refs(toolang_root, agent_name, visibility=visibility, kind=kind))
+    return tuple(dict.fromkeys(items))
+
+
+def _configured_remote_name_refs(
+    toolang_root: Path,
+    agent_name: str,
+    *,
+    visibility: PreparedVisibility,
+    kind: EntryKind,
+) -> tuple[tuple[str, str], ...]:
+    if kind not in CAP_KINDS:
+        return ()
+    data = _load_config_data(_config_path(toolang_root, agent_name, visibility=visibility))
+    table = _config_kind_table_optional(data, kind)
+    if table is None:
+        return ()
+    return tuple((name, _config_ref(item)) for name, item in sorted(table.items()))
+
+
+def _prepared_name_refs(
+    toolang_root: Path,
+    agent_name: str,
+    *,
+    visibility: PreparedVisibility,
+    kind: EntryKind,
+) -> tuple[tuple[str, str], ...]:
+    try:
+        lock = (
+            load_shared_lock(toolang_root)
+            if visibility == "shared"
+            else load_private_lock(toolang_root, agent_name)
+        )
+    except (FileNotFoundError, KeyError, TypeError, ValueError):
+        return ()
+    return tuple((entry.name, entry.ref) for entry in lock.entries if entry.kind == kind)
 
 
 def _local_entry_file_path(
@@ -1038,6 +1342,7 @@ def _collect_remote_entries(
     visibility: PreparedVisibility | None = None,
     kinds: set[EntryKind] | None = None,
     materialize: bool = False,
+    remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
 ) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
     requests = _collect_remote_entry_requests(
@@ -1051,6 +1356,7 @@ def _collect_remote_entries(
         agent_name,
         requests,
         materialize=materialize,
+        remote_cache=remote_cache,
         progress=progress,
     )
 
@@ -1100,6 +1406,7 @@ def _collect_program_use_entries(
     visibility: PreparedVisibility | None = None,
     kinds: set[EntryKind] | None = None,
     materialize: bool = False,
+    remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
 ) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
     if visibility == "shared" or durable.program_source is None:
@@ -1136,6 +1443,7 @@ def _collect_program_use_entries(
         durable.agent_name,
         tuple(requests),
         materialize=materialize,
+        remote_cache=remote_cache,
         progress=progress,
     )
 
@@ -1270,9 +1578,24 @@ def _remote_entry_from_ref(
     form: Literal["wired", "ref"],
     source_line: int | None = None,
     materialize: bool,
+    remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
 ) -> tuple[PreparedEntry, dict[str, bytes]]:
-    if materialize and "://" not in ref:
+    request = _RemoteEntryRequest(
+        visibility=visibility,
+        kind=kind,
+        ref=ref,
+        name=name,
+        relative_config_path=relative_config_path,
+        config_path=config_path,
+        form=form,
+        source_line=source_line,
+    )
+    cached = _cached_remote_entry(remote_cache, request)
+    if cached is not None:
+        canonical_ref = cached.ref
+        _emit_cached_remote_progress(request, canonical_ref, progress=progress)
+    elif materialize and "://" not in ref:
         canonical_ref = _resolve_remote_ref(kind, ref, progress=progress)
     else:
         canonical_ref = _canonicalize_remote_ref(kind, ref)
@@ -1285,7 +1608,9 @@ def _remote_entry_from_ref(
         name=name,
         form=form,
     )
-    if materialize and progress is not None:
+    if cached is not None:
+        entry_files = _remap_cached_remote_files(cached, relative_entry_path)
+    elif materialize and progress is not None:
         entry_files = _remote_materialized_files(
             relative_entry_path=relative_entry_path,
             kind=kind,
@@ -1308,7 +1633,7 @@ def _remote_entry_from_ref(
                 ref=canonical_ref,
             )
         }
-    if materialize:
+    if materialize and cached is None:
         emit_progress(
             progress,
             id=f"cap.extract:{kind}:{canonical_ref}",
@@ -1336,7 +1661,7 @@ def _remote_entry_from_ref(
             meta=_load_meta_text(entry_content.decode("utf-8")),
         )
     except Exception as exc:
-        if materialize:
+        if materialize and cached is None:
             emit_progress(
                 progress,
                 id=f"cap.extract:{kind}:{canonical_ref}",
@@ -1344,9 +1669,9 @@ def _remote_entry_from_ref(
                 label=f"Extract {kind}",
                 status="failed",
                 detail=str(exc),
-            )
+        )
         raise
-    if materialize:
+    if materialize and cached is None:
         emit_progress(
             progress,
             id=f"cap.extract:{kind}:{canonical_ref}",
@@ -1378,6 +1703,7 @@ def _materialize_remote_entry_requests(
     requests: tuple[_RemoteEntryRequest, ...],
     *,
     materialize: bool,
+    remote_cache: _RemoteEntryCache | None,
     progress: ProgressSink | None,
 ) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
     if not requests:
@@ -1388,6 +1714,7 @@ def _materialize_remote_entry_requests(
             agent_name,
             requests,
             materialize=materialize,
+            remote_cache=remote_cache,
             progress=progress,
         )
     for request in requests:
@@ -1405,6 +1732,7 @@ def _materialize_remote_entry_requests(
                 agent_name,
                 request,
                 materialize=materialize,
+                remote_cache=remote_cache,
                 progress=progress,
             ): index
             for index, request in enumerate(requests)
@@ -1439,6 +1767,7 @@ def _materialize_remote_entry_requests_serial(
     requests: tuple[_RemoteEntryRequest, ...],
     *,
     materialize: bool,
+    remote_cache: _RemoteEntryCache | None,
     progress: ProgressSink | None,
 ) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
     entries: list[PreparedEntry] = []
@@ -1449,6 +1778,7 @@ def _materialize_remote_entry_requests_serial(
             agent_name,
             request,
             materialize=materialize,
+            remote_cache=remote_cache,
             progress=progress,
         )
         entries.append(entry)
@@ -1462,6 +1792,7 @@ def _remote_entry_from_request(
     request: _RemoteEntryRequest,
     *,
     materialize: bool,
+    remote_cache: _RemoteEntryCache | None,
     progress: ProgressSink | None,
 ) -> tuple[PreparedEntry, dict[str, bytes]]:
     return _remote_entry_from_ref(
@@ -1476,6 +1807,7 @@ def _remote_entry_from_request(
         form=request.form,
         source_line=request.source_line,
         materialize=materialize,
+        remote_cache=remote_cache,
         progress=progress,
     )
 

@@ -370,7 +370,7 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     ) -> None:
         visibility, agent_name = _target_visibility(ctx)
         selected_agent = _context_agent(ctx)
-        if _entry_exists(
+        if _local_entry_exists(
             _context_root(ctx),
             agent_name,
             visibility=visibility,
@@ -396,18 +396,14 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             text=text,
         )
         if selected_agent:
-            progress = _make_cap_write_progress()
-            try:
-                _refresh_and_append_cap_update(
-                    _context_root(ctx),
-                    selected_agent,
-                    kind=kind,
-                    name=name,
-                    visibility=visibility,
-                    progress=progress,
-                )
-            finally:
-                progress.finish(details=False)
+            _refresh_and_append_cap_update(
+                _context_root(ctx),
+                selected_agent,
+                kind=kind,
+                name=name,
+                visibility=visibility,
+                progress_total=1,
+            )
         typer.echo(f"Created {kind} {name}: {path}")
 
     return new_cap
@@ -448,18 +444,14 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             text=updated_text,
         )
         if selected_agent:
-            progress = _make_cap_write_progress()
-            try:
-                _refresh_and_append_cap_update(
-                    _context_root(ctx),
-                    selected_agent,
-                    kind=kind,
-                    name=name,
-                    visibility=visibility,
-                    progress=progress,
-                )
-            finally:
-                progress.finish(details=False)
+            _refresh_and_append_cap_update(
+                _context_root(ctx),
+                selected_agent,
+                kind=kind,
+                name=name,
+                visibility=visibility,
+                progress_total=1,
+            )
         typer.echo(f"Updated {kind} {name}: {path}")
 
     return edit_cap
@@ -509,6 +501,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                     kind=kind,
                     name=entry.name,
                     visibility=visibility,
+                    progress_total=1,
                     progress=progress,
                 )
             finally:
@@ -527,7 +520,6 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     ) -> None:
         visibility, agent_name = _target_visibility(ctx)
         selected_agent = _context_agent(ctx)
-        progress = _make_cap_write_progress() if selected_agent else None
         entry = _named_entry(
             _context_root(ctx),
             agent_name,
@@ -548,18 +540,14 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         if not removed:
             raise click.ClickException(f"{title} {name} not found")
         if selected_agent:
-            try:
-                _refresh_and_append_cap_update(
-                    _context_root(ctx),
-                    selected_agent,
-                    kind=kind,
-                    name=name,
-                    visibility=visibility,
-                    progress=progress,
-                )
-            finally:
-                if progress is not None:
-                    progress.finish(details=False)
+            _refresh_and_append_cap_update(
+                _context_root(ctx),
+                selected_agent,
+                kind=kind,
+                name=name,
+                visibility=visibility,
+                progress_total=0,
+            )
         typer.echo(f"Removed {kind} {name}: {entry.ref}")
 
     return remove_cap
@@ -594,18 +582,14 @@ def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         if not removed:
             raise click.ClickException(f"{title} {name} not found")
         if selected_agent:
-            progress = _make_cap_write_progress()
-            try:
-                _refresh_and_append_cap_update(
-                    _context_root(ctx),
-                    selected_agent,
-                    kind=kind,
-                    name=name,
-                    visibility=visibility,
-                    progress=progress,
-                )
-            finally:
-                progress.finish(details=False)
+            _refresh_and_append_cap_update(
+                _context_root(ctx),
+                selected_agent,
+                kind=kind,
+                name=name,
+                visibility=visibility,
+                progress_total=0,
+            )
         typer.echo(f"Deleted {kind} {name}: {deleted_path}")
 
     return delete_cap
@@ -760,11 +744,20 @@ def _named_entry(
     source_origin: Literal["local", "remote"] | None = None,
     source_form: cap_store.EntryForm | None = None,
 ) -> PreparedEntry:
-    entries = cap_store.list_entries(
-        toolang_root,
-        agent_name,
-        visibility=visibility,
-        kinds={kind},
+    entries = (
+        cap_store.list_local_entries(
+            toolang_root,
+            agent_name,
+            visibility=visibility,
+            kinds={kind},
+        )
+        if source_origin == "local"
+        else cap_store.list_entries(
+            toolang_root,
+            agent_name,
+            visibility=visibility,
+            kinds={kind},
+        )
     )
     for entry in entries:
         if entry.name != name:
@@ -777,7 +770,7 @@ def _named_entry(
     raise click.ClickException(f"{kind.title()} {name} not found")
 
 
-def _entry_exists(
+def _local_entry_exists(
     toolang_root: Path,
     agent_name: str,
     *,
@@ -787,7 +780,7 @@ def _entry_exists(
 ) -> bool:
     return any(
         entry.name == name
-        for entry in cap_store.list_entries(
+        for entry in cap_store.list_local_entries(
             toolang_root,
             agent_name,
             visibility=visibility,
@@ -832,31 +825,24 @@ def _refresh_and_append_cap_update(
     kind: CapKind,
     name: str,
     visibility: PreparedVisibility,
+    progress_total: int,
     progress: CliProgress | None = None,
 ) -> None:
     from ..state.durable import scan_durable_state
     from .progress import as_progress_sink
 
     durable = _wrap_user_error(scan_durable_state, toolang_root, agent_name)
-    prepared = _wrap_user_error(
+    _wrap_user_error(
         watch_feature.build_prepared_state,
         durable,
         progress=as_progress_sink(progress),
     )
     if progress is not None:
-        progress.set_prepare_total(_prepared_cap_count(prepared))
+        progress.set_prepare_total(progress_total)
     _append_cap_update(
         toolang_root,
         agent_name,
         kind=kind,
         name=name,
         visibility=visibility,
-    )
-
-
-def _prepared_cap_count(prepared: PreparedState) -> int:
-    return sum(
-        1
-        for entry in (*prepared.shared_lock.entries, *prepared.private_lock.entries)
-        if entry.kind in CAP_KINDS
     )

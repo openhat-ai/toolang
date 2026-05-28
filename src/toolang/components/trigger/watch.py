@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
+import fcntl
 import hashlib
 import logging
 from pathlib import Path
@@ -14,6 +17,7 @@ from watchfiles import Change, awatch
 
 from ...caps import (
     build_visibility_lock,
+    remote_entry_cache,
     select_cap_entries,
     visibility_input_fingerprint,
     visibility_lock_content_fingerprint,
@@ -345,7 +349,36 @@ def _build_or_reuse_visibility_lock(
             detail="cached",
         )
         return current
-    lock, files = build_visibility_lock(durable, visibility=visibility, progress=progress)
+    if visibility == "shared":
+        with _shared_prepare_lock(durable.toolang_root):
+            latest = _latest_visibility_lock(durable, visibility=visibility)
+            if latest is not None and _visibility_lock_matches(durable, visibility=visibility, lock=latest):
+                emit_progress(
+                    progress,
+                    id=f"prepare.visibility:{visibility}",
+                    phase="prepare.visibility",
+                    label=f"Prepare {visibility} caps",
+                    status="ok",
+                    detail="cached",
+                )
+                return latest
+            return _build_visibility_lock(durable, visibility=visibility, current=latest or current, progress=progress)
+    return _build_visibility_lock(durable, visibility=visibility, current=current, progress=progress)
+
+
+def _build_visibility_lock(
+    durable: DurableState,
+    *,
+    visibility: PreparedVisibility,
+    current: PreparedLock | None,
+    progress: ProgressSink | None,
+) -> PreparedLock:
+    cache = (
+        remote_entry_cache(durable.toolang_root, current)
+        if current is not None
+        else None
+    )
+    lock, files = build_visibility_lock(durable, visibility=visibility, remote_cache=cache, progress=progress)
     if visibility == "private":
         program = build_prepared_program(durable)
         lock = replace(
@@ -356,6 +389,31 @@ def _build_or_reuse_visibility_lock(
     return _write_visibility_if_changed(durable.toolang_root, lock, files, force=True)
 
 
+@contextmanager
+def _shared_prepare_lock(toolang_root: Path) -> Iterator[None]:
+    toolang_root.mkdir(parents=True, exist_ok=True)
+    lock_path = toolang_root / ".prepare-shared.lock"
+    with lock_path.open("a+b") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _latest_visibility_lock(
+    durable: DurableState,
+    *,
+    visibility: PreparedVisibility,
+) -> PreparedLock | None:
+    try:
+        if visibility == "shared":
+            return load_shared_lock(durable.toolang_root)
+        return load_private_lock(durable.toolang_root, durable.agent_name)
+    except (FileNotFoundError, KeyError, TypeError, ValueError):
+        return None
+
+
 def _visibility_lock_matches(
     durable: DurableState,
     *,
@@ -364,13 +422,17 @@ def _visibility_lock_matches(
 ) -> bool:
     if lock.input_fingerprint != visibility_input_fingerprint(durable, visibility=visibility):
         return False
-    if visibility == "private" and lock.program is None:
+    return _visibility_lock_outputs_match(durable.toolang_root, lock)
+
+
+def _visibility_lock_outputs_match(toolang_root: Path, lock: PreparedLock) -> bool:
+    if lock.visibility == "private" and lock.program is None:
         return False
     try:
-        fingerprint = visibility_lock_content_fingerprint(durable.toolang_root, lock)
+        fingerprint = visibility_lock_content_fingerprint(toolang_root, lock)
     except (FileNotFoundError, KeyError):
         return False
-    if visibility == "private":
+    if lock.visibility == "private":
         if lock.program is None:
             return False
         fingerprint = _combined_private_fingerprint(fingerprint, lock.program.fingerprint())
