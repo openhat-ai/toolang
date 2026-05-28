@@ -14,11 +14,13 @@ from watchfiles import Change, awatch
 
 from ...caps import (
     build_visibility_lock,
+    select_cap_entries,
     visibility_input_fingerprint,
     visibility_lock_content_fingerprint,
 )
 from ...common.progress import ProgressSink, emit_progress
 from ...execution.records import UpdateKind
+from ...models.resolution import select_model_selectors
 from ...state.durable import DurableState, is_durable_path, scan_durable_state
 from ...state.live import load_live_state
 from ...state.program import build_prepared_program
@@ -39,6 +41,7 @@ DEFAULT_INTERVAL_MS = 1_000.0
 DEFAULT_DEBOUNCE_MS = 500.0
 logger = logging.getLogger("toolang.watch")
 prepare_logger = logging.getLogger("toolang.prepare")
+state_logger = logging.getLogger("toolang.state")
 _EMPTY_INPUT_FINGERPRINT = hashlib.sha256().hexdigest()
 
 
@@ -93,7 +96,7 @@ async def _run_prepare_watch(
     interval_ms = float(interval_value)
     context.root.mkdir(parents=True, exist_ok=True)
     logger.debug(
-        "watch prepare started root=%s agent=%s interval_ms=%s",
+        "watch.prepare_started root=%s agent=%s interval_ms=%s",
         context.root,
         context.name,
         int(interval_ms),
@@ -123,7 +126,7 @@ async def _run_load_live(
         raise TypeError("invalid config: components.trigger.watch.debounce_ms")
     debounce_timeout = float(debounce_value) / 1000
     logger.debug(
-        "watch load started root=%s agent=%s debounce_ms=%s live=%s",
+        "watch.load_started root=%s agent=%s debounce_ms=%s live=%s",
         context.root,
         context.name,
         int(float(debounce_value)),
@@ -132,25 +135,35 @@ async def _run_load_live(
     while True:
         if not await _wait_for_reload_or_stop(reload_signal, stop_signal):
             return
-        logger.info("watch reload requested agent=%s", context.name)
+        logger.debug("watch.reload_requested agent=%s", context.name)
         if await _debounce_reload(reload_signal, stop_signal, debounce_timeout):
             return
         try:
             prepared = load_prepared_state(context.root, context.name)
         except FileNotFoundError:
-            logger.debug("watch reload skipped missing prepared state agent=%s", context.name)
+            logger.debug("watch.reload_skipped agent=%s reason=missing_prepared_state", context.name)
             continue
         if context.live.fingerprint == prepared.fingerprint:
             logger.debug(
-                "watch reload skipped unchanged fingerprint=%s agent=%s",
-                _short_fingerprint(prepared.fingerprint),
+                "watch.reload_skipped agent=%s reason=unchanged fingerprint=%s",
                 context.name,
+                _short_fingerprint(prepared.fingerprint),
             )
             continue
         enabled_components = context.config.require("components.enabled")
         if not isinstance(enabled_components, tuple):
             raise TypeError("invalid config: components.enabled")
         live = load_live_state(prepared, enabled_components=cast(tuple[str, ...], enabled_components))
+        cap_selectors = _cap_allowed_selectors(context)
+        if cap_selectors:
+            live = replace(
+                live,
+                cap_entries=select_cap_entries(
+                    live.cap_entries,
+                    cap_selectors,
+                    agent_name=context.name,
+                ),
+            )
         from ...up import load_runtime_tool_plugins
 
         tools = load_runtime_tool_plugins(
@@ -158,15 +171,25 @@ async def _run_load_live(
             agent_name=context.name,
             live=live,
             environ=context.model_environ,
+            selectors=_tool_allowed_selectors(context),
         )
-        logger.info(
-            "watch reload applied agent=%s live=%s->%s",
+        logger.debug(
+            "watch.reload_applied agent=%s live=%s->%s",
             context.name,
             _short_fingerprint(context.live.fingerprint),
             _short_fingerprint(live.fingerprint),
         )
         context.live = live
         context.tools = tools
+        state_logger.info(
+            "Agent reloaded state=%s models=%s tools=%s psyches=%s skills=%s services=%s",
+            _short_fingerprint(live.fingerprint),
+            _model_count(context),
+            len(tools),
+            _cap_count(live, "psyche"),
+            _cap_count(live, "skill"),
+            _cap_count(live, "service"),
+        )
 
 
 def build_prepared_state(durable: DurableState, *, progress: ProgressSink | None = None) -> PreparedState:
@@ -182,7 +205,7 @@ def build_prepared_state(durable: DurableState, *, progress: ProgressSink | None
         detail=durable.agent_name,
     )
     prepare_logger.debug(
-        "prepare build started root=%s agent=%s durable_fingerprint=%s",
+        "prepare.started root=%s agent=%s durable_fingerprint=%s",
         durable.toolang_root,
         durable.agent_name,
         _short_fingerprint(durable.fingerprint),
@@ -201,7 +224,7 @@ def build_prepared_state(durable: DurableState, *, progress: ProgressSink | None
     )
     prepared = load_prepared_state(durable.toolang_root, durable.agent_name)
     prepare_logger.debug(
-        "prepare build completed root=%s agent=%s prepared_fingerprint=%s",
+        "prepare.result root=%s agent=%s prepared_fingerprint=%s",
         durable.toolang_root,
         durable.agent_name,
         _short_fingerprint(prepared.fingerprint),
@@ -229,8 +252,8 @@ def apply_changes(
     durable_paths = [str(path) for path in durable_relative_paths]
     if not durable_paths:
         return
-    prepare_logger.info(
-        "prepare changed agent=%s paths=%s",
+    prepare_logger.debug(
+        "prepare.changed agent=%s paths=%s",
         context.name,
         ", ".join(durable_paths),
     )
@@ -239,8 +262,8 @@ def apply_changes(
     prepared = build_prepared_state(durable)
     _append_entry_change_updates(context, before, prepared)
     should_reload = prepared.fingerprint != context.live.fingerprint
-    prepare_logger.info(
-        "prepare applied agent=%s shared=%s private=%s live=%s reload=%s",
+    prepare_logger.debug(
+        "prepare.applied agent=%s shared=%s private=%s live=%s reload=%s",
         context.name,
         _lock_change(before, prepared, visibility="shared"),
         _lock_change(before, prepared, visibility="private"),
@@ -443,6 +466,53 @@ def _short_fingerprint(value: str) -> str:
     return value[:12]
 
 
+def _model_count(context: UptimeContext) -> int:
+    try:
+        selectors = _model_allowed_selectors(context)
+        if selectors:
+            return len(select_model_selectors(context, activation_selectors=selectors))
+        return len(select_model_selectors(context))
+    except Exception:
+        selectors = context.config.get("models.allowed_selectors")
+        if isinstance(selectors, tuple):
+            return len(selectors)
+        if isinstance(selectors, list):
+            return len(selectors)
+        return 0
+
+
+def _model_allowed_selectors(context: UptimeContext) -> tuple[str, ...]:
+    selectors = context.config.get("models.allowed_selectors")
+    if isinstance(selectors, tuple):
+        return tuple(item for item in selectors if isinstance(item, str) and item.strip())
+    if isinstance(selectors, list):
+        return tuple(item for item in selectors if isinstance(item, str) and item.strip())
+    return ()
+
+
+def _tool_allowed_selectors(context: UptimeContext) -> tuple[str, ...] | None:
+    selectors = context.config.get("tools.allowed_selectors")
+    if isinstance(selectors, tuple):
+        return tuple(item for item in selectors if isinstance(item, str) and item.strip())
+    if isinstance(selectors, list):
+        return tuple(item for item in selectors if isinstance(item, str) and item.strip())
+    return None
+
+
+def _cap_allowed_selectors(context: UptimeContext) -> tuple[str, ...]:
+    selectors = context.config.get("caps.allowed_selectors")
+    if isinstance(selectors, tuple):
+        return tuple(item for item in selectors if isinstance(item, str) and item.strip())
+    if isinstance(selectors, list):
+        return tuple(item for item in selectors if isinstance(item, str) and item.strip())
+    return ()
+
+
+def _cap_count(live: object, kind: str) -> int:
+    entries = getattr(live, "cap_entries", ())
+    return sum(1 for entry in entries if getattr(entry, "kind", None) == kind)
+
+
 def _combined_private_fingerprint(lock_fingerprint: str, program_fingerprint: str) -> str:
     import hashlib
 
@@ -484,6 +554,6 @@ async def _debounce_reload(
             return True
         except TimeoutError:
             if reload_signal.is_set():
-                logger.debug("watch reload coalesced additional signals")
+                logger.debug("watch.reload_coalesced")
                 continue
             return False

@@ -44,7 +44,7 @@ def test_httpx_log_filter_redacts_telegram_token_and_demotes_to_debug() -> None:
     assert record.getMessage() == 'HTTP Request: POST https://api.telegram.org/bot<redacted>/getUpdates "HTTP/1.1 200 OK"'
 
 
-def test_build_uvicorn_log_config_registers_httpx_filter_and_debug_logger() -> None:
+def test_build_uvicorn_log_config_registers_httpx_filter_and_keeps_http_debug_off_by_default() -> None:
     config = build_uvicorn_log_config()
 
     filters = cast(dict[str, object], config["filters"])
@@ -52,9 +52,22 @@ def test_build_uvicorn_log_config_registers_httpx_filter_and_debug_logger() -> N
     handlers = cast(dict[str, dict[str, object]], config["handlers"])
 
     assert "httpx" in filters
-    assert loggers["httpx"]["level"] == "DEBUG"
-    assert loggers["httpcore"]["level"] == "DEBUG"
+    assert loggers["httpx"]["level"] == "OFF"
+    assert loggers["httpcore"]["level"] == "OFF"
     assert handlers["default"]["level"] == "ERROR"
+
+
+def test_build_uvicorn_log_config_keeps_http_debug_off_when_toolang_debug_is_enabled() -> None:
+    config = build_uvicorn_log_config(
+        spec=parse_log_spec("toolang=debug", default_root_level=logging.ERROR)
+    )
+
+    loggers = cast(dict[str, dict[str, object]], config["loggers"])
+    handlers = cast(dict[str, dict[str, object]], config["handlers"])
+
+    assert handlers["default"]["level"] == "DEBUG"
+    assert loggers["httpx"]["level"] == "OFF"
+    assert loggers["httpcore"]["level"] == "OFF"
 
 
 def test_parse_log_level_accepts_warn_alias() -> None:

@@ -235,19 +235,23 @@ def test_queue_runner_drains_requests_in_order(tmp_path: Path, caplog) -> None:
             "draft follow-up",
             "refresh status",
         ]
-        assert sum(1 for item in printed if item.startswith("starting run ")) == 3
-        assert sum(1 for item in printed if item.startswith("finished run ")) == 3
+        assert sum(1 for item in printed if item.startswith("Run started ")) == 3
+        assert sum(1 for item in printed if item.startswith("Run finished ")) == 3
+        draft_start = next(
+            item
+            for item in printed
+            if item.startswith("Run started ")
+            and "thread=thread-1 " in item
+            and "input='draft follow-up'" in item
+        )
         assert _index_where(
             printed,
             lambda item: (
-                item.startswith("finished run ")
-                and "group=chat " in item
-                and "thread_id=thread-1 " in item
+                item.startswith("Run finished ")
+                and "thread=thread-1 " in item
                 and "status=finished" in item
             ),
-        ) < printed.index(
-            "starting run group=chat origin=chat thread_id=thread-1 input='draft follow-up'"
-        )
+        ) < printed.index(draft_start)
         assert len(context.runner) == 0
         assert context.runner.snapshot()["concurrency_groups"] == [
             {"available": 1, "group": "chat", "in_flight": 0, "limit": 1},
@@ -2311,19 +2315,165 @@ def test_up_logs_runtime_urls_after_start_and_stop(tmp_path: Path, monkeypatch, 
     assert result == 0
     messages = [record.getMessage() for record in caplog.records if record.name == "toolang.runtime"]
     assert len(messages) == 4
-    assert messages[0] == f"Agent alice starting root={toolang_root} trigger=none runner=none router=inspect"
-    assert messages[1] == "Agent alice started webui=https://agents.example.test/8765"
-    assert messages[2] == "Agent alice stopping"
-    assert messages[3] == "Agent alice stopped"
+    assert messages[0] == f"Agent starting root={toolang_root} trigger=none runner=none router=inspect"
+    assert messages[1] == "Agent started webui=https://agents.example.test/8765"
+    assert messages[2] == "Agent stopping"
+    assert messages[3] == "Agent stopped"
     color_messages = [
         record.__dict__.get("color_message")
         for record in caplog.records
         if record.name == "toolang.runtime"
     ]
     assert color_messages[0] == (
-        "Agent %s starting root=\x1b[1m%s\x1b[0m trigger=\x1b[1m%s\x1b[0m runner=\x1b[1m%s\x1b[0m router=\x1b[1m%s\x1b[0m"
+        "Agent starting root=\x1b[1m%s\x1b[0m trigger=\x1b[1m%s\x1b[0m runner=\x1b[1m%s\x1b[0m router=\x1b[1m%s\x1b[0m"
     )
-    assert color_messages[1] == "Agent %s started webui=\x1b[1m%s\x1b[0m"
+    assert color_messages[1] == "Agent started webui=\x1b[1m%s\x1b[0m"
+
+
+def test_state_loaded_log_counts_selectable_models(tmp_path: Path, caplog) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat",),
+    )
+
+    caplog.set_level(logging.INFO, logger="toolang.state")
+    up_module._log_state_loaded(context)
+
+    messages = [record.getMessage() for record in caplog.records if record.name == "toolang.state"]
+    assert messages == [
+        (
+            f"Agent loaded state={context.live.fingerprint[:12]} "
+            f"models={up_module._model_count(context)} tools={len(context.tools)} "
+            "psyches=0 skills=0 services=0"
+        )
+    ]
+    assert up_module._model_count(context) > 0
+    unrestricted_count = up_module._model_count(context)
+    context.config.set("models.allowed_selectors", ("openai/gpt-5[openai]",))
+    assert up_module._model_count(context) == 1
+    assert up_module._model_count(context) < unrestricted_count
+
+
+def test_load_runtime_context_rejects_unmatched_tool_selector(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+
+    with pytest.raises(ValueError, match="tool selector matched no tools: missing/none"):
+        up_module._load_runtime_context(
+            toolang_root=toolang_root,
+            agent_name="alice",
+            enabled_components=("runner.chat",),
+            environ={"OPENAI_API_KEY": "secret"},
+            tool_selectors=("missing/none",),
+        )
+
+
+def test_load_runtime_context_rejects_unmatched_cap_selector(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+
+    with pytest.raises(ValueError, match="cap selector matched no caps: skill/missing"):
+        up_module._load_runtime_context(
+            toolang_root=toolang_root,
+            agent_name="alice",
+            enabled_components=("runner.chat",),
+            environ={"OPENAI_API_KEY": "secret"},
+            cap_selectors=("skill/missing",),
+        )
+
+
+def test_load_runtime_context_applies_tool_and_cap_selectors(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="local-reviewer",
+        text="---\ndescription: Review local changes\n---\n# Local Reviewer\n",
+    )
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="extra-skill",
+        text="---\ndescription: Extra\n---\n# Extra\n",
+    )
+
+    context = up_module._load_runtime_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_components=("runner.chat",),
+        environ={"OPENAI_API_KEY": "secret"},
+        tool_selectors=("shell/*",),
+        cap_selectors=("skill/local-reviewer",),
+    )
+
+    assert tuple(context.tools) == ("shell__execute",)
+    assert [(entry.kind, entry.name) for entry in context.live.cap_entries] == [
+        ("skill", "local-reviewer")
+    ]
+
+
+def test_watch_reload_preserves_tool_and_cap_selectors(tmp_path: Path) -> None:
+    async def run_test() -> None:
+        toolang_root = tmp_path / "toolang"
+        agents.create_agent(toolang_root, "alice")
+        caps.put_local_entry_text(
+            toolang_root,
+            "alice",
+            visibility="private",
+            kind="skill",
+            name="local-reviewer",
+            text="---\ndescription: Review local changes\n---\n# Local Reviewer\n",
+        )
+        context = up_module._load_runtime_context(
+            toolang_root=toolang_root,
+            agent_name="alice",
+            enabled_components=("trigger.watch", "runner.chat"),
+            environ={"OPENAI_API_KEY": "secret"},
+            tool_selectors=("shell/*",),
+            cap_selectors=("skill/local-reviewer",),
+        )
+        context.config.set("components.trigger.watch.debounce_ms", 1)
+        before = context.live.fingerprint
+        caps.put_local_entry_text(
+            toolang_root,
+            "alice",
+            visibility="private",
+            kind="skill",
+            name="extra-skill",
+            text="---\ndescription: Extra\n---\n# Extra\n",
+        )
+        prepared = watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
+        assert prepared.fingerprint != before
+
+        stop_signal = asyncio.Event()
+        reload_signal = asyncio.Event()
+        reload_signal.set()
+        task = asyncio.create_task(
+            watch._run_load_live(context, stop_signal=stop_signal, reload_signal=reload_signal)
+        )
+        for _ in range(50):
+            if context.live.fingerprint == prepared.fingerprint:
+                break
+            await asyncio.sleep(0.01)
+        stop_signal.set()
+        reload_signal.set()
+        await task
+
+        assert context.live.fingerprint == prepared.fingerprint
+        assert tuple(context.tools) == ("shell__execute",)
+        assert [(entry.kind, entry.name) for entry in context.live.cap_entries] == [
+            ("skill", "local-reviewer")
+        ]
+
+    asyncio.run(run_test())
 
 
 def test_trigger_logger_names_are_flat() -> None:
@@ -5205,11 +5355,11 @@ def test_assemble_run_input_logs_activation_set_math(tmp_path: Path, caplog) -> 
         for record in caplog.records
         if record.name == "toolang.run"
     ]
-    info_line = next(message for message in messages if message.startswith("activation set math "))
-    assert "models 2 = openai/gpt-5 -> 1" in info_line
-    assert "skills 1 = local-reviewer -> 1" in info_line
-    assert "activation_ceiling" not in info_line
-    detail_line = next(message for message in messages if message.startswith("activation set math detail "))
+    detail_line = next(message for message in messages if message.startswith("run.activation "))
+    assert "thread=script_" in detail_line
+    assert " run=run_" in detail_line
+    assert "summary=models 2 = openai/gpt-5 -> 1" in detail_line
+    assert "skills 1 = local-reviewer -> 1" in detail_line
     logged_math = json.loads(detail_line.split(" math=", 1)[1])
     assert logged_math["models"]["effective"] == ["openai/gpt-5[openai]"]
     assert logged_math["skills"]["effective"] == ["skill/local-reviewer"]
@@ -5381,11 +5531,11 @@ def test_run_input_debug_logs_computed_prompt_bundle(tmp_path: Path, caplog) -> 
         RunInput.from_binding(context, bound)
 
     messages = [record.getMessage() for record in caplog.records if record.name == "toolang.run"]
-    assert any(message.startswith("computed prompt bundle run_id=") for message in messages)
-    assert any(message.startswith("computed prompt tools=") for message in messages)
-    assert any(message.startswith("computed prompt instructions=<runtime-instructions>") for message in messages)
-    assert any(message.startswith("computed prompt context=<context>") for message in messages)
-    assert any(message.startswith("computed prompt messages=") and '"role": "user"' in message and "hi" in message for message in messages)
+    assert any(message.startswith("prompt.assembled thread=") for message in messages)
+    assert any(message.startswith("prompt.tools thread=") for message in messages)
+    assert any(message.startswith("prompt.instructions thread=") and "text=<runtime-instructions>" in message for message in messages)
+    assert any(message.startswith("prompt.context thread=") and "text=<context>" in message for message in messages)
+    assert any(message.startswith("prompt.messages thread=") and '"role": "user"' in message and "hi" in message for message in messages)
 
 
 def test_chat_run_prefers_named_chat_thunk_over_main(tmp_path: Path) -> None:
@@ -5722,11 +5872,13 @@ def test_script_execute_run_logs_lifecycle_without_queue_runner(tmp_path: Path, 
         if record.name == "toolang.run"
     ]
     assert outcome.status == "finished"
-    assert messages[0].startswith("starting run group=script origin=script thread_id=script_")
-    assert messages[0].endswith(" input='hello'")
-    assert messages[-1].startswith("finished run run_id=run_")
-    assert " group=script origin=script thread_id=script_" in messages[-1]
-    assert messages[-1].endswith(" status=finished")
+    assert messages[0].startswith("Thread created id=script_")
+    assert messages[1].startswith("Run started thread=script_")
+    assert " run=run_" in messages[1]
+    assert messages[1].endswith(" input='hello'")
+    assert messages[-1].startswith("Run finished thread=script_")
+    assert " run=run_" in messages[-1]
+    assert " status=finished " in messages[-1]
 
 
 def test_script_loop_cancel_does_not_wait_for_worker_thread() -> None:

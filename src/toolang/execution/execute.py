@@ -43,6 +43,7 @@ async def execute_run(
     bound: RunBinding | None = None
     run_input: RunInput | None = None
     started = False
+    run_started_at = time.perf_counter()
     try:
         bound = bind_run_request(context, request, live=submission.live)
         _log_run_start(request=request, bound=bound)
@@ -70,6 +71,7 @@ async def execute_run(
         )
         provider = context.model_providers[model.provider]
         model = provider.prepare_target(model)
+        _log_run_prepared(run=bound, run_input=run_input, model=model)
         adapter = context.model_adapters.get(model.adapter)
         if adapter is None:
             raise ToolangError(f"unknown model adapter: {model.adapter}")
@@ -109,6 +111,7 @@ async def execute_run(
                 thunk_name=bound.thunk_name,
                 thread_id=bound.thread_id,
                 delay_sec=delay_sec,
+                duration_ms=_elapsed_ms(run_started_at),
                 status="failed",
                 output_text="",
                 error=error,
@@ -123,6 +126,7 @@ async def execute_run(
                 thunk_name=bound.thunk_name,
                 thread_id=bound.thread_id,
                 delay_sec=delay_sec,
+                duration_ms=_elapsed_ms(run_started_at),
                 status="failed",
                 output_text="",
                 error=error,
@@ -153,6 +157,7 @@ async def execute_run(
         thunk_name=bound.thunk_name,
         thread_id=bound.thread_id,
         delay_sec=delay_sec,
+        duration_ms=_elapsed_ms(run_started_at),
         status="failed" if final_status == "canceled" else "finished",
         output_text=execution.output_text,
         error=final_error,
@@ -183,12 +188,40 @@ def _log_run_start(*, request: RunRequest, bound: RunBinding) -> None:
     if request.message is not None:
         input_summary = message_summary(request.message.parts) or input_summary
     _LOGGER.info(
-        "starting run group=%s origin=%s thread_id=%s input=%r",
-        bound.group,
-        bound.origin,
-        bound.thread_id or "-",
+        "Run started thread=%s run=%s input=%r",
+        bound.thread_id,
+        bound.run_id,
         input_summary,
     )
+
+
+def _log_run_prepared(*, run: RunBinding, run_input: RunInput, model: object) -> None:
+    _LOGGER.info(
+        "Run prepared thread=%s run=%s thunk=%s model=%s tools=%s psyches=%s skills=%s services=%s",
+        run.thread_id,
+        run.run_id,
+        _thunk_name(run_input),
+        getattr(model, "ref", "-"),
+        len(run_input.tools()),
+        _entry_count(run_input, "psyches"),
+        _entry_count(run_input, "skills"),
+        _entry_count(run_input, "services"),
+    )
+
+
+def _thunk_name(run_input: RunInput) -> str:
+    thunk = getattr(run_input, "thunk", None)
+    thunk_name = getattr(thunk, "thunk_name", None)
+    if callable(thunk_name):
+        return str(thunk_name())
+    return "-"
+
+
+def _entry_count(run_input: RunInput, method_name: str) -> int:
+    method = getattr(run_input, method_name, None)
+    if not callable(method):
+        return 0
+    return len(method())
 
 
 def _finish_outcome(
@@ -200,6 +233,7 @@ def _finish_outcome(
     thunk_name: str | None,
     thread_id: str | None,
     delay_sec: float,
+    duration_ms: int,
     status: RunOutcomeStatus,
     output_text: str = "",
     error: str | None = None,
@@ -219,12 +253,11 @@ def _finish_outcome(
         live_fingerprint=live_fingerprint,
     )
     _LOGGER.info(
-        "finished run run_id=%s group=%s origin=%s thread_id=%s status=%s",
-        outcome.run_id[:12],
-        outcome.group,
-        outcome.origin,
+        "Run finished thread=%s run=%s status=%s duration_ms=%s",
         outcome.thread_id or "-",
+        outcome.run_id,
         outcome.status,
+        duration_ms,
     )
     return outcome
 
@@ -305,6 +338,10 @@ def _event_is_after_canceled_run(context: UptimeContext, event: TraceEvent) -> b
 
 def _utc_now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return max(0, round((time.perf_counter() - started_at) * 1000))
 
 
 def _request_id(metadata: dict[str, object]) -> str | None:

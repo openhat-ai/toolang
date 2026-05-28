@@ -1320,16 +1320,16 @@ def test_responses_adapter_logs_api_request_and_response_at_debug(caplog, monkey
         messages=[Message.user("hello")],
     )
 
-    with caplog.at_level(logging.DEBUG, logger="toolang.model.api"):
+    with caplog.at_level(logging.DEBUG, logger="toolang.model.adapter"):
         result = responses_models.invoke_response(target, request, stateful=True)
 
     assert result.message == Message.assistant("done")
     assert result.usage == ModelUsage(input_tokens=11, output_tokens=7)
     assert captured["payload"] == response_payload(target, request, stateful=True)
-    assert "responses api request provider=openai ref=openai/gpt-5" in caplog.text
+    assert "adapter.request provider=openai ref=openai/gpt-5" in caplog.text
     assert '"model": "gpt-5"' in caplog.text
     assert '"text": "Rewrite the input."' in caplog.text
-    assert "responses api response provider=openai ref=openai/gpt-5" in caplog.text
+    assert "adapter.result provider=openai ref=openai/gpt-5" in caplog.text
     assert '"id": "resp_123"' in caplog.text
     assert '"output_text": "done"' in caplog.text
     assert "secret" not in caplog.text
@@ -1371,8 +1371,8 @@ def test_run_context_logs_model_and_tool_io_at_debug(caplog) -> None:
     )
 
     with (
-        caplog.at_level(logging.DEBUG, logger="toolang.run.model"),
-        caplog.at_level(logging.DEBUG, logger="toolang.run.tool"),
+        caplog.at_level(logging.DEBUG, logger="toolang.model"),
+        caplog.at_level(logging.DEBUG, logger="toolang.tool"),
     ):
         result = load_loop("basic").run(
             RunContext(
@@ -1389,12 +1389,13 @@ def test_run_context_logs_model_and_tool_io_at_debug(caplog) -> None:
         )
 
     assert result.output_text == "done"
-    assert "model call input instructions=" in caplog.text
+    assert "model.request thread=thread-1 run=run-1 step=1 instructions=" in caplog.text
     assert '"command": "pwd"' in caplog.text
-    assert "model call output message=" in caplog.text
+    assert "model.result thread=thread-1 run=run-1 step=1 message=" in caplog.text
     assert '"output_tokens": 7' in caplog.text
-    assert "tool call input name=shell__execute" in caplog.text
-    assert "tool call output name=shell__execute" in caplog.text
+    assert "tool.request thread=thread-1 run=run-1 step=2 plugin=" in caplog.text
+    assert "tool=shell__execute" in caplog.text
+    assert "tool.result thread=thread-1 run=run-1 step=2 plugin=" in caplog.text
     assert '"stdout": "ran:pwd"' in caplog.text
 
 

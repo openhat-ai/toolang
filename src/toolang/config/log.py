@@ -12,6 +12,7 @@ from typing import Any, Literal, cast
 
 from .log_spec import (
     LogSpec,
+    OFF_LOG_LEVEL,
     PY_LOG_ENV_VAR,
     directive_level_for,
     ensure_custom_levels,
@@ -20,7 +21,7 @@ from .log_spec import (
 )
 
 DEFAULT_LOG_LEVEL = "ERROR"
-DEFAULT_AGENT_LOG_SPEC = "error,toolang.run=info,toolang.runtime=info,httpx=off,httpcore=off"
+DEFAULT_AGENT_LOG_SPEC = "error,toolang.runtime=info,toolang.state=info,toolang.run=info,httpx=off,httpcore=off"
 DEFAULT_LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 DEFAULT_LOG_FORMAT = "%(asctime)s %(levelprefix)s [%(name)s] %(message)s"
 DEFAULT_ACCESS_LOG_FORMAT = (
@@ -140,13 +141,13 @@ def build_uvicorn_log_config(*, spec: LogSpec | None = None, level: str = DEFAUL
                 "propagate": False,
             },
             "httpx": {
-                "level": _logger_level_name("httpx", log_spec, default=logging.DEBUG),
+                "level": _logger_level_name("httpx", log_spec, default=OFF_LOG_LEVEL),
                 "handlers": ["default"],
                 "filters": ["httpx"],
                 "propagate": False,
             },
             "httpcore": {
-                "level": _logger_level_name("httpcore", log_spec, default=logging.DEBUG),
+                "level": _logger_level_name("httpcore", log_spec, default=OFF_LOG_LEVEL),
                 "handlers": ["default"],
                 "filters": ["httpx"],
                 "propagate": False,

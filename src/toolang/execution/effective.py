@@ -271,21 +271,16 @@ def resolve_runtime_models(
 
 
 def log_set_math(*, run: RunBinding, thunk: Thunk, set_math: dict[str, object]) -> None:
-    if not _LOGGER.isEnabledFor(logging.INFO):
+    if not _LOGGER.isEnabledFor(logging.DEBUG):
         return
-    _LOGGER.info(
-        "activation set math run_id=%s thunk=%s %s",
+    _LOGGER.debug(
+        "run.activation thread=%s run=%s thunk=%s summary=%s math=%s",
+        run.thread_id,
         run.run_id,
         thunk.thunk_name(),
         _set_math_summary(set_math),
+        json.dumps(set_math, ensure_ascii=False, sort_keys=True),
     )
-    if _LOGGER.isEnabledFor(logging.DEBUG):
-        _LOGGER.debug(
-            "activation set math detail run_id=%s thunk=%s math=%s",
-            run.run_id,
-            thunk.thunk_name(),
-            json.dumps(set_math, ensure_ascii=False, sort_keys=True),
-        )
 
 
 def _find_named_thunk(thunks: tuple[Thunk, ...], name: str) -> Thunk | None:
