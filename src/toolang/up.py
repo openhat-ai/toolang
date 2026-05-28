@@ -55,7 +55,7 @@ from .config.web import resolve_cors_allowed_origins, resolve_ui_base_url
 from .execution.input import allocate_run_id
 from .execution.response import ResponseSink, build_channel_response_sink
 from .execution.execute import execute_run
-from .models.resolution import resolve_model, select_model_selectors
+from .models.resolution import select_model_selectors
 from .execution.runner import QueueRunner, RunRequest, RunSubmission, RunOutcome
 from .execution.db import ExecutionStore, execution_db_path
 from .execution.stream import RuntimeEventBus
@@ -116,6 +116,7 @@ OPENAPI_TAGS = [
     {"name": "activity", "description": "Thread, run, and event history endpoints."},
 ]
 logger = logging.getLogger("toolang.runtime")
+state_logger = logging.getLogger("toolang.state")
 _PLUGIN_API_REEXPORTS = (
     PluginInfo,
     list_plugin_infos,
@@ -701,8 +702,7 @@ def _validate_startup_models(
     if not selectors:
         select_model_selectors(context)
         return
-    for selector in selectors:
-        resolve_model(context, selector=selector)
+    _validate_model_selectors(context, selectors)
 
 
 def build_run_argv(
@@ -801,6 +801,7 @@ def _up_local(
         prepared_state=prepared_state,
     )
     live = context.live
+    _log_state_loaded(context)
     context.store.append_update(
         kind="started",
         payload={
@@ -886,14 +887,13 @@ def _up_local(
         log_config=build_uvicorn_log_config(level=log_spec or DEFAULT_LOG_LEVEL),
         shutdown_signal=shutdown_signal,
         on_starting=lambda: logger.info(
-            "Agent %s starting root=%s trigger=%s runner=%s router=%s",
-            context.name,
+            "Agent starting root=%s trigger=%s runner=%s router=%s",
             toolang_root,
             format_component_group(enabled_components, "trigger"),
             format_component_group(enabled_components, "runner"),
             format_component_group(enabled_components, "router"),
             extra={
-                "color_message": "Agent %s starting root="
+                "color_message": "Agent starting root="
                 + click.style("%s", bold=True)
                 + " trigger="
                 + click.style("%s", bold=True)
@@ -904,17 +904,60 @@ def _up_local(
             },
         ),
         on_running=lambda: logger.info(
-            "Agent %s started webui=%s",
-            context.name,
+            "Agent started webui=%s",
             webui_url,
             extra={
-                "color_message": "Agent %s started webui=" + click.style("%s", bold=True)
+                "color_message": "Agent started webui=" + click.style("%s", bold=True)
             },
         ),
-        on_stopping=lambda: logger.info("Agent %s stopping", context.name),
-        on_stopped=lambda: logger.info("Agent %s stopped", context.name),
+        on_stopping=lambda: logger.info("Agent stopping"),
+        on_stopped=lambda: logger.info("Agent stopped"),
     )
     return 0
+
+
+def _log_state_loaded(context: UptimeContext) -> None:
+    state_logger.info(
+        "Agent loaded state=%s models=%s tools=%s psyches=%s skills=%s services=%s",
+        _short_fingerprint(context.live.fingerprint),
+        _model_count(context),
+        len(context.tools),
+        _cap_count(context.live, "psyche"),
+        _cap_count(context.live, "skill"),
+        _cap_count(context.live, "service"),
+    )
+
+
+def _model_count(context: UptimeContext) -> int:
+    try:
+        selectors = _model_allowed_selectors(context)
+        if selectors:
+            return len(select_model_selectors(context, activation_selectors=selectors))
+        return len(select_model_selectors(context))
+    except Exception:
+        selectors = context.config.get("models.allowed_selectors")
+        if isinstance(selectors, tuple):
+            return len(selectors)
+        if isinstance(selectors, list):
+            return len(selectors)
+        return 0
+
+
+def _model_allowed_selectors(context: UptimeContext) -> tuple[str, ...]:
+    selectors = context.config.get("models.allowed_selectors")
+    if isinstance(selectors, tuple):
+        return tuple(item for item in selectors if isinstance(item, str) and item.strip())
+    if isinstance(selectors, list):
+        return tuple(item for item in selectors if isinstance(item, str) and item.strip())
+    return ()
+
+
+def _cap_count(live: LiveState, kind: str) -> int:
+    return sum(1 for entry in live.cap_entries if entry.kind == kind)
+
+
+def _short_fingerprint(value: str) -> str:
+    return value[:12]
 
 
 class _ToolangServer(uvicorn.Server):
@@ -1042,6 +1085,20 @@ def _load_runtime_context(
     normalized_model_selectors = _normalize_model_selectors(model_selectors)
     normalized_tool_selectors = _normalize_tool_selectors(tool_selectors)
     normalized_cap_selectors = _normalize_cap_selectors(cap_selectors)
+    model_providers = load_model_providers(toolang_root, agent_name)
+    model_aliases = load_model_aliases(toolang_root, agent_name)
+    default_models = load_default_models(toolang_root, agent_name)
+    if normalized_model_selectors or _startup_requires_model(enabled_components) or not enabled_components:
+        _validate_model_selectors(
+            _StartupModelSelection(
+                model_providers=model_providers,
+                model_aliases=model_aliases,
+                default_models=default_models,
+                model_environ=environ,
+            ),
+            normalized_model_selectors,
+        )
+    _validate_cap_selectors(live, normalized_cap_selectors, agent_name=agent_name)
     live = _select_live_caps(live, normalized_cap_selectors, agent_name=agent_name)
     default_model_selector = normalized_model_selectors[0] if normalized_model_selectors else None
     config = UptimeConfig(
@@ -1063,21 +1120,23 @@ def _load_runtime_context(
         }
     )
     store = ExecutionStore(execution_db_path(toolang_root, agent_name))
+    tools = load_runtime_tool_plugins(
+        toolang_root=toolang_root,
+        agent_name=agent_name,
+        live=live,
+        environ=environ,
+    )
+    selected_tools = _select_runtime_tools(tools, normalized_tool_selectors)
+    _validate_tool_selectors(tools, normalized_tool_selectors)
     return UptimeContext(
         root=toolang_root,
         name=agent_name,
         live=live,
-        tools=load_runtime_tool_plugins(
-            toolang_root=toolang_root,
-            agent_name=agent_name,
-            live=live,
-            environ=environ,
-            selectors=normalized_tool_selectors,
-        ),
-        model_providers=load_model_providers(toolang_root, agent_name),
+        tools=selected_tools,
+        model_providers=model_providers,
         model_adapters=load_model_adapters(),
-        model_aliases=load_model_aliases(toolang_root, agent_name),
-        default_models=load_default_models(toolang_root, agent_name),
+        model_aliases=model_aliases,
+        default_models=default_models,
         model_environ=environ,
         channel_bindings=channel_bindings,
         channel_plugins={
@@ -1361,7 +1420,7 @@ def _up_managed_sandbox(
         status="running",
     )
     logger.info(
-        "sandbox ready agent=%s sandbox=%s endpoint=%s",
+        "Sandbox ready agent=%s sandbox=%s endpoint=%s",
         agent_name,
         selector.render(),
         start.endpoint or endpoint,
@@ -1448,6 +1507,47 @@ def _select_runtime_tools(
         for name in selected_names
         if name in tools
     }
+
+
+def _validate_model_selectors(context: _StartupModelSelection, selectors: Sequence[str]) -> None:
+    if not selectors:
+        select_model_selectors(context)
+        return
+    select_model_selectors(context, activation_selectors=selectors)
+    for selector in selectors:
+        select_model_selectors(context, activation_selectors=(selector,))
+
+
+def _validate_tool_selectors(tools: dict[str, AgentTool], selectors: Sequence[str] | None) -> None:
+    if not selectors:
+        return
+    refs_by_model_name = {
+        name: tool_ref_for_model_tool(name, tool)
+        for name, tool in tools.items()
+    }
+    missing = [
+        selector
+        for selector in selectors
+        if not selected_tool_names(refs_by_model_name, (selector,))
+    ]
+    if missing:
+        raise ValueError(f"tool selector matched no tools: {', '.join(missing)}")
+
+
+def _validate_cap_selectors(live: LiveState, selectors: Sequence[str], *, agent_name: str) -> None:
+    if not selectors:
+        return
+    missing = [
+        selector
+        for selector in selectors
+        if not cap_store.select_cap_entries(
+            live.cap_entries,
+            (selector,),
+            agent_name=agent_name,
+        )
+    ]
+    if missing:
+        raise ValueError(f"cap selector matched no caps: {', '.join(missing)}")
 
 def _pick_runtime_port(
     host: str,

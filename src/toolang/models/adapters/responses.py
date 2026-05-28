@@ -34,7 +34,7 @@ from toolang.base.types.run import (
 )
 from toolang.base.types.tool import ToolDefinition
 
-_API_LOGGER = logging.getLogger("toolang.model.api")
+_ADAPTER_LOGGER = logging.getLogger("toolang.model.adapter")
 _LOG_PREVIEW_LIMIT = 4_000
 _STATEFUL_PROVIDERS = frozenset({"openai"})
 _AUDIO_MODEL_PREFIXES: tuple[str, ...] = (
@@ -686,10 +686,10 @@ def _log_api_request(
     stateful: bool,
     stream: bool,
 ) -> None:
-    if not _API_LOGGER.isEnabledFor(logging.DEBUG):
+    if not _ADAPTER_LOGGER.isEnabledFor(logging.DEBUG):
         return
-    _API_LOGGER.debug(
-        "responses api request provider=%s ref=%s model=%s adapter=%s stateful=%s stream=%s payload=%s",
+    _ADAPTER_LOGGER.debug(
+        "adapter.request provider=%s ref=%s model=%s adapter=%s stateful=%s stream=%s payload=%s",
         target.provider,
         target.ref,
         target.model,
@@ -707,10 +707,10 @@ def _log_api_response(
     stateful: bool,
     stream: bool,
 ) -> None:
-    if not _API_LOGGER.isEnabledFor(logging.DEBUG):
+    if not _ADAPTER_LOGGER.isEnabledFor(logging.DEBUG):
         return
-    _API_LOGGER.debug(
-        "responses api response provider=%s ref=%s model=%s adapter=%s stateful=%s stream=%s payload=%s",
+    _ADAPTER_LOGGER.debug(
+        "adapter.result provider=%s ref=%s model=%s adapter=%s stateful=%s stream=%s payload=%s",
         target.provider,
         target.ref,
         target.model,

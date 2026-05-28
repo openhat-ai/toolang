@@ -61,8 +61,9 @@ if TYPE_CHECKING:
     from ..up import UptimeContext
     from .input import RunInput
 
-_MODEL_LOGGER = logging.getLogger("toolang.run.model")
-_TOOL_LOGGER = logging.getLogger("toolang.run.tool")
+_RUN_LOGGER = logging.getLogger("toolang.run")
+_MODEL_LOGGER = logging.getLogger("toolang.model")
+_TOOL_LOGGER = logging.getLogger("toolang.tool")
 _LOG_PREVIEW_LIMIT = 2_000
 
 
@@ -244,10 +245,17 @@ class RunContext:
         """Perform one model call and update run state."""
 
         step_index = self._next_step_index()
+        step_started = time.perf_counter()
         started_at = _utc_now()
         consumed_inputs = self._consume_pending_inputs()
         step_input = (*self._model_step_input(), *(RunInputRef(index=item.index) for item in consumed_inputs))
         self._start_model_step(step_index)
+        _RUN_LOGGER.info(
+            "Step started thread=%s run=%s step=%s kind=model_call",
+            self._input.run.thread_id,
+            self._input.run.run_id,
+            step_index,
+        )
         self._emit(
             StepStart(
                 run_id=self._input.run.run_id,
@@ -266,34 +274,51 @@ class RunContext:
             tools=self._tool_definitions,
             state=self._state,
         )
-        _MODEL_LOGGER.info(
-            "model call target ref=%s provider=%s model=%s adapter=%s%s",
-            self._model.ref,
-            self._model.provider,
-            self._model.model,
-            self._model.adapter,
-            f" base_url={self._model.base_url}" if self._model.base_url else "",
+        _log_model_target(
+            self._model,
+            thread_id=self._input.run.thread_id,
+            run_id=self._input.run.run_id,
+            step_index=step_index,
         )
-        _log_model_request(request)
-        if self._stream and self._on_event is not None and self._model.streaming:
-            current = self._adapter.stream(
-                self._model,
-                request,
-                on_event=self._handle_model_event,
+        _log_model_request(
+            request,
+            thread_id=self._input.run.thread_id,
+            run_id=self._input.run.run_id,
+            step_index=step_index,
+        )
+        try:
+            if self._stream and self._on_event is not None and self._model.streaming:
+                current = self._adapter.stream(
+                    self._model,
+                    request,
+                    on_event=self._handle_model_event,
+                )
+            else:
+                current = self._adapter.invoke(self._model, request)
+        except Exception as exc:
+            _RUN_LOGGER.error(
+                "Step failed thread=%s run=%s step=%s kind=model_call error=%r duration_ms=%s",
+                self._input.run.thread_id,
+                self._input.run.run_id,
+                step_index,
+                str(exc),
+                _elapsed_ms(step_started),
             )
-        else:
-            current = self._adapter.invoke(self._model, request)
+            raise
         return self._apply_model_response(
             current,
             step_index=step_index,
             started_at=started_at,
+            duration_ms=_elapsed_ms(step_started),
         )
 
     def call_tool(self, call: ToolCall) -> ToolCallResult:
         """Perform one tool call and update run state."""
 
         step_index = self._next_step_index()
+        step_started = time.perf_counter()
         started_at = _utc_now()
+        plugin_name = _tool_plugin_name(self._input.tools().get(call.name))
         source = self._tool_call_sources.get(call.tool_call_id)
         step_input: tuple[StepInputItem, ...]
         if source is not None:
@@ -307,7 +332,20 @@ class RunContext:
             step_input = (StepOutputRef(step_index=self._last_step_index),)
         else:
             step_input = (RunInputRef(),)
-        _log_tool_call_input(call)
+        _RUN_LOGGER.info(
+            "Step started thread=%s run=%s step=%s kind=tool_call tool=%s",
+            self._input.run.thread_id,
+            self._input.run.run_id,
+            step_index,
+            call.name,
+        )
+        _log_tool_call_input(
+            call,
+            thread_id=self._input.run.thread_id,
+            run_id=self._input.run.run_id,
+            step_index=step_index,
+            plugin_name=plugin_name,
+        )
         self._emit(
             StepStart(
                 run_id=self._input.run.run_id,
@@ -350,7 +388,13 @@ class RunContext:
             )
         )
         status = "failed" if record.error else "finished"
-        _log_tool_call_output(record)
+        _log_tool_call_output(
+            record,
+            thread_id=self._input.run.thread_id,
+            run_id=self._input.run.run_id,
+            step_index=step_index,
+            plugin_name=plugin_name,
+        )
         self._emit(
             StepEnd(
                 run_id=self._input.run.run_id,
@@ -367,6 +411,15 @@ class RunContext:
         )
         self._messages.append(_tool_followup_message(record))
         self._last_step_index = step_index
+        _RUN_LOGGER.info(
+            "Step finished thread=%s run=%s step=%s kind=tool_call tool=%s status=%s duration_ms=%s",
+            self._input.run.thread_id,
+            self._input.run.run_id,
+            step_index,
+            call.name,
+            status,
+            _elapsed_ms(step_started),
+        )
         return record
 
     def call_tools(self, calls: Sequence[ToolCall]) -> tuple[ToolCallResult, ...]:
@@ -391,11 +444,17 @@ class RunContext:
         *,
         step_index: int,
         started_at: str,
+        duration_ms: int,
     ) -> ModelCallResult:
         parsed_calls = tuple(current.tool_calls)
         current_text = message_text(current.message.parts) if current.message is not None else ""
         self._output_text = current_text
-        _log_model_result(current)
+        _log_model_result(
+            current,
+            thread_id=self._input.run.thread_id,
+            run_id=self._input.run.run_id,
+            step_index=step_index,
+        )
         output_parts = self._model_output_parts(current=current, tool_calls=parsed_calls)
         for part_index, part in output_parts:
             self._emit_part_start(step_index=step_index, part_index=part_index, kind=part.type)
@@ -438,6 +497,17 @@ class RunContext:
         )
         self._last_step_index = step_index
         self._active_model_step_index = None
+        usage = current.usage
+        _RUN_LOGGER.info(
+            "Step finished thread=%s run=%s step=%s kind=model_call status=finished input=%s output=%s tool_calls=%s duration_ms=%s",
+            self._input.run.thread_id,
+            self._input.run.run_id,
+            step_index,
+            usage.input_tokens if usage is not None else 0,
+            usage.output_tokens if usage is not None else 0,
+            len(parsed_calls),
+            duration_ms,
+        )
         return current
 
     def _handle_model_event(self, event: object) -> None:
@@ -733,11 +803,30 @@ def _thunk_to_data(thunk: Thunk) -> dict[str, object]:
     }
 
 
-def _log_model_request(request: ModelCall) -> None:
+def _log_model_target(model: ModelTarget, *, thread_id: str, run_id: str, step_index: int) -> None:
     if not _MODEL_LOGGER.isEnabledFor(logging.DEBUG):
         return
     _MODEL_LOGGER.debug(
-        "model call input instructions=%s messages=%s tools=%s state=%s",
+        "model.target thread=%s run=%s step=%s ref=%s provider=%s model=%s adapter=%s%s",
+        thread_id,
+        run_id,
+        step_index,
+        model.ref,
+        model.provider,
+        model.model,
+        model.adapter,
+        f" base_url={model.base_url}" if model.base_url else "",
+    )
+
+
+def _log_model_request(request: ModelCall, *, thread_id: str, run_id: str, step_index: int) -> None:
+    if not _MODEL_LOGGER.isEnabledFor(logging.DEBUG):
+        return
+    _MODEL_LOGGER.debug(
+        "model.request thread=%s run=%s step=%s instructions=%s messages=%s tools=%s state=%s",
+        thread_id,
+        run_id,
+        step_index,
         _preview_text(request.instructions),
         _preview_data([message.to_data() for message in request.messages]),
         _preview_data([tool.name for tool in request.tools]),
@@ -745,7 +834,7 @@ def _log_model_request(request: ModelCall) -> None:
     )
 
 
-def _log_model_result(result: ModelCallResult) -> None:
+def _log_model_result(result: ModelCallResult, *, thread_id: str, run_id: str, step_index: int) -> None:
     if not _MODEL_LOGGER.isEnabledFor(logging.DEBUG):
         return
     usage = None
@@ -755,7 +844,10 @@ def _log_model_result(result: ModelCallResult) -> None:
             "output_tokens": result.usage.output_tokens,
         }
     _MODEL_LOGGER.debug(
-        "model call output message=%s tool_calls=%s usage=%s state=%s",
+        "model.result thread=%s run=%s step=%s message=%s tool_calls=%s usage=%s state=%s",
+        thread_id,
+        run_id,
+        step_index,
         _preview_data(result.message.to_data() if result.message is not None else None),
         _preview_data(
             [
@@ -773,29 +865,56 @@ def _log_model_result(result: ModelCallResult) -> None:
     )
 
 
-def _log_tool_call_input(call: ToolCall) -> None:
+def _log_tool_call_input(
+    call: ToolCall,
+    *,
+    thread_id: str,
+    run_id: str,
+    step_index: int,
+    plugin_name: str,
+) -> None:
     if not _TOOL_LOGGER.isEnabledFor(logging.DEBUG):
         return
     _TOOL_LOGGER.debug(
-        "tool call input name=%s tool_call_id=%s call_id=%s arguments=%s",
+        "tool.request thread=%s run=%s step=%s plugin=%s tool=%s call=%s arguments=%s",
+        thread_id,
+        run_id,
+        step_index,
+        plugin_name,
         call.name,
-        call.tool_call_id,
-        call.call_id,
+        call.call_id or call.tool_call_id,
         _preview_data(call.input),
     )
 
 
-def _log_tool_call_output(result: ToolCallResult) -> None:
+def _log_tool_call_output(
+    result: ToolCallResult,
+    *,
+    thread_id: str,
+    run_id: str,
+    step_index: int,
+    plugin_name: str,
+) -> None:
     if not _TOOL_LOGGER.isEnabledFor(logging.DEBUG):
         return
     _TOOL_LOGGER.debug(
-        "tool call output name=%s tool_call_id=%s call_id=%s output=%s error=%s",
+        "tool.result thread=%s run=%s step=%s plugin=%s tool=%s call=%s output=%s error=%s",
+        thread_id,
+        run_id,
+        step_index,
+        plugin_name,
         result.name,
-        result.tool_call_id,
-        result.call_id,
+        result.call_id or result.tool_call_id,
         _preview_data(result.output),
         result.error or "-",
     )
+
+
+def _tool_plugin_name(tool: AgentTool | None) -> str:
+    plugin_name = getattr(tool, "plugin_name", None)
+    if isinstance(plugin_name, str) and plugin_name:
+        return plugin_name
+    return "-"
 
 
 def _preview_text(value: str) -> str:
@@ -838,3 +957,7 @@ def _tool_followup_message(tool_call: ToolCallResult) -> Message:
 
 def _utc_now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return max(0, round((time.perf_counter() - started_at) * 1000))

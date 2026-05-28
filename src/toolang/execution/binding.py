@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+import logging
 from typing import TYPE_CHECKING, Any, cast
 
 from toolang.base.types.message import Message, message_text
@@ -18,6 +19,8 @@ from .records import RunLoop, ThreadPeer
 if TYPE_CHECKING:
     from ..up import UptimeContext
     from .runner import RunRequest
+
+_LOGGER = logging.getLogger("toolang.run")
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,11 +52,19 @@ def bind_run_request(
     bound_live = live or context.live
     thread_id = request.thread_id or _new_thread_id(context, request.thread_kind or request.origin)
     thread_peer = _request_thread_peer(request.metadata)
+    existing_thread = context.store.get_thread(thread_id=thread_id)
     context.store.ensure_thread(
         thread_id=thread_id,
         origin=request.origin,
         peer=thread_peer,
     )
+    if existing_thread is None:
+        _LOGGER.info(
+            "Thread created id=%s origin=%s source=%s",
+            thread_id,
+            request.origin,
+            request.thread_kind or request.origin,
+        )
     run_loop = normalize_run_loop_name(request.run_loop)
     return RunBinding(
         run_id=request.run_id or allocate_run_id(context),

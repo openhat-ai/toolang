@@ -249,17 +249,24 @@ def _log_model_call_assembly(
         return
     run = bundle.run
     _LOGGER.debug(
-        "computed prompt bundle run_id=%s thread_id=%s origin=%s thunk=%s",
-        run.run_id,
+        "prompt.assembled thread=%s run=%s origin=%s thunk=%s",
         run.thread_id,
+        run.run_id,
         run.origin,
         bundle.thunk.thunk_name(),
     )
-    _LOGGER.debug("computed prompt tools=%s", json.dumps(sorted(bundle.tools()), ensure_ascii=False))
-    _LOGGER.debug("computed prompt instructions=%s", instructions)
-    _LOGGER.debug("computed prompt context=%s", context_text)
     _LOGGER.debug(
-        "computed prompt messages=%s",
+        "prompt.tools thread=%s run=%s tools=%s",
+        run.thread_id,
+        run.run_id,
+        json.dumps(sorted(bundle.tools()), ensure_ascii=False),
+    )
+    _LOGGER.debug("prompt.instructions thread=%s run=%s text=%s", run.thread_id, run.run_id, instructions)
+    _LOGGER.debug("prompt.context thread=%s run=%s text=%s", run.thread_id, run.run_id, context_text)
+    _LOGGER.debug(
+        "prompt.messages thread=%s run=%s messages=%s",
+        run.thread_id,
+        run.run_id,
         json.dumps(
             [
                 {

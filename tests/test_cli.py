@@ -3672,6 +3672,36 @@ def test_cli_run_passes_model_selectors_to_agent_up(tmp_path: Path, monkeypatch)
     assert captured["models"] == ("openai/gpt-5[openai]", "o3")
 
 
+def test_cli_run_accepts_glob_model_selector_as_available_model_filter(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    captured: dict[str, object] = {}
+
+    def fake_start_runtime(
+        startup: cli.agent_up.StartupSpec,
+        *,
+        environ: dict[str, str],
+        sandbox_child: bool = False,
+        progress=None,
+        prepared_state=None,
+    ) -> int:
+        del environ, sandbox_child, progress, prepared_state
+        captured["models"] = startup.model_selectors
+        return 0
+
+    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
+
+    result = runner.invoke(
+        cli.app,
+        ["run", "alice", "--models", "openai/*"],
+        env={"TOOLANG_ROOT": str(toolang_root), "OPENAI_API_KEY": "secret"},
+    )
+
+    assert result.exit_code == 0
+    assert captured["models"] == ("openai/*",)
+
+
 def test_cli_run_passes_tool_selectors_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")

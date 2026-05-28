@@ -38,7 +38,7 @@ async def run(
         raise TypeError("invalid config: components.trigger.poll.interval_ms")
     interval_timeout = float(interval_value) / 1000
     logger.debug(
-        "poll loop started root=%s agent=%s interval_ms=%s bindings=%s",
+        "poll.started root=%s agent=%s interval_ms=%s bindings=%s",
         context.root,
         context.name,
         int(float(interval_value)),
@@ -77,8 +77,8 @@ async def _poll_binding(context: UptimeContext, binding_name: str) -> None:
         return
     if not _chat_runner_enabled(context):
         return
-    logger.info(
-        "poll received agent=%s binding=%s deliveries=%s cursor=%s",
+    logger.debug(
+        "poll.received agent=%s binding=%s deliveries=%s cursor=%s",
         context.name,
         binding_name,
         len(result.deliveries),
