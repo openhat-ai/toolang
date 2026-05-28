@@ -5611,6 +5611,107 @@ def test_assemble_run_input_uses_thunk_user_message_for_script_runs(tmp_path: Pa
     assert text.endswith("Rewrite the input for a technical audience.\n\nhello world")
 
 
+@pytest.mark.parametrize("recall", ["none", "memory"])
+def test_script_run_can_simulate_history_with_explicit_message_blocks(
+    tmp_path: Path,
+    recall: str,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        (
+            "agent alice\n\n"
+            "thunk replay(_):\n"
+            f"  recall = {recall}\n"
+            "  context: none\n"
+            "  instruct: none\n\n"
+            "  user:\n"
+            "    My name is Ada.\n\n"
+            "  assistant:\n"
+            "    Nice to meet you, Ada.\n\n"
+            "  user:\n"
+            "    Answer from the simulated conversation: {{_}}\n"
+        ),
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=(),
+    )
+    previous = context.store.start_run(
+        run_id="run-previous",
+        thread_id="thread-1",
+        origin="chat",
+        input=Message.user("stored history should not appear"),
+    )
+    context.store.append_step(
+        run_id=previous.run_id,
+        step_index=1,
+        kind="model_call",
+        status="finished",
+        input=(RunInputRef(),),
+        output=(TextPart(text="stored answer should not appear"),),
+        payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
+        started_at="2026-01-01T00:00:01Z",
+        finished_at="2026-01-01T00:00:02Z",
+    )
+    context.store.finish_run(run_id=previous.run_id, finished_at="2026-01-01T00:00:03Z")
+    bound = bind_run_request(
+        context,
+        RunRequest(
+            group="script",
+            origin="script",
+            thread_id="thread-1",
+            thunk_name="replay",
+            thunk="What is my name?",
+        ),
+    )
+
+    bundle = RunInput.from_binding(context, bound)
+
+    assert bundle.history == ()
+    assert bundle.debug["recall"] == [recall]
+    assert [(item.role, message_text(item.parts)) for item in bundle.messages()] == [
+        ("user", "My name is Ada."),
+        ("assistant", "Nice to meet you, Ada."),
+        ("user", "Answer from the simulated conversation: What is my name?"),
+    ]
+
+
+def test_script_run_keeps_implicit_user_block_as_single_invoke_message(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        (
+            "agent alice\n\n"
+            "thunk replay(_):\n"
+            "  recall = none\n"
+            "  context: none\n\n"
+            "  Use one invoke message.\n"
+        ),
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=(),
+    )
+    bound = bind_run_request(
+        context,
+        RunRequest(
+            group="script",
+            origin="script",
+            thunk_name="replay",
+            thunk="current input",
+        ),
+    )
+
+    bundle = RunInput.from_binding(context, bound)
+
+    assert [(item.role, message_text(item.parts)) for item in bundle.messages()] == [
+        ("user", "Use one invoke message.\n\ncurrent input"),
+    ]
+
+
 def test_assemble_run_input_keeps_thread_messages_out_of_system_instructions(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(

@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from toolang.base.protocols.tool import AgentTool
-from toolang.base.types.message import Message, message_summary, message_text
+from toolang.base.types.message import Message, MessageRole, TextPart, message_summary, message_text
 
 from ..program import MessageBlock, Thunk
 from ..state.prepared import PreparedEntry
@@ -162,7 +162,11 @@ class RunInput:
         """Return the ordered input message history for one model call."""
 
         if self.run.origin == "script":
-            return (self.message,)
+            return _script_messages(
+                rendered_messages=self.rendered_messages(),
+                context_text=self.context_text,
+                fallback=self.message,
+            )
         return (*self.history, self.message)
 
     def input_message(self) -> Message:
@@ -278,3 +282,41 @@ def _log_model_call_assembly(
             ensure_ascii=False,
         ),
     )
+
+
+def _script_messages(
+    *,
+    rendered_messages: tuple[MessageBlock, ...],
+    context_text: str,
+    fallback: Message,
+) -> tuple[Message, ...]:
+    conversation_blocks = tuple(
+        block
+        for block in rendered_messages
+        if block.kind in {"user", "assistant", "tool"}
+    )
+    if not any(block.explicit for block in conversation_blocks):
+        return (fallback,)
+
+    messages: list[Message] = []
+    context_pending = bool(context_text.strip())
+    for block in conversation_blocks:
+        text = block.text.strip()
+        if not text and not (context_pending and block.kind == "user"):
+            continue
+        if context_pending and block.kind == "user":
+            text = _join_message_texts(context_text, text)
+            context_pending = False
+        messages.append(
+            Message(
+                role=cast(MessageRole, block.kind),
+                parts=(TextPart(text=text),),
+            )
+        )
+    if context_pending:
+        messages.insert(0, Message.user(context_text.strip()))
+    return tuple(messages) if messages else (fallback,)
+
+
+def _join_message_texts(*parts: str) -> str:
+    return "\n\n".join(part.strip() for part in parts if part.strip()).strip()
