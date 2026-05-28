@@ -25,7 +25,7 @@ It stores:
 - runs
 - steps
 - agent-local updates
-- deduplicated instruction bodies
+- deduplicated prompt bodies
 
 
 ## Durable Records
@@ -115,10 +115,11 @@ input in one ordered list.
 - `model_ref`
 - `input_tokens`
 - `output_tokens`
-- `instructions_hash`
+- `instruct`
+- `context`
 
-Instruction bodies are stored separately in `instruction_blobs` and referenced
-by hash.
+Instruction and context bodies are stored separately in `prompts` and referenced
+by content hash.
 
 
 ## Trace Events

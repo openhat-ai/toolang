@@ -538,7 +538,8 @@ Delete is destructive and is available only through archived routes.
 - `GET /api/v1/runs/{run_id}`
 - `POST /api/v1/runs/{run_id}/steer`
 - `POST /api/v1/runs/{run_id}/stop`
-- `GET /api/v1/instructions/{instructions_hash}`
+- `GET /api/v1/instruct/{hash}`
+- `GET /api/v1/context/{hash}`
 - `GET /api/v1/threads`
 - `GET /api/v1/threads/{thread_id}`
 - `GET /api/v1/events`

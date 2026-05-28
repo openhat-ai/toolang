@@ -101,7 +101,8 @@ class StepStart:
     kind: StepKind
     input: tuple[StepInputItem, ...]
     started_at: str
-    instructions: str | None = None
+    instruct: str | None = None
+    context: str | None = None
     type: str = "step-start"
 
 

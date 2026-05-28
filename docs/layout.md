@@ -88,7 +88,7 @@ Key paths:
 | `status.json` | Runtime status, endpoint, sandbox summary, and enabled features |
 | `agent.log`    | Runtime log                                                  |
 | `logs/<thunk>/<run_id>.log` | Per-run script invoke logs when `PY_LOG` is set |
-| `runs.db` | Runs, steps, updates, and instruction blobs                  |
+| `runs.db` | Runs, steps, updates, and prompt blobs                       |
 | `ids.json`     | Local id allocator state                                     |
 | `pulse.json`   | Pulse loop state                                             |
 | `tools/`       | Per-tool plugin working directories                          |

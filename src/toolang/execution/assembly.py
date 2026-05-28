@@ -48,6 +48,7 @@ class RunInput:
     thunk: Thunk
     input_text: str
     message: Message
+    context_text: str
     params: dict[str, Any]
     user_template_context: dict[str, object]
     system_template_context: dict[str, object]
@@ -108,6 +109,7 @@ class RunInput:
             thunk=thunk,
             input_text=input_text,
             message=call.message,
+            context_text=call.context_text,
             params=params,
             user_template_context=call.user_template_context,
             system_template_context=call.system_template_context,
@@ -149,7 +151,11 @@ class RunInput:
                 "instructions": call.instructions,
             },
         )
-        _log_model_call_assembly(bundle, instructions=call.instructions, context_text=call.context_text)
+        _log_model_call_assembly(
+            bundle,
+            instructions=call.instructions,
+            context_text=call.context_text,
+        )
         return bundle
 
     def messages(self) -> tuple[Message, ...]:
@@ -158,6 +164,13 @@ class RunInput:
         if self.run.origin == "script":
             return (self.message,)
         return (*self.history, self.message)
+
+    def input_message(self) -> Message:
+        """Return the caller-facing input message without runtime context."""
+
+        if self.run.message is not None:
+            return self.run.message
+        return Message.user(self.input_text)
 
     def model_selector(self, context: UptimeContext) -> str | None:
         """Return the primary effective model selector for this run."""
@@ -219,6 +232,11 @@ class RunInput:
             thunk=self.thunk,
             system_context=self.system_template_context,
         )
+
+    def context(self) -> str:
+        """Return the assembled context text for this run."""
+
+        return self.context_text
 
 
 def _log_model_call_assembly(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import asdict
+import hashlib
 import json
 import threading
 from typing import TYPE_CHECKING, Any
@@ -156,8 +157,16 @@ def _trace_event_payload(event: TraceEvent) -> dict[str, Any]:
     if isinstance(event, RunStart):
         payload["input"] = event.input.to_data()
     elif isinstance(event, StepStart):
-        payload.pop("instructions", None)
-        payload["input"] = [asdict(item) if not hasattr(item, "to_data") else item.to_data() for item in event.input]
+        payload["instruct"] = (
+            _prompt_hash(event.instruct) if event.instruct is not None else None
+        )
+        payload["context"] = (
+            _prompt_hash(event.context) if event.context is not None else None
+        )
+        payload["input"] = [
+            asdict(item) if not hasattr(item, "to_data") else item.to_data()
+            for item in event.input
+        ]
     elif isinstance(event, PartDelta):
         payload["delta"] = _delta_data(event.delta)
     elif isinstance(event, PartEnd):
@@ -167,6 +176,10 @@ def _trace_event_payload(event: TraceEvent) -> dict[str, Any]:
         payload["output"] = parts_to_data(event.output)
         payload["payload"] = event.payload.to_data()
     return payload
+
+
+def _prompt_hash(body: str) -> str:
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
 def _run_input_payload(event: RunStart) -> dict[str, Any]:
