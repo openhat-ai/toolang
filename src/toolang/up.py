@@ -443,6 +443,7 @@ def start_runtime(
     environ: Mapping[str, str],
     sandbox_child: bool = False,
     progress: ProgressSink | None = None,
+    prepared_state: PreparedState | None = None,
 ) -> int:
     """Start one already resolved agent runtime."""
 
@@ -478,6 +479,7 @@ def start_runtime(
         cap_selectors=spec.cap_selectors,
         log_spec=spec.log_spec,
         progress=progress,
+        prepared_state=prepared_state,
     )
 
 
@@ -773,6 +775,7 @@ def _up_local(
     cap_selectors: tuple[str, ...],
     log_spec: str | None,
     progress: ProgressSink | None = None,
+    prepared_state: PreparedState | None = None,
 ) -> int:
     loop_intervals_ms = dict(DEFAULT_TRIGGER_INTERVAL_MS)
     for component_name in component_group(TRIGGER_COMPONENTS, "trigger"):
@@ -795,6 +798,7 @@ def _up_local(
         tool_selectors=tool_selectors,
         cap_selectors=cap_selectors,
         progress=progress,
+        prepared_state=prepared_state,
     )
     live = context.live
     context.store.append_update(

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -45,6 +45,7 @@ class ChatRequest(BaseModel):
     """One formal chat submission."""
 
     thread: str | None = Field(default=None, min_length=1)
+    client: Literal["web", "tui", "chat"] = "web"
     peer: ThreadPeerPayload | None = None
     request_id: str | None = Field(default=None, min_length=1)
     message: ChatMessagePayload
@@ -152,6 +153,7 @@ async def _submit_chat_run(
             group="chat",
             origin="chat",
             thread_id=thread_id,
+            thread_kind=payload.client,
             message=user_message,
             model_selector=payload.model,
             metadata=_thread_metadata(payload),
@@ -176,6 +178,7 @@ async def _stream_chat_run(
             group="chat",
             origin="chat",
             thread_id=thread_id,
+            thread_kind=payload.client,
             message=user_message,
             model_selector=payload.model,
             metadata=_thread_metadata(payload),

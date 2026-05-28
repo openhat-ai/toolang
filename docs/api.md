@@ -374,6 +374,8 @@ chat runs after applying the current activation config and the `chat` thunk's
 Chat request body uses:
 
 - `thread`
+- `client`: `web`, `tui`, or `chat`; defaults to `web` and controls the prefix
+  for newly allocated chat thread ids
 - `peer` optional thread peer descriptor
   - `type`: `user` or `agent`; defaults to `user`
   - `name`: peer name; defaults to `user`

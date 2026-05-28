@@ -24,7 +24,6 @@ This design applies only to Toolang-owned local ids.
 
 It does not rewrite the opaque payload of external ids such as:
 
-- user-provided web thread ids like `web_<external_id>`
 - transport-native ids exposed under Toolang prefixes such as
   `tg_<external_id>`
 - provider-native ids such as OpenAI response ids
@@ -36,7 +35,7 @@ Toolang currently defines two families:
 
 | Family | Width | Raw layout | Intended use |
 | --- | --- | --- | --- |
-| `local` | 6 chars | `tick(20) + seq(10)` | task ids, chore ids, and Toolang-owned local thread ids |
+| `local` | 8 chars | `tick(20) + seq(20)` | task ids, chore ids, and Toolang-owned local thread ids |
 | `run` | 8 chars | `tick(20) + seq(20)` | run ids |
 
 Shared rules:
@@ -56,8 +55,8 @@ Shared rules:
 For the `local` family:
 
 - 4 base32 tick chars = 20 tick bits
-- 2 base32 seq chars = 10 seq bits
-- capacity is 1,024 ids per hour per allocator state
+- 4 base32 seq chars = 20 seq bits
+- capacity is 1,048,576 ids per hour per allocator state
 
 For the `run` family:
 
@@ -72,8 +71,9 @@ The proposed full identities are:
 
 - task thread: `task_<id>`
 - chore thread: `chore_<id>`
-- local chat thread: `chat_<id>`
-- web chat thread: `web_<external_id>`
+- web chat thread: `web_<id>`
+- TUI chat thread: `tui_<id>`
+- agent chat thread: `chat_<id>`
 - Telegram thread: `tg_<external_id>`
 - run id: `run_<id>`
 

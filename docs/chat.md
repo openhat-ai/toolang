@@ -25,10 +25,11 @@ Thread ids use one underscore-delimited normalized form:
 
 Examples:
 
-- `task_3nprht`
-- `chore_xy1234`
-- `chat_ab12cd`
-- `web_1776857671893`
+- `task_3nprht9x`
+- `chore_xy1234ab`
+- `chat_ab12cd34`
+- `web_def456gh`
+- `tui_jk789mnp`
 - `tg_123456789`
 
 The parser splits on the first `_`; the trailing id may contain additional
@@ -134,6 +135,8 @@ Buffered chat:
 request body:
 
 - `thread`
+- `client`: `web`, `tui`, or `chat`; defaults to `web` and controls the prefix
+  for newly allocated chat thread ids
 - `peer` optional; defaults to the user peer
 - `message`
   - `role`

@@ -281,7 +281,7 @@ class AllocatedId:
 LOCAL_ID_FAMILY = IdFamily(
     name="local",
     tick_chars=4,
-    seq_chars=2,
+    seq_chars=4,
     tick_seconds=3_600,
     tick_multiplier=699_051,
     tick_offset=123_457,

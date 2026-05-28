@@ -37,7 +37,8 @@ if TYPE_CHECKING:
 
 DEFAULT_INTERVAL_MS = 1_000.0
 DEFAULT_DEBOUNCE_MS = 500.0
-logger = logging.getLogger("toolang.component.watch")
+logger = logging.getLogger("toolang.watch")
+prepare_logger = logging.getLogger("toolang.prepare")
 _EMPTY_INPUT_FINGERPRINT = hashlib.sha256().hexdigest()
 
 
@@ -180,7 +181,7 @@ def build_prepared_state(durable: DurableState, *, progress: ProgressSink | None
         status="running",
         detail=durable.agent_name,
     )
-    logger.debug(
+    prepare_logger.debug(
         "prepare build started root=%s agent=%s durable_fingerprint=%s",
         durable.toolang_root,
         durable.agent_name,
@@ -199,7 +200,7 @@ def build_prepared_state(durable: DurableState, *, progress: ProgressSink | None
         progress=progress,
     )
     prepared = load_prepared_state(durable.toolang_root, durable.agent_name)
-    logger.debug(
+    prepare_logger.debug(
         "prepare build completed root=%s agent=%s prepared_fingerprint=%s",
         durable.toolang_root,
         durable.agent_name,
@@ -228,7 +229,7 @@ def apply_changes(
     durable_paths = [str(path) for path in durable_relative_paths]
     if not durable_paths:
         return
-    logger.info(
+    prepare_logger.info(
         "prepare changed agent=%s paths=%s",
         context.name,
         ", ".join(durable_paths),
@@ -238,7 +239,7 @@ def apply_changes(
     prepared = build_prepared_state(durable)
     _append_entry_change_updates(context, before, prepared)
     should_reload = prepared.fingerprint != context.live.fingerprint
-    logger.info(
+    prepare_logger.info(
         "prepare applied agent=%s shared=%s private=%s live=%s reload=%s",
         context.name,
         _lock_change(before, prepared, visibility="shared"),

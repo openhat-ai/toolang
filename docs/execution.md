@@ -47,8 +47,8 @@ It stores:
 `input` is the canonical initial `Message` for the run.
 
 Toolang-owned run ids use `run_<id>`, where `<id>` is encoded with the `run`
-id family. Thread ids use `<kind>_<id>`, such as `task_3nprht`,
-`chore_xy1234`, or `web_1776857671893`.
+id family. Thread ids use `<kind>_<id>`, such as `task_3nprht9x`,
+`chore_xy1234ab`, or `web_def456gh`.
 
 ### StepRecord
 

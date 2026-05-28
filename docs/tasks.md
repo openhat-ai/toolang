@@ -64,8 +64,8 @@ Users should not need to invent ids by hand.
 New jobs created by the CLI use the generated id as the file name:
 
 ```text
-tasks/3nprht.md
-chores/xy1234.md
+tasks/3nprht9x.md
+chores/xy1234ab.md
 ```
 
 When users manually add Markdown files under `tasks/` or `chores/`, Toolang
@@ -98,7 +98,7 @@ A minimal task document:
 
 ```md
 ---
-id: 3nprht
+id: 3nprht9x
 ---
 
 Review the API changes and summarize risks.
@@ -108,7 +108,7 @@ This is equivalent to:
 
 ```md
 ---
-id: 3nprht
+id: 3nprht9x
 state: active
 stage: todo
 ---
@@ -154,7 +154,7 @@ A minimal chore document:
 
 ```md
 ---
-id: xy1234
+id: xy1234ab
 schedule: "FREQ=HOURLY;INTERVAL=6"
 ---
 
@@ -192,8 +192,8 @@ chore_<id>
 Examples:
 
 ```text
-task_3nprht
-chore_xy1234
+task_3nprht9x
+chore_xy1234ab
 ```
 
 Run ids use the run id family with a `run_` prefix:
@@ -220,15 +220,15 @@ Task projection:
 
 ```json
 {
-  "id": "3nprht",
+  "id": "3nprht9x",
   "kind": "task",
   "state": "active",
   "stage": "todo",
   "title": "Review API changes",
-  "path": "tasks/3nprht.md",
+  "path": "tasks/3nprht9x.md",
   "updated_at": "2026-04-23T10:10:00Z",
   "runtime": {
-    "thread_id": "task_3nprht",
+    "thread_id": "task_3nprht9x",
     "active_run": null,
     "last_run": null,
     "next_run": null
@@ -240,15 +240,15 @@ Chore projection:
 
 ```json
 {
-  "id": "xy1234",
+  "id": "xy1234ab",
   "kind": "chore",
   "state": "active",
   "schedule": "FREQ=HOURLY;INTERVAL=6",
   "title": "Check stale PRs",
-  "path": "chores/xy1234.md",
+  "path": "chores/xy1234ab.md",
   "updated_at": "2026-04-23T10:10:00Z",
   "runtime": {
-    "thread_id": "chore_xy1234",
+    "thread_id": "chore_xy1234ab",
     "active_run": null,
     "last_run": {
       "id": "run_ab12cd34",

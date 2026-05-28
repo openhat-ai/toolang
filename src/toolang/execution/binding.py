@@ -47,7 +47,7 @@ def bind_run_request(
     """Bind one queued run request to immutable runtime inputs."""
 
     bound_live = live or context.live
-    thread_id = request.thread_id or _new_thread_id(context, request.origin)
+    thread_id = request.thread_id or _new_thread_id(context, request.thread_kind or request.origin)
     thread_peer = _request_thread_peer(request.metadata)
     context.store.ensure_thread(
         thread_id=thread_id,

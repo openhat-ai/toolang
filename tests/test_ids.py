@@ -24,7 +24,7 @@ def test_encode_decode_round_trip_for_local_ids() -> None:
     value = encode_id(family=LOCAL_ID_FAMILY, tick=12_345, seq=17)
     decoded = decode_id(value, family=LOCAL_ID_FAMILY)
 
-    assert len(value) == 6
+    assert len(value) == 8
     assert decoded.tick == 12_345
     assert decoded.seq == 17
     assert decoded.prefix == value[:4]
