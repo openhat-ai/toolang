@@ -66,6 +66,8 @@ def model_provider_rows(
             provider,
             environ=environ,
             adapter=adapter,
+            model_count=len(models),
+            available_count=available_counts.get(name, 0),
             configured=bool(provider_configs.get(name)),
         )
         if name in provider_configs:
@@ -136,6 +138,8 @@ def model_provider_config(
     *,
     environ: Mapping[str, str],
     adapter: str,
+    model_count: int | None = None,
+    available_count: int | None = None,
     configured: bool = False,
 ) -> str:
     """Return compact provider configuration details."""
@@ -144,16 +148,15 @@ def model_provider_config(
     required = required_provider_env_vars(provider)
     base_url = default_provider_base_url(provider, environ=environ)
     api_key_env = default_provider_api_key_env(provider)
+    offline = _provider_url_offline(provider, model_count=model_count, available_count=available_count)
     parts: list[str] = []
     if base_url is not None:
-        parts.append(f"url={base_url}")
+        parts.append(f"url={base_url}{'(offline)' if offline else ''}")
     parts.append(f"adapter={adapter}")
     if required:
-        parts.append(f"env={'+'.join(required)}")
+        parts.append(f"env={_env_status(required, missing)}")
     elif api_key_env is not None:
         parts.append(f"env={api_key_env}")
-    if missing:
-        parts.append(f"missing_env={'+'.join(missing)}")
     if configured:
         parts.append("configured=true")
     return ", ".join(parts)
@@ -191,6 +194,24 @@ def _model_provider_model_count(
     if available_count is None:
         return str(len(models))
     return f"{available_count}/{len(models)}"
+
+
+def _env_status(required: tuple[str, ...], missing: tuple[str, ...]) -> str:
+    missing_set = set(missing)
+    return "+".join(f"{name}(missing)" if name in missing_set else name for name in required)
+
+
+def _provider_url_offline(
+    provider: ModelProvider,
+    *,
+    model_count: int | None,
+    available_count: int | None,
+) -> bool:
+    if provider.name != "ollama":
+        return False
+    if model_count != 0 or available_count != 0:
+        return False
+    return True
 
 
 def _model_alias_missing_env(
@@ -249,9 +270,17 @@ def _find_model_info(
 
 
 def _format_k(value: int) -> str:
-    if value >= 1024:
-        return f"{value / 1024:g}k"
+    if value >= 1_000_000:
+        return f"{_format_decimal_unit(value / 1_000_000)}M"
+    if value >= 1_000:
+        return f"{_format_decimal_unit(value / 1_000)}k"
     return str(value)
+
+
+def _format_decimal_unit(value: float) -> str:
+    if value.is_integer():
+        return str(int(value))
+    return f"{value:.1f}".rstrip("0").rstrip(".")
 
 
 def _format_price_per_million(value: float) -> str:

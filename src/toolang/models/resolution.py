@@ -533,7 +533,8 @@ def _provider_model_name_from_ref(provider: str, ref: str) -> str:
 
 
 def _default_provider_adapter(provider: str) -> str:
-    del provider
+    if provider in {"deepseek", "google", "openrouter"}:
+        return "chat_completions"
     return "responses"
 
 

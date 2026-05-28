@@ -13,7 +13,7 @@ from toolang.base.types.model import ModelInfo, ModelTarget
 
 _DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 _DEFAULT_API_KEY_ENV = "OPENROUTER_API_KEY"
-_OPENROUTER_ADAPTER = "responses"
+_OPENROUTER_ADAPTER = "chat_completions"
 _APP_REFERER = "https://toolang.ai"
 _APP_TITLE = "Toolang"
 _APP_CATEGORIES = "cli-agent"

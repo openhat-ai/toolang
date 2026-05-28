@@ -360,8 +360,26 @@ def _make_table(
             column_justify = cast(TableJustify, justify[index])
         table.add_column(header, no_wrap=True, justify=column_justify)
     for row in rows:
-        table.add_row(*(Text(cell) for cell in row))
+        table.add_row(*(_table_cell_text(cell) for cell in row))
     return table
+
+
+def _table_cell_text(cell: str) -> Text:
+    text = Text(cell)
+    for marker, style in (
+        ("(missing)", "bold red"),
+        ("(offline)", "bold yellow"),
+        ("(auth failed)", "bold red"),
+        ("(error)", "bold red"),
+    ):
+        start = 0
+        while True:
+            index = cell.find(marker, start)
+            if index < 0:
+                break
+            text.stylize(style, index, index + len(marker))
+            start = index + len(marker)
+    return text
 
 
 def _echo_block(text: str) -> None:

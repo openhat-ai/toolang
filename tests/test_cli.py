@@ -2140,6 +2140,8 @@ thunk:
   Reply directly.
 """.strip(),
     )
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setenv("OLLAMA_HOST", "http://127.0.0.1:9")
@@ -3286,6 +3288,37 @@ def test_cli_model_providers_orders_config_fields(monkeypatch) -> None:
     assert "url=https://api.openai.com/v1, adapter=responses, env=OPENAI_API_KEY" in result.stdout
 
 
+def test_cli_model_providers_marks_missing_env_and_offline_url(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli.agent_up,
+        "load_model_providers",
+        lambda *_args: {
+            "google": _FakeModelProvider(
+                name="google",
+                required_env=("GEMINI_API_KEY",),
+                base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+                models=(),
+            ),
+            "ollama": _FakeModelProvider(
+                name="ollama",
+                base_url="http://127.0.0.1:11434/v1",
+                models=(),
+            ),
+        },
+    )
+
+    result = runner.invoke(
+        cli.app,
+        ["model", "providers"],
+        env={"GEMINI_API_KEY": ""},
+    )
+
+    assert result.exit_code == 0
+    assert "env=GEMINI_API_KEY(missing)" in result.stdout
+    assert "missing_env=GEMINI_API_KEY" not in result.stdout
+    assert "url=http://127.0.0.1:11434/v1(offline)" in result.stdout
+
+
 def test_cli_model_list_filters_by_model_selector(monkeypatch) -> None:
     monkeypatch.setattr(
         cli.agent_up,
@@ -3775,7 +3808,13 @@ def test_cli_run_rejects_missing_default_model_env(tmp_path: Path, monkeypatch) 
     result = runner.invoke(
         cli.app,
         ["--root", str(toolang_root), "run", "alice", "--enable", "chat"],
-        env={"OPENAI_API_KEY": "", "OPENROUTER_API_KEY": "", "OLLAMA_HOST": "http://127.0.0.1:9"},
+        env={
+            "DEEPSEEK_API_KEY": "",
+            "GEMINI_API_KEY": "",
+            "OPENAI_API_KEY": "",
+            "OPENROUTER_API_KEY": "",
+            "OLLAMA_HOST": "http://127.0.0.1:9",
+        },
     )
 
     assert result.exit_code == 1
@@ -4312,7 +4351,13 @@ def test_cli_start_rejects_missing_default_model_env(tmp_path: Path, monkeypatch
     result = runner.invoke(
         cli.app,
         ["--root", str(toolang_root), "start", "alice"],
-        env={"OPENAI_API_KEY": "", "OPENROUTER_API_KEY": "", "OLLAMA_HOST": "http://127.0.0.1:9"},
+        env={
+            "DEEPSEEK_API_KEY": "",
+            "GEMINI_API_KEY": "",
+            "OPENAI_API_KEY": "",
+            "OPENROUTER_API_KEY": "",
+            "OLLAMA_HOST": "http://127.0.0.1:9",
+        },
     )
 
     assert result.exit_code == 1

@@ -1045,6 +1045,8 @@ def _replay_messages_from_step(step: StepRecord) -> list[Message]:
     meta: dict[str, Any] = {}
     if step.error is not None:
         meta["error"] = step.error
+    if isinstance(step.payload, ModelCallStepPayload) and step.payload.reasoning_content:
+        meta["reasoning_content"] = step.payload.reasoning_content
     return [Message(role=role, parts=tuple(step.output), meta=meta)]
 
 
@@ -1124,6 +1126,7 @@ class PersistSink:
                     base_url=payload.base_url,
                     instruct=instruct,
                     context=context,
+                    reasoning_content=payload.reasoning_content,
                 )
             self._store.append_step(
                 run_id=event.run_id,

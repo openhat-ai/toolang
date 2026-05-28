@@ -5386,9 +5386,12 @@ def test_assemble_run_input_accepts_explicit_run_model_within_allowed_set(tmp_pa
     )
 
     bundle = RunInput.from_binding(context, bound)
+    runtime_context = cast(dict[str, object], bundle.system_template_context["runtime"])
+    model_context = cast(dict[str, object], runtime_context["model"])
 
     assert bundle.effective_model_selectors(context) == ("openai/o3[openai]", "openai/gpt-5[openai]")
     assert bundle.model_selector(context) == "openai/gpt-5[openai]"
+    assert model_context["ref"] == "openai/gpt-5"
     assert bundle.debug["requested_model_selector"] == "openai/gpt-5[openai]"
 
 
@@ -6403,6 +6406,52 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
             {"role": "user", "parts": [{"type": "text", "text": "sum 7 and 8"}]},
             {"role": "assistant", "parts": [{"type": "text", "text": "15"}]},
         ]
+    finally:
+        store.close()
+
+
+def test_execution_store_replays_model_reasoning_content(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    store = ExecutionStore(execution_db_path(toolang_root, "alice"))
+    try:
+        run = store.start_run(
+            run_id="run-1",
+            thread_id="thread-1",
+            origin="chat",
+            input=Message.user("list files"),
+        )
+        store.append_step(
+            run_id=run.run_id,
+            step_index=1,
+            kind="model_call",
+            status="finished",
+            input=(RunInputRef(),),
+            output=(
+                ToolCallPart(
+                    tool_call_id="tool-1",
+                    tool_name="filesystem__list",
+                    tool_family="filesystem__list",
+                    input={"path": "."},
+                ),
+            ),
+            payload=ModelCallStepPayload(
+                model_ref="deepseek/deepseek-v4-flash",
+                input_tokens=0,
+                output_tokens=0,
+                provider="deepseek",
+                model="deepseek-v4-flash",
+                adapter="chat_completions",
+                reasoning_content="The user asked for files, so list the current directory.",
+            ),
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+
+        messages = store.recent_conversation_messages(thread_id="thread-1")
+
+        assert messages[1].meta == {
+            "reasoning_content": "The user asked for files, so list the current directory."
+        }
     finally:
         store.close()
 

@@ -490,6 +490,7 @@ class RunContext:
                     model=self._model.model,
                     adapter=self._model.adapter,
                     base_url=self._model.base_url,
+                    reasoning_content=_message_reasoning_content(current.message),
                 ),
                 started_at=started_at,
                 finished_at=_utc_now(),
@@ -953,6 +954,16 @@ def _tool_followup_message(tool_call: ToolCallResult) -> Message:
         ),
         meta=meta,
     )
+
+
+def _message_reasoning_content(message: Message | None) -> str | None:
+    if message is None:
+        return None
+    value = message.meta.get("reasoning_content")
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
 
 
 def _utc_now() -> str:
