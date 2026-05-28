@@ -162,6 +162,7 @@ def test_agent_chat_tool_creates_child_thread_and_sends_peer_request(monkeypatch
         {
             "url": "http://127.0.0.1:7002/api/v1/chat",
             "json": {
+                "client": "chat",
                 "peer": {"type": "agent", "name": "alice", "thread": result["local_thread"]},
                 "message": {
                     "role": "user",
@@ -238,6 +239,7 @@ def test_agent_chat_tool_accepts_direct_peer_object_without_config(monkeypatch, 
 
     assert calls[0]["url"] == "http://127.0.0.1:7002/api/v1/chat"
     assert calls[0]["json"] == {
+        "client": "chat",
         "peer": {"type": "agent", "name": "eve", "thread": result["local_thread"]},
         "message": {
             "role": "user",

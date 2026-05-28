@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from .. import templates
     from .. import up as agent_up
     from ..execution.records import UpdateKind
-    from ..state.prepared import PreparedLock
+    from ..state.prepared import PreparedLock, PreparedState
     from . import invoke as cli_invoke
     from .progress import CliProgress
 
@@ -141,6 +141,7 @@ class _RuntimeStartup:
     startup: agent_up.StartupSpec
     environ: dict[str, str]
     log_plan: LoggingPlan
+    prepared_state: PreparedState
 
 
 POSTFIX_AGENT_COMMANDS = frozenset({"run", "start", "stop", "info"})
@@ -523,6 +524,7 @@ def run_agent(
                     environ=launch.environ,
                     sandbox_child=sandbox_child,
                     progress=None,
+                    prepared_state=launch.prepared_state,
                 )
             )
     except KeyboardInterrupt:
@@ -596,13 +598,19 @@ def _resolve_runtime_startup(
         temporary_port=target.kind == "visiting" and port is None,
         environ=log_plan.environ,
     )
-    _wrap_user_error(
+    prepared_state = _wrap_user_error(
         agent_up.prepare_agent,
         toolang_root=run_root,
         agent_name=agent_name,
         progress=as_progress_sink(progress),
     )
-    return _RuntimeStartup(target=target, startup=startup, environ=log_plan.environ, log_plan=log_plan)
+    return _RuntimeStartup(
+        target=target,
+        startup=startup,
+        environ=log_plan.environ,
+        log_plan=log_plan,
+        prepared_state=prepared_state,
+    )
 
 
 @app.command(

@@ -36,6 +36,7 @@ class RunRequest:
     message: Message | None = None
     thunk_name: str | None = None
     thread_id: str | None = None
+    thread_kind: str | None = None
     model_selector: str | None = None
     run_loop: str = "basic"
     delay_sec: float | None = None

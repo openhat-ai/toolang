@@ -61,15 +61,15 @@ Task list item:
 
 ```json
 {
-  "id": "3nprht",
+  "id": "3nprht9x",
   "kind": "task",
   "state": "active",
   "stage": "todo",
   "title": "Review API changes",
-  "path": "tasks/3nprht.md",
+  "path": "tasks/3nprht9x.md",
   "updated_at": "2026-04-23T10:10:00Z",
   "runtime": {
-    "thread_id": "task_3nprht",
+    "thread_id": "task_3nprht9x",
     "active_run": null,
     "last_run": null,
     "next_run": null
@@ -81,15 +81,15 @@ Chore list item:
 
 ```json
 {
-  "id": "xy1234",
+  "id": "xy1234ab",
   "kind": "chore",
   "state": "active",
   "schedule": "FREQ=HOURLY;INTERVAL=6",
   "title": "Check stale PRs",
-  "path": "chores/xy1234.md",
+  "path": "chores/xy1234ab.md",
   "updated_at": "2026-04-23T10:10:00Z",
   "runtime": {
-    "thread_id": "chore_xy1234",
+    "thread_id": "chore_xy1234ab",
     "active_run": null,
     "last_run": {
       "id": "run_ab12cd34",

@@ -137,6 +137,7 @@ class AgentChatPlugin:
                     )
                 peer_thread = local_thread.peer.thread
                 payload: dict[str, Any] = {
+                    "client": "chat",
                     "peer": {
                         "type": "agent",
                         "name": context.home.name,

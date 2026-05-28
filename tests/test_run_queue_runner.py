@@ -275,7 +275,7 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
             assert response.status_code == 200
             body = response.json()
             thread_id = body["thread_id"]
-            assert thread_id.startswith("chat_")
+            assert thread_id.startswith("web_")
             assert body["message"]["parts"][0]["text"] == "say hello"
             assert body["assistant"]["parts"][0]["text"] == "assistant:say hello"
             assert client.put(
@@ -873,7 +873,7 @@ def test_agent_events_include_cap_updates(tmp_path: Path) -> None:
     }
 
 
-def test_chat_api_allocates_new_threads_and_rejects_unknown_thread_ids(tmp_path: Path) -> None:
+def test_chat_api_allocates_web_threads_by_default_and_rejects_unknown_thread_ids(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
@@ -903,10 +903,34 @@ def test_chat_api_allocates_new_threads_and_rejects_unknown_thread_ids(tmp_path:
     assert rejected.status_code == 404
     assert rejected.json()["detail"] == "chat thread not found: web-client-created"
     assert first.status_code == 200
-    assert thread_id.startswith("chat_")
+    assert thread_id.startswith("web_")
+    assert len(thread_id) == len("web_") + 8
     assert second.status_code == 200
     assert second.json()["thread_id"] == thread_id
     assert thread["run_count"] == 2
+
+
+def test_chat_api_allocates_tui_threads_for_tui_client(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat", "inspect"),
+    )
+    app = _create_test_app(context)
+
+    with _patched_runner_execution():
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/v1/chat",
+                json={"client": "tui", "message": _chat_message("hello")},
+            )
+            thread_id = response.json()["thread_id"]
+
+    assert response.status_code == 200
+    assert thread_id.startswith("tui_")
+    assert len(thread_id) == len("tui_") + 8
 
 
 def test_chat_restart_supersedes_previous_run_in_thread_projection(tmp_path: Path) -> None:
@@ -2163,6 +2187,25 @@ def test_bind_run_request_allocates_normalized_local_ids(tmp_path: Path) -> None
     assert (toolang_root / "agents" / "alice" / ".runtime" / "ids.json").is_file()
 
 
+def test_bind_run_request_uses_explicit_thread_kind_for_new_thread(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat",),
+    )
+
+    bound = bind_run_request(
+        context,
+        RunRequest(group="chat", origin="chat", thread_kind="tui", thunk="hello"),
+    )
+
+    assert bound.origin == "chat"
+    assert bound.thread_id.startswith("tui_")
+    assert len(bound.thread_id) == len("tui_") + 8
+
+
 def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
@@ -2263,6 +2306,12 @@ def test_up_logs_runtime_urls_after_start_and_stop(tmp_path: Path, monkeypatch, 
         "Agent %s starting root=\x1b[1m%s\x1b[0m trigger=\x1b[1m%s\x1b[0m runner=\x1b[1m%s\x1b[0m router=\x1b[1m%s\x1b[0m"
     )
     assert color_messages[1] == "Agent %s started webui=\x1b[1m%s\x1b[0m"
+
+
+def test_trigger_logger_names_are_flat() -> None:
+    assert watch.logger.name == "toolang.watch"
+    assert watch.prepare_logger.name == "toolang.prepare"
+    assert poll.logger.name == "toolang.poll"
 
 
 def test_up_reuses_previous_agent_port_when_unspecified(tmp_path: Path, monkeypatch) -> None:

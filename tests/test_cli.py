@@ -1225,8 +1225,9 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
         environ: dict[str, str],
         sandbox_child: bool,
         progress=None,
+        prepared_state=None,
     ) -> int:
-        del environ, sandbox_child, progress
+        del environ, sandbox_child, progress, prepared_state
         captured["toolang_root"] = startup.toolang_root
         captured["agent_name"] = startup.agent_name
         captured["port"] = startup.port
@@ -1275,8 +1276,9 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
         environ: dict[str, str],
         sandbox_child: bool,
         progress=None,
+        prepared_state=None,
     ) -> int:
-        del environ, sandbox_child, progress
+        del environ, sandbox_child, progress, prepared_state
         captured["toolang_root"] = startup.toolang_root
         captured["agent_name"] = startup.agent_name
         captured["port"] = startup.port
@@ -3464,8 +3466,9 @@ def test_cli_run_hands_to_agent_up(tmp_path: Path, monkeypatch) -> None:
         environ: dict[str, str],
         sandbox_child: bool = False,
         progress=None,
+        prepared_state=None,
     ) -> int:
-        del progress
+        del progress, prepared_state
         captured["toolang_root"] = startup.toolang_root
         captured["agent_name"] = startup.agent_name
         captured["host"] = startup.host
@@ -3518,6 +3521,44 @@ def test_cli_run_hands_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     assert cast(dict[str, str], captured["environ"])[PY_LOG_ENV_VAR] == DEFAULT_AGENT_LOG_SPEC
 
 
+def test_cli_run_reuses_prepared_state_for_foreground_runtime(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    prepared_state = object()
+    captured: dict[str, object] = {}
+    prepare_calls = 0
+
+    def fake_prepare_agent(**_kwargs):
+        nonlocal prepare_calls
+        prepare_calls += 1
+        return prepared_state
+
+    def fake_start_runtime(
+        startup: cli.agent_up.StartupSpec,
+        *,
+        environ: dict[str, str],
+        sandbox_child: bool = False,
+        progress=None,
+        prepared_state=None,
+    ) -> int:
+        del startup, environ, sandbox_child, progress
+        captured["prepared_state"] = prepared_state
+        return 0
+
+    monkeypatch.setattr(cli.agent_up, "prepare_agent", fake_prepare_agent)
+    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
+
+    result = runner.invoke(
+        cli.app,
+        ["run", "alice", "--enable", "inspect"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+    )
+
+    assert result.exit_code == 0
+    assert prepare_calls == 1
+    assert captured["prepared_state"] is prepared_state
+
+
 def test_cli_run_resolves_port_when_unspecified(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
@@ -3530,8 +3571,9 @@ def test_cli_run_resolves_port_when_unspecified(tmp_path: Path, monkeypatch) -> 
         environ: dict[str, str],
         sandbox_child: bool = False,
         progress=None,
+        prepared_state=None,
     ) -> int:
-        del progress
+        del progress, prepared_state
         captured["toolang_root"] = startup.toolang_root
         captured["agent_name"] = startup.agent_name
         captured["host"] = startup.host
@@ -3581,8 +3623,9 @@ def test_cli_run_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
         environ: dict[str, str],
         sandbox_child: bool = False,
         progress=None,
+        prepared_state=None,
     ) -> int:
-        del environ, sandbox_child, progress
+        del environ, sandbox_child, progress, prepared_state
         captured["component_names"] = startup.enabled_components
         return 0
 
@@ -3610,8 +3653,9 @@ def test_cli_run_passes_model_selectors_to_agent_up(tmp_path: Path, monkeypatch)
         environ: dict[str, str],
         sandbox_child: bool = False,
         progress=None,
+        prepared_state=None,
     ) -> int:
-        del environ, sandbox_child, progress
+        del environ, sandbox_child, progress, prepared_state
         captured["models"] = startup.model_selectors
         return 0
 
@@ -3639,8 +3683,9 @@ def test_cli_run_passes_tool_selectors_to_agent_up(tmp_path: Path, monkeypatch) 
         environ: dict[str, str],
         sandbox_child: bool = False,
         progress=None,
+        prepared_state=None,
     ) -> int:
-        del environ, sandbox_child, progress
+        del environ, sandbox_child, progress, prepared_state
         captured["tools"] = startup.tool_selectors
         return 0
 
@@ -3668,8 +3713,9 @@ def test_cli_run_passes_cap_selectors_to_agent_up(tmp_path: Path, monkeypatch) -
         environ: dict[str, str],
         sandbox_child: bool = False,
         progress=None,
+        prepared_state=None,
     ) -> int:
-        del environ, sandbox_child, progress
+        del environ, sandbox_child, progress, prepared_state
         captured["caps"] = startup.cap_selectors
         return 0
 
@@ -3717,8 +3763,9 @@ def test_cli_run_uses_py_log_spec(tmp_path: Path, monkeypatch) -> None:
         environ: dict[str, str],
         sandbox_child: bool = False,
         progress=None,
+        prepared_state=None,
     ) -> int:
-        del sandbox_child, progress
+        del sandbox_child, progress, prepared_state
         captured["environ"] = environ
         captured["log_spec"] = startup.log_spec
         return 0
@@ -3770,8 +3817,9 @@ def test_cli_run_loads_root_and_agent_env_with_agent_override(tmp_path: Path, mo
         environ: dict[str, str],
         sandbox_child: bool = False,
         progress=None,
+        prepared_state=None,
     ) -> int:
-        del progress
+        del progress, prepared_state
         captured["environ"] = environ
         captured["endpoint_host"] = startup.endpoint_host
         captured["sandbox"] = startup.selector.render()
