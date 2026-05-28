@@ -158,10 +158,12 @@ class ModelCallStepPayload:
     model: str = ""
     adapter: str = ""
     base_url: str | None = None
-    instructions_hash: str | None = None
+    instruct: str | None = None
+    context: str | None = None
 
     @classmethod
     def from_data(cls, payload: Mapping[str, Any]) -> ModelCallStepPayload:
+        instruct = payload.get("instruct", payload.get("instructions_hash"))
         return cls(
             model_ref=str(payload.get("model_ref", "")),
             input_tokens=int(payload.get("input_tokens", 0)),
@@ -174,9 +176,14 @@ class ModelCallStepPayload:
                 if payload.get("base_url") is not None
                 else None
             ),
-            instructions_hash=(
-                str(payload.get("instructions_hash"))
-                if payload.get("instructions_hash") is not None
+            instruct=(
+                str(instruct)
+                if instruct is not None
+                else None
+            ),
+            context=(
+                str(payload.get("context"))
+                if payload.get("context") is not None
                 else None
             ),
         )

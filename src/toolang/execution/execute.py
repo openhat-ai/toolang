@@ -55,7 +55,7 @@ async def execute_run(
                 run_id=bound.run_id,
                 origin=bound.origin,
                 thread_id=bound.thread_id,
-                input=run_input.message,
+                input=run_input.input_message(),
                 created_at=bound.created_at,
                 started_at=bound.created_at,
                 request_id=_request_id(bound.metadata),

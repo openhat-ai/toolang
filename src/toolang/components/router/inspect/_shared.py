@@ -350,13 +350,21 @@ def create_router() -> APIRouter:
         context.events.publish(domain="thread", domain_id=run.thread_id, type="run_input", payload=event_payload)
         return {"input": event_payload}
 
-    @router.get("/instructions/{instructions_hash}", tags=["activity"], summary="Get Instructions")
-    async def instructions(request: Request, instructions_hash: str) -> dict[str, object]:
+    @router.get("/instruct/{prompt_hash}", tags=["activity"], summary="Get Instruct Prompt")
+    async def instruct_prompt(request: Request, prompt_hash: str) -> dict[str, object]:
         context = request.app.state.runtime
-        body = context.store.get_instruction_blob(instructions_hash=instructions_hash)
+        body = context.store.get_prompt(prompt_hash=prompt_hash)
         if body is None:
-            raise HTTPException(status_code=404, detail=f"instructions not found: {instructions_hash}")
-        return {"hash": instructions_hash, "body": body}
+            raise HTTPException(status_code=404, detail=f"instruct not found: {prompt_hash}")
+        return {"hash": prompt_hash, "body": body}
+
+    @router.get("/context/{prompt_hash}", tags=["activity"], summary="Get Context Prompt")
+    async def context_prompt(request: Request, prompt_hash: str) -> dict[str, object]:
+        context = request.app.state.runtime
+        body = context.store.get_prompt(prompt_hash=prompt_hash)
+        if body is None:
+            raise HTTPException(status_code=404, detail=f"context not found: {prompt_hash}")
+        return {"hash": prompt_hash, "body": body}
 
     @router.get("/threads", tags=["activity"], summary="List Threads")
     async def threads(

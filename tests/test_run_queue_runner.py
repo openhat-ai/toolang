@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager, contextmanager, suppress
 from datetime import datetime, timezone
+import hashlib
 import json
 import logging
 import os
@@ -342,13 +343,22 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
                 run_detail["output"]["steps"][0]["message"]["parts"][0]["text"]
                 == "assistant:say hello"
             )
-            instructions_hash = run_detail["output"]["steps"][0]["record"]["payload"]["instructions_hash"]
-            assert isinstance(instructions_hash, str) and instructions_hash
-            instructions = client.get(f"/api/v1/instructions/{instructions_hash}").json()
-            assert instructions == {
-                "hash": instructions_hash,
+            payload = run_detail["output"]["steps"][0]["record"]["payload"]
+            instruct_hash = payload["instruct"]
+            context_hash = payload["context"]
+            assert isinstance(instruct_hash, str) and instruct_hash
+            assert isinstance(context_hash, str) and context_hash
+            instruct = client.get(f"/api/v1/instruct/{instruct_hash}").json()
+            context_prompt = client.get(f"/api/v1/context/{context_hash}").json()
+            assert instruct == {
+                "hash": instruct_hash,
                 "body": "You are a helpful assistant.",
             }
+            assert context_prompt == {
+                "hash": context_hash,
+                "body": "Context for this run.",
+            }
+            assert client.get(f"/api/v1/instructions/{instruct_hash}").status_code == 404
             assert definitions["program_source"] == "agents/alice/agent.too"
             assert definitions["private_entries"] == []
             assert prepared_fingerprint == live["fingerprint"]
@@ -647,6 +657,8 @@ def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
                 kind="model_call",
                 input=(StepOutputRef(step_index=1), RunInputRef(index=1)),
                 started_at="2026-01-01T00:00:01Z",
+                instruct="call prompt",
+                context="call context",
             )
         )
         events = client.get("/api/v1/threads/thread-1/events").json()["items"]
@@ -658,6 +670,12 @@ def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
         {"kind": "step", "index": 1},
         {"kind": "input", "index": 1},
     ]
+    assert events[1]["payload"]["instruct"] == hashlib.sha256(
+        b"call prompt"
+    ).hexdigest()
+    assert events[1]["payload"]["context"] == hashlib.sha256(
+        b"call context"
+    ).hexdigest()
 
 
 def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
@@ -6094,6 +6112,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
     current_message = message_text(messages[6].parts)
     assert current_message.startswith("<context>")
     assert current_message.endswith("again")
+    assert message_text(bundle.input_message().parts) == "again"
     assert "Prior Tool Results:" not in instructions
     assert "service_use__tool_list service=linear succeeded" not in instructions
 
@@ -6139,6 +6158,7 @@ def test_run_input_recall_none_disables_thread_history_and_tool_context(tmp_path
     text = message_text(messages[0].parts)
     assert text.startswith("<context>")
     assert text.endswith("again")
+    assert message_text(bundle.input_message().parts) == "again"
     assert bundle.history == ()
     assert bundle.debug["recall"] == ["none"]
 
@@ -6328,6 +6348,12 @@ def _fake_run_input(bound):
         def instructions(self) -> str:
             return ""
 
+        def context(self) -> str:
+            return "Context for this run."
+
+        def input_message(self) -> Message:
+            return input_message
+
         def messages(self):
             return (input_message,)
 
@@ -6360,6 +6386,7 @@ def _started(
     kind: Literal["model_call", "tool_call", "runtime"],
     input=(),
     instructions: str | None = None,
+    context: str | None = None,
 ) -> StepStart:
     return StepStart(
         run_id=run_id,
@@ -6368,7 +6395,8 @@ def _started(
         kind=kind,
         input=tuple(input) or _default_step_input(step_index=step_index, kind=kind),
         started_at="2026-01-01T00:00:00Z",
-        instructions=instructions,
+        instruct=instructions,
+        context=context,
     )
 
 
@@ -6413,12 +6441,31 @@ def test_model_call_step_payload_round_trips_target_metadata() -> None:
         model="openai/gpt-5",
         adapter="responses",
         base_url="https://openrouter.ai/api/v1",
-        instructions_hash="abc123",
+        instruct="abc123",
+        context="def456",
     )
 
     restored = ModelCallStepPayload.from_data(payload.to_data())
 
     assert restored == payload
+    assert (
+        ModelCallStepPayload.from_data({"instructions_hash": "old"}).instruct
+        == "old"
+    )
+
+
+def test_prompt_store_uses_content_hash_for_all_prompt_kinds(tmp_path: Path) -> None:
+    store = ExecutionStore(tmp_path / "runs.db")
+    try:
+        instruct_hash = store.put_prompt(body="shared body")
+        context_hash = store.put_prompt(body="shared body")
+        body = store.get_prompt(prompt_hash=instruct_hash)
+    finally:
+        store.close()
+
+    assert instruct_hash == context_hash
+    assert instruct_hash == hashlib.sha256(b"shared body").hexdigest()
+    assert body == "shared body"
 
 
 def _default_step_input(
@@ -6456,6 +6503,7 @@ def _patched_runner_execution():
                     thread_id=current["thread_id"],
                     kind="model_call",
                     instructions=instructions,
+                    context="Context for this run.",
                 )
             )
             context.on_event(

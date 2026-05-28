@@ -47,7 +47,7 @@ from .records import (
     step_payload_to_data,
 )
 
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 
 
 class ExecutionStore:
@@ -406,29 +406,29 @@ class ExecutionStore:
             grouped.setdefault(record.run_id, []).append(record)
         return grouped
 
-    def put_instruction_blob(self, *, body: str) -> str:
-        instructions_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    def put_prompt(self, *, body: str) -> str:
+        prompt_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
         with self._lock:
             self._conn.execute(
                 """
-                INSERT OR IGNORE INTO instruction_blobs(
-                    instructions_hash,
+                INSERT OR IGNORE INTO prompts(
+                    hash,
                     body
                 ) VALUES (?, ?)
                 """,
-                (instructions_hash, body),
+                (prompt_hash, body),
             )
             self._conn.commit()
-        return instructions_hash
+        return prompt_hash
 
-    def get_instruction_blob(self, *, instructions_hash: str) -> str | None:
+    def get_prompt(self, *, prompt_hash: str) -> str | None:
         with self._lock:
             row = self._conn.execute(
                 """
-                SELECT body FROM instruction_blobs
-                WHERE instructions_hash = ?
+                SELECT body FROM prompts
+                WHERE hash = ?
                 """,
-                (instructions_hash,),
+                (prompt_hash,),
             ).fetchone()
         if row is None:
             return None
@@ -731,6 +731,7 @@ class ExecutionStore:
                 self._conn.execute("DROP TABLE IF EXISTS updates")
                 self._conn.execute("DROP TABLE IF EXISTS events")
                 self._conn.execute("DROP TABLE IF EXISTS instruction_blobs")
+                self._conn.execute("DROP TABLE IF EXISTS prompts")
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS threads (
@@ -817,8 +818,8 @@ class ExecutionStore:
             )
             self._conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS instruction_blobs (
-                    instructions_hash TEXT PRIMARY KEY,
+                CREATE TABLE IF NOT EXISTS prompts (
+                    hash TEXT PRIMARY KEY,
                     body TEXT NOT NULL
                 )
                 """
@@ -1073,7 +1074,7 @@ class PersistSink:
 
     def __init__(self, store: ExecutionStore) -> None:
         self._store = store
-        self._pending_steps: dict[tuple[str, int], tuple[tuple[StepInputItem, ...], str, str | None]] = {}
+        self._pending_steps: dict[tuple[str, int], tuple[tuple[StepInputItem, ...], str, str | None, str | None]] = {}
         self._last_step_index: dict[str, int] = {}
 
     def on_event(self, event: TraceEvent) -> None:
@@ -1089,21 +1090,27 @@ class PersistSink:
             )
             return
         if isinstance(event, StepStart):
-            instructions_hash = (
-                self._store.put_instruction_blob(body=event.instructions)
-                if event.instructions is not None
+            instruct = (
+                self._store.put_prompt(body=event.instruct)
+                if event.instruct is not None
+                else None
+            )
+            context = (
+                self._store.put_prompt(body=event.context)
+                if event.context is not None
                 else None
             )
             self._pending_steps[(event.run_id, event.step_index)] = (
                 tuple(event.input),
                 event.started_at,
-                instructions_hash,
+                instruct,
+                context,
             )
             return
         if isinstance(event, StepEnd):
-            step_input, started_at, instructions_hash = self._pending_steps.pop(
+            step_input, started_at, instruct, context = self._pending_steps.pop(
                 (event.run_id, event.step_index),
-                ((), event.started_at, None),
+                ((), event.started_at, None, None),
             )
             payload = event.payload
             if isinstance(payload, ModelCallStepPayload):
@@ -1115,7 +1122,8 @@ class PersistSink:
                     model=payload.model,
                     adapter=payload.adapter,
                     base_url=payload.base_url,
-                    instructions_hash=instructions_hash,
+                    instruct=instruct,
+                    context=context,
                 )
             self._store.append_step(
                 run_id=event.run_id,

@@ -1636,6 +1636,7 @@ def _run_input() -> RunInput:
         ),
         input_text="hello",
         message=Message.user("hello"),
+        context_text="",
         params={},
         user_template_context={},
         system_template_context={},

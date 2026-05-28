@@ -256,7 +256,8 @@ class RunContext:
                 kind="model_call",
                 input=step_input,
                 started_at=started_at,
-                instructions=self._input.instructions(),
+                instruct=self._input.instructions(),
+                context=self._input.context(),
             )
         )
         request = ModelCall(
