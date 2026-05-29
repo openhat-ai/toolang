@@ -19,10 +19,9 @@ import click
 import typer
 from typer.core import TyperCommand, TyperGroup
 
-from .. import agents
-from ..config.log import LoggingPlan, configure_logging, configure_logging_plan, resolve_agent_logging
-from .caps import CAP_KINDS, register_toolang_caps_commands
-from .utils import (
+from ... import agents
+from ...config.log import LoggingPlan, configure_logging, configure_logging_plan, resolve_agent_logging
+from ..utils import (
     _PrefixAgentWorkGroup,
     _RequiredPrefixAgentCommand,
     _RunAgentCommand,
@@ -46,15 +45,17 @@ from .utils import (
     _wait_for_started_status,
     _wrap_user_error,
 )
+from .caps import CAP_KINDS, register_caps_commands
+from .fmt import register_fmt_command
 
 if TYPE_CHECKING:
-    from .. import caps as cap_store
-    from .. import templates
-    from .. import up as agent_up
-    from ..execution.records import UpdateKind
-    from ..state.prepared import PreparedLock, PreparedState
-    from . import invoke as cli_invoke
-    from .progress import CliProgress
+    from ... import caps as cap_store
+    from ... import templates
+    from ... import up as agent_up
+    from ...execution.records import UpdateKind
+    from ...state.prepared import PreparedLock, PreparedState
+    from .. import invoke as cli_invoke
+    from ..progress import CliProgress
 
 
 class _LazyModule:
@@ -105,6 +106,7 @@ TOP_LEVEL_COMMANDS = frozenset(
         "remove",
         "list",
         "info",
+        "fmt",
         "model",
         "tool",
         "channel",
@@ -491,7 +493,7 @@ def run_agent(
         typer.Option("--sandbox-child", hidden=True),
     ] = False,
 ) -> None:
-    from .progress import as_progress_sink, make_cli_progress
+    from ..progress import as_progress_sink, make_cli_progress
 
     selector = _required_runtime_agent(ctx, agent)
     normalized_components = _normalize_component_option(components)
@@ -563,7 +565,7 @@ def _resolve_runtime_startup(
     background: bool,
     progress: CliProgress | None,
 ) -> _RuntimeStartup:
-    from .progress import as_progress_sink
+    from ..progress import as_progress_sink
 
     run_root = target.toolang_root
     agent_name = target.agent_name
@@ -666,7 +668,7 @@ def start_agent(
         typer.Option("--endpoint-host", help="Endpoint host name.", hidden=True),
     ] = None,
 ) -> None:
-    from .progress import as_progress_sink, make_cli_progress
+    from ..progress import as_progress_sink, make_cli_progress
 
     selector = _required_runtime_agent(ctx, agent)
     parsed_selector = _wrap_user_error(agents.parse_agent_selector, selector)
@@ -709,7 +711,7 @@ def start_agent(
     command = [
         sys.executable,
         "-m",
-        "toolang.cli.main",
+        "toolang.cli.toolang",
         *agent_up.build_run_argv(launch.startup),
     ]
     with log_path.open("ab") as stream:
@@ -801,7 +803,7 @@ def _info_caps_summary(toolang_root: Path, agent_name: str) -> str:
 
 
 def _prepared_info_cap_counts(toolang_root: Path, agent_name: str) -> dict[str, int] | None:
-    from ..state.prepared import load_private_lock, load_shared_lock
+    from ...state.prepared import load_private_lock, load_shared_lock
 
     try:
         shared_lock = load_shared_lock(toolang_root)
@@ -834,7 +836,7 @@ def _prepared_lock_info_cap_counts(
 
 
 def _prepare_info_cap_counts(toolang_root: Path, agent_name: str) -> dict[str, int]:
-    from .progress import as_progress_sink, make_cli_progress
+    from ..progress import as_progress_sink, make_cli_progress
 
     progress = make_cli_progress(show_materialize_summary=True)
     try:
@@ -853,7 +855,7 @@ def _prepare_info_cap_counts(toolang_root: Path, agent_name: str) -> dict[str, i
 
 
 def _info_jobs_summary(toolang_root: Path, agent_name: str) -> str:
-    from .. import work
+    from ... import work
 
     chore_count = len(work.list_chores(toolang_root, agent_name))
     task_count = len(work.list_tasks(toolang_root, agent_name))
@@ -883,7 +885,7 @@ def _info_models_summary(
     configured = agent_up.load_default_models(toolang_root, agent_name)
     if configured:
         return ", ".join(configured)
-    from ..models.resolution import DEFAULT_MODEL_SELECTOR
+    from ...models.resolution import DEFAULT_MODEL_SELECTOR
 
     return DEFAULT_MODEL_SELECTOR
 
@@ -936,8 +938,8 @@ def list_models(
         ),
     ] = None,
 ) -> None:
-    from ..models.errors import NO_AVAILABLE_MODELS_MESSAGE
-    from ..models.resolution import split_model_selectors
+    from ...models.errors import NO_AVAILABLE_MODELS_MESSAGE
+    from ...models.resolution import split_model_selectors
 
     environ = dict(os.environ)
     root = _toolang_root(None)
@@ -970,7 +972,7 @@ def list_model_providers() -> None:
 
 @model_app.command("adapters", help="List available model API adapters.")
 def list_model_adapters() -> None:
-    from ..models.views import available_model_adapters
+    from ...models.views import available_model_adapters
 
     rows = [(name,) for name in available_model_adapters()]
     _echo_table(("ADAPTER",), rows)
@@ -988,7 +990,7 @@ def list_tools(
         ),
     ] = None,
 ) -> None:
-    from ..tools.registry import split_tool_selectors
+    from ...tools.registry import split_tool_selectors
 
     environ = dict(os.environ)
     root = _toolang_root(None)
@@ -1032,8 +1034,8 @@ def _model_rows(
     *,
     model_selectors: Sequence[str] = (),
 ) -> list[tuple[str, str, str]]:
-    from ..models.config import load_model_aliases
-    from ..models.views import model_list_rows
+    from ...models.config import load_model_aliases
+    from ...models.views import model_list_rows
 
     providers = agent_up.load_model_providers(root, "")
     aliases = load_model_aliases(root, "")
@@ -1046,8 +1048,8 @@ def _model_rows(
 
 
 def _model_provider_rows(root: Path, environ: dict[str, str]) -> list[tuple[str, str, str]]:
-    from ..models.config import load_model_aliases, load_model_provider_configs
-    from ..models.views import model_provider_rows
+    from ...models.config import load_model_aliases, load_model_provider_configs
+    from ...models.views import model_provider_rows
 
     provider_configs = load_model_provider_configs(root, "")
     providers = agent_up.load_model_providers(root, "")
@@ -1066,8 +1068,8 @@ def _tool_rows(
     *,
     tool_selectors: Sequence[str] = (),
 ) -> list[tuple[str, str, str]]:
-    from ..config.plugins import load_tool_plugin_config
-    from ..tools.views import tool_list_rows
+    from ...config.plugins import load_tool_plugin_config
+    from ...tools.views import tool_list_rows
 
     config = load_tool_plugin_config(root, "", environ=environ)
     tools = agent_up.load_tool_plugins(config=config)
@@ -1209,7 +1211,7 @@ def _make_work_list_command(kind: WorkKind, title: str) -> Callable[..., None]:
             typer.Option("--all", help="Include archived items."),
         ] = False,
     ) -> None:
-        from .. import work
+        from ... import work
 
         agent_name = _required_prefix_agent(ctx, command_name=kind)
         root = _context_root(ctx)
@@ -1253,7 +1255,7 @@ def _make_new_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
     def new_work(
         ctx: typer.Context,
     ) -> None:
-        from .. import work
+        from ... import work
 
         agent_name = _required_prefix_agent(ctx, command_name=kind)
         text = click.edit(
@@ -1281,7 +1283,7 @@ def _make_edit_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
-        from .. import work
+        from ... import work
 
         job_id = id
         agent_name = _required_prefix_agent(ctx, command_name=kind)
@@ -1316,7 +1318,7 @@ def _make_pause_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
-        from .. import work
+        from ... import work
 
         job_id = id
         agent_name = _required_prefix_agent(ctx, command_name=kind)
@@ -1339,7 +1341,7 @@ def _make_resume_work_command(kind: WorkKind, title: str) -> Callable[..., None]
         ctx: typer.Context,
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
-        from .. import work
+        from ... import work
 
         job_id = id
         agent_name = _required_prefix_agent(ctx, command_name=kind)
@@ -1362,7 +1364,7 @@ def _make_archive_work_command(kind: WorkKind, title: str) -> Callable[..., None
         ctx: typer.Context,
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
-        from .. import work
+        from ... import work
 
         job_id = id
         agent_name = _required_prefix_agent(ctx, command_name=kind)
@@ -1389,7 +1391,7 @@ def _make_restore_work_command(kind: WorkKind, title: str) -> Callable[..., None
             typer.Option("--inactive", help="Restore as inactive instead of active."),
         ] = False,
     ) -> None:
-        from .. import work
+        from ... import work
 
         job_id = id
         agent_name = _required_prefix_agent(ctx, command_name=kind)
@@ -1414,7 +1416,7 @@ def _make_delete_work_command(kind: WorkKind, title: str) -> Callable[..., None]
         ctx: typer.Context,
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
-        from .. import work
+        from ... import work
 
         job_id = id
         agent_name = _required_prefix_agent(ctx, command_name=kind)
@@ -1457,7 +1459,8 @@ app.add_typer(model_app, name="model", no_args_is_help=True, rich_help_panel=RUN
 app.add_typer(tool_app, name="tool", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
 app.add_typer(channel_app, name="channel", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
 app.add_typer(sandbox_app, name="sandbox", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
-register_toolang_caps_commands(app, rich_help_panel=CAPS_COMMAND_PANEL)
+register_fmt_command(app)
+register_caps_commands(app, rich_help_panel=CAPS_COMMAND_PANEL)
 register_work_commands()
 
 

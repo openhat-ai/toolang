@@ -14,9 +14,9 @@ from typing import Annotated
 import click
 import typer
 
-from ..config.log import configure_logging
-from .caps import CAP_KINDS, register_standalone_caps_commands
-from .utils import _OptionalPrefixAgentGroup, _toolang_root
+from ...config.log import configure_logging
+from .commands import CAP_KINDS, register_standalone_caps_commands
+from ..utils import _OptionalPrefixAgentGroup, _toolang_root
 
 _CLI_PREFIX_AGENT: str | None = None
 CAP_TOP_LEVEL_COMMANDS = frozenset({"list", *CAP_KINDS})
