@@ -22,21 +22,24 @@ def fmt(
     ] = None,
     check: Annotated[
         bool,
-        typer.Option("--check", help="Exit non-zero if any file is not formatted."),
+        typer.Option("--check", help="Check formatting."),
     ] = False,
     tab_size: Annotated[
         int,
-        typer.Option("--tab-size", min=1, help="Number of spaces per indentation level."),
+        typer.Option("--tab-size", help="Indent size."),
     ] = 2,
     stdin_filepath: Annotated[
         Path | None,
         typer.Option(
             "--stdin-filepath",
-            help="Format stdin as the given .too file path and write the result to stdout.",
+            help="Path label for stdin.",
         ),
     ] = None,
 ) -> None:
     from ...program_format import ToolangFormatError, format_source
+
+    if tab_size < 1:
+        raise click.ClickException("--tab-size must be at least 1")
 
     def format_too_source(source: str) -> str:
         return format_source(source, tab_size=tab_size)
