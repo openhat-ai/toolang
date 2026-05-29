@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from .toolang.main import *  # noqa: F403
+from .toolang.app import *  # noqa: F403
 
 
 if __name__ == "__main__":
-    from .toolang.main import main
+    from .toolang.app import main
 
     raise SystemExit(main())

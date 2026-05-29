@@ -54,9 +54,9 @@ Repository = "https://github.com/openhat-ai/toolang"
 Issues = "https://github.com/openhat-ai/toolang/issues"
 
 [project.scripts]
-toolang = "toolang.cli.toolang.main:main"
-too = "toolang.cli.toolang.main:main"
-caps = "toolang.cli.caps.main:main"
+toolang = "toolang.cli.toolang.app:main"
+too = "toolang.cli.toolang.app:main"
+caps = "toolang.cli.caps.app:main"
 
 [project.entry-points."toolang.tool"]
 agent_chat = "toolang.tools.agent_chat:create_tool_set"

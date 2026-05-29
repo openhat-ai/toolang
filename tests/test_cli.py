@@ -17,8 +17,8 @@ from toolang import caps
 from toolang.base.types.message import Message
 from toolang.base.types.model import ModelInfo
 from toolang.base.types.tool import ToolContext, ToolDefinition
-import toolang.cli.toolang.main as cli
-import toolang.cli.caps.main as caps_cli
+import toolang.cli.toolang.app as cli
+import toolang.cli.caps.app as caps_cli
 import toolang.cli.caps.commands as caps_commands
 from toolang.cli.progress import CliProgress
 from toolang.components.trigger import watch
@@ -3972,7 +3972,7 @@ def test_cli_start_spawns_background_run_and_reports_status(tmp_path: Path, monk
     assert captured["command"] == [
         cli.sys.executable,
         "-m",
-        "toolang.cli.toolang.main",
+        "toolang.cli.toolang",
         "--root",
         str(toolang_root),
         "run",
@@ -4053,7 +4053,7 @@ def test_cli_start_propagates_py_log_to_agent_process(tmp_path: Path, monkeypatc
     assert command[0:5] == [
         cli.sys.executable,
         "-m",
-        "toolang.cli.toolang.main",
+        "toolang.cli.toolang",
         "--root",
         str(toolang_root),
     ]

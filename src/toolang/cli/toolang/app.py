@@ -711,7 +711,7 @@ def start_agent(
     command = [
         sys.executable,
         "-m",
-        "toolang.cli.toolang.main",
+        "toolang.cli.toolang",
         *agent_up.build_run_argv(launch.startup),
     ]
     with log_path.open("ab") as stream:
