@@ -5466,6 +5466,141 @@ def test_cli_does_not_register_plugin_command() -> None:
     assert "No such command" in result.output
 
 
+def test_cli_fmt_is_hidden_but_available() -> None:
+    help_result = runner.invoke(cli.app, ["--help"])
+    fmt_result = runner.invoke(cli.app, ["fmt", "--help"])
+
+    assert help_result.exit_code == 0
+    assert " fmt " not in help_result.stdout
+    assert fmt_result.exit_code == 0
+    assert "Format .too files." in fmt_result.stdout
+
+
+def test_cli_fmt_formats_too_file(tmp_path: Path) -> None:
+    source_path = tmp_path / "agent.too"
+    source_path.write_text(
+        "#!/usr/bin/env toolang\n"
+        "\n"
+        "struct Result:\n"
+        "    title:string\n"
+        "\n"
+        "thunk review( input:Message)->Json:\n"
+        "    model= deepseek/*\n"
+        "    user:   Review it.\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(cli.app, ["fmt", str(source_path)])
+
+    assert result.exit_code == 0
+    assert "formatted" in result.stdout
+    assert source_path.read_text(encoding="utf-8") == (
+        "#!/usr/bin/env toolang\n"
+        "\n"
+        "struct Result:\n"
+        "  title: string\n"
+        "\n"
+        "thunk review(input: Message) -> Json:\n"
+        "  models = deepseek/*\n"
+        "\n"
+        "  user: Review it.\n"
+    )
+
+
+def test_cli_fmt_check_reports_unformatted_without_writing(tmp_path: Path) -> None:
+    source_path = tmp_path / "agent.too"
+    source = "thunk review( input:Message):\n    user:   Review it.\n"
+    source_path.write_text(source, encoding="utf-8")
+
+    result = runner.invoke(cli.app, ["fmt", "--check", str(source_path)])
+
+    assert result.exit_code == 1
+    assert f"would reformat {source_path}" in result.stdout
+    assert source_path.read_text(encoding="utf-8") == source
+
+
+def test_cli_fmt_formats_stdin_with_filepath() -> None:
+    result = runner.invoke(
+        cli.app,
+        ["fmt", "--stdin-filepath", "buffer.too"],
+        input="thunk review( input:Message):\n    user:   Review it.\n",
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == (
+        "thunk review(input: Message):\n"
+        "  user: Review it.\n"
+    )
+
+
+def test_cli_fmt_formats_dash_as_stdin() -> None:
+    result = runner.invoke(
+        cli.app,
+        ["fmt", "-"],
+        input="thunk review( input:Message):\n    user:   Review it.\n",
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == (
+        "thunk review(input: Message):\n"
+        "  user: Review it.\n"
+    )
+
+
+def test_cli_fmt_formats_stdin_with_tab_size() -> None:
+    result = runner.invoke(
+        cli.app,
+        ["fmt", "--tab-size", "4", "-"],
+        input="thunk review( input:Message):\n  user:\n    Review it.\n",
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == (
+        "thunk review(input: Message):\n"
+        "    user:\n"
+        "        Review it.\n"
+    )
+
+
+def test_cli_fmt_allows_stdin_filepath_with_dash() -> None:
+    result = runner.invoke(
+        cli.app,
+        ["fmt", "--stdin-filepath", "buffer.too", "-"],
+        input="#Comment\n",
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == "# Comment\n"
+
+
+def test_cli_fmt_rejects_stdin_filepath_with_file_args(tmp_path: Path) -> None:
+    source_path = tmp_path / "agent.too"
+    source_path.write_text("thunk:\n  hello\n", encoding="utf-8")
+
+    result = runner.invoke(
+        cli.app,
+        ["fmt", "--stdin-filepath", "buffer.too", str(source_path)],
+        input="thunk:\n  hello\n",
+    )
+
+    assert result.exit_code != 0
+    assert "--stdin-filepath can only be combined with '-'" in result.output
+
+
+def test_cli_fmt_rejects_dash_with_other_file_args(tmp_path: Path) -> None:
+    source_path = tmp_path / "agent.too"
+    source_path.write_text("thunk:\n  hello\n", encoding="utf-8")
+
+    result = runner.invoke(
+        cli.app,
+        ["fmt", "-", str(source_path)],
+        input="thunk:\n  hello\n",
+    )
+
+    assert result.exit_code != 0
+    assert "'-' cannot be combined with other path arguments" in result.output
+
+
 def test_cli_caps_alias_lists_caps(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     caps.put_local_entry_text(
