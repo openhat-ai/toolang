@@ -12,8 +12,8 @@ import click
 import typer
 from typer.core import TyperGroup
 
-from ..base.error import ToolangError
-from .utils import (
+from ...base.error import ToolangError
+from ..utils import (
     _OptionalPrefixAgentCommand,
     _OptionalPrefixAgentGroup,
     _OptionalPrefixAgentListCommand,
@@ -27,12 +27,12 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from .. import caps as cap_store
-    from .. import templates
-    from ..execution.records import UpdateKind
-    from ..components.trigger import watch as watch_feature
-    from ..state.prepared import PreparedEntry, PreparedState
-    from .progress import CliProgress
+    from ... import caps as cap_store
+    from ... import templates
+    from ...execution.records import UpdateKind
+    from ...components.trigger import watch as watch_feature
+    from ...state.prepared import PreparedEntry, PreparedState
+    from ..progress import CliProgress
 
 CapKind = Literal["skill", "psyche", "prompt", "service"]
 EntryKind = Literal["psyche", "skill", "service", "prompt", "task", "chore"]
@@ -462,7 +462,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         ref: str = typer.Argument(..., help=f"{title} ref"),
     ) -> None:
-        from .progress import as_progress_sink
+        from ..progress import as_progress_sink
 
         visibility, agent_name = _target_visibility(ctx)
         selected_agent = _context_agent(ctx)
@@ -691,11 +691,11 @@ def _all_cap_entries(
     prepare: bool,
     kinds: set[EntryKind],
 ) -> tuple[PreparedEntry, ...]:
-    from ..state.durable import scan_durable_state
+    from ...state.durable import scan_durable_state
 
     durable = _wrap_user_error(scan_durable_state, toolang_root, agent_name)
     if prepare and durable.program_source is not None:
-        from .progress import as_progress_sink, make_cli_progress
+        from ..progress import as_progress_sink, make_cli_progress
 
         progress = make_cli_progress(
             prepare_summary_label="Resolved",
@@ -810,7 +810,7 @@ def _append_cap_update(
 
 
 def _make_cap_write_progress() -> CliProgress:
-    from .progress import make_cli_progress
+    from ..progress import make_cli_progress
 
     return make_cli_progress(
         prepare_summary_label="Resolved",
@@ -828,8 +828,8 @@ def _refresh_and_append_cap_update(
     progress_total: int,
     progress: CliProgress | None = None,
 ) -> None:
-    from ..state.durable import scan_durable_state
-    from .progress import as_progress_sink
+    from ...state.durable import scan_durable_state
+    from ..progress import as_progress_sink
 
     durable = _wrap_user_error(scan_durable_state, toolang_root, agent_name)
     _wrap_user_error(
