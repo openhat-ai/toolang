@@ -84,6 +84,7 @@ from toolang.caps import (
     remove_remote_entry,
 )
 from toolang.config.plugins import ChannelBinding
+from toolang.config.log_spec import PY_LOG_ENV_VAR
 from toolang.execution import execute as run_execute_module
 from toolang.execution.input import RunInput, bind_run_request
 from toolang.execution.runner import QueueRunner, RunOutcome, RunRequest, RunSubmission
@@ -2301,6 +2302,7 @@ def test_up_logs_runtime_urls_after_start_and_stop(tmp_path: Path, monkeypatch, 
             on_stopped()
 
     monkeypatch.setattr("toolang.up._run_uvicorn_app", fake_run_uvicorn_app)
+    monkeypatch.setattr("toolang.up.configure_logging", lambda **_kwargs: None)
     caplog.set_level(logging.INFO, logger="toolang.runtime")
 
     result = run_experiments_up(
@@ -2328,6 +2330,50 @@ def test_up_logs_runtime_urls_after_start_and_stop(tmp_path: Path, monkeypatch, 
         "Agent starting root=\x1b[1m%s\x1b[0m trigger=\x1b[1m%s\x1b[0m runner=\x1b[1m%s\x1b[0m router=\x1b[1m%s\x1b[0m"
     )
     assert color_messages[1] == "Agent started webui=\x1b[1m%s\x1b[0m"
+
+
+def test_local_runtime_configures_logging_before_state_loaded(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    agents.create_agent(toolang_root, "alice")
+    order: list[str] = []
+    captured: dict[str, object] = {}
+
+    def fake_configure_logging(*, spec: str | None, environ: dict[str, str], log_path=None) -> None:
+        del log_path
+        order.append("configure")
+        captured["spec"] = spec
+        captured["environ"] = environ
+
+    def fake_log_state_loaded(context: UptimeContext) -> None:
+        del context
+        order.append("state")
+
+    def fake_run_uvicorn_app(*args, **kwargs) -> None:
+        del args, kwargs
+        order.append("run")
+
+    monkeypatch.setattr(up_module, "configure_logging", fake_configure_logging)
+    monkeypatch.setattr(up_module, "_log_state_loaded", fake_log_state_loaded)
+    monkeypatch.setattr(up_module, "_run_uvicorn_app", fake_run_uvicorn_app)
+
+    result = up_module._up_local(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        host="127.0.0.1",
+        endpoint_host="localhost",
+        port=8765,
+        enabled_components=("router.inspect",),
+        environ={PY_LOG_ENV_VAR: "toolang.state=info"},
+        sandbox_child=False,
+        model_selectors=(),
+        tool_selectors=None,
+        cap_selectors=(),
+        log_spec=None,
+    )
+
+    assert result == 0
+    assert order[:2] == ["configure", "state"]
+    assert captured["spec"] == "toolang.state=info"
 
 
 def test_state_loaded_log_counts_selectable_models(tmp_path: Path, caplog) -> None:

@@ -46,6 +46,7 @@ from toolang.tools.registry import (
 from .config.log import (
     DEFAULT_LOG_LEVEL,
     build_uvicorn_log_config,
+    configure_logging,
     configure_logging_plan,
     resolve_agent_logging,
 )
@@ -777,6 +778,8 @@ def _up_local(
     progress: ProgressSink | None = None,
     prepared_state: PreparedState | None = None,
 ) -> int:
+    runtime_log_spec = _runtime_log_spec_value(log_spec, environ)
+    configure_logging(spec=runtime_log_spec, environ=environ)
     loop_intervals_ms = dict(DEFAULT_TRIGGER_INTERVAL_MS)
     for component_name in component_group(TRIGGER_COMPONENTS, "trigger"):
         if component_name in loop_intervals_ms and loop_intervals_ms[component_name] <= 0:
@@ -884,7 +887,7 @@ def _up_local(
         app,
         host=host,
         port=port,
-        log_config=build_uvicorn_log_config(level=log_spec or DEFAULT_LOG_LEVEL),
+        log_config=build_uvicorn_log_config(level=runtime_log_spec or DEFAULT_LOG_LEVEL),
         shutdown_signal=shutdown_signal,
         on_starting=lambda: logger.info(
             "Agent starting root=%s trigger=%s runner=%s router=%s",
@@ -914,6 +917,13 @@ def _up_local(
         on_stopped=lambda: logger.info("Agent stopped"),
     )
     return 0
+
+
+def _runtime_log_spec_value(log_spec: str | None, environ: Mapping[str, str]) -> str | None:
+    if isinstance(log_spec, str) and log_spec.strip():
+        return log_spec.strip()
+    env_spec = environ.get(PY_LOG_ENV_VAR, "").strip()
+    return env_spec or None
 
 
 def _log_state_loaded(context: UptimeContext) -> None:

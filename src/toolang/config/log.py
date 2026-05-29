@@ -8,6 +8,7 @@ import logging
 import logging.config
 from pathlib import Path
 import re
+import sys
 from typing import Any, Literal, cast
 
 from .log_spec import (
@@ -72,13 +73,21 @@ class MessageRegexFilter(logging.Filter):
         return bool(self._pattern.search(record.getMessage()))
 
 
-def build_uvicorn_log_config(*, spec: LogSpec | None = None, level: str = DEFAULT_LOG_LEVEL) -> dict[str, object]:
+def build_uvicorn_log_config(
+    *,
+    spec: LogSpec | None = None,
+    level: str = DEFAULT_LOG_LEVEL,
+    default_use_colors: bool | None = None,
+    access_use_colors: bool | None = None,
+) -> dict[str, object]:
     """Build one logging config shared by Uvicorn and runtime loggers."""
 
     ensure_custom_levels()
     log_spec = spec or resolve_log_spec(cli_value=level, environ={}, default=DEFAULT_LOG_LEVEL)
     root_level = level_name(log_spec.root_level)
     handler_level = level_name(log_spec.handler_level)
+    default_colors = _stream_uses_colors(sys.stderr) if default_use_colors is None else default_use_colors
+    access_colors = _stream_uses_colors(sys.stdout) if access_use_colors is None else access_use_colors
     return {
         "version": 1,
         "disable_existing_loggers": False,
@@ -87,13 +96,13 @@ def build_uvicorn_log_config(*, spec: LogSpec | None = None, level: str = DEFAUL
                 "()": "uvicorn.logging.DefaultFormatter",
                 "fmt": DEFAULT_LOG_FORMAT,
                 "datefmt": DEFAULT_LOG_DATE_FORMAT,
-                "use_colors": None,
+                "use_colors": default_colors,
             },
             "access": {
                 "()": "uvicorn.logging.AccessFormatter",
                 "fmt": DEFAULT_ACCESS_LOG_FORMAT,
                 "datefmt": DEFAULT_LOG_DATE_FORMAT,
-                "use_colors": None,
+                "use_colors": access_colors,
             },
         },
         "filters": {
@@ -169,7 +178,11 @@ def configure_logging(
         environ={} if environ is None else environ,
         default=DEFAULT_LOG_LEVEL,
     )
-    config = build_uvicorn_log_config(spec=log_spec)
+    config = build_uvicorn_log_config(
+        spec=log_spec,
+        default_use_colors=False if log_path is not None else None,
+        access_use_colors=False if log_path is not None else None,
+    )
     if log_path is not None:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         handlers = cast(dict[str, object], config.get("handlers", {}))
@@ -236,6 +249,10 @@ def _redact_telegram_bot_url(text: str) -> str:
 def _logger_level_name(target: str, spec: LogSpec, *, default: int) -> str:
     level = directive_level_for(target, spec.logger_levels)
     return level_name(default if level is None else level)
+
+
+def _stream_uses_colors(stream: object) -> bool:
+    return bool(getattr(stream, "isatty", lambda: False)())
 
 
 def _install_message_filter(filter_obj: MessageRegexFilter) -> None:
