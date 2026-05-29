@@ -83,6 +83,7 @@ class CliProgress:
                 for line in self._lines():
                     print(line, file=self._stream)
             self._print_summary()
+            self._reset_terminal_style()
 
     def interrupt(self) -> None:
         with self._lock:
@@ -289,6 +290,12 @@ class CliProgress:
             return
         for summary in summaries:
             self._console.print(Text(summary, style="dim"))
+
+    def _reset_terminal_style(self) -> None:
+        if not self._console.is_terminal:
+            return
+        self._stream.write("\x1b[0m")
+        self._stream.flush()
 
     def _live_text(self) -> Text:
         text = Text()

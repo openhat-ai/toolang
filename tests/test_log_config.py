@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import logging.config
 import re
+import sys
 from typing import cast
 
 from toolang.config.log import (
@@ -68,6 +69,25 @@ def test_build_uvicorn_log_config_keeps_http_debug_off_when_toolang_debug_is_ena
     assert handlers["default"]["level"] == "DEBUG"
     assert loggers["httpx"]["level"] == "OFF"
     assert loggers["httpcore"]["level"] == "OFF"
+
+
+def test_build_uvicorn_log_config_uses_formatter_stream_colors(monkeypatch) -> None:
+    class Tty:
+        def isatty(self) -> bool:
+            return True
+
+    class Plain:
+        def isatty(self) -> bool:
+            return False
+
+    monkeypatch.setattr(sys, "stderr", Tty())
+    monkeypatch.setattr(sys, "stdout", Plain())
+
+    config = build_uvicorn_log_config()
+
+    formatters = cast(dict[str, dict[str, object]], config["formatters"])
+    assert formatters["default"]["use_colors"] is True
+    assert formatters["access"]["use_colors"] is False
 
 
 def test_parse_log_level_accepts_warn_alias() -> None:
@@ -146,6 +166,22 @@ def test_configure_logging_supports_off_level(monkeypatch) -> None:
     config = cast(dict[str, object], captured["config"])
     loggers = cast(dict[str, dict[str, object]], config["loggers"])
     assert loggers["httpx"]["level"] == "OFF"
+
+
+def test_configure_logging_disables_colors_for_file_logs(monkeypatch, tmp_path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_dict_config(config: dict[str, object]) -> None:
+        captured["config"] = config
+
+    monkeypatch.setattr(logging.config, "dictConfig", fake_dict_config)
+
+    configure_logging(spec="toolang.run=debug", environ={}, log_path=tmp_path / "agent.log")
+
+    config = cast(dict[str, object], captured["config"])
+    formatters = cast(dict[str, dict[str, object]], config["formatters"])
+    assert formatters["default"]["use_colors"] is False
+    assert formatters["access"]["use_colors"] is False
 
 
 def test_resolve_agent_logging_defaults_run_and_start_to_agent_spec(tmp_path) -> None:
