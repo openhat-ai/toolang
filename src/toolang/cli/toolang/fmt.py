@@ -22,11 +22,11 @@ def fmt(
     ] = None,
     check: Annotated[
         bool,
-        typer.Option("--check", help="Check formatting."),
+        typer.Option("--check", help="Exit non-zero if any file is not formatted."),
     ] = False,
     tab_size: Annotated[
         int,
-        typer.Option("--tab-size", help="Indent size."),
+        typer.Option("--tab-size", help="Number of spaces per indentation level."),
     ] = 2,
     stdin_filepath: Annotated[
         Path | None,
