@@ -20,6 +20,7 @@ from toolang.base.types.tool import ToolContext, ToolDefinition
 import toolang.cli.toolang.app as cli
 import toolang.cli.caps.app as caps_cli
 import toolang.cli.caps.commands as caps_commands
+import toolang.cli.utils as cli_utils
 from toolang.cli.progress import CliProgress
 from toolang.components.trigger import watch
 from toolang.config.log import DEFAULT_AGENT_LOG_SPEC
@@ -2623,6 +2624,57 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
         "_utc_now",
         lambda: datetime(2026, 4, 8, 12, 0, 0, tzinfo=timezone.utc),
     )
+    monkeypatch.setattr(
+        cli.agent_up,
+        "load_model_providers",
+        lambda *_args: {
+            "openai": _FakeModelProvider(
+                name="openai",
+                models=(
+                    ModelInfo(
+                        ref="openai/o3",
+                        provider="openai",
+                        name="o3",
+                        model="o3",
+                        selectors=("o3", "openai/o3"),
+                        adapter="responses",
+                    ),
+                    ModelInfo(
+                        ref="openai/gpt-5",
+                        provider="openai",
+                        name="gpt-5",
+                        model="gpt-5",
+                        selectors=("gpt-5", "openai/gpt-5"),
+                        adapter="responses",
+                    ),
+                ),
+            ),
+        },
+    )
+    monkeypatch.setattr(
+        cli.agent_up,
+        "load_tool_plugins",
+        lambda *, config=None: {
+            "filesystem__read_text": _FakeLoadedTool(
+                plugin_name="filesystem",
+                leaf_name="read_text",
+                description="Read one text file.",
+            ),
+            "shell__execute": _FakeLoadedTool(
+                plugin_name="shell",
+                leaf_name="execute",
+                description="Run one shell command.",
+            ),
+        },
+    )
+    monkeypatch.setattr(
+        cli.agent_up,
+        "list_plugin_infos",
+        lambda *, group: [
+            cli.agent_up.PluginInfo(name="filesystem", source="built-in"),
+            cli.agent_up.PluginInfo(name="shell", source="external"),
+        ],
+    )
     caps.put_local_entry_text(
         toolang_root,
         "alice",
@@ -2677,7 +2729,8 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
     assert "alice" in result.stdout
     assert "-----" in result.stdout
     assert "Home" in result.stdout
-    assert str(toolang_root / "agents" / "alice") in result.stdout
+    assert result.stdout.index("▄▄▄▄▄▄▄▄▄") < result.stdout.index("ALICE") < result.stdout.index("Home")
+    assert str(toolang_root / "agents" / "alice") in "".join(result.stdout.split())
     assert "ROOM" not in result.stdout
     assert "PROGRAM" not in result.stdout
     assert "RUNTIME" not in result.stdout
@@ -2692,13 +2745,16 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
     assert "1 chore" in result.stdout
     assert "1 task" in result.stdout
     assert "Models" in result.stdout
-    assert "o3, gpt-5" in result.stdout
+    assert "2 models, 1 provider" in result.stdout
+    assert "Tools" in result.stdout
+    assert "2 tools, 2 sets" in result.stdout
+    assert result.stdout.index("Tools") < result.stdout.index("Models")
     assert "Status" in result.stdout
     assert "running (up a day)" in result.stdout
     assert "Sandbox" in result.stdout
     assert "none" in result.stdout
-    assert "Components" in result.stdout
-    assert "router.chat, runner.chat, trigger.pulse" in result.stdout
+    assert "Components" not in result.stdout
+    assert "router.chat, runner.chat, trigger.pulse" not in result.stdout
     assert "PID" in result.stdout
     assert str(os.getpid()) in result.stdout
     assert "Started" in result.stdout
@@ -2707,13 +2763,20 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
     assert "ONLINE" not in result.stdout
     assert "ENDPOINT" not in result.stdout
     assert "API" in result.stdout
-    assert "http://127.0.0.1:8765/docs" in result.stdout
+    assert "http://127.0.0.1:8765" in result.stdout
+    assert "http://127.0.0.1:8765/docs" not in result.stdout
     assert "WebUI" in result.stdout
     assert "https://too.run/8765" in result.stdout
     assert "Updated" not in result.stdout
     assert result.stdout.index("PID") < result.stdout.index("API")
     assert result.stdout.index("WebUI") < result.stdout.index("Started")
     assert result.stdout.index("Started") < result.stdout.index("Created")
+
+
+def test_cli_info_console_uses_terminal_width(monkeypatch) -> None:
+    monkeypatch.setenv("COLUMNS", "72")
+
+    assert cli_utils._INFO_CONSOLE.width == 72
 
 
 def test_cli_info_reads_cap_counts_from_prepared_locks(tmp_path: Path, monkeypatch) -> None:
@@ -2878,7 +2941,7 @@ def test_cli_info_for_running_docker_sandbox_shows_container_pid(tmp_path: Path,
     assert result.stdout.index("PID") < result.stdout.index("API")
 
 
-def test_cli_info_prefers_runtime_models_for_active_agent(tmp_path: Path) -> None:
+def test_cli_info_prefers_runtime_models_for_active_agent(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     (toolang_root / "agents" / "alice" / "config.toml").write_text(
@@ -2886,6 +2949,39 @@ def test_cli_info_prefers_runtime_models_for_active_agent(tmp_path: Path) -> Non
         'default = ["o3", "gpt-5"]\n',
         encoding="utf-8",
     )
+    monkeypatch.setattr(
+        cli.agent_up,
+        "load_model_providers",
+        lambda *_args: {
+            "anthropic": _FakeModelProvider(
+                name="anthropic",
+                models=(
+                    ModelInfo(
+                        ref="anthropic/claude",
+                        provider="anthropic",
+                        name="claude",
+                        model="claude",
+                        selectors=("claude", "anthropic/claude"),
+                        adapter="responses",
+                    ),
+                ),
+            ),
+            "openai": _FakeModelProvider(
+                name="openai",
+                models=(
+                    ModelInfo(
+                        ref="openai/gpt-5",
+                        provider="openai",
+                        name="gpt-5",
+                        model="gpt-5",
+                        selectors=("gpt-5", "openai/gpt-5"),
+                        adapter="responses",
+                    ),
+                ),
+            ),
+        },
+    )
+    monkeypatch.setattr(cli.agent_up, "load_tool_plugins", lambda *, config=None: {})
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -2905,7 +3001,7 @@ def test_cli_info_prefers_runtime_models_for_active_agent(tmp_path: Path) -> Non
 
     assert result.exit_code == 0
     assert "Models" in result.stdout
-    assert "claude, gpt-5" in result.stdout
+    assert "2 models, 2 providers" in result.stdout
 
 
 def test_cli_channel_list_shows_installed_channels(monkeypatch) -> None:
