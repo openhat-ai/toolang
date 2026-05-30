@@ -21,7 +21,7 @@ from typer.core import TyperArgument, TyperCommand, TyperGroup
 
 from .. import agents
 from ..base.error import ToolangError
-from .logo import info_avatar, info_palette_styles
+from .logo import info_avatar, info_palette
 
 if TYPE_CHECKING:
     from ..execution.records import UpdateKind
@@ -32,22 +32,14 @@ setattr(typer_rich_utils, "STYLE_HELPTEXT", "")
 _TABLE_CONSOLE = Console(highlight=False, width=4096)
 _INFO_CONSOLE = Console(highlight=False)
 TableJustify = Literal["default", "left", "center", "right", "full"]
-_AGENT_AVATAR_CACHE: str | None = None
-_PALETTE_STYLES_CACHE: tuple[tuple[str, ...], tuple[str, ...]] | None = None
+_AGENT_AVATAR_CACHE: Text | None = None
 
 
-def _agent_avatar() -> str:
+def _agent_avatar() -> Text:
     global _AGENT_AVATAR_CACHE
     if _AGENT_AVATAR_CACHE is None:
         _AGENT_AVATAR_CACHE = info_avatar()
     return _AGENT_AVATAR_CACHE
-
-
-def _palette_styles() -> tuple[tuple[str, ...], tuple[str, ...]]:
-    global _PALETTE_STYLES_CACHE
-    if _PALETTE_STYLES_CACHE is None:
-        _PALETTE_STYLES_CACHE = info_palette_styles()
-    return _PALETTE_STYLES_CACHE
 
 
 class _PrefixAgentCommand(TyperCommand):
@@ -401,7 +393,7 @@ def _echo_table(
 def _echo_pairs_table(
     rows: Sequence[tuple[str, str]],
     *,
-    avatar: str | None = None,
+    avatar: Text | str | None = None,
     title: str | None = None,
 ) -> None:
     table = Table(
@@ -424,9 +416,10 @@ def _echo_pairs_table(
             _INFO_CONSOLE.print(_info_title_block(title))
             _INFO_CONSOLE.print(table)
     else:
-        avatar_text = _rainbow_avatar_text(avatar)
+        avatar_text = avatar if isinstance(avatar, Text) else Text(avatar)
         if _INFO_CONSOLE.width < 100:
             _INFO_CONSOLE.print(avatar_text)
+            _INFO_CONSOLE.print(Text(""))
             if title is not None:
                 _INFO_CONSOLE.print(_info_title_block(title))
             _INFO_CONSOLE.print(table)
@@ -439,8 +432,7 @@ def _echo_pairs_table(
             right = Table.grid(padding=(0, 0))
             right.add_column(no_wrap=False)
             if title is not None:
-                right.add_row(_info_title_block(title))
-                avatar_text = _rainbow_avatar_text("\n" + avatar)
+                layout.add_row(Text(""), _info_title_block(title))
             right.add_row(table)
             right.add_row(Text(""))
             right.add_row(_palette_block())
@@ -454,23 +446,6 @@ def _styled_info_value(key: str, value: str) -> Text:
     return Text(value)
 
 
-def _rainbow_avatar_text(avatar: str) -> Text:
-    rainbow_styles = _palette_styles()[0]
-    lines = avatar.splitlines()
-    text = Text()
-    for row, line in enumerate(lines):
-        for column, char in enumerate(line):
-            if char == " ":
-                text.append(char)
-                continue
-            style_index = (column + (row * 2)) % len(rainbow_styles)
-            text.append(char, style=rainbow_styles[style_index])
-        text.append("\n")
-    if text.plain.endswith("\n"):
-        text = text[:-1]
-    return text
-
-
 def _info_title_block(title: str) -> Table:
     block = Table.grid(padding=(0, 0))
     block.add_column(no_wrap=False)
@@ -480,14 +455,7 @@ def _info_title_block(title: str) -> Table:
 
 
 def _palette_block() -> Text:
-    top_styles, bottom_styles = _palette_styles()
-    palette = Text()
-    for style in top_styles:
-        palette.append("██", style=style)
-    palette.append("\n")
-    for style in bottom_styles:
-        palette.append("██", style=style)
-    return palette
+    return info_palette()
 
 
 def _runtime_value(value: object) -> str:
