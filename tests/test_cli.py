@@ -20,6 +20,7 @@ from toolang.base.types.tool import ToolContext, ToolDefinition
 import toolang.cli.toolang.app as cli
 import toolang.cli.caps.app as caps_cli
 import toolang.cli.caps.commands as caps_commands
+import toolang.cli.logo as cli_logo
 import toolang.cli.utils as cli_utils
 from toolang.cli.progress import CliProgress
 from toolang.components.trigger import watch
@@ -2725,11 +2726,12 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
     )
 
     assert result.exit_code == 0
-    assert "▄▄▄▄▄▄▄▄▄" in result.stdout
+    assert "██████████" in result.stdout
+    assert "████" in result.stdout
     assert "alice" in result.stdout
     assert "-----" in result.stdout
     assert "Home" in result.stdout
-    assert result.stdout.index("▄▄▄▄▄▄▄▄▄") < result.stdout.index("ALICE") < result.stdout.index("Home")
+    assert result.stdout.index("██████████") < result.stdout.index("ALICE") < result.stdout.index("Home")
     assert str(toolang_root / "agents" / "alice") in "".join(result.stdout.split())
     assert "ROOM" not in result.stdout
     assert "PROGRAM" not in result.stdout
@@ -2759,7 +2761,7 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
     assert str(os.getpid()) in result.stdout
     assert "Started" in result.stdout
     assert "2026-04-07T11:00:00Z" in result.stdout
-    assert "Created" in result.stdout
+    assert "Created" not in result.stdout
     assert "ONLINE" not in result.stdout
     assert "ENDPOINT" not in result.stdout
     assert "API" in result.stdout
@@ -2770,13 +2772,55 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
     assert "Updated" not in result.stdout
     assert result.stdout.index("PID") < result.stdout.index("API")
     assert result.stdout.index("WebUI") < result.stdout.index("Started")
-    assert result.stdout.index("Started") < result.stdout.index("Created")
 
 
 def test_cli_info_console_uses_terminal_width(monkeypatch) -> None:
     monkeypatch.setenv("COLUMNS", "72")
 
     assert cli_utils._INFO_CONSOLE.width == 72
+
+
+def test_cli_info_narrow_layout_separates_avatar_from_table(monkeypatch) -> None:
+    output = io.StringIO()
+    console = cli_utils.Console(file=output, width=80, highlight=False, color_system=None)
+    monkeypatch.setattr(cli_utils, "_INFO_CONSOLE", console)
+
+    cli_utils._echo_pairs_table([("Home", "x")], avatar="AA\nBB", title="DEV")
+
+    assert output.getvalue().startswith("AA\nBB\n\nDEV\n---\nHome x")
+
+
+def test_cli_info_wide_layout_aligns_avatar_with_table(monkeypatch) -> None:
+    output = io.StringIO()
+    console = cli_utils.Console(file=output, width=120, highlight=False, color_system=None)
+    monkeypatch.setattr(cli_utils, "_INFO_CONSOLE", console)
+
+    cli_utils._echo_pairs_table([("Home", "x"), ("Caps", "y")], avatar="AA\nBB", title="DEV")
+
+    assert "AA    Home x" in output.getvalue()
+
+
+def test_cli_info_avatar_uses_rainbow_style() -> None:
+    avatar = cli_logo._rainbow_text(" A\nB ")
+
+    assert avatar.plain == " A\nB "
+    assert avatar.style == ""
+    assert [(span.start, span.end, span.style) for span in avatar.spans] == [
+        (1, 2, "bold #9edb49"),
+        (3, 4, "bold #f4d35e"),
+    ]
+
+
+def test_cli_info_avatar_matches_logo_proportions() -> None:
+    avatar = cli_utils._agent_avatar().plain
+    lines = avatar.splitlines()
+
+    assert len(lines) == 7
+    assert {len(line) for line in lines} == {36}
+    assert lines[0].startswith(" ██████████")
+    assert lines[0].endswith("████ ")
+    assert "▄▄▄▄     ▄▄▄▄" in avatar
+    assert "▄▄▄▄████" in avatar
 
 
 def test_cli_info_reads_cap_counts_from_prepared_locks(tmp_path: Path, monkeypatch) -> None:
@@ -2886,7 +2930,7 @@ def test_cli_info_for_stopped_agent_shows_created_only(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 0
-    assert "▄▄▄▄▄▄▄▄▄" in result.stdout
+    assert "██████████" in result.stdout
     assert "Status" in result.stdout
     assert "AGENT" not in result.stdout
     assert "stopped" in result.stdout

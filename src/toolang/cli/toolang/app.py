@@ -420,7 +420,6 @@ def info_agent(
         rows.append(("WebUI", status.webui_url))
     if status.status == "running" and started_at != "-":
         rows.append(("Started", started_at))
-        rows.append(("Created", created_at))
     if status.status != "running" and updated_at != "-":
         rows.append(("Updated", updated_at))
     if status.status != "running" and message != "-":
