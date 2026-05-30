@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 # weight so usage notes remain easy to read in terminal help output.
 setattr(typer_rich_utils, "STYLE_HELPTEXT", "")
 _TABLE_CONSOLE = Console(highlight=False, width=4096)
+_INFO_CONSOLE = Console(highlight=False)
 TableJustify = Literal["default", "left", "center", "right", "full"]
 _AGENT_AVATAR_CACHE: str | None = None
 _PALETTE_STYLES_CACHE: tuple[tuple[str, ...], tuple[str, ...]] | None = None
@@ -412,31 +413,39 @@ def _echo_pairs_table(
         collapse_padding=True,
     )
     table.add_column("FIELD", no_wrap=True, style="bold bright_cyan")
-    table.add_column("VALUE", no_wrap=False, style="white")
+    table.add_column("VALUE", no_wrap=False, style="white", overflow="fold")
     for key, value in rows:
         table.add_row(Text(key), _styled_info_value(key, value))
     typer.echo()
     if avatar is None:
         if title is None:
-            _TABLE_CONSOLE.print(table)
+            _INFO_CONSOLE.print(table)
         else:
-            _TABLE_CONSOLE.print(_info_title_block(title))
-            _TABLE_CONSOLE.print(table)
+            _INFO_CONSOLE.print(_info_title_block(title))
+            _INFO_CONSOLE.print(table)
     else:
-        layout = Table.grid(padding=(0, 4))
-        layout.add_column(no_wrap=True, ratio=0)
-        layout.add_column(no_wrap=False, ratio=1)
-        right = Table.grid(padding=(0, 0))
-        right.add_column(no_wrap=False)
         avatar_text = _rainbow_avatar_text(avatar)
-        if title is not None:
-            right.add_row(_info_title_block(title))
-            avatar_text = _rainbow_avatar_text("\n" + avatar)
-        right.add_row(table)
-        right.add_row(Text(""))
-        right.add_row(_palette_block())
-        layout.add_row(avatar_text, right)
-        _TABLE_CONSOLE.print(layout)
+        if _INFO_CONSOLE.width < 100:
+            _INFO_CONSOLE.print(avatar_text)
+            if title is not None:
+                _INFO_CONSOLE.print(_info_title_block(title))
+            _INFO_CONSOLE.print(table)
+            _INFO_CONSOLE.print(Text(""))
+            _INFO_CONSOLE.print(_palette_block())
+        else:
+            layout = Table.grid(padding=(0, 4))
+            layout.add_column(no_wrap=True, ratio=0)
+            layout.add_column(no_wrap=False, ratio=1)
+            right = Table.grid(padding=(0, 0))
+            right.add_column(no_wrap=False)
+            if title is not None:
+                right.add_row(_info_title_block(title))
+                avatar_text = _rainbow_avatar_text("\n" + avatar)
+            right.add_row(table)
+            right.add_row(Text(""))
+            right.add_row(_palette_block())
+            layout.add_row(avatar_text, right)
+            _INFO_CONSOLE.print(layout)
     typer.echo()
 
 

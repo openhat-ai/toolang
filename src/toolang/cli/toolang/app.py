@@ -38,7 +38,6 @@ from ..utils import (
     _required_prefix_agent,
     _required_runtime_agent,
     _runtime_environ_for_agent,
-    _runtime_components,
     _runtime_value,
     _toolang_root,
     _ui_base_url,
@@ -401,6 +400,7 @@ def info_agent(
         ("Home", str(agents.agent_home(root, agent_name))),
         ("Caps", _info_caps_summary(root, agent_name)),
         ("Jobs", _info_jobs_summary(root, agent_name)),
+        ("Tools", _info_tools_summary(root, agent_name)),
         ("Models", _info_models_summary(root, agent_name, runtime_state=runtime_state, running=status.status != "stopped")),
         ("Status", status_value),
     ]
@@ -410,16 +410,12 @@ def info_agent(
         return
     if status.sandbox:
         rows.append(("Sandbox", status.sandbox))
-    if status.status == "running":
-        loops_text = _runtime_components(runtime_state)
-        if loops_text is not None:
-            rows.append(("Components", loops_text))
     message = _runtime_value(runtime_state.get("message"))
     pid_text = agents.runtime_pid_label(runtime_state)
     if pid_text is not None and status.status != "stopped":
         rows.append(("PID", pid_text))
-    if status.api_url:
-        rows.append(("API", status.api_url))
+    if status.endpoint:
+        rows.append(("API", status.endpoint))
     if status.webui_url:
         rows.append(("WebUI", status.webui_url))
     if status.status == "running" and started_at != "-":
@@ -875,19 +871,46 @@ def _info_models_summary(
     if running:
         raw_models = runtime_state.get("models")
         if isinstance(raw_models, list):
-            runtime_models = tuple(
+            selectors = tuple(
                 str(item).strip()
                 for item in raw_models
                 if isinstance(item, str) and item.strip()
             )
-            if runtime_models:
-                return ", ".join(runtime_models)
-    configured = agent_up.load_default_models(toolang_root, agent_name)
-    if configured:
-        return ", ".join(configured)
-    from ...models.resolution import DEFAULT_MODEL_SELECTOR
+            if selectors:
+                return _model_count_summary(
+                    toolang_root,
+                    agent_name,
+                    environ=dict(os.environ),
+                    selectors=selectors,
+                )
+    selectors = agent_up.load_default_models(toolang_root, agent_name)
+    return _model_count_summary(
+        toolang_root,
+        agent_name,
+        environ=dict(os.environ),
+        selectors=selectors,
+    )
 
-    return DEFAULT_MODEL_SELECTOR
+
+def _info_tools_summary(toolang_root: Path, agent_name: str) -> str:
+    rows = _tool_rows(toolang_root, dict(os.environ), agent_name=agent_name)
+    set_count = len({namespace for namespace, _tool, _description in rows})
+    return f"{len(rows)} {'tool' if len(rows) == 1 else 'tools'}, {set_count} {'set' if set_count == 1 else 'sets'}"
+
+
+def _model_count_summary(
+    toolang_root: Path,
+    agent_name: str,
+    *,
+    environ: dict[str, str],
+    selectors: Sequence[str] = (),
+) -> str:
+    rows = _model_rows(toolang_root, environ, agent_name=agent_name, model_selectors=selectors)
+    provider_count = len({provider for _model, provider, _details in rows})
+    return (
+        f"{len(rows)} {'model' if len(rows) == 1 else 'models'}, "
+        f"{provider_count} {'provider' if provider_count == 1 else 'providers'}"
+    )
 
 
 model_app = typer.Typer(
@@ -1032,13 +1055,14 @@ def _model_rows(
     root: Path,
     environ: dict[str, str],
     *,
+    agent_name: str = "",
     model_selectors: Sequence[str] = (),
 ) -> list[tuple[str, str, str]]:
     from ...models.config import load_model_aliases
     from ...models.views import model_list_rows
 
-    providers = agent_up.load_model_providers(root, "")
-    aliases = load_model_aliases(root, "")
+    providers = agent_up.load_model_providers(root, agent_name)
+    aliases = load_model_aliases(root, agent_name)
     return model_list_rows(
         providers=providers,
         aliases=aliases,
@@ -1066,12 +1090,13 @@ def _tool_rows(
     root: Path,
     environ: dict[str, str],
     *,
+    agent_name: str = "",
     tool_selectors: Sequence[str] = (),
 ) -> list[tuple[str, str, str]]:
     from ...config.plugins import load_tool_plugin_config
     from ...tools.views import tool_list_rows
 
-    config = load_tool_plugin_config(root, "", environ=environ)
+    config = load_tool_plugin_config(root, agent_name, environ=environ)
     tools = agent_up.load_tool_plugins(config=config)
     sources = _plugin_source_by_name("toolang.tool")
     return tool_list_rows(
