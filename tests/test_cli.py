@@ -6681,6 +6681,20 @@ def test_cli_chat_help_uses_thread_option() -> None:
     assert "Thread or run id." in result.stdout
 
 
+def test_cli_chat_ui_opens_terminal_loop(monkeypatch) -> None:
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        assert request_path == "/api/v1/threads"
+        assert payload == {"client": "tui"}
+        return {"thread_id": "tui_new"}
+
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+
+    result = _invoke_app(["chat", "dev", "--ui"], input="/exit\n")
+
+    assert result.exit_code == 0
+    assert "thread tui_new" in result.stdout
+
+
 def test_cli_rewind_accepts_thread_target(monkeypatch) -> None:
     calls: list[tuple[str, object]] = []
 

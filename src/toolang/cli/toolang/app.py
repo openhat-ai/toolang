@@ -478,7 +478,7 @@ def chat_command(
     ctx: typer.Context,
     message: Annotated[str | None, typer.Argument(help="Message text.")] = None,
     thread: Annotated[str | None, typer.Option("--thread", help="Thread or run id.")] = None,
-    ui: Annotated[bool, typer.Option("--ui", help="Open the thread UI.")] = False,
+    ui: Annotated[bool, typer.Option("--ui", help="Open the terminal UI.")] = False,
     model: Annotated[str | None, typer.Option("--model", help="Model selector.")] = None,
 ) -> None:
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
@@ -588,7 +588,7 @@ def steer_command(
     ctx: typer.Context,
     target: str = typer.Argument(..., help="Run id or thread id."),
     message: str = typer.Argument(..., help="Steering message."),
-    ui: Annotated[bool, typer.Option("--ui", help="Open the thread UI.")] = False,
+    ui: Annotated[bool, typer.Option("--ui", help="Open the terminal UI.")] = False,
 ) -> None:
     run_id = _target_run_id(ctx, target)
     _runtime_post(ctx, f"/api/v1/runs/{run_id}/steer", payload={"message": _message_payload(message)})
@@ -601,7 +601,7 @@ def steer_command(
 def cancel_command(
     ctx: typer.Context,
     target: str = typer.Argument(..., help="Run id or thread id."),
-    ui: Annotated[bool, typer.Option("--ui", help="Open the thread UI.")] = False,
+    ui: Annotated[bool, typer.Option("--ui", help="Open the terminal UI.")] = False,
 ) -> None:
     run_id = _target_run_id(ctx, target)
     _runtime_post(ctx, f"/api/v1/runs/{run_id}/cancel", payload={})
@@ -615,7 +615,7 @@ def rewind_command(
     ctx: typer.Context,
     target: str = typer.Argument(..., help="Run id or thread id."),
     message: Annotated[str | None, typer.Argument(help="Replacement message.")] = None,
-    ui: Annotated[bool, typer.Option("--ui", help="Open the thread UI.")] = False,
+    ui: Annotated[bool, typer.Option("--ui", help="Open the terminal UI.")] = False,
 ) -> None:
     run_id = _target_latest_run_id(ctx, target)
     payload = {"message": _message_payload(message)} if message is not None else {}
@@ -631,7 +631,7 @@ def fork_command(
     ctx: typer.Context,
     target: str = typer.Argument(..., help="Run id or thread id."),
     message: Annotated[str | None, typer.Argument(help="Fork message.")] = None,
-    ui: Annotated[bool, typer.Option("--ui", help="Open the thread UI.")] = False,
+    ui: Annotated[bool, typer.Option("--ui", help="Open the terminal UI.")] = False,
 ) -> None:
     run_id = _target_latest_run_id(ctx, target)
     payload = {"message": _message_payload(message)} if message is not None else {}
@@ -850,13 +850,8 @@ def _display_run_status(status: object) -> str:
 
 def _open_thread_ui(ctx: typer.Context, thread_id: str | None) -> None:
     if thread_id is None:
-        raise click.ClickException("thread UI requires an existing thread; pass a message to start a terminal chat")
-    agent_name = _required_prefix_agent(ctx, command_name=str(ctx.info_name or "chat"))
-    status = agents.get_agent_status(_context_root(ctx), agent_name, ui_base_url=_ui_base_url())
-    if status is None or status.status != "running" or status.webui_url is None:
-        typer.echo(f"thread {thread_id}")
-        return
-    typer.echo(f"{status.webui_url.rstrip('/')}/threads/{thread_id}")
+        raise click.ClickException("terminal UI requires an existing thread; pass a message to start a terminal chat")
+    _chat_interactive(ctx, thread_id=thread_id, model=None)
 
 
 def _chat_interactive(ctx: typer.Context, *, thread_id: str, model: str | None) -> None:
