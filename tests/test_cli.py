@@ -6655,7 +6655,7 @@ def test_cli_chat_thread_without_message_sends_interactive_lines(monkeypatch) ->
 
     monkeypatch.setattr(cli, "_runtime_stream", fake_runtime_stream)
 
-    result = _invoke_app(["chat", "dev", "tui_existing"], input="hello\n/exit\n")
+    result = _invoke_app(["chat", "dev", "--thread", "tui_existing"], input="hello\n/exit\n")
 
     assert result.exit_code == 0
     assert "thread tui_existing" in result.stdout
@@ -6669,6 +6669,16 @@ def test_cli_chat_thread_without_message_sends_interactive_lines(monkeypatch) ->
             },
         )
     ]
+
+
+def test_cli_chat_help_uses_thread_option() -> None:
+    result = _invoke_app(["chat", "dev", "--help"])
+
+    assert result.exit_code == 0
+    assert "TARGET_OR_MESSAGE" not in result.stdout
+    assert "[MESSAGE]" in result.stdout
+    assert "--thread" in result.stdout
+    assert "Thread or run id." in result.stdout
 
 
 def test_cli_rewind_accepts_thread_target(monkeypatch) -> None:

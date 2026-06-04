@@ -90,8 +90,8 @@ toolang start alice
 toolang stop alice
 toolang info alice
 toolang alice chat "What changed today?"
-toolang alice chat tui_3nprht9x "Continue"
-toolang alice chat tui_3nprht9x --ui
+toolang alice chat --thread tui_3nprht9x "Continue"
+toolang alice chat --thread tui_3nprht9x --ui
 toolang alice threads
 toolang alice runs --thread tui_3nprht9x
 toolang alice steer run_ppkp9e94 "Use the smaller patch"
@@ -423,11 +423,11 @@ For multipart payload details:
 `POST /api/v1/chat/stream` returns one SSE stream that follows an AI SDK UI
 message stream subset.
 
-The CLI command for chat-style input is `toolang <agent> chat [thread] [message]`.
-Without a thread id, the CLI creates a terminal chat thread. With a thread id,
-it continues or opens that thread. Job thread ids are inspectable and
-controllable through thread and run commands, but `chat` does not implicitly
-reopen tasks or create manual chore runs.
+The CLI command for chat-style input is `toolang <agent> chat [message]`.
+Without `--thread`, the CLI creates a terminal chat thread. With `--thread`, it
+continues or opens that thread. Job thread ids are inspectable and controllable
+through thread and run commands, but `chat` does not implicitly reopen tasks or
+create manual chore runs.
 
 
 ## Job Endpoints

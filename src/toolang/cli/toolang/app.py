@@ -476,14 +476,13 @@ def info_agent(
 )
 def chat_command(
     ctx: typer.Context,
-    target_or_message: Annotated[str | None, typer.Argument(help="Thread, run, or message.")] = None,
     message: Annotated[str | None, typer.Argument(help="Message text.")] = None,
+    thread: Annotated[str | None, typer.Option("--thread", help="Thread or run id.")] = None,
     ui: Annotated[bool, typer.Option("--ui", help="Open the thread UI.")] = False,
     model: Annotated[str | None, typer.Option("--model", help="Model selector.")] = None,
 ) -> None:
-    target, text = _chat_target_and_message(target_or_message, message)
-    thread_id = _target_thread_id(ctx, target) if target is not None else None
-    if text is None:
+    thread_id = _target_thread_id(ctx, thread) if thread is not None else None
+    if message is None:
         if thread_id is None:
             result = _runtime_post(ctx, "/api/v1/threads", payload={"client": "tui"})
             created = result.get("thread_id")
@@ -495,7 +494,7 @@ def chat_command(
             return
         _chat_interactive(ctx, thread_id=thread_id, model=model)
         return
-    payload: dict[str, Any] = {"thread": thread_id, "client": "tui", "message": _message_payload(text)}
+    payload: dict[str, Any] = {"thread": thread_id, "client": "tui", "message": _message_payload(message)}
     if model is not None:
         payload["model"] = model
     if ui:
@@ -847,18 +846,6 @@ def _api_run_status(status: str) -> str:
 def _display_run_status(status: object) -> str:
     text = str(status or "")
     return "succeeded" if text == "finished" else text
-
-
-def _chat_target_and_message(first: str | None, second: str | None) -> tuple[str | None, str | None]:
-    if first is None:
-        return None, second
-    if second is None and not _looks_like_thread_or_run_id(first):
-        return None, first
-    return first, second
-
-
-def _looks_like_thread_or_run_id(value: str) -> bool:
-    return value.startswith(("run_", "tui_", "web_", "tg_", "tsk_", "chr_", "task_", "chore_"))
 
 
 def _open_thread_ui(ctx: typer.Context, thread_id: str | None) -> None:
