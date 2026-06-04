@@ -62,6 +62,11 @@ def _invoke_caps_app(
         caps_cli._CLI_PREFIX_AGENT = previous
 
 
+def _indexes_in_order(text: str, tokens: tuple[str, ...]) -> bool:
+    indexes = [text.index(token) for token in tokens]
+    return indexes == sorted(indexes)
+
+
 class _FakeModelProvider:
     def __init__(
         self,
@@ -5275,6 +5280,50 @@ def test_cli_task_new_persists_id(tmp_path: Path, monkeypatch) -> None:
     assert "stage: todo" not in saved
 
 
+def test_cli_task_and_chore_help_orders_commands() -> None:
+    task = _invoke_app(["task", "--help"], prefix_agent="alice")
+    chore = _invoke_app(["chore", "--help"], prefix_agent="alice")
+
+    assert task.exit_code == 0
+    assert chore.exit_code == 0
+    assert _indexes_in_order(
+        task.stdout,
+        (
+            "list",
+            "new",
+            "clone",
+            "edit",
+            "delete",
+            "draft",
+            "ready",
+            "archive",
+            "cancel",
+            "reopen",
+        ),
+    )
+    assert "run      Unsupported." not in task.stdout
+    assert "Move a task to ready." in task.stdout
+    assert "Move a task to archive." in task.stdout
+    assert _indexes_in_order(
+        chore.stdout,
+        (
+            "list",
+            "new",
+            "clone",
+            "edit",
+            "delete",
+            "draft",
+            "ready",
+            "archive",
+            "cancel",
+            "run",
+        ),
+    )
+    assert "reopen   Unsupported." not in chore.stdout
+    assert "Move a chore to ready." in chore.stdout
+    assert "Move a chore to archive." in chore.stdout
+
+
 def test_cli_task_list_shows_task_rows(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(
@@ -5306,6 +5355,29 @@ def test_cli_task_list_shows_task_rows(tmp_path: Path, monkeypatch) -> None:
     assert "LIFECYCLE" in result.stdout
     assert "Review the current plan." in result.stdout
     assert "ready" in result.stdout
+
+
+def test_cli_task_clone_creates_ready_copy(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
+    _invoke_app(
+        ["task", "new", "--draft"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    task_id = work.list_draft_tasks(toolang_root, "alice")[0].document.task_id()
+
+    result = _invoke_app(
+        ["task", "clone", task_id],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    cloned = work.list_tasks(toolang_root, "alice")[0]
+
+    assert result.exit_code == 0
+    assert f"task {cloned.document.task_id()} cloned" in result.stdout
+    assert cloned.document.task_id() != task_id
+    assert cloned.document.title == "Task title"
 
 
 def test_cli_task_delete_requires_archived_task(tmp_path: Path, monkeypatch) -> None:
@@ -5424,6 +5496,30 @@ def test_cli_chore_new_and_list_show_schedule(tmp_path: Path, monkeypatch) -> No
     assert "SCHEDULE" in result.stdout
     assert "Chore title" in result.stdout
     assert "FREQ=HOURLY;INTERVAL=1" in result.stdout
+
+
+def test_cli_chore_clone_creates_ready_copy(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
+    _invoke_app(
+        ["chore", "new", "--draft"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    chore_id = work.list_draft_chores(toolang_root, "alice")[0].document.chore_id()
+
+    result = _invoke_app(
+        ["chore", "clone", chore_id],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    cloned = work.list_chores(toolang_root, "alice")[0]
+
+    assert result.exit_code == 0
+    assert f"chore {cloned.document.chore_id()} cloned" in result.stdout
+    assert cloned.document.chore_id() != chore_id
+    assert cloned.document.title == "Chore title"
+    assert cloned.document.schedule == "FREQ=HOURLY;INTERVAL=1"
 
 
 def test_cli_chore_draft_and_ready_move_lifecycle(tmp_path: Path, monkeypatch) -> None:

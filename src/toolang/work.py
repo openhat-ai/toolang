@@ -538,6 +538,30 @@ def create_chore_text(
     return path
 
 
+def clone_task(toolang_root: Path, agent_name: str, task_id: str) -> Path:
+    """Clone one task definition into a new ready task."""
+
+    entry = find_task(toolang_root, agent_name, task_id, lifecycle=None)
+    if entry is None:
+        raise FileNotFoundError(f"task not found: {task_id}")
+    document = entry.document.model_copy(update={"id": allocate_job_id(toolang_root, agent_name)})
+    path = task_path(toolang_root, agent_name, document.task_id(), lifecycle="ready")
+    document.save(path)
+    return path
+
+
+def clone_chore(toolang_root: Path, agent_name: str, chore_id: str) -> Path:
+    """Clone one chore definition into a new ready chore."""
+
+    entry = find_chore(toolang_root, agent_name, chore_id, lifecycle=None)
+    if entry is None:
+        raise FileNotFoundError(f"chore not found: {chore_id}")
+    document = entry.document.model_copy(update={"id": allocate_job_id(toolang_root, agent_name)})
+    path = chore_path(toolang_root, agent_name, document.chore_id(), lifecycle="ready")
+    document.save(path)
+    return path
+
+
 def update_task_text(toolang_root: Path, agent_name: str, task_id: str, text: str) -> Path:
     """Replace one task definition, preserving its stable id and lifecycle."""
 

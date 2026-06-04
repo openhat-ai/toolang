@@ -1373,9 +1373,23 @@ def register_work_commands() -> None:
             cls=_RequiredPrefixAgentCommand,
         ),
         WorkCommandSpec(
+            name="clone",
+            help=lambda kind: f"Clone a {kind}.",
+            factory=_make_clone_work_command,
+            cls=_RequiredPrefixAgentCommand,
+            no_args_is_help=True,
+        ),
+        WorkCommandSpec(
             name="edit",
             help=lambda kind: f"Edit a {kind}.",
             factory=_make_edit_work_command,
+            cls=_RequiredPrefixAgentCommand,
+            no_args_is_help=True,
+        ),
+        WorkCommandSpec(
+            name="delete",
+            help=lambda kind: f"Delete a {kind}.",
+            factory=_make_delete_work_command,
             cls=_RequiredPrefixAgentCommand,
             no_args_is_help=True,
         ),
@@ -1388,43 +1402,36 @@ def register_work_commands() -> None:
         ),
         WorkCommandSpec(
             name="ready",
-            help=lambda kind: f"Move a {kind} to ready work.",
+            help=lambda kind: f"Move a {kind} to ready.",
             factory=_make_ready_work_command,
             cls=_RequiredPrefixAgentCommand,
             no_args_is_help=True,
         ),
         WorkCommandSpec(
             name="archive",
-            help=lambda kind: f"Archive a {kind}.",
+            help=lambda kind: f"Move a {kind} to archive.",
             factory=_make_archive_work_command,
             cls=_RequiredPrefixAgentCommand,
             no_args_is_help=True,
         ),
         WorkCommandSpec(
+            name="cancel",
+            help=lambda kind: f"Cancel a {kind}.",
+            factory=_make_cancel_work_command,
+            cls=_RequiredPrefixAgentCommand,
+            no_args_is_help=True,
+        ),
+        WorkCommandSpec(
             name="reopen",
-            help=lambda kind: f"Reopen a {kind}." if kind == "task" else "Unsupported.",
+            help=lambda kind: f"Reopen a {kind}.",
             factory=_make_reopen_work_command,
             cls=_RequiredPrefixAgentCommand,
             no_args_is_help=True,
         ),
         WorkCommandSpec(
             name="run",
-            help=lambda kind: f"Run a {kind} manually." if kind == "chore" else "Unsupported.",
+            help=lambda kind: f"Run a {kind}.",
             factory=_make_run_work_command,
-            cls=_RequiredPrefixAgentCommand,
-            no_args_is_help=True,
-        ),
-        WorkCommandSpec(
-            name="cancel",
-            help=lambda kind: f"Cancel a running {kind}.",
-            factory=_make_cancel_work_command,
-            cls=_RequiredPrefixAgentCommand,
-            no_args_is_help=True,
-        ),
-        WorkCommandSpec(
-            name="delete",
-            help=lambda kind: f"Delete an archived {kind}.",
-            factory=_make_delete_work_command,
             cls=_RequiredPrefixAgentCommand,
             no_args_is_help=True,
         ),
@@ -1441,6 +1448,10 @@ def register_work_commands() -> None:
             pretty_exceptions_show_locals=False,
         )
         for spec in command_specs:
+            if kind == "task" and spec.name == "run":
+                continue
+            if kind == "chore" and spec.name == "reopen":
+                continue
             work_app.command(
                 spec.name,
                 help=spec.help(kind),
@@ -1554,6 +1565,28 @@ def _make_new_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
         typer.echo(f"{kind} {job_id} created\t{path}")
 
     return new_work
+
+
+def _make_clone_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
+    def clone_work(
+        ctx: typer.Context,
+        id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
+    ) -> None:
+        from ... import work
+
+        agent_name = _required_prefix_agent(ctx, command_name=kind)
+        path = _wrap_user_error(
+            work.clone_task if kind == "task" else work.clone_chore,
+            _context_root(ctx),
+            agent_name,
+            id,
+        )
+        job_id = path.stem
+        _reconcile_work_jobs(_context_root(ctx), agent_name, kind=kind)
+        _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
+        typer.echo(f"{kind} {job_id} cloned\t{path}")
+
+    return clone_work
 
 
 def _make_edit_work_command(kind: WorkKind, title: str) -> Callable[..., None]:

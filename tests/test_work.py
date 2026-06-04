@@ -74,6 +74,27 @@ def test_lifecycle_moves_between_folders(tmp_path) -> None:
     assert archive_path == toolang_root / "agents" / "alice" / "archive" / "tasks" / f"{task_id}.md"
 
 
+def test_clone_creates_ready_copy_with_new_id(tmp_path) -> None:
+    toolang_root = tmp_path / "toolang"
+    original = work.create_task_text(
+        toolang_root,
+        "alice",
+        "---\ntitle: Original\n---\n\nReview the original task.\n",
+        lifecycle="draft",
+    )
+    task_id = work.list_draft_tasks(toolang_root, "alice")[0].document.task_id()
+
+    clone = work.clone_task(toolang_root, "alice", task_id)
+    cloned = work.list_tasks(toolang_root, "alice")[0]
+
+    assert original.exists()
+    assert clone == cloned.path
+    assert cloned.document.task_id() != task_id
+    assert cloned.document.title == "Original"
+    assert cloned.document.body == "Review the original task."
+    assert cloned.lifecycle == "ready"
+
+
 def test_manual_task_file_gets_id_on_scan(tmp_path) -> None:
     toolang_root = tmp_path / "toolang"
     path = toolang_root / "agents" / "alice" / "tasks" / "manual.md"
