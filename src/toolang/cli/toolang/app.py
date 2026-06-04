@@ -881,6 +881,25 @@ def _runtime_get_stream(ctx: typer.Context, path: str) -> None:
         raise click.ClickException(f"runtime request failed: {exc.reason}") from exc
 
 
+def _runtime_consume_stream(ctx: typer.Context, path: str, *, payload: dict[str, Any]) -> None:
+    url = f"{_runtime_base_url(ctx)}{path}"
+    request = Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=None) as response:
+            for _raw_line in response:
+                pass
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise click.ClickException(f"runtime request failed: {exc.code} {detail}") from exc
+    except URLError as exc:
+        raise click.ClickException(f"runtime request failed: {exc.reason}") from exc
+
+
 def _stream_result_run(ctx: typer.Context, result: dict[str, Any]) -> None:
     run_id = result.get("run_id")
     if isinstance(run_id, str) and run_id:
@@ -915,7 +934,8 @@ def _open_thread_ui(ctx: typer.Context, thread_id: str | None) -> None:
 
 def _chat_interactive(ctx: typer.Context, *, thread_id: str, model: str | None) -> None:
     typer.echo(f"thread {thread_id}")
-    listener = _start_thread_event_listener(ctx, thread_id)
+    local_streaming = threading.Event()
+    listener = _start_thread_event_listener(ctx, thread_id, local_streaming=local_streaming)
     try:
         while True:
             try:
@@ -932,7 +952,11 @@ def _chat_interactive(ctx: typer.Context, *, thread_id: str, model: str | None) 
             payload: dict[str, Any] = {"thread": thread_id, "client": "tui", "message": _message_payload(text)}
             if model is not None:
                 payload["model"] = model
-            _runtime_post(ctx, "/api/v1/chat", payload=payload)
+            local_streaming.set()
+            try:
+                _runtime_consume_stream(ctx, "/api/v1/chat/stream", payload=payload)
+            finally:
+                local_streaming.clear()
     finally:
         listener.stop()
 
@@ -945,7 +969,12 @@ class _ThreadEventListener:
         self._stop_event.set()
 
 
-def _start_thread_event_listener(ctx: typer.Context, thread_id: str) -> _ThreadEventListener:
+def _start_thread_event_listener(
+    ctx: typer.Context,
+    thread_id: str,
+    *,
+    local_streaming: threading.Event | None = None,
+) -> _ThreadEventListener:
     stop_event = threading.Event()
     try:
         after = _thread_event_cursor(ctx, thread_id)
@@ -954,7 +983,7 @@ def _start_thread_event_listener(ctx: typer.Context, thread_id: str) -> _ThreadE
         return _ThreadEventListener(stop_event)
     thread = threading.Thread(
         target=_run_thread_event_listener,
-        args=(ctx, thread_id, after, stop_event),
+        args=(ctx, thread_id, after, stop_event, local_streaming),
         daemon=True,
     )
     thread.start()
@@ -974,8 +1003,9 @@ def _run_thread_event_listener(
     thread_id: str,
     after: int | None,
     stop_event: threading.Event,
+    local_streaming: threading.Event | None,
 ) -> None:
-    renderer = _ThreadEventRenderer()
+    renderer = _ThreadEventRenderer(redraw_prompt=True, local_streaming=local_streaming)
     path = f"/api/v1/threads/{thread_id}/stream"
     if after is not None:
         path = f"{path}?{urlencode([('after', str(after))])}"
@@ -1013,8 +1043,16 @@ def _iter_sse_events(response, *, stop_event: threading.Event) -> Iterator[dict[
 
 
 class _ThreadEventRenderer:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        redraw_prompt: bool = False,
+        local_streaming: threading.Event | None = None,
+    ) -> None:
         self._assistant_open = False
+        self._redraw_prompt = redraw_prompt
+        self._local_streaming = local_streaming
+        self._text_delta_runs: set[str] = set()
 
     def render(self, event: dict[str, Any]) -> None:
         event_type = str(event.get("type") or event.get("event_type") or "")
@@ -1025,8 +1063,10 @@ class _ThreadEventRenderer:
             self._render_run_input(payload)
         elif event_type == "part_delta":
             self._render_part_delta(payload)
+        elif event_type == "step_end":
+            self._render_step_end(payload)
         elif event_type in {"part_end", "run_end"}:
-            self._close_assistant()
+            self._close_assistant(redraw_prompt=event_type == "run_end")
 
     def _render_run_input(self, payload: dict[str, Any]) -> None:
         if payload.get("action") != "start":
@@ -1034,7 +1074,7 @@ class _ThreadEventRenderer:
         text = _event_message_text(payload.get("message"))
         if not text:
             return
-        self._close_assistant()
+        self._close_assistant(redraw_prompt=False)
         typer.echo(f"\nuser: {text}")
 
     def _render_part_delta(self, payload: dict[str, Any]) -> None:
@@ -1044,15 +1084,37 @@ class _ThreadEventRenderer:
         text = str(delta.get("text") or "")
         if not text:
             return
+        run_id = payload.get("run_id")
+        if isinstance(run_id, str):
+            self._text_delta_runs.add(run_id)
         if not self._assistant_open:
             typer.echo("assistant: ", nl=False)
             self._assistant_open = True
         typer.echo(text, nl=False)
 
-    def _close_assistant(self) -> None:
+    def _render_step_end(self, payload: dict[str, Any]) -> None:
+        if payload.get("kind") != "model_call":
+            return
+        run_id = payload.get("run_id")
+        if isinstance(run_id, str) and run_id in self._text_delta_runs:
+            return
+        text = _event_parts_text(payload.get("output"))
+        if not text:
+            return
+        if not self._assistant_open:
+            typer.echo("assistant: ", nl=False)
+            self._assistant_open = True
+        typer.echo(text, nl=False)
+
+    def _close_assistant(self, *, redraw_prompt: bool) -> None:
         if self._assistant_open:
             typer.echo()
             self._assistant_open = False
+        if redraw_prompt and self._redraw_prompt and not self._local_streaming_active():
+            typer.echo("> ", nl=False)
+
+    def _local_streaming_active(self) -> bool:
+        return self._local_streaming is not None and self._local_streaming.is_set()
 
 
 def _event_message_text(message: object) -> str:
@@ -1060,6 +1122,19 @@ def _event_message_text(message: object) -> str:
         return ""
     typed_message = cast(Mapping[str, object], message)
     parts = typed_message.get("parts")
+    if not isinstance(parts, list):
+        return ""
+    texts: list[str] = []
+    for part in parts:
+        if not isinstance(part, Mapping):
+            continue
+        typed_part = cast(Mapping[str, object], part)
+        if typed_part.get("type") == "text":
+            texts.append(str(typed_part.get("text") or ""))
+    return "".join(texts).strip()
+
+
+def _event_parts_text(parts: object) -> str:
     if not isinstance(parts, list):
         return ""
     texts: list[str] = []

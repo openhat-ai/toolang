@@ -6666,7 +6666,7 @@ def test_cli_chat_without_args_creates_terminal_thread(monkeypatch) -> None:
         return {"thread_id": "tui_new"}
 
     monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
-    monkeypatch.setattr(cli, "_start_thread_event_listener", lambda _ctx, _thread_id: FakeListener())
+    monkeypatch.setattr(cli, "_start_thread_event_listener", lambda _ctx, _thread_id, **_kwargs: FakeListener())
     monkeypatch.setattr(
         cli.agents,
         "get_agent_status",
@@ -6695,16 +6695,15 @@ def test_cli_chat_thread_without_message_sends_interactive_lines(monkeypatch) ->
         def stop(self) -> None:
             listeners.append("stopped")
 
-    def fake_start_thread_event_listener(_ctx: Any, thread_id: str) -> FakeListener:
+    def fake_start_thread_event_listener(_ctx: Any, thread_id: str, **_kwargs: object) -> FakeListener:
         listeners.append(thread_id)
         return FakeListener()
 
-    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+    def fake_runtime_consume_stream(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> None:
         calls.append((request_path, payload))
-        return {"thread_id": "tui_existing", "run_id": "run_new"}
 
     monkeypatch.setattr(cli, "_start_thread_event_listener", fake_start_thread_event_listener)
-    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(cli, "_runtime_consume_stream", fake_runtime_consume_stream)
 
     result = _invoke_app(["chat", "dev", "--thread", "tui_existing"], input="hello\n/exit\n")
 
@@ -6713,7 +6712,7 @@ def test_cli_chat_thread_without_message_sends_interactive_lines(monkeypatch) ->
     assert listeners == ["tui_existing", "stopped"]
     assert calls == [
         (
-            "/api/v1/chat",
+            "/api/v1/chat/stream",
             {
                 "thread": "tui_existing",
                 "client": "tui",
@@ -6740,6 +6739,44 @@ def test_cli_thread_event_renderer_prints_thread_messages(capsys) -> None:
     renderer.render({"type": "run_end", "payload": {"status": "finished"}})
 
     assert capsys.readouterr().out == "\nuser: hello from web\nassistant: hi there\n"
+
+
+def test_cli_thread_event_renderer_redraws_prompt_for_remote_run(capsys) -> None:
+    renderer = cli._ThreadEventRenderer(redraw_prompt=True)
+
+    renderer.render({"type": "part_delta", "payload": {"run_id": "run_web", "delta": {"type": "text", "text": "hi"}}})
+    renderer.render({"type": "run_end", "payload": {"run_id": "run_web", "status": "finished"}})
+
+    assert capsys.readouterr().out == "assistant: hi\n> "
+
+
+def test_cli_thread_event_renderer_skips_prompt_during_local_stream(capsys) -> None:
+    local_streaming = cli.threading.Event()
+    local_streaming.set()
+    renderer = cli._ThreadEventRenderer(redraw_prompt=True, local_streaming=local_streaming)
+
+    renderer.render({"type": "part_delta", "payload": {"run_id": "run_tui", "delta": {"type": "text", "text": "hi"}}})
+    renderer.render({"type": "run_end", "payload": {"run_id": "run_tui", "status": "finished"}})
+
+    assert capsys.readouterr().out == "assistant: hi\n"
+
+
+def test_cli_thread_event_renderer_prints_step_end_without_streaming_delta(capsys) -> None:
+    renderer = cli._ThreadEventRenderer()
+
+    renderer.render(
+        {
+            "type": "step_end",
+            "payload": {
+                "run_id": "run_non_streaming",
+                "kind": "model_call",
+                "output": [{"type": "text", "text": "complete answer"}],
+            },
+        }
+    )
+    renderer.render({"type": "run_end", "payload": {"run_id": "run_non_streaming", "status": "finished"}})
+
+    assert capsys.readouterr().out == "assistant: complete answer\n"
 
 
 def test_cli_chat_help_uses_thread_option() -> None:
@@ -6778,7 +6815,7 @@ def test_cli_chat_tui_opens_terminal_loop(monkeypatch) -> None:
         return {"thread_id": "tui_new"}
 
     monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
-    monkeypatch.setattr(cli, "_start_thread_event_listener", lambda _ctx, _thread_id: FakeListener())
+    monkeypatch.setattr(cli, "_start_thread_event_listener", lambda _ctx, _thread_id, **_kwargs: FakeListener())
 
     result = _invoke_app(["chat", "dev", "--tui"], input="/exit\n")
 
