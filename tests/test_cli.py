@@ -38,12 +38,13 @@ def _invoke_app(
     args: list[str],
     *,
     env: dict[str, str] | None = None,
+    input: str | None = None,
     prefix_agent: str | None = None,
 ):
     previous = cli._CLI_PREFIX_AGENT
     cli._CLI_PREFIX_AGENT = prefix_agent
     try:
-        return runner.invoke(cli.app, args, env=env)
+        return runner.invoke(cli.app, args, env=env, input=input)
     finally:
         cli._CLI_PREFIX_AGENT = previous
 
@@ -6644,6 +6645,30 @@ def test_cli_chat_without_args_creates_terminal_thread(monkeypatch) -> None:
     assert result.exit_code == 0
     assert calls == [("/api/v1/threads", {"client": "tui"})]
     assert "thread tui_new" in result.stdout
+
+
+def test_cli_chat_thread_without_message_sends_interactive_lines(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def fake_runtime_stream(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> None:
+        calls.append((request_path, payload))
+
+    monkeypatch.setattr(cli, "_runtime_stream", fake_runtime_stream)
+
+    result = _invoke_app(["chat", "dev", "tui_existing"], input="hello\n/exit\n")
+
+    assert result.exit_code == 0
+    assert "thread tui_existing" in result.stdout
+    assert calls == [
+        (
+            "/api/v1/chat/stream",
+            {
+                "thread": "tui_existing",
+                "client": "tui",
+                "message": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
+            },
+        )
+    ]
 
 
 def test_cli_rewind_accepts_thread_target(monkeypatch) -> None:

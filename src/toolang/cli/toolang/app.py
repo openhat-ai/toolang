@@ -490,7 +490,10 @@ def chat_command(
             if not isinstance(created, str):
                 raise click.ClickException("runtime did not return a thread id")
             thread_id = created
-        _open_thread_ui(ctx, thread_id)
+        if ui:
+            _open_thread_ui(ctx, thread_id)
+            return
+        _chat_interactive(ctx, thread_id=thread_id, model=model)
         return
     payload: dict[str, Any] = {"thread": thread_id, "client": "tui", "message": _message_payload(text)}
     if model is not None:
@@ -867,6 +870,26 @@ def _open_thread_ui(ctx: typer.Context, thread_id: str | None) -> None:
         typer.echo(f"thread {thread_id}")
         return
     typer.echo(f"{status.webui_url.rstrip('/')}/threads/{thread_id}")
+
+
+def _chat_interactive(ctx: typer.Context, *, thread_id: str, model: str | None) -> None:
+    typer.echo(f"thread {thread_id}")
+    while True:
+        try:
+            text = input("> ")
+        except EOFError:
+            return
+        except KeyboardInterrupt:
+            typer.echo()
+            return
+        if text.strip() in {"/exit", "/quit"}:
+            return
+        if not text.strip():
+            continue
+        payload: dict[str, Any] = {"thread": thread_id, "client": "tui", "message": _message_payload(text)}
+        if model is not None:
+            payload["model"] = model
+        _runtime_stream(ctx, "/api/v1/chat/stream", payload=payload)
 
 
 def _target_thread_id(ctx: typer.Context, target: str | None) -> str | None:
