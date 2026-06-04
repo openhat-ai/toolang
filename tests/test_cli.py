@@ -5322,6 +5322,8 @@ def test_cli_task_and_chore_help_orders_commands() -> None:
     assert "reopen   Unsupported." not in chore.stdout
     assert "Move a chore to ready." in chore.stdout
     assert "Move a chore to archive." in chore.stdout
+    assert "Start a manual chore run." in chore.stdout
+    assert "Run a chore." not in chore.stdout
 
 
 def test_cli_task_list_shows_task_rows(tmp_path: Path, monkeypatch) -> None:

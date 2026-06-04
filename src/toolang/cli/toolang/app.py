@@ -1430,7 +1430,7 @@ def register_work_commands() -> None:
         ),
         WorkCommandSpec(
             name="run",
-            help=lambda kind: f"Run a {kind}.",
+            help=lambda kind: "Start a manual chore run." if kind == "chore" else f"Run a {kind}.",
             factory=_make_run_work_command,
             cls=_RequiredPrefixAgentCommand,
             no_args_is_help=True,
@@ -1731,7 +1731,7 @@ def _make_run_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
         if kind != "chore":
             raise click.ClickException("run is only supported for chores")
         _runtime_post(ctx, f"/api/v1/chores/{id}/run", payload={})
-        typer.echo(f"chore {id} run requested")
+        typer.echo(f"chore {id} manual run requested")
 
     return run_work
 
