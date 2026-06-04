@@ -6506,6 +6506,36 @@ def test_cli_main_normalizes_agent_prefix_shortcut_for_caps_command(monkeypatch)
     assert cli._CLI_PREFIX_AGENT is None
 
 
+@pytest.mark.parametrize(
+    ("command", "path"),
+    (
+        ("threads", "/api/v1/threads"),
+        ("runs", "/api/v1/runs"),
+    ),
+)
+def test_cli_main_thread_commands_support_agent_prefix_shortcut(
+    command: str,
+    path: str,
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_runtime_json(ctx: Any, request_path: str) -> dict[str, object]:
+        captured["agent"] = cast(dict[str, object], ctx.obj).get("agent")
+        captured["path"] = request_path
+        return {"items": []}
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(cli.sys, "argv", ["too"])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["dev", command])
+
+    assert exc.value.code == 0
+    assert captured == {"agent": "dev", "path": path}
+    assert cli._CLI_PREFIX_AGENT is None
+
+
 def test_standalone_caps_list_supports_agent_prefix(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     caps.put_local_entry_text(
