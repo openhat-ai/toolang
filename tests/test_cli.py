@@ -7264,12 +7264,12 @@ def test_cli_help_lists_cap_commands() -> None:
     assert "Inspect available channels." in result.stdout
     assert "Inspect available sandboxes." in result.stdout
     assert "Agent Commands" in result.stdout
+    assert "Chat & Work Commands" in result.stdout
     assert "Thread Commands" in result.stdout
     assert "Runtime Commands" in result.stdout
-    assert "Caps Commands" in result.stdout
+    assert "Cap Commands" in result.stdout
     assert "Runtime Components" not in result.stdout
     assert "Agent Capabilities" not in result.stdout
-    assert "Work Commands" not in result.stdout
     assert "Inspect available caps." in result.stdout
     assert "Manage psyche caps." in result.stdout
     assert "Manage skill caps." in result.stdout
@@ -7301,12 +7301,13 @@ def test_cli_help_lists_cap_commands() -> None:
     prompt_index = result.stdout.index("prompt")
     caps_index = result.stdout.rindex("caps")
     assert "plugin" not in result.stdout
-    assert result.stdout.index("Agent Commands") < chore_index
-    assert chore_index < task_index
+    assert result.stdout.index("Agent Commands") < result.stdout.index("Chat & Work Commands")
     assert (
-        task_index
-        < result.stdout.index("Thread Commands")
+        result.stdout.index("Chat & Work Commands")
         < chat_index
+        < chore_index
+        < task_index
+        < result.stdout.index("Thread Commands")
         < steer_index
         < cancel_index
         < rewind_index
@@ -7319,7 +7320,7 @@ def test_cli_help_lists_cap_commands() -> None:
         < channel_index
         < sandbox_index
     )
-    assert result.stdout.index("Caps Commands") < psyche_index
+    assert result.stdout.index("Cap Commands") < psyche_index
     assert psyche_index < skill_index < service_index < prompt_index < caps_index
 
 

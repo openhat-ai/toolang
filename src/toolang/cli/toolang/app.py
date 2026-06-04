@@ -102,9 +102,10 @@ if not TYPE_CHECKING:
 WorkKind = Literal["task", "chore"]
 _CLI_PREFIX_AGENT: str | None = None
 AGENT_COMMAND_PANEL = "Agent Commands"
+CHAT_WORK_COMMAND_PANEL = "Chat & Work Commands"
 THREAD_COMMAND_PANEL = "Thread Commands"
 RUNTIME_COMMAND_PANEL = "Runtime Commands"
-CAPS_COMMAND_PANEL = "Caps Commands"
+CAPS_COMMAND_PANEL = "Cap Commands"
 TOP_LEVEL_COMMANDS = frozenset(
     {
         "new",
@@ -137,7 +138,8 @@ TOP_LEVEL_COMMANDS = frozenset(
 )
 
 _CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt", "caps")
-_THREAD_PANEL_COMMAND_ORDER = ("chat", "steer", "cancel", "rewind", "fork", "runs", "threads")
+_CHAT_WORK_PANEL_COMMAND_ORDER = ("chat", "chore", "task")
+_THREAD_PANEL_COMMAND_ORDER = ("steer", "cancel", "rewind", "fork", "runs", "threads")
 _RUNTIME_PANEL_COMMAND_ORDER = ("model", "tool", "channel", "sandbox")
 _THREAD_TARGET_COMMANDS = frozenset({"steer", "cancel", "rewind", "fork"})
 
@@ -145,12 +147,14 @@ _THREAD_TARGET_COMMANDS = frozenset({"steer", "cancel", "rewind", "fork"})
 class _ToolangGroup(TyperGroup):
     def list_commands(self, ctx: click.Context) -> list[str]:
         names = TyperGroup.list_commands(self, ctx)
+        chat_work_names = [name for name in _CHAT_WORK_PANEL_COMMAND_ORDER if name in names]
         thread_names = [name for name in _THREAD_PANEL_COMMAND_ORDER if name in names]
-        if thread_names:
-            reordered = [name for name in names if name not in thread_names]
+        ordered_thread_group_names = [*chat_work_names, *thread_names]
+        if ordered_thread_group_names:
+            reordered = [name for name in names if name not in ordered_thread_group_names]
             runtime_indexes = [reordered.index(name) for name in _RUNTIME_PANEL_COMMAND_ORDER if name in reordered]
             insertion_index = min(runtime_indexes) if runtime_indexes else len(reordered)
-            names = reordered[:insertion_index] + thread_names + reordered[insertion_index:]
+            names = reordered[:insertion_index] + ordered_thread_group_names + reordered[insertion_index:]
         cap_names = [name for name in _CAPS_PANEL_COMMAND_ORDER if name in names]
         if len(cap_names) < 2:
             return names
@@ -475,7 +479,7 @@ def info_agent(
     "chat",
     help="Start or continue a thread.",
     cls=_RequiredPrefixAgentCommand,
-    rich_help_panel=THREAD_COMMAND_PANEL,
+    rich_help_panel=CHAT_WORK_COMMAND_PANEL,
 )
 def chat_command(
     ctx: typer.Context,
@@ -1935,7 +1939,7 @@ def register_work_commands() -> None:
                 cls=spec.cls,
                 no_args_is_help=spec.no_args_is_help,
             )(spec.factory(kind, title))
-        app.add_typer(work_app, name=kind, no_args_is_help=True, rich_help_panel=AGENT_COMMAND_PANEL)
+        app.add_typer(work_app, name=kind, no_args_is_help=True, rich_help_panel=CHAT_WORK_COMMAND_PANEL)
 
 
 def _make_work_list_command(kind: WorkKind, title: str) -> Callable[..., None]:
