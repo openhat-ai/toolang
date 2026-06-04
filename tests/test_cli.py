@@ -6092,8 +6092,9 @@ def test_cli_skill_new_help_mentions_agent_scope() -> None:
     assert "Create a file-backed skill." in result.stdout
     assert "[AGENT] skill new" in result.stdout
     assert "agent      TEXT" in result.stdout
-    assert "Scope" in result.stdout
-    assert "Apply to this agent's skills instead of root skills." in result.stdout
+    assert "Scope" not in result.stdout
+    assert "Apply to this agent's home skills instead of root" in result.stdout
+    assert "skills." in result.stdout
 
 
 def test_cli_skill_template_help_shows_plain_text_metavar() -> None:
@@ -6102,7 +6103,7 @@ def test_cli_skill_template_help_shows_plain_text_metavar() -> None:
     assert result.exit_code == 0
     assert "Usage:" in result.stdout
     assert "[AGENT] skill template [OPTIONS] [NAME]" in result.stdout
-    assert "name      TEXT" in result.stdout
+    assert "name       TEXT" in result.stdout
     assert "Template name." in result.stdout
 
 
@@ -6128,7 +6129,7 @@ def test_cli_skill_list_help_mentions_agent_scope_concisely() -> None:
     assert result.exit_code == 0
     assert "List skills." in result.stdout
     assert "[AGENT] skill list" in result.stdout
-    assert "agent      TEXT  Also include this agent's skills." in result.stdout
+    assert "agent      TEXT  Also include this agent's home skills." in result.stdout
 
 
 def test_cli_cap_list_with_agent_defaults_to_all_scopes(tmp_path: Path, monkeypatch) -> None:
@@ -6993,8 +6994,8 @@ def test_standalone_caps_help_shows_agent_prefix_usage() -> None:
     assert result.exit_code == 0
     assert "Manage composable agent primitives." in result.stdout
     assert "caps [AGENT] [OPTIONS] COMMAND [ARGS]..." in result.stdout
-    assert "Scope" in result.stdout
-    assert "agent      TEXT  Apply to this agent's caps instead of root caps." in result.stdout
+    assert "Scope" not in result.stdout
+    assert "agent      TEXT  Apply to this agent's home caps instead of root caps." in result.stdout
     assert "--agent" not in result.stdout
 
 
@@ -7009,7 +7010,7 @@ def test_standalone_caps_list_help_mentions_agent_inclusion() -> None:
     assert "Filter caps with selector-list syntax." in result.stdout
     assert "--kind" not in result.stdout
     assert "--global" not in result.stdout
-    assert "agent      TEXT  Also include this agent's caps." in result.stdout
+    assert "agent      TEXT  Also include this agent's home caps." in result.stdout
 
 
 def test_standalone_cap_kind_list_help_omits_kind_filters() -> None:
@@ -7028,10 +7029,11 @@ def test_standalone_cap_group_help_shows_agent_prefix_usage() -> None:
     assert result.exit_code == 0
     assert "caps [AGENT] psyche [OPTIONS] COMMAND [ARGS]..." in result.stdout
     assert "caps [AGENT] TEXT psyche" not in result.stdout
-    assert "Scope" in result.stdout
+    assert "Scope" not in result.stdout
     assert "Manage psyche caps." in result.stdout
     assert "List psyches." in result.stdout
-    assert "agent      TEXT  Apply to this agent's psyches instead of root psyches." in result.stdout
+    assert "agent      TEXT  Apply to this agent's home psyches instead of root" in result.stdout
+    assert "psyches." in result.stdout
     assert "--agent" not in result.stdout
 
 
@@ -7041,9 +7043,10 @@ def test_standalone_cap_template_help_uses_inspect_description() -> None:
     assert result.exit_code == 0
     assert "caps [AGENT] psyche template [OPTIONS] [NAME]" in result.stdout
     assert "Inspect psyche templates." in result.stdout
-    assert "name      TEXT  Template name." in result.stdout
-    assert "Scope" in result.stdout
-    assert "agent      TEXT  Apply to this agent's psyches instead of root psyches." in result.stdout
+    assert "name       TEXT  Template name." in result.stdout
+    assert "Scope" not in result.stdout
+    assert "agent      TEXT  Apply to this agent's home psyches instead of root" in result.stdout
+    assert "psyches." in result.stdout
 
 
 def test_standalone_caps_main_supports_agent_prefix(monkeypatch) -> None:

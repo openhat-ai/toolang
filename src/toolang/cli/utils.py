@@ -47,7 +47,7 @@ class _PrefixAgentCommand(TyperCommand):
 
     prefix_agent_metavar = "[AGENT]"
     argument_metavar = "TEXT"
-    argument_help = "Apply to this agent's caps instead of root caps."
+    argument_help = "Apply to this agent's home caps instead of root caps."
 
     def _real_params(self, ctx: click.Context) -> list[click.Parameter]:
         return TyperCommand.get_params(self, ctx)
@@ -60,7 +60,6 @@ class _PrefixAgentCommand(TyperCommand):
             default=None,
             expose_value=False,
             help=self.argument_help,
-            rich_help_panel="Scope",
         )
 
     def get_params(self, ctx: click.Context) -> list[click.Parameter]:
@@ -105,7 +104,7 @@ class _OptionalPrefixAgentGroup(TyperGroup):
 
     prefix_agent_metavar = "[AGENT]"
     argument_metavar = "TEXT"
-    argument_help = "Apply to this agent's caps instead of root caps."
+    argument_help = "Apply to this agent's home caps instead of root caps."
 
     def _real_params(self, ctx: click.Context) -> list[click.Parameter]:
         return TyperGroup.get_params(self, ctx)
@@ -118,7 +117,6 @@ class _OptionalPrefixAgentGroup(TyperGroup):
             default=None,
             expose_value=False,
             help=self.argument_help,
-            rich_help_panel="Scope",
         )
 
     def get_params(self, ctx: click.Context) -> list[click.Parameter]:
@@ -142,7 +140,7 @@ class _OptionalPrefixAgentCommand(_PrefixAgentCommand):
 
 
 class _OptionalPrefixAgentListCommand(_OptionalPrefixAgentCommand):
-    argument_help = "Also include this agent's caps."
+    argument_help = "Also include this agent's home caps."
 
 
 class _RequiredPrefixAgentCommand(_PrefixAgentCommand):

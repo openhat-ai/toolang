@@ -111,7 +111,7 @@ def _kind_command_cls(label: str) -> type[_OptionalPrefixAgentCommand]:
     return type(
         f"{label.title().replace(' ', '')}ScopeCommand",
         (_OptionalPrefixAgentCommand,),
-        {"argument_help": f"Apply to this agent's {label} instead of root {label}."},
+        {"argument_help": f"Apply to this agent's home {label} instead of root {label}."},
     )
 
 
@@ -119,7 +119,7 @@ def _kind_list_command_cls(label: str) -> type[_OptionalPrefixAgentListCommand]:
     return type(
         f"{label.title().replace(' ', '')}ListScopeCommand",
         (_OptionalPrefixAgentListCommand,),
-        {"argument_help": f"Also include this agent's {label}."},
+        {"argument_help": f"Also include this agent's home {label}."},
     )
 
 
@@ -127,7 +127,7 @@ def _kind_template_command_cls(label: str) -> type[_OptionalPrefixAgentTemplateC
     return type(
         f"{label.title().replace(' ', '')}TemplateScopeCommand",
         (_OptionalPrefixAgentTemplateCommand,),
-        {"argument_help": f"Apply to this agent's {label} instead of root {label}."},
+        {"argument_help": f"Apply to this agent's home {label} instead of root {label}."},
     )
 
 
@@ -137,7 +137,7 @@ def _kind_group_cls(group_cls: type[TyperGroup] | None, label: str) -> type[Type
     return type(
         f"{label.title().replace(' ', '')}ScopeGroup",
         (group_cls,),
-        {"argument_help": f"Apply to this agent's {label} instead of root {label}."},
+        {"argument_help": f"Apply to this agent's home {label} instead of root {label}."},
     )
 
 
