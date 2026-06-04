@@ -102,7 +102,6 @@ if not TYPE_CHECKING:
 WorkKind = Literal["task", "chore"]
 _CLI_PREFIX_AGENT: str | None = None
 AGENT_COMMAND_PANEL = "Agent Commands"
-CHAT_WORK_COMMAND_PANEL = "Work Commands"
 THREAD_COMMAND_PANEL = "Thread Commands"
 RUNTIME_COMMAND_PANEL = "Runtime Commands"
 CAPS_COMMAND_PANEL = "Cap Commands"
@@ -138,7 +137,7 @@ TOP_LEVEL_COMMANDS = frozenset(
 )
 
 _CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt", "caps")
-_CHAT_WORK_PANEL_COMMAND_ORDER = ("chat", "chore", "task")
+_AGENT_PANEL_COMMAND_ORDER = ("new", "clone", "remove", "list", "info", "run", "start", "stop", "chat", "chore", "task")
 _THREAD_PANEL_COMMAND_ORDER = ("steer", "cancel", "rewind", "fork", "runs", "threads")
 _RUNTIME_PANEL_COMMAND_ORDER = ("model", "tool", "channel", "sandbox")
 _THREAD_TARGET_COMMANDS = frozenset({"steer", "cancel", "rewind", "fork"})
@@ -147,9 +146,13 @@ _THREAD_TARGET_COMMANDS = frozenset({"steer", "cancel", "rewind", "fork"})
 class _ToolangGroup(TyperGroup):
     def list_commands(self, ctx: click.Context) -> list[str]:
         names = TyperGroup.list_commands(self, ctx)
-        chat_work_names = [name for name in _CHAT_WORK_PANEL_COMMAND_ORDER if name in names]
+        agent_names = [name for name in _AGENT_PANEL_COMMAND_ORDER if name in names]
+        if agent_names:
+            first_agent_index = min(names.index(name) for name in agent_names)
+            reordered = [name for name in names if name not in agent_names]
+            names = reordered[:first_agent_index] + agent_names + reordered[first_agent_index:]
         thread_names = [name for name in _THREAD_PANEL_COMMAND_ORDER if name in names]
-        ordered_thread_group_names = [*chat_work_names, *thread_names]
+        ordered_thread_group_names = [*thread_names]
         if ordered_thread_group_names:
             reordered = [name for name in names if name not in ordered_thread_group_names]
             runtime_indexes = [reordered.index(name) for name in _RUNTIME_PANEL_COMMAND_ORDER if name in reordered]
@@ -477,9 +480,9 @@ def info_agent(
 
 @app.command(
     "chat",
-    help="Start or continue a thread.",
+    help="Chat with an agent.",
     cls=_RequiredPrefixAgentCommand,
-    rich_help_panel=CHAT_WORK_COMMAND_PANEL,
+    rich_help_panel=AGENT_COMMAND_PANEL,
 )
 def chat_command(
     ctx: typer.Context,
@@ -1934,7 +1937,7 @@ def register_work_commands() -> None:
                 cls=spec.cls,
                 no_args_is_help=spec.no_args_is_help,
             )(spec.factory(kind, title))
-        app.add_typer(work_app, name=kind, no_args_is_help=True, rich_help_panel=CHAT_WORK_COMMAND_PANEL)
+        app.add_typer(work_app, name=kind, no_args_is_help=True, rich_help_panel=AGENT_COMMAND_PANEL)
 
 
 def _make_work_list_command(kind: WorkKind, title: str) -> Callable[..., None]:

@@ -7267,7 +7267,7 @@ def test_cli_help_lists_cap_commands() -> None:
     assert "Inspect available channels." in result.stdout
     assert "Inspect available sandboxes." in result.stdout
     assert "Agent Commands" in result.stdout
-    assert "Work Commands" in result.stdout
+    assert "Work Commands" not in result.stdout
     assert "Thread Commands" in result.stdout
     assert "Runtime Commands" in result.stdout
     assert "Cap Commands" in result.stdout
@@ -7278,7 +7278,7 @@ def test_cli_help_lists_cap_commands() -> None:
     assert "Manage skill caps." in result.stdout
     assert "Manage service caps." in result.stdout
     assert "Manage prompt caps." in result.stdout
-    assert "Start or continue a thread." in result.stdout
+    assert "Chat with an agent." in result.stdout
     assert "Guide an active run." in result.stdout
     assert "Cancel an active run." in result.stdout
     assert "Rewind a thread from a run." in result.stdout
@@ -7287,6 +7287,7 @@ def test_cli_help_lists_cap_commands() -> None:
     assert "attach" not in result.stdout
     chore_index = result.stdout.index("chore")
     task_index = result.stdout.index("task")
+    stop_index = result.stdout.index("stop")
     chat_index = result.stdout.index("chat")
     steer_index = result.stdout.index("steer")
     cancel_index = result.stdout.index("cancel")
@@ -7304,13 +7305,9 @@ def test_cli_help_lists_cap_commands() -> None:
     prompt_index = result.stdout.index("prompt")
     caps_index = result.stdout.rindex("caps")
     assert "plugin" not in result.stdout
-    assert result.stdout.index("Agent Commands") < result.stdout.index("Work Commands")
+    assert result.stdout.index("Agent Commands") < stop_index < chat_index < chore_index < task_index < result.stdout.index("Cap Commands")
     assert (
-        result.stdout.index("Work Commands")
-        < chat_index
-        < chore_index
-        < task_index
-        < result.stdout.index("Thread Commands")
+        result.stdout.index("Thread Commands")
         < steer_index
         < cancel_index
         < rewind_index
