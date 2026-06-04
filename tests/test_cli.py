@@ -6683,6 +6683,19 @@ def test_cli_chat_help_uses_thread_option() -> None:
     assert "Thread or run id." in result.stdout
 
 
+def test_cli_thread_control_help_lists_agent_with_arguments() -> None:
+    result = _invoke_app(["steer", "dev", "--help"])
+
+    assert result.exit_code == 0
+    assert "Scope" not in result.stdout
+    positions = [
+        result.stdout.index("Agent name."),
+        result.stdout.index("Run id or thread id."),
+        result.stdout.index("Steering message."),
+    ]
+    assert positions == sorted(positions)
+
+
 def test_cli_chat_tui_opens_terminal_loop(monkeypatch) -> None:
     def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
         assert request_path == "/api/v1/threads"

@@ -157,7 +157,6 @@ class _RequiredPrefixAgentCommand(_PrefixAgentCommand):
             default=None,
             expose_value=False,
             help=self.argument_help,
-            rich_help_panel="Scope",
         )
 
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
