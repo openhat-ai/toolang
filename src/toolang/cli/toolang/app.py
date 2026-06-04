@@ -486,7 +486,6 @@ def chat_command(
     message: Annotated[str | None, typer.Argument(help="Message to send. Omit to open the TUI.")] = None,
     thread: Annotated[str | None, typer.Option("--thread", help="Thread id to continue; run id accepted.")] = None,
     tui: Annotated[bool, typer.Option("--tui", help="Open the terminal UI after the command.")] = False,
-    model: Annotated[str | None, typer.Option("--model", help="Model selector for the new run.")] = None,
 ) -> None:
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
     if message is None:
@@ -499,11 +498,9 @@ def chat_command(
         if tui:
             _open_thread_ui(ctx, thread_id)
             return
-        _chat_interactive(ctx, thread_id=thread_id, model=model)
+        _chat_interactive(ctx, thread_id=thread_id)
         return
     payload: dict[str, Any] = {"thread": thread_id, "client": "tui", "message": _message_payload(message)}
-    if model is not None:
-        payload["model"] = model
     if tui:
         result = _runtime_post(ctx, "/api/v1/chat", payload=payload)
         thread = result.get("thread_id")
@@ -934,10 +931,10 @@ def _display_run_status(status: object) -> str:
 def _open_thread_ui(ctx: typer.Context, thread_id: str | None) -> None:
     if thread_id is None:
         raise click.ClickException("terminal UI requires an existing thread; pass a message to start a terminal chat")
-    _chat_interactive(ctx, thread_id=thread_id, model=None)
+    _chat_interactive(ctx, thread_id=thread_id)
 
 
-def _chat_interactive(ctx: typer.Context, *, thread_id: str, model: str | None) -> None:
+def _chat_interactive(ctx: typer.Context, *, thread_id: str) -> None:
     typer.echo(f"thread {thread_id}")
     local_streaming = threading.Event()
     local_request_ids: set[str] = set()
@@ -968,8 +965,6 @@ def _chat_interactive(ctx: typer.Context, *, thread_id: str, model: str | None) 
                 "request_id": request_id,
                 "message": _message_payload(text),
             }
-            if model is not None:
-                payload["model"] = model
             local_streaming.set()
             try:
                 _runtime_consume_stream(ctx, "/api/v1/chat/stream", payload=payload)

@@ -6808,9 +6808,9 @@ def test_cli_chat_help_uses_thread_option() -> None:
     assert "--thread" in result.stdout
     assert "--tui" in result.stdout
     assert "--ui" not in result.stdout
+    assert "--model" not in result.stdout
     assert "Message to send. Omit to open the TUI." in result.stdout
     assert "Thread id to continue; run id accepted." in result.stdout
-    assert "Model selector for the new run." in result.stdout
 
 
 def test_cli_thread_control_help_lists_agent_with_arguments() -> None:
@@ -6937,8 +6937,8 @@ def test_cli_rewind_tui_streams_created_run_before_prompt(monkeypatch) -> None:
     def fake_runtime_get_stream(_ctx: Any, request_path: str) -> None:
         calls.append(("stream", request_path))
 
-    def fake_chat_interactive(_ctx: Any, *, thread_id: str, model: str | None) -> None:
-        calls.append(("tui", (thread_id, model)))
+    def fake_chat_interactive(_ctx: Any, *, thread_id: str) -> None:
+        calls.append(("tui", thread_id))
 
     monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
     monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
@@ -6958,7 +6958,7 @@ def test_cli_rewind_tui_streams_created_run_before_prompt(monkeypatch) -> None:
             ),
         ),
         ("stream", "/api/v1/runs/run_new/stream"),
-        ("tui", ("tui_thread", None)),
+        ("tui", "tui_thread"),
     ]
 
 
