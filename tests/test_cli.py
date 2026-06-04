@@ -6536,6 +6536,36 @@ def test_cli_main_thread_commands_support_agent_prefix_shortcut(
     assert cli._CLI_PREFIX_AGENT is None
 
 
+def test_cli_threads_lists_title_and_run_count(monkeypatch) -> None:
+    title = "This is a very long thread title that should be truncated before display"
+
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        assert request_path == "/api/v1/threads"
+        return {
+            "items": [
+                {
+                    "id": "web_abc12345",
+                    "title": title,
+                    "run_count": 12,
+                    "origin": "chat",
+                    "status": "running",
+                    "updated_at": "2026-06-04T09:00:00Z",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+
+    result = _invoke_app(["threads", "dev"])
+
+    assert result.exit_code == 0
+    assert "TITLE" in result.stdout
+    assert "RUNS" in result.stdout
+    assert "12" in result.stdout
+    assert "This is a very long thread title that should..." in result.stdout
+    assert title not in result.stdout
+
+
 def test_standalone_caps_list_supports_agent_prefix(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     caps.put_local_entry_text(

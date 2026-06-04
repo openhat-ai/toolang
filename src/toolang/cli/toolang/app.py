@@ -479,6 +479,8 @@ def threads_command(
     rows = [
         (
             str(item.get("id", "")),
+            _truncate_table_text(item.get("title"), width=48),
+            str(item.get("run_count", "")),
             str(item.get("origin", "")),
             str(item.get("status", "")),
             str(item.get("updated_at", "")),
@@ -486,7 +488,7 @@ def threads_command(
         for item in result.get("items", [])
         if isinstance(item, dict)
     ]
-    _echo_table(("THREAD", "ORIGIN", "STATUS", "UPDATED"), rows)
+    _echo_table(("THREAD", "TITLE", "RUNS", "ORIGIN", "STATUS", "UPDATED"), rows)
 
 
 @app.command("runs", help="List runs.", cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
@@ -672,6 +674,15 @@ def _active_run_error(status: agents.AgentStatus) -> str:
     if detail:
         return f"{message}: {detail}"
     return message
+
+
+def _truncate_table_text(value: object, *, width: int) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= width:
+        return text
+    if width <= 3:
+        return text[:width]
+    return f"{text[: width - 3].rstrip()}..."
 
 
 def _runtime_base_url(ctx: typer.Context) -> str:
