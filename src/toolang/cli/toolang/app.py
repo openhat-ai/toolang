@@ -1430,7 +1430,7 @@ def register_work_commands() -> None:
         ),
         WorkCommandSpec(
             name="run",
-            help=lambda kind: "Start a manual chore run." if kind == "chore" else f"Run a {kind}.",
+            help=lambda kind: "Trigger a chore run now." if kind == "chore" else f"Run a {kind}.",
             factory=_make_run_work_command,
             cls=_RequiredPrefixAgentCommand,
             no_args_is_help=True,
