@@ -6092,8 +6092,9 @@ def test_cli_skill_new_help_mentions_agent_scope() -> None:
     assert "Create a file-backed skill." in result.stdout
     assert "[AGENT] skill new" in result.stdout
     assert "agent      TEXT" in result.stdout
-    assert "Scope" in result.stdout
-    assert "Apply to this agent's skills instead of root skills." in result.stdout
+    assert "Scope" not in result.stdout
+    assert "Apply to this agent's home skills instead of root" in result.stdout
+    assert "skills." in result.stdout
 
 
 def test_cli_skill_template_help_shows_plain_text_metavar() -> None:
@@ -6102,7 +6103,7 @@ def test_cli_skill_template_help_shows_plain_text_metavar() -> None:
     assert result.exit_code == 0
     assert "Usage:" in result.stdout
     assert "[AGENT] skill template [OPTIONS] [NAME]" in result.stdout
-    assert "name      TEXT" in result.stdout
+    assert "name       TEXT" in result.stdout
     assert "Template name." in result.stdout
 
 
@@ -6128,7 +6129,7 @@ def test_cli_skill_list_help_mentions_agent_scope_concisely() -> None:
     assert result.exit_code == 0
     assert "List skills." in result.stdout
     assert "[AGENT] skill list" in result.stdout
-    assert "agent      TEXT  Also include this agent's skills." in result.stdout
+    assert "agent      TEXT  Also include this agent's home skills." in result.stdout
 
 
 def test_cli_cap_list_with_agent_defaults_to_all_scopes(tmp_path: Path, monkeypatch) -> None:
@@ -6807,9 +6808,9 @@ def test_cli_chat_help_uses_thread_option() -> None:
     assert "--thread" in result.stdout
     assert "--tui" in result.stdout
     assert "--ui" not in result.stdout
+    assert "--model" not in result.stdout
     assert "Message to send. Omit to open the TUI." in result.stdout
     assert "Thread id to continue; run id accepted." in result.stdout
-    assert "Model selector for the new run." in result.stdout
 
 
 def test_cli_thread_control_help_lists_agent_with_arguments() -> None:
@@ -6936,8 +6937,8 @@ def test_cli_rewind_tui_streams_created_run_before_prompt(monkeypatch) -> None:
     def fake_runtime_get_stream(_ctx: Any, request_path: str) -> None:
         calls.append(("stream", request_path))
 
-    def fake_chat_interactive(_ctx: Any, *, thread_id: str, model: str | None) -> None:
-        calls.append(("tui", (thread_id, model)))
+    def fake_chat_interactive(_ctx: Any, *, thread_id: str) -> None:
+        calls.append(("tui", thread_id))
 
     monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
     monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
@@ -6957,7 +6958,7 @@ def test_cli_rewind_tui_streams_created_run_before_prompt(monkeypatch) -> None:
             ),
         ),
         ("stream", "/api/v1/runs/run_new/stream"),
-        ("tui", ("tui_thread", None)),
+        ("tui", "tui_thread"),
     ]
 
 
@@ -6993,8 +6994,8 @@ def test_standalone_caps_help_shows_agent_prefix_usage() -> None:
     assert result.exit_code == 0
     assert "Manage composable agent primitives." in result.stdout
     assert "caps [AGENT] [OPTIONS] COMMAND [ARGS]..." in result.stdout
-    assert "Scope" in result.stdout
-    assert "agent      TEXT  Apply to this agent's caps instead of root caps." in result.stdout
+    assert "Scope" not in result.stdout
+    assert "agent      TEXT  Apply to this agent's home caps instead of root caps." in result.stdout
     assert "--agent" not in result.stdout
 
 
@@ -7009,7 +7010,7 @@ def test_standalone_caps_list_help_mentions_agent_inclusion() -> None:
     assert "Filter caps with selector-list syntax." in result.stdout
     assert "--kind" not in result.stdout
     assert "--global" not in result.stdout
-    assert "agent      TEXT  Also include this agent's caps." in result.stdout
+    assert "agent      TEXT  Also include this agent's home caps." in result.stdout
 
 
 def test_standalone_cap_kind_list_help_omits_kind_filters() -> None:
@@ -7028,10 +7029,11 @@ def test_standalone_cap_group_help_shows_agent_prefix_usage() -> None:
     assert result.exit_code == 0
     assert "caps [AGENT] psyche [OPTIONS] COMMAND [ARGS]..." in result.stdout
     assert "caps [AGENT] TEXT psyche" not in result.stdout
-    assert "Scope" in result.stdout
+    assert "Scope" not in result.stdout
     assert "Manage psyche caps." in result.stdout
     assert "List psyches." in result.stdout
-    assert "agent      TEXT  Apply to this agent's psyches instead of root psyches." in result.stdout
+    assert "agent      TEXT  Apply to this agent's home psyches instead of root" in result.stdout
+    assert "psyches." in result.stdout
     assert "--agent" not in result.stdout
 
 
@@ -7041,9 +7043,10 @@ def test_standalone_cap_template_help_uses_inspect_description() -> None:
     assert result.exit_code == 0
     assert "caps [AGENT] psyche template [OPTIONS] [NAME]" in result.stdout
     assert "Inspect psyche templates." in result.stdout
-    assert "name      TEXT  Template name." in result.stdout
-    assert "Scope" in result.stdout
-    assert "agent      TEXT  Apply to this agent's psyches instead of root psyches." in result.stdout
+    assert "name       TEXT  Template name." in result.stdout
+    assert "Scope" not in result.stdout
+    assert "agent      TEXT  Apply to this agent's home psyches instead of root" in result.stdout
+    assert "psyches." in result.stdout
 
 
 def test_standalone_caps_main_supports_agent_prefix(monkeypatch) -> None:
@@ -7264,18 +7267,18 @@ def test_cli_help_lists_cap_commands() -> None:
     assert "Inspect available channels." in result.stdout
     assert "Inspect available sandboxes." in result.stdout
     assert "Agent Commands" in result.stdout
+    assert "Work Commands" not in result.stdout
     assert "Thread Commands" in result.stdout
     assert "Runtime Commands" in result.stdout
-    assert "Caps Commands" in result.stdout
+    assert "Cap Commands" in result.stdout
     assert "Runtime Components" not in result.stdout
     assert "Agent Capabilities" not in result.stdout
-    assert "Work Commands" not in result.stdout
     assert "Inspect available caps." in result.stdout
     assert "Manage psyche caps." in result.stdout
     assert "Manage skill caps." in result.stdout
     assert "Manage service caps." in result.stdout
     assert "Manage prompt caps." in result.stdout
-    assert "Start, continue, or open a thread." in result.stdout
+    assert "Chat with an agent." in result.stdout
     assert "Guide an active run." in result.stdout
     assert "Cancel an active run." in result.stdout
     assert "Rewind a thread from a run." in result.stdout
@@ -7284,6 +7287,7 @@ def test_cli_help_lists_cap_commands() -> None:
     assert "attach" not in result.stdout
     chore_index = result.stdout.index("chore")
     task_index = result.stdout.index("task")
+    stop_index = result.stdout.index("stop")
     chat_index = result.stdout.index("chat")
     steer_index = result.stdout.index("steer")
     cancel_index = result.stdout.index("cancel")
@@ -7301,12 +7305,9 @@ def test_cli_help_lists_cap_commands() -> None:
     prompt_index = result.stdout.index("prompt")
     caps_index = result.stdout.rindex("caps")
     assert "plugin" not in result.stdout
-    assert result.stdout.index("Agent Commands") < chore_index
-    assert chore_index < task_index
+    assert result.stdout.index("Agent Commands") < stop_index < chat_index < chore_index < task_index < result.stdout.index("Cap Commands")
     assert (
-        task_index
-        < result.stdout.index("Thread Commands")
-        < chat_index
+        result.stdout.index("Thread Commands")
         < steer_index
         < cancel_index
         < rewind_index
@@ -7319,7 +7320,7 @@ def test_cli_help_lists_cap_commands() -> None:
         < channel_index
         < sandbox_index
     )
-    assert result.stdout.index("Caps Commands") < psyche_index
+    assert result.stdout.index("Cap Commands") < psyche_index
     assert psyche_index < skill_index < service_index < prompt_index < caps_index
 
 

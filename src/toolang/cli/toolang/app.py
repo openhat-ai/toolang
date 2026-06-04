@@ -104,7 +104,7 @@ _CLI_PREFIX_AGENT: str | None = None
 AGENT_COMMAND_PANEL = "Agent Commands"
 THREAD_COMMAND_PANEL = "Thread Commands"
 RUNTIME_COMMAND_PANEL = "Runtime Commands"
-CAPS_COMMAND_PANEL = "Caps Commands"
+CAPS_COMMAND_PANEL = "Cap Commands"
 TOP_LEVEL_COMMANDS = frozenset(
     {
         "new",
@@ -137,7 +137,8 @@ TOP_LEVEL_COMMANDS = frozenset(
 )
 
 _CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt", "caps")
-_THREAD_PANEL_COMMAND_ORDER = ("chat", "steer", "cancel", "rewind", "fork", "runs", "threads")
+_AGENT_PANEL_COMMAND_ORDER = ("new", "clone", "remove", "list", "info", "run", "start", "stop", "chat", "chore", "task")
+_THREAD_PANEL_COMMAND_ORDER = ("steer", "cancel", "rewind", "fork", "runs", "threads")
 _RUNTIME_PANEL_COMMAND_ORDER = ("model", "tool", "channel", "sandbox")
 _THREAD_TARGET_COMMANDS = frozenset({"steer", "cancel", "rewind", "fork"})
 
@@ -145,12 +146,18 @@ _THREAD_TARGET_COMMANDS = frozenset({"steer", "cancel", "rewind", "fork"})
 class _ToolangGroup(TyperGroup):
     def list_commands(self, ctx: click.Context) -> list[str]:
         names = TyperGroup.list_commands(self, ctx)
+        agent_names = [name for name in _AGENT_PANEL_COMMAND_ORDER if name in names]
+        if agent_names:
+            first_agent_index = min(names.index(name) for name in agent_names)
+            reordered = [name for name in names if name not in agent_names]
+            names = reordered[:first_agent_index] + agent_names + reordered[first_agent_index:]
         thread_names = [name for name in _THREAD_PANEL_COMMAND_ORDER if name in names]
-        if thread_names:
-            reordered = [name for name in names if name not in thread_names]
+        ordered_thread_group_names = [*thread_names]
+        if ordered_thread_group_names:
+            reordered = [name for name in names if name not in ordered_thread_group_names]
             runtime_indexes = [reordered.index(name) for name in _RUNTIME_PANEL_COMMAND_ORDER if name in reordered]
             insertion_index = min(runtime_indexes) if runtime_indexes else len(reordered)
-            names = reordered[:insertion_index] + thread_names + reordered[insertion_index:]
+            names = reordered[:insertion_index] + ordered_thread_group_names + reordered[insertion_index:]
         cap_names = [name for name in _CAPS_PANEL_COMMAND_ORDER if name in names]
         if len(cap_names) < 2:
             return names
@@ -473,16 +480,15 @@ def info_agent(
 
 @app.command(
     "chat",
-    help="Start, continue, or open a thread.",
+    help="Chat with an agent.",
     cls=_RequiredPrefixAgentCommand,
-    rich_help_panel=THREAD_COMMAND_PANEL,
+    rich_help_panel=AGENT_COMMAND_PANEL,
 )
 def chat_command(
     ctx: typer.Context,
     message: Annotated[str | None, typer.Argument(help="Message to send. Omit to open the TUI.")] = None,
     thread: Annotated[str | None, typer.Option("--thread", help="Thread id to continue; run id accepted.")] = None,
     tui: Annotated[bool, typer.Option("--tui", help="Open the terminal UI after the command.")] = False,
-    model: Annotated[str | None, typer.Option("--model", help="Model selector for the new run.")] = None,
 ) -> None:
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
     if message is None:
@@ -495,11 +501,9 @@ def chat_command(
         if tui:
             _open_thread_ui(ctx, thread_id)
             return
-        _chat_interactive(ctx, thread_id=thread_id, model=model)
+        _chat_interactive(ctx, thread_id=thread_id)
         return
     payload: dict[str, Any] = {"thread": thread_id, "client": "tui", "message": _message_payload(message)}
-    if model is not None:
-        payload["model"] = model
     if tui:
         result = _runtime_post(ctx, "/api/v1/chat", payload=payload)
         thread = result.get("thread_id")
@@ -930,10 +934,10 @@ def _display_run_status(status: object) -> str:
 def _open_thread_ui(ctx: typer.Context, thread_id: str | None) -> None:
     if thread_id is None:
         raise click.ClickException("terminal UI requires an existing thread; pass a message to start a terminal chat")
-    _chat_interactive(ctx, thread_id=thread_id, model=None)
+    _chat_interactive(ctx, thread_id=thread_id)
 
 
-def _chat_interactive(ctx: typer.Context, *, thread_id: str, model: str | None) -> None:
+def _chat_interactive(ctx: typer.Context, *, thread_id: str) -> None:
     typer.echo(f"thread {thread_id}")
     local_streaming = threading.Event()
     local_request_ids: set[str] = set()
@@ -964,8 +968,6 @@ def _chat_interactive(ctx: typer.Context, *, thread_id: str, model: str | None) 
                 "request_id": request_id,
                 "message": _message_payload(text),
             }
-            if model is not None:
-                payload["model"] = model
             local_streaming.set()
             try:
                 _runtime_consume_stream(ctx, "/api/v1/chat/stream", payload=payload)
