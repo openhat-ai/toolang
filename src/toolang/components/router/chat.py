@@ -287,10 +287,7 @@ def _thread_metadata(payload: ChatRequest) -> dict[str, object]:
 
 
 def _thread_info(context: UptimeContext, thread_id: str):
-    runs = sorted(
-        context.store.list_runs(limit=None, thread_id=thread_id),
-        key=lambda item: item.created_at,
-    )
+    runs = context.store.list_thread_runs_chronological(thread_id=thread_id)
     thread = context.store.get_thread(thread_id=thread_id)
     if not runs:
         if thread is None:

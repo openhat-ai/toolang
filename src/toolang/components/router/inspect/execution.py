@@ -155,6 +155,7 @@ def create_router() -> APIRouter:
                 separators=(",", ":"),
             ),
         )
+        copied_runs = _shared._copy_fork_history(context, source_run=run, target_thread_id=new_thread_id)
         if message is not None and new_run_id is not None:
             context.runner.enqueue(
                 _shared.RunRequest(
@@ -171,6 +172,7 @@ def create_router() -> APIRouter:
             "source_thread_id": run.thread_id,
             "thread_id": new_thread_id,
             "run_id": new_run_id,
+            "copied_run_ids": [item.run_id for item in copied_runs],
         }
         if message is not None:
             event_payload["message"] = message.to_data()
@@ -182,6 +184,7 @@ def create_router() -> APIRouter:
             "thread_id": new_thread_id,
             "source_thread_id": run.thread_id,
             "from_run_id": run.run_id,
+            "copied_run_ids": [item.run_id for item in copied_runs],
             "message": message.to_data() if message is not None else None,
         }
 
@@ -245,12 +248,12 @@ def create_router() -> APIRouter:
         info = next((item for item in items if item.id == thread_id), None)
         if info is None:
             raise HTTPException(status_code=404, detail=f"thread not found: {thread_id}")
+        thread_runs = context.store.list_thread_runs_chronological(thread_id=thread_id)
+        if limit is not None:
+            thread_runs = thread_runs[-limit:]
         runs = [
             _shared._run_detail(context, item)
-            for item in sorted(
-                context.store.list_runs(limit=limit, thread_id=thread_id),
-                key=lambda run: run.created_at,
-            )
+            for item in thread_runs
         ]
         return {
             "info": asdict(info),

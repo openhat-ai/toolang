@@ -332,6 +332,186 @@ class ExecutionStore:
         runs = self.list_runs(thread_id=thread_id, status="running", limit=1)
         return runs[0] if runs else None
 
+    def list_thread_runs_chronological(
+        self,
+        *,
+        thread_id: str,
+        limit: int | None = None,
+        include_superseded: bool = False,
+    ) -> tuple[RunRecord, ...]:
+        """Return one thread's visible runs in durable chronological order."""
+
+        clauses = ["thread_id = ?"]
+        params: list[object] = [thread_id]
+        if not include_superseded:
+            clauses.append("superseded IS NULL")
+        query = f"""
+            SELECT * FROM runs
+            WHERE {' AND '.join(clauses)}
+            ORDER BY created_at ASC, rowid ASC
+        """
+        if limit is not None:
+            query = f"{query} LIMIT ?"
+            params.append(limit)
+        with self._lock:
+            rows = self._conn.execute(query, tuple(params)).fetchall()
+        return tuple(_run_from_row(row) for row in rows)
+
+    def list_thread_runs_before(self, *, run_id: str) -> tuple[RunRecord, ...]:
+        """Return visible runs in the same thread before one anchor run."""
+
+        with self._lock:
+            anchor = self._conn.execute(
+                "SELECT rowid, * FROM runs WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+            if anchor is None:
+                raise ValueError(f"run not found: {run_id}")
+            rows = self._conn.execute(
+                """
+                SELECT * FROM runs
+                WHERE thread_id = ?
+                  AND superseded IS NULL
+                  AND (
+                    created_at < ?
+                    OR (created_at = ? AND rowid < ?)
+                  )
+                ORDER BY created_at ASC, rowid ASC
+                """,
+                (anchor["thread_id"], anchor["created_at"], anchor["created_at"], anchor["rowid"]),
+            ).fetchall()
+        return tuple(_run_from_row(row) for row in rows)
+
+    def copy_runs_to_thread(
+        self,
+        *,
+        source_run_ids: Sequence[str],
+        target_thread_id: str,
+        target_run_ids: Sequence[str],
+    ) -> tuple[RunRecord, ...]:
+        """Copy durable run records, inputs, and steps into another thread."""
+
+        if len(source_run_ids) != len(target_run_ids):
+            raise ValueError("source and target run id counts must match")
+        if not source_run_ids:
+            return ()
+        with self._lock:
+            copied: list[sqlite3.Row] = []
+            for source_run_id, target_run_id in zip(source_run_ids, target_run_ids, strict=True):
+                source_run = self._conn.execute(
+                    "SELECT * FROM runs WHERE run_id = ?",
+                    (source_run_id,),
+                ).fetchone()
+                if source_run is None:
+                    raise ValueError(f"run not found: {source_run_id}")
+                self._conn.execute(
+                    """
+                    INSERT INTO runs(
+                        run_id,
+                        thread_id,
+                        origin,
+                        status,
+                        error,
+                        superseded,
+                        created_at,
+                        started_at,
+                        finished_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        target_run_id,
+                        target_thread_id,
+                        source_run["origin"],
+                        source_run["status"],
+                        source_run["error"],
+                        source_run["superseded"],
+                        source_run["created_at"],
+                        source_run["started_at"],
+                        source_run["finished_at"],
+                    ),
+                )
+                input_rows = self._conn.execute(
+                    """
+                    SELECT * FROM inputs
+                    WHERE run_id = ?
+                    ORDER BY "index" ASC
+                    """,
+                    (source_run_id,),
+                ).fetchall()
+                self._conn.executemany(
+                    """
+                    INSERT INTO inputs(
+                        run_id,
+                        "index",
+                        action,
+                        mode,
+                        request_id,
+                        message,
+                        created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            target_run_id,
+                            row["index"],
+                            row["action"],
+                            row["mode"],
+                            row["request_id"],
+                            row["message"],
+                            row["created_at"],
+                        )
+                        for row in input_rows
+                    ],
+                )
+                step_rows = self._conn.execute(
+                    """
+                    SELECT * FROM steps
+                    WHERE run_id = ?
+                    ORDER BY step_index ASC
+                    """,
+                    (source_run_id,),
+                ).fetchall()
+                self._conn.executemany(
+                    """
+                    INSERT INTO steps(
+                        run_id,
+                        step_index,
+                        kind,
+                        status,
+                        input,
+                        output,
+                        payload,
+                        error,
+                        started_at,
+                        finished_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            target_run_id,
+                            row["step_index"],
+                            row["kind"],
+                            row["status"],
+                            row["input"],
+                            row["output"],
+                            row["payload"],
+                            row["error"],
+                            row["started_at"],
+                            row["finished_at"],
+                        )
+                        for row in step_rows
+                    ],
+                )
+                inserted = self._conn.execute(
+                    "SELECT * FROM runs WHERE run_id = ?",
+                    (target_run_id,),
+                ).fetchone()
+                if inserted is None:
+                    raise RuntimeError("copied run insert returned no row")
+                copied.append(inserted)
+            self._conn.commit()
+        return tuple(_run_from_row(row) for row in copied)
+
     def supersede_thread_from_run(
         self,
         *,
@@ -517,27 +697,8 @@ class ExecutionStore:
         return results[-limit:]
 
     def _conversation_runs(self, *, thread_id: str, limit: int) -> list[RunRecord]:
-        thread = self.get_thread(thread_id=thread_id)
-        inherited: list[RunRecord] = []
-        if thread is not None and thread.parent is not None:
-            parent = _parse_fork_parent(thread.parent)
-            if parent is not None:
-                parent_thread_id, from_run_id = parent
-                parent_anchor = self.get_run(run_id=from_run_id)
-                if parent_anchor is not None:
-                    inherited = [
-                        run
-                        for run in sorted(
-                            self.list_runs(thread_id=parent_thread_id, limit=None),
-                            key=lambda item: item.created_at,
-                        )
-                        if run.created_at < parent_anchor.created_at
-                    ]
-        current = sorted(
-            self.list_runs(thread_id=thread_id, limit=limit),
-            key=lambda item: item.created_at,
-        )
-        return [*inherited, *current][-limit:]
+        current = list(self.list_thread_runs_chronological(thread_id=thread_id, limit=None))
+        return current[-limit:]
 
     def append_update(
         self,
@@ -984,22 +1145,6 @@ def _dump_json(value: Any) -> str:
 
 def _load_json(value: str) -> Any:
     return json.loads(value)
-
-
-def _parse_fork_parent(value: str) -> tuple[str, str] | None:
-    try:
-        data = _load_json(value)
-    except Exception:
-        return None
-    if not isinstance(data, dict) or data.get("type") != "fork":
-        return None
-    thread_id = data.get("thread_id")
-    from_run_id = data.get("from_run_id")
-    if not isinstance(thread_id, str) or not isinstance(from_run_id, str):
-        return None
-    if not thread_id or not from_run_id:
-        return None
-    return thread_id, from_run_id
 
 
 def _run_from_row(row: sqlite3.Row) -> RunRecord:

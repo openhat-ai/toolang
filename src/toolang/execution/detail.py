@@ -113,6 +113,9 @@ def thread_info_from_runs(
     active = next((run for run in reversed(runs) if run.status == "running"), None)
     first_input = run_input_message_data(first, _start_input(inputs_by_run.get(first.run_id, ())))
     title = message_summary(first_input.parts) or first.origin
+    updated_at = last.finished_at or last.started_at
+    if thread is not None:
+        updated_at = max(updated_at, thread.updated_at)
     return ThreadInfo(
         id=thread_id,
         title=title,
@@ -120,7 +123,7 @@ def thread_info_from_runs(
         origin=last.origin,
         channel=_thread_channel(thread_id, last.origin),
         status=_thread_status(active),
-        updated_at=last.finished_at or last.started_at,
+        updated_at=updated_at,
         peer=thread.peer if thread is not None else ThreadPeer(),
         parent=thread.parent if thread is not None else None,
         run_count=len(runs),

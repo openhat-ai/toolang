@@ -1073,6 +1073,60 @@ def test_chat_rewind_cancels_running_run_before_superseding(tmp_path: Path) -> N
     assert [item["info"]["id"] for item in thread_detail["runs"]] == [new_run_id]
 
 
+def test_chat_fork_copies_prior_runs_into_new_thread(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat", "inspect"),
+    )
+    app = _create_test_app(context)
+
+    with _patched_runner_execution():
+        with TestClient(app) as client:
+            first = client.post(
+                "/api/v1/chat",
+                json={"message": _chat_message("first input")},
+            )
+            source_thread_id = first.json()["thread_id"]
+            first_run_id = first.json()["run_id"]
+            second = client.post(
+                "/api/v1/chat",
+                json={"thread": source_thread_id, "message": _chat_message("second input")},
+            )
+            fork = client.post(
+                f"/api/v1/runs/{second.json()['run_id']}/fork",
+                json={"message": _chat_message("fork input")},
+            )
+            fork_thread_id = fork.json()["thread_id"]
+            fork_run_id = fork.json()["run_id"]
+
+            for _ in range(100):
+                thread_detail = client.get(f"/api/v1/threads/{fork_thread_id}").json()
+                run_ids = [item["info"]["id"] for item in thread_detail["runs"]]
+                if run_ids[-1:] == [fork_run_id] and len(run_ids) == 2:
+                    break
+                time.sleep(0.01)
+            copied_run_id = fork.json()["copied_run_ids"][0]
+            copied_detail = client.get(f"/api/v1/runs/{copied_run_id}").json()
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert fork.status_code == 200
+    assert fork.json()["source_thread_id"] == source_thread_id
+    assert fork.json()["from_run_id"] == second.json()["run_id"]
+    assert fork.json()["copied_run_ids"] == [copied_run_id]
+    assert copied_run_id != first_run_id
+    assert copied_detail["info"]["thread_id"] == fork_thread_id
+    assert copied_detail["input"]["parts"][0]["text"] == "first input"
+    assert [item["input"]["parts"][0]["text"] for item in thread_detail["runs"]] == [
+        "first input",
+        "fork input",
+    ]
+    assert thread_detail["info"]["run_count"] == 2
+
+
 def test_chat_api_records_peer_for_new_thread_and_rejects_mismatch(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "bob" / "agent.too", "agent bob\n")

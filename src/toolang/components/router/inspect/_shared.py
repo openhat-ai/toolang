@@ -338,6 +338,7 @@ def create_router() -> APIRouter:
                 separators=(",", ":"),
             ),
         )
+        copied_runs = _copy_fork_history(context, source_run=run, target_thread_id=new_thread_id)
         if message is not None and new_run_id is not None:
             context.runner.enqueue(
                 RunRequest(
@@ -354,6 +355,7 @@ def create_router() -> APIRouter:
             "source_thread_id": run.thread_id,
             "thread_id": new_thread_id,
             "run_id": new_run_id,
+            "copied_run_ids": [item.run_id for item in copied_runs],
         }
         if message is not None:
             event_payload["message"] = message.to_data()
@@ -365,6 +367,7 @@ def create_router() -> APIRouter:
             "thread_id": new_thread_id,
             "source_thread_id": run.thread_id,
             "from_run_id": run.run_id,
+            "copied_run_ids": [item.run_id for item in copied_runs],
             "message": message.to_data() if message is not None else None,
         }
 
@@ -428,12 +431,12 @@ def create_router() -> APIRouter:
         info = next((item for item in items if item.id == thread_id), None)
         if info is None:
             raise HTTPException(status_code=404, detail=f"thread not found: {thread_id}")
+        thread_runs = context.store.list_thread_runs_chronological(thread_id=thread_id)
+        if limit is not None:
+            thread_runs = thread_runs[-limit:]
         runs = [
             _run_detail(context, item)
-            for item in sorted(
-                context.store.list_runs(limit=limit, thread_id=thread_id),
-                key=lambda run: run.created_at,
-            )
+            for item in thread_runs
         ]
         return {
             "info": asdict(info),
@@ -1338,7 +1341,13 @@ def _run_messages(
 
 
 def _thread_items(context: UptimeContext) -> list[ThreadInfo]:
-    runs = context.store.list_runs(limit=None)
+    recent_runs = context.store.list_runs(limit=None)
+    thread_ids = sorted({run.thread_id for run in recent_runs})
+    runs = [
+        run
+        for thread_id in thread_ids
+        for run in context.store.list_thread_runs_chronological(thread_id=thread_id)
+    ]
     steps_by_run = context.store.list_steps_for_runs(run_ids=tuple(item.run_id for item in runs))
     inputs_by_run = {run.run_id: context.store.list_inputs(run_id=run.run_id) for run in runs}
     grouped_runs: dict[str, list[RunRecord]] = {}
@@ -1347,11 +1356,10 @@ def _thread_items(context: UptimeContext) -> list[ThreadInfo]:
     thread_records = {item.thread_id: item for item in context.store.list_threads()}
     items: list[ThreadInfo] = []
     for thread_id, runs in grouped_runs.items():
-        ordered_runs = sorted(runs, key=lambda item: item.created_at)
         items.append(
             thread_info_from_runs(
                 thread_id,
-                ordered_runs,
+                runs,
                 inputs_by_run=inputs_by_run,
                 steps_by_run=steps_by_run,
                 thread=thread_records.get(thread_id),
@@ -1467,6 +1475,21 @@ def _cancel_running_replaced_runs(context: UptimeContext, *, anchor: RunRecord, 
         payload = _run_event_payload(canceled)
         context.events.publish(domain="run", domain_id=canceled.run_id, type="run_end", payload=payload)
         context.events.publish(domain="thread", domain_id=canceled.thread_id, type="run_end", payload=payload)
+
+
+def _copy_fork_history(
+    context: UptimeContext,
+    *,
+    source_run: RunRecord,
+    target_thread_id: str,
+) -> tuple[RunRecord, ...]:
+    source_runs = context.store.list_thread_runs_before(run_id=source_run.run_id)
+    target_run_ids = tuple(allocate_run_id(context) for _ in source_runs)
+    return context.store.copy_runs_to_thread(
+        source_run_ids=tuple(run.run_id for run in source_runs),
+        target_thread_id=target_thread_id,
+        target_run_ids=target_run_ids,
+    )
 
 
 def _fork_thread_id(context: UptimeContext, *, source_thread_id: str) -> str:
