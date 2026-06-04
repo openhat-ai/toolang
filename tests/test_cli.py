@@ -6710,16 +6710,14 @@ def test_cli_chat_thread_without_message_sends_interactive_lines(monkeypatch) ->
     assert result.exit_code == 0
     assert "thread tui_existing" in result.stdout
     assert listeners == ["tui_existing", "stopped"]
-    assert calls == [
-        (
-            "/api/v1/chat/stream",
-            {
-                "thread": "tui_existing",
-                "client": "tui",
-                "message": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
-            },
-        )
-    ]
+    assert len(calls) == 1
+    request_path, payload = calls[0]
+    assert request_path == "/api/v1/chat/stream"
+    assert payload["thread"] == "tui_existing"
+    assert payload["client"] == "tui"
+    assert payload["message"] == {"role": "user", "parts": [{"type": "text", "text": "hello"}]}
+    assert isinstance(payload["request_id"], str)
+    assert payload["request_id"].startswith("tui_")
 
 
 def test_cli_thread_event_renderer_prints_thread_messages(capsys) -> None:
@@ -6759,6 +6757,27 @@ def test_cli_thread_event_renderer_skips_prompt_during_local_stream(capsys) -> N
     renderer.render({"type": "run_end", "payload": {"run_id": "run_tui", "status": "finished"}})
 
     assert capsys.readouterr().out == "assistant: hi\n"
+
+
+def test_cli_thread_event_renderer_skips_prompt_for_local_request(capsys) -> None:
+    local_request_ids = {"tui_req"}
+    renderer = cli._ThreadEventRenderer(redraw_prompt=True, local_request_ids=local_request_ids)
+
+    renderer.render(
+        {
+            "type": "run_input",
+            "payload": {
+                "run_id": "run_tui",
+                "request_id": "tui_req",
+                "action": "start",
+                "message": {"role": "user", "parts": [{"type": "text", "text": "local"}]},
+            },
+        }
+    )
+    renderer.render({"type": "part_delta", "payload": {"run_id": "run_tui", "delta": {"type": "text", "text": "hi"}}})
+    renderer.render({"type": "run_end", "payload": {"run_id": "run_tui", "status": "finished"}})
+
+    assert capsys.readouterr().out == "\nuser: local\nassistant: hi\n"
 
 
 def test_cli_thread_event_renderer_prints_step_end_without_streaming_delta(capsys) -> None:

@@ -19,6 +19,7 @@ from typing import Annotated, Any, Literal, TYPE_CHECKING, cast
 from urllib.parse import urlencode
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from uuid import uuid4
 
 import click
 import typer
@@ -935,7 +936,13 @@ def _open_thread_ui(ctx: typer.Context, thread_id: str | None) -> None:
 def _chat_interactive(ctx: typer.Context, *, thread_id: str, model: str | None) -> None:
     typer.echo(f"thread {thread_id}")
     local_streaming = threading.Event()
-    listener = _start_thread_event_listener(ctx, thread_id, local_streaming=local_streaming)
+    local_request_ids: set[str] = set()
+    listener = _start_thread_event_listener(
+        ctx,
+        thread_id,
+        local_streaming=local_streaming,
+        local_request_ids=local_request_ids,
+    )
     try:
         while True:
             try:
@@ -949,7 +956,14 @@ def _chat_interactive(ctx: typer.Context, *, thread_id: str, model: str | None) 
                 return
             if not text.strip():
                 continue
-            payload: dict[str, Any] = {"thread": thread_id, "client": "tui", "message": _message_payload(text)}
+            request_id = f"tui_{uuid4().hex}"
+            local_request_ids.add(request_id)
+            payload: dict[str, Any] = {
+                "thread": thread_id,
+                "client": "tui",
+                "request_id": request_id,
+                "message": _message_payload(text),
+            }
             if model is not None:
                 payload["model"] = model
             local_streaming.set()
@@ -974,6 +988,7 @@ def _start_thread_event_listener(
     thread_id: str,
     *,
     local_streaming: threading.Event | None = None,
+    local_request_ids: set[str] | None = None,
 ) -> _ThreadEventListener:
     stop_event = threading.Event()
     try:
@@ -983,7 +998,7 @@ def _start_thread_event_listener(
         return _ThreadEventListener(stop_event)
     thread = threading.Thread(
         target=_run_thread_event_listener,
-        args=(ctx, thread_id, after, stop_event, local_streaming),
+        args=(ctx, thread_id, after, stop_event, local_streaming, local_request_ids),
         daemon=True,
     )
     thread.start()
@@ -1004,8 +1019,13 @@ def _run_thread_event_listener(
     after: int | None,
     stop_event: threading.Event,
     local_streaming: threading.Event | None,
+    local_request_ids: set[str] | None,
 ) -> None:
-    renderer = _ThreadEventRenderer(redraw_prompt=True, local_streaming=local_streaming)
+    renderer = _ThreadEventRenderer(
+        redraw_prompt=True,
+        local_streaming=local_streaming,
+        local_request_ids=local_request_ids,
+    )
     path = f"/api/v1/threads/{thread_id}/stream"
     if after is not None:
         path = f"{path}?{urlencode([('after', str(after))])}"
@@ -1048,10 +1068,13 @@ class _ThreadEventRenderer:
         *,
         redraw_prompt: bool = False,
         local_streaming: threading.Event | None = None,
+        local_request_ids: set[str] | None = None,
     ) -> None:
         self._assistant_open = False
         self._redraw_prompt = redraw_prompt
         self._local_streaming = local_streaming
+        self._local_request_ids = local_request_ids
+        self._local_run_ids: set[str] = set()
         self._text_delta_runs: set[str] = set()
 
     def render(self, event: dict[str, Any]) -> None:
@@ -1066,15 +1089,19 @@ class _ThreadEventRenderer:
         elif event_type == "step_end":
             self._render_step_end(payload)
         elif event_type in {"part_end", "run_end"}:
-            self._close_assistant(redraw_prompt=event_type == "run_end")
+            self._close_assistant(
+                redraw_prompt=event_type == "run_end",
+                run_id=str(payload.get("run_id") or "") or None,
+            )
 
     def _render_run_input(self, payload: dict[str, Any]) -> None:
         if payload.get("action") != "start":
             return
+        self._remember_local_run(payload)
         text = _event_message_text(payload.get("message"))
         if not text:
             return
-        self._close_assistant(redraw_prompt=False)
+        self._close_assistant(redraw_prompt=False, run_id=str(payload.get("run_id") or "") or None)
         typer.echo(f"\nuser: {text}")
 
     def _render_part_delta(self, payload: dict[str, Any]) -> None:
@@ -1106,15 +1133,30 @@ class _ThreadEventRenderer:
             self._assistant_open = True
         typer.echo(text, nl=False)
 
-    def _close_assistant(self, *, redraw_prompt: bool) -> None:
+    def _close_assistant(self, *, redraw_prompt: bool, run_id: str | None) -> None:
         if self._assistant_open:
             typer.echo()
             self._assistant_open = False
-        if redraw_prompt and self._redraw_prompt and not self._local_streaming_active():
+        local_run = run_id is not None and run_id in self._local_run_ids
+        if redraw_prompt and self._redraw_prompt and not self._local_run_active(run_id=run_id):
             typer.echo("> ", nl=False)
+        if redraw_prompt and local_run and run_id is not None:
+            self._local_run_ids.discard(run_id)
 
-    def _local_streaming_active(self) -> bool:
-        return self._local_streaming is not None and self._local_streaming.is_set()
+    def _remember_local_run(self, payload: dict[str, Any]) -> None:
+        request_id = payload.get("request_id")
+        run_id = payload.get("run_id")
+        if not isinstance(request_id, str) or not isinstance(run_id, str):
+            return
+        if self._local_request_ids is not None and request_id in self._local_request_ids:
+            self._local_run_ids.add(run_id)
+
+    def _local_run_active(self, *, run_id: str | None) -> bool:
+        if run_id is not None and run_id in self._local_run_ids:
+            return True
+        if self._local_streaming is not None and self._local_streaming.is_set():
+            return True
+        return False
 
 
 def _event_message_text(message: object) -> str:
