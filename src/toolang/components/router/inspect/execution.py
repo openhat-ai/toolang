@@ -103,37 +103,39 @@ def create_router() -> APIRouter:
         context = request.app.state.runtime
         run = _shared._run_or_404(context, run_id)
         _require_branchable_thread(context, run)
-        message = _shared._input_message(payload.message)
-        new_run_id = _shared.allocate_run_id(context)
+        message = _shared._input_message(payload.message) if payload.message is not None else None
+        new_run_id = _shared.allocate_run_id(context) if message is not None else None
         _cancel_running_replaced_runs(context, anchor=run, reason="Run was rewound.")
         superseded = context.store.supersede_thread_from_run(
             run_id=run.run_id,
             superseded={"type": "rewound", "by": new_run_id, "from_run_id": run.run_id},
         )
-        context.runner.enqueue(
-            _shared.RunRequest(
-                group="chat",
-                origin="chat",
-                run_id=new_run_id,
-                thread_id=run.thread_id,
-                message=message,
-                metadata={"request_id": payload.request_id} if payload.request_id is not None else {},
+        if message is not None and new_run_id is not None:
+            context.runner.enqueue(
+                _shared.RunRequest(
+                    group="chat",
+                    origin="chat",
+                    run_id=new_run_id,
+                    thread_id=run.thread_id,
+                    message=message,
+                    metadata={"request_id": payload.request_id} if payload.request_id is not None else {},
+                )
             )
-        )
         event_payload = {
             "from_run_id": run.run_id,
             "new_run_id": new_run_id,
             "thread_id": run.thread_id,
             "superseded_run_ids": [item.run_id for item in superseded],
-            "message": message.to_data(),
         }
+        if message is not None:
+            event_payload["message"] = message.to_data()
         context.events.publish(domain="thread", domain_id=run.thread_id, type="thread_rewind", payload=event_payload)
         context.events.publish(domain="agent", domain_id=context.name, type="thread_update", payload=event_payload)
         return {
             "run_id": new_run_id,
             "thread_id": run.thread_id,
             "superseded_run_ids": [item.run_id for item in superseded],
-            "message": message.to_data(),
+            "message": message.to_data() if message is not None else None,
         }
 
     @router.post("/runs/{run_id}/fork", tags=["activity"], summary="Fork Thread")
@@ -141,8 +143,8 @@ def create_router() -> APIRouter:
         context = request.app.state.runtime
         run = _shared._run_or_404(context, run_id)
         _require_branchable_thread(context, run)
-        message = _shared._input_message(payload.message)
-        new_run_id = _shared.allocate_run_id(context)
+        message = _shared._input_message(payload.message) if payload.message is not None else None
+        new_run_id = _shared.allocate_run_id(context) if message is not None else None
         new_thread_id = _fork_thread_id(context, source_thread_id=run.thread_id)
         context.store.ensure_thread(
             thread_id=new_thread_id,
@@ -153,23 +155,25 @@ def create_router() -> APIRouter:
                 separators=(",", ":"),
             ),
         )
-        context.runner.enqueue(
-            _shared.RunRequest(
-                group="chat",
-                origin="chat",
-                run_id=new_run_id,
-                thread_id=new_thread_id,
-                message=message,
-                metadata={"request_id": payload.request_id} if payload.request_id is not None else {},
+        if message is not None and new_run_id is not None:
+            context.runner.enqueue(
+                _shared.RunRequest(
+                    group="chat",
+                    origin="chat",
+                    run_id=new_run_id,
+                    thread_id=new_thread_id,
+                    message=message,
+                    metadata={"request_id": payload.request_id} if payload.request_id is not None else {},
+                )
             )
-        )
         event_payload = {
             "from_run_id": run.run_id,
             "source_thread_id": run.thread_id,
             "thread_id": new_thread_id,
             "run_id": new_run_id,
-            "message": message.to_data(),
         }
+        if message is not None:
+            event_payload["message"] = message.to_data()
         context.events.publish(domain="thread", domain_id=run.thread_id, type="thread_fork", payload=event_payload)
         context.events.publish(domain="thread", domain_id=new_thread_id, type="thread_forked", payload=event_payload)
         context.events.publish(domain="agent", domain_id=context.name, type="thread_update", payload=event_payload)
@@ -178,7 +182,7 @@ def create_router() -> APIRouter:
             "thread_id": new_thread_id,
             "source_thread_id": run.thread_id,
             "from_run_id": run.run_id,
-            "message": message.to_data(),
+            "message": message.to_data() if message is not None else None,
         }
 
     @router.post("/runs/{run_id}/steer", tags=["activity"], summary="Steer Run")
@@ -217,11 +221,21 @@ def create_router() -> APIRouter:
         return {"hash": prompt_hash, "body": body}
 
     @router.get("/threads", tags=["activity"], summary="List Threads")
-    async def threads(request: Request, limit: int = Query(default=50), origin: str | None = None) -> dict[str, object]:
+    async def threads(
+        request: Request,
+        limit: int = Query(default=50),
+        origin: str | None = None,
+        channel: str | None = None,
+        status: str | None = None,
+    ) -> dict[str, object]:
         context = request.app.state.runtime
         items = _shared._thread_items(context)
         if origin is not None:
             items = [item for item in items if item.origin == origin]
+        if channel is not None:
+            items = [item for item in items if item.channel == channel]
+        if status is not None:
+            items = [item for item in items if item.status == status]
         return {"items": [asdict(item) for item in items[:limit]]}
 
     @router.get("/threads/{thread_id}", tags=["activity"], summary="Get Thread")
@@ -299,7 +313,7 @@ def create_router() -> APIRouter:
 def _require_branchable_thread(context, run) -> None:
     thread = context.store.get_thread(thread_id=run.thread_id)
     origin = thread.origin if thread is not None else run.origin
-    if run.thread_id.startswith(("task_", "chore_")) or origin != "chat":
+    if run.thread_id.startswith(("tsk_", "chr_")) or origin != "chat":
         raise HTTPException(status_code=409, detail=f"thread cannot be rewound or forked: {run.thread_id}")
 
 

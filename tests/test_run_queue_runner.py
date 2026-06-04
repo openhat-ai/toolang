@@ -148,14 +148,14 @@ def test_runner_pending_requests_include_group_waiters(tmp_path: Path) -> None:
         active = RunRequest(
             group="pulse:task",
             origin="task",
-            thread_id="task_abc123",
+            thread_id="tsk_abc123",
             thunk="work task",
             delay_sec=0.05,
         )
         waiting = RunRequest(
             group="pulse:task",
             origin="task",
-            thread_id="task_def456",
+            thread_id="tsk_def456",
             thunk="sync remote task",
             delay_sec=0.0,
         )
@@ -318,6 +318,8 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
                 "id": thread_id,
                 "title": "say hello",
                 "origin": "chat",
+                "channel": "web",
+                "status": "idle",
                 "peer": {"type": "user", "name": "user", "thread": None},
                 "parent": None,
                 "created_at": runs[0]["created_at"],
@@ -417,6 +419,8 @@ def test_threads_api_reports_full_run_count_independent_of_recent_run_limit(tmp_
     assert [item["id"] for item in recent_runs] == ["run-new"]
     assert thread["id"] == "thread-1"
     assert thread["title"] == "first message"
+    assert thread["channel"] == "terminal"
+    assert thread["status"] == "idle"
     assert thread["run_count"] == 2
     assert thread["created_at"] == "2026-01-01T00:00:00Z"
     assert thread["latest_run"] == {
@@ -464,6 +468,8 @@ def test_threads_api_reports_active_run(tmp_path: Path) -> None:
         "updated_at": "2026-01-01T00:00:00Z",
     }
     assert thread["created_at"] == "2026-01-01T00:00:00Z"
+    assert thread["channel"] == "terminal"
+    assert thread["status"] == "running"
     assert detail["info"]["active_run"] == thread["active_run"]
     assert detail["event_cursor"] == 0
 
@@ -956,6 +962,30 @@ def test_chat_api_allocates_tui_threads_for_tui_client(tmp_path: Path) -> None:
     assert len(thread_id) == len("tui_") + 8
 
 
+def test_chat_api_creates_empty_terminal_threads(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat", "inspect"),
+    )
+    app = _create_test_app(context)
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/threads", json={"client": "tui"})
+        body = response.json()
+        thread = client.get(f"/api/v1/threads/{body['thread_id']}").json()["info"]
+
+    assert response.status_code == 200
+    assert body["thread_id"].startswith("tui_")
+    assert body["thread"]["origin"] == "chat"
+    assert body["thread"]["channel"] == "terminal"
+    assert body["thread"]["status"] == "idle"
+    assert body["thread"]["run_count"] == 0
+    assert thread == body["thread"]
+
+
 def test_chat_rewind_supersedes_previous_run_in_thread_projection(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
@@ -1255,7 +1285,7 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
 
     task_run = store.start_run(
         run_id="run-task",
-        thread_id="task_task-1",
+        thread_id="tsk_task-1",
         origin="task",
         input=Message.user("do the task"),
     )
@@ -1263,7 +1293,7 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
 
     chore_run = store.start_run(
         run_id="run-chore",
-        thread_id="chore_daily-sync",
+        thread_id="chr_daily-sync",
         origin="chore",
         input=Message.user("run the chore"),
     )
@@ -1364,7 +1394,7 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
     )
     context.store.start_run(
         run_id="run-loop",
-        thread_id="chore_sync",
+        thread_id="chr_sync",
         origin="chore",
         input=Message.user("sync remote tasks"),
     )
@@ -2164,7 +2194,7 @@ def test_background_features_enqueue_runs(tmp_path: Path) -> None:
                 assert completed[0]["group"] == "pulse:task"
                 assert completed[0]["origin"] == "task"
                 assert completed[0]["input_text"] == "Review the current plan."
-                assert str(completed[0]["thread_id"]).startswith("task_")
+                assert str(completed[0]["thread_id"]).startswith("tsk_")
 
     asyncio.run(run_test())
 
@@ -4784,7 +4814,7 @@ def test_new_task_reloads_into_live_state_and_tasks_endpoint(tmp_path: Path) -> 
     assert tasks[0]["status"] == "todo"
     assert tasks[0]["remote_ref"] is None
     assert tasks[0]["remote_status"] is None
-    assert tasks[0]["runtime"]["thread_id"] == f"task_{tasks[0]['id']}"
+    assert tasks[0]["runtime"]["thread_id"] == f"tsk_{tasks[0]['id']}"
     assert tasks[0]["runtime"]["last_run"] is None
     assert tasks[0]["runtime"]["next_run"] is None
     assert tasks[0]["path"] == "tasks/review.md"
@@ -4817,7 +4847,7 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
         assert task["lifecycle"] == "ready"
         assert task["status"] == "todo"
         assert task["body"] == "Review the new API surface."
-        assert task["runtime"]["thread_id"] == f"task_{task_id}"
+        assert task["runtime"]["thread_id"] == f"tsk_{task_id}"
 
         jobs = client.get("/api/v1/jobs").json()["items"]
         assert [(item["kind"], item["id"]) for item in jobs] == [("task", task_id)]
@@ -4950,7 +4980,7 @@ def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
         assert chore["status"] == "todo"
         assert chore["schedule"] == "FREQ=HOURLY;INTERVAL=6"
         assert chore["body"] == "Check stale pull requests."
-        assert chore["runtime"]["thread_id"] == f"chore_{chore_id}"
+        assert chore["runtime"]["thread_id"] == f"chr_{chore_id}"
 
         jobs = client.get("/api/v1/jobs?kind=chore").json()["items"]
         assert [(item["kind"], item["id"]) for item in jobs] == [("chore", chore_id)]
@@ -5058,7 +5088,7 @@ def test_new_task_reloads_and_pulse_runs_it(tmp_path: Path) -> None:
     assert completed[0]["group"] == "pulse:task"
     assert completed[0]["origin"] == "task"
     assert completed[0]["input_text"] == "Review the current plan."
-    assert str(completed[0]["thread_id"]).startswith("task_")
+    assert str(completed[0]["thread_id"]).startswith("tsk_")
 
 
 def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) -> None:

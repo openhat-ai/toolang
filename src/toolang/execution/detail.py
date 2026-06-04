@@ -32,6 +32,8 @@ class ThreadInfo:
     created_at: str
     updated_at: str
     origin: str
+    channel: str
+    status: str
     peer: ThreadPeer
     parent: str | None
     run_count: int
@@ -116,6 +118,8 @@ def thread_info_from_runs(
         title=title,
         created_at=thread.created_at if thread is not None else first.created_at,
         origin=last.origin,
+        channel=_thread_channel(thread_id, last.origin),
+        status=_thread_status(active),
         updated_at=last.finished_at or last.started_at,
         peer=thread.peer if thread is not None else ThreadPeer(),
         parent=thread.parent if thread is not None else None,
@@ -134,6 +138,8 @@ def thread_info_from_record(thread: ThreadRecord) -> ThreadInfo:
         title=title,
         created_at=thread.created_at,
         origin=thread.origin,
+        channel=_thread_channel(thread.thread_id, thread.origin),
+        status="idle",
         updated_at=thread.updated_at,
         peer=thread.peer,
         parent=thread.parent,
@@ -170,6 +176,20 @@ def run_info_from_record(run: RunRecord) -> RunInfo:
         finished_at=run.finished_at,
         updated_at=run.finished_at or run.started_at,
     )
+
+
+def _thread_channel(thread_id: str, origin: str) -> str:
+    if origin != "chat":
+        return ""
+    if thread_id.startswith("web_"):
+        return "web"
+    if thread_id.startswith("tg_"):
+        return "tg"
+    return "terminal"
+
+
+def _thread_status(active: RunRecord | None) -> str:
+    return "running" if active is not None else "idle"
 
 
 def run_input_from_records(run: RunRecord, *, inputs: Sequence[InputRecord]) -> MessageData | None:

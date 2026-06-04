@@ -299,30 +299,30 @@ def next_scheduled_at(
 def task_thread_id(task_id: str) -> str:
     """Return the normalized thread id for one task."""
 
-    return f"task_{task_id.strip()}"
+    return f"tsk_{task_id.strip()}"
 
 
 def chore_thread_id(chore_id: str) -> str:
     """Return the normalized thread id for one chore."""
 
-    return f"chore_{chore_id.strip()}"
+    return f"chr_{chore_id.strip()}"
 
 
 def task_id_from_thread_id(thread_id: str) -> str | None:
     """Extract one local task id from its canonical thread id."""
 
-    if not thread_id.startswith("task_"):
+    if not thread_id.startswith("tsk_"):
         return None
-    task_id = thread_id.removeprefix("task_").strip()
+    task_id = thread_id.removeprefix("tsk_").strip()
     return task_id or None
 
 
 def chore_id_from_thread_id(thread_id: str) -> str | None:
     """Extract one local chore id from its canonical thread id."""
 
-    if not thread_id.startswith("chore_"):
+    if not thread_id.startswith("chr_"):
         return None
-    chore_id = thread_id.removeprefix("chore_").strip()
+    chore_id = thread_id.removeprefix("chr_").strip()
     return chore_id or None
 
 

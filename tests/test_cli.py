@@ -6548,6 +6548,7 @@ def test_cli_threads_lists_title_and_run_count(monkeypatch) -> None:
                     "title": title,
                     "run_count": 12,
                     "origin": "chat",
+                    "channel": "web",
                     "status": "running",
                     "updated_at": "2026-06-04T09:00:00Z",
                 }
@@ -6561,6 +6562,8 @@ def test_cli_threads_lists_title_and_run_count(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "TITLE" in result.stdout
     assert "RUNS" in result.stdout
+    assert "CHANNEL" in result.stdout
+    assert "web" in result.stdout
     assert "12" in result.stdout
     assert "This is a very long thread title that should..." in result.stdout
     assert title not in result.stdout
@@ -6590,8 +6593,109 @@ def test_cli_runs_lists_title(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert "TITLE" in result.stdout
+    assert "succeeded" in result.stdout
     assert "This is a very long run summary that should b..." in result.stdout
     assert title not in result.stdout
+
+
+def test_cli_chat_uses_terminal_client_and_streams(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_runtime_stream(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> None:
+        captured["path"] = request_path
+        captured["payload"] = payload
+
+    monkeypatch.setattr(cli, "_runtime_stream", fake_runtime_stream)
+
+    result = _invoke_app(["chat", "dev", "review this repo"])
+
+    assert result.exit_code == 0
+    assert captured["path"] == "/api/v1/chat/stream"
+    assert captured["payload"] == {
+        "thread": None,
+        "client": "tui",
+        "message": {"role": "user", "parts": [{"kind": "text", "text": "review this repo"}]},
+    }
+
+
+def test_cli_chat_without_args_creates_terminal_thread(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        calls.append((request_path, payload))
+        return {"thread_id": "tui_new"}
+
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(
+        cli.agents,
+        "get_agent_status",
+        lambda *_args, **_kwargs: cli.agents.AgentStatus(
+            name="dev",
+            status="stopped",
+            endpoint=None,
+            api_url=None,
+            webui_url=None,
+            sandbox=None,
+        ),
+    )
+
+    result = _invoke_app(["chat", "dev"])
+
+    assert result.exit_code == 0
+    assert calls == [("/api/v1/threads", {"client": "tui"})]
+    assert "thread tui_new" in result.stdout
+
+
+def test_cli_rewind_accepts_thread_target(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        calls.append(("json", request_path))
+        return {"info": {"latest_run": {"id": "run_latest"}}}
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        calls.append(("post", (request_path, payload)))
+        return {"thread_id": "tui_thread", "run_id": "run_new"}
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+
+    result = _invoke_app(["rewind", "dev", "tui_thread", "try again"])
+
+    assert result.exit_code == 0
+    assert calls == [
+        ("json", "/api/v1/threads/tui_thread"),
+        (
+            "post",
+            (
+                "/api/v1/runs/run_latest/rewind",
+                {"message": {"role": "user", "parts": [{"kind": "text", "text": "try again"}]}},
+            ),
+        ),
+    ]
+
+
+def test_cli_rewind_without_message_does_not_send_empty_message(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        calls.append(("json", request_path))
+        return {"info": {"latest_run": {"id": "run_latest"}}}
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        calls.append(("post", (request_path, payload)))
+        return {"thread_id": "tui_thread", "run_id": None}
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+
+    result = _invoke_app(["rewind", "dev", "tui_thread"])
+
+    assert result.exit_code == 0
+    assert calls == [
+        ("json", "/api/v1/threads/tui_thread"),
+        ("post", ("/api/v1/runs/run_latest/rewind", {})),
+    ]
 
 
 def test_standalone_caps_list_supports_agent_prefix(tmp_path: Path) -> None:
@@ -6908,14 +7012,16 @@ def test_cli_help_lists_cap_commands() -> None:
     assert "Manage skill caps." in result.stdout
     assert "Manage service caps." in result.stdout
     assert "Manage prompt caps." in result.stdout
-    assert "Send messages to a thread" in result.stdout
-    assert "Steer a running run." in result.stdout
-    assert "Cancel a running run." in result.stdout
-    assert "Rewind a chat thread from a run." in result.stdout
-    assert "Fork a chat thread from a run." in result.stdout
+    assert "Start, continue, or open a thread." in result.stdout
+    assert "Guide an active run." in result.stdout
+    assert "Cancel an active run." in result.stdout
+    assert "Rewind a thread from a run." in result.stdout
+    assert "Fork a thread from a run." in result.stdout
+    assert "send" not in result.stdout
+    assert "attach" not in result.stdout
     chore_index = result.stdout.index("chore")
     task_index = result.stdout.index("task")
-    send_index = result.stdout.index("send")
+    chat_index = result.stdout.index("chat")
     steer_index = result.stdout.index("steer")
     cancel_index = result.stdout.index("cancel")
     rewind_index = result.stdout.index("rewind")
@@ -6937,7 +7043,7 @@ def test_cli_help_lists_cap_commands() -> None:
     assert (
         task_index
         < result.stdout.index("Thread Commands")
-        < send_index
+        < chat_index
         < steer_index
         < cancel_index
         < rewind_index

@@ -179,15 +179,15 @@ output.
 Job thread ids are runtime projections derived from job kind and id:
 
 ```text
-task_<id>
-chore_<id>
+tsk_<id>
+chr_<id>
 ```
 
 Examples:
 
 ```text
-task_3nprht9x
-chore_xy1234ab
+tsk_3nprht9x
+chr_xy1234ab
 ```
 
 Run ids use the run id family with a `run_` prefix:
@@ -226,7 +226,7 @@ Task projection:
   "path": "tasks/3nprht9x.md",
   "updated_at": "2026-04-23T10:10:00Z",
   "runtime": {
-    "thread_id": "task_3nprht9x",
+    "thread_id": "tsk_3nprht9x",
     "last_run": null,
     "next_run": null
   }
@@ -246,7 +246,7 @@ Chore projection:
   "path": "chores/xy1234ab.md",
   "updated_at": "2026-04-23T10:10:00Z",
   "runtime": {
-    "thread_id": "chore_xy1234ab",
+    "thread_id": "chr_xy1234ab",
     "last_run": {
       "id": "run_ab12cd34",
       "status": "finished",

@@ -69,11 +69,10 @@ For the `run` family:
 
 The proposed full identities are:
 
-- task thread: `task_<id>`
-- chore thread: `chore_<id>`
+- task thread: `tsk_<id>`
+- chore thread: `chr_<id>`
 - web chat thread: `web_<id>`
 - TUI chat thread: `tui_<id>`
-- agent chat thread: `chat_<id>`
 - Telegram thread: `tg_<external_id>`
 - run id: `run_<id>`
 

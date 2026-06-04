@@ -25,9 +25,8 @@ Thread ids use one underscore-delimited normalized form:
 
 Examples:
 
-- `task_3nprht9x`
-- `chore_xy1234ab`
-- `chat_ab12cd34`
+- `tsk_3nprht9x`
+- `chr_xy1234ab`
 - `web_def456gh`
 - `tui_jk789mnp`
 - `tg_123456789`

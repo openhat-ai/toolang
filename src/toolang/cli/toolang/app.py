@@ -15,6 +15,7 @@ import sys
 import time
 import tomllib
 from typing import Annotated, Any, Literal, TYPE_CHECKING, cast
+from urllib.parse import urlencode
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -114,7 +115,9 @@ TOP_LEVEL_COMMANDS = frozenset(
         "tool",
         "channel",
         "sandbox",
+        "chat",
         "send",
+        "attach",
         "threads",
         "runs",
         "steer",
@@ -132,7 +135,7 @@ TOP_LEVEL_COMMANDS = frozenset(
 )
 
 _CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt", "caps")
-_THREAD_PANEL_COMMAND_ORDER = ("send", "steer", "cancel", "rewind", "fork", "runs", "threads")
+_THREAD_PANEL_COMMAND_ORDER = ("chat", "steer", "cancel", "rewind", "fork", "runs", "threads")
 _RUNTIME_PANEL_COMMAND_ORDER = ("model", "tool", "channel", "sandbox")
 
 
@@ -164,9 +167,28 @@ class _RuntimeStartup:
     prepared_state: PreparedState
 
 
-POSTFIX_AGENT_COMMANDS = frozenset({"run", "start", "stop", "info", "send", "threads", "runs", "steer", "cancel", "rewind", "fork"})
+POSTFIX_AGENT_COMMANDS = frozenset(
+    {"run", "start", "stop", "info", "chat", "send", "attach", "threads", "runs", "steer", "cancel", "rewind", "fork"}
+)
 PREFIX_AGENT_COMMANDS = frozenset(
-    {"run", "start", "stop", "caps", "send", "threads", "runs", "steer", "cancel", "rewind", "fork", *CAP_KINDS, "task", "chore"}
+    {
+        "run",
+        "start",
+        "stop",
+        "caps",
+        "chat",
+        "send",
+        "attach",
+        "threads",
+        "runs",
+        "steer",
+        "cancel",
+        "rewind",
+        "fork",
+        *CAP_KINDS,
+        "task",
+        "chore",
+    }
 )
 
 
@@ -447,34 +469,73 @@ def info_agent(
 
 
 @app.command(
-    "send",
-    help="Send messages to a thread",
+    "chat",
+    help="Start, continue, or open a thread.",
     cls=_RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
 )
-def send_command(
+def chat_command(
     ctx: typer.Context,
-    message: str = typer.Argument(..., help="Message text."),
-    thread: Annotated[str | None, typer.Option("--thread", help="Existing chat thread id.")] = None,
+    target_or_message: Annotated[str | None, typer.Argument(help="Thread, run, or message.")] = None,
+    message: Annotated[str | None, typer.Argument(help="Message text.")] = None,
+    ui: Annotated[bool, typer.Option("--ui", help="Open the thread UI.")] = False,
     model: Annotated[str | None, typer.Option("--model", help="Model selector.")] = None,
-    stream: Annotated[bool, typer.Option("--stream", help="Stream the response.")] = False,
 ) -> None:
-    payload: dict[str, Any] = {"thread": thread, "message": _message_payload(message)}
+    target, text = _chat_target_and_message(target_or_message, message)
+    thread_id = _target_thread_id(ctx, target) if target is not None else None
+    if text is None:
+        if thread_id is None:
+            result = _runtime_post(ctx, "/api/v1/threads", payload={"client": "tui"})
+            created = result.get("thread_id")
+            if not isinstance(created, str):
+                raise click.ClickException("runtime did not return a thread id")
+            thread_id = created
+        _open_thread_ui(ctx, thread_id)
+        return
+    payload: dict[str, Any] = {"thread": thread_id, "client": "tui", "message": _message_payload(text)}
     if model is not None:
         payload["model"] = model
-    if stream:
-        _runtime_stream(ctx, "/api/v1/chat/stream", payload=payload)
+    if ui:
+        result = _runtime_post(ctx, "/api/v1/chat", payload=payload)
+        thread = result.get("thread_id")
+        if isinstance(thread, str):
+            _open_thread_ui(ctx, thread)
+        typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
         return
-    result = _runtime_post(ctx, "/api/v1/chat", payload=payload)
-    typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    _runtime_stream(ctx, "/api/v1/chat/stream", payload=payload)
+
+
+@app.command("send", hidden=True, cls=_RequiredPrefixAgentCommand)
+def send_command(
+    ctx: typer.Context,
+    thread: Annotated[str, typer.Argument(help="Thread id.")],
+    message: Annotated[str, typer.Argument(help="Message text.")],
+    model: Annotated[str | None, typer.Option("--model", help="Model selector.")] = None,
+) -> None:
+    target = _target_thread_id(ctx, thread)
+    payload: dict[str, Any] = {"thread": target, "client": "tui", "message": _message_payload(message)}
+    if model is not None:
+        payload["model"] = model
+    _runtime_stream(ctx, "/api/v1/chat/stream", payload=payload)
+
+
+@app.command("attach", hidden=True, cls=_RequiredPrefixAgentCommand)
+def attach_command(
+    ctx: typer.Context,
+    thread: Annotated[str, typer.Argument(help="Thread id.")],
+) -> None:
+    _open_thread_ui(ctx, _target_thread_id(ctx, thread))
 
 
 @app.command("threads", help="List threads.", cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
 def threads_command(
     ctx: typer.Context,
     origin: Annotated[str | None, typer.Option("--origin", help="Filter by origin.")] = None,
+    channel: Annotated[str | None, typer.Option("--channel", help="Filter by channel.")] = None,
+    status: Annotated[str | None, typer.Option("--status", help="Filter by thread status.")] = None,
 ) -> None:
-    path = "/api/v1/threads" if origin is None else f"/api/v1/threads?origin={origin}"
+    query = _query_params(origin=origin, channel=channel, status=status)
+    path = "/api/v1/threads" if not query else f"/api/v1/threads?{query}"
     result = _runtime_json(ctx, path)
     rows = [
         (
@@ -482,13 +543,14 @@ def threads_command(
             _truncate_table_text(item.get("title"), width=48),
             str(item.get("run_count", "")),
             str(item.get("origin", "")),
+            str(item.get("channel", "")),
             str(item.get("status", "")),
             str(item.get("updated_at", "")),
         )
         for item in result.get("items", [])
         if isinstance(item, dict)
     ]
-    _echo_table(("THREAD", "TITLE", "RUNS", "ORIGIN", "STATUS", "UPDATED"), rows)
+    _echo_table(("THREAD", "TITLE", "RUNS", "ORIGIN", "CHANNEL", "STATUS", "UPDATED"), rows)
 
 
 @app.command("runs", help="List runs.", cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
@@ -497,12 +559,12 @@ def runs_command(
     thread: Annotated[str | None, typer.Option("--thread", help="Filter by thread id.")] = None,
     status: Annotated[str | None, typer.Option("--status", help="Filter by run status.")] = None,
 ) -> None:
-    query: list[str] = []
+    query: list[tuple[str, str]] = []
     if thread is not None:
-        query.append(f"thread_id={thread}")
+        query.append(("thread_id", thread))
     if status is not None:
-        query.append(f"status={status}")
-    path = "/api/v1/runs" if not query else f"/api/v1/runs?{'&'.join(query)}"
+        query.append(("status", _api_run_status(status)))
+    path = "/api/v1/runs" if not query else f"/api/v1/runs?{urlencode(query)}"
     result = _runtime_json(ctx, path)
     rows = [
         (
@@ -510,7 +572,7 @@ def runs_command(
             _truncate_table_text(item.get("summary") or item.get("input_text"), width=48),
             str(item.get("thread_id", "")),
             str(item.get("origin", "")),
-            str(item.get("status", "")),
+            _display_run_status(item.get("status")),
             str(item.get("created_at", "")),
         )
         for item in result.get("items", [])
@@ -519,44 +581,63 @@ def runs_command(
     _echo_table(("RUN", "TITLE", "THREAD", "ORIGIN", "STATUS", "CREATED"), rows)
 
 
-@app.command("steer", help="Steer a running run.", cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
+@app.command("steer", help="Guide an active run.", cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
 def steer_command(
     ctx: typer.Context,
     target: str = typer.Argument(..., help="Run id or thread id."),
     message: str = typer.Argument(..., help="Steering message."),
+    ui: Annotated[bool, typer.Option("--ui", help="Open the thread UI.")] = False,
 ) -> None:
     run_id = _target_run_id(ctx, target)
     _runtime_post(ctx, f"/api/v1/runs/{run_id}/steer", payload={"message": _message_payload(message)})
+    if ui:
+        _open_thread_ui(ctx, _target_thread_id(ctx, target))
     typer.echo(f"steered {run_id}")
 
 
-@app.command("cancel", help="Cancel a running run.", cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
+@app.command("cancel", help="Cancel an active run.", cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
 def cancel_command(
     ctx: typer.Context,
     target: str = typer.Argument(..., help="Run id or thread id."),
+    ui: Annotated[bool, typer.Option("--ui", help="Open the thread UI.")] = False,
 ) -> None:
     run_id = _target_run_id(ctx, target)
     _runtime_post(ctx, f"/api/v1/runs/{run_id}/cancel", payload={})
+    if ui:
+        _open_thread_ui(ctx, _target_thread_id(ctx, target))
     typer.echo(f"canceled {run_id}")
 
 
-@app.command("rewind", help="Rewind a chat thread from a run.", cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
+@app.command("rewind", help="Rewind a thread from a run.", cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
 def rewind_command(
     ctx: typer.Context,
-    run_id: str = typer.Argument(..., help="Anchor run id."),
-    message: str = typer.Argument(..., help="Replacement message."),
+    target: str = typer.Argument(..., help="Run id or thread id."),
+    message: Annotated[str | None, typer.Argument(help="Replacement message.")] = None,
+    ui: Annotated[bool, typer.Option("--ui", help="Open the thread UI.")] = False,
 ) -> None:
-    result = _runtime_post(ctx, f"/api/v1/runs/{run_id}/rewind", payload={"message": _message_payload(message)})
+    run_id = _target_latest_run_id(ctx, target)
+    payload = {"message": _message_payload(message)} if message is not None else {}
+    result = _runtime_post(ctx, f"/api/v1/runs/{run_id}/rewind", payload=payload)
+    if ui:
+        thread = result.get("thread_id")
+        _open_thread_ui(ctx, str(thread) if isinstance(thread, str) else _target_thread_id(ctx, target))
     typer.echo(f"rewound {result.get('thread_id')}\t{result.get('run_id')}")
 
 
-@app.command("fork", help="Fork a chat thread from a run.", cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
+@app.command("fork", help="Fork a thread from a run.", cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
 def fork_command(
     ctx: typer.Context,
-    run_id: str = typer.Argument(..., help="Anchor run id."),
-    message: str = typer.Argument(..., help="Fork message."),
+    target: str = typer.Argument(..., help="Run id or thread id."),
+    message: Annotated[str | None, typer.Argument(help="Fork message.")] = None,
+    ui: Annotated[bool, typer.Option("--ui", help="Open the thread UI.")] = False,
 ) -> None:
-    result = _runtime_post(ctx, f"/api/v1/runs/{run_id}/fork", payload={"message": _message_payload(message)})
+    run_id = _target_latest_run_id(ctx, target)
+    payload = {"message": _message_payload(message)} if message is not None else {}
+    result = _runtime_post(ctx, f"/api/v1/runs/{run_id}/fork", payload=payload)
+    if ui:
+        thread = result.get("thread_id")
+        if isinstance(thread, str):
+            _open_thread_ui(ctx, thread)
     typer.echo(f"forked {result.get('thread_id')}\t{result.get('run_id')}")
 
 
@@ -752,6 +833,57 @@ def _message_payload(text: str) -> dict[str, object]:
     }
 
 
+def _query_params(**items: str | None) -> str:
+    return urlencode([(key, value) for key, value in items.items() if value is not None])
+
+
+def _api_run_status(status: str) -> str:
+    return "finished" if status == "succeeded" else status
+
+
+def _display_run_status(status: object) -> str:
+    text = str(status or "")
+    return "succeeded" if text == "finished" else text
+
+
+def _chat_target_and_message(first: str | None, second: str | None) -> tuple[str | None, str | None]:
+    if first is None:
+        return None, second
+    if second is None and not _looks_like_thread_or_run_id(first):
+        return None, first
+    return first, second
+
+
+def _looks_like_thread_or_run_id(value: str) -> bool:
+    return value.startswith(("run_", "tui_", "web_", "tg_", "tsk_", "chr_", "task_", "chore_"))
+
+
+def _open_thread_ui(ctx: typer.Context, thread_id: str | None) -> None:
+    if thread_id is None:
+        raise click.ClickException("thread UI requires an existing thread; pass a message to start a terminal chat")
+    agent_name = _required_prefix_agent(ctx, command_name=str(ctx.info_name or "chat"))
+    status = agents.get_agent_status(_context_root(ctx), agent_name, ui_base_url=_ui_base_url())
+    if status is None or status.status != "running" or status.webui_url is None:
+        typer.echo(f"thread {thread_id}")
+        return
+    typer.echo(f"{status.webui_url.rstrip('/')}/threads/{thread_id}")
+
+
+def _target_thread_id(ctx: typer.Context, target: str | None) -> str | None:
+    if target is None:
+        return None
+    if target.startswith("run_"):
+        detail = _runtime_json(ctx, f"/api/v1/runs/{target}")
+        info = detail.get("info")
+        if isinstance(info, dict) and isinstance(info.get("thread_id"), str):
+            return str(info["thread_id"])
+        thread_id = detail.get("thread_id")
+        if isinstance(thread_id, str):
+            return thread_id
+        raise click.ClickException(f"run has no thread: {target}")
+    return target
+
+
 def _target_run_id(ctx: typer.Context, target: str) -> str:
     if target.startswith("run_"):
         return target
@@ -763,6 +895,19 @@ def _target_run_id(ctx: typer.Context, target: str) -> str:
     if not isinstance(active, dict) or not isinstance(active.get("id"), str):
         raise click.ClickException(f"thread has no active run: {target}")
     return str(active["id"])
+
+
+def _target_latest_run_id(ctx: typer.Context, target: str) -> str:
+    if target.startswith("run_"):
+        return target
+    detail = _runtime_json(ctx, f"/api/v1/threads/{target}")
+    info = detail.get("info")
+    if not isinstance(info, dict):
+        raise click.ClickException(f"thread not found: {target}")
+    latest = info.get("latest_run")
+    if not isinstance(latest, dict) or not isinstance(latest.get("id"), str):
+        raise click.ClickException(f"thread has no runs: {target}")
+    return str(latest["id"])
 
 
 def _resolve_runtime_startup(
