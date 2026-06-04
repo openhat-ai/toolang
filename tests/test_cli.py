@@ -6807,7 +6807,9 @@ def test_cli_chat_help_uses_thread_option() -> None:
     assert "--thread" in result.stdout
     assert "--tui" in result.stdout
     assert "--ui" not in result.stdout
-    assert "Thread or run id." in result.stdout
+    assert "Message to send. Omit to open the TUI." in result.stdout
+    assert "Thread id to continue; run id accepted." in result.stdout
+    assert "Model selector for the new run." in result.stdout
 
 
 def test_cli_thread_control_help_lists_agent_with_arguments() -> None:
@@ -6817,10 +6819,26 @@ def test_cli_thread_control_help_lists_agent_with_arguments() -> None:
     assert "Scope" not in result.stdout
     positions = [
         result.stdout.index("Agent name."),
-        result.stdout.index("Run id or thread id."),
-        result.stdout.index("Steering message."),
+        result.stdout.index("Run id, or thread id with an active run."),
+        result.stdout.index("Instruction to steer the run."),
     ]
     assert positions == sorted(positions)
+
+
+def test_cli_rewind_and_fork_help_describe_latest_run_target() -> None:
+    rewind = _invoke_app(["rewind", "dev", "--help"])
+    fork = _invoke_app(["fork", "dev", "--help"])
+
+    assert rewind.exit_code == 0
+    assert "Run id to rewind from, or thread id to use its" in rewind.stdout
+    assert "latest run." in rewind.stdout
+    assert "Message to send after rewinding." in rewind.stdout
+    assert "Open the terminal UI after rewinding." in rewind.stdout
+    assert fork.exit_code == 0
+    assert "Run id to fork from, or thread id to use its" in fork.stdout
+    assert "latest run." in fork.stdout
+    assert "Message to send in the forked thread." in fork.stdout
+    assert "Open the terminal UI after forking." in fork.stdout
 
 
 def test_cli_chat_tui_opens_terminal_loop(monkeypatch) -> None:
