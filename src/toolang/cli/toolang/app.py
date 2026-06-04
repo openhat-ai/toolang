@@ -102,7 +102,7 @@ if not TYPE_CHECKING:
 WorkKind = Literal["task", "chore"]
 _CLI_PREFIX_AGENT: str | None = None
 AGENT_COMMAND_PANEL = "Agent Commands"
-CHAT_WORK_COMMAND_PANEL = "Chat & Work Commands"
+CHAT_WORK_COMMAND_PANEL = "Work Commands"
 THREAD_COMMAND_PANEL = "Thread Commands"
 RUNTIME_COMMAND_PANEL = "Runtime Commands"
 CAPS_COMMAND_PANEL = "Cap Commands"

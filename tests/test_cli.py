@@ -7264,7 +7264,7 @@ def test_cli_help_lists_cap_commands() -> None:
     assert "Inspect available channels." in result.stdout
     assert "Inspect available sandboxes." in result.stdout
     assert "Agent Commands" in result.stdout
-    assert "Chat & Work Commands" in result.stdout
+    assert "Work Commands" in result.stdout
     assert "Thread Commands" in result.stdout
     assert "Runtime Commands" in result.stdout
     assert "Cap Commands" in result.stdout
@@ -7301,9 +7301,9 @@ def test_cli_help_lists_cap_commands() -> None:
     prompt_index = result.stdout.index("prompt")
     caps_index = result.stdout.rindex("caps")
     assert "plugin" not in result.stdout
-    assert result.stdout.index("Agent Commands") < result.stdout.index("Chat & Work Commands")
+    assert result.stdout.index("Agent Commands") < result.stdout.index("Work Commands")
     assert (
-        result.stdout.index("Chat & Work Commands")
+        result.stdout.index("Work Commands")
         < chat_index
         < chore_index
         < task_index
