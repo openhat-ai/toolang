@@ -6614,7 +6614,7 @@ def test_cli_chat_uses_terminal_client_and_streams(monkeypatch) -> None:
     assert captured["payload"] == {
         "thread": None,
         "client": "tui",
-        "message": {"role": "user", "parts": [{"kind": "text", "text": "review this repo"}]},
+        "message": {"role": "user", "parts": [{"type": "text", "text": "review this repo"}]},
     }
 
 
@@ -6669,7 +6669,7 @@ def test_cli_rewind_accepts_thread_target(monkeypatch) -> None:
             "post",
             (
                 "/api/v1/runs/run_latest/rewind",
-                {"message": {"role": "user", "parts": [{"kind": "text", "text": "try again"}]}},
+                {"message": {"role": "user", "parts": [{"type": "text", "text": "try again"}]}},
             ),
         ),
     ]

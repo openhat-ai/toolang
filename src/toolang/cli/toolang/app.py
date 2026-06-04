@@ -829,7 +829,7 @@ def _runtime_stream(ctx: typer.Context, path: str, *, payload: dict[str, Any]) -
 def _message_payload(text: str) -> dict[str, object]:
     return {
         "role": "user",
-        "parts": [{"kind": "text", "text": text}],
+        "parts": [{"type": "text", "text": text}],
     }
 
 
