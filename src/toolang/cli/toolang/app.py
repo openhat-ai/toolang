@@ -639,10 +639,11 @@ def rewind_command(
     run_id = _target_latest_run_id(ctx, target)
     payload = {"message": _message_payload(message)} if message is not None else {}
     result = _runtime_post(ctx, f"/api/v1/runs/{run_id}/rewind", payload=payload)
+    typer.echo(f"rewound {result.get('thread_id')}\t{result.get('run_id')}")
     if tui:
         thread = result.get("thread_id")
+        _stream_result_run(ctx, result)
         _open_thread_ui(ctx, str(thread) if isinstance(thread, str) else _target_thread_id(ctx, target))
-    typer.echo(f"rewound {result.get('thread_id')}\t{result.get('run_id')}")
 
 
 @app.command(
@@ -661,11 +662,12 @@ def fork_command(
     run_id = _target_latest_run_id(ctx, target)
     payload = {"message": _message_payload(message)} if message is not None else {}
     result = _runtime_post(ctx, f"/api/v1/runs/{run_id}/fork", payload=payload)
+    typer.echo(f"forked {result.get('thread_id')}\t{result.get('run_id')}")
     if tui:
+        _stream_result_run(ctx, result)
         thread = result.get("thread_id")
         if isinstance(thread, str):
             _open_thread_ui(ctx, thread)
-    typer.echo(f"forked {result.get('thread_id')}\t{result.get('run_id')}")
 
 
 @app.command(
@@ -851,6 +853,27 @@ def _runtime_stream(ctx: typer.Context, path: str, *, payload: dict[str, Any]) -
         raise click.ClickException(f"runtime request failed: {exc.code} {detail}") from exc
     except URLError as exc:
         raise click.ClickException(f"runtime request failed: {exc.reason}") from exc
+
+
+def _runtime_get_stream(ctx: typer.Context, path: str) -> None:
+    url = f"{_runtime_base_url(ctx)}{path}"
+    try:
+        with urlopen(url, timeout=60) as response:
+            for raw_line in response:
+                line = raw_line.decode("utf-8", errors="replace").rstrip()
+                if line:
+                    typer.echo(line)
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise click.ClickException(f"runtime request failed: {exc.code} {detail}") from exc
+    except URLError as exc:
+        raise click.ClickException(f"runtime request failed: {exc.reason}") from exc
+
+
+def _stream_result_run(ctx: typer.Context, result: dict[str, Any]) -> None:
+    run_id = result.get("run_id")
+    if isinstance(run_id, str) and run_id:
+        _runtime_get_stream(ctx, f"/api/v1/runs/{run_id}/stream")
 
 
 def _message_payload(text: str) -> dict[str, object]:

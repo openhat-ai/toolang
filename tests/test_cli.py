@@ -6759,6 +6759,45 @@ def test_cli_rewind_without_message_does_not_send_empty_message(monkeypatch) -> 
     ]
 
 
+def test_cli_rewind_tui_streams_created_run_before_prompt(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        calls.append(("json", request_path))
+        return {"info": {"latest_run": {"id": "run_latest"}}}
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        calls.append(("post", (request_path, payload)))
+        return {"thread_id": "tui_thread", "run_id": "run_new"}
+
+    def fake_runtime_get_stream(_ctx: Any, request_path: str) -> None:
+        calls.append(("stream", request_path))
+
+    def fake_chat_interactive(_ctx: Any, *, thread_id: str, model: str | None) -> None:
+        calls.append(("tui", (thread_id, model)))
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(cli, "_runtime_get_stream", fake_runtime_get_stream)
+    monkeypatch.setattr(cli, "_chat_interactive", fake_chat_interactive)
+
+    result = _invoke_app(["rewind", "dev", "tui_thread", "--tui", "try again"])
+
+    assert result.exit_code == 0
+    assert calls == [
+        ("json", "/api/v1/threads/tui_thread"),
+        (
+            "post",
+            (
+                "/api/v1/runs/run_latest/rewind",
+                {"message": {"role": "user", "parts": [{"type": "text", "text": "try again"}]}},
+            ),
+        ),
+        ("stream", "/api/v1/runs/run_new/stream"),
+        ("tui", ("tui_thread", None)),
+    ]
+
+
 def test_standalone_caps_list_supports_agent_prefix(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     caps.put_local_entry_text(
