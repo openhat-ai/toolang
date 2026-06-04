@@ -7275,7 +7275,7 @@ def test_cli_help_lists_cap_commands() -> None:
     assert "Manage skill caps." in result.stdout
     assert "Manage service caps." in result.stdout
     assert "Manage prompt caps." in result.stdout
-    assert "Start, continue, or open a thread." in result.stdout
+    assert "Start or continue a chat thread." in result.stdout
     assert "Guide an active run." in result.stdout
     assert "Cancel an active run." in result.stdout
     assert "Rewind a thread from a run." in result.stdout

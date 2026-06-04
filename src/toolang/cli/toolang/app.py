@@ -473,7 +473,7 @@ def info_agent(
 
 @app.command(
     "chat",
-    help="Start, continue, or open a thread.",
+    help="Start or continue a chat thread.",
     cls=_RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
 )
