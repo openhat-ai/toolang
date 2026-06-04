@@ -6606,6 +6606,34 @@ def test_cli_runs_lists_title(monkeypatch) -> None:
     assert title not in result.stdout
 
 
+def test_cli_runs_hides_thread_column_when_filtered_by_thread(monkeypatch) -> None:
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        assert request_path == "/api/v1/runs?thread_id=tui_bzrh67se"
+        return {
+            "items": [
+                {
+                    "id": "run_abc12345",
+                    "summary": "one run",
+                    "thread_id": "tui_bzrh67se",
+                    "origin": "chat",
+                    "status": "running",
+                    "created_at": "2026-06-04T09:00:00Z",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+
+    result = _invoke_app(["runs", "dev", "--thread", "tui_bzrh67se"])
+
+    assert result.exit_code == 0
+    assert "THREAD" not in result.stdout
+    assert "tui_bzrh67se" not in result.stdout
+    assert "RUN" in result.stdout
+    assert "run_abc12345" in result.stdout
+    assert "one run" in result.stdout
+
+
 def test_cli_chat_uses_terminal_client_and_streams(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

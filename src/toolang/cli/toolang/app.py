@@ -568,18 +568,31 @@ def runs_command(
         query.append(("status", _api_run_status(status)))
     path = "/api/v1/runs" if not query else f"/api/v1/runs?{urlencode(query)}"
     result = _runtime_json(ctx, path)
-    rows = [
-        (
-            str(item.get("thread_id", "")),
-            str(item.get("id", "")),
-            _truncate_table_text(item.get("summary") or item.get("input_text"), width=48),
-            _display_run_status(item.get("status")),
-            str(item.get("created_at", "")),
-        )
-        for item in result.get("items", [])
-        if isinstance(item, dict)
-    ]
-    _echo_table(("THREAD", "RUN", "TITLE", "STATUS", "CREATED"), rows)
+    if thread is not None:
+        rows = [
+            (
+                str(item.get("id", "")),
+                _truncate_table_text(item.get("summary") or item.get("input_text"), width=48),
+                _display_run_status(item.get("status")),
+                str(item.get("created_at", "")),
+            )
+            for item in result.get("items", [])
+            if isinstance(item, dict)
+        ]
+        _echo_table(("RUN", "TITLE", "STATUS", "CREATED"), rows)
+    else:
+        rows = [
+            (
+                str(item.get("thread_id", "")),
+                str(item.get("id", "")),
+                _truncate_table_text(item.get("summary") or item.get("input_text"), width=48),
+                _display_run_status(item.get("status")),
+                str(item.get("created_at", "")),
+            )
+            for item in result.get("items", [])
+            if isinstance(item, dict)
+        ]
+        _echo_table(("THREAD", "RUN", "TITLE", "STATUS", "CREATED"), rows)
 
 
 @app.command(
