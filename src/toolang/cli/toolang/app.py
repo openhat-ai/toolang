@@ -137,6 +137,7 @@ TOP_LEVEL_COMMANDS = frozenset(
 _CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt", "caps")
 _THREAD_PANEL_COMMAND_ORDER = ("chat", "steer", "cancel", "rewind", "fork", "runs", "threads")
 _RUNTIME_PANEL_COMMAND_ORDER = ("model", "tool", "channel", "sandbox")
+_THREAD_TARGET_COMMANDS = frozenset({"steer", "cancel", "rewind", "fork"})
 
 
 class _ToolangGroup(TyperGroup):
@@ -583,7 +584,13 @@ def runs_command(
     _echo_table(("RUN", "TITLE", "THREAD", "ORIGIN", "STATUS", "CREATED"), rows)
 
 
-@app.command("steer", help="Guide an active run.", cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
+@app.command(
+    "steer",
+    help="Guide an active run.",
+    no_args_is_help=True,
+    cls=_RequiredPrefixAgentCommand,
+    rich_help_panel=THREAD_COMMAND_PANEL,
+)
 def steer_command(
     ctx: typer.Context,
     target: str = typer.Argument(..., help="Run id or thread id."),
@@ -597,7 +604,13 @@ def steer_command(
     typer.echo(f"steered {run_id}")
 
 
-@app.command("cancel", help="Cancel an active run.", cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
+@app.command(
+    "cancel",
+    help="Cancel an active run.",
+    no_args_is_help=True,
+    cls=_RequiredPrefixAgentCommand,
+    rich_help_panel=THREAD_COMMAND_PANEL,
+)
 def cancel_command(
     ctx: typer.Context,
     target: str = typer.Argument(..., help="Run id or thread id."),
@@ -610,7 +623,13 @@ def cancel_command(
     typer.echo(f"canceled {run_id}")
 
 
-@app.command("rewind", help="Rewind a thread from a run.", cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
+@app.command(
+    "rewind",
+    help="Rewind a thread from a run.",
+    no_args_is_help=True,
+    cls=_RequiredPrefixAgentCommand,
+    rich_help_panel=THREAD_COMMAND_PANEL,
+)
 def rewind_command(
     ctx: typer.Context,
     target: str = typer.Argument(..., help="Run id or thread id."),
@@ -626,7 +645,13 @@ def rewind_command(
     typer.echo(f"rewound {result.get('thread_id')}\t{result.get('run_id')}")
 
 
-@app.command("fork", help="Fork a thread from a run.", cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
+@app.command(
+    "fork",
+    help="Fork a thread from a run.",
+    no_args_is_help=True,
+    cls=_RequiredPrefixAgentCommand,
+    rich_help_panel=THREAD_COMMAND_PANEL,
+)
 def fork_command(
     ctx: typer.Context,
     target: str = typer.Argument(..., help="Run id or thread id."),
@@ -2083,6 +2108,12 @@ def _consume_global_arg(token: str, argv: list[str], index: int) -> tuple[list[s
 def _rewrite_agent_shortcuts(body: list[str]) -> tuple[list[str], str | None]:
     if not body:
         return body, None
+    if (
+        len(body) == 2
+        and _looks_like_agent_name(body[0])
+        and body[1] in _THREAD_TARGET_COMMANDS
+    ):
+        return [body[1], "--help"], body[0]
     if (
         len(body) >= 2
         and _looks_like_agent_name(body[0])

@@ -6697,6 +6697,16 @@ def test_cli_chat_tui_opens_terminal_loop(monkeypatch) -> None:
     assert "thread tui_new" in result.stdout
 
 
+@pytest.mark.parametrize("command", ("steer", "cancel", "rewind", "fork"))
+def test_cli_thread_control_commands_show_help_without_target(command: str, monkeypatch) -> None:
+    monkeypatch.setattr(cli.sys, "argv", ["too"])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["alice", command])
+
+    assert exc.value.code == 0
+
+
 def test_cli_rewind_accepts_thread_target(monkeypatch) -> None:
     calls: list[tuple[str, object]] = []
 
