@@ -113,8 +113,6 @@ class SnapshotTask:
     ref: str
     name: str
     body: str
-    state: str
-    stage: str
     thread_id: str
     path: str
 
@@ -747,8 +745,6 @@ def _task_snapshot(
             ref=task.document.thread_id(),
             name=task.name.rsplit("/", 1)[-1],
             body=task.document.body,
-            state=task.document.state,
-            stage=task.document.stage,
             thread_id=task.document.thread_id(),
             path=str(task.path),
         ),

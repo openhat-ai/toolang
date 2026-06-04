@@ -1,4 +1,4 @@
-"""Local task and chore document helpers."""
+"""Local task and chore definition and lifecycle helpers."""
 
 from __future__ import annotations
 
@@ -15,28 +15,22 @@ from dateutil.rrule import rrulestr
 import frontmatter
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from .common.ids import LOCAL_ID_FAMILY, allocate_id, decode_id
+from .common.ids import LOCAL_ID_FAMILY, allocate_id
 
-JobState = Literal["active", "inactive", "archived"]
-TaskStage = Literal["todo", "running", "done", "failed"]
+JobKind = Literal["task", "chore"]
+JobLifecycle = Literal["ready", "draft", "archived"]
+TaskStatus = Literal["todo", "running", "done", "failed", "canceled"]
+ChoreStatus = Literal["todo", "running", "done"]
 DEFAULT_CHORE_SCHEDULE = "FREQ=HOURLY;INTERVAL=1"
 REMOTE_REF_PATTERN = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")
 
 
 class _MarkdownDocument(BaseModel):
-    """Base model for one markdown work document."""
+    """Base model for one authored markdown work document."""
 
     model_config = ConfigDict(extra="ignore")
 
-    state: JobState = "active"
     body: str = ""
-
-    @field_validator("state", mode="before")
-    @classmethod
-    def _normalize_state(cls, value: object) -> object:
-        if value is None:
-            return "active"
-        return str(value).strip().lower() or "active"
 
     @classmethod
     def _load_markdown(cls, path: Path) -> "_MarkdownDocument":
@@ -56,13 +50,10 @@ class _MarkdownDocument(BaseModel):
     def markdown_metadata(self) -> dict[str, object]:
         """Return persisted frontmatter metadata."""
 
-        metadata: dict[str, object] = {}
-        if self.state != "active":
-            metadata["state"] = self.state
-        return metadata
+        return {}
 
     def content_hash(self) -> str:
-        """Return one stable textual signature for this document."""
+        """Return one stable textual signature for this definition."""
 
         payload = json.dumps(
             {"metadata": self.markdown_metadata(), "body": self.body},
@@ -72,23 +63,12 @@ class _MarkdownDocument(BaseModel):
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
-    def active(self) -> bool:
-        """Return whether this document participates in execution."""
-
-        return self.state == "active"
-
-    def archived(self) -> bool:
-        """Return whether this document is archived."""
-
-        return self.state == "archived"
-
 
 class TaskFile(_MarkdownDocument):
-    """One local task document."""
+    """One local task definition."""
 
     id: str | None = None
     title: str | None = None
-    stage: TaskStage = "todo"
 
     @field_validator("id", mode="before")
     @classmethod
@@ -98,14 +78,6 @@ class TaskFile(_MarkdownDocument):
         text = str(value).strip()
         return text or None
 
-    @field_validator("stage", mode="before")
-    @classmethod
-    def _normalize_stage(cls, value: object) -> object:
-        if value is None:
-            return "todo"
-        text = str(value).strip().lower()
-        return text or "todo"
-
     @classmethod
     def load(
         cls,
@@ -113,12 +85,9 @@ class TaskFile(_MarkdownDocument):
         *,
         id_factory: Callable[[], str] | None = None,
         persist_id: bool = False,
-        archived: bool = False,
     ) -> "TaskFile":
         loaded = cls._load_markdown(path)
         document = cls.model_validate(loaded.model_dump(mode="python"))
-        if archived and document.state != "archived":
-            document = document.model_copy(update={"state": "archived"})
         original = document
         if document.id is None and id_factory is not None:
             document = document.model_copy(update={"id": id_factory()})
@@ -153,34 +122,6 @@ class TaskFile(_MarkdownDocument):
     def thread_id(self) -> str:
         return task_thread_id(self.task_id())
 
-    def claimable(self) -> bool:
-        """Return whether this task can be claimed by a run."""
-
-        return self.state == "active" and self.stage == "todo"
-
-    def running(self) -> "TaskFile":
-        """Return this task marked as claimed."""
-
-        return self.model_copy(update={"stage": "running"})
-
-    def completed(self, *, succeeded: bool) -> "TaskFile":
-        """Return this task marked as completed."""
-
-        return self.model_copy(update={"stage": "done" if succeeded else "failed"})
-
-    def remote_stage(self) -> TaskStage | None:
-        """Return the local stage implied by a mirrored remote status."""
-
-        status = self.remote_status()
-        if status is None:
-            return None
-        normalized = status.lower()
-        if normalized in {"done", "completed", "complete", "closed", "resolved"}:
-            return "done"
-        if normalized in {"canceled", "cancelled"}:
-            return "failed"
-        return "todo"
-
     def remote_status(self) -> str | None:
         """Return the first explicit remote status line from the task body."""
 
@@ -203,11 +144,6 @@ class TaskFile(_MarkdownDocument):
             return None
         return match.group(0)
 
-    def archived_copy(self) -> "TaskFile":
-        """Return this task marked as archived."""
-
-        return self.model_copy(update={"state": "archived"})
-
     def render_input(self, *, fallback_name: str) -> str:
         """Return the prompt input for this task."""
 
@@ -222,18 +158,16 @@ class TaskFile(_MarkdownDocument):
         return _display_title(self.title, self.body, fallback=fallback_name)
 
     def markdown_metadata(self) -> dict[str, object]:
-        metadata = super().markdown_metadata()
+        metadata: dict[str, object] = {}
         if self.id is not None:
             metadata["id"] = self.id
         if self.title is not None and self.title.strip():
             metadata["title"] = self.title.strip()
-        if self.stage != "todo":
-            metadata["stage"] = self.stage
         return metadata
 
 
 class ChoreFile(_MarkdownDocument):
-    """One local chore document."""
+    """One local chore definition."""
 
     id: str | None = None
     title: str | None = None
@@ -261,12 +195,9 @@ class ChoreFile(_MarkdownDocument):
         *,
         id_factory: Callable[[], str] | None = None,
         persist_id: bool = False,
-        archived: bool = False,
     ) -> "ChoreFile":
         loaded = cls._load_markdown(path)
         document = cls.model_validate(loaded.model_dump(mode="python"))
-        if archived and document.state != "archived":
-            document = document.model_copy(update={"state": "archived"})
         original = document
         if document.id is None and id_factory is not None:
             document = document.model_copy(update={"id": id_factory()})
@@ -317,13 +248,8 @@ class ChoreFile(_MarkdownDocument):
 
         return _display_title(self.title, self.body, fallback=fallback_name)
 
-    def archived_copy(self) -> "ChoreFile":
-        """Return this chore marked as archived."""
-
-        return self.model_copy(update={"state": "archived"})
-
     def markdown_metadata(self) -> dict[str, object]:
-        metadata = super().markdown_metadata()
+        metadata: dict[str, object] = {}
         if self.id is not None:
             metadata["id"] = self.id
         if self.title is not None and self.title.strip():
@@ -334,26 +260,22 @@ class ChoreFile(_MarkdownDocument):
 
 @dataclass(frozen=True, slots=True)
 class TaskEntry:
-    """One listed task document."""
+    """One listed task definition."""
 
     name: str
     path: Path
     document: TaskFile
+    lifecycle: JobLifecycle = "ready"
 
 
 @dataclass(frozen=True, slots=True)
 class ChoreEntry:
-    """One listed chore document."""
+    """One listed chore definition."""
 
     name: str
     path: Path
     document: ChoreFile
-
-
-def task_terminal(stage: TaskStage) -> bool:
-    """Return whether one task stage is terminal."""
-
-    return stage in {"done", "failed"}
+    lifecycle: JobLifecycle = "ready"
 
 
 def next_scheduled_at(
@@ -377,63 +299,101 @@ def next_scheduled_at(
 def task_thread_id(task_id: str) -> str:
     """Return the normalized thread id for one task."""
 
-    return f"task_{task_id.strip()}"
+    return f"tsk_{task_id.strip()}"
 
 
 def chore_thread_id(chore_id: str) -> str:
     """Return the normalized thread id for one chore."""
 
-    return f"chore_{chore_id.strip()}"
+    return f"chr_{chore_id.strip()}"
 
 
 def task_id_from_thread_id(thread_id: str) -> str | None:
     """Extract one local task id from its canonical thread id."""
 
-    if not thread_id.startswith("task_"):
+    if not thread_id.startswith("tsk_"):
         return None
-    task_id = thread_id.removeprefix("task_").strip()
+    task_id = thread_id.removeprefix("tsk_").strip()
     return task_id or None
 
 
 def chore_id_from_thread_id(thread_id: str) -> str | None:
     """Extract one local chore id from its canonical thread id."""
 
-    if not thread_id.startswith("chore_"):
+    if not thread_id.startswith("chr_"):
         return None
-    chore_id = thread_id.removeprefix("chore_").strip()
+    chore_id = thread_id.removeprefix("chr_").strip()
     return chore_id or None
 
 
-def task_path(toolang_root: Path, agent_name: str, task_id: str) -> Path:
+def job_thread_id(kind: JobKind, job_id: str) -> str:
+    """Return the normalized thread id for one job."""
+
+    return task_thread_id(job_id) if kind == "task" else chore_thread_id(job_id)
+
+
+def task_path(
+    toolang_root: Path,
+    agent_name: str,
+    task_id: str,
+    *,
+    lifecycle: JobLifecycle = "ready",
+) -> Path:
     """Return one local task path."""
 
-    return _work_dir(toolang_root, agent_name, kind="task") / _relative_id_path(task_id)
+    return _work_dir(toolang_root, agent_name, kind="task", lifecycle=lifecycle) / _relative_id_path(task_id)
 
 
-def chore_path(toolang_root: Path, agent_name: str, chore_id: str) -> Path:
+def chore_path(
+    toolang_root: Path,
+    agent_name: str,
+    chore_id: str,
+    *,
+    lifecycle: JobLifecycle = "ready",
+) -> Path:
     """Return one local chore path."""
 
-    return _work_dir(toolang_root, agent_name, kind="chore") / _relative_id_path(chore_id)
+    return _work_dir(toolang_root, agent_name, kind="chore", lifecycle=lifecycle) / _relative_id_path(chore_id)
+
+
+def job_path(
+    toolang_root: Path,
+    agent_name: str,
+    *,
+    kind: JobKind,
+    job_id: str,
+    lifecycle: JobLifecycle = "ready",
+) -> Path:
+    """Return one local job path."""
+
+    return task_path(toolang_root, agent_name, job_id, lifecycle=lifecycle) if kind == "task" else chore_path(toolang_root, agent_name, job_id, lifecycle=lifecycle)
 
 
 def list_tasks(
     toolang_root: Path,
     agent_name: str,
     *,
+    lifecycle: JobLifecycle = "ready",
     include_archived: bool = False,
 ) -> tuple[TaskEntry, ...]:
     """List local tasks for one agent."""
 
-    items = list(_task_entries(toolang_root, agent_name, archived=False))
     if include_archived:
-        items.extend(_task_entries(toolang_root, agent_name, archived=True))
-    return tuple(sorted(items, key=lambda item: str(item.path)))
+        items = [*_task_entries(toolang_root, agent_name, lifecycle="ready"), *_task_entries(toolang_root, agent_name, lifecycle="archived")]
+        return tuple(sorted(items, key=lambda item: str(item.path)))
+    return tuple(sorted(_task_entries(toolang_root, agent_name, lifecycle=lifecycle), key=lambda item: str(item.path)))
 
 
 def list_archived_tasks(toolang_root: Path, agent_name: str) -> tuple[TaskEntry, ...]:
     """List archived local tasks for one agent."""
 
-    return tuple(sorted(_task_entries(toolang_root, agent_name, archived=True), key=lambda item: str(item.path)))
+    return list_tasks(toolang_root, agent_name, lifecycle="archived")
+
+
+def list_draft_tasks(toolang_root: Path, agent_name: str) -> tuple[TaskEntry, ...]:
+    """List draft local tasks for one agent."""
+
+    return list_tasks(toolang_root, agent_name, lifecycle="draft")
 
 
 def find_task(
@@ -441,43 +401,50 @@ def find_task(
     agent_name: str,
     task_id: str,
     *,
+    lifecycle: JobLifecycle | None = "ready",
     include_archived: bool = False,
 ) -> TaskEntry | None:
     """Find one local task by stable task id."""
 
-    for entry in list_tasks(toolang_root, agent_name, include_archived=include_archived):
-        if entry.document.task_id() == task_id:
-            return entry
+    lifecycles = _find_lifecycles(lifecycle, include_archived=include_archived)
+    for item_lifecycle in lifecycles:
+        for entry in list_tasks(toolang_root, agent_name, lifecycle=item_lifecycle):
+            if entry.document.task_id() == task_id:
+                return entry
     return None
 
 
 def find_archived_task(toolang_root: Path, agent_name: str, task_id: str) -> TaskEntry | None:
     """Find one archived local task by stable task id."""
 
-    for entry in list_archived_tasks(toolang_root, agent_name):
-        if entry.document.task_id() == task_id:
-            return entry
-    return None
+    return find_task(toolang_root, agent_name, task_id, lifecycle="archived")
 
 
 def list_chores(
     toolang_root: Path,
     agent_name: str,
     *,
+    lifecycle: JobLifecycle = "ready",
     include_archived: bool = False,
 ) -> tuple[ChoreEntry, ...]:
     """List local chores for one agent."""
 
-    items = list(_chore_entries(toolang_root, agent_name, archived=False))
     if include_archived:
-        items.extend(_chore_entries(toolang_root, agent_name, archived=True))
-    return tuple(sorted(items, key=lambda item: str(item.path)))
+        items = [*_chore_entries(toolang_root, agent_name, lifecycle="ready"), *_chore_entries(toolang_root, agent_name, lifecycle="archived")]
+        return tuple(sorted(items, key=lambda item: str(item.path)))
+    return tuple(sorted(_chore_entries(toolang_root, agent_name, lifecycle=lifecycle), key=lambda item: str(item.path)))
 
 
 def list_archived_chores(toolang_root: Path, agent_name: str) -> tuple[ChoreEntry, ...]:
     """List archived local chores for one agent."""
 
-    return tuple(sorted(_chore_entries(toolang_root, agent_name, archived=True), key=lambda item: str(item.path)))
+    return list_chores(toolang_root, agent_name, lifecycle="archived")
+
+
+def list_draft_chores(toolang_root: Path, agent_name: str) -> tuple[ChoreEntry, ...]:
+    """List draft local chores for one agent."""
+
+    return list_chores(toolang_root, agent_name, lifecycle="draft")
 
 
 def find_chore(
@@ -485,84 +452,133 @@ def find_chore(
     agent_name: str,
     chore_id: str,
     *,
+    lifecycle: JobLifecycle | None = "ready",
     include_archived: bool = False,
 ) -> ChoreEntry | None:
     """Find one local chore by stable chore id."""
 
-    for entry in list_chores(toolang_root, agent_name, include_archived=include_archived):
-        if entry.document.chore_id() == chore_id:
-            return entry
+    lifecycles = _find_lifecycles(lifecycle, include_archived=include_archived)
+    for item_lifecycle in lifecycles:
+        for entry in list_chores(toolang_root, agent_name, lifecycle=item_lifecycle):
+            if entry.document.chore_id() == chore_id:
+                return entry
     return None
 
 
 def find_archived_chore(toolang_root: Path, agent_name: str, chore_id: str) -> ChoreEntry | None:
     """Find one archived local chore by stable chore id."""
 
-    for entry in list_archived_chores(toolang_root, agent_name):
-        if entry.document.chore_id() == chore_id:
-            return entry
-    return None
+    return find_chore(toolang_root, agent_name, chore_id, lifecycle="archived")
+
+
+def find_job(
+    toolang_root: Path,
+    agent_name: str,
+    *,
+    kind: JobKind,
+    job_id: str,
+    lifecycle: JobLifecycle | None = "ready",
+) -> TaskEntry | ChoreEntry | None:
+    """Find one local job by stable id."""
+
+    if kind == "task":
+        return find_task(toolang_root, agent_name, job_id, lifecycle=lifecycle)
+    return find_chore(toolang_root, agent_name, job_id, lifecycle=lifecycle)
 
 
 def load_task_text(toolang_root: Path, agent_name: str, task_id: str) -> str:
-    """Load one task document."""
+    """Load one task definition."""
 
-    entry = find_task(toolang_root, agent_name, task_id)
+    entry = find_task(toolang_root, agent_name, task_id, lifecycle=None)
     if entry is None:
         raise FileNotFoundError(f"task not found: {task_id}")
     return entry.path.read_text(encoding="utf-8")
 
 
 def load_chore_text(toolang_root: Path, agent_name: str, chore_id: str) -> str:
-    """Load one chore document."""
+    """Load one chore definition."""
 
-    entry = find_chore(toolang_root, agent_name, chore_id)
+    entry = find_chore(toolang_root, agent_name, chore_id, lifecycle=None)
     if entry is None:
         raise FileNotFoundError(f"chore not found: {chore_id}")
     return entry.path.read_text(encoding="utf-8")
 
 
-def create_task_text(toolang_root: Path, agent_name: str, text: str) -> Path:
-    """Create one validated task document with an auto-generated id path."""
+def create_task_text(
+    toolang_root: Path,
+    agent_name: str,
+    text: str,
+    *,
+    lifecycle: JobLifecycle = "ready",
+) -> Path:
+    """Create one validated task definition with an auto-generated id path."""
 
     document = TaskFile.parse_text(text).model_copy(
         update={"id": allocate_job_id(toolang_root, agent_name)}
     )
-    path = task_path(toolang_root, agent_name, document.task_id())
+    path = task_path(toolang_root, agent_name, document.task_id(), lifecycle=lifecycle)
     document.save(path)
     return path
 
 
-def create_chore_text(toolang_root: Path, agent_name: str, text: str) -> Path:
-    """Create one validated chore document with an auto-generated id path."""
+def create_chore_text(
+    toolang_root: Path,
+    agent_name: str,
+    text: str,
+    *,
+    lifecycle: JobLifecycle = "ready",
+) -> Path:
+    """Create one validated chore definition with an auto-generated id path."""
 
     document = ChoreFile.parse_text(text).model_copy(
         update={"id": allocate_job_id(toolang_root, agent_name)}
     )
-    path = chore_path(toolang_root, agent_name, document.chore_id())
+    path = chore_path(toolang_root, agent_name, document.chore_id(), lifecycle=lifecycle)
+    document.save(path)
+    return path
+
+
+def clone_task(toolang_root: Path, agent_name: str, task_id: str) -> Path:
+    """Clone one task definition into a new ready task."""
+
+    entry = find_task(toolang_root, agent_name, task_id, lifecycle=None)
+    if entry is None:
+        raise FileNotFoundError(f"task not found: {task_id}")
+    document = entry.document.model_copy(update={"id": allocate_job_id(toolang_root, agent_name)})
+    path = task_path(toolang_root, agent_name, document.task_id(), lifecycle="ready")
+    document.save(path)
+    return path
+
+
+def clone_chore(toolang_root: Path, agent_name: str, chore_id: str) -> Path:
+    """Clone one chore definition into a new ready chore."""
+
+    entry = find_chore(toolang_root, agent_name, chore_id, lifecycle=None)
+    if entry is None:
+        raise FileNotFoundError(f"chore not found: {chore_id}")
+    document = entry.document.model_copy(update={"id": allocate_job_id(toolang_root, agent_name)})
+    path = chore_path(toolang_root, agent_name, document.chore_id(), lifecycle="ready")
     document.save(path)
     return path
 
 
 def update_task_text(toolang_root: Path, agent_name: str, task_id: str, text: str) -> Path:
-    """Replace one task document, preserving its stable id."""
+    """Replace one task definition, preserving its stable id and lifecycle."""
 
-    entry = find_task(toolang_root, agent_name, task_id)
+    entry = find_task(toolang_root, agent_name, task_id, lifecycle=None)
     if entry is None:
         raise FileNotFoundError(f"task not found: {task_id}")
-    document = TaskFile.parse_text(text)
-    document = _task_with_existing_id(document, task_id=entry.document.task_id())
+    document = _task_with_existing_id(TaskFile.parse_text(text), task_id=entry.document.task_id())
     return save_task_entry(toolang_root, agent_name, entry, document)
 
 
 def update_chore_text(toolang_root: Path, agent_name: str, chore_id: str, text: str) -> Path:
-    """Replace one chore document, preserving its stable id."""
+    """Replace one chore definition, preserving its stable id and lifecycle."""
 
-    entry = find_chore(toolang_root, agent_name, chore_id)
+    entry = find_chore(toolang_root, agent_name, chore_id, lifecycle=None)
     if entry is None:
         raise FileNotFoundError(f"chore not found: {chore_id}")
-    document = ChoreFile.parse_text(text)
-    document = _chore_with_existing_id(document, chore_id=entry.document.chore_id())
+    document = _chore_with_existing_id(ChoreFile.parse_text(text), chore_id=entry.document.chore_id())
     return save_chore_entry(toolang_root, agent_name, entry, document)
 
 
@@ -572,17 +588,15 @@ def save_task_entry(
     entry: TaskEntry,
     document: TaskFile,
 ) -> Path:
-    """Save a task entry, moving it when its state changes archive placement."""
+    """Save a task entry in its current lifecycle folder."""
 
     document = _task_with_existing_id(document, task_id=entry.document.task_id())
-    return _save_job_document(
-        toolang_root,
-        agent_name,
-        kind="task",
-        item_id=document.task_id(),
-        current_path=entry.path,
-        document=document,
-    )
+    target = task_path(toolang_root, agent_name, document.task_id(), lifecycle=entry.lifecycle)
+    document.save(target)
+    if entry.path != target:
+        entry.path.unlink(missing_ok=True)
+        _prune_empty_parents(entry.path.parent, stop=_work_dir(toolang_root, agent_name, kind="task", lifecycle=entry.lifecycle))
+    return target
 
 
 def save_chore_entry(
@@ -591,197 +605,128 @@ def save_chore_entry(
     entry: ChoreEntry,
     document: ChoreFile,
 ) -> Path:
-    """Save a chore entry, moving it when its state changes archive placement."""
+    """Save a chore entry in its current lifecycle folder."""
 
     document = _chore_with_existing_id(document, chore_id=entry.document.chore_id())
-    return _save_job_document(
-        toolang_root,
-        agent_name,
-        kind="chore",
-        item_id=document.chore_id(),
-        current_path=entry.path,
-        document=document,
-    )
+    target = chore_path(toolang_root, agent_name, document.chore_id(), lifecycle=entry.lifecycle)
+    document.save(target)
+    if entry.path != target:
+        entry.path.unlink(missing_ok=True)
+        _prune_empty_parents(entry.path.parent, stop=_work_dir(toolang_root, agent_name, kind="chore", lifecycle=entry.lifecycle))
+    return target
 
 
-def pause_task(toolang_root: Path, agent_name: str, task_id: str) -> Path | None:
-    """Mark one task inactive."""
-
-    entry = find_task(toolang_root, agent_name, task_id)
-    if entry is None:
-        return None
-    document = entry.document.model_copy(update={"state": "inactive"})
-    return save_task_entry(toolang_root, agent_name, entry, document)
-
-
-def resume_task(toolang_root: Path, agent_name: str, task_id: str) -> Path | None:
-    """Mark one task active."""
-
-    entry = find_task(toolang_root, agent_name, task_id)
-    if entry is None:
-        return None
-    document = entry.document.model_copy(update={"state": "active"})
-    return save_task_entry(toolang_root, agent_name, entry, document)
-
-
-def pause_chore(toolang_root: Path, agent_name: str, chore_id: str) -> Path | None:
-    """Mark one chore inactive."""
-
-    entry = find_chore(toolang_root, agent_name, chore_id)
-    if entry is None:
-        return None
-    document = entry.document.model_copy(update={"state": "inactive"})
-    return save_chore_entry(toolang_root, agent_name, entry, document)
-
-
-def resume_chore(toolang_root: Path, agent_name: str, chore_id: str) -> Path | None:
-    """Mark one chore active."""
-
-    entry = find_chore(toolang_root, agent_name, chore_id)
-    if entry is None:
-        return None
-    document = entry.document.model_copy(update={"state": "active"})
-    return save_chore_entry(toolang_root, agent_name, entry, document)
-
-
-def remove_task(toolang_root: Path, agent_name: str, task_id: str) -> bool:
-    """Remove one task document."""
-
-    entry = find_task(toolang_root, agent_name, task_id)
-    if entry is None:
-        return False
-    entry.path.unlink()
-    _prune_empty_parents(entry.path.parent, stop=_work_dir(toolang_root, agent_name, kind="task"))
-    return True
-
-
-def remove_chore(toolang_root: Path, agent_name: str, chore_id: str) -> bool:
-    """Remove one chore document."""
-
-    entry = find_chore(toolang_root, agent_name, chore_id)
-    if entry is None:
-        return False
-    entry.path.unlink()
-    _prune_empty_parents(entry.path.parent, stop=_work_dir(toolang_root, agent_name, kind="chore"))
-    return True
-
-
-def remove_archived_task(toolang_root: Path, agent_name: str, task_id: str) -> bool:
-    """Remove one archived task document."""
-
-    entry = find_archived_task(toolang_root, agent_name, task_id)
-    if entry is None:
-        return False
-    entry.path.unlink()
-    _prune_empty_parents(entry.path.parent, stop=_archive_dir(toolang_root, agent_name, kind="task"))
-    return True
-
-
-def remove_archived_chore(toolang_root: Path, agent_name: str, chore_id: str) -> bool:
-    """Remove one archived chore document."""
-
-    entry = find_archived_chore(toolang_root, agent_name, chore_id)
-    if entry is None:
-        return False
-    entry.path.unlink()
-    _prune_empty_parents(entry.path.parent, stop=_archive_dir(toolang_root, agent_name, kind="chore"))
-    return True
-
-
-def claim_task(path: Path) -> TaskFile:
-    """Mark one task document as running."""
-
-    task = TaskFile.load(path, persist_id=True)
-    if not task.claimable():
-        raise ValueError(f"task cannot be claimed: {path}")
-    claimed = task.running()
-    claimed.save(path)
-    return claimed
-
-
-def finish_task(
+def move_task_lifecycle(
     toolang_root: Path,
     agent_name: str,
     task_id: str,
     *,
-    succeeded: bool,
+    lifecycle: JobLifecycle,
 ) -> Path | None:
-    """Mark one task as finished without archiving it."""
+    """Move one task definition to another lifecycle folder."""
 
-    entry = find_task(toolang_root, agent_name, task_id)
+    entry = find_task(toolang_root, agent_name, task_id, lifecycle=None)
     if entry is None:
         return None
-    completed = entry.document.completed(succeeded=succeeded)
-    completed.save(entry.path)
-    return entry.path
+    return _move_entry(toolang_root, agent_name, kind="task", entry=entry, lifecycle=lifecycle)
+
+
+def move_chore_lifecycle(
+    toolang_root: Path,
+    agent_name: str,
+    chore_id: str,
+    *,
+    lifecycle: JobLifecycle,
+) -> Path | None:
+    """Move one chore definition to another lifecycle folder."""
+
+    entry = find_chore(toolang_root, agent_name, chore_id, lifecycle=None)
+    if entry is None:
+        return None
+    return _move_entry(toolang_root, agent_name, kind="chore", entry=entry, lifecycle=lifecycle)
 
 
 def archive_task(toolang_root: Path, agent_name: str, task_id: str) -> Path | None:
     """Archive one task by id."""
 
-    entry = find_task(toolang_root, agent_name, task_id)
-    if entry is None:
-        return None
-    archived = entry.document.archived_copy()
-    target = _archive_path(toolang_root, agent_name, kind="task", item_id=task_id)
-    archived.save(target)
-    entry.path.unlink(missing_ok=True)
-    _prune_empty_parents(entry.path.parent, stop=_work_dir(toolang_root, agent_name, kind="task"))
-    return target
+    return move_task_lifecycle(toolang_root, agent_name, task_id, lifecycle="archived")
 
 
 def archive_chore(toolang_root: Path, agent_name: str, chore_id: str) -> Path | None:
-    """Archive one active chore by id."""
+    """Archive one chore by id."""
 
-    entry = find_chore(toolang_root, agent_name, chore_id)
-    if entry is None:
-        return None
-    archived = entry.document.archived_copy()
-    target = _archive_path(toolang_root, agent_name, kind="chore", item_id=chore_id)
-    archived.save(target)
-    entry.path.unlink(missing_ok=True)
-    _prune_empty_parents(entry.path.parent, stop=_work_dir(toolang_root, agent_name, kind="chore"))
-    return target
+    return move_chore_lifecycle(toolang_root, agent_name, chore_id, lifecycle="archived")
 
 
-def unarchive_task(
-    toolang_root: Path,
-    agent_name: str,
-    task_id: str,
-    *,
-    state: Literal["active", "inactive"] = "active",
-    stage: TaskStage | None = None,
-) -> Path | None:
-    """Move one archived task back to the active task directory."""
+def ready_task(toolang_root: Path, agent_name: str, task_id: str) -> Path | None:
+    """Move one task to the ready folder."""
+
+    return move_task_lifecycle(toolang_root, agent_name, task_id, lifecycle="ready")
+
+
+def ready_chore(toolang_root: Path, agent_name: str, chore_id: str) -> Path | None:
+    """Move one chore to the ready folder."""
+
+    return move_chore_lifecycle(toolang_root, agent_name, chore_id, lifecycle="ready")
+
+
+def draft_task(toolang_root: Path, agent_name: str, task_id: str) -> Path | None:
+    """Move one task to the draft folder."""
+
+    return move_task_lifecycle(toolang_root, agent_name, task_id, lifecycle="draft")
+
+
+def draft_chore(toolang_root: Path, agent_name: str, chore_id: str) -> Path | None:
+    """Move one chore to the draft folder."""
+
+    return move_chore_lifecycle(toolang_root, agent_name, chore_id, lifecycle="draft")
+
+
+def remove_archived_task(toolang_root: Path, agent_name: str, task_id: str) -> bool:
+    """Remove one archived task definition."""
 
     entry = find_archived_task(toolang_root, agent_name, task_id)
     if entry is None:
-        return None
-    updates: dict[str, object] = {"state": state}
-    if stage is not None:
-        updates["stage"] = stage
-    document = entry.document.model_copy(update=updates)
-    return save_task_entry(toolang_root, agent_name, entry, document)
+        return False
+    entry.path.unlink()
+    _prune_empty_parents(entry.path.parent, stop=_work_dir(toolang_root, agent_name, kind="task", lifecycle="archived"))
+    return True
 
 
-def unarchive_chore(
-    toolang_root: Path,
-    agent_name: str,
-    chore_id: str,
-    *,
-    state: Literal["active", "inactive"] = "active",
-) -> Path | None:
-    """Move one archived chore back to the active chore directory."""
+def remove_archived_chore(toolang_root: Path, agent_name: str, chore_id: str) -> bool:
+    """Remove one archived chore definition."""
 
     entry = find_archived_chore(toolang_root, agent_name, chore_id)
     if entry is None:
-        return None
-    document = entry.document.model_copy(update={"state": state})
-    return save_chore_entry(toolang_root, agent_name, entry, document)
+        return False
+    entry.path.unlink()
+    _prune_empty_parents(entry.path.parent, stop=_work_dir(toolang_root, agent_name, kind="chore", lifecycle="archived"))
+    return True
 
 
-def _task_entries(toolang_root: Path, agent_name: str, *, archived: bool) -> Iterable[TaskEntry]:
-    root = _archive_dir(toolang_root, agent_name, kind="task") if archived else _work_dir(toolang_root, agent_name, kind="task")
+def ready_job_entries(
+    toolang_root: Path,
+    agent_name: str,
+    *,
+    kind: JobKind | None = None,
+) -> tuple[TaskEntry | ChoreEntry, ...]:
+    """Return ready job entries scanned from ready folders."""
+
+    items: list[TaskEntry | ChoreEntry] = []
+    if kind in {None, "task"}:
+        items.extend(list_tasks(toolang_root, agent_name))
+    if kind in {None, "chore"}:
+        items.extend(list_chores(toolang_root, agent_name))
+    return tuple(sorted(items, key=lambda item: str(item.path)))
+
+
+def _task_entries(
+    toolang_root: Path,
+    agent_name: str,
+    *,
+    lifecycle: JobLifecycle,
+) -> Iterable[TaskEntry]:
+    root = _work_dir(toolang_root, agent_name, kind="task", lifecycle=lifecycle)
     if not root.exists():
         return ()
     return tuple(
@@ -790,17 +735,22 @@ def _task_entries(toolang_root: Path, agent_name: str, *, archived: bool) -> Ite
             path=path,
             document=TaskFile.load(
                 path,
-                id_factory=(None if archived else lambda: allocate_job_id(toolang_root, agent_name)),
+                id_factory=(lambda: allocate_job_id(toolang_root, agent_name)),
                 persist_id=True,
-                archived=archived,
             ),
+            lifecycle=lifecycle,
         )
         for path in sorted(root.rglob("*.md"))
     )
 
 
-def _chore_entries(toolang_root: Path, agent_name: str, *, archived: bool) -> Iterable[ChoreEntry]:
-    root = _archive_dir(toolang_root, agent_name, kind="chore") if archived else _work_dir(toolang_root, agent_name, kind="chore")
+def _chore_entries(
+    toolang_root: Path,
+    agent_name: str,
+    *,
+    lifecycle: JobLifecycle,
+) -> Iterable[ChoreEntry]:
+    root = _work_dir(toolang_root, agent_name, kind="chore", lifecycle=lifecycle)
     if not root.exists():
         return ()
     return tuple(
@@ -809,95 +759,64 @@ def _chore_entries(toolang_root: Path, agent_name: str, *, archived: bool) -> It
             path=path,
             document=ChoreFile.load(
                 path,
-                id_factory=(None if archived else lambda: allocate_job_id(toolang_root, agent_name)),
+                id_factory=(lambda: allocate_job_id(toolang_root, agent_name)),
                 persist_id=True,
-                archived=archived,
             ),
+            lifecycle=lifecycle,
         )
         for path in sorted(root.rglob("*.md"))
     )
 
 
-def _work_dir(toolang_root: Path, agent_name: str, *, kind: Literal["task", "chore"]) -> Path:
-    return toolang_root / "agents" / agent_name / ("tasks" if kind == "task" else "chores")
-
-
-def _archive_dir(toolang_root: Path, agent_name: str, *, kind: Literal["task", "chore"]) -> Path:
-    return toolang_root / "agents" / agent_name / "archive" / ("tasks" if kind == "task" else "chores")
-
-
-def _archive_path(
+def _work_dir(
     toolang_root: Path,
     agent_name: str,
     *,
-    kind: Literal["task", "chore"],
-    item_id: str,
+    kind: JobKind,
+    lifecycle: JobLifecycle,
 ) -> Path:
-    return _archive_dir(toolang_root, agent_name, kind=kind) / _archive_bucket(item_id) / f"{item_id}.md"
+    home = toolang_root / "agents" / agent_name
+    bucket = "tasks" if kind == "task" else "chores"
+    if lifecycle == "ready":
+        return home / bucket
+    if lifecycle == "draft":
+        return home / "drafts" / bucket
+    return home / "archive" / bucket
 
 
-def _job_path_for_state(
+def _move_entry(
     toolang_root: Path,
     agent_name: str,
     *,
-    kind: Literal["task", "chore"],
-    item_id: str,
-    state: JobState,
+    kind: JobKind,
+    entry: TaskEntry | ChoreEntry,
+    lifecycle: JobLifecycle,
 ) -> Path:
-    if state == "archived":
-        return _archive_path(toolang_root, agent_name, kind=kind, item_id=item_id)
-    if kind == "task":
-        return task_path(toolang_root, agent_name, item_id)
-    return chore_path(toolang_root, agent_name, item_id)
-
-
-def _save_job_document(
-    toolang_root: Path,
-    agent_name: str,
-    *,
-    kind: Literal["task", "chore"],
-    item_id: str,
-    current_path: Path,
-    document: TaskFile | ChoreFile,
-) -> Path:
-    target = _job_path_for_state(
-        toolang_root,
-        agent_name,
-        kind=kind,
-        item_id=item_id,
-        state=document.state,
-    )
-    document.save(target)
-    if current_path != target:
-        current_path.unlink(missing_ok=True)
+    if isinstance(entry, TaskEntry):
+        item_id = entry.document.task_id()
+    else:
+        item_id = entry.document.chore_id()
+    target = job_path(toolang_root, agent_name, kind=kind, job_id=item_id, lifecycle=lifecycle)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if entry.path != target:
+        entry.path.replace(target)
         _prune_empty_parents(
-            current_path.parent,
-            stop=_job_parent_root(toolang_root, agent_name, kind=kind, path=current_path),
+            entry.path.parent,
+            stop=_work_dir(toolang_root, agent_name, kind=kind, lifecycle=entry.lifecycle),
         )
     return target
 
 
-def _job_parent_root(
-    toolang_root: Path,
-    agent_name: str,
+def _find_lifecycles(
+    lifecycle: JobLifecycle | None,
     *,
-    kind: Literal["task", "chore"],
-    path: Path,
-) -> Path:
-    archive = _archive_dir(toolang_root, agent_name, kind=kind)
-    try:
-        path.relative_to(archive)
-    except ValueError:
-        return _work_dir(toolang_root, agent_name, kind=kind)
-    return archive
-
-
-def _archive_bucket(item_id: str) -> str:
-    try:
-        started_at = decode_id(item_id, family=LOCAL_ID_FAMILY).bucket_started_at
-    except ValueError:
-        return (item_id[:4] or "legacy").lower()
-    return started_at.astimezone(timezone.utc).strftime("%Y%m%dT%HZ")
+    include_archived: bool,
+) -> tuple[JobLifecycle, ...]:
+    if lifecycle is not None:
+        if include_archived and lifecycle == "ready":
+            return ("ready", "archived")
+        return (lifecycle,)
+    return ("ready", "draft", "archived")
 
 
 def _relative_id_path(value: str) -> Path:
@@ -968,10 +887,12 @@ def _job_id_exists(toolang_root: Path, agent_name: str, value: str) -> bool:
 
 def _job_document_paths(toolang_root: Path, agent_name: str) -> Iterable[Path]:
     roots = (
-        _work_dir(toolang_root, agent_name, kind="task"),
-        _work_dir(toolang_root, agent_name, kind="chore"),
-        _archive_dir(toolang_root, agent_name, kind="task"),
-        _archive_dir(toolang_root, agent_name, kind="chore"),
+        _work_dir(toolang_root, agent_name, kind="task", lifecycle="ready"),
+        _work_dir(toolang_root, agent_name, kind="chore", lifecycle="ready"),
+        _work_dir(toolang_root, agent_name, kind="task", lifecycle="draft"),
+        _work_dir(toolang_root, agent_name, kind="chore", lifecycle="draft"),
+        _work_dir(toolang_root, agent_name, kind="task", lifecycle="archived"),
+        _work_dir(toolang_root, agent_name, kind="chore", lifecycle="archived"),
     )
     for root in roots:
         if not root.exists():
@@ -980,10 +901,11 @@ def _job_document_paths(toolang_root: Path, agent_name: str) -> Iterable[Path]:
 
 
 def _display_title(title: str | None, body: str, *, fallback: str) -> str:
-    if title is not None and title.strip():
-        return title.strip()
+    text = (title or "").strip()
+    if text:
+        return text
     for line in body.splitlines():
-        text = line.strip().lstrip("#").strip()
-        if text:
-            return text[:80]
-    return fallback.strip()
+        candidate = line.strip().lstrip("#").strip()
+        if candidate:
+            return candidate[:80]
+    return fallback

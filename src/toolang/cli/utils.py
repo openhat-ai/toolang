@@ -157,8 +157,15 @@ class _RequiredPrefixAgentCommand(_PrefixAgentCommand):
             default=None,
             expose_value=False,
             help=self.argument_help,
-            rich_help_panel="Scope",
         )
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        state = ctx.obj if isinstance(ctx.obj, dict) else {}
+        if args and not args[0].startswith("-") and not state.get("agent"):
+            agent = args.pop(0)
+            state["agent"] = agent
+            ctx.obj = state
+        return TyperCommand.parse_args(self, ctx, args)
 
 
 class _HelpOnlyTyperArgument(TyperArgument):

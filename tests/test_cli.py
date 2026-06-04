@@ -38,12 +38,13 @@ def _invoke_app(
     args: list[str],
     *,
     env: dict[str, str] | None = None,
+    input: str | None = None,
     prefix_agent: str | None = None,
 ):
     previous = cli._CLI_PREFIX_AGENT
     cli._CLI_PREFIX_AGENT = prefix_agent
     try:
-        return runner.invoke(cli.app, args, env=env)
+        return runner.invoke(cli.app, args, env=env, input=input)
     finally:
         cli._CLI_PREFIX_AGENT = previous
 
@@ -60,6 +61,11 @@ def _invoke_caps_app(
         return runner.invoke(caps_cli.app, args, env=env)
     finally:
         caps_cli._CLI_PREFIX_AGENT = previous
+
+
+def _indexes_in_order(text: str, tokens: tuple[str, ...]) -> bool:
+    indexes = [text.index(token) for token in tokens]
+    return indexes == sorted(indexes)
 
 
 class _FakeModelProvider:
@@ -5275,6 +5281,52 @@ def test_cli_task_new_persists_id(tmp_path: Path, monkeypatch) -> None:
     assert "stage: todo" not in saved
 
 
+def test_cli_task_and_chore_help_orders_commands() -> None:
+    task = _invoke_app(["task", "--help"], prefix_agent="alice")
+    chore = _invoke_app(["chore", "--help"], prefix_agent="alice")
+
+    assert task.exit_code == 0
+    assert chore.exit_code == 0
+    assert _indexes_in_order(
+        task.stdout,
+        (
+            "list",
+            "new",
+            "clone",
+            "edit",
+            "delete",
+            "draft",
+            "ready",
+            "archive",
+            "cancel",
+            "reopen",
+        ),
+    )
+    assert "run      Unsupported." not in task.stdout
+    assert "Move a task to ready." in task.stdout
+    assert "Move a task to archive." in task.stdout
+    assert _indexes_in_order(
+        chore.stdout,
+        (
+            "list",
+            "new",
+            "clone",
+            "edit",
+            "delete",
+            "draft",
+            "ready",
+            "archive",
+            "cancel",
+            "run",
+        ),
+    )
+    assert "reopen   Unsupported." not in chore.stdout
+    assert "Move a chore to ready." in chore.stdout
+    assert "Move a chore to archive." in chore.stdout
+    assert "Trigger a chore run now." in chore.stdout
+    assert "Run a chore." not in chore.stdout
+
+
 def test_cli_task_list_shows_task_rows(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(
@@ -5303,11 +5355,32 @@ def test_cli_task_list_shows_task_rows(tmp_path: Path, monkeypatch) -> None:
     assert result.exit_code == 0
     assert "ID" in result.stdout
     assert "TASK" in result.stdout
-    assert "STATE" in result.stdout
-    assert "STAGE" in result.stdout
+    assert "LIFECYCLE" in result.stdout
     assert "Review the current plan." in result.stdout
-    assert "inactive" in result.stdout
-    assert "running" in result.stdout
+    assert "ready" in result.stdout
+
+
+def test_cli_task_clone_creates_ready_copy(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
+    _invoke_app(
+        ["task", "new", "--draft"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    task_id = work.list_draft_tasks(toolang_root, "alice")[0].document.task_id()
+
+    result = _invoke_app(
+        ["task", "clone", task_id],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    cloned = work.list_tasks(toolang_root, "alice")[0]
+
+    assert result.exit_code == 0
+    assert f"task {cloned.document.task_id()} cloned" in result.stdout
+    assert cloned.document.task_id() != task_id
+    assert cloned.document.title == "Task title"
 
 
 def test_cli_task_delete_requires_archived_task(tmp_path: Path, monkeypatch) -> None:
@@ -5347,7 +5420,7 @@ def test_cli_task_delete_requires_archived_task(tmp_path: Path, monkeypatch) -> 
     assert work.find_archived_task(toolang_root, "alice", task_id) is None
 
 
-def test_cli_task_pause_and_resume_update_state(tmp_path: Path, monkeypatch) -> None:
+def test_cli_task_draft_and_ready_move_lifecycle(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
     _invoke_app(
@@ -5357,30 +5430,28 @@ def test_cli_task_pause_and_resume_update_state(tmp_path: Path, monkeypatch) -> 
     )
     task_id = work.list_tasks(toolang_root, "alice")[0].document.task_id()
 
-    pause_result = _invoke_app(
-        ["task", "pause", task_id],
+    draft_result = _invoke_app(
+        ["task", "draft", task_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    paused = work.find_task(toolang_root, "alice", task_id)
-    resume_result = _invoke_app(
-        ["task", "resume", task_id],
+    drafted = work.find_task(toolang_root, "alice", task_id, lifecycle="draft")
+    ready_result = _invoke_app(
+        ["task", "ready", task_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    resumed = work.find_task(toolang_root, "alice", task_id)
+    readied = work.find_task(toolang_root, "alice", task_id)
 
-    assert pause_result.exit_code == 0
-    assert f"task {task_id} paused" in pause_result.stdout
-    assert paused is not None
-    assert paused.document.state == "inactive"
-    assert resume_result.exit_code == 0
-    assert f"task {task_id} resumed" in resume_result.stdout
-    assert resumed is not None
-    assert resumed.document.state == "active"
+    assert draft_result.exit_code == 0
+    assert f"task {task_id} drafted" in draft_result.stdout
+    assert drafted is not None
+    assert ready_result.exit_code == 0
+    assert f"task {task_id} ready" in ready_result.stdout
+    assert readied is not None
 
 
-def test_cli_task_restore_moves_archived_task_back(tmp_path: Path, monkeypatch) -> None:
+def test_cli_task_ready_moves_archived_task_back(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
     _invoke_app(
@@ -5396,13 +5467,13 @@ def test_cli_task_restore_moves_archived_task_back(tmp_path: Path, monkeypatch) 
     )
 
     result = _invoke_app(
-        ["task", "restore", task_id],
+        ["task", "ready", task_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
 
     assert result.exit_code == 0
-    assert f"task {task_id} restored" in result.stdout
+    assert f"task {task_id} ready" in result.stdout
     assert work.find_task(toolang_root, "alice", task_id) is not None
     assert work.find_archived_task(toolang_root, "alice", task_id) is None
 
@@ -5430,7 +5501,31 @@ def test_cli_chore_new_and_list_show_schedule(tmp_path: Path, monkeypatch) -> No
     assert "FREQ=HOURLY;INTERVAL=1" in result.stdout
 
 
-def test_cli_chore_pause_and_resume_update_state(tmp_path: Path, monkeypatch) -> None:
+def test_cli_chore_clone_creates_ready_copy(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
+    _invoke_app(
+        ["chore", "new", "--draft"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    chore_id = work.list_draft_chores(toolang_root, "alice")[0].document.chore_id()
+
+    result = _invoke_app(
+        ["chore", "clone", chore_id],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+        prefix_agent="alice",
+    )
+    cloned = work.list_chores(toolang_root, "alice")[0]
+
+    assert result.exit_code == 0
+    assert f"chore {cloned.document.chore_id()} cloned" in result.stdout
+    assert cloned.document.chore_id() != chore_id
+    assert cloned.document.title == "Chore title"
+    assert cloned.document.schedule == "FREQ=HOURLY;INTERVAL=1"
+
+
+def test_cli_chore_draft_and_ready_move_lifecycle(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
     _invoke_app(
@@ -5440,30 +5535,28 @@ def test_cli_chore_pause_and_resume_update_state(tmp_path: Path, monkeypatch) ->
     )
     chore_id = work.list_chores(toolang_root, "alice")[0].document.chore_id()
 
-    pause_result = _invoke_app(
-        ["chore", "pause", chore_id],
+    draft_result = _invoke_app(
+        ["chore", "draft", chore_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    paused = work.find_chore(toolang_root, "alice", chore_id)
-    resume_result = _invoke_app(
-        ["chore", "resume", chore_id],
+    drafted = work.find_chore(toolang_root, "alice", chore_id, lifecycle="draft")
+    ready_result = _invoke_app(
+        ["chore", "ready", chore_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    resumed = work.find_chore(toolang_root, "alice", chore_id)
+    readied = work.find_chore(toolang_root, "alice", chore_id)
 
-    assert pause_result.exit_code == 0
-    assert f"chore {chore_id} paused" in pause_result.stdout
-    assert paused is not None
-    assert paused.document.state == "inactive"
-    assert resume_result.exit_code == 0
-    assert f"chore {chore_id} resumed" in resume_result.stdout
-    assert resumed is not None
-    assert resumed.document.state == "active"
+    assert draft_result.exit_code == 0
+    assert f"chore {chore_id} drafted" in draft_result.stdout
+    assert drafted is not None
+    assert ready_result.exit_code == 0
+    assert f"chore {chore_id} ready" in ready_result.stdout
+    assert readied is not None
 
 
-def test_cli_chore_restore_can_restore_as_inactive(tmp_path: Path, monkeypatch) -> None:
+def test_cli_chore_ready_moves_archived_chore_back(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
     _invoke_app(
@@ -5479,7 +5572,7 @@ def test_cli_chore_restore_can_restore_as_inactive(tmp_path: Path, monkeypatch) 
     )
 
     result = _invoke_app(
-        ["chore", "restore", chore_id, "--inactive"],
+        ["chore", "ready", chore_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -5487,7 +5580,6 @@ def test_cli_chore_restore_can_restore_as_inactive(tmp_path: Path, monkeypatch) 
     assert result.exit_code == 0
     chore = work.find_chore(toolang_root, "alice", chore_id)
     assert chore is not None
-    assert chore.document.state == "inactive"
     assert work.find_archived_chore(toolang_root, "alice", chore_id) is None
 
 
@@ -6415,6 +6507,460 @@ def test_cli_main_normalizes_agent_prefix_shortcut_for_caps_command(monkeypatch)
     assert cli._CLI_PREFIX_AGENT is None
 
 
+@pytest.mark.parametrize(
+    ("command", "path"),
+    (
+        ("threads", "/api/v1/threads"),
+        ("runs", "/api/v1/runs"),
+    ),
+)
+def test_cli_main_thread_commands_support_agent_prefix_shortcut(
+    command: str,
+    path: str,
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_runtime_json(ctx: Any, request_path: str) -> dict[str, object]:
+        captured["agent"] = cast(dict[str, object], ctx.obj).get("agent")
+        captured["path"] = request_path
+        return {"items": []}
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(cli.sys, "argv", ["too"])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["dev", command])
+
+    assert exc.value.code == 0
+    assert captured == {"agent": "dev", "path": path}
+    assert cli._CLI_PREFIX_AGENT is None
+
+
+def test_cli_threads_lists_title_and_run_count(monkeypatch) -> None:
+    title = "This is a very long thread title that should be truncated before display"
+
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        assert request_path == "/api/v1/threads"
+        return {
+            "items": [
+                {
+                    "id": "web_abc12345",
+                    "title": title,
+                    "run_count": 12,
+                    "origin": "chat",
+                    "channel": "web",
+                    "status": "running",
+                    "updated_at": "2026-06-04T09:00:00Z",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+
+    result = _invoke_app(["threads", "dev"])
+
+    assert result.exit_code == 0
+    assert "TITLE" in result.stdout
+    assert "RUNS" in result.stdout
+    assert "CHANNEL" not in result.stdout
+    assert "ORIGIN" not in result.stdout
+    assert "chat" not in result.stdout
+    assert "web" in result.stdout
+    assert "12" in result.stdout
+    assert "This is a very long thread title that should..." in result.stdout
+    assert title not in result.stdout
+
+
+def test_cli_runs_lists_title(monkeypatch) -> None:
+    title = "This is a very long run summary that should be truncated before display"
+
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        assert request_path == "/api/v1/runs"
+        return {
+            "items": [
+                {
+                    "id": "run_abc12345",
+                    "summary": title,
+                    "thread_id": "web_thread1",
+                    "origin": "chat",
+                    "status": "finished",
+                    "created_at": "2026-06-04T09:00:00Z",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+
+    result = _invoke_app(["runs", "dev"])
+
+    assert result.exit_code == 0
+    assert result.stdout.index("THREAD") < result.stdout.index("RUN")
+    assert "TITLE" in result.stdout
+    assert "ORIGIN" not in result.stdout
+    assert "chat" not in result.stdout
+    assert "web_thread1" in result.stdout
+    assert "run_abc12345" in result.stdout
+    assert "succeeded" in result.stdout
+    assert "This is a very long run summary that should b..." in result.stdout
+    assert title not in result.stdout
+
+
+def test_cli_runs_hides_thread_column_when_filtered_by_thread(monkeypatch) -> None:
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        assert request_path == "/api/v1/runs?thread_id=tui_bzrh67se"
+        return {
+            "items": [
+                {
+                    "id": "run_abc12345",
+                    "summary": "one run",
+                    "thread_id": "tui_bzrh67se",
+                    "origin": "chat",
+                    "status": "running",
+                    "created_at": "2026-06-04T09:00:00Z",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+
+    result = _invoke_app(["runs", "dev", "--thread", "tui_bzrh67se"])
+
+    assert result.exit_code == 0
+    assert "THREAD" not in result.stdout
+    assert "tui_bzrh67se" not in result.stdout
+    assert "RUN" in result.stdout
+    assert "run_abc12345" in result.stdout
+    assert "one run" in result.stdout
+
+
+def test_cli_chat_uses_terminal_client_and_streams(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_runtime_stream(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> None:
+        captured["path"] = request_path
+        captured["payload"] = payload
+
+    monkeypatch.setattr(cli, "_runtime_stream", fake_runtime_stream)
+
+    result = _invoke_app(["chat", "dev", "review this repo"])
+
+    assert result.exit_code == 0
+    assert captured["path"] == "/api/v1/chat/stream"
+    assert captured["payload"] == {
+        "thread": None,
+        "client": "tui",
+        "message": {"role": "user", "parts": [{"type": "text", "text": "review this repo"}]},
+    }
+
+
+def test_cli_chat_without_args_creates_terminal_thread(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+
+    class FakeListener:
+        def stop(self) -> None:
+            pass
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        calls.append((request_path, payload))
+        return {"thread_id": "tui_new"}
+
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(cli, "_start_thread_event_listener", lambda _ctx, _thread_id, **_kwargs: FakeListener())
+    monkeypatch.setattr(
+        cli.agents,
+        "get_agent_status",
+        lambda *_args, **_kwargs: cli.agents.AgentStatus(
+            name="dev",
+            status="stopped",
+            endpoint=None,
+            api_url=None,
+            webui_url=None,
+            sandbox=None,
+        ),
+    )
+
+    result = _invoke_app(["chat", "dev"], input="/exit\n")
+
+    assert result.exit_code == 0
+    assert calls == [("/api/v1/threads", {"client": "tui"})]
+    assert "thread tui_new" in result.stdout
+
+
+def test_cli_chat_thread_without_message_sends_interactive_lines(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+    listeners: list[str] = []
+
+    class FakeListener:
+        def stop(self) -> None:
+            listeners.append("stopped")
+
+    def fake_start_thread_event_listener(_ctx: Any, thread_id: str, **_kwargs: object) -> FakeListener:
+        listeners.append(thread_id)
+        return FakeListener()
+
+    def fake_runtime_consume_stream(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> None:
+        calls.append((request_path, payload))
+
+    monkeypatch.setattr(cli, "_start_thread_event_listener", fake_start_thread_event_listener)
+    monkeypatch.setattr(cli, "_runtime_consume_stream", fake_runtime_consume_stream)
+
+    result = _invoke_app(["chat", "dev", "--thread", "tui_existing"], input="hello\n/exit\n")
+
+    assert result.exit_code == 0
+    assert "thread tui_existing" in result.stdout
+    assert listeners == ["tui_existing", "stopped"]
+    assert len(calls) == 1
+    request_path, payload = calls[0]
+    assert request_path == "/api/v1/chat/stream"
+    assert payload["thread"] == "tui_existing"
+    assert payload["client"] == "tui"
+    assert payload["message"] == {"role": "user", "parts": [{"type": "text", "text": "hello"}]}
+    assert isinstance(payload["request_id"], str)
+    assert payload["request_id"].startswith("tui_")
+
+
+def test_cli_thread_event_renderer_prints_thread_messages(capsys) -> None:
+    renderer = cli._ThreadEventRenderer()
+
+    renderer.render(
+        {
+            "type": "run_input",
+            "payload": {
+                "action": "start",
+                "message": {"role": "user", "parts": [{"type": "text", "text": "hello from web"}]},
+            },
+        }
+    )
+    renderer.render({"type": "part_delta", "payload": {"delta": {"type": "text", "text": "hi"}}})
+    renderer.render({"type": "part_delta", "payload": {"delta": {"type": "text", "text": " there"}}})
+    renderer.render({"type": "run_end", "payload": {"status": "finished"}})
+
+    assert capsys.readouterr().out == "\nuser: hello from web\nassistant: hi there\n"
+
+
+def test_cli_thread_event_renderer_redraws_prompt_for_remote_run(capsys) -> None:
+    renderer = cli._ThreadEventRenderer(redraw_prompt=True)
+
+    renderer.render({"type": "part_delta", "payload": {"run_id": "run_web", "delta": {"type": "text", "text": "hi"}}})
+    renderer.render({"type": "run_end", "payload": {"run_id": "run_web", "status": "finished"}})
+
+    assert capsys.readouterr().out == "assistant: hi\n> "
+
+
+def test_cli_thread_event_renderer_skips_prompt_during_local_stream(capsys) -> None:
+    local_streaming = cli.threading.Event()
+    local_streaming.set()
+    renderer = cli._ThreadEventRenderer(redraw_prompt=True, local_streaming=local_streaming)
+
+    renderer.render({"type": "part_delta", "payload": {"run_id": "run_tui", "delta": {"type": "text", "text": "hi"}}})
+    renderer.render({"type": "run_end", "payload": {"run_id": "run_tui", "status": "finished"}})
+
+    assert capsys.readouterr().out == "assistant: hi\n"
+
+
+def test_cli_thread_event_renderer_skips_prompt_for_local_request(capsys) -> None:
+    local_request_ids = {"tui_req"}
+    renderer = cli._ThreadEventRenderer(redraw_prompt=True, local_request_ids=local_request_ids)
+
+    renderer.render(
+        {
+            "type": "run_input",
+            "payload": {
+                "run_id": "run_tui",
+                "request_id": "tui_req",
+                "action": "start",
+                "message": {"role": "user", "parts": [{"type": "text", "text": "local"}]},
+            },
+        }
+    )
+    renderer.render({"type": "part_delta", "payload": {"run_id": "run_tui", "delta": {"type": "text", "text": "hi"}}})
+    renderer.render({"type": "run_end", "payload": {"run_id": "run_tui", "status": "finished"}})
+
+    assert capsys.readouterr().out == "\nuser: local\nassistant: hi\n"
+
+
+def test_cli_thread_event_renderer_prints_step_end_without_streaming_delta(capsys) -> None:
+    renderer = cli._ThreadEventRenderer()
+
+    renderer.render(
+        {
+            "type": "step_end",
+            "payload": {
+                "run_id": "run_non_streaming",
+                "kind": "model_call",
+                "output": [{"type": "text", "text": "complete answer"}],
+            },
+        }
+    )
+    renderer.render({"type": "run_end", "payload": {"run_id": "run_non_streaming", "status": "finished"}})
+
+    assert capsys.readouterr().out == "assistant: complete answer\n"
+
+
+def test_cli_chat_help_uses_thread_option() -> None:
+    result = _invoke_app(["chat", "dev", "--help"])
+
+    assert result.exit_code == 0
+    assert "TARGET_OR_MESSAGE" not in result.stdout
+    assert "[MESSAGE]" in result.stdout
+    assert "--thread" in result.stdout
+    assert "--tui" in result.stdout
+    assert "--ui" not in result.stdout
+    assert "Message to send. Omit to open the TUI." in result.stdout
+    assert "Thread id to continue; run id accepted." in result.stdout
+    assert "Model selector for the new run." in result.stdout
+
+
+def test_cli_thread_control_help_lists_agent_with_arguments() -> None:
+    result = _invoke_app(["steer", "dev", "--help"])
+
+    assert result.exit_code == 0
+    assert "Scope" not in result.stdout
+    positions = [
+        result.stdout.index("Agent name."),
+        result.stdout.index("Run id, or thread id with an active run."),
+        result.stdout.index("Instruction to steer the run."),
+    ]
+    assert positions == sorted(positions)
+
+
+def test_cli_rewind_and_fork_help_describe_latest_run_target() -> None:
+    rewind = _invoke_app(["rewind", "dev", "--help"])
+    fork = _invoke_app(["fork", "dev", "--help"])
+
+    assert rewind.exit_code == 0
+    assert "Run id to rewind from, or thread id to use its" in rewind.stdout
+    assert "latest run." in rewind.stdout
+    assert "Message to send after rewinding." in rewind.stdout
+    assert "Open the terminal UI after rewinding." in rewind.stdout
+    assert fork.exit_code == 0
+    assert "Run id to fork from, or thread id to use its" in fork.stdout
+    assert "latest run." in fork.stdout
+    assert "Message to send in the forked thread." in fork.stdout
+    assert "Open the terminal UI after forking." in fork.stdout
+
+
+def test_cli_chat_tui_opens_terminal_loop(monkeypatch) -> None:
+    class FakeListener:
+        def stop(self) -> None:
+            pass
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        assert request_path == "/api/v1/threads"
+        assert payload == {"client": "tui"}
+        return {"thread_id": "tui_new"}
+
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(cli, "_start_thread_event_listener", lambda _ctx, _thread_id, **_kwargs: FakeListener())
+
+    result = _invoke_app(["chat", "dev", "--tui"], input="/exit\n")
+
+    assert result.exit_code == 0
+    assert "thread tui_new" in result.stdout
+
+
+@pytest.mark.parametrize("command", ("steer", "cancel", "rewind", "fork"))
+def test_cli_thread_control_commands_show_help_without_target(command: str, monkeypatch) -> None:
+    monkeypatch.setattr(cli.sys, "argv", ["too"])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["alice", command])
+
+    assert exc.value.code == 0
+
+
+def test_cli_rewind_accepts_thread_target(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        calls.append(("json", request_path))
+        return {"info": {"latest_run": {"id": "run_latest"}}}
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        calls.append(("post", (request_path, payload)))
+        return {"thread_id": "tui_thread", "run_id": "run_new"}
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+
+    result = _invoke_app(["rewind", "dev", "tui_thread", "try again"])
+
+    assert result.exit_code == 0
+    assert calls == [
+        ("json", "/api/v1/threads/tui_thread"),
+        (
+            "post",
+            (
+                "/api/v1/runs/run_latest/rewind",
+                {"message": {"role": "user", "parts": [{"type": "text", "text": "try again"}]}},
+            ),
+        ),
+    ]
+
+
+def test_cli_rewind_without_message_does_not_send_empty_message(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        calls.append(("json", request_path))
+        return {"info": {"latest_run": {"id": "run_latest"}}}
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        calls.append(("post", (request_path, payload)))
+        return {"thread_id": "tui_thread", "run_id": None}
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+
+    result = _invoke_app(["rewind", "dev", "tui_thread"])
+
+    assert result.exit_code == 0
+    assert calls == [
+        ("json", "/api/v1/threads/tui_thread"),
+        ("post", ("/api/v1/runs/run_latest/rewind", {})),
+    ]
+
+
+def test_cli_rewind_tui_streams_created_run_before_prompt(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        calls.append(("json", request_path))
+        return {"info": {"latest_run": {"id": "run_latest"}}}
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        calls.append(("post", (request_path, payload)))
+        return {"thread_id": "tui_thread", "run_id": "run_new"}
+
+    def fake_runtime_get_stream(_ctx: Any, request_path: str) -> None:
+        calls.append(("stream", request_path))
+
+    def fake_chat_interactive(_ctx: Any, *, thread_id: str, model: str | None) -> None:
+        calls.append(("tui", (thread_id, model)))
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(cli, "_runtime_get_stream", fake_runtime_get_stream)
+    monkeypatch.setattr(cli, "_chat_interactive", fake_chat_interactive)
+
+    result = _invoke_app(["rewind", "dev", "tui_thread", "--tui", "try again"])
+
+    assert result.exit_code == 0
+    assert calls == [
+        ("json", "/api/v1/threads/tui_thread"),
+        (
+            "post",
+            (
+                "/api/v1/runs/run_latest/rewind",
+                {"message": {"role": "user", "parts": [{"type": "text", "text": "try again"}]}},
+            ),
+        ),
+        ("stream", "/api/v1/runs/run_new/stream"),
+        ("tui", ("tui_thread", None)),
+    ]
+
+
 def test_standalone_caps_list_supports_agent_prefix(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     caps.put_local_entry_text(
@@ -6718,6 +7264,7 @@ def test_cli_help_lists_cap_commands() -> None:
     assert "Inspect available channels." in result.stdout
     assert "Inspect available sandboxes." in result.stdout
     assert "Agent Commands" in result.stdout
+    assert "Thread Commands" in result.stdout
     assert "Runtime Commands" in result.stdout
     assert "Caps Commands" in result.stdout
     assert "Runtime Components" not in result.stdout
@@ -6728,8 +7275,22 @@ def test_cli_help_lists_cap_commands() -> None:
     assert "Manage skill caps." in result.stdout
     assert "Manage service caps." in result.stdout
     assert "Manage prompt caps." in result.stdout
+    assert "Start, continue, or open a thread." in result.stdout
+    assert "Guide an active run." in result.stdout
+    assert "Cancel an active run." in result.stdout
+    assert "Rewind a thread from a run." in result.stdout
+    assert "Fork a thread from a run." in result.stdout
+    assert "send" not in result.stdout
+    assert "attach" not in result.stdout
     chore_index = result.stdout.index("chore")
     task_index = result.stdout.index("task")
+    chat_index = result.stdout.index("chat")
+    steer_index = result.stdout.index("steer")
+    cancel_index = result.stdout.index("cancel")
+    rewind_index = result.stdout.index("rewind")
+    fork_index = result.stdout.index("fork")
+    runs_index = result.stdout.index("runs")
+    threads_index = result.stdout.index("threads")
     model_index = result.stdout.index("model")
     tool_index = result.stdout.index("tool")
     channel_index = result.stdout.index("channel")
@@ -6744,6 +7305,14 @@ def test_cli_help_lists_cap_commands() -> None:
     assert chore_index < task_index
     assert (
         task_index
+        < result.stdout.index("Thread Commands")
+        < chat_index
+        < steer_index
+        < cancel_index
+        < rewind_index
+        < fork_index
+        < runs_index
+        < threads_index
         < result.stdout.index("Runtime Commands")
         < model_index
         < tool_index

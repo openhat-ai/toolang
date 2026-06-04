@@ -32,6 +32,8 @@ class ThreadInfo:
     created_at: str
     updated_at: str
     origin: str
+    channel: str
+    status: str
     peer: ThreadPeer
     parent: str | None
     run_count: int
@@ -111,12 +113,17 @@ def thread_info_from_runs(
     active = next((run for run in reversed(runs) if run.status == "running"), None)
     first_input = run_input_message_data(first, _start_input(inputs_by_run.get(first.run_id, ())))
     title = message_summary(first_input.parts) or first.origin
+    updated_at = last.finished_at or last.started_at
+    if thread is not None:
+        updated_at = max(updated_at, thread.updated_at)
     return ThreadInfo(
         id=thread_id,
         title=title,
         created_at=thread.created_at if thread is not None else first.created_at,
         origin=last.origin,
-        updated_at=last.finished_at or last.started_at,
+        channel=_thread_channel(thread_id, last.origin),
+        status=_thread_status(active),
+        updated_at=updated_at,
         peer=thread.peer if thread is not None else ThreadPeer(),
         parent=thread.parent if thread is not None else None,
         run_count=len(runs),
@@ -134,6 +141,8 @@ def thread_info_from_record(thread: ThreadRecord) -> ThreadInfo:
         title=title,
         created_at=thread.created_at,
         origin=thread.origin,
+        channel=_thread_channel(thread.thread_id, thread.origin),
+        status="idle",
         updated_at=thread.updated_at,
         peer=thread.peer,
         parent=thread.parent,
@@ -170,6 +179,20 @@ def run_info_from_record(run: RunRecord) -> RunInfo:
         finished_at=run.finished_at,
         updated_at=run.finished_at or run.started_at,
     )
+
+
+def _thread_channel(thread_id: str, origin: str) -> str:
+    if origin != "chat":
+        return ""
+    if thread_id.startswith("web_"):
+        return "web"
+    if thread_id.startswith("tg_"):
+        return "tg"
+    return "terminal"
+
+
+def _thread_status(active: RunRecord | None) -> str:
+    return "running" if active is not None else "idle"
 
 
 def run_input_from_records(run: RunRecord, *, inputs: Sequence[InputRecord]) -> MessageData | None:

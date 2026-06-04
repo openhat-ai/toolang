@@ -155,12 +155,6 @@ def agent_script_run_log_path(toolang_root: Path, agent_name: str, *, thunk_name
     return agent_room(toolang_root, agent_name) / "logs" / _safe_log_label(thunk_name or "main") / f"{run_id}.log"
 
 
-def agent_pulse_state_path(toolang_root: Path, agent_name: str) -> Path:
-    """Return one agent pulse-state path."""
-
-    return agent_room(toolang_root, agent_name) / "pulse.json"
-
-
 def agent_id_state_path(toolang_root: Path, agent_name: str) -> Path:
     """Return one agent local-id allocator state path."""
 

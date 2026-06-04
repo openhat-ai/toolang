@@ -836,7 +836,9 @@ def active_job_entries(private_lock: PreparedLock) -> tuple[PreparedEntry, ...]:
     jobs = [
         entry
         for entry in private_lock.entries
-        if entry.kind in JOB_KINDS and entry.meta.get("state") != "archived"
+        if entry.kind in JOB_KINDS
+        and len(Path(entry.path).parts) >= 2
+        and Path(entry.path).parts[-2] in {"tasks", "chores"}
     ]
     return tuple(sorted(jobs, key=_entry_sort_key))
 

@@ -44,7 +44,7 @@ _SOURCE_BUCKET_BY_KIND: dict[EntryKind, str] = {
     kind: bucket for bucket, kind in _KIND_BY_SOURCE_BUCKET.items()
 }
 _SOURCE_DIRS_SHARED = ("psyches", "skills", "services", "prompts")
-_SOURCE_DIRS_PRIVATE = (*_SOURCE_DIRS_SHARED, "tasks", "chores", "archive")
+_SOURCE_DIRS_PRIVATE = (*_SOURCE_DIRS_SHARED, "tasks", "chores", "drafts", "archive")
 _ARTIFACT_BUCKETS = ("inline", "ref", "wired")
 
 
@@ -828,7 +828,7 @@ def _manifest_file_category(scope_path: str) -> str:
         return "program"
     if scope_path == "config.toml":
         return "config"
-    if first in {"tasks", "chores", "archive"}:
+    if first in {"tasks", "chores", "drafts", "archive"}:
         return "job"
     return "cap"
 

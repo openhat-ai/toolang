@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from ... import agents
+from ...common.ids import LOCAL_ID_FAMILY, allocate_id
 from toolang.base.error import ToolangError
 from toolang.base.types.message import Message
 from ...execution.detail import run_detail_from_record, thread_info_from_record, thread_info_from_runs
@@ -52,10 +54,32 @@ class ChatRequest(BaseModel):
     model: str | None = None
 
 
+class ThreadCreateRequest(BaseModel):
+    """Request one empty chat thread."""
+
+    client: Literal["web", "tui", "tg"] = "tui"
+    peer: ThreadPeerPayload | None = None
+
+
 def create_router() -> APIRouter:
     """Build the formal chat route group."""
 
     router = APIRouter(prefix="/api/v1", tags=["chat"])
+
+    @router.post("/threads", summary="Create Chat Thread")
+    async def create_thread(request: Request, payload: ThreadCreateRequest) -> dict[str, object]:
+        context = request.app.state.runtime
+        thread_id = _new_thread_id(context, payload.client)
+        peer = _peer_payload(payload.peer)
+        context.store.ensure_thread(
+            thread_id=thread_id,
+            origin="chat",
+            peer=peer,
+        )
+        return {
+            "thread_id": thread_id,
+            "thread": asdict(_thread_info(context, thread_id)),
+        }
 
     @router.post("/chat", summary="Submit Chat")
     async def submit_chat(request: Request, payload: ChatRequest) -> dict[str, object]:
@@ -240,10 +264,14 @@ def _chat_user_message(payload: ChatRequest) -> Message:
 
 
 def _request_peer(payload: ChatRequest) -> ThreadPeer | None:
-    if payload.peer is None:
+    return _peer_payload(payload.peer)
+
+
+def _peer_payload(payload: ThreadPeerPayload | None) -> ThreadPeer | None:
+    if payload is None:
         return None
     try:
-        return ThreadPeer.from_data(payload.peer.model_dump())
+        return ThreadPeer.from_data(payload.model_dump())
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -259,10 +287,7 @@ def _thread_metadata(payload: ChatRequest) -> dict[str, object]:
 
 
 def _thread_info(context: UptimeContext, thread_id: str):
-    runs = sorted(
-        context.store.list_runs(limit=None, thread_id=thread_id),
-        key=lambda item: item.created_at,
-    )
+    runs = context.store.list_thread_runs_chronological(thread_id=thread_id)
     thread = context.store.get_thread(thread_id=thread_id)
     if not runs:
         if thread is None:
@@ -277,6 +302,14 @@ def _thread_info(context: UptimeContext, thread_id: str):
         steps_by_run=steps_by_run,
         thread=thread,
     )
+
+
+def _new_thread_id(context: UptimeContext, client: str) -> str:
+    value = allocate_id(
+        agents.agent_id_state_path(context.root, context.name),
+        family=LOCAL_ID_FAMILY,
+    ).value
+    return f"{client}_{value}"
 
 
 def _chat_model_item(*, selector: str, context: UptimeContext) -> dict[str, object]:

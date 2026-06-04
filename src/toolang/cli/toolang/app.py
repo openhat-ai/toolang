@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
+import json
 from pathlib import Path
 import os
 import subprocess
 import sys
+import threading
 import time
 import tomllib
 from typing import Annotated, Any, Literal, TYPE_CHECKING, cast
+from urllib.parse import urlencode
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+from uuid import uuid4
 
 import click
 import typer
@@ -96,6 +102,7 @@ if not TYPE_CHECKING:
 WorkKind = Literal["task", "chore"]
 _CLI_PREFIX_AGENT: str | None = None
 AGENT_COMMAND_PANEL = "Agent Commands"
+THREAD_COMMAND_PANEL = "Thread Commands"
 RUNTIME_COMMAND_PANEL = "Runtime Commands"
 CAPS_COMMAND_PANEL = "Caps Commands"
 TOP_LEVEL_COMMANDS = frozenset(
@@ -110,6 +117,15 @@ TOP_LEVEL_COMMANDS = frozenset(
         "tool",
         "channel",
         "sandbox",
+        "chat",
+        "send",
+        "attach",
+        "threads",
+        "runs",
+        "steer",
+        "cancel",
+        "rewind",
+        "fork",
         "run",
         "start",
         "stop",
@@ -121,11 +137,20 @@ TOP_LEVEL_COMMANDS = frozenset(
 )
 
 _CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt", "caps")
+_THREAD_PANEL_COMMAND_ORDER = ("chat", "steer", "cancel", "rewind", "fork", "runs", "threads")
+_RUNTIME_PANEL_COMMAND_ORDER = ("model", "tool", "channel", "sandbox")
+_THREAD_TARGET_COMMANDS = frozenset({"steer", "cancel", "rewind", "fork"})
 
 
 class _ToolangGroup(TyperGroup):
     def list_commands(self, ctx: click.Context) -> list[str]:
         names = TyperGroup.list_commands(self, ctx)
+        thread_names = [name for name in _THREAD_PANEL_COMMAND_ORDER if name in names]
+        if thread_names:
+            reordered = [name for name in names if name not in thread_names]
+            runtime_indexes = [reordered.index(name) for name in _RUNTIME_PANEL_COMMAND_ORDER if name in reordered]
+            insertion_index = min(runtime_indexes) if runtime_indexes else len(reordered)
+            names = reordered[:insertion_index] + thread_names + reordered[insertion_index:]
         cap_names = [name for name in _CAPS_PANEL_COMMAND_ORDER if name in names]
         if len(cap_names) < 2:
             return names
@@ -145,9 +170,28 @@ class _RuntimeStartup:
     prepared_state: PreparedState
 
 
-POSTFIX_AGENT_COMMANDS = frozenset({"run", "start", "stop", "info"})
+POSTFIX_AGENT_COMMANDS = frozenset(
+    {"run", "start", "stop", "info", "chat", "send", "attach", "threads", "runs", "steer", "cancel", "rewind", "fork"}
+)
 PREFIX_AGENT_COMMANDS = frozenset(
-    {"run", "start", "stop", "caps", *CAP_KINDS, "task", "chore"}
+    {
+        "run",
+        "start",
+        "stop",
+        "caps",
+        "chat",
+        "send",
+        "attach",
+        "threads",
+        "runs",
+        "steer",
+        "cancel",
+        "rewind",
+        "fork",
+        *CAP_KINDS,
+        "task",
+        "chore",
+    }
 )
 
 
@@ -428,6 +472,217 @@ def info_agent(
 
 
 @app.command(
+    "chat",
+    help="Start, continue, or open a thread.",
+    cls=_RequiredPrefixAgentCommand,
+    rich_help_panel=THREAD_COMMAND_PANEL,
+)
+def chat_command(
+    ctx: typer.Context,
+    message: Annotated[str | None, typer.Argument(help="Message to send. Omit to open the TUI.")] = None,
+    thread: Annotated[str | None, typer.Option("--thread", help="Thread id to continue; run id accepted.")] = None,
+    tui: Annotated[bool, typer.Option("--tui", help="Open the terminal UI after the command.")] = False,
+    model: Annotated[str | None, typer.Option("--model", help="Model selector for the new run.")] = None,
+) -> None:
+    thread_id = _target_thread_id(ctx, thread) if thread is not None else None
+    if message is None:
+        if thread_id is None:
+            result = _runtime_post(ctx, "/api/v1/threads", payload={"client": "tui"})
+            created = result.get("thread_id")
+            if not isinstance(created, str):
+                raise click.ClickException("runtime did not return a thread id")
+            thread_id = created
+        if tui:
+            _open_thread_ui(ctx, thread_id)
+            return
+        _chat_interactive(ctx, thread_id=thread_id, model=model)
+        return
+    payload: dict[str, Any] = {"thread": thread_id, "client": "tui", "message": _message_payload(message)}
+    if model is not None:
+        payload["model"] = model
+    if tui:
+        result = _runtime_post(ctx, "/api/v1/chat", payload=payload)
+        thread = result.get("thread_id")
+        if isinstance(thread, str):
+            _open_thread_ui(ctx, thread)
+        typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+    _runtime_stream(ctx, "/api/v1/chat/stream", payload=payload)
+
+
+@app.command("send", hidden=True, cls=_RequiredPrefixAgentCommand)
+def send_command(
+    ctx: typer.Context,
+    thread: Annotated[str, typer.Argument(help="Thread id.")],
+    message: Annotated[str, typer.Argument(help="Message text.")],
+    model: Annotated[str | None, typer.Option("--model", help="Model selector.")] = None,
+) -> None:
+    target = _target_thread_id(ctx, thread)
+    payload: dict[str, Any] = {"thread": target, "client": "tui", "message": _message_payload(message)}
+    if model is not None:
+        payload["model"] = model
+    _runtime_stream(ctx, "/api/v1/chat/stream", payload=payload)
+
+
+@app.command("attach", hidden=True, cls=_RequiredPrefixAgentCommand)
+def attach_command(
+    ctx: typer.Context,
+    thread: Annotated[str, typer.Argument(help="Thread id.")],
+) -> None:
+    _open_thread_ui(ctx, _target_thread_id(ctx, thread))
+
+
+@app.command("threads", help="List threads.", cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
+def threads_command(
+    ctx: typer.Context,
+    origin: Annotated[str | None, typer.Option("--origin", help="Filter by origin.")] = None,
+    channel: Annotated[str | None, typer.Option("--channel", help="Filter by channel.")] = None,
+    status: Annotated[str | None, typer.Option("--status", help="Filter by thread status.")] = None,
+) -> None:
+    query = _query_params(origin=origin, channel=channel, status=status)
+    path = "/api/v1/threads" if not query else f"/api/v1/threads?{query}"
+    result = _runtime_json(ctx, path)
+    rows = [
+        (
+            str(item.get("id", "")),
+            _truncate_table_text(item.get("title"), width=48),
+            str(item.get("run_count", "")),
+            str(item.get("status", "")),
+            str(item.get("updated_at", "")),
+        )
+        for item in result.get("items", [])
+        if isinstance(item, dict)
+    ]
+    _echo_table(("THREAD", "TITLE", "RUNS", "STATUS", "UPDATED"), rows)
+
+
+@app.command("runs", help="List runs.", cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
+def runs_command(
+    ctx: typer.Context,
+    thread: Annotated[str | None, typer.Option("--thread", help="Filter by thread id.")] = None,
+    status: Annotated[str | None, typer.Option("--status", help="Filter by run status.")] = None,
+) -> None:
+    query: list[tuple[str, str]] = []
+    if thread is not None:
+        query.append(("thread_id", thread))
+    if status is not None:
+        query.append(("status", _api_run_status(status)))
+    path = "/api/v1/runs" if not query else f"/api/v1/runs?{urlencode(query)}"
+    result = _runtime_json(ctx, path)
+    if thread is not None:
+        rows = [
+            (
+                str(item.get("id", "")),
+                _truncate_table_text(item.get("summary") or item.get("input_text"), width=48),
+                _display_run_status(item.get("status")),
+                str(item.get("created_at", "")),
+            )
+            for item in result.get("items", [])
+            if isinstance(item, dict)
+        ]
+        _echo_table(("RUN", "TITLE", "STATUS", "CREATED"), rows)
+    else:
+        rows = [
+            (
+                str(item.get("thread_id", "")),
+                str(item.get("id", "")),
+                _truncate_table_text(item.get("summary") or item.get("input_text"), width=48),
+                _display_run_status(item.get("status")),
+                str(item.get("created_at", "")),
+            )
+            for item in result.get("items", [])
+            if isinstance(item, dict)
+        ]
+        _echo_table(("THREAD", "RUN", "TITLE", "STATUS", "CREATED"), rows)
+
+
+@app.command(
+    "steer",
+    help="Guide an active run.",
+    no_args_is_help=True,
+    cls=_RequiredPrefixAgentCommand,
+    rich_help_panel=THREAD_COMMAND_PANEL,
+)
+def steer_command(
+    ctx: typer.Context,
+    target: str = typer.Argument(..., help="Run id, or thread id with an active run."),
+    message: str = typer.Argument(..., help="Instruction to steer the run."),
+    tui: Annotated[bool, typer.Option("--tui", help="Open the terminal UI after steering.")] = False,
+) -> None:
+    run_id = _target_run_id(ctx, target)
+    _runtime_post(ctx, f"/api/v1/runs/{run_id}/steer", payload={"message": _message_payload(message)})
+    if tui:
+        _open_thread_ui(ctx, _target_thread_id(ctx, target))
+    typer.echo(f"steered {run_id}")
+
+
+@app.command(
+    "cancel",
+    help="Cancel an active run.",
+    no_args_is_help=True,
+    cls=_RequiredPrefixAgentCommand,
+    rich_help_panel=THREAD_COMMAND_PANEL,
+)
+def cancel_command(
+    ctx: typer.Context,
+    target: str = typer.Argument(..., help="Run id, or thread id with an active run."),
+    tui: Annotated[bool, typer.Option("--tui", help="Open the terminal UI after canceling.")] = False,
+) -> None:
+    run_id = _target_run_id(ctx, target)
+    _runtime_post(ctx, f"/api/v1/runs/{run_id}/cancel", payload={})
+    if tui:
+        _open_thread_ui(ctx, _target_thread_id(ctx, target))
+    typer.echo(f"canceled {run_id}")
+
+
+@app.command(
+    "rewind",
+    help="Rewind a thread from a run.",
+    no_args_is_help=True,
+    cls=_RequiredPrefixAgentCommand,
+    rich_help_panel=THREAD_COMMAND_PANEL,
+)
+def rewind_command(
+    ctx: typer.Context,
+    target: str = typer.Argument(..., help="Run id to rewind from, or thread id to use its latest run."),
+    message: Annotated[str | None, typer.Argument(help="Message to send after rewinding.")] = None,
+    tui: Annotated[bool, typer.Option("--tui", help="Open the terminal UI after rewinding.")] = False,
+) -> None:
+    run_id = _target_latest_run_id(ctx, target)
+    payload = {"message": _message_payload(message)} if message is not None else {}
+    result = _runtime_post(ctx, f"/api/v1/runs/{run_id}/rewind", payload=payload)
+    typer.echo(f"rewound {result.get('thread_id')}\t{result.get('run_id')}")
+    if tui:
+        thread = result.get("thread_id")
+        _stream_result_run(ctx, result)
+        _open_thread_ui(ctx, str(thread) if isinstance(thread, str) else _target_thread_id(ctx, target))
+
+
+@app.command(
+    "fork",
+    help="Fork a thread from a run.",
+    no_args_is_help=True,
+    cls=_RequiredPrefixAgentCommand,
+    rich_help_panel=THREAD_COMMAND_PANEL,
+)
+def fork_command(
+    ctx: typer.Context,
+    target: str = typer.Argument(..., help="Run id to fork from, or thread id to use its latest run."),
+    message: Annotated[str | None, typer.Argument(help="Message to send in the forked thread.")] = None,
+    tui: Annotated[bool, typer.Option("--tui", help="Open the terminal UI after forking.")] = False,
+) -> None:
+    run_id = _target_latest_run_id(ctx, target)
+    payload = {"message": _message_payload(message)} if message is not None else {}
+    result = _runtime_post(ctx, f"/api/v1/runs/{run_id}/fork", payload=payload)
+    typer.echo(f"forked {result.get('thread_id')}\t{result.get('run_id')}")
+    if tui:
+        _stream_result_run(ctx, result)
+        thread = result.get("thread_id")
+        if isinstance(thread, str):
+            _open_thread_ui(ctx, thread)
+
+
+@app.command(
     "run",
     help="Run an agent in the foreground.",
     no_args_is_help=True,
@@ -542,6 +797,437 @@ def _active_run_error(status: agents.AgentStatus) -> str:
     if detail:
         return f"{message}: {detail}"
     return message
+
+
+def _truncate_table_text(value: object, *, width: int) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= width:
+        return text
+    if width <= 3:
+        return text[:width]
+    return f"{text[: width - 3].rstrip()}..."
+
+
+def _runtime_base_url(ctx: typer.Context) -> str:
+    agent_name = _required_prefix_agent(ctx, command_name=str(ctx.info_name or "runtime"))
+    status = agents.get_agent_status(_context_root(ctx), agent_name, ui_base_url=_ui_base_url())
+    if status is None or status.status != "running" or status.endpoint is None:
+        raise click.ClickException(f"agent is not running: {agent_name}")
+    return status.endpoint.rstrip("/")
+
+
+def _runtime_json(ctx: typer.Context, path: str) -> dict[str, Any]:
+    url = f"{_runtime_base_url(ctx)}{path}"
+    try:
+        with urlopen(url, timeout=30) as response:
+            return cast(dict[str, Any], json.loads(response.read().decode("utf-8")))
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise click.ClickException(f"runtime request failed: {exc.code} {detail}") from exc
+    except URLError as exc:
+        raise click.ClickException(f"runtime request failed: {exc.reason}") from exc
+
+
+def _runtime_post(ctx: typer.Context, path: str, *, payload: dict[str, Any]) -> dict[str, Any]:
+    url = f"{_runtime_base_url(ctx)}{path}"
+    request = Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=60) as response:
+            return cast(dict[str, Any], json.loads(response.read().decode("utf-8")))
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise click.ClickException(f"runtime request failed: {exc.code} {detail}") from exc
+    except URLError as exc:
+        raise click.ClickException(f"runtime request failed: {exc.reason}") from exc
+
+
+def _runtime_stream(ctx: typer.Context, path: str, *, payload: dict[str, Any]) -> None:
+    url = f"{_runtime_base_url(ctx)}{path}"
+    request = Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=60) as response:
+            for raw_line in response:
+                line = raw_line.decode("utf-8", errors="replace").rstrip()
+                if line:
+                    typer.echo(line)
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise click.ClickException(f"runtime request failed: {exc.code} {detail}") from exc
+    except URLError as exc:
+        raise click.ClickException(f"runtime request failed: {exc.reason}") from exc
+
+
+def _runtime_get_stream(ctx: typer.Context, path: str) -> None:
+    url = f"{_runtime_base_url(ctx)}{path}"
+    try:
+        with urlopen(url, timeout=60) as response:
+            for raw_line in response:
+                line = raw_line.decode("utf-8", errors="replace").rstrip()
+                if line:
+                    typer.echo(line)
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise click.ClickException(f"runtime request failed: {exc.code} {detail}") from exc
+    except URLError as exc:
+        raise click.ClickException(f"runtime request failed: {exc.reason}") from exc
+
+
+def _runtime_consume_stream(ctx: typer.Context, path: str, *, payload: dict[str, Any]) -> None:
+    url = f"{_runtime_base_url(ctx)}{path}"
+    request = Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=None) as response:
+            for _raw_line in response:
+                pass
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise click.ClickException(f"runtime request failed: {exc.code} {detail}") from exc
+    except URLError as exc:
+        raise click.ClickException(f"runtime request failed: {exc.reason}") from exc
+
+
+def _stream_result_run(ctx: typer.Context, result: dict[str, Any]) -> None:
+    run_id = result.get("run_id")
+    if isinstance(run_id, str) and run_id:
+        _runtime_get_stream(ctx, f"/api/v1/runs/{run_id}/stream")
+
+
+def _message_payload(text: str) -> dict[str, object]:
+    return {
+        "role": "user",
+        "parts": [{"type": "text", "text": text}],
+    }
+
+
+def _query_params(**items: str | None) -> str:
+    return urlencode([(key, value) for key, value in items.items() if value is not None])
+
+
+def _api_run_status(status: str) -> str:
+    return "finished" if status == "succeeded" else status
+
+
+def _display_run_status(status: object) -> str:
+    text = str(status or "")
+    return "succeeded" if text == "finished" else text
+
+
+def _open_thread_ui(ctx: typer.Context, thread_id: str | None) -> None:
+    if thread_id is None:
+        raise click.ClickException("terminal UI requires an existing thread; pass a message to start a terminal chat")
+    _chat_interactive(ctx, thread_id=thread_id, model=None)
+
+
+def _chat_interactive(ctx: typer.Context, *, thread_id: str, model: str | None) -> None:
+    typer.echo(f"thread {thread_id}")
+    local_streaming = threading.Event()
+    local_request_ids: set[str] = set()
+    listener = _start_thread_event_listener(
+        ctx,
+        thread_id,
+        local_streaming=local_streaming,
+        local_request_ids=local_request_ids,
+    )
+    try:
+        while True:
+            try:
+                text = input("> ")
+            except EOFError:
+                return
+            except KeyboardInterrupt:
+                typer.echo()
+                return
+            if text.strip() in {"/exit", "/quit"}:
+                return
+            if not text.strip():
+                continue
+            request_id = f"tui_{uuid4().hex}"
+            local_request_ids.add(request_id)
+            payload: dict[str, Any] = {
+                "thread": thread_id,
+                "client": "tui",
+                "request_id": request_id,
+                "message": _message_payload(text),
+            }
+            if model is not None:
+                payload["model"] = model
+            local_streaming.set()
+            try:
+                _runtime_consume_stream(ctx, "/api/v1/chat/stream", payload=payload)
+            finally:
+                local_streaming.clear()
+    finally:
+        listener.stop()
+
+
+class _ThreadEventListener:
+    def __init__(self, stop_event: threading.Event) -> None:
+        self._stop_event = stop_event
+
+    def stop(self) -> None:
+        self._stop_event.set()
+
+
+def _start_thread_event_listener(
+    ctx: typer.Context,
+    thread_id: str,
+    *,
+    local_streaming: threading.Event | None = None,
+    local_request_ids: set[str] | None = None,
+) -> _ThreadEventListener:
+    stop_event = threading.Event()
+    try:
+        after = _thread_event_cursor(ctx, thread_id)
+    except click.ClickException:
+        stop_event.set()
+        return _ThreadEventListener(stop_event)
+    thread = threading.Thread(
+        target=_run_thread_event_listener,
+        args=(ctx, thread_id, after, stop_event, local_streaming, local_request_ids),
+        daemon=True,
+    )
+    thread.start()
+    return _ThreadEventListener(stop_event)
+
+
+def _thread_event_cursor(ctx: typer.Context, thread_id: str) -> int | None:
+    detail = _runtime_json(ctx, f"/api/v1/threads/{thread_id}")
+    cursor = detail.get("event_cursor")
+    if isinstance(cursor, int):
+        return cursor
+    return None
+
+
+def _run_thread_event_listener(
+    ctx: typer.Context,
+    thread_id: str,
+    after: int | None,
+    stop_event: threading.Event,
+    local_streaming: threading.Event | None,
+    local_request_ids: set[str] | None,
+) -> None:
+    renderer = _ThreadEventRenderer(
+        redraw_prompt=True,
+        local_streaming=local_streaming,
+        local_request_ids=local_request_ids,
+    )
+    path = f"/api/v1/threads/{thread_id}/stream"
+    if after is not None:
+        path = f"{path}?{urlencode([('after', str(after))])}"
+    url = f"{_runtime_base_url(ctx)}{path}"
+    try:
+        with urlopen(url, timeout=None) as response:
+            for event in _iter_sse_events(response, stop_event=stop_event):
+                if stop_event.is_set():
+                    return
+                renderer.render(event)
+    except Exception:
+        if not stop_event.is_set():
+            typer.echo("thread event stream closed", err=True)
+
+
+def _iter_sse_events(response, *, stop_event: threading.Event) -> Iterator[dict[str, Any]]:
+    data_lines: list[str] = []
+    for raw_line in response:
+        if stop_event.is_set():
+            break
+        line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+        if line == "":
+            if data_lines:
+                data = "\n".join(data_lines)
+                data_lines = []
+                try:
+                    event = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event, dict):
+                    yield cast(dict[str, Any], event)
+            continue
+        if line.startswith("data:"):
+            data_lines.append(line.removeprefix("data:").strip())
+
+
+class _ThreadEventRenderer:
+    def __init__(
+        self,
+        *,
+        redraw_prompt: bool = False,
+        local_streaming: threading.Event | None = None,
+        local_request_ids: set[str] | None = None,
+    ) -> None:
+        self._assistant_open = False
+        self._redraw_prompt = redraw_prompt
+        self._local_streaming = local_streaming
+        self._local_request_ids = local_request_ids
+        self._local_run_ids: set[str] = set()
+        self._text_delta_runs: set[str] = set()
+
+    def render(self, event: dict[str, Any]) -> None:
+        event_type = str(event.get("type") or event.get("event_type") or "")
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            return
+        if event_type == "run_input":
+            self._render_run_input(payload)
+        elif event_type == "part_delta":
+            self._render_part_delta(payload)
+        elif event_type == "step_end":
+            self._render_step_end(payload)
+        elif event_type in {"part_end", "run_end"}:
+            self._close_assistant(
+                redraw_prompt=event_type == "run_end",
+                run_id=str(payload.get("run_id") or "") or None,
+            )
+
+    def _render_run_input(self, payload: dict[str, Any]) -> None:
+        if payload.get("action") != "start":
+            return
+        self._remember_local_run(payload)
+        text = _event_message_text(payload.get("message"))
+        if not text:
+            return
+        self._close_assistant(redraw_prompt=False, run_id=str(payload.get("run_id") or "") or None)
+        typer.echo(f"\nuser: {text}")
+
+    def _render_part_delta(self, payload: dict[str, Any]) -> None:
+        delta = payload.get("delta")
+        if not isinstance(delta, dict) or delta.get("type") != "text":
+            return
+        text = str(delta.get("text") or "")
+        if not text:
+            return
+        run_id = payload.get("run_id")
+        if isinstance(run_id, str):
+            self._text_delta_runs.add(run_id)
+        if not self._assistant_open:
+            typer.echo("assistant: ", nl=False)
+            self._assistant_open = True
+        typer.echo(text, nl=False)
+
+    def _render_step_end(self, payload: dict[str, Any]) -> None:
+        if payload.get("kind") != "model_call":
+            return
+        run_id = payload.get("run_id")
+        if isinstance(run_id, str) and run_id in self._text_delta_runs:
+            return
+        text = _event_parts_text(payload.get("output"))
+        if not text:
+            return
+        if not self._assistant_open:
+            typer.echo("assistant: ", nl=False)
+            self._assistant_open = True
+        typer.echo(text, nl=False)
+
+    def _close_assistant(self, *, redraw_prompt: bool, run_id: str | None) -> None:
+        if self._assistant_open:
+            typer.echo()
+            self._assistant_open = False
+        local_run = run_id is not None and run_id in self._local_run_ids
+        if redraw_prompt and self._redraw_prompt and not self._local_run_active(run_id=run_id):
+            typer.echo("> ", nl=False)
+        if redraw_prompt and local_run and run_id is not None:
+            self._local_run_ids.discard(run_id)
+
+    def _remember_local_run(self, payload: dict[str, Any]) -> None:
+        request_id = payload.get("request_id")
+        run_id = payload.get("run_id")
+        if not isinstance(request_id, str) or not isinstance(run_id, str):
+            return
+        if self._local_request_ids is not None and request_id in self._local_request_ids:
+            self._local_run_ids.add(run_id)
+
+    def _local_run_active(self, *, run_id: str | None) -> bool:
+        if run_id is not None and run_id in self._local_run_ids:
+            return True
+        if self._local_streaming is not None and self._local_streaming.is_set():
+            return True
+        return False
+
+
+def _event_message_text(message: object) -> str:
+    if not isinstance(message, Mapping):
+        return ""
+    typed_message = cast(Mapping[str, object], message)
+    parts = typed_message.get("parts")
+    if not isinstance(parts, list):
+        return ""
+    texts: list[str] = []
+    for part in parts:
+        if not isinstance(part, Mapping):
+            continue
+        typed_part = cast(Mapping[str, object], part)
+        if typed_part.get("type") == "text":
+            texts.append(str(typed_part.get("text") or ""))
+    return "".join(texts).strip()
+
+
+def _event_parts_text(parts: object) -> str:
+    if not isinstance(parts, list):
+        return ""
+    texts: list[str] = []
+    for part in parts:
+        if not isinstance(part, Mapping):
+            continue
+        typed_part = cast(Mapping[str, object], part)
+        if typed_part.get("type") == "text":
+            texts.append(str(typed_part.get("text") or ""))
+    return "".join(texts).strip()
+
+
+def _target_thread_id(ctx: typer.Context, target: str | None) -> str | None:
+    if target is None:
+        return None
+    if target.startswith("run_"):
+        detail = _runtime_json(ctx, f"/api/v1/runs/{target}")
+        info = detail.get("info")
+        if isinstance(info, dict) and isinstance(info.get("thread_id"), str):
+            return str(info["thread_id"])
+        thread_id = detail.get("thread_id")
+        if isinstance(thread_id, str):
+            return thread_id
+        raise click.ClickException(f"run has no thread: {target}")
+    return target
+
+
+def _target_run_id(ctx: typer.Context, target: str) -> str:
+    if target.startswith("run_"):
+        return target
+    detail = _runtime_json(ctx, f"/api/v1/threads/{target}")
+    info = detail.get("info")
+    if not isinstance(info, dict):
+        raise click.ClickException(f"thread not found: {target}")
+    active = info.get("active_run")
+    if not isinstance(active, dict) or not isinstance(active.get("id"), str):
+        raise click.ClickException(f"thread has no active run: {target}")
+    return str(active["id"])
+
+
+def _target_latest_run_id(ctx: typer.Context, target: str) -> str:
+    if target.startswith("run_"):
+        return target
+    detail = _runtime_json(ctx, f"/api/v1/threads/{target}")
+    info = detail.get("info")
+    if not isinstance(info, dict):
+        raise click.ClickException(f"thread not found: {target}")
+    latest = info.get("latest_run")
+    if not isinstance(latest, dict) or not isinstance(latest.get("id"), str):
+        raise click.ClickException(f"thread has no runs: {target}")
+    return str(latest["id"])
 
 
 def _resolve_runtime_startup(
@@ -1164,6 +1850,13 @@ def register_work_commands() -> None:
             cls=_RequiredPrefixAgentCommand,
         ),
         WorkCommandSpec(
+            name="clone",
+            help=lambda kind: f"Clone a {kind}.",
+            factory=_make_clone_work_command,
+            cls=_RequiredPrefixAgentCommand,
+            no_args_is_help=True,
+        ),
+        WorkCommandSpec(
             name="edit",
             help=lambda kind: f"Edit a {kind}.",
             factory=_make_edit_work_command,
@@ -1171,37 +1864,51 @@ def register_work_commands() -> None:
             no_args_is_help=True,
         ),
         WorkCommandSpec(
-            name="pause",
-            help=lambda kind: f"Pause a {kind}.",
-            factory=_make_pause_work_command,
+            name="delete",
+            help=lambda kind: f"Delete a {kind}.",
+            factory=_make_delete_work_command,
             cls=_RequiredPrefixAgentCommand,
             no_args_is_help=True,
         ),
         WorkCommandSpec(
-            name="resume",
-            help=lambda kind: f"Resume a {kind}.",
-            factory=_make_resume_work_command,
+            name="draft",
+            help=lambda kind: f"Move a {kind} to drafts.",
+            factory=_make_draft_work_command,
+            cls=_RequiredPrefixAgentCommand,
+            no_args_is_help=True,
+        ),
+        WorkCommandSpec(
+            name="ready",
+            help=lambda kind: f"Move a {kind} to ready.",
+            factory=_make_ready_work_command,
             cls=_RequiredPrefixAgentCommand,
             no_args_is_help=True,
         ),
         WorkCommandSpec(
             name="archive",
-            help=lambda kind: f"Archive a {kind}.",
+            help=lambda kind: f"Move a {kind} to archive.",
             factory=_make_archive_work_command,
             cls=_RequiredPrefixAgentCommand,
             no_args_is_help=True,
         ),
         WorkCommandSpec(
-            name="restore",
-            help=lambda kind: f"Restore an archived {kind}.",
-            factory=_make_restore_work_command,
+            name="cancel",
+            help=lambda kind: f"Cancel a {kind}.",
+            factory=_make_cancel_work_command,
             cls=_RequiredPrefixAgentCommand,
             no_args_is_help=True,
         ),
         WorkCommandSpec(
-            name="delete",
-            help=lambda kind: f"Delete an archived {kind}.",
-            factory=_make_delete_work_command,
+            name="reopen",
+            help=lambda kind: f"Reopen a {kind}.",
+            factory=_make_reopen_work_command,
+            cls=_RequiredPrefixAgentCommand,
+            no_args_is_help=True,
+        ),
+        WorkCommandSpec(
+            name="run",
+            help=lambda kind: "Trigger a chore run now." if kind == "chore" else f"Run a {kind}.",
+            factory=_make_run_work_command,
             cls=_RequiredPrefixAgentCommand,
             no_args_is_help=True,
         ),
@@ -1218,6 +1925,10 @@ def register_work_commands() -> None:
             pretty_exceptions_show_locals=False,
         )
         for spec in command_specs:
+            if kind == "task" and spec.name == "run":
+                continue
+            if kind == "chore" and spec.name == "reopen":
+                continue
             work_app.command(
                 spec.name,
                 help=spec.help(kind),
@@ -1230,17 +1941,38 @@ def register_work_commands() -> None:
 def _make_work_list_command(kind: WorkKind, title: str) -> Callable[..., None]:
     def list_work(
         ctx: typer.Context,
+        drafts: Annotated[
+            bool,
+            typer.Option("--drafts", help="List draft items."),
+        ] = False,
+        archived: Annotated[
+            bool,
+            typer.Option("--archived", help="List archived items."),
+        ] = False,
         all_items: Annotated[
             bool,
-            typer.Option("--all", help="Include archived items."),
+            typer.Option("--all", help="List ready, draft, and archived items."),
         ] = False,
     ) -> None:
         from ... import work
 
         agent_name = _required_prefix_agent(ctx, command_name=kind)
         root = _context_root(ctx)
+        lifecycles: tuple[work.JobLifecycle, ...]
+        if all_items:
+            lifecycles = ("ready", "draft", "archived")
+        elif drafts:
+            lifecycles = ("draft",)
+        elif archived:
+            lifecycles = ("archived",)
+        else:
+            lifecycles = ("ready",)
         if kind == "task":
-            entries = work.list_tasks(root, agent_name, include_archived=all_items)
+            entries = tuple(
+                entry
+                for lifecycle in lifecycles
+                for entry in work.list_tasks(root, agent_name, lifecycle=lifecycle)
+            )
             if not entries:
                 typer.echo("No tasks found.")
                 return
@@ -1248,15 +1980,18 @@ def _make_work_list_command(kind: WorkKind, title: str) -> Callable[..., None]:
                 (
                     entry.document.task_id(),
                     entry.document.display_title(fallback_name=entry.document.task_id()),
-                    entry.document.state,
-                    entry.document.stage,
+                    entry.lifecycle,
                     _work_location(root, agent_name, entry.path),
                 )
                 for entry in entries
             ]
-            _echo_table(("ID", title.upper(), "STATE", "STAGE", "LOCATION"), rows)
+            _echo_table(("ID", title.upper(), "LIFECYCLE", "LOCATION"), rows)
             return
-        entries = work.list_chores(root, agent_name, include_archived=all_items)
+        entries = tuple(
+            entry
+            for lifecycle in lifecycles
+            for entry in work.list_chores(root, agent_name, lifecycle=lifecycle)
+        )
         if not entries:
             typer.echo("No chores found.")
             return
@@ -1264,13 +1999,13 @@ def _make_work_list_command(kind: WorkKind, title: str) -> Callable[..., None]:
             (
                 entry.document.chore_id(),
                 entry.document.display_title(fallback_name=entry.document.chore_id()),
-                entry.document.state,
+                entry.lifecycle,
                 entry.document.schedule,
                 _work_location(root, agent_name, entry.path),
             )
             for entry in entries
         ]
-        _echo_table(("ID", title.upper(), "STATE", "SCHEDULE", "LOCATION"), rows)
+        _echo_table(("ID", title.upper(), "LIFECYCLE", "SCHEDULE", "LOCATION"), rows)
 
     return list_work
 
@@ -1278,6 +2013,10 @@ def _make_work_list_command(kind: WorkKind, title: str) -> Callable[..., None]:
 def _make_new_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
     def new_work(
         ctx: typer.Context,
+        draft: Annotated[
+            bool,
+            typer.Option("--draft", help="Create the item in drafts."),
+        ] = False,
     ) -> None:
         from ... import work
 
@@ -1294,12 +2033,37 @@ def _make_new_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
             _context_root(ctx),
             agent_name,
             text,
+            lifecycle="draft" if draft else "ready",
         )
         job_id = path.stem
+        if not draft:
+            _reconcile_work_jobs(_context_root(ctx), agent_name, kind=kind)
         _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
         typer.echo(f"{kind} {job_id} created\t{path}")
 
     return new_work
+
+
+def _make_clone_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
+    def clone_work(
+        ctx: typer.Context,
+        id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
+    ) -> None:
+        from ... import work
+
+        agent_name = _required_prefix_agent(ctx, command_name=kind)
+        path = _wrap_user_error(
+            work.clone_task if kind == "task" else work.clone_chore,
+            _context_root(ctx),
+            agent_name,
+            id,
+        )
+        job_id = path.stem
+        _reconcile_work_jobs(_context_root(ctx), agent_name, kind=kind)
+        _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
+        typer.echo(f"{kind} {job_id} cloned\t{path}")
+
+    return clone_work
 
 
 def _make_edit_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
@@ -1331,14 +2095,15 @@ def _make_edit_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
             job_id,
             updated_text,
         )
+        _reconcile_work_jobs(_context_root(ctx), agent_name, kind=kind)
         _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
         typer.echo(str(path))
 
     return edit_work
 
 
-def _make_pause_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
-    def pause_work(
+def _make_draft_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
+    def draft_work(
         ctx: typer.Context,
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
@@ -1347,21 +2112,22 @@ def _make_pause_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
         job_id = id
         agent_name = _required_prefix_agent(ctx, command_name=kind)
         path = _wrap_user_error(
-            work.pause_task if kind == "task" else work.pause_chore,
+            work.draft_task if kind == "task" else work.draft_chore,
             _context_root(ctx),
             agent_name,
             job_id,
         )
         if path is None:
             raise click.ClickException(f"{kind} not found: {job_id}")
+        _reconcile_work_jobs(_context_root(ctx), agent_name, kind=kind)
         _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
-        typer.echo(f"{kind} {job_id} paused\t{path}")
+        typer.echo(f"{kind} {job_id} drafted\t{path}")
 
-    return pause_work
+    return draft_work
 
 
-def _make_resume_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
-    def resume_work(
+def _make_ready_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
+    def ready_work(
         ctx: typer.Context,
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
@@ -1370,17 +2136,18 @@ def _make_resume_work_command(kind: WorkKind, title: str) -> Callable[..., None]
         job_id = id
         agent_name = _required_prefix_agent(ctx, command_name=kind)
         path = _wrap_user_error(
-            work.resume_task if kind == "task" else work.resume_chore,
+            work.ready_task if kind == "task" else work.ready_chore,
             _context_root(ctx),
             agent_name,
             job_id,
         )
         if path is None:
             raise click.ClickException(f"{kind} not found: {job_id}")
+        _reconcile_work_jobs(_context_root(ctx), agent_name, kind=kind)
         _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
-        typer.echo(f"{kind} {job_id} resumed\t{path}")
+        typer.echo(f"{kind} {job_id} ready\t{path}")
 
-    return resume_work
+    return ready_work
 
 
 def _make_archive_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
@@ -1400,39 +2167,80 @@ def _make_archive_work_command(kind: WorkKind, title: str) -> Callable[..., None
         )
         if path is None:
             raise click.ClickException(f"{kind} not found: {job_id}")
+        _reconcile_work_jobs(_context_root(ctx), agent_name, kind=kind)
         _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
         typer.echo(f"{kind} {job_id} archived\t{path}")
 
     return archive_work
 
 
-def _make_restore_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
-    def restore_work(
+def _make_reopen_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
+    def reopen_work(
         ctx: typer.Context,
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
-        inactive: Annotated[
-            bool,
-            typer.Option("--inactive", help="Restore as inactive instead of active."),
-        ] = False,
     ) -> None:
-        from ... import work
+        if kind != "task":
+            raise click.ClickException("reopen is only supported for tasks")
+        from ... import jobs
 
-        job_id = id
         agent_name = _required_prefix_agent(ctx, command_name=kind)
-        state: Literal["active", "inactive"] = "inactive" if inactive else "active"
-        path = _wrap_user_error(
-            work.unarchive_task if kind == "task" else work.unarchive_chore,
-            _context_root(ctx),
-            agent_name,
-            job_id,
-            state=state,
-        )
-        if path is None:
-            raise click.ClickException(f"archived {kind} not found: {job_id}")
-        _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
-        typer.echo(f"{kind} {job_id} restored\t{path}")
+        root = _context_root(ctx)
+        store = jobs.open_job_store(root, agent_name)
+        try:
+            record = _wrap_user_error(
+                store.reopen_task,
+                toolang_root=root,
+                agent_name=agent_name,
+                task_id=id,
+            )
+        finally:
+            store.close()
+        typer.echo(f"task {record.job_id} reopened\t{record.status}")
 
-    return restore_work
+    return reopen_work
+
+
+def _make_run_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
+    def run_work(
+        ctx: typer.Context,
+        id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
+    ) -> None:
+        if kind != "chore":
+            raise click.ClickException("run is only supported for chores")
+        _runtime_post(ctx, f"/api/v1/chores/{id}/run", payload={})
+        typer.echo(f"chore {id} manual run requested")
+
+    return run_work
+
+
+def _make_cancel_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
+    def cancel_work(
+        ctx: typer.Context,
+        id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
+    ) -> None:
+        from ... import jobs
+
+        agent_name = _required_prefix_agent(ctx, command_name=kind)
+        root = _context_root(ctx)
+        store = jobs.open_job_store(root, agent_name)
+        try:
+            store.reconcile(toolang_root=root, agent_name=agent_name, kind=kind)
+            record = store.get(job_id=id, kind=kind)
+            if record is None:
+                raise click.ClickException(f"{kind} not found: {id}")
+            if record.status == "running" and record.last_run_id is not None:
+                _runtime_post(ctx, f"/api/v1/runs/{record.last_run_id}/cancel", payload={})
+                typer.echo(f"{kind} {id} cancel requested\t{record.last_run_id}")
+                return
+            if kind == "task" and record.status == "todo":
+                updated = store.cancel_pending_task(task_id=id)
+                typer.echo(f"task {id} canceled\t{updated.status}")
+                return
+            raise click.ClickException(f"{kind} cannot be canceled from status: {record.status}")
+        finally:
+            store.close()
+
+    return cancel_work
 
 
 def _make_delete_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
@@ -1445,11 +2253,11 @@ def _make_delete_work_command(kind: WorkKind, title: str) -> Callable[..., None]
         job_id = id
         agent_name = _required_prefix_agent(ctx, command_name=kind)
         active_entry = (
-            work.find_task(_context_root(ctx), agent_name, job_id)
+            work.find_task(_context_root(ctx), agent_name, job_id, lifecycle=None)
             if kind == "task"
-            else work.find_chore(_context_root(ctx), agent_name, job_id)
+            else work.find_chore(_context_root(ctx), agent_name, job_id, lifecycle=None)
         )
-        if active_entry is not None:
+        if active_entry is not None and active_entry.lifecycle != "archived":
             raise click.ClickException(f"{kind} is not archived: {job_id}; archive it before deleting")
         entry = (
             work.find_archived_task(_context_root(ctx), agent_name, job_id)
@@ -1467,10 +2275,21 @@ def _make_delete_work_command(kind: WorkKind, title: str) -> Callable[..., None]
         if not removed:
             raise click.ClickException(f"archived {kind} not found: {job_id}")
         path = entry.path
+        _reconcile_work_jobs(_context_root(ctx), agent_name, kind=kind)
         _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
         typer.echo(f"{kind} {job_id} deleted")
 
     return delete_work
+
+
+def _reconcile_work_jobs(toolang_root: Path, agent_name: str, *, kind: WorkKind) -> None:
+    from ... import jobs
+
+    store = jobs.open_job_store(toolang_root, agent_name)
+    try:
+        store.reconcile(toolang_root=toolang_root, agent_name=agent_name, kind=kind)
+    finally:
+        store.close()
 
 
 def _work_location(toolang_root: Path, agent_name: str, path: Path) -> str:
@@ -1579,6 +2398,12 @@ def _consume_global_arg(token: str, argv: list[str], index: int) -> tuple[list[s
 def _rewrite_agent_shortcuts(body: list[str]) -> tuple[list[str], str | None]:
     if not body:
         return body, None
+    if (
+        len(body) == 2
+        and _looks_like_agent_name(body[0])
+        and body[1] in _THREAD_TARGET_COMMANDS
+    ):
+        return [body[1], "--help"], body[0]
     if (
         len(body) >= 2
         and _looks_like_agent_name(body[0])
