@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError
@@ -12,6 +12,7 @@ from pathlib import Path
 import os
 import subprocess
 import sys
+import threading
 import time
 import tomllib
 from typing import Annotated, Any, Literal, TYPE_CHECKING, cast
@@ -904,22 +905,161 @@ def _open_thread_ui(ctx: typer.Context, thread_id: str | None) -> None:
 
 def _chat_interactive(ctx: typer.Context, *, thread_id: str, model: str | None) -> None:
     typer.echo(f"thread {thread_id}")
-    while True:
-        try:
-            text = input("> ")
-        except EOFError:
-            return
-        except KeyboardInterrupt:
-            typer.echo()
-            return
-        if text.strip() in {"/exit", "/quit"}:
-            return
-        if not text.strip():
+    listener = _start_thread_event_listener(ctx, thread_id)
+    try:
+        while True:
+            try:
+                text = input("> ")
+            except EOFError:
+                return
+            except KeyboardInterrupt:
+                typer.echo()
+                return
+            if text.strip() in {"/exit", "/quit"}:
+                return
+            if not text.strip():
+                continue
+            payload: dict[str, Any] = {"thread": thread_id, "client": "tui", "message": _message_payload(text)}
+            if model is not None:
+                payload["model"] = model
+            _runtime_post(ctx, "/api/v1/chat", payload=payload)
+    finally:
+        listener.stop()
+
+
+class _ThreadEventListener:
+    def __init__(self, stop_event: threading.Event) -> None:
+        self._stop_event = stop_event
+
+    def stop(self) -> None:
+        self._stop_event.set()
+
+
+def _start_thread_event_listener(ctx: typer.Context, thread_id: str) -> _ThreadEventListener:
+    stop_event = threading.Event()
+    try:
+        after = _thread_event_cursor(ctx, thread_id)
+    except click.ClickException:
+        stop_event.set()
+        return _ThreadEventListener(stop_event)
+    thread = threading.Thread(
+        target=_run_thread_event_listener,
+        args=(ctx, thread_id, after, stop_event),
+        daemon=True,
+    )
+    thread.start()
+    return _ThreadEventListener(stop_event)
+
+
+def _thread_event_cursor(ctx: typer.Context, thread_id: str) -> int | None:
+    detail = _runtime_json(ctx, f"/api/v1/threads/{thread_id}")
+    cursor = detail.get("event_cursor")
+    if isinstance(cursor, int):
+        return cursor
+    return None
+
+
+def _run_thread_event_listener(
+    ctx: typer.Context,
+    thread_id: str,
+    after: int | None,
+    stop_event: threading.Event,
+) -> None:
+    renderer = _ThreadEventRenderer()
+    path = f"/api/v1/threads/{thread_id}/stream"
+    if after is not None:
+        path = f"{path}?{urlencode([('after', str(after))])}"
+    url = f"{_runtime_base_url(ctx)}{path}"
+    try:
+        with urlopen(url, timeout=None) as response:
+            for event in _iter_sse_events(response, stop_event=stop_event):
+                if stop_event.is_set():
+                    return
+                renderer.render(event)
+    except Exception:
+        if not stop_event.is_set():
+            typer.echo("thread event stream closed", err=True)
+
+
+def _iter_sse_events(response, *, stop_event: threading.Event) -> Iterator[dict[str, Any]]:
+    data_lines: list[str] = []
+    for raw_line in response:
+        if stop_event.is_set():
+            break
+        line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+        if line == "":
+            if data_lines:
+                data = "\n".join(data_lines)
+                data_lines = []
+                try:
+                    event = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event, dict):
+                    yield cast(dict[str, Any], event)
             continue
-        payload: dict[str, Any] = {"thread": thread_id, "client": "tui", "message": _message_payload(text)}
-        if model is not None:
-            payload["model"] = model
-        _runtime_stream(ctx, "/api/v1/chat/stream", payload=payload)
+        if line.startswith("data:"):
+            data_lines.append(line.removeprefix("data:").strip())
+
+
+class _ThreadEventRenderer:
+    def __init__(self) -> None:
+        self._assistant_open = False
+
+    def render(self, event: dict[str, Any]) -> None:
+        event_type = str(event.get("type") or event.get("event_type") or "")
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            return
+        if event_type == "run_input":
+            self._render_run_input(payload)
+        elif event_type == "part_delta":
+            self._render_part_delta(payload)
+        elif event_type in {"part_end", "run_end"}:
+            self._close_assistant()
+
+    def _render_run_input(self, payload: dict[str, Any]) -> None:
+        if payload.get("action") != "start":
+            return
+        text = _event_message_text(payload.get("message"))
+        if not text:
+            return
+        self._close_assistant()
+        typer.echo(f"\nuser: {text}")
+
+    def _render_part_delta(self, payload: dict[str, Any]) -> None:
+        delta = payload.get("delta")
+        if not isinstance(delta, dict) or delta.get("type") != "text":
+            return
+        text = str(delta.get("text") or "")
+        if not text:
+            return
+        if not self._assistant_open:
+            typer.echo("assistant: ", nl=False)
+            self._assistant_open = True
+        typer.echo(text, nl=False)
+
+    def _close_assistant(self) -> None:
+        if self._assistant_open:
+            typer.echo()
+            self._assistant_open = False
+
+
+def _event_message_text(message: object) -> str:
+    if not isinstance(message, Mapping):
+        return ""
+    typed_message = cast(Mapping[str, object], message)
+    parts = typed_message.get("parts")
+    if not isinstance(parts, list):
+        return ""
+    texts: list[str] = []
+    for part in parts:
+        if not isinstance(part, Mapping):
+            continue
+        typed_part = cast(Mapping[str, object], part)
+        if typed_part.get("type") == "text":
+            texts.append(str(typed_part.get("text") or ""))
+    return "".join(texts).strip()
 
 
 def _target_thread_id(ctx: typer.Context, target: str | None) -> str | None:
