@@ -91,7 +91,7 @@ toolang stop alice
 toolang info alice
 toolang alice chat "What changed today?"
 toolang alice chat --thread tui_3nprht9x "Continue"
-toolang alice chat --thread tui_3nprht9x --ui
+toolang alice chat --thread tui_3nprht9x --tui
 toolang alice threads
 toolang alice runs --thread tui_3nprht9x
 toolang alice steer run_ppkp9e94 "Use the smaller patch"

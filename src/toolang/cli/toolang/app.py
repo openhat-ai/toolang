@@ -478,7 +478,7 @@ def chat_command(
     ctx: typer.Context,
     message: Annotated[str | None, typer.Argument(help="Message text.")] = None,
     thread: Annotated[str | None, typer.Option("--thread", help="Thread or run id.")] = None,
-    ui: Annotated[bool, typer.Option("--ui", help="Open the terminal UI.")] = False,
+    tui: Annotated[bool, typer.Option("--tui", help="Open the terminal UI.")] = False,
     model: Annotated[str | None, typer.Option("--model", help="Model selector.")] = None,
 ) -> None:
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
@@ -489,7 +489,7 @@ def chat_command(
             if not isinstance(created, str):
                 raise click.ClickException("runtime did not return a thread id")
             thread_id = created
-        if ui:
+        if tui:
             _open_thread_ui(ctx, thread_id)
             return
         _chat_interactive(ctx, thread_id=thread_id, model=model)
@@ -497,7 +497,7 @@ def chat_command(
     payload: dict[str, Any] = {"thread": thread_id, "client": "tui", "message": _message_payload(message)}
     if model is not None:
         payload["model"] = model
-    if ui:
+    if tui:
         result = _runtime_post(ctx, "/api/v1/chat", payload=payload)
         thread = result.get("thread_id")
         if isinstance(thread, str):
@@ -588,11 +588,11 @@ def steer_command(
     ctx: typer.Context,
     target: str = typer.Argument(..., help="Run id or thread id."),
     message: str = typer.Argument(..., help="Steering message."),
-    ui: Annotated[bool, typer.Option("--ui", help="Open the terminal UI.")] = False,
+    tui: Annotated[bool, typer.Option("--tui", help="Open the terminal UI.")] = False,
 ) -> None:
     run_id = _target_run_id(ctx, target)
     _runtime_post(ctx, f"/api/v1/runs/{run_id}/steer", payload={"message": _message_payload(message)})
-    if ui:
+    if tui:
         _open_thread_ui(ctx, _target_thread_id(ctx, target))
     typer.echo(f"steered {run_id}")
 
@@ -601,11 +601,11 @@ def steer_command(
 def cancel_command(
     ctx: typer.Context,
     target: str = typer.Argument(..., help="Run id or thread id."),
-    ui: Annotated[bool, typer.Option("--ui", help="Open the terminal UI.")] = False,
+    tui: Annotated[bool, typer.Option("--tui", help="Open the terminal UI.")] = False,
 ) -> None:
     run_id = _target_run_id(ctx, target)
     _runtime_post(ctx, f"/api/v1/runs/{run_id}/cancel", payload={})
-    if ui:
+    if tui:
         _open_thread_ui(ctx, _target_thread_id(ctx, target))
     typer.echo(f"canceled {run_id}")
 
@@ -615,12 +615,12 @@ def rewind_command(
     ctx: typer.Context,
     target: str = typer.Argument(..., help="Run id or thread id."),
     message: Annotated[str | None, typer.Argument(help="Replacement message.")] = None,
-    ui: Annotated[bool, typer.Option("--ui", help="Open the terminal UI.")] = False,
+    tui: Annotated[bool, typer.Option("--tui", help="Open the terminal UI.")] = False,
 ) -> None:
     run_id = _target_latest_run_id(ctx, target)
     payload = {"message": _message_payload(message)} if message is not None else {}
     result = _runtime_post(ctx, f"/api/v1/runs/{run_id}/rewind", payload=payload)
-    if ui:
+    if tui:
         thread = result.get("thread_id")
         _open_thread_ui(ctx, str(thread) if isinstance(thread, str) else _target_thread_id(ctx, target))
     typer.echo(f"rewound {result.get('thread_id')}\t{result.get('run_id')}")
@@ -631,12 +631,12 @@ def fork_command(
     ctx: typer.Context,
     target: str = typer.Argument(..., help="Run id or thread id."),
     message: Annotated[str | None, typer.Argument(help="Fork message.")] = None,
-    ui: Annotated[bool, typer.Option("--ui", help="Open the terminal UI.")] = False,
+    tui: Annotated[bool, typer.Option("--tui", help="Open the terminal UI.")] = False,
 ) -> None:
     run_id = _target_latest_run_id(ctx, target)
     payload = {"message": _message_payload(message)} if message is not None else {}
     result = _runtime_post(ctx, f"/api/v1/runs/{run_id}/fork", payload=payload)
-    if ui:
+    if tui:
         thread = result.get("thread_id")
         if isinstance(thread, str):
             _open_thread_ui(ctx, thread)
