@@ -68,8 +68,9 @@ Key paths:
 | `agent.too` | Agent program |
 | `config.toml` | Agent-local configuration |
 | `psyches/`, `skills/`, `services/`, `prompts/` | Agent-local cap definitions |
-| `tasks/` | Task documents |
-| `chores/` | Chore documents |
+| `tasks/` | Ready task documents |
+| `chores/` | Ready chore documents |
+| `drafts/` | Draft task and chore documents |
 | `archive/` | Retired task and chore documents |
 | `.caps/` | Prepared runtime artifacts |
 | `.runtime/` | Live runtime state |
@@ -88,9 +89,9 @@ Key paths:
 | `status.json` | Runtime status, endpoint, sandbox summary, and enabled features |
 | `agent.log`    | Runtime log                                                  |
 | `logs/<thunk>/<run_id>.log` | Per-run script invoke logs when `PY_LOG` is set |
-| `runs.db` | Runs, steps, updates, and prompt blobs                       |
+| `jobs.db` | Scheduler job projection and atomic job claims                |
+| `runs.db` | Threads, runs, steps, updates, and prompt blobs               |
 | `ids.json`     | Local id allocator state                                     |
-| `pulse.json`   | Pulse loop state                                             |
 | `tools/`       | Per-tool plugin working directories                          |
 | `channels/`    | Per-channel plugin working directories                       |
 
@@ -122,7 +123,8 @@ Durable authored state lives in:
 - agent cap directories
 - agent `tasks/`
 - agent `chores/`
+- agent `drafts/`
 - agent `archive/`
 
 Durable execution state does not live in authored files. It lives in
-`runs.db`.
+`jobs.db` and `runs.db`.

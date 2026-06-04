@@ -112,6 +112,10 @@ To build a full transcript, flatten:
 1. each run input
 2. each step message in run order
 
+Forked chat threads store their source thread and anchor run in `parent`.
+Inherited transcript context includes visible source-thread runs before the
+anchor run.
+
 
 ## Run API
 
@@ -123,6 +127,27 @@ Run detail returns:
 
 `output.steps` contains the projected step detail for the run. This is the
 source used by trace and chat inspection pages.
+
+Run control endpoints are:
+
+- `POST /api/v1/runs/{run_id}/steer`
+- `POST /api/v1/runs/{run_id}/cancel`
+- `POST /api/v1/runs/{run_id}/rewind`
+- `POST /api/v1/runs/{run_id}/fork`
+
+`steer` and `cancel` require a running run. They can target chat, task, and
+chore runs.
+
+`rewind` replaces the visible suffix of a branchable chat thread from the
+anchor run onward and starts a replacement run in the same thread. Superseded
+runs remain inspectable by id but are hidden from normal thread projections.
+
+`fork` creates a new chat thread from the context before the anchor run and
+starts one run in the new thread.
+
+Task and chore thread ids are derived from job ids, so job threads cannot be
+rewound or forked. Job execution commands expose explicit job semantics such as
+`task reopen <id>` and `chore run <id>` instead.
 
 
 ## Chat API

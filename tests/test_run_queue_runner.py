@@ -21,6 +21,7 @@ import pytest
 
 from toolang import agents
 from toolang import caps
+from toolang import jobs
 from toolang import work
 from toolang.base.error import ToolangError
 from toolang.base.protocols.channel import AgentChannel
@@ -170,7 +171,6 @@ def test_runner_pending_requests_include_group_waiters(tmp_path: Path) -> None:
 
             assert waiting in context.runner.pending_requests()
             assert len(context.runner) >= 1
-            assert "task:def456" in pulse._pending_keys(context)
 
             context.runner.close()
             await drain_task
@@ -956,7 +956,7 @@ def test_chat_api_allocates_tui_threads_for_tui_client(tmp_path: Path) -> None:
     assert len(thread_id) == len("tui_") + 8
 
 
-def test_chat_restart_supersedes_previous_run_in_thread_projection(tmp_path: Path) -> None:
+def test_chat_rewind_supersedes_previous_run_in_thread_projection(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
@@ -974,11 +974,11 @@ def test_chat_restart_supersedes_previous_run_in_thread_projection(tmp_path: Pat
             )
             old_run_id = first.json()["run_id"]
             thread_id = first.json()["thread_id"]
-            restart = client.post(
-                f"/api/v1/runs/{old_run_id}/restart",
+            rewind = client.post(
+                f"/api/v1/runs/{old_run_id}/rewind",
                 json={"message": _chat_message("replacement input")},
             )
-            new_run_id = restart.json()["run_id"]
+            new_run_id = rewind.json()["run_id"]
 
             for _ in range(100):
                 thread_detail = client.get(f"/api/v1/threads/{thread_id}").json()
@@ -989,16 +989,19 @@ def test_chat_restart_supersedes_previous_run_in_thread_projection(tmp_path: Pat
             runs = client.get(f"/api/v1/runs?thread_id={thread_id}").json()["items"]
 
     assert first.status_code == 200
-    assert restart.status_code == 200
-    assert restart.json()["previous_run"]["superseded"] == {"type": "replaced", "by": new_run_id}
-    assert old_detail["info"]["superseded"] == {"type": "replaced", "by": new_run_id}
+    assert rewind.status_code == 200
+    assert old_detail["info"]["superseded"] == {
+        "type": "rewound",
+        "by": new_run_id,
+        "from_run_id": old_run_id,
+    }
     assert [item["info"]["id"] for item in thread_detail["runs"]] == [new_run_id]
     assert thread_detail["runs"][0]["input"]["parts"][0]["text"] == "replacement input"
     assert thread_detail["info"]["run_count"] == 1
     assert [item["id"] for item in runs] == [new_run_id]
 
 
-def test_chat_restart_cancels_running_run_before_superseding(tmp_path: Path) -> None:
+def test_chat_rewind_cancels_running_run_before_superseding(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
@@ -1016,11 +1019,11 @@ def test_chat_restart_cancels_running_run_before_superseding(tmp_path: Path) -> 
 
     with _patched_runner_execution():
         with TestClient(app) as client:
-            restart = client.post(
-                "/api/v1/runs/run_running/restart",
+            rewind = client.post(
+                "/api/v1/runs/run_running/rewind",
                 json={"message": _chat_message("replacement input")},
             )
-            new_run_id = restart.json()["run_id"]
+            new_run_id = rewind.json()["run_id"]
 
             for _ in range(100):
                 thread_detail = client.get("/api/v1/threads/chat_running").json()
@@ -1029,12 +1032,14 @@ def test_chat_restart_cancels_running_run_before_superseding(tmp_path: Path) -> 
                 time.sleep(0.01)
             old_detail = client.get("/api/v1/runs/run_running").json()
 
-    assert restart.status_code == 200
-    assert restart.json()["previous_run"]["status"] == "canceled"
-    assert restart.json()["previous_run"]["superseded"] == {"type": "replaced", "by": new_run_id}
+    assert rewind.status_code == 200
     assert old_detail["output"]["status"] == "canceled"
-    assert old_detail["output"]["error"] == "Run was restarted."
-    assert old_detail["info"]["superseded"] == {"type": "replaced", "by": new_run_id}
+    assert old_detail["output"]["error"] == "Run was rewound."
+    assert old_detail["info"]["superseded"] == {
+        "type": "rewound",
+        "by": new_run_id,
+        "from_run_id": "run_running",
+    }
     assert [item["info"]["id"] for item in thread_detail["runs"]] == [new_run_id]
 
 
@@ -2181,14 +2186,17 @@ def test_pulse_collects_due_chores_before_claimable_tasks(tmp_path: Path) -> Non
         enabled_features=("pulse",),
     )
 
-    _state, submissions = pulse.collect_pulse_submissions(
-        context,
-        pulse.PulseState(),
-        now=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        pending_keys=set(),
-    )
+    store = jobs.open_job_store(toolang_root, "alice")
+    try:
+        submissions = pulse.collect_pulse_submissions(
+            context,
+            store,
+            now=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+    finally:
+        store.close()
 
-    assert [item.kind for item in submissions] == ["chore", "task"]
+    assert {item.kind for item in submissions} == {"chore", "task"}
 
 
 def test_bind_run_request_allocates_normalized_local_ids(tmp_path: Path) -> None:
@@ -4772,12 +4780,11 @@ def test_new_task_reloads_into_live_state_and_tasks_endpoint(tmp_path: Path) -> 
     assert len(tasks) == 1
     assert tasks[0]["kind"] == "task"
     assert tasks[0]["title"] == "Review"
-    assert tasks[0]["state"] == "active"
-    assert tasks[0]["stage"] == "todo"
+    assert tasks[0]["lifecycle"] == "ready"
+    assert tasks[0]["status"] == "todo"
     assert tasks[0]["remote_ref"] is None
     assert tasks[0]["remote_status"] is None
     assert tasks[0]["runtime"]["thread_id"] == f"task_{tasks[0]['id']}"
-    assert tasks[0]["runtime"]["active_run"] is None
     assert tasks[0]["runtime"]["last_run"] is None
     assert tasks[0]["runtime"]["next_run"] is None
     assert tasks[0]["path"] == "tasks/review.md"
@@ -4807,8 +4814,8 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
         task_id = task["id"]
 
         assert task["kind"] == "task"
-        assert task["state"] == "active"
-        assert task["stage"] == "todo"
+        assert task["lifecycle"] == "ready"
+        assert task["status"] == "todo"
         assert task["body"] == "Review the new API surface."
         assert task["runtime"]["thread_id"] == f"task_{task_id}"
 
@@ -4823,21 +4830,18 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
         updated = client.patch(
             f"/api/v1/tasks/{task_id}",
             json={
-                "state": "inactive",
-                "stage": "running",
                 "body": "Updated task body.",
             },
         )
         assert updated.status_code == 200
         task = updated.json()["item"]
-        assert task["state"] == "inactive"
-        assert task["stage"] == "running"
+        assert task["lifecycle"] == "ready"
         assert task["body"] == "Updated task body."
 
-        archived = client.patch(f"/api/v1/jobs/{task_id}", json={"state": "archived"})
+        archived = client.post(f"/api/v1/tasks/{task_id}/archive")
         assert archived.status_code == 200
         task = archived.json()["item"]
-        assert task["state"] == "archived"
+        assert task["lifecycle"] == "archived"
         assert task["path"].startswith("archive/tasks/")
 
         assert client.get("/api/v1/tasks").json()["items"] == []
@@ -4847,21 +4851,14 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
         archived_detail = client.get(f"/api/v1/tasks/archived/{task_id}").json()["item"]
         assert archived_detail["body"] == "Updated task body."
 
-        reopened = client.patch(
-            f"/api/v1/jobs/archived/{task_id}",
-            json={
-                "state": "active",
-                "stage": "todo",
-            },
-        )
+        reopened = client.post(f"/api/v1/tasks/{task_id}/ready")
         assert reopened.status_code == 200
         task = reopened.json()["item"]
-        assert task["state"] == "active"
-        assert task["stage"] == "todo"
+        assert task["lifecycle"] == "ready"
         assert task["path"] == f"tasks/{task_id}.md"
         assert [item["id"] for item in client.get("/api/v1/jobs").json()["items"]] == [task_id]
 
-        rearchived = client.patch(f"/api/v1/tasks/{task_id}", json={"state": "archived"})
+        rearchived = client.post(f"/api/v1/tasks/{task_id}/archive")
         assert rearchived.status_code == 200
 
         deleted = client.delete(f"/api/v1/tasks/archived/{task_id}")
@@ -4883,7 +4880,7 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
         "created",
         "updated",
         "archived",
-        "unarchived",
+        "ready",
         "archived",
         "deleted",
     ]
@@ -4917,10 +4914,11 @@ def test_jobs_api_projects_active_run_tasks_as_running(tmp_path: Path) -> None:
         item = client.get("/api/v1/tasks").json()["items"][0]
 
     assert item["id"] == task.task_id()
-    assert item["stage"] == "running"
+    assert item["status"] == "todo"
     assert item["remote_ref"] == "XBY-26"
     assert item["remote_status"] == "Backlog"
-    assert item["runtime"]["active_run"]["id"] == "run-active-task"
+    assert item["runtime"]["last_run"]["id"] == "run-active-task"
+    assert item["runtime"]["last_run"]["status"] == "running"
 
 
 def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
@@ -4948,7 +4946,8 @@ def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
         chore_id = chore["id"]
 
         assert chore["kind"] == "chore"
-        assert chore["state"] == "active"
+        assert chore["lifecycle"] == "ready"
+        assert chore["status"] == "todo"
         assert chore["schedule"] == "FREQ=HOURLY;INTERVAL=6"
         assert chore["body"] == "Check stale pull requests."
         assert chore["runtime"]["thread_id"] == f"chore_{chore_id}"
@@ -4967,21 +4966,20 @@ def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
         updated = client.patch(
             f"/api/v1/chores/{chore_id}",
             json={
-                "state": "inactive",
                 "schedule": "FREQ=DAILY",
                 "body": "Updated chore body.",
             },
         )
         assert updated.status_code == 200
         chore = updated.json()["item"]
-        assert chore["state"] == "inactive"
+        assert chore["lifecycle"] == "ready"
         assert chore["schedule"] == "FREQ=DAILY"
         assert chore["body"] == "Updated chore body."
 
-        archived = client.patch(f"/api/v1/chores/{chore_id}", json={"state": "archived"})
+        archived = client.post(f"/api/v1/chores/{chore_id}/archive")
         assert archived.status_code == 200
         chore = archived.json()["item"]
-        assert chore["state"] == "archived"
+        assert chore["lifecycle"] == "archived"
         assert chore["path"].startswith("archive/chores/")
 
         assert client.get("/api/v1/chores").json()["items"] == []
@@ -4989,20 +4987,17 @@ def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
         archived_chores = client.get("/api/v1/jobs/archived?kind=chore").json()["items"]
         assert [item["id"] for item in archived_chores] == [chore_id]
 
-        reopened = client.patch(
-            f"/api/v1/chores/archived/{chore_id}",
-            json={"state": "active"},
-        )
+        reopened = client.post(f"/api/v1/chores/{chore_id}/ready")
         assert reopened.status_code == 200
         chore = reopened.json()["item"]
-        assert chore["state"] == "active"
+        assert chore["lifecycle"] == "ready"
         assert chore["path"] == f"chores/{chore_id}.md"
         assert [item["id"] for item in client.get("/api/v1/chores").json()["items"]] == [chore_id]
 
-        rearchived = client.patch(f"/api/v1/jobs/{chore_id}", json={"state": "archived"})
+        rearchived = client.post(f"/api/v1/chores/{chore_id}/archive")
         assert rearchived.status_code == 200
 
-        deleted = client.delete(f"/api/v1/jobs/archived/{chore_id}")
+        deleted = client.delete(f"/api/v1/chores/archived/{chore_id}")
         assert deleted.status_code == 200
         assert deleted.json() == {"deleted": True, "id": chore_id, "kind": "chore"}
         assert client.get("/api/v1/chores/archived").json()["items"] == []
@@ -5021,7 +5016,7 @@ def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
         "created",
         "updated",
         "archived",
-        "unarchived",
+        "ready",
         "archived",
         "deleted",
     ]
@@ -5106,8 +5101,6 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
         ref=task.thread_id(),
         name="review",
         body=task.body,
-        state="active",
-        stage="todo",
         thread_id=task.thread_id(),
         path=str(toolang_root / "agents" / "alice" / "tasks" / "review.md"),
     )
@@ -5121,16 +5114,10 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
     instructions = bundle.instructions()
     assert "Treat the user's message as the current task input." in instructions
     assert "Current task:" in instructions
-    assert "- State: active" in instructions
-    assert "- Stage: todo" in instructions
     assert f"- Path: {toolang_root / 'agents' / 'alice' / 'tasks' / 'review.md'}" in instructions
-    assert "- Before finishing, update this task with agent_state__task_update." in instructions
-    assert "- Set stage=done only when the task acceptance criteria are actually complete." in instructions
-    assert "- Set stage=failed when the task is blocked, impossible, or incomplete after your attempt." in instructions
+    assert "The runtime records completion status from the run outcome." in instructions
     assert "If this task mirrors a remote work item" in instructions
-    assert "Do not mark the local task done just because you fetched or verified the remote item" in instructions
-    assert "For non-terminal remote statuses such as Backlog, Todo, or In Progress" in instructions
-    assert "keep the local stage runnable (`todo` or `running`), not `done`" in instructions
+    assert "Do not report the task complete just because you fetched or verified the remote item" in instructions
     assert "update the remote status when supported" in instructions
     service_schema = bundle.tools()["service_use__bridge_start"].definition().parameters[
         "properties"
@@ -5169,15 +5156,10 @@ def test_chore_run_includes_remote_task_sync_protocol_in_prompt_bundle(tmp_path:
     assert "include the remote title, description, link, update timestamp, status" in instructions
     assert "match by remote_ref, remote URL, or remote id" in instructions
     assert "instead of creating another local task for the same remote item" in instructions
-    assert "keep the local task stage aligned with the remote status" in instructions
-    assert "if the remote item has a non-terminal status but the local task is `done` or `failed`" in instructions
-    assert "update the local task back to `todo`" in instructions
-    assert "even when remote updatedAt did not change" in instructions
-    assert "If an existing mirror task is already `running`" in instructions
-    assert "do not set its stage back to `todo`" in instructions
+    assert "update the remote status when supported" in instructions
 
 
-def test_pulse_marks_task_failed_when_finished_run_leaves_task_incomplete(tmp_path: Path) -> None:
+def test_pulse_marks_finished_task_job_done(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     _write_text(
@@ -5189,61 +5171,39 @@ def test_pulse_marks_task_failed_when_finished_run_leaves_task_incomplete(tmp_pa
         agent_name="alice",
         enabled_features=("pulse",),
     )
-    task = work.list_tasks(toolang_root, "alice")[0].document
-    claimed = work.claim_task(toolang_root / "agents" / "alice" / "tasks" / "review.md")
-    run_id = "run-failed-tool"
+    store = jobs.open_job_store(toolang_root, "alice")
+    store.reconcile(toolang_root=toolang_root, agent_name="alice", kind="task")
+    claimed = store.claim_due(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        kind="task",
+        run_id="run-task-done",
+        now=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    assert claimed is not None
+    run_id = claimed.run_id
     context.store.start_run(
         run_id=run_id,
-        thread_id=claimed.thread_id(),
+        thread_id=claimed.job.thread_id,
         origin="task",
-        input=Message.user(claimed.body),
-    )
-    context.store.append_step(
-        run_id=run_id,
-        step_index=1,
-        kind="model_call",
-        status="finished",
-        input=(RunInputRef(),),
-        output=(
-            ToolCallPart(
-                tool_call_id="tool-1",
-                call_id="call-1",
-                tool_name="service_use__bridge_start",
-                tool_family="service_use__bridge_start",
-                input={"service": "linear"},
-            ),
-        ),
-        payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
-        started_at="2026-01-01T00:00:01Z",
-        finished_at="2026-01-01T00:00:02Z",
-    )
-    context.store.append_step(
-        run_id=run_id,
-        step_index=2,
-        kind="model_call",
-        status="finished",
-        input=(StepOutputRef(step_index=1),),
-        output=(TextPart(text="blocked"),),
-        payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
-        started_at="2026-01-01T00:00:05Z",
-        finished_at="2026-01-01T00:00:06Z",
+        input=Message.user(claimed.text),
     )
     context.store.finish_run(run_id=run_id, status="finished", finished_at="2026-01-01T00:00:07Z")
 
     pulse._record_completed_runs(
         context,
-        pulse.PulseState(),
+        store,
         [
             RunOutcome(
                 run_id=run_id,
                 group="pulse",
                 origin="task",
-                input_text=claimed.body,
+                input_text=claimed.text,
                 thunk_name=None,
-                thread_id=task.thread_id(),
+                thread_id=claimed.job.thread_id,
                 delay_sec=0.0,
                 status="finished",
-                output_text="blocked",
+                output_text="done",
                 live_fingerprint=context.live.fingerprint,
             )
         ],
@@ -5251,13 +5211,13 @@ def test_pulse_marks_task_failed_when_finished_run_leaves_task_incomplete(tmp_pa
         now=datetime.now(timezone.utc),
     )
 
-    failed = work.find_task(toolang_root, "alice", task.task_id())
-    assert failed is not None
-    assert failed.document.stage == "failed"
-    assert work.find_archived_task(toolang_root, "alice", task.task_id()) is None
+    updated = store.get(job_id=claimed.job.job_id, kind="task")
+    store.close()
+    assert updated is not None
+    assert updated.status == "done"
 
 
-def test_pulse_leaves_done_task_active_until_manual_archive(tmp_path: Path) -> None:
+def test_pulse_marks_failed_task_job_failed(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     _write_text(
@@ -5269,108 +5229,38 @@ def test_pulse_leaves_done_task_active_until_manual_archive(tmp_path: Path) -> N
         agent_name="alice",
         enabled_features=("pulse",),
     )
-    task = work.list_tasks(toolang_root, "alice")[0].document
-    claimed = work.claim_task(toolang_root / "agents" / "alice" / "tasks" / "review.md")
-    entry = work.find_task(toolang_root, "alice", task.task_id())
-    assert entry is not None
-    work.save_task_entry(
-        toolang_root,
-        "alice",
-        entry,
-        entry.document.model_copy(update={"stage": "done"}),
-    )
-    run_id = "run-task-done"
-    context.store.start_run(
-        run_id=run_id,
-        thread_id=claimed.thread_id(),
-        origin="task",
-        input=Message.user(claimed.body),
-    )
-    context.store.append_step(
-        run_id=run_id,
-        step_index=1,
-        kind="model_call",
-        status="finished",
-        input=(RunInputRef(),),
-        output=(TextPart(text="completed"),),
-        payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
-        started_at="2026-01-01T00:00:01Z",
-        finished_at="2026-01-01T00:00:02Z",
-    )
-    context.store.finish_run(run_id=run_id, status="finished", finished_at="2026-01-01T00:00:03Z")
-
-    state = pulse.PulseState()
-    state.tasks[task.task_id()] = pulse.PulseItemState()
-    pulse._record_completed_runs(
-        context,
-        state,
-        [
-            RunOutcome(
-                run_id=run_id,
-                group="pulse",
-                origin="task",
-                input_text=claimed.body,
-                thunk_name=None,
-                thread_id=task.thread_id(),
-                delay_sec=0.0,
-                status="finished",
-                output_text="completed",
-                live_fingerprint=context.live.fingerprint,
-            )
-        ],
-        seen_completed=set(),
-        now=datetime.now(timezone.utc),
-    )
-
-    done = work.find_task(toolang_root, "alice", task.task_id())
-    assert done is not None
-    assert done.document.state == "active"
-    assert done.document.stage == "done"
-    assert work.find_archived_task(toolang_root, "alice", task.task_id()) is None
-    assert state.tasks[task.task_id()].last_status == "finished"
-
-
-def test_pulse_reopens_done_mirror_task_when_remote_status_is_active(tmp_path: Path) -> None:
-    toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
-    _write_text(
-        toolang_root / "agents" / "alice" / "tasks" / "review.md",
-        "---\ntitle: Review\n---\nLink: https://linear.app/xby/issue/XBY-35/example\n"
-        "Updated: 2026-04-27T13:01:59.877Z\n"
-        "Status: Todo\n",
-    )
-    context = _build_context(
+    store = jobs.open_job_store(toolang_root, "alice")
+    store.reconcile(toolang_root=toolang_root, agent_name="alice", kind="task")
+    claimed = store.claim_due(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("pulse",),
+        kind="task",
+        run_id="run-task-failed",
+        now=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
-    task = work.list_tasks(toolang_root, "alice")[0].document
-    claimed = work.claim_task(toolang_root / "agents" / "alice" / "tasks" / "review.md")
-    entry = work.find_task(toolang_root, "alice", task.task_id())
-    assert entry is not None
-    work.save_task_entry(
-        toolang_root,
-        "alice",
-        entry,
-        entry.document.model_copy(update={"stage": "done"}),
+    assert claimed is not None
+    context.store.start_run(
+        run_id=claimed.run_id,
+        thread_id=claimed.job.thread_id,
+        origin="task",
+        input=Message.user(claimed.text),
     )
-    state = pulse.PulseState()
-    state.tasks[task.task_id()] = pulse.PulseItemState()
+    context.store.finish_run(run_id=claimed.run_id, status="failed", finished_at="2026-01-01T00:00:07Z")
 
     pulse._record_completed_runs(
         context,
-        state,
+        store,
         [
             RunOutcome(
-                run_id="run-task-false-done",
+                run_id=claimed.run_id,
                 group="pulse:task",
                 origin="task",
-                input_text=claimed.body,
+                input_text=claimed.text,
                 thunk_name=None,
-                thread_id=task.thread_id(),
+                thread_id=claimed.job.thread_id,
                 delay_sec=0.0,
-                status="finished",
-                output_text="verified remote issue",
+                status="failed",
+                output_text="failed",
                 live_fingerprint=context.live.fingerprint,
             )
         ],
@@ -5378,10 +5268,10 @@ def test_pulse_reopens_done_mirror_task_when_remote_status_is_active(tmp_path: P
         now=datetime.now(timezone.utc),
     )
 
-    reopened = work.find_task(toolang_root, "alice", task.task_id())
-    assert reopened is not None
-    assert reopened.document.stage == "todo"
-    assert state.tasks[task.task_id()].last_status == "failed"
+    updated = store.get(job_id=claimed.job.job_id, kind="task")
+    store.close()
+    assert updated is not None
+    assert updated.status == "failed"
 
 
 def test_assemble_run_input_prefers_thunk_model_over_activation_default(tmp_path: Path) -> None:

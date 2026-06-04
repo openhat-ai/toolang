@@ -18,14 +18,19 @@ One run is bound to one prepared snapshot for its full lifetime.
 
 ## Durable Store
 
-`runs.db` is the durable store for runtime truth.
+`runs.db` is the durable store for thread and run truth.
 
 It stores:
 
+- threads
 - runs
 - steps
 - agent-local updates
 - deduplicated prompt bodies
+
+`.runtime/jobs.db` stores the scheduler projection for ready task and chore
+documents. It is used for atomic job claims and completion bookkeeping; it is
+not the transcript or run-history store.
 
 
 ## Durable Records
@@ -87,6 +92,7 @@ Run input is stored as an ordered `inputs` stream. Each input has:
 
 `index = 0` is the `start` input that created the run. Later `steer`
 inputs belong to the same running run and can be referenced by later steps.
+Cancel operations append a `stop` input and then finish the run as canceled.
 
 Step input is an ordered mix of:
 

@@ -34,15 +34,11 @@ Treat the user's message as the current task input.
 {{#runtime.job}}
 Current task:
 - Name: {{name}}
-- State: {{state}}
-- Stage: {{stage}}
 {{#path}}
 - Path: {{path}}
 {{/path}}
-- Before finishing, update this task with agent_state__task_update.
-- Set stage=done only when the task acceptance criteria are actually complete.
-- Set stage=failed when the task is blocked, impossible, or incomplete after your attempt.
-- If this task mirrors a remote work item, follow the remote item's description and acceptance criteria. Do not mark the local task done just because you fetched or verified the remote item. For non-terminal remote statuses such as Backlog, Todo, or In Progress, keep the local stage runnable (`todo` or `running`), not `done`. Mark it done only after the remote work is complete or the remote status is terminal. Reply or comment on the remote item with the outcome when appropriate, update the remote status when supported, then set the local task stage to match the remote outcome.
+- Complete the task objective directly. The runtime records completion status from the run outcome.
+- If this task mirrors a remote work item, follow the remote item's description and acceptance criteria. Do not report the task complete just because you fetched or verified the remote item. Reply or comment on the remote item with the outcome when appropriate and update the remote status when supported.
 {{/runtime.job}}
 Work the task directly and keep progress or outcome notes precise.
 Do not call tools or inspect files just to explore the environment.
@@ -66,7 +62,7 @@ Current chore:
 {{/path}}
 {{/runtime.job}}
 Complete the chore directly and keep the result concise.
-When creating or updating local tasks that mirror remote work items, include the remote title, description, link, update timestamp, status, and clear execution instructions: complete the remote item's requested work, reply or comment on the remote item with the result when appropriate, update the remote status when supported, and keep the local task stage aligned with the remote status. Before creating a mirror task, list existing active and archived tasks and match by remote_ref, remote URL, or remote id; update the existing mirror instead of creating another local task for the same remote item. Treat remote status and local stage as sync inputs, not just remote updated timestamps: if the remote item has a non-terminal status but the local task is `done` or `failed`, update the local task back to `todo` even when remote updatedAt did not change. If an existing mirror task is already `running`, update its body/status metadata if needed but do not set its stage back to `todo`; let the active run finish.
+When creating or updating local tasks that mirror remote work items, include the remote title, description, link, update timestamp, status, and clear execution instructions: complete the remote item's requested work, reply or comment on the remote item with the result when appropriate, and update the remote status when supported. Before creating a mirror task, list existing ready and archived tasks and match by remote_ref, remote URL, or remote id; update the existing mirror instead of creating another local task for the same remote item.
 Do not call tools or inspect files just to explore the environment.
 Use tools only when they materially help with the chore.
 </origin-instruction>

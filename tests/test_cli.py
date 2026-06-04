@@ -5303,11 +5303,9 @@ def test_cli_task_list_shows_task_rows(tmp_path: Path, monkeypatch) -> None:
     assert result.exit_code == 0
     assert "ID" in result.stdout
     assert "TASK" in result.stdout
-    assert "STATE" in result.stdout
-    assert "STAGE" in result.stdout
+    assert "LIFECYCLE" in result.stdout
     assert "Review the current plan." in result.stdout
-    assert "inactive" in result.stdout
-    assert "running" in result.stdout
+    assert "ready" in result.stdout
 
 
 def test_cli_task_delete_requires_archived_task(tmp_path: Path, monkeypatch) -> None:
@@ -5347,7 +5345,7 @@ def test_cli_task_delete_requires_archived_task(tmp_path: Path, monkeypatch) -> 
     assert work.find_archived_task(toolang_root, "alice", task_id) is None
 
 
-def test_cli_task_pause_and_resume_update_state(tmp_path: Path, monkeypatch) -> None:
+def test_cli_task_draft_and_ready_move_lifecycle(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
     _invoke_app(
@@ -5357,30 +5355,28 @@ def test_cli_task_pause_and_resume_update_state(tmp_path: Path, monkeypatch) -> 
     )
     task_id = work.list_tasks(toolang_root, "alice")[0].document.task_id()
 
-    pause_result = _invoke_app(
-        ["task", "pause", task_id],
+    draft_result = _invoke_app(
+        ["task", "draft", task_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    paused = work.find_task(toolang_root, "alice", task_id)
-    resume_result = _invoke_app(
-        ["task", "resume", task_id],
+    drafted = work.find_task(toolang_root, "alice", task_id, lifecycle="draft")
+    ready_result = _invoke_app(
+        ["task", "ready", task_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    resumed = work.find_task(toolang_root, "alice", task_id)
+    readied = work.find_task(toolang_root, "alice", task_id)
 
-    assert pause_result.exit_code == 0
-    assert f"task {task_id} paused" in pause_result.stdout
-    assert paused is not None
-    assert paused.document.state == "inactive"
-    assert resume_result.exit_code == 0
-    assert f"task {task_id} resumed" in resume_result.stdout
-    assert resumed is not None
-    assert resumed.document.state == "active"
+    assert draft_result.exit_code == 0
+    assert f"task {task_id} drafted" in draft_result.stdout
+    assert drafted is not None
+    assert ready_result.exit_code == 0
+    assert f"task {task_id} ready" in ready_result.stdout
+    assert readied is not None
 
 
-def test_cli_task_restore_moves_archived_task_back(tmp_path: Path, monkeypatch) -> None:
+def test_cli_task_ready_moves_archived_task_back(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
     _invoke_app(
@@ -5396,13 +5392,13 @@ def test_cli_task_restore_moves_archived_task_back(tmp_path: Path, monkeypatch) 
     )
 
     result = _invoke_app(
-        ["task", "restore", task_id],
+        ["task", "ready", task_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
 
     assert result.exit_code == 0
-    assert f"task {task_id} restored" in result.stdout
+    assert f"task {task_id} ready" in result.stdout
     assert work.find_task(toolang_root, "alice", task_id) is not None
     assert work.find_archived_task(toolang_root, "alice", task_id) is None
 
@@ -5430,7 +5426,7 @@ def test_cli_chore_new_and_list_show_schedule(tmp_path: Path, monkeypatch) -> No
     assert "FREQ=HOURLY;INTERVAL=1" in result.stdout
 
 
-def test_cli_chore_pause_and_resume_update_state(tmp_path: Path, monkeypatch) -> None:
+def test_cli_chore_draft_and_ready_move_lifecycle(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
     _invoke_app(
@@ -5440,30 +5436,28 @@ def test_cli_chore_pause_and_resume_update_state(tmp_path: Path, monkeypatch) ->
     )
     chore_id = work.list_chores(toolang_root, "alice")[0].document.chore_id()
 
-    pause_result = _invoke_app(
-        ["chore", "pause", chore_id],
+    draft_result = _invoke_app(
+        ["chore", "draft", chore_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    paused = work.find_chore(toolang_root, "alice", chore_id)
-    resume_result = _invoke_app(
-        ["chore", "resume", chore_id],
+    drafted = work.find_chore(toolang_root, "alice", chore_id, lifecycle="draft")
+    ready_result = _invoke_app(
+        ["chore", "ready", chore_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    resumed = work.find_chore(toolang_root, "alice", chore_id)
+    readied = work.find_chore(toolang_root, "alice", chore_id)
 
-    assert pause_result.exit_code == 0
-    assert f"chore {chore_id} paused" in pause_result.stdout
-    assert paused is not None
-    assert paused.document.state == "inactive"
-    assert resume_result.exit_code == 0
-    assert f"chore {chore_id} resumed" in resume_result.stdout
-    assert resumed is not None
-    assert resumed.document.state == "active"
+    assert draft_result.exit_code == 0
+    assert f"chore {chore_id} drafted" in draft_result.stdout
+    assert drafted is not None
+    assert ready_result.exit_code == 0
+    assert f"chore {chore_id} ready" in ready_result.stdout
+    assert readied is not None
 
 
-def test_cli_chore_restore_can_restore_as_inactive(tmp_path: Path, monkeypatch) -> None:
+def test_cli_chore_ready_moves_archived_chore_back(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
     _invoke_app(
@@ -5479,7 +5473,7 @@ def test_cli_chore_restore_can_restore_as_inactive(tmp_path: Path, monkeypatch) 
     )
 
     result = _invoke_app(
-        ["chore", "restore", chore_id, "--inactive"],
+        ["chore", "ready", chore_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
@@ -5487,7 +5481,6 @@ def test_cli_chore_restore_can_restore_as_inactive(tmp_path: Path, monkeypatch) 
     assert result.exit_code == 0
     chore = work.find_chore(toolang_root, "alice", chore_id)
     assert chore is not None
-    assert chore.document.state == "inactive"
     assert work.find_archived_chore(toolang_root, "alice", chore_id) is None
 
 
@@ -6718,6 +6711,7 @@ def test_cli_help_lists_cap_commands() -> None:
     assert "Inspect available channels." in result.stdout
     assert "Inspect available sandboxes." in result.stdout
     assert "Agent Commands" in result.stdout
+    assert "Thread Commands" in result.stdout
     assert "Runtime Commands" in result.stdout
     assert "Caps Commands" in result.stdout
     assert "Runtime Components" not in result.stdout
@@ -6728,8 +6722,20 @@ def test_cli_help_lists_cap_commands() -> None:
     assert "Manage skill caps." in result.stdout
     assert "Manage service caps." in result.stdout
     assert "Manage prompt caps." in result.stdout
+    assert "Send messages to a thread" in result.stdout
+    assert "Steer a running run." in result.stdout
+    assert "Cancel a running run." in result.stdout
+    assert "Rewind a chat thread from a run." in result.stdout
+    assert "Fork a chat thread from a run." in result.stdout
     chore_index = result.stdout.index("chore")
     task_index = result.stdout.index("task")
+    send_index = result.stdout.index("send")
+    steer_index = result.stdout.index("steer")
+    cancel_index = result.stdout.index("cancel")
+    rewind_index = result.stdout.index("rewind")
+    fork_index = result.stdout.index("fork")
+    runs_index = result.stdout.index("runs")
+    threads_index = result.stdout.index("threads")
     model_index = result.stdout.index("model")
     tool_index = result.stdout.index("tool")
     channel_index = result.stdout.index("channel")
@@ -6744,6 +6750,14 @@ def test_cli_help_lists_cap_commands() -> None:
     assert chore_index < task_index
     assert (
         task_index
+        < result.stdout.index("Thread Commands")
+        < send_index
+        < steer_index
+        < cancel_index
+        < rewind_index
+        < fork_index
+        < runs_index
+        < threads_index
         < result.stdout.index("Runtime Commands")
         < model_index
         < tool_index

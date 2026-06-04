@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import asdict
 from collections.abc import AsyncIterator, Container, Sequence
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -13,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from toolang.base.types.message import Message, TextPart, message_summary, parts_to_data
+from ....common.ids import LOCAL_ID_FAMILY, allocate_id
 from ....execution.detail import (
     RunDetail,
     ThreadInfo,
@@ -27,6 +29,7 @@ from ....execution.records import (
     InputRecord,
     ModelCallStepPayload,
     RunRecord,
+    RunStatus,
     RuntimeStepPayload,
     StepRecord,
     step_input_items_to_data,
@@ -34,10 +37,9 @@ from ....execution.records import (
 )
 from ....execution.runner import RunRequest
 from ....execution.stream import event_data
-from .... import agents, caps, templates, work
+from .... import agents, caps, jobs, templates, work
 from ....state.durable import scan_durable_state
 from ....state.prepared import PreparedEntry, load_prepared_state
-from ....state.pulse import PulseState
 from ...registry import ROUTER_COMPONENTS, RUNNER_COMPONENTS, TRIGGER_COMPONENTS, component_group, normalize_component_names
 from .._streaming import ShutdownAwareStreamingResponse
 
@@ -48,7 +50,6 @@ if TYPE_CHECKING:
 
 CapKind = Literal["psyche", "skill", "service", "prompt"]
 JobKind = Literal["task", "chore"]
-JobWriteState = Literal["active", "inactive"]
 ROUTER_COMPONENT_LEAVES = frozenset(component_group(ROUTER_COMPONENTS, "router"))
 RUNNER_COMPONENT_LEAVES = frozenset(component_group(RUNNER_COMPONENTS, "runner"))
 TRIGGER_COMPONENT_LEAVES = frozenset(component_group(TRIGGER_COMPONENTS, "trigger"))
@@ -77,7 +78,7 @@ class RunCancelRequest(BaseModel):
 
 
 class RunRestartRequest(BaseModel):
-    """Request one restarted chat run with a replacement input."""
+    """Request one replacement or forked chat run with a new input."""
 
     request_id: str | None = None
     message: RunInputMessagePayload
@@ -98,36 +99,28 @@ class _ApiModel(BaseModel):
 class TaskCreateRequest(_ApiModel):
     title: str | None = None
     body: str = ""
-    state: JobWriteState = "active"
-    stage: work.TaskStage = "todo"
 
 
 class TaskPatchRequest(_ApiModel):
     title: str | None = None
     body: str | None = None
-    state: work.JobState | None = None
-    stage: work.TaskStage | None = None
 
 
 class JobPatchRequest(_ApiModel):
     title: str | None = None
     body: str | None = None
-    state: work.JobState | None = None
-    stage: work.TaskStage | None = None
     schedule: str | None = None
 
 
 class ChoreCreateRequest(_ApiModel):
     title: str | None = None
     body: str = ""
-    state: JobWriteState = "active"
     schedule: str = work.DEFAULT_CHORE_SCHEDULE
 
 
 class ChorePatchRequest(_ApiModel):
     title: str | None = None
     body: str | None = None
-    state: work.JobState | None = None
     schedule: str | None = None
 
 
@@ -209,9 +202,14 @@ def create_router() -> APIRouter:
         return {"item": _cap_detail_item(context, entry)}
 
     @router.get("/runs", tags=["activity"], summary="List Runs")
-    async def runs(request: Request, limit: int = Query(default=50), thread_id: str | None = None) -> dict[str, object]:
+    async def runs(
+        request: Request,
+        limit: int = Query(default=50),
+        thread_id: str | None = None,
+        status: RunStatus | None = None,
+    ) -> dict[str, object]:
         context = request.app.state.runtime
-        runs = context.store.list_runs(limit=limit, thread_id=thread_id)
+        runs = context.store.list_runs(limit=limit, thread_id=thread_id, status=status)
         steps_by_run = context.store.list_steps_for_runs(run_ids=tuple(item.run_id for item in runs))
         inputs_by_run = {run.run_id: context.store.list_inputs(run_id=run.run_id) for run in runs}
         items = [
@@ -254,10 +252,12 @@ def create_router() -> APIRouter:
             context.events.stream(domain="run", domain_id=run_id, after=after),
         )
 
-    @router.post("/runs/{run_id}/stop", tags=["activity"], summary="Stop Run")
-    async def stop_run(request: Request, run_id: str, payload: RunCancelRequest | None = None) -> dict[str, object]:
+    @router.post("/runs/{run_id}/cancel", tags=["activity"], summary="Cancel Run")
+    async def cancel_run(request: Request, run_id: str, payload: RunCancelRequest | None = None) -> dict[str, object]:
         context = request.app.state.runtime
         run = _run_or_404(context, run_id)
+        if run.status != "running":
+            raise HTTPException(status_code=409, detail=f"run is not running: {run_id}")
         input_record = context.store.append_input(
             run_id=run.run_id,
             action="stop",
@@ -267,12 +267,11 @@ def create_router() -> APIRouter:
         input_payload = _input_event_payload(run, input_record)
         context.events.publish(domain="run", domain_id=run.run_id, type="run_input", payload=input_payload)
         context.events.publish(domain="thread", domain_id=run.thread_id, type="run_input", payload=input_payload)
-        if run.status == "running":
-            run = context.store.cancel_run(run_id=run_id, error=payload.reason if payload else None)
-            event_payload = _run_event_payload(run)
-            context.events.publish(domain="run", domain_id=run.run_id, type="run_end", payload=event_payload)
-            context.events.publish(domain="thread", domain_id=run.thread_id, type="run_end", payload=event_payload)
-            context.events.publish(domain="agent", domain_id=context.name, type="thread_update", payload=event_payload)
+        run = context.store.cancel_run(run_id=run_id, error=payload.reason if payload else None)
+        event_payload = _run_event_payload(run)
+        context.events.publish(domain="run", domain_id=run.run_id, type="run_end", payload=event_payload)
+        context.events.publish(domain="thread", domain_id=run.thread_id, type="run_end", payload=event_payload)
+        context.events.publish(domain="agent", domain_id=context.name, type="thread_update", payload=event_payload)
         return {
             "run": _run_item(
                 run,
@@ -282,24 +281,17 @@ def create_router() -> APIRouter:
             "input": input_payload,
         }
 
-    @router.post("/runs/{run_id}/restart", tags=["activity"], summary="Restart Run")
-    async def restart_run(request: Request, run_id: str, payload: RunRestartRequest) -> dict[str, object]:
+    @router.post("/runs/{run_id}/rewind", tags=["activity"], summary="Rewind Thread")
+    async def rewind_thread(request: Request, run_id: str, payload: RunRestartRequest) -> dict[str, object]:
         context = request.app.state.runtime
         run = _run_or_404(context, run_id)
-        if run.origin != "chat":
-            raise HTTPException(status_code=409, detail=f"run restarts are only supported for chat runs: {run_id}")
-        if run.superseded is not None:
-            raise HTTPException(status_code=409, detail=f"run is already superseded: {run_id}")
+        _require_branchable_thread(context, run)
         message = _input_message(payload.message)
         new_run_id = allocate_run_id(context)
-        if run.status == "running":
-            run = context.store.cancel_run(run_id=run.run_id, error="Run was restarted.")
-            run_end_payload = _run_event_payload(run)
-            context.events.publish(domain="run", domain_id=run.run_id, type="run_end", payload=run_end_payload)
-            context.events.publish(domain="thread", domain_id=run.thread_id, type="run_end", payload=run_end_payload)
-        run = context.store.supersede_run(
+        _cancel_running_replaced_runs(context, anchor=run, reason="Run was rewound.")
+        superseded = context.store.supersede_thread_from_run(
             run_id=run.run_id,
-            superseded={"type": "replaced", "by": new_run_id},
+            superseded={"type": "rewound", "by": new_run_id, "from_run_id": run.run_id},
         )
         context.runner.enqueue(
             RunRequest(
@@ -312,22 +304,63 @@ def create_router() -> APIRouter:
             )
         )
         event_payload = {
-            "run_id": run.run_id,
-            "replacement_run_id": new_run_id,
+            "from_run_id": run.run_id,
+            "new_run_id": new_run_id,
             "thread_id": run.thread_id,
-            "superseded": run.superseded,
+            "superseded_run_ids": [item.run_id for item in superseded],
             "message": message.to_data(),
         }
-        context.events.publish(domain="run", domain_id=run.run_id, type="run_restart", payload=event_payload)
-        context.events.publish(domain="thread", domain_id=run.thread_id, type="run_restart", payload=event_payload)
+        context.events.publish(domain="thread", domain_id=run.thread_id, type="thread_rewind", payload=event_payload)
         context.events.publish(domain="agent", domain_id=context.name, type="thread_update", payload=event_payload)
         return {
             "run_id": new_run_id,
-            "previous_run": _run_item(
-                run,
-                inputs=context.store.list_inputs(run_id=run.run_id),
-                steps=context.store.list_steps(run_id=run.run_id),
+            "thread_id": run.thread_id,
+            "superseded_run_ids": [item.run_id for item in superseded],
+            "message": message.to_data(),
+        }
+
+    @router.post("/runs/{run_id}/fork", tags=["activity"], summary="Fork Thread")
+    async def fork_thread(request: Request, run_id: str, payload: RunRestartRequest) -> dict[str, object]:
+        context = request.app.state.runtime
+        run = _run_or_404(context, run_id)
+        _require_branchable_thread(context, run)
+        message = _input_message(payload.message)
+        new_run_id = allocate_run_id(context)
+        new_thread_id = _fork_thread_id(context, source_thread_id=run.thread_id)
+        context.store.ensure_thread(
+            thread_id=new_thread_id,
+            origin="chat",
+            parent=json.dumps(
+                {"type": "fork", "thread_id": run.thread_id, "from_run_id": run.run_id},
+                ensure_ascii=False,
+                separators=(",", ":"),
             ),
+        )
+        context.runner.enqueue(
+            RunRequest(
+                group="chat",
+                origin="chat",
+                run_id=new_run_id,
+                thread_id=new_thread_id,
+                message=message,
+                metadata={"request_id": payload.request_id} if payload.request_id is not None else {},
+            )
+        )
+        event_payload = {
+            "from_run_id": run.run_id,
+            "source_thread_id": run.thread_id,
+            "thread_id": new_thread_id,
+            "run_id": new_run_id,
+            "message": message.to_data(),
+        }
+        context.events.publish(domain="thread", domain_id=run.thread_id, type="thread_fork", payload=event_payload)
+        context.events.publish(domain="thread", domain_id=new_thread_id, type="thread_forked", payload=event_payload)
+        context.events.publish(domain="agent", domain_id=context.name, type="thread_update", payload=event_payload)
+        return {
+            "run_id": new_run_id,
+            "thread_id": new_thread_id,
+            "source_thread_id": run.thread_id,
+            "from_run_id": run.run_id,
             "message": message.to_data(),
         }
 
@@ -714,32 +747,31 @@ def _task_collection(context: UptimeContext, *, archived: bool) -> list[dict[str
 
 
 def _chore_collection(context: UptimeContext, *, archived: bool) -> list[dict[str, object]]:
-    pulse_state = _pulse_state(context)
     entries = (
         work.list_archived_chores(context.root, context.name)
         if archived
         else work.list_chores(context.root, context.name)
     )
     return [
-        _chore_item(context, entry, pulse_state=pulse_state)
+        _chore_item(context, entry)
         for entry in entries
     ]
 
 
 def _task_item(context: UptimeContext, entry: work.TaskEntry) -> dict[str, object]:
     document = entry.document
-    runtime = _job_runtime(context, thread_id=document.thread_id())
+    job = _job_record(context, kind="task", job_id=document.task_id(), lifecycle=entry.lifecycle)
     return {
         "id": document.task_id(),
         "kind": "task",
-        "state": document.state,
-        "stage": "running" if runtime["active_run"] is not None else document.stage,
+        "lifecycle": entry.lifecycle,
+        "status": job.status if job is not None else None,
         "remote_ref": document.remote_ref(),
         "remote_status": document.remote_status(),
         "title": document.display_title(fallback_name=entry.name.rsplit("/", 1)[-1]),
         "path": _agent_relative_path(context, entry.path),
         "updated_at": _path_updated_at(entry.path),
-        "runtime": runtime,
+        "runtime": _job_runtime(context, thread_id=document.thread_id(), job=job),
     }
 
 
@@ -750,28 +782,19 @@ def _task_detail_item(context: UptimeContext, entry: work.TaskEntry) -> dict[str
     }
 
 
-def _chore_item(
-    context: UptimeContext,
-    entry: work.ChoreEntry,
-    *,
-    pulse_state: PulseState | None = None,
-) -> dict[str, object]:
+def _chore_item(context: UptimeContext, entry: work.ChoreEntry) -> dict[str, object]:
     document = entry.document
-    state = pulse_state or _pulse_state(context)
-    item_state = state.chores.get(document.chore_id())
+    job = _job_record(context, kind="chore", job_id=document.chore_id(), lifecycle=entry.lifecycle)
     return {
         "id": document.chore_id(),
         "kind": "chore",
-        "state": document.state,
+        "lifecycle": entry.lifecycle,
+        "status": job.status if job is not None else None,
         "schedule": document.schedule,
         "title": document.display_title(fallback_name=entry.name.rsplit("/", 1)[-1]),
         "path": _agent_relative_path(context, entry.path),
         "updated_at": _path_updated_at(entry.path),
-        "runtime": _job_runtime(
-            context,
-            thread_id=document.thread_id(),
-            next_run_at=None if item_state is None else item_state.next_due_at,
-        ),
+        "runtime": _job_runtime(context, thread_id=document.thread_id(), job=job),
     }
 
 
@@ -853,8 +876,6 @@ def _task_document_from_create(context: UptimeContext, payload: TaskCreateReques
             id=work.allocate_job_id(context.root, context.name),
             title=payload.title,
             body=payload.body,
-            state=payload.state,
-            stage=payload.stage,
         )
     except ValidationError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -866,7 +887,6 @@ def _chore_document_from_create(context: UptimeContext, payload: ChoreCreateRequ
             id=work.allocate_job_id(context.root, context.name),
             title=payload.title,
             body=payload.body,
-            state=payload.state,
             schedule=payload.schedule,
         )
     except ValidationError as error:
@@ -893,9 +913,10 @@ def _update_task(
 ) -> dict[str, object]:
     document = _patch_task_document(entry.document, payload)
     path = work.save_task_entry(context.root, context.name, entry, document)
-    action = _job_change_action(before=entry.document.state, after=document.state)
-    _append_job_update(context, kind="task", item_id=document.task_id(), action=action, path=path)
-    updated = _task_entry_after_save(context, document.task_id(), archived=document.state == "archived")
+    _append_job_update(context, kind="task", item_id=document.task_id(), action="updated", path=path)
+    updated = work.find_task(context.root, context.name, document.task_id(), lifecycle=entry.lifecycle)
+    if updated is None:
+        raise HTTPException(status_code=404, detail=f"task not found after update: {document.task_id()}")
     return {"item": _task_detail_item(context, updated)}
 
 
@@ -907,30 +928,11 @@ def _update_chore(
 ) -> dict[str, object]:
     document = _patch_chore_document(entry.document, payload)
     path = work.save_chore_entry(context.root, context.name, entry, document)
-    action = _job_change_action(before=entry.document.state, after=document.state)
-    _append_job_update(context, kind="chore", item_id=document.chore_id(), action=action, path=path)
-    updated = _chore_entry_after_save(context, document.chore_id(), archived=document.state == "archived")
+    _append_job_update(context, kind="chore", item_id=document.chore_id(), action="updated", path=path)
+    updated = work.find_chore(context.root, context.name, document.chore_id(), lifecycle=entry.lifecycle)
+    if updated is None:
+        raise HTTPException(status_code=404, detail=f"chore not found after update: {document.chore_id()}")
     return {"item": _chore_detail_item(context, updated)}
-
-
-def _task_entry_after_save(context: UptimeContext, task_id: str, *, archived: bool) -> work.TaskEntry:
-    if archived:
-        return _find_archived_task_or_404(context, task_id)
-    return _find_task_or_404(context, task_id)
-
-
-def _chore_entry_after_save(context: UptimeContext, chore_id: str, *, archived: bool) -> work.ChoreEntry:
-    if archived:
-        return _find_archived_chore_or_404(context, chore_id)
-    return _find_chore_or_404(context, chore_id)
-
-
-def _job_change_action(*, before: work.JobState, after: work.JobState) -> str:
-    if before != "archived" and after == "archived":
-        return "archived"
-    if before == "archived" and after != "archived":
-        return "unarchived"
-    return "updated"
 
 
 def _patch_task_document(document: work.TaskFile, payload: TaskPatchRequest | JobPatchRequest) -> work.TaskFile:
@@ -938,7 +940,7 @@ def _patch_task_document(document: work.TaskFile, payload: TaskPatchRequest | Jo
         raise HTTPException(status_code=400, detail="tasks do not support schedule")
     updates = {
         field: getattr(payload, field)
-        for field in ("title", "body", "state", "stage")
+        for field in ("title", "body")
         if field in payload.model_fields_set
     }
     try:
@@ -948,11 +950,9 @@ def _patch_task_document(document: work.TaskFile, payload: TaskPatchRequest | Jo
 
 
 def _patch_chore_document(document: work.ChoreFile, payload: ChorePatchRequest | JobPatchRequest) -> work.ChoreFile:
-    if "stage" in payload.model_fields_set:
-        raise HTTPException(status_code=400, detail="chores do not support stage")
     updates = {
         field: getattr(payload, field)
-        for field in ("title", "body", "state", "schedule")
+        for field in ("title", "body", "schedule")
         if field in payload.model_fields_set
     }
     try:
@@ -995,54 +995,46 @@ def _job_runtime(
     context: UptimeContext,
     *,
     thread_id: str,
-    next_run_at: datetime | None = None,
+    job: jobs.JobRecord | None = None,
 ) -> dict[str, object]:
     runs = context.store.list_runs(limit=None, thread_id=thread_id)
     ordered = sorted(runs, key=lambda item: item.created_at, reverse=True)
-    active = next((item for item in ordered if item.status == "running"), None)
-    last = next((item for item in ordered if item.status != "running"), None)
+    last = next((item for item in ordered), None)
     return {
         "thread_id": thread_id,
-        "active_run": _active_run_item(active) if active is not None else None,
         "last_run": _last_run_item(last) if last is not None else None,
         "next_run": (
-            {"at": next_run_at.astimezone(timezone.utc).isoformat()}
-            if next_run_at is not None
+            {"at": job.next_run_at}
+            if job is not None and job.next_run_at is not None
             else None
         ),
-    }
-
-
-def _active_run_item(run: RunRecord) -> dict[str, object]:
-    return {
-        "id": run.run_id,
-        "started_at": run.started_at,
     }
 
 
 def _last_run_item(run: RunRecord) -> dict[str, object]:
     return {
         "id": run.run_id,
-        "status": _runtime_run_status(run.status),
+        "status": run.status,
         "started_at": run.started_at,
         "finished_at": run.finished_at,
     }
 
 
-def _runtime_run_status(status: str) -> str:
-    if status == "finished":
-        return "succeeded"
-    return status
-
-
-def _pulse_state(context: UptimeContext) -> PulseState:
-    path = agents.agent_pulse_state_path(context.root, context.name)
-    if not path.is_file():
-        return PulseState()
+def _job_record(
+    context: UptimeContext,
+    *,
+    kind: work.JobKind,
+    job_id: str,
+    lifecycle: work.JobLifecycle,
+) -> jobs.JobRecord | None:
+    if lifecycle != "ready":
+        return None
+    store = jobs.open_job_store(context.root, context.name)
     try:
-        return PulseState.load(path)
-    except Exception:
-        return PulseState()
+        store.reconcile(toolang_root=context.root, agent_name=context.name, kind=kind)
+        return store.get(job_id=job_id, kind=kind)
+    finally:
+        store.close()
 
 
 def _agent_relative_path(context: UptimeContext, path: Path) -> str:
@@ -1442,6 +1434,38 @@ def _thread_metric_kind(thread: ThreadInfo) -> Literal["chat", "chore", "task"]:
     if thread.id.startswith("chore_") or thread.origin == "chore":
         return "chore"
     return "chat"
+
+
+def _require_branchable_thread(context: UptimeContext, run: RunRecord) -> None:
+    thread = context.store.get_thread(thread_id=run.thread_id)
+    origin = thread.origin if thread is not None else run.origin
+    if run.thread_id.startswith(("task_", "chore_")) or origin != "chat":
+        raise HTTPException(status_code=409, detail=f"thread cannot be rewound or forked: {run.thread_id}")
+
+
+def _cancel_running_replaced_runs(context: UptimeContext, *, anchor: RunRecord, reason: str) -> None:
+    runs = [
+        item
+        for item in sorted(
+            context.store.list_runs(thread_id=anchor.thread_id, limit=None),
+            key=lambda run: run.created_at,
+        )
+        if item.created_at >= anchor.created_at and item.status == "running"
+    ]
+    for run in runs:
+        canceled = context.store.cancel_run(run_id=run.run_id, error=reason)
+        payload = _run_event_payload(canceled)
+        context.events.publish(domain="run", domain_id=canceled.run_id, type="run_end", payload=payload)
+        context.events.publish(domain="thread", domain_id=canceled.thread_id, type="run_end", payload=payload)
+
+
+def _fork_thread_id(context: UptimeContext, *, source_thread_id: str) -> str:
+    prefix = source_thread_id.split("_", 1)[0].strip() or "thread"
+    value = allocate_id(
+        agents.agent_id_state_path(context.root, context.name),
+        family=LOCAL_ID_FAMILY,
+    ).value
+    return f"{prefix}_{value}"
 
 
 def _runtime_endpoint(

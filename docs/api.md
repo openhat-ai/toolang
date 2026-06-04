@@ -18,6 +18,13 @@ Top-level commands are:
 - `remove`
 - `list`
 - `info`
+- `send`
+- `threads`
+- `runs`
+- `steer`
+- `cancel`
+- `rewind`
+- `fork`
 - `model`
 - `plugin`
 - `run`
@@ -83,6 +90,14 @@ toolang clone brice/alice
 toolang start alice
 toolang stop alice
 toolang info alice
+toolang alice send "What changed today?"
+toolang alice send --thread web_3nprht9x "Continue"
+toolang alice threads
+toolang alice runs --thread web_3nprht9x
+toolang alice steer run_ppkp9e94 "Use the smaller patch"
+toolang alice cancel web_3nprht9x
+toolang alice rewind run_ppkp9e94 "Try again from here"
+toolang alice fork run_ppkp9e94 "Explore a different approach"
 toolang model list
 toolang plugin list
 ```
@@ -409,6 +424,11 @@ For multipart payload details:
 `POST /api/v1/chat/stream` returns one SSE stream that follows an AI SDK UI
 message stream subset.
 
+The CLI command for submitting chat-style input is `toolang <agent> send`.
+`--thread <thread_id>` attaches to an existing chat thread. Job thread ids are
+inspectable and controllable through thread and run commands, but `send` does
+not implicitly reopen tasks or create manual chore runs.
+
 
 ## Job Endpoints
 
@@ -417,23 +437,30 @@ message stream subset.
 - `PATCH /api/v1/jobs/{job_id}`
 - `GET /api/v1/jobs/archived`
 - `GET /api/v1/jobs/archived/{job_id}`
-- `PATCH /api/v1/jobs/archived/{job_id}`
 - `DELETE /api/v1/jobs/archived/{job_id}`
 - `GET /api/v1/tasks`
 - `POST /api/v1/tasks`
 - `GET /api/v1/tasks/{task_id}`
 - `PATCH /api/v1/tasks/{task_id}`
+- `POST /api/v1/tasks/{task_id}/draft`
+- `POST /api/v1/tasks/{task_id}/ready`
+- `POST /api/v1/tasks/{task_id}/archive`
+- `POST /api/v1/tasks/{task_id}/reopen`
+- `POST /api/v1/tasks/{task_id}/cancel`
 - `GET /api/v1/tasks/archived`
 - `GET /api/v1/tasks/archived/{task_id}`
-- `PATCH /api/v1/tasks/archived/{task_id}`
 - `DELETE /api/v1/tasks/archived/{task_id}`
 - `GET /api/v1/chores`
 - `POST /api/v1/chores`
 - `GET /api/v1/chores/{chore_id}`
 - `PATCH /api/v1/chores/{chore_id}`
+- `POST /api/v1/chores/{chore_id}/draft`
+- `POST /api/v1/chores/{chore_id}/ready`
+- `POST /api/v1/chores/{chore_id}/archive`
+- `POST /api/v1/chores/{chore_id}/run`
+- `POST /api/v1/chores/{chore_id}/cancel`
 - `GET /api/v1/chores/archived`
 - `GET /api/v1/chores/archived/{chore_id}`
-- `PATCH /api/v1/chores/archived/{chore_id}`
 - `DELETE /api/v1/chores/archived/{chore_id}`
 - `GET /api/v1/will`
 
@@ -442,14 +469,14 @@ message stream subset.
 `GET /api/v1/chores` return the same projections split by kind.
 
 List endpoints return authored job fields at the top level and runtime-derived
-state under `runtime`.
+status under `runtime`.
 
 Task items include:
 
 - `id`
 - `kind`
-- `state`
-- `stage`
+- `lifecycle`
+- `status`
 - `title`
 - `path`
 - `updated_at`
@@ -459,38 +486,45 @@ Chore items include:
 
 - `id`
 - `kind`
-- `state`
+- `lifecycle`
+- `status`
 - `schedule`
 - `title`
 - `path`
 - `updated_at`
 - `runtime`
 
-`state` values are:
+`lifecycle` values are:
 
-- `active`
-- `inactive`
+- `ready`
+- `draft`
 - `archived`
 
-Task `stage` values are:
+Task status values are:
 
 - `todo`
 - `running`
 - `done`
 - `failed`
+- `canceled`
+
+Chore status values are:
+
+- `todo`
+- `running`
+- `done`
 
 `runtime` contains:
 
 - `thread_id`
-- `active_run`
 - `last_run`
 - `next_run`
 
-`active_run` is the currently running run object or `null`. `last_run` is the
-most recent finished run object or `null`; it must not point at the same run as
-`active_run`. `next_run` is the next scheduled chore run or `null`.
+`last_run` is the latest run object or `null`. If `last_run.status` is
+`running`, that run is the active run. `next_run` is the next scheduled chore
+run or `null`.
 
-Default job list endpoints return active and inactive jobs. Archived jobs are
+Default job list endpoints return ready jobs. Draft and archived jobs are
 available only through explicit `/archived` routes.
 
 Detail endpoints return the same item shape plus `body`.
@@ -500,17 +534,13 @@ Task create requests accept:
 ```json
 {
   "title": "Review API changes",
-  "body": "Review the API changes and summarize risks.",
-  "state": "active",
-  "stage": "todo"
+  "body": "Review the API changes and summarize risks."
 }
 ```
 
-Task patch requests accept any subset of `title`, `body`, `state`, and `stage`.
-Patch `state: "inactive"` on the normal route to pause a task, and patch
-`state: "active"` on the normal route to resume it. Patch `state: "archived"`
-on the normal route to archive a task. Patch `state: "active"` or
-`state: "inactive"` on the archived route to unarchive it.
+Task patch requests accept any subset of `title` and `body`. Lifecycle actions
+use the task `draft`, `ready`, and `archive` endpoints. `task reopen` sets a
+completed, failed, or canceled task back to scheduler status `todo`.
 Delete is destructive and is available only through archived routes.
 
 Chore create requests accept:
@@ -519,16 +549,13 @@ Chore create requests accept:
 {
   "title": "Check stale PRs",
   "body": "Check stale pull requests and summarize blockers.",
-  "state": "active",
   "schedule": "FREQ=HOURLY;INTERVAL=6"
 }
 ```
 
-Chore patch requests accept any subset of `title`, `body`, `state`, and
-`schedule`. Patch `state: "inactive"` on the normal route to pause a chore,
-and patch `state: "active"` on the normal route to resume it. Patch
-`state: "archived"` on the normal route to archive a chore. Patch
-`state: "active"` or `state: "inactive"` on the archived route to unarchive it.
+Chore patch requests accept any subset of `title`, `body`, and `schedule`.
+Lifecycle actions use the chore `draft`, `ready`, and `archive` endpoints.
+`chore run` starts one manual occurrence without changing the schedule.
 Delete is destructive and is available only through archived routes.
 
 
@@ -537,7 +564,9 @@ Delete is destructive and is available only through archived routes.
 - `GET /api/v1/runs`
 - `GET /api/v1/runs/{run_id}`
 - `POST /api/v1/runs/{run_id}/steer`
-- `POST /api/v1/runs/{run_id}/stop`
+- `POST /api/v1/runs/{run_id}/cancel`
+- `POST /api/v1/runs/{run_id}/rewind`
+- `POST /api/v1/runs/{run_id}/fork`
 - `GET /api/v1/instruct/{hash}`
 - `GET /api/v1/context/{hash}`
 - `GET /api/v1/threads`
@@ -546,6 +575,10 @@ Delete is destructive and is available only through archived routes.
 - `GET /api/v1/events/stream`
 
 `/api/v1/runs/{run_id}` is the main trace-detail endpoint.
+
+`steer` and `cancel` operate on running runs. `rewind` and `fork` operate on
+branchable chat threads by taking a run id as the anchor; task and chore threads
+cannot be rewound or forked because their thread ids are derived from job ids.
 
 
 ## Hook Endpoints

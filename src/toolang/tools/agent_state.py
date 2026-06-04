@@ -77,8 +77,6 @@ class AgentStatePlugin:
         def task_create(
             body: str,
             title: str | None = None,
-            state: str = "active",
-            stage: str = "todo",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             scope = _scope(context)
@@ -86,8 +84,6 @@ class AgentStatePlugin:
                 {
                     "id": work.allocate_job_id(scope.toolang_root, scope.agent_name),
                     "title": _blank_to_none(title),
-                    "state": state,
-                    "stage": stage,
                     "body": body,
                 }
             )
@@ -102,8 +98,6 @@ class AgentStatePlugin:
             task_id: str,
             title: str | None = None,
             body: str | None = None,
-            state: str | None = None,
-            stage: str | None = None,
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             scope = _scope(context)
@@ -120,10 +114,6 @@ class AgentStatePlugin:
                 updates["title"] = _blank_to_none(title)
             if body is not None:
                 updates["body"] = body
-            if state is not None:
-                updates["state"] = state
-            if stage is not None:
-                updates["stage"] = stage
             document = work.TaskFile.model_validate(
                 {**entry.document.model_dump(mode="python"), **updates}
             )
@@ -171,7 +161,6 @@ class AgentStatePlugin:
             body: str,
             schedule: str = work.DEFAULT_CHORE_SCHEDULE,
             title: str | None = None,
-            state: str = "active",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             scope = _scope(context)
@@ -179,7 +168,6 @@ class AgentStatePlugin:
                 {
                     "id": work.allocate_job_id(scope.toolang_root, scope.agent_name),
                     "title": _blank_to_none(title),
-                    "state": state,
                     "schedule": schedule,
                     "body": body,
                 }
@@ -195,7 +183,6 @@ class AgentStatePlugin:
             chore_id: str,
             title: str | None = None,
             body: str | None = None,
-            state: str | None = None,
             schedule: str | None = None,
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
@@ -213,8 +200,6 @@ class AgentStatePlugin:
                 updates["title"] = _blank_to_none(title)
             if body is not None:
                 updates["body"] = body
-            if state is not None:
-                updates["state"] = state
             if schedule is not None:
                 updates["schedule"] = schedule
             document = work.ChoreFile.model_validate(
@@ -478,8 +463,7 @@ def _task_payload(entry: work.TaskEntry) -> dict[str, Any]:
         "thread_id": document.thread_id(),
         "path": str(entry.path),
         "title": document.title,
-        "state": document.state,
-        "stage": document.stage,
+        "lifecycle": entry.lifecycle,
         "body": document.body,
     }
 
@@ -491,7 +475,7 @@ def _chore_payload(entry: work.ChoreEntry) -> dict[str, Any]:
         "thread_id": document.thread_id(),
         "path": str(entry.path),
         "title": document.title,
-        "state": document.state,
+        "lifecycle": entry.lifecycle,
         "schedule": document.schedule,
         "body": document.body,
     }

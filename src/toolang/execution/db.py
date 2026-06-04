@@ -326,6 +326,51 @@ class ExecutionStore:
             rows = self._conn.execute(query, tuple(params)).fetchall()
         return [_run_from_row(row) for row in rows]
 
+    def active_run_for_thread(self, *, thread_id: str) -> RunRecord | None:
+        """Return the currently running visible run for one thread, if any."""
+
+        runs = self.list_runs(thread_id=thread_id, status="running", limit=1)
+        return runs[0] if runs else None
+
+    def supersede_thread_from_run(
+        self,
+        *,
+        run_id: str,
+        superseded: Mapping[str, object],
+    ) -> tuple[RunRecord, ...]:
+        """Mark one run and later visible runs in the same thread as superseded."""
+
+        anchor = self.get_run(run_id=run_id)
+        if anchor is None:
+            raise ValueError(f"run not found: {run_id}")
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT * FROM runs
+                WHERE thread_id = ?
+                  AND superseded IS NULL
+                  AND created_at >= ?
+                ORDER BY created_at
+                """,
+                (anchor.thread_id, anchor.created_at),
+            ).fetchall()
+            self._conn.executemany(
+                "UPDATE runs SET superseded = ? WHERE run_id = ?",
+                [(_dump_json(dict(superseded)), str(row["run_id"])) for row in rows],
+            )
+            updated = self._conn.execute(
+                """
+                SELECT * FROM runs
+                WHERE thread_id = ?
+                  AND superseded IS NOT NULL
+                  AND created_at >= ?
+                ORDER BY created_at
+                """,
+                (anchor.thread_id, anchor.created_at),
+            ).fetchall()
+            self._conn.commit()
+        return tuple(_run_from_row(row) for row in updated)
+
     def append_step(
         self,
         *,
@@ -435,10 +480,7 @@ class ExecutionStore:
         return str(row["body"])
 
     def recent_conversation_messages(self, *, thread_id: str, limit: int = 20) -> list[Message]:
-        runs = sorted(
-            self.list_runs(thread_id=thread_id, limit=max(limit, 20)),
-            key=lambda item: item.created_at,
-        )
+        runs = self._conversation_runs(thread_id=thread_id, limit=max(limit, 20))
         steps_by_run = self.list_steps_for_runs(run_ids=tuple(run.run_id for run in runs))
         results: list[Message] = []
         for run in runs:
@@ -457,10 +499,7 @@ class ExecutionStore:
     ) -> list[Message]:
         """Return recent actor messages without raw tool-call or tool-result parts."""
 
-        runs = sorted(
-            self.list_runs(thread_id=thread_id, limit=max(limit * 4, 100)),
-            key=lambda item: item.created_at,
-        )
+        runs = self._conversation_runs(thread_id=thread_id, limit=max(limit * 4, 100))
         steps_by_run = self.list_steps_for_runs(run_ids=tuple(run.run_id for run in runs))
         results: list[Message] = []
         for run in runs:
@@ -476,6 +515,29 @@ class ExecutionStore:
                     if actor_message is not None:
                         results.append(actor_message)
         return results[-limit:]
+
+    def _conversation_runs(self, *, thread_id: str, limit: int) -> list[RunRecord]:
+        thread = self.get_thread(thread_id=thread_id)
+        inherited: list[RunRecord] = []
+        if thread is not None and thread.parent is not None:
+            parent = _parse_fork_parent(thread.parent)
+            if parent is not None:
+                parent_thread_id, from_run_id = parent
+                parent_anchor = self.get_run(run_id=from_run_id)
+                if parent_anchor is not None:
+                    inherited = [
+                        run
+                        for run in sorted(
+                            self.list_runs(thread_id=parent_thread_id, limit=None),
+                            key=lambda item: item.created_at,
+                        )
+                        if run.created_at < parent_anchor.created_at
+                    ]
+        current = sorted(
+            self.list_runs(thread_id=thread_id, limit=limit),
+            key=lambda item: item.created_at,
+        )
+        return [*inherited, *current][-limit:]
 
     def append_update(
         self,
@@ -922,6 +984,22 @@ def _dump_json(value: Any) -> str:
 
 def _load_json(value: str) -> Any:
     return json.loads(value)
+
+
+def _parse_fork_parent(value: str) -> tuple[str, str] | None:
+    try:
+        data = _load_json(value)
+    except Exception:
+        return None
+    if not isinstance(data, dict) or data.get("type") != "fork":
+        return None
+    thread_id = data.get("thread_id")
+    from_run_id = data.get("from_run_id")
+    if not isinstance(thread_id, str) or not isinstance(from_run_id, str):
+        return None
+    if not thread_id or not from_run_id:
+        return None
+    return thread_id, from_run_id
 
 
 def _run_from_row(row: sqlite3.Row) -> RunRecord:

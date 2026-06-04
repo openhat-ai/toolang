@@ -40,21 +40,17 @@ def test_agent_state_tool_creates_lists_gets_and_updates_tasks(tmp_path: Path) -
         {
             "task_id": task_id,
             "body": "Review the merged implementation.",
-            "state": "inactive",
-            "stage": "running",
         },
         context,
     )
 
     assert listed["tasks"][0]["id"] == task_id
     assert loaded["task"]["title"] == "Review plan"
-    assert updated["task"]["state"] == "inactive"
-    assert updated["task"]["stage"] == "running"
+    assert updated["task"]["lifecycle"] == "ready"
     assert updated["task"]["body"] == "Review the merged implementation."
     task = work.find_task(toolang_root, "alice", task_id)
     assert task is not None
-    assert task.document.state == "inactive"
-    assert task.document.stage == "running"
+    assert task.lifecycle == "ready"
 
 
 def test_agent_state_tool_creates_and_updates_chores(tmp_path: Path) -> None:

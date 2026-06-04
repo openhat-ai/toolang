@@ -2,27 +2,32 @@
 
 This document summarizes the local agent API surface that the web UI should use
 to render and update the job board. The UI may present the data as a Kanban
-board, but the shared API vocabulary is job, task, chore, runtime, and phase.
+board, but the shared API vocabulary is job, task, chore, lifecycle, runtime,
+and phase.
 
 
 ## Core Concepts
 
 A job is either a task or a chore.
 
-Tasks are one-shot jobs. They have authored `state` and task-specific `stage`.
+Task and chore Markdown files store stable authored definitions. Lifecycle is
+folder placement:
 
-Chores are recurring jobs. They have authored `state` and `schedule`.
+- `tasks/` and `chores/` are ready folders
+- `drafts/tasks/` and `drafts/chores/` are draft folders
+- `archive/tasks/` and `archive/chores/` are archived folders
 
-Runtime data is derived from execution records. It is returned under
-`runtime` and should not be edited by the UI.
+Runtime status is stored separately in `.runtime/jobs.db`. Thread and run
+history is stored in `.runtime/runs.db`. Runtime fields should not be edited by
+the UI as Markdown frontmatter.
 
-Phase is a UI projection derived from authored job fields and runtime data. It
-is not stored by Toolang and is not returned as a persisted field.
+Phase is a UI projection derived from lifecycle, job status, and runtime data.
+It is not stored by Toolang and is not returned as a persisted field.
 
 
 ## Recommended Read Flow
 
-Use the unified jobs endpoint for board data:
+Use the unified jobs endpoint for ready board data:
 
 ```http
 GET /api/v1/jobs
@@ -63,14 +68,13 @@ Task list item:
 {
   "id": "3nprht9x",
   "kind": "task",
-  "state": "active",
-  "stage": "todo",
+  "lifecycle": "ready",
+  "status": "todo",
   "title": "Review API changes",
   "path": "tasks/3nprht9x.md",
   "updated_at": "2026-04-23T10:10:00Z",
   "runtime": {
     "thread_id": "task_3nprht9x",
-    "active_run": null,
     "last_run": null,
     "next_run": null
   }
@@ -83,17 +87,17 @@ Chore list item:
 {
   "id": "xy1234ab",
   "kind": "chore",
-  "state": "active",
+  "lifecycle": "ready",
+  "status": "todo",
   "schedule": "FREQ=HOURLY;INTERVAL=6",
   "title": "Check stale PRs",
   "path": "chores/xy1234ab.md",
   "updated_at": "2026-04-23T10:10:00Z",
   "runtime": {
     "thread_id": "chore_xy1234ab",
-    "active_run": null,
     "last_run": {
       "id": "run_ab12cd34",
-      "status": "succeeded",
+      "status": "finished",
       "started_at": "2026-04-23T06:00:00Z",
       "finished_at": "2026-04-23T06:02:00Z"
     },
@@ -109,29 +113,38 @@ Detail responses return the same item plus `body`.
 
 ## Field Values
 
-`state` values:
+`lifecycle` values:
 
 | Value | Meaning |
 | --- | --- |
-| `active` | Participates in scheduling or claiming |
-| `inactive` | Authored but skipped by scheduling |
+| `ready` | Visible to the runtime |
+| `draft` | Authored but not ready |
 | `archived` | Retired and hidden from default lists |
 
-Task `stage` values:
+Task `status` values:
 
 | Value | Meaning |
 | --- | --- |
 | `todo` | Ready to be claimed |
 | `running` | Claimed or currently being processed |
 | `done` | Completed successfully |
-| `failed` | Failed and will not retry automatically |
+| `failed` | Failed and not retried automatically |
+| `canceled` | Intentionally canceled |
+
+Chore `status` values:
+
+| Value | Meaning |
+| --- | --- |
+| `todo` | Waiting for the next due or manual run |
+| `running` | Claimed or currently being processed |
+| `done` | No future scheduled occurrences remain |
 
 Runtime run `status` values:
 
 | Value | Meaning |
 | --- | --- |
 | `running` | Run is currently active |
-| `succeeded` | Run finished successfully |
+| `finished` | Run finished successfully |
 | `failed` | Run failed |
 | `canceled` | Run was canceled |
 
@@ -144,19 +157,17 @@ Recommended derivation:
 
 ```ts
 function jobPhase(job: Job): JobPhase {
-  if (job.state === "archived") return "archived";
-  if (job.runtime.active_run) return "in_progress";
+  if (job.lifecycle === "archived") return "archived";
+  if (job.lifecycle === "draft") return "draft";
+  if (job.runtime.last_run?.status === "running") return "in_progress";
 
-  if (job.kind === "task" && job.stage === "running") return "in_progress";
-  if (job.state === "inactive") return "inactive";
-  if (job.kind === "task" && job.stage === "failed") return "failed";
-  if (job.runtime.last_run?.status === "failed") return "failed";
+  if (job.kind === "task" && job.status === "failed") return "failed";
+  if (job.kind === "task" && job.status === "canceled") return "canceled";
+  if (job.kind === "task" && job.status === "todo") return "todo";
+  if (job.kind === "task" && job.status === "done") return "finished";
 
-  if (job.kind === "task" && job.stage === "todo") return "todo";
-  if (job.kind === "task" && job.stage === "done") return "finished";
-
-  if (job.kind === "chore" && job.runtime.next_run) return "scheduled";
-  if (job.runtime.last_run?.status === "succeeded") return "finished";
+  if (job.kind === "chore" && job.status === "todo" && job.runtime.next_run) return "scheduled";
+  if (job.kind === "chore" && job.status === "done") return "finished";
 
   return "ready";
 }
@@ -166,14 +177,15 @@ Suggested columns:
 
 | Phase | Typical contents |
 | --- | --- |
-| `todo` | Active task with `stage: todo` |
-| `scheduled` | Active chore with a future `next_run` |
-| `ready` | Active job without a more specific phase |
-| `in_progress` | Running run or task `stage: running` |
-| `failed` | Failed task or last run |
-| `finished` | Completed task or successful last chore run |
-| `inactive` | `state: inactive` jobs |
-| `archived` | `state: archived` jobs when shown |
+| `todo` | Ready tasks |
+| `scheduled` | Ready chores with a future `next_run` |
+| `ready` | Ready jobs without a more specific phase |
+| `in_progress` | Jobs whose latest run is running |
+| `failed` | Failed tasks |
+| `canceled` | Canceled tasks |
+| `finished` | Done tasks or chores with no future schedule |
+| `draft` | Draft jobs when shown |
+| `archived` | Archived jobs when shown |
 
 
 ## Create And Update
@@ -188,13 +200,11 @@ Content-Type: application/json
 ```json
 {
   "title": "Review API changes",
-  "body": "Review the API changes and summarize risks.",
-  "state": "active",
-  "stage": "todo"
+  "body": "Review the API changes and summarize risks."
 }
 ```
 
-Patch a task:
+Patch a task definition:
 
 ```http
 PATCH /api/v1/tasks/{task_id}
@@ -204,40 +214,22 @@ Content-Type: application/json
 ```json
 {
   "title": "Review updated API changes",
-  "body": "Focus on web UI integration risks.",
-  "state": "inactive",
-  "stage": "todo"
+  "body": "Focus on web UI integration risks."
 }
 ```
 
-Task patch accepts any subset of `title`, `body`, `state`, and `stage`.
-
-Archive a task by patching `state: "archived"` on the normal route:
+Move a task through lifecycle folders:
 
 ```http
-PATCH /api/v1/tasks/{task_id}
-Content-Type: application/json
+POST /api/v1/tasks/{task_id}/draft
+POST /api/v1/tasks/{task_id}/ready
+POST /api/v1/tasks/{task_id}/archive
 ```
 
-```json
-{
-  "state": "archived"
-}
-```
-
-Unarchive a task by patching `state: "active"` or `state: "inactive"` on the
-archived route:
+Reopen a finished, failed, or canceled task:
 
 ```http
-PATCH /api/v1/tasks/archived/{task_id}
-Content-Type: application/json
-```
-
-```json
-{
-  "state": "active",
-  "stage": "todo"
-}
+POST /api/v1/tasks/{task_id}/reopen
 ```
 
 Create a chore:
@@ -251,12 +243,11 @@ Content-Type: application/json
 {
   "title": "Check stale PRs",
   "body": "Check stale pull requests and summarize blockers.",
-  "state": "active",
   "schedule": "FREQ=HOURLY;INTERVAL=6"
 }
 ```
 
-Patch a chore:
+Patch a chore definition:
 
 ```http
 PATCH /api/v1/chores/{chore_id}
@@ -265,60 +256,33 @@ Content-Type: application/json
 
 ```json
 {
-  "state": "inactive",
-  "schedule": "FREQ=DAILY"
+  "schedule": "FREQ=DAILY",
+  "body": "Check stale pull requests once per day."
 }
 ```
 
-Chore patch accepts any subset of `title`, `body`, `state`, and `schedule`.
-
-Archive a chore by patching `state: "archived"` on the normal route:
+Move a chore through lifecycle folders:
 
 ```http
-PATCH /api/v1/chores/{chore_id}
-Content-Type: application/json
+POST /api/v1/chores/{chore_id}/draft
+POST /api/v1/chores/{chore_id}/ready
+POST /api/v1/chores/{chore_id}/archive
 ```
 
-```json
-{
-  "state": "archived"
-}
-```
-
-Unarchive a chore by patching `state: "active"` or `state: "inactive"` on the
-archived route:
+Create one manual chore occurrence without changing the schedule:
 
 ```http
-PATCH /api/v1/chores/archived/{chore_id}
-Content-Type: application/json
+POST /api/v1/chores/{chore_id}/run
 ```
-
-```json
-{
-  "state": "active"
-}
-```
-
-Pause and resume active-directory jobs by patching `state` on the normal route:
-
-```http
-PATCH /api/v1/tasks/{task_id}
-PATCH /api/v1/chores/{chore_id}
-PATCH /api/v1/jobs/{job_id}
-```
-
-Use `state: "inactive"` to pause and `state: "active"` to resume.
 
 
 ## Archive And Delete
 
-Archive instead of deleting for normal UI retirement. Archive uses `PATCH
-state`, not a separate action endpoint:
+Archive instead of deleting for normal UI retirement:
 
 ```http
-PATCH /api/v1/tasks/{task_id}
-PATCH /api/v1/chores/{chore_id}
-PATCH /api/v1/jobs/{job_id}
+POST /api/v1/tasks/{task_id}/archive
+POST /api/v1/chores/{chore_id}/archive
 ```
 
 Delete is destructive and is available only for archived items:
@@ -338,19 +302,29 @@ Use `runtime.thread_id` to open the job thread:
 GET /api/v1/threads/{thread_id}
 ```
 
-Use `runtime.active_run.id` or `runtime.last_run.id` to open a trace:
+Use `runtime.last_run.id` to open a trace:
 
 ```http
 GET /api/v1/runs/{run_id}
 ```
 
-The web UI can route these ids to existing thread and trace pages.
+If `runtime.last_run.status` is `running`, it is the current active run. The UI
+may expose steer and cancel controls for that run:
+
+```http
+POST /api/v1/runs/{run_id}/steer
+POST /api/v1/runs/{run_id}/cancel
+```
+
+Do not expose rewind or fork for task and chore threads. Their thread ids are
+derived from job ids, so those thread operations are limited to branchable chat
+threads.
 
 
 ## Refresh Strategy
 
-After create, patch, archive, or delete, the simplest correct behavior is to
-refetch `GET /api/v1/jobs`.
+After create, patch, lifecycle action, execution action, or delete, the
+simplest correct behavior is to refetch `GET /api/v1/jobs`.
 
 For background changes, poll `GET /api/v1/jobs` on an interval. `GET
 /api/v1/events` exposes recent update records such as `task_changed` and
@@ -370,6 +344,7 @@ Use normal HTTP status handling:
 | --- | --- |
 | `400` | Invalid job data, such as an invalid RRULE schedule |
 | `404` | Task or chore id not found |
+| `409` | Runtime action is not valid for the current status |
 | `422` | Request body shape failed API validation |
 
 Job ids are server-generated. The web UI should not ask users to type ids.
