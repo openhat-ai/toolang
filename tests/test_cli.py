@@ -6563,7 +6563,9 @@ def test_cli_threads_lists_title_and_run_count(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "TITLE" in result.stdout
     assert "RUNS" in result.stdout
-    assert "CHANNEL" in result.stdout
+    assert "CHANNEL" not in result.stdout
+    assert "ORIGIN" not in result.stdout
+    assert "chat" not in result.stdout
     assert "web" in result.stdout
     assert "12" in result.stdout
     assert "This is a very long thread title that should..." in result.stdout
@@ -6593,7 +6595,12 @@ def test_cli_runs_lists_title(monkeypatch) -> None:
     result = _invoke_app(["runs", "dev"])
 
     assert result.exit_code == 0
+    assert result.stdout.index("THREAD") < result.stdout.index("RUN")
     assert "TITLE" in result.stdout
+    assert "ORIGIN" not in result.stdout
+    assert "chat" not in result.stdout
+    assert "web_thread1" in result.stdout
+    assert "run_abc12345" in result.stdout
     assert "succeeded" in result.stdout
     assert "This is a very long run summary that should b..." in result.stdout
     assert title not in result.stdout

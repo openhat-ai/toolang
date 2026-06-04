@@ -546,15 +546,13 @@ def threads_command(
             str(item.get("id", "")),
             _truncate_table_text(item.get("title"), width=48),
             str(item.get("run_count", "")),
-            str(item.get("origin", "")),
-            str(item.get("channel", "")),
             str(item.get("status", "")),
             str(item.get("updated_at", "")),
         )
         for item in result.get("items", [])
         if isinstance(item, dict)
     ]
-    _echo_table(("THREAD", "TITLE", "RUNS", "ORIGIN", "CHANNEL", "STATUS", "UPDATED"), rows)
+    _echo_table(("THREAD", "TITLE", "RUNS", "STATUS", "UPDATED"), rows)
 
 
 @app.command("runs", help="List runs.", cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
@@ -572,17 +570,16 @@ def runs_command(
     result = _runtime_json(ctx, path)
     rows = [
         (
+            str(item.get("thread_id", "")),
             str(item.get("id", "")),
             _truncate_table_text(item.get("summary") or item.get("input_text"), width=48),
-            str(item.get("thread_id", "")),
-            str(item.get("origin", "")),
             _display_run_status(item.get("status")),
             str(item.get("created_at", "")),
         )
         for item in result.get("items", [])
         if isinstance(item, dict)
     ]
-    _echo_table(("RUN", "TITLE", "THREAD", "ORIGIN", "STATUS", "CREATED"), rows)
+    _echo_table(("THREAD", "RUN", "TITLE", "STATUS", "CREATED"), rows)
 
 
 @app.command(
