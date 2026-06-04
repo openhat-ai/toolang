@@ -507,6 +507,7 @@ def runs_command(
     rows = [
         (
             str(item.get("id", "")),
+            _truncate_table_text(item.get("summary") or item.get("input_text"), width=48),
             str(item.get("thread_id", "")),
             str(item.get("origin", "")),
             str(item.get("status", "")),
@@ -515,7 +516,7 @@ def runs_command(
         for item in result.get("items", [])
         if isinstance(item, dict)
     ]
-    _echo_table(("RUN", "THREAD", "ORIGIN", "STATUS", "CREATED"), rows)
+    _echo_table(("RUN", "TITLE", "THREAD", "ORIGIN", "STATUS", "CREATED"), rows)
 
 
 @app.command("steer", help="Steer a running run.", cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)

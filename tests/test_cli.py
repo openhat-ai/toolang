@@ -6566,6 +6566,34 @@ def test_cli_threads_lists_title_and_run_count(monkeypatch) -> None:
     assert title not in result.stdout
 
 
+def test_cli_runs_lists_title(monkeypatch) -> None:
+    title = "This is a very long run summary that should be truncated before display"
+
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        assert request_path == "/api/v1/runs"
+        return {
+            "items": [
+                {
+                    "id": "run_abc12345",
+                    "summary": title,
+                    "thread_id": "web_thread1",
+                    "origin": "chat",
+                    "status": "finished",
+                    "created_at": "2026-06-04T09:00:00Z",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+
+    result = _invoke_app(["runs", "dev"])
+
+    assert result.exit_code == 0
+    assert "TITLE" in result.stdout
+    assert "This is a very long run summary that should b..." in result.stdout
+    assert title not in result.stdout
+
+
 def test_standalone_caps_list_supports_agent_prefix(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     caps.put_local_entry_text(
