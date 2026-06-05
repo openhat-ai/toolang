@@ -177,6 +177,22 @@ class _RuntimeStartup:
     prepared_state: PreparedState
 
 
+@dataclass(frozen=True, slots=True)
+class _RoamingFileRuntimeOptions:
+    """Parsed foreground runtime options for a local script inbox."""
+
+    inboxes: tuple[Path, ...]
+    models: tuple[str, ...]
+    tools: tuple[str, ...] | None
+    caps: tuple[str, ...]
+    components: tuple[str, ...]
+    host: str
+    endpoint_host: str | None
+    port: int | None
+    sandbox: str
+    dev: Path | None
+
+
 POSTFIX_AGENT_COMMANDS = frozenset(
     {"run", "start", "stop", "info", "chat", "send", "attach", "threads", "runs", "steer", "cancel", "rewind", "fork"}
 )
@@ -731,6 +747,10 @@ def run_agent(
         list[str] | None,
         typer.Option("--enable", help="Enable runtime components. Pass CSV or repeat."),
     ] = None,
+    inboxes: Annotated[
+        list[Path] | None,
+        typer.Option("--inbox", help="Watch an inbox directory for file requests. Repeat to watch more than one."),
+    ] = None,
     dev: Annotated[
         Path | None,
         typer.Option(
@@ -764,6 +784,7 @@ def run_agent(
                 tools=tools,
                 caps=caps,
                 components=normalized_components,
+                inboxes=inboxes,
                 port=port,
                 host=host,
                 endpoint_host=endpoint_host,
@@ -1241,6 +1262,7 @@ def _resolve_runtime_startup(
     tools: list[str] | None,
     caps: list[str] | None,
     components: list[str] | None,
+    inboxes: list[Path] | None,
     port: int | None,
     host: str,
     endpoint_host: str | None,
@@ -1277,6 +1299,7 @@ def _resolve_runtime_startup(
         models=models,
         tools=tools,
         caps=caps,
+        file_inboxes=inboxes,
         dev=dev,
         component_names=components,
         log_spec=log_plan.spec,
@@ -1339,6 +1362,10 @@ def start_agent(
         list[str] | None,
         typer.Option("--enable", help="Enable runtime components. Pass CSV or repeat."),
     ] = None,
+    inboxes: Annotated[
+        list[Path] | None,
+        typer.Option("--inbox", help="Watch an inbox directory for file requests. Repeat to watch more than one."),
+    ] = None,
     dev: Annotated[
         Path | None,
         typer.Option(
@@ -1370,6 +1397,7 @@ def start_agent(
                 tools=tools,
                 caps=caps,
                 components=normalized_components,
+                inboxes=inboxes,
                 port=port,
                 host=host,
                 endpoint_host=endpoint_host,
@@ -2321,6 +2349,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             except ValueError as exc:
                 typer.echo(f"toolang error: {exc}", err=True)
                 return 1
+            if _is_roaming_file_runtime_request(body):
+                return _run_roaming_file_runtime(global_args, body)
             return cli_invoke.handle_roaming_invoke(
                 global_args,
                 body,
@@ -2343,6 +2373,241 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         _CLI_PREFIX_AGENT = previous_prefix_agent
     return 0
+
+
+def _is_roaming_file_runtime_request(body: list[str]) -> bool:
+    rest = body[1:]
+    if not rest or not rest[0].startswith("-"):
+        return False
+    return any(token == "--inbox" or token.startswith("--inbox=") for token in rest)
+
+
+def _run_roaming_file_runtime(global_args: list[str], body: list[str]) -> int:
+    if global_args:
+        typer.echo("toolang error: too <path>.too does not support global CLI options", err=True)
+        return 1
+    source_path = _roaming_source_path(body[0])
+    if source_path is None:
+        typer.echo(f"toolang error: agent program not found: {body[0]}", err=True)
+        return 1
+    try:
+        options = _parse_roaming_file_runtime_options(body[1:])
+        toolang_root, agent_name = agents.materialize_roaming_program(source_path)
+        existing = agents.get_agent_status(toolang_root, agent_name, ui_base_url=_ui_base_url())
+        if existing is not None and existing.status in {"running", "preparing", "starting"}:
+            raise click.ClickException(_active_run_error(existing))
+        from ...config.env import load_runtime_environ
+
+        environ = load_runtime_environ(toolang_root, agent_name, base_environ=os.environ)
+        environ["TOOLANG_ROOT"] = str(toolang_root)
+        log_plan = resolve_agent_logging(
+            mode="run",
+            environ=environ,
+            agent_log_path=agents.agent_runtime_log_path(toolang_root, agent_name),
+        )
+        configure_logging_plan(log_plan)
+        startup = _wrap_user_error(
+            agent_up.resolve_startup,
+            toolang_root=toolang_root,
+            agent_name=agent_name,
+            host=options.host,
+            endpoint_host=options.endpoint_host,
+            port=options.port,
+            sandbox=options.sandbox,
+            models=options.models,
+            tools=options.tools,
+            caps=options.caps,
+            file_inboxes=options.inboxes,
+            dev=options.dev,
+            component_names=options.components,
+            log_spec=log_plan.spec,
+            temporary_port=options.port is None,
+            environ=log_plan.environ,
+        )
+        prepared_state = _wrap_user_error(
+            agent_up.prepare_agent,
+            toolang_root=toolang_root,
+            agent_name=agent_name,
+        )
+        return _wrap_user_error(
+            agent_up.start_runtime,
+            startup,
+            environ=log_plan.environ,
+            prepared_state=prepared_state,
+        )
+    except KeyboardInterrupt:
+        return 130
+    except (FileExistsError, FileNotFoundError, ValueError, click.ClickException) as exc:
+        message = exc.message if isinstance(exc, click.ClickException) else str(exc)
+        typer.echo(f"toolang error: {message}", err=True)
+        return 1
+
+
+def _parse_roaming_file_runtime_options(argv: list[str]) -> _RoamingFileRuntimeOptions:
+    from ...caps import split_cap_selectors
+    from ...models.resolution import split_model_selectors
+    from ...tools.registry import split_tool_selectors
+
+    inboxes: list[Path] = []
+    models: list[str] = []
+    tools: list[str] | None = None
+    caps: list[str] = []
+    components: list[str] = ["runner.file", "trigger.file", "trigger.watch"]
+    host = "127.0.0.1"
+    endpoint_host: str | None = None
+    port: int | None = None
+    sandbox = "none"
+    dev: Path | None = None
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token.startswith("--inbox="):
+            value = token.partition("=")[2].strip()
+            if not value:
+                raise click.ClickException("--inbox requires a value")
+            inboxes.append(Path(value))
+            index += 1
+            continue
+        if token == "--inbox":
+            value = _next_option_value(argv, index, "--inbox")
+            inboxes.append(Path(value))
+            index += 2
+            continue
+        if token.startswith("--models="):
+            value = token.partition("=")[2].strip()
+            if not value:
+                raise click.ClickException("--models requires a value")
+            models.extend(split_model_selectors((value,)))
+            index += 1
+            continue
+        if token == "--models":
+            value = _next_option_value(argv, index, "--models")
+            models.extend(split_model_selectors((value,)))
+            index += 2
+            continue
+        if token.startswith("--tools="):
+            value = token.partition("=")[2].strip()
+            if not value:
+                raise click.ClickException("--tools requires a value")
+            if tools is None:
+                tools = []
+            tools.extend(split_tool_selectors((value,)))
+            index += 1
+            continue
+        if token == "--tools":
+            value = _next_option_value(argv, index, "--tools")
+            if tools is None:
+                tools = []
+            tools.extend(split_tool_selectors((value,)))
+            index += 2
+            continue
+        if token.startswith("--caps="):
+            value = token.partition("=")[2].strip()
+            if not value:
+                raise click.ClickException("--caps requires a value")
+            caps.extend(split_cap_selectors((value,)))
+            index += 1
+            continue
+        if token == "--caps":
+            value = _next_option_value(argv, index, "--caps")
+            caps.extend(split_cap_selectors((value,)))
+            index += 2
+            continue
+        if token.startswith("--enable="):
+            value = token.partition("=")[2].strip()
+            if not value:
+                raise click.ClickException("--enable requires a value")
+            components.extend(_normalize_component_option([value]) or [])
+            index += 1
+            continue
+        if token == "--enable":
+            value = _next_option_value(argv, index, "--enable")
+            components.extend(_normalize_component_option([value]) or [])
+            index += 2
+            continue
+        if token.startswith("--host="):
+            host = token.partition("=")[2].strip()
+            if not host:
+                raise click.ClickException("--host requires a value")
+            index += 1
+            continue
+        if token == "--host":
+            host = _next_option_value(argv, index, "--host")
+            index += 2
+            continue
+        if token.startswith("--endpoint-host="):
+            endpoint_host = token.partition("=")[2].strip() or None
+            index += 1
+            continue
+        if token == "--endpoint-host":
+            endpoint_host = _next_option_value(argv, index, "--endpoint-host")
+            index += 2
+            continue
+        if token.startswith("--port="):
+            port = _parse_port_value(token.partition("=")[2])
+            index += 1
+            continue
+        if token == "--port":
+            port = _parse_port_value(_next_option_value(argv, index, "--port"))
+            index += 2
+            continue
+        if token.startswith("--sandbox="):
+            sandbox = token.partition("=")[2].strip()
+            if not sandbox:
+                raise click.ClickException("--sandbox requires a value")
+            index += 1
+            continue
+        if token == "--sandbox":
+            sandbox = _next_option_value(argv, index, "--sandbox")
+            index += 2
+            continue
+        if token.startswith("--dev="):
+            value = token.partition("=")[2].strip()
+            if not value:
+                raise click.ClickException("--dev requires a value")
+            dev = Path(value)
+            index += 1
+            continue
+        if token == "--dev":
+            dev = Path(_next_option_value(argv, index, "--dev"))
+            index += 2
+            continue
+        if token in {"--help", "-h"}:
+            raise click.ClickException("file request runtime usage: toolang SCRIPT --inbox PATH [--inbox PATH...]")
+        if token.startswith("-"):
+            raise click.ClickException(f"unknown Toolang runtime option: {token}")
+        raise click.ClickException(f"unexpected thunk argument for file request runtime: {token}")
+    if not inboxes:
+        raise click.ClickException("--inbox is required")
+    normalized_components = list(dict.fromkeys(components))
+    return _RoamingFileRuntimeOptions(
+        inboxes=tuple(inboxes),
+        models=tuple(dict.fromkeys(models)),
+        tools=None if tools is None else tuple(dict.fromkeys(tools)),
+        caps=tuple(dict.fromkeys(caps)),
+        components=tuple(normalized_components),
+        host=host,
+        endpoint_host=endpoint_host,
+        port=port,
+        sandbox=sandbox,
+        dev=dev,
+    )
+
+
+def _next_option_value(argv: list[str], index: int, option_name: str) -> str:
+    if index + 1 >= len(argv):
+        raise click.ClickException(f"{option_name} requires a value")
+    value = argv[index + 1].strip()
+    if not value:
+        raise click.ClickException(f"{option_name} requires a value")
+    return value
+
+
+def _parse_port_value(raw: str) -> int:
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise click.ClickException("--port expects an integer") from exc
 
 
 def _roaming_source_path(token: str) -> Path | None:

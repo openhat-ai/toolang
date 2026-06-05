@@ -183,6 +183,57 @@ def test_cli_main_intercepts_local_too_program_before_typer(monkeypatch, tmp_pat
     assert captured["prog_name"] == "toolang"
 
 
+def test_cli_main_runs_roaming_file_runtime_for_script_inbox(monkeypatch, tmp_path: Path) -> None:
+    program_path = tmp_path / "demo.too"
+    program_path.write_text("thunk file(_):\n  Process a file.\n", encoding="utf-8")
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    captured: dict[str, object] = {}
+
+    def fake_file_runtime(global_args: list[str], body: list[str]) -> int:
+        captured["global_args"] = list(global_args)
+        captured["body"] = list(body)
+        return 0
+
+    monkeypatch.setattr(cli, "_run_roaming_file_runtime", fake_file_runtime)
+    monkeypatch.setattr(cli.sys, "argv", ["toolang"])
+
+    result = cli.main([str(program_path), "--inbox", str(inbox)])
+
+    assert result == 0
+    assert captured["global_args"] == []
+    assert captured["body"] == [str(program_path), "--inbox", str(inbox)]
+
+
+def test_cli_main_keeps_roaming_thunk_invoke_when_thunk_is_present(monkeypatch, tmp_path: Path) -> None:
+    program_path = tmp_path / "demo.too"
+    program_path.write_text("thunk file(_):\n  Process a file.\n", encoding="utf-8")
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    captured: dict[str, object] = {}
+
+    def fake_handle(global_args: list[str], body: list[str], *, prog_name: str) -> int:
+        captured["global_args"] = list(global_args)
+        captured["body"] = list(body)
+        captured["prog_name"] = prog_name
+        return 0
+
+    def fail_file_runtime(global_args: list[str], body: list[str]) -> int:
+        del global_args, body
+        raise AssertionError("file runtime should not be used")
+
+    monkeypatch.setattr(cli, "_run_roaming_file_runtime", fail_file_runtime)
+    monkeypatch.setattr(cli.cli_invoke, "handle_roaming_invoke", fake_handle)
+    monkeypatch.setattr(cli.sys, "argv", ["toolang"])
+
+    result = cli.main([str(program_path), "file", "--inbox", str(inbox)])
+
+    assert result == 0
+    assert captured["global_args"] == []
+    assert captured["body"] == [str(program_path), "file", "--inbox", str(inbox)]
+    assert captured["prog_name"] == "toolang"
+
+
 def test_cli_main_does_not_preconfigure_roaming_invoke_from_py_log(monkeypatch, tmp_path: Path) -> None:
     program_path = tmp_path / "demo.too"
     program_path.write_text("thunk:\n  Reply directly.\n", encoding="utf-8")

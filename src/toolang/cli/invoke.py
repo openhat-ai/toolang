@@ -20,6 +20,7 @@ from typer.core import TyperArgument, TyperCommand, TyperGroup
 from typer.main import get_command
 
 from .. import agents
+from .. import file_requests
 from .. import up as agent_up
 from ..base.error import ToolangError
 from ..config.env import load_runtime_environ
@@ -36,24 +37,6 @@ from .progress import CliProgress, as_progress_sink, make_cli_progress
 
 MarkupMode = Literal["markdown", "rich"]
 HELP_FLAGS = {"--help", "-h"}
-_TEXT_PART_EXTENSIONS = {".txt", ".md"}
-_IMAGE_PART_EXTENSIONS = {
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".gif",
-    ".webp",
-    ".bmp",
-    ".svg",
-}
-_AUDIO_PART_EXTENSIONS = {
-    ".mp3",
-    ".wav",
-    ".m4a",
-    ".aac",
-    ".ogg",
-    ".flac",
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -545,28 +528,13 @@ def _render_roaming_input(parts: list[str]) -> tuple[str, list[dict[str, str]]]:
             candidate = Path(part[1:]).expanduser().resolve()
             if not candidate.exists():
                 raise click.ClickException(f"invoke input not found: {candidate}")
-            ext = candidate.suffix.lower()
-            if ext in _TEXT_PART_EXTENSIONS:
-                text = candidate.read_text(encoding="utf-8")
-                rendered.append(text)
-                invoke_parts.append({"type": "text", "text": text, "path": str(candidate)})
-                continue
-            part_type = _path_part_type(candidate)
-            rendered.append(f"Attached {part_type}: {candidate}")
-            invoke_parts.append({"type": part_type, "path": str(candidate)})
+            text, path_parts = file_requests.render_file_input(candidate)
+            rendered.append(text)
+            invoke_parts.extend(path_parts)
             continue
         rendered.append(part)
         invoke_parts.append({"type": "text", "text": part})
     return "\n\n".join(rendered), invoke_parts
-
-
-def _path_part_type(path: Path) -> str:
-    ext = path.suffix.lower()
-    if ext in _IMAGE_PART_EXTENSIONS:
-        return "image"
-    if ext in _AUDIO_PART_EXTENSIONS:
-        return "audio"
-    return "file"
 
 
 def _emit_invoke_outcome(outcome: RunOutcome) -> int:

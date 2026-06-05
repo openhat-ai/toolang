@@ -6,7 +6,7 @@ from collections.abc import Iterable, Sequence
 from typing import Literal, cast
 
 ComponentNamespace = Literal["router", "runner", "trigger"]
-ComponentLeaf = Literal["chat", "manage", "inspect", "task", "chore", "pulse", "poll", "watch"]
+ComponentLeaf = Literal["chat", "manage", "inspect", "task", "chore", "file", "pulse", "poll", "watch"]
 ComponentName = Literal[
     "router.chat",
     "router.manage",
@@ -14,17 +14,20 @@ ComponentName = Literal[
     "runner.chat",
     "runner.task",
     "runner.chore",
+    "runner.file",
     "trigger.pulse",
     "trigger.poll",
     "trigger.watch",
+    "trigger.file",
 ]
 
 ROUTER_COMPONENTS: tuple[ComponentName, ...] = ("router.chat", "router.manage", "router.inspect")
-RUNNER_COMPONENTS: tuple[ComponentName, ...] = ("runner.chat", "runner.task", "runner.chore")
+RUNNER_COMPONENTS: tuple[ComponentName, ...] = ("runner.chat", "runner.task", "runner.chore", "runner.file")
 TRIGGER_COMPONENTS: tuple[ComponentName, ...] = (
     "trigger.pulse",
     "trigger.poll",
     "trigger.watch",
+    "trigger.file",
 )
 ALL_COMPONENTS: tuple[ComponentName, ...] = (
     *ROUTER_COMPONENTS,
@@ -43,7 +46,7 @@ DEFAULT_ENABLED_COMPONENTS: tuple[ComponentName, ...] = (
 )
 
 COMPONENT_NAMESPACES = frozenset({"router", "runner", "trigger"})
-COMPONENT_LEAVES = frozenset({"chat", "manage", "inspect", "task", "chore", "pulse", "poll", "watch"})
+COMPONENT_LEAVES = frozenset({"chat", "manage", "inspect", "task", "chore", "file", "pulse", "poll", "watch"})
 
 if COMPONENT_NAMESPACES & COMPONENT_LEAVES:
     raise RuntimeError("component namespace and leaf names must not overlap")

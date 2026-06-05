@@ -91,6 +91,7 @@ Key paths:
 | `logs/<thunk>/<run_id>.log` | Per-run script invoke logs when `PY_LOG` is set |
 | `jobs.db` | Scheduler job projection and atomic job claims                |
 | `runs.db` | Threads, runs, steps, updates, and prompt blobs               |
+| `files.db` | File request claims, fingerprints, and completion state        |
 | `ids.json`     | Local id allocator state                                     |
 | `tools/`       | Per-tool plugin working directories                          |
 | `channels/`    | Per-channel plugin working directories                       |
@@ -127,4 +128,8 @@ Durable authored state lives in:
 - agent `archive/`
 
 Durable execution state does not live in authored files. It lives in
-`jobs.db` and `runs.db`.
+`jobs.db`, `runs.db`, and `files.db`.
+
+Inbox directories passed with `--inbox` are external user directories. Toolang
+does not write marker files into them; file request progress is recorded under
+the agent runtime room in `files.db`.

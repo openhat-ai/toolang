@@ -32,6 +32,12 @@ It stores:
 documents. It is used for atomic job claims and completion bookkeeping; it is
 not the transcript or run-history store.
 
+`.runtime/files.db` stores file request claims for inbox directories. It records
+the watched root, relative path, absolute path, size, mtime, content
+fingerprint, terminal status, run id, timestamps, and terminal error. It is used
+for deduplicating file fingerprints and completion bookkeeping; it is not the
+transcript or run-history store.
+
 
 ## Durable Records
 
@@ -53,7 +59,12 @@ not the transcript or run-history store.
 
 Toolang-owned run ids use `run_<id>`, where `<id>` is encoded with the `run`
 id family. Thread ids use `<kind>_<id>`, such as `tsk_3nprht9x`,
-`chr_xy1234ab`, or `web_def456gh`.
+`chr_xy1234ab`, `file_def456gh`, or `web_def456gh`.
+
+File request runs use origin `file` and explicitly invoke the thunk named
+`file`. The run input stores the rendered file message, and run metadata stores
+the `invoke_parts` file attachment data plus the file request id and
+fingerprint.
 
 ### StepRecord
 

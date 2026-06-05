@@ -93,7 +93,8 @@ from toolang.execution.db import ExecutionStore, execution_db_path
 from toolang.execution.stream import RuntimeEventBus
 from toolang.components.router import chat as chat_loop, inspect
 from toolang.components.router._streaming import ShutdownAwareStreamingResponse
-from toolang.components.trigger import poll, pulse, watch
+from toolang.components.trigger import files, poll, pulse, watch
+from toolang import file_requests
 from toolang.state.durable import scan_durable_state
 from toolang.state.live import load_live_state
 from toolang.state.prepared import PreparedState, load_prepared_state, write_prepared_lock
@@ -260,6 +261,65 @@ def test_queue_runner_drains_requests_in_order(tmp_path: Path, caplog) -> None:
         ]
 
     asyncio.run(run_test())
+
+
+def test_file_request_store_deduplicates_same_fingerprint(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    store = file_requests.open_file_request_store(toolang_root, "alice")
+    snapshot = file_requests.FileSnapshot(
+        watch_root=str(tmp_path / "inbox"),
+        relative_path="note.txt",
+        absolute_path=str(tmp_path / "inbox" / "note.txt"),
+        size=5,
+        mtime_ns=123,
+        fingerprint="abc123",
+    )
+    try:
+        first = store.claim(snapshot, run_id="run_first")
+        second = store.claim(snapshot, run_id="run_second")
+        finished = store.finish_run(run_id="run_first", run_status="finished")
+    finally:
+        store.close()
+
+    assert first is not None
+    assert second is None
+    assert finished is not None
+    assert finished.status == "finished"
+    assert finished.processed_at is not None
+
+
+def test_collect_file_submissions_scans_existing_inbox_files_once(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    inbox = tmp_path / "inbox"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        "agent alice\n\nthunk file(_):\n  Process a file.\n",
+    )
+    _write_text(inbox / "note.txt", "hello")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("file",),
+    )
+    context.config.set("components.trigger.file.inboxes", (inbox,))
+    context.config.set("components.trigger.file.stable_ms", 0.0)
+    store = file_requests.open_file_request_store(toolang_root, "alice")
+    try:
+        first = files.collect_file_submissions(context, store)
+        second = files.collect_file_submissions(context, store)
+        rows = store.list()
+    finally:
+        store.close()
+        context.store.close()
+
+    note_path = str((inbox / "note.txt").resolve())
+    assert len(first) == 1
+    assert second == []
+    assert first[0].text == "hello"
+    assert first[0].parts == [{"type": "text", "text": "hello", "path": note_path}]
+    assert len(rows) == 1
+    assert rows[0].relative_path == "note.txt"
+    assert rows[0].status == "running"
 
 
 def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
@@ -6719,6 +6779,8 @@ async def _running_context(
         if "watch" in enabled_features:
             context.config.set("features.watch.debounce_ms", 10.0)
             background_tasks.append(watch.spawn(context, stop_signal=stop_signal))
+        if "file" in enabled_features:
+            background_tasks.append(files.spawn(context, stop_signal=stop_signal))
         runner_task = None
         if any(feature in RUN_FEATURES for feature in enabled_features):
             runner_task = context.runner.spawn(context)
@@ -6801,6 +6863,9 @@ def _build_context(
                 "features.poll.interval_ms": poll.DEFAULT_INTERVAL_MS,
                 "features.watch.interval_ms": watch.DEFAULT_INTERVAL_MS,
                 "features.watch.debounce_ms": watch.DEFAULT_DEBOUNCE_MS,
+                "features.file.interval_ms": files.DEFAULT_INTERVAL_MS,
+                "components.trigger.file.stable_ms": files.DEFAULT_STABLE_MS,
+                "components.trigger.file.inboxes": (),
                 "runtime.sandbox": "none",
             }
         ),
