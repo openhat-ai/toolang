@@ -16,7 +16,7 @@ from .execution.records import RunStatus
 FileRequestStatus = Literal["running", "finished", "failed", "canceled"]
 
 _SCHEMA_VERSION = 1
-_TEXT_PART_EXTENSIONS = {".txt", ".md"}
+_TEXT_PART_EXTENSIONS = {".txt", ".md", ".mdx"}
 _IMAGE_PART_EXTENSIONS = {
     ".png",
     ".jpg",
