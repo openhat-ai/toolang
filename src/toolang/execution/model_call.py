@@ -110,6 +110,13 @@ def run_message(
 ) -> Message:
     if run.origin != "script" and run.message is not None:
         return _expanded_run_message(run.message, input_text=input_text, context_text=context_text)
+    if run.origin == "file":
+        text = _file_message_text(
+            input_text=input_text,
+            rendered_messages=rendered_messages,
+            context_text=context_text,
+        )
+        return Message.user(text)
     if run.origin != "script":
         return Message.user(_join_message_texts(context_text, input_text))
     text = _script_message_text(
@@ -429,6 +436,17 @@ def _script_message_text(
     if authored_text:
         return _join_message_texts(context_text, authored_text)
     return _join_message_texts(context_text, input_text)
+
+
+def _file_message_text(
+    *,
+    input_text: str,
+    rendered_messages: tuple[MessageBlock, ...],
+    context_text: str,
+) -> str:
+    user_messages = tuple(item for item in rendered_messages if item.kind == "user")
+    authored_text = _message_blocks_body(user_messages)
+    return _join_message_texts(context_text, authored_text, input_text)
 
 
 def _join_message_texts(*parts: str) -> str:

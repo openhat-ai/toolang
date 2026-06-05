@@ -5516,6 +5516,41 @@ def test_assemble_run_input_uses_activation_default_when_thunk_omits_one(tmp_pat
     assert bundle.debug["activation_default_model"] == "openai/gpt-5[openai]"
 
 
+def test_assemble_file_run_input_includes_authored_file_thunk_message(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        (
+            "agent alice\n\n"
+            "thunk file(input: Message):\n"
+            "  tools = filesystem/*\n\n"
+            "  user:\n"
+            "    Write one short text summary to outbox/index.md.\n"
+        ),
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat",),
+    )
+    context.config.set("models.default_selector", "openai/gpt-5[openai]")
+    bound = bind_run_request(
+        context,
+        RunRequest(
+            group="file",
+            origin="file",
+            thunk_name="file",
+            thunk="file body",
+        ),
+    )
+
+    bundle = RunInput.from_binding(context, bound)
+
+    text = message_text(bundle.message.parts)
+    assert "Write one short text summary to outbox/index.md." in text
+    assert "file body" in text
+
+
 def test_assemble_run_input_hides_tools_when_activation_has_no_tools(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
