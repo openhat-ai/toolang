@@ -171,9 +171,10 @@ Behavior:
 - `NAME=VALUE` sets one thunk named param when `NAME` matches the thunk signature
 - `INPUT` rules:
   - `TEXT` adds one text part; use `@@TEXT` for literal text beginning with `@`
-  - `@PATH` adds one path-based part; `.txt`, `.md`, and `.mdx` paths become text parts
+  - `@PATH` adds one path-based part; text-like paths become text parts
   - image extensions such as `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, and `.svg` infer image parts
   - audio extensions such as `.mp3`, `.wav`, `.m4a`, `.aac`, `.ogg`, and `.flac` infer audio parts
+  - video extensions such as `.mp4`, `.mov`, `.m4v`, `.webm`, `.mkv`, `.avi`, `.mpeg`, `.mpg`, `.3gp`, and `.ogv` infer video parts
   - all other path extensions infer generic file parts
 - `--` ends option parsing so later arguments stay `INPUT` values
 - `--option` is reserved for Toolang runtime options

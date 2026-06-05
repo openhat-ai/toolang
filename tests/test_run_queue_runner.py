@@ -292,6 +292,20 @@ def test_file_request_store_deduplicates_same_fingerprint(tmp_path: Path) -> Non
     assert finished.processed_at is not None
 
 
+def test_file_request_input_classifies_common_file_types(tmp_path: Path) -> None:
+    text_path = tmp_path / "data.json"
+    text_path.write_text('{"ok": true}\n', encoding="utf-8")
+
+    text, parts = file_requests.render_file_input(text_path)
+
+    assert text == '{"ok": true}\n'
+    assert parts == [{"type": "text", "text": '{"ok": true}\n', "path": str(text_path.resolve())}]
+    assert file_requests.path_part_type(tmp_path / "photo.png") == "image"
+    assert file_requests.path_part_type(tmp_path / "voice.wav") == "audio"
+    assert file_requests.path_part_type(tmp_path / "clip.mp4") == "video"
+    assert file_requests.path_part_type(tmp_path / "archive.zip") == "file"
+
+
 def test_collect_file_submissions_scans_existing_inbox_files_once(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     inbox = tmp_path / "inbox"

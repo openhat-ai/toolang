@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
+import mimetypes
 from pathlib import Path
 import sqlite3
 import threading
@@ -16,7 +17,35 @@ from .execution.records import RunStatus
 FileRequestStatus = Literal["running", "finished", "failed", "canceled"]
 
 _SCHEMA_VERSION = 1
-_TEXT_PART_EXTENSIONS = {".txt", ".md", ".mdx"}
+_TEXT_PART_EXTENSIONS = {
+    ".cfg",
+    ".conf",
+    ".csv",
+    ".css",
+    ".go",
+    ".h",
+    ".hpp",
+    ".html",
+    ".ini",
+    ".java",
+    ".js",
+    ".json",
+    ".jsx",
+    ".log",
+    ".md",
+    ".mdx",
+    ".py",
+    ".rs",
+    ".sh",
+    ".sql",
+    ".toml",
+    ".ts",
+    ".tsx",
+    ".txt",
+    ".xml",
+    ".yaml",
+    ".yml",
+}
 _IMAGE_PART_EXTENSIONS = {
     ".png",
     ".jpg",
@@ -33,6 +62,29 @@ _AUDIO_PART_EXTENSIONS = {
     ".aac",
     ".ogg",
     ".flac",
+}
+_VIDEO_PART_EXTENSIONS = {
+    ".mp4",
+    ".m4v",
+    ".mov",
+    ".webm",
+    ".mkv",
+    ".avi",
+    ".mpeg",
+    ".mpg",
+    ".3gp",
+    ".3g2",
+    ".ogv",
+}
+_TEXT_MEDIA_TYPES = {
+    "application/javascript",
+    "application/json",
+    "application/toml",
+    "application/xml",
+    "application/yaml",
+    "application/x-ndjson",
+    "application/x-sh",
+    "application/x-yaml",
 }
 
 
@@ -236,11 +288,10 @@ def render_file_input(path: Path) -> tuple[str, list[dict[str, str]]]:
     """Render one file path using the same part conventions as invoke."""
 
     resolved = path.expanduser().resolve()
-    ext = resolved.suffix.lower()
-    if ext in _TEXT_PART_EXTENSIONS:
+    part_type = path_part_type(resolved)
+    if part_type == "text":
         text = resolved.read_text(encoding="utf-8")
         return text, [{"type": "text", "text": text, "path": str(resolved)}]
-    part_type = path_part_type(resolved)
     return f"Attached {part_type}: {resolved}", [{"type": part_type, "path": str(resolved)}]
 
 
@@ -248,11 +299,22 @@ def path_part_type(path: Path) -> str:
     """Return the multimodal part type inferred from a path extension."""
 
     ext = path.suffix.lower()
+    if ext in _TEXT_PART_EXTENSIONS or _is_text_media_type(path):
+        return "text"
     if ext in _IMAGE_PART_EXTENSIONS:
         return "image"
     if ext in _AUDIO_PART_EXTENSIONS:
         return "audio"
+    if ext in _VIDEO_PART_EXTENSIONS:
+        return "video"
     return "file"
+
+
+def _is_text_media_type(path: Path) -> bool:
+    media_type, _encoding = mimetypes.guess_type(path.as_posix())
+    if media_type is None:
+        return False
+    return media_type.startswith("text/") or media_type in _TEXT_MEDIA_TYPES
 
 
 def _record_from_row(row: sqlite3.Row) -> FileRequestRecord:

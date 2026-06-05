@@ -2492,6 +2492,60 @@ thunk(_):
     }
 
 
+def test_cli_roaming_invoke_passes_video_path_part(tmp_path: Path, monkeypatch, capsys) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+thunk(_):
+  Reply directly.
+""".strip(),
+    )
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"mp4")
+    captured: dict[str, object] = {}
+
+    def fake_invoke(
+        *,
+        toolang_root: Path,
+        agent_name: str,
+        thunk_name: str | None,
+        input_text: str | None,
+        models: tuple[str, ...],
+        metadata: dict[str, object] | None,
+        environ: dict[str, str],
+        response,
+        log_spec: str | None = None,
+        prepared_state=None,
+    ):
+        del toolang_root, agent_name, thunk_name, models, environ, response, log_spec, prepared_state
+        captured["input_text"] = input_text
+        captured["metadata"] = dict(metadata or {})
+
+        class _Outcome:
+            run_id = "run_test"
+            status = "finished"
+            output_text = "done"
+            error = None
+            log_path = None
+
+        return _Outcome()
+
+    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+
+    result = cli.main([str(program_path), "main", f"@{video}"])
+    output = capsys.readouterr()
+
+    assert result == 0
+    assert output.out.strip() == "done"
+    assert captured["input_text"] == f"Attached video: {video.resolve()}"
+    assert captured["metadata"] == {
+        "invoke_params": {},
+        "invoke_parts": [
+            {"type": "video", "path": str(video.resolve())},
+        ],
+    }
+
+
 def test_cli_start_rejects_remote_selector(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
 
