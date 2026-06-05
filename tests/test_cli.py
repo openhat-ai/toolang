@@ -205,6 +205,42 @@ def test_cli_main_runs_roaming_file_runtime_for_script_inbox(monkeypatch, tmp_pa
     assert captured["body"] == [str(program_path), "--inbox", str(inbox)]
 
 
+def test_cli_main_routes_roaming_thread_commands_to_materialized_agent(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    program_path = tmp_path / "demo.too"
+    program_path.write_text("thunk:\n  Reply directly.\n", encoding="utf-8")
+    toolang_root = tmp_path / ".toolang"
+    captured: dict[str, object] = {}
+
+    def fake_materialize(path: Path) -> tuple[Path, str]:
+        captured["source"] = path
+        return toolang_root, "demo"
+
+    def fake_app(*, args, prog_name: str, standalone_mode: bool) -> None:
+        captured["args"] = args
+        captured["prog_name"] = prog_name
+        captured["standalone_mode"] = standalone_mode
+        captured["prefix_agent"] = cli._CLI_PREFIX_AGENT
+
+    monkeypatch.setattr(cli.agents, "materialize_roaming_program", fake_materialize)
+    monkeypatch.setattr(cli, "app", cast(object, fake_app))
+    monkeypatch.setattr(cli.sys, "argv", ["toolang"])
+
+    result = cli.main([str(program_path), "threads"])
+
+    assert result == 0
+    assert captured == {
+        "source": program_path.resolve(),
+        "args": ["--root", str(toolang_root), "threads"],
+        "prog_name": "toolang",
+        "standalone_mode": True,
+        "prefix_agent": "demo",
+    }
+    assert cli._CLI_PREFIX_AGENT is None
+
+
 def test_cli_main_keeps_roaming_thunk_invoke_when_thunk_is_present(monkeypatch, tmp_path: Path) -> None:
     program_path = tmp_path / "demo.too"
     program_path.write_text("thunk file(_):\n  Process a file.\n", encoding="utf-8")

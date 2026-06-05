@@ -196,6 +196,7 @@ class _RoamingFileRuntimeOptions:
 POSTFIX_AGENT_COMMANDS = frozenset(
     {"run", "start", "stop", "info", "chat", "send", "attach", "threads", "runs", "steer", "cancel", "rewind", "fork"}
 )
+ROAMING_THREAD_COMMANDS = frozenset({"threads", "runs", "steer", "cancel", "rewind", "fork"})
 PREFIX_AGENT_COMMANDS = frozenset(
     {
         "run",
@@ -2349,6 +2350,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             except ValueError as exc:
                 typer.echo(f"toolang error: {exc}", err=True)
                 return 1
+            if _is_roaming_thread_command(body):
+                return _run_roaming_thread_command(
+                    global_args,
+                    body,
+                    prog_name=_prog_name(sys.argv[0] if sys.argv else ""),
+                )
             if _is_roaming_file_runtime_request(body):
                 return _run_roaming_file_runtime(global_args, body)
             return cli_invoke.handle_roaming_invoke(
@@ -2380,6 +2387,42 @@ def _is_roaming_file_runtime_request(body: list[str]) -> bool:
     if not rest or not rest[0].startswith("-"):
         return False
     return any(token == "--inbox" or token.startswith("--inbox=") for token in rest)
+
+
+def _is_roaming_thread_command(body: list[str]) -> bool:
+    return len(body) >= 2 and body[1] in ROAMING_THREAD_COMMANDS
+
+
+def _run_roaming_thread_command(global_args: list[str], body: list[str], *, prog_name: str) -> int:
+    global _CLI_PREFIX_AGENT
+    if global_args:
+        typer.echo("toolang error: too <path>.too does not support global CLI options", err=True)
+        return 1
+    source_path = _roaming_source_path(body[0])
+    if source_path is None:
+        typer.echo(f"toolang error: agent program not found: {body[0]}", err=True)
+        return 1
+    try:
+        toolang_root, agent_name = agents.materialize_roaming_program(source_path)
+    except (FileExistsError, FileNotFoundError, ValueError) as exc:
+        typer.echo(f"toolang error: {exc}", err=True)
+        return 1
+    previous_prefix_agent = _CLI_PREFIX_AGENT
+    _CLI_PREFIX_AGENT = agent_name
+    try:
+        app(
+            args=["--root", str(toolang_root), *body[1:]],
+            prog_name=prog_name,
+            standalone_mode=True,
+        )
+    except click.exceptions.Exit as exc:
+        return exc.exit_code
+    except (FileExistsError, FileNotFoundError, ValueError) as exc:
+        typer.echo(f"toolang error: {exc}", err=True)
+        return 1
+    finally:
+        _CLI_PREFIX_AGENT = previous_prefix_agent
+    return 0
 
 
 def _run_roaming_file_runtime(global_args: list[str], body: list[str]) -> int:

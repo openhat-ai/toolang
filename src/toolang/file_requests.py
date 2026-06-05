@@ -16,7 +16,7 @@ from .execution.records import RunStatus
 
 FileRequestStatus = Literal["running", "finished", "failed", "canceled"]
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _TEXT_PART_EXTENSIONS = {
     ".cfg",
     ".conf",
@@ -86,6 +86,7 @@ _TEXT_MEDIA_TYPES = {
     "application/x-sh",
     "application/x-yaml",
 }
+_FILE_THREAD_HASH_CHARS = 12
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +112,7 @@ class FileRequestRecord:
     size: int
     mtime_ns: int
     fingerprint: str
+    thread_id: str
     status: FileRequestStatus
     run_id: str
     error: str | None
@@ -139,6 +141,7 @@ class FileRequestStore:
         snapshot: FileSnapshot,
         *,
         run_id: str,
+        thread_id: str,
         now: datetime | None = None,
     ) -> FileRequestRecord | None:
         """Persist and claim one unseen file fingerprint."""
@@ -149,9 +152,9 @@ class FileRequestStore:
                 """
                 INSERT OR IGNORE INTO file_requests(
                     watch_root, relative_path, absolute_path, size, mtime_ns,
-                    fingerprint, status, run_id, error, first_seen_at,
+                    fingerprint, thread_id, status, run_id, error, first_seen_at,
                     processed_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, NULL, ?, NULL, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, NULL, ?, NULL, ?)
                 """,
                 (
                     snapshot.watch_root,
@@ -160,6 +163,7 @@ class FileRequestStore:
                     snapshot.size,
                     snapshot.mtime_ns,
                     snapshot.fingerprint,
+                    thread_id,
                     run_id,
                     _iso(current),
                     _iso(current),
@@ -232,34 +236,41 @@ class FileRequestStore:
             version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
             if version != _SCHEMA_VERSION:
                 self._conn.execute("DROP TABLE IF EXISTS file_requests")
-            self._conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS file_requests (
-                    request_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    watch_root TEXT NOT NULL,
-                    relative_path TEXT NOT NULL,
-                    absolute_path TEXT NOT NULL,
-                    size INTEGER NOT NULL,
-                    mtime_ns INTEGER NOT NULL,
-                    fingerprint TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    run_id TEXT NOT NULL UNIQUE,
-                    error TEXT,
-                    first_seen_at TEXT NOT NULL,
-                    processed_at TEXT,
-                    updated_at TEXT NOT NULL,
-                    UNIQUE(watch_root, relative_path, fingerprint)
-                )
-                """
-            )
+            self._create_schema()
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_file_requests_status ON file_requests(status)"
             )
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_file_requests_path ON file_requests(watch_root, relative_path)"
             )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_file_requests_thread ON file_requests(thread_id)"
+            )
             self._conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
             self._conn.commit()
+
+    def _create_schema(self) -> None:
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS file_requests (
+                request_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                watch_root TEXT NOT NULL,
+                relative_path TEXT NOT NULL,
+                absolute_path TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                mtime_ns INTEGER NOT NULL,
+                fingerprint TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                run_id TEXT NOT NULL UNIQUE,
+                error TEXT,
+                first_seen_at TEXT NOT NULL,
+                processed_at TEXT,
+                updated_at TEXT NOT NULL,
+                UNIQUE(watch_root, relative_path, fingerprint)
+            )
+            """
+        )
 
 
 def files_db_path(toolang_root: Path, agent_name: str) -> Path:
@@ -282,6 +293,14 @@ def fingerprint_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def file_thread_id(path: Path | str) -> str:
+    """Return the stable file request thread id for one absolute source path."""
+
+    resolved = Path(path).expanduser().resolve()
+    digest = hashlib.sha256(resolved.as_posix().encode("utf-8")).hexdigest()
+    return f"file_{digest[:_FILE_THREAD_HASH_CHARS]}"
 
 
 def render_file_input(path: Path) -> tuple[str, list[dict[str, str]]]:
@@ -326,6 +345,7 @@ def _record_from_row(row: sqlite3.Row) -> FileRequestRecord:
         size=int(row["size"]),
         mtime_ns=int(row["mtime_ns"]),
         fingerprint=str(row["fingerprint"]),
+        thread_id=str(row["thread_id"]),
         status=cast(FileRequestStatus, str(row["status"])),
         run_id=str(row["run_id"]),
         error=str(row["error"]) if row["error"] is not None else None,

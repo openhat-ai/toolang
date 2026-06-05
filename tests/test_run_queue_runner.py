@@ -279,13 +279,18 @@ def test_file_request_store_deduplicates_same_fingerprint(tmp_path: Path) -> Non
         fingerprint="abc123",
     )
     try:
-        first = store.claim(snapshot, run_id="run_first")
-        second = store.claim(snapshot, run_id="run_second")
+        first = store.claim(
+            snapshot,
+            run_id="run_first",
+            thread_id=file_requests.file_thread_id(snapshot.absolute_path),
+        )
+        second = store.claim(snapshot, run_id="run_second", thread_id="file_unused")
         finished = store.finish_run(run_id="run_first", run_status="finished")
     finally:
         store.close()
 
     assert first is not None
+    assert first.thread_id == file_requests.file_thread_id(snapshot.absolute_path)
     assert second is None
     assert finished is not None
     assert finished.status == "finished"
@@ -337,6 +342,7 @@ def test_collect_file_submissions_scans_existing_inbox_files_once(tmp_path: Path
     assert first[0].parts == [{"type": "text", "text": "hello", "path": note_path}]
     assert len(rows) == 1
     assert rows[0].relative_path == "note.txt"
+    assert rows[0].thread_id == file_requests.file_thread_id(inbox / "note.txt")
     assert rows[0].status == "running"
 
 
@@ -5516,6 +5522,30 @@ def test_assemble_run_input_uses_activation_default_when_thunk_omits_one(tmp_pat
     assert bundle.debug["activation_default_model"] == "openai/gpt-5[openai]"
 
 
+def test_script_run_thread_id_uses_thunk_name(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        "agent alice\n\nthunk summarize(_):\n  Summarize it.\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat",),
+    )
+    bound = bind_run_request(
+        context,
+        RunRequest(
+            group="script",
+            origin="script",
+            thunk_name="summarize",
+            thunk="hello",
+        ),
+    )
+
+    assert bound.thread_id == "thunk_summarize"
+
+
 def test_assemble_file_run_input_includes_authored_file_thunk_message(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
@@ -5704,7 +5734,7 @@ def test_assemble_run_input_logs_activation_set_math(tmp_path: Path, caplog) -> 
         if record.name == "toolang.run"
     ]
     detail_line = next(message for message in messages if message.startswith("run.activation "))
-    assert "thread=script_" in detail_line
+    assert "thread=thunk_summarize" in detail_line
     assert " run=run_" in detail_line
     assert "summary=models 2 = openai/gpt-5 -> 1" in detail_line
     assert "skills 1 = local-reviewer -> 1" in detail_line
@@ -6321,11 +6351,11 @@ def test_script_execute_run_logs_lifecycle_without_queue_runner(tmp_path: Path, 
         if record.name == "toolang.run"
     ]
     assert outcome.status == "finished"
-    assert messages[0].startswith("Thread created id=script_")
-    assert messages[1].startswith("Run started thread=script_")
+    assert messages[0].startswith("Thread created id=thunk_main")
+    assert messages[1].startswith("Run started thread=thunk_main")
     assert " run=run_" in messages[1]
     assert messages[1].endswith(" input='hello'")
-    assert messages[-1].startswith("Run finished thread=script_")
+    assert messages[-1].startswith("Run finished thread=thunk_main")
     assert " run=run_" in messages[-1]
     assert " status=finished " in messages[-1]
 

@@ -80,6 +80,7 @@ async def run(
                         group="file",
                         origin="file",
                         run_id=submission.run_id,
+                        thread_id=submission.record.thread_id,
                         thunk=submission.text,
                         thunk_name="file",
                         metadata={
@@ -125,7 +126,8 @@ def collect_file_submissions(
                 logger.debug("files.input_skipped path=%s error=%s", snapshot.absolute_path, exc)
                 continue
             run_id = allocate_run_id(context)
-            record = store.claim(snapshot, run_id=run_id, now=current)
+            thread_id = file_requests.file_thread_id(snapshot.absolute_path)
+            record = store.claim(snapshot, run_id=run_id, thread_id=thread_id, now=current)
             if record is None:
                 continue
             submissions.append(
