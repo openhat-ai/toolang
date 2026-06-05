@@ -12,7 +12,7 @@
 #   examples/.toolang/agents/file-inbox-indexer/outbox/index.md
 
 thunk file(input: Message):
-  tools = filesystem
+  tools = filesystem/*
 
   user:
     Process the current file request immediately. Do not ask for confirmation.

@@ -217,6 +217,7 @@ class _TreeSitterSource:
     source: str
     line_map: tuple[int | None, ...]
     synthetic_message_rows: frozenset[int]
+    original_lines: tuple[str, ...]
 
     def original_line_index(self, row: int) -> int:
         if 0 <= row < len(self.line_map):
@@ -227,6 +228,12 @@ class _TreeSitterSource:
 
     def original_line_number(self, row: int) -> int:
         return self.original_line_index(row) + 1
+
+    def original_line(self, row: int) -> str:
+        original = self.original_line_index(row)
+        if 0 <= original < len(self.original_lines):
+            return self.original_lines[original]
+        return ""
 
 
 def parse(source: str) -> Program:
@@ -478,8 +485,14 @@ def _overlay_from_node(node: Node, syntax_source: _TreeSitterSource) -> ThunkOve
         if overlay.child_by_field_name("operator") is not None
         else _required_text(overlay, "operator").strip()
     )
-    raw_values = _optional_text(overlay.child_by_field_name("values")) or ""
     line_number = syntax_source.original_line_number(node.start_point.row)
+    raw_values = (
+        _raw_overlay_values_from_line(syntax_source.original_line(node.start_point.row))
+        if node.type in {"overlay_line", "directive"}
+        else None
+    )
+    if raw_values is None:
+        raw_values = _optional_text(overlay.child_by_field_name("values")) or ""
     kind = _overlay_kind(subject, line_number=line_number)
     items = tuple(
         item
@@ -492,6 +505,14 @@ def _overlay_from_node(node: Node, syntax_source: _TreeSitterSource) -> ThunkOve
         items=items,
         span=SourceSpan(line_number),
     )
+
+
+def _raw_overlay_values_from_line(line: str) -> str | None:
+    match = DIRECTIVE_RE.match(line)
+    if match is None:
+        return None
+    values, _comment = _split_inline_comment(line[match.end() :])
+    return values
 
 
 def _overlay_kind(subject: str, *, line_number: int) -> OverlayKind:
@@ -881,6 +902,7 @@ def _tree_sitter_source(source: str) -> _TreeSitterSource:
         source=tree_source,
         line_map=tuple(line_map),
         synthetic_message_rows=frozenset(synthetic_message_rows),
+        original_lines=tuple(original_lines),
     )
 
 
@@ -922,10 +944,21 @@ def _transform_directive_line(line: str) -> str:
         return line
     key = match.group("key")
     normalized_key = "models" if key == "model" else key
+    values = line[match.end() :]
+    rendered_values = " selector" if values.strip() else values
     return (
         f"{match.group('indent')}{normalized_key}"
-        f"{match.group('space')}{match.group('op')}{line[match.end():]}"
+        f"{match.group('space')}{match.group('op')}{rendered_values}"
     )
+
+
+def _split_inline_comment(line: str) -> tuple[str, str]:
+    match = re.search(r"(?<!\S)#", line)
+    if match is None:
+        return line.rstrip(), ""
+    body = line[: match.start()].rstrip()
+    comment = line[match.start() :].strip()
+    return body, f"  {comment}" if body else comment
 
 
 def _tree_sitter_params(raw: str) -> str:
