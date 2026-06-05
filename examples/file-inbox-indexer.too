@@ -1,0 +1,36 @@
+#!/usr/bin/env toolang
+
+# File request runtime example.
+#
+# Run:
+#   mkdir -p inbox
+#   toolang examples/file-inbox-indexer.too --inbox ./inbox
+#
+# Drop files into ./inbox. Each discovered file is sent to the `file` thunk, and
+# the thunk appends one summary row to the roaming agent home file:
+#
+#   examples/.toolang/agents/file-inbox-indexer/outbox/index.md
+
+thunk file(input: Message):
+  tools = filesystem
+
+  user:
+    Process the current file request.
+
+    The current message contains the inbox file content when it is a text file,
+    or an attachment description/path for other file types.
+
+    Use the filesystem tool to maintain `outbox/index.md` in the agent home:
+
+    1. Ensure the `outbox` directory exists.
+    2. If `outbox/index.md` does not exist, create it with this header:
+
+       | File | Summary |
+       | --- | --- |
+
+    3. Append one row for the current inbox file:
+
+       | `<file name or path>` | <one-sentence summary> |
+
+    Keep the summary factual and concise. Escape pipe characters in the file
+    name and summary so the Markdown table remains valid.
