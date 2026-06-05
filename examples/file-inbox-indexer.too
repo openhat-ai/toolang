@@ -7,7 +7,7 @@
 #   toolang examples/file-inbox-indexer.too --inbox ./inbox
 #
 # Drop files into ./inbox. Each discovered file is sent to the `file` thunk, and
-# the thunk appends one summary row to the roaming agent home file:
+# the thunk appends one summary bullet to the roaming agent home file:
 #
 #   examples/.toolang/agents/file-inbox-indexer/outbox/index.md
 
@@ -21,23 +21,15 @@ thunk file(input: Message):
     The current message contains the inbox file content when it is a text file,
     or an attachment description/path for other file types.
 
-    You must use the filesystem tool to maintain `outbox/index.md` in the
-    agent home:
+    You must use the filesystem tool to append one summary entry to
+    `outbox/index.md` in the agent home:
 
     1. Call `filesystem.mkdir` for `outbox`.
-    2. Call `filesystem.stat` for `outbox/index.md`.
-    3. If `outbox/index.md` does not exist, call `filesystem.write_text` with
-       this exact header:
+    2. Call `filesystem.append_text` exactly once for `outbox/index.md`.
+       `append_text` creates the file if it does not already exist.
+    3. Append one Markdown bullet for the current inbox file:
 
-       | File | Summary |
-       | --- | --- |
+       - `<file name or path>`: <one-sentence summary>
 
-    4. Call `filesystem.append_text` to append one row for the current inbox
-       file:
-
-       | `<file name or path>` | <one-sentence summary> |
-
-    Keep the summary factual and concise. Escape pipe characters in the file
-    name and summary so the Markdown table remains valid.
-
+    Keep the summary factual and concise.
     After the file is written, reply with only: Indexed `<file name or path>`.

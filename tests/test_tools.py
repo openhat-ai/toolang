@@ -45,6 +45,25 @@ def test_filesystem_tool_reads_and_writes_within_agent_home(tmp_path: Path) -> N
     assert loaded["text"] == "hello"
 
 
+def test_filesystem_tool_appends_to_missing_file(tmp_path: Path) -> None:
+    home = tmp_path / "alice"
+    home.mkdir()
+    plugin = create_filesystem_tool({})
+    tools = plugin.tools()
+
+    appended = tools["append_text"].invoke(
+        {"path": "outbox/index.md", "text": "- hello\n"},
+        _tool_context(home, "filesystem"),
+    )
+    loaded = tools["read_text"].invoke(
+        {"path": "outbox/index.md"},
+        _tool_context(home, "filesystem"),
+    )
+
+    assert appended["bytes_appended"] == len("- hello\n")
+    assert loaded["text"] == "- hello\n"
+
+
 def test_filesystem_tool_rejects_paths_outside_agent_home(tmp_path: Path) -> None:
     home = tmp_path / "alice"
     home.mkdir()
