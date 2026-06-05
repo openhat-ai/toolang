@@ -88,7 +88,7 @@ from toolang.config.plugins import ChannelBinding
 from toolang.config.log_spec import PY_LOG_ENV_VAR
 from toolang.execution import execute as run_execute_module
 from toolang.execution.input import RunInput, bind_run_request
-from toolang.execution.runner import QueueRunner, RunOutcome, RunRequest, RunSubmission
+from toolang.execution.runner import DEFAULT_GROUP_LIMITS, QueueRunner, RunOutcome, RunRequest, RunSubmission
 from toolang.execution.db import ExecutionStore, execution_db_path
 from toolang.execution.stream import RuntimeEventBus
 from toolang.components.router import chat as chat_loop, inspect
@@ -130,6 +130,10 @@ def test_runner_queue_is_fifo() -> None:
         assert await runner.dequeue() is None
 
     asyncio.run(run_test())
+
+
+def test_file_runner_default_concurrency_is_ten() -> None:
+    assert DEFAULT_GROUP_LIMITS["file"] == 10
 
 
 def test_runner_pending_requests_include_group_waiters(tmp_path: Path) -> None:
