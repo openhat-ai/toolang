@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
@@ -27,6 +27,10 @@ from typer.core import TyperCommand, TyperGroup
 
 from ... import agents
 from ...config.log import LoggingPlan, configure_logging, configure_logging_plan, resolve_agent_logging
+from ...execution.db import ExecutionStore, execution_db_path
+from ...execution.detail import run_detail_from_record, thread_info_from_record, thread_info_from_runs
+from ...execution.records import RunStatus
+from ...base.types.message import message_summary
 from ..utils import (
     _PrefixAgentWorkGroup,
     _RequiredPrefixAgentCommand,
@@ -562,7 +566,11 @@ def threads_command(
 ) -> None:
     query = _query_params(origin=origin, channel=channel, status=status)
     path = "/api/v1/threads" if not query else f"/api/v1/threads?{query}"
-    result = _runtime_json(ctx, path)
+    result = _runtime_json_or_offline(
+        ctx,
+        path,
+        lambda: _offline_threads_json(ctx, origin=origin, channel=channel, status=status),
+    )
     rows = [
         (
             str(item.get("id", "")),
@@ -589,7 +597,11 @@ def runs_command(
     if status is not None:
         query.append(("status", _api_run_status(status)))
     path = "/api/v1/runs" if not query else f"/api/v1/runs?{urlencode(query)}"
-    result = _runtime_json(ctx, path)
+    result = _runtime_json_or_offline(
+        ctx,
+        path,
+        lambda: _offline_runs_json(ctx, thread=thread, status=status),
+    )
     if thread is not None:
         rows = [
             (
@@ -854,6 +866,20 @@ def _runtime_json(ctx: typer.Context, path: str) -> dict[str, Any]:
         raise click.ClickException(f"runtime request failed: {exc.reason}") from exc
 
 
+def _runtime_json_or_offline(
+    ctx: typer.Context,
+    path: str,
+    offline: Callable[[], dict[str, Any] | None],
+) -> dict[str, Any]:
+    try:
+        return _runtime_json(ctx, path)
+    except click.ClickException as exc:
+        result = offline()
+        if result is None:
+            raise exc
+        return result
+
+
 def _runtime_post(ctx: typer.Context, path: str, *, payload: dict[str, Any]) -> dict[str, Any]:
     url = f"{_runtime_base_url(ctx)}{path}"
     request = Request(
@@ -870,6 +896,125 @@ def _runtime_post(ctx: typer.Context, path: str, *, payload: dict[str, Any]) -> 
         raise click.ClickException(f"runtime request failed: {exc.code} {detail}") from exc
     except URLError as exc:
         raise click.ClickException(f"runtime request failed: {exc.reason}") from exc
+
+
+def _offline_threads_json(
+    ctx: typer.Context,
+    *,
+    origin: str | None,
+    channel: str | None,
+    status: str | None,
+) -> dict[str, Any] | None:
+    store = _open_offline_execution_store(ctx)
+    if store is None:
+        return {"items": []}
+    try:
+        runs = store.list_runs(limit=None)
+        thread_ids = sorted({run.thread_id for run in runs})
+        ordered_runs = [
+            run
+            for thread_id in thread_ids
+            for run in store.list_thread_runs_chronological(thread_id=thread_id)
+        ]
+        steps_by_run = store.list_steps_for_runs(run_ids=tuple(item.run_id for item in ordered_runs))
+        inputs_by_run = {run.run_id: store.list_inputs(run_id=run.run_id) for run in ordered_runs}
+        grouped_runs: dict[str, list[Any]] = {}
+        for run in ordered_runs:
+            grouped_runs.setdefault(run.thread_id, []).append(run)
+        thread_records = {item.thread_id: item for item in store.list_threads()}
+        items: list[dict[str, Any]] = []
+        for thread_id, thread_runs in grouped_runs.items():
+            info = thread_info_from_runs(
+                thread_id,
+                thread_runs,
+                inputs_by_run=inputs_by_run,
+                steps_by_run=steps_by_run,
+                thread=thread_records.get(thread_id),
+            )
+            items.append(asdict(info))
+        for thread_id, thread in thread_records.items():
+            if thread_id not in grouped_runs:
+                items.append(asdict(thread_info_from_record(thread)))
+        filtered = [
+            item
+            for item in items
+            if (origin is None or item.get("origin") == origin)
+            and (channel is None or item.get("channel") == channel)
+            and (status is None or item.get("status") == status)
+        ]
+        return {"items": sorted(filtered, key=lambda item: str(item.get("updated_at", "")), reverse=True)}
+    finally:
+        store.close()
+
+
+def _offline_runs_json(
+    ctx: typer.Context,
+    *,
+    thread: str | None,
+    status: str | None,
+) -> dict[str, Any] | None:
+    store = _open_offline_execution_store(ctx)
+    if store is None:
+        return {"items": []}
+    try:
+        run_status = _run_status_or_none(status)
+        runs = store.list_runs(limit=50, thread_id=thread, status=run_status)
+        steps_by_run = store.list_steps_for_runs(run_ids=tuple(item.run_id for item in runs))
+        inputs_by_run = {run.run_id: store.list_inputs(run_id=run.run_id) for run in runs}
+        return {
+            "items": [
+                _offline_run_item(
+                    run,
+                    inputs=inputs_by_run.get(run.run_id, ()),
+                    steps=steps_by_run.get(run.run_id, ()),
+                )
+                for run in runs
+            ]
+        }
+    finally:
+        store.close()
+
+
+def _offline_run_item(run, *, inputs: Sequence, steps: Sequence) -> dict[str, Any]:
+    detail = run_detail_from_record(run, inputs=inputs, steps=steps)
+    input_text = message_summary(detail.input.parts) if detail.input is not None else ""
+    last_step_message = next(
+        (item.message for item in reversed(detail.output.steps) if item.message is not None),
+        None,
+    )
+    summary = message_summary(last_step_message.parts) if last_step_message is not None else input_text
+    if run.status == "failed" and run.error and (not summary or summary == input_text):
+        summary = run.error
+    return {
+        "id": run.run_id,
+        "origin": run.origin,
+        "thread_id": run.thread_id,
+        "input_text": input_text,
+        "summary": summary,
+        "status": run.status,
+        "error": run.error,
+        "created_at": run.created_at,
+        "started_at": run.started_at,
+        "finished_at": run.finished_at,
+        "updated_at": run.finished_at or run.started_at,
+    }
+
+
+def _open_offline_execution_store(ctx: typer.Context) -> ExecutionStore | None:
+    agent_name = _required_prefix_agent(ctx, command_name=str(ctx.info_name or "runtime"))
+    path = execution_db_path(_context_root(ctx), agent_name)
+    if not path.exists():
+        return None
+    return ExecutionStore(path)
+
+
+def _run_status_or_none(status: str | None) -> RunStatus | None:
+    if status is None:
+        return None
+    normalized = _api_run_status(status)
+    if normalized in {"running", "finished", "failed", "canceled"}:
+        return cast(RunStatus, normalized)
+    raise click.ClickException(f"unknown run status: {status}")
 
 
 def _runtime_stream(ctx: typer.Context, path: str, *, payload: dict[str, Any]) -> None:
@@ -1217,7 +1362,13 @@ def _target_thread_id(ctx: typer.Context, target: str | None) -> str | None:
     if target is None:
         return None
     if target.startswith("run_"):
-        detail = _runtime_json(ctx, f"/api/v1/runs/{target}")
+        try:
+            detail = _runtime_json(ctx, f"/api/v1/runs/{target}")
+        except click.ClickException:
+            thread_id = _offline_thread_id_for_run(ctx, target)
+            if thread_id is not None:
+                return thread_id
+            raise
         info = detail.get("info")
         if isinstance(info, dict) and isinstance(info.get("thread_id"), str):
             return str(info["thread_id"])
@@ -1231,7 +1382,13 @@ def _target_thread_id(ctx: typer.Context, target: str | None) -> str | None:
 def _target_run_id(ctx: typer.Context, target: str) -> str:
     if target.startswith("run_"):
         return target
-    detail = _runtime_json(ctx, f"/api/v1/threads/{target}")
+    try:
+        detail = _runtime_json(ctx, f"/api/v1/threads/{target}")
+    except click.ClickException:
+        run_id = _offline_active_run_id(ctx, target)
+        if run_id is not None:
+            return run_id
+        raise
     info = detail.get("info")
     if not isinstance(info, dict):
         raise click.ClickException(f"thread not found: {target}")
@@ -1244,7 +1401,13 @@ def _target_run_id(ctx: typer.Context, target: str) -> str:
 def _target_latest_run_id(ctx: typer.Context, target: str) -> str:
     if target.startswith("run_"):
         return target
-    detail = _runtime_json(ctx, f"/api/v1/threads/{target}")
+    try:
+        detail = _runtime_json(ctx, f"/api/v1/threads/{target}")
+    except click.ClickException:
+        run_id = _offline_latest_run_id(ctx, target)
+        if run_id is not None:
+            return run_id
+        raise
     info = detail.get("info")
     if not isinstance(info, dict):
         raise click.ClickException(f"thread not found: {target}")
@@ -1252,6 +1415,39 @@ def _target_latest_run_id(ctx: typer.Context, target: str) -> str:
     if not isinstance(latest, dict) or not isinstance(latest.get("id"), str):
         raise click.ClickException(f"thread has no runs: {target}")
     return str(latest["id"])
+
+
+def _offline_thread_id_for_run(ctx: typer.Context, run_id: str) -> str | None:
+    store = _open_offline_execution_store(ctx)
+    if store is None:
+        return None
+    try:
+        run = store.get_run(run_id=run_id)
+        return run.thread_id if run is not None else None
+    finally:
+        store.close()
+
+
+def _offline_active_run_id(ctx: typer.Context, thread_id: str) -> str | None:
+    store = _open_offline_execution_store(ctx)
+    if store is None:
+        return None
+    try:
+        runs = store.list_runs(thread_id=thread_id, status="running", limit=1)
+        return runs[0].run_id if runs else None
+    finally:
+        store.close()
+
+
+def _offline_latest_run_id(ctx: typer.Context, thread_id: str) -> str | None:
+    store = _open_offline_execution_store(ctx)
+    if store is None:
+        return None
+    try:
+        runs = store.list_runs(thread_id=thread_id, limit=1)
+        return runs[0].run_id if runs else None
+    finally:
+        store.close()
 
 
 def _resolve_runtime_startup(
@@ -2417,6 +2613,9 @@ def _run_roaming_thread_command(global_args: list[str], body: list[str], *, prog
         )
     except click.exceptions.Exit as exc:
         return exc.exit_code
+    except SystemExit as exc:
+        code = exc.code
+        return code if isinstance(code, int) else 1
     except (FileExistsError, FileNotFoundError, ValueError) as exc:
         typer.echo(f"toolang error: {exc}", err=True)
         return 1

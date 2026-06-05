@@ -241,6 +241,37 @@ def test_cli_main_routes_roaming_thread_commands_to_materialized_agent(
     assert cli._CLI_PREFIX_AGENT is None
 
 
+def test_cli_main_roaming_threads_can_read_offline_materialized_store(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    program_path = _write_roaming_program(tmp_path, "thunk:\n  Reply directly.\n", name="demo")
+    toolang_root, agent_name = agents.materialize_roaming_program(program_path)
+    store = ExecutionStore(execution_db_path(toolang_root, agent_name))
+    try:
+        run = store.start_run(
+            run_id="run_first",
+            thread_id="thunk_main",
+            origin="script",
+            input=Message.user("roaming input"),
+            created_at="2026-06-06T01:00:00Z",
+            started_at="2026-06-06T01:00:00Z",
+        )
+        store.finish_run(run_id=run.run_id, finished_at="2026-06-06T01:01:00Z")
+    finally:
+        store.close()
+
+    monkeypatch.setattr(cli.sys, "argv", ["toolang"])
+
+    result = cli.main([str(program_path), "threads"])
+    output = capsys.readouterr()
+
+    assert result == 0
+    assert "thunk_main" in output.out
+    assert "roaming input" in output.out
+
+
 def test_cli_main_keeps_roaming_thunk_invoke_when_thunk_is_present(monkeypatch, tmp_path: Path) -> None:
     program_path = tmp_path / "demo.too"
     program_path.write_text("thunk file(_):\n  Process a file.\n", encoding="utf-8")
@@ -6769,6 +6800,32 @@ def test_cli_threads_lists_title_and_run_count(monkeypatch) -> None:
     assert title not in result.stdout
 
 
+def test_cli_threads_lists_offline_runs_when_agent_is_not_running(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    store = ExecutionStore(execution_db_path(toolang_root, "alice"))
+    try:
+        run = store.start_run(
+            run_id="run_first",
+            thread_id="thunk_main",
+            origin="script",
+            input=Message.user("index docs"),
+            created_at="2026-06-06T01:00:00Z",
+            started_at="2026-06-06T01:00:00Z",
+        )
+        store.finish_run(run_id=run.run_id, finished_at="2026-06-06T01:01:00Z")
+    finally:
+        store.close()
+
+    result = _invoke_app(
+        ["threads", "alice"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+    )
+
+    assert result.exit_code == 0
+    assert "thunk_main" in result.stdout
+    assert "index docs" in result.stdout
+
+
 def test_cli_runs_lists_title(monkeypatch) -> None:
     title = "This is a very long run summary that should be truncated before display"
 
@@ -6801,6 +6858,41 @@ def test_cli_runs_lists_title(monkeypatch) -> None:
     assert "succeeded" in result.stdout
     assert "This is a very long run summary that should b..." in result.stdout
     assert title not in result.stdout
+
+
+def test_cli_runs_falls_back_to_offline_store_when_api_is_unavailable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    store = ExecutionStore(execution_db_path(toolang_root, "alice"))
+    try:
+        run = store.start_run(
+            run_id="run_first",
+            thread_id="file_abc123",
+            origin="file",
+            input=Message.user("summarize file"),
+            created_at="2026-06-06T01:00:00Z",
+            started_at="2026-06-06T01:00:00Z",
+        )
+        store.finish_run(run_id=run.run_id, finished_at="2026-06-06T01:01:00Z")
+    finally:
+        store.close()
+
+    monkeypatch.setattr(
+        cli,
+        "_runtime_json",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(cli.click.ClickException("runtime request failed")),
+    )
+
+    result = _invoke_app(
+        ["runs", "alice", "--thread", "file_abc123"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+    )
+
+    assert result.exit_code == 0
+    assert "run_first" in result.stdout
+    assert "summarize file" in result.stdout
 
 
 def test_cli_runs_hides_thread_column_when_filtered_by_thread(monkeypatch) -> None:
