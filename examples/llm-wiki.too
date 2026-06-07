@@ -3,14 +3,13 @@
 # LLM wiki file request example.
 #
 # Run:
-#   mkdir -p wiki-inbox
-#   toolang examples/llm-wiki.too --inbox ./wiki-inbox
+# mkdir -p wiki-inbox
+# toolang examples/llm-wiki.too --inbox ./wiki-inbox
 #
 # Drop documents, images, audio, video, or other files into ./wiki-inbox.
 # The `file` thunk turns each file into a concise wiki page in:
 #
-#   examples/.toolang/agents/llm-wiki/wiki/
-
+# examples/.toolang/agents/llm-wiki/wiki/
 thunk file(input: Message):
   tools = filesystem/*
 
@@ -18,12 +17,12 @@ thunk file(input: Message):
     Process the current file request immediately. Do not ask for confirmation.
     Maintain an LLM-readable wiki under `wiki/` in the agent home.
 
-    Write one concise Markdown page under `wiki/pages/` for this file.
-    Append one short link entry to `wiki/index.md`.
+  Write one concise Markdown page under `wiki/pages/` for this file.
+  Append one short link entry to `wiki/index.md`.
 
-    Each page should contain only useful text: a title, source reference when
-    visible, a compact summary, key facts, and searchable keywords.
-    After writing, reply with only: Wikified `<file name or path>`.
+  Each page should contain only useful text: a title, source reference when
+  visible, a compact summary, key facts, and searchable keywords.
+  After writing, reply with only: Wikified `<file name or path>`.
 
 thunk chat(input: Message):
   tools = filesystem/*

@@ -3,19 +3,18 @@
 # File request runtime example.
 #
 # Run:
-#   mkdir -p inbox
-#   toolang examples/file-inbox-indexer.too --inbox ./inbox
+# mkdir -p inbox
+# toolang examples/file-inbox-indexer.too --inbox ./inbox
 #
 # Drop files into ./inbox. Each discovered file is sent to the `file` thunk.
 # The thunk appends a short text summary to the roaming agent home file:
 #
-#   examples/.toolang/agents/file-inbox-indexer/outbox/index.md
+# examples/.toolang/agents/file-inbox-indexer/outbox/index.md
 
 thunk file(input: Message):
   tools = filesystem/*
 
   user:
     Process the current file request immediately. Do not ask for confirmation.
-    Write one short text summary of the current file request to
-    `outbox/index.md` in the agent home.
+    Append each file with its short text summary to `outbox/index.md` in the agent home.
     After the file is written, reply with only: Indexed `<file name or path>`.
