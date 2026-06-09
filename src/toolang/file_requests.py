@@ -300,7 +300,7 @@ def file_thread_id(path: Path | str) -> str:
 
     resolved = Path(path).expanduser().resolve()
     digest = hashlib.sha256(resolved.as_posix().encode("utf-8")).hexdigest()
-    return f"file_{digest[:_FILE_THREAD_HASH_CHARS]}"
+    return f"script_{digest[:_FILE_THREAD_HASH_CHARS]}"
 
 
 def render_file_input(path: Path) -> tuple[str, list[dict[str, str]]]:

@@ -88,6 +88,13 @@ class RunStart:
     created_at: str
     started_at: str
     request_id: str | None = None
+    root_run_id: str | None = None
+    parent_run_id: str | None = None
+    parent_step_index: int | None = None
+    executable_kind: str = "thunk"
+    executable_name: str | None = None
+    call_kind: str = "top"
+    metadata: dict[str, Any] = field(default_factory=dict)
     type: str = "run-start"
 
 

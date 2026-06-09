@@ -153,14 +153,14 @@ def test_runner_pending_requests_include_group_waiters(tmp_path: Path) -> None:
         active = RunRequest(
             group="pulse:task",
             origin="task",
-            thread_id="tsk_abc123",
+            thread_id="task_abc123",
             thunk="work task",
             delay_sec=0.05,
         )
         waiting = RunRequest(
             group="pulse:task",
             origin="task",
-            thread_id="tsk_def456",
+            thread_id="task_def456",
             thunk="sync remote task",
             delay_sec=0.0,
         )
@@ -284,7 +284,7 @@ def test_file_request_store_deduplicates_same_fingerprint(tmp_path: Path) -> Non
             run_id="run_first",
             thread_id=file_requests.file_thread_id(snapshot.absolute_path),
         )
-        second = store.claim(snapshot, run_id="run_second", thread_id="file_unused")
+        second = store.claim(snapshot, run_id="run_second", thread_id="script_unused")
         finished = store.finish_run(run_id="run_first", run_status="finished")
     finally:
         store.close()
@@ -1023,7 +1023,7 @@ def test_chat_api_allocates_web_threads_by_default_and_rejects_unknown_thread_id
     assert thread["run_count"] == 2
 
 
-def test_chat_api_allocates_tui_threads_for_tui_client(tmp_path: Path) -> None:
+def test_chat_api_allocates_term_threads_for_term_client(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
@@ -1042,8 +1042,8 @@ def test_chat_api_allocates_tui_threads_for_tui_client(tmp_path: Path) -> None:
             thread_id = response.json()["thread_id"]
 
     assert response.status_code == 200
-    assert thread_id.startswith("tui_")
-    assert len(thread_id) == len("tui_") + 8
+    assert thread_id.startswith("term_")
+    assert len(thread_id) == len("term_") + 8
 
 
 def test_chat_api_creates_empty_terminal_threads(tmp_path: Path) -> None:
@@ -1062,7 +1062,7 @@ def test_chat_api_creates_empty_terminal_threads(tmp_path: Path) -> None:
         thread = client.get(f"/api/v1/threads/{body['thread_id']}").json()["info"]
 
     assert response.status_code == 200
-    assert body["thread_id"].startswith("tui_")
+    assert body["thread_id"].startswith("term_")
     assert body["thread"]["origin"] == "chat"
     assert body["thread"]["channel"] == "terminal"
     assert body["thread"]["status"] == "idle"
@@ -1125,7 +1125,7 @@ def test_chat_rewind_cancels_running_run_before_superseding(tmp_path: Path) -> N
     )
     context.store.start_run(
         run_id="run_running",
-        thread_id="chat_running",
+        thread_id="term_running",
         origin="chat",
         input=Message.user("original input"),
     )
@@ -1140,7 +1140,7 @@ def test_chat_rewind_cancels_running_run_before_superseding(tmp_path: Path) -> N
             new_run_id = rewind.json()["run_id"]
 
             for _ in range(100):
-                thread_detail = client.get("/api/v1/threads/chat_running").json()
+                thread_detail = client.get("/api/v1/threads/term_running").json()
                 if [item["info"]["id"] for item in thread_detail["runs"]] == [new_run_id]:
                     break
                 time.sleep(0.01)
@@ -1226,7 +1226,7 @@ def test_chat_api_records_peer_for_new_thread_and_rejects_mismatch(tmp_path: Pat
             first = client.post(
                 "/api/v1/chat",
                 json={
-                    "peer": {"type": "agent", "name": "alice", "thread": "chat_a"},
+                    "peer": {"type": "agent", "name": "alice", "thread": "term_a"},
                     "message": _chat_message("Alice asks Bob"),
                 },
             )
@@ -1235,7 +1235,7 @@ def test_chat_api_records_peer_for_new_thread_and_rejects_mismatch(tmp_path: Pat
                 "/api/v1/chat",
                 json={
                     "thread": thread_id,
-                    "peer": {"type": "agent", "name": "alice", "thread": "chat_a"},
+                    "peer": {"type": "agent", "name": "alice", "thread": "term_a"},
                     "message": _chat_message("follow up"),
                 },
             )
@@ -1243,21 +1243,21 @@ def test_chat_api_records_peer_for_new_thread_and_rejects_mismatch(tmp_path: Pat
                 "/api/v1/chat",
                 json={
                     "thread": thread_id,
-                    "peer": {"type": "agent", "name": "carol", "thread": "chat_c"},
+                    "peer": {"type": "agent", "name": "carol", "thread": "term_c"},
                     "message": _chat_message("wrong peer"),
                 },
             )
             thread = client.get(f"/api/v1/threads/{thread_id}").json()["info"]
 
     assert first.status_code == 200
-    assert first.json()["thread"]["peer"] == {"type": "agent", "name": "alice", "thread": "chat_a"}
+    assert first.json()["thread"]["peer"] == {"type": "agent", "name": "alice", "thread": "term_a"}
     assert accepted.status_code == 200
     assert rejected.status_code == 409
-    assert thread["peer"] == {"type": "agent", "name": "alice", "thread": "chat_a"}
+    assert thread["peer"] == {"type": "agent", "name": "alice", "thread": "term_a"}
     assert thread["parent"] is None
 
 
-def test_chat_models_lists_effective_selectors_for_chat_thunk(tmp_path: Path) -> None:
+def test_chat_models_lists_effective_selectors_for_term_thunk(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -1358,14 +1358,14 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
         ).to_data(),
     )
 
-    chat_run = store.start_run(
+    term_run = store.start_run(
         run_id="run-chat",
         thread_id="thread-chat",
         origin="chat",
         input=Message.user("list tools"),
     )
     store.append_step(
-        run_id=chat_run.run_id,
+        run_id=term_run.run_id,
         step_index=1,
         kind="model_call",
         status="finished",
@@ -1387,7 +1387,7 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
         finished_at="2026-01-01T00:00:02Z",
     )
     store.append_step(
-        run_id=chat_run.run_id,
+        run_id=term_run.run_id,
         step_index=2,
         kind="tool_call",
         status="finished",
@@ -1405,7 +1405,7 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
         finished_at="2026-01-01T00:00:04Z",
     )
     store.append_step(
-        run_id=chat_run.run_id,
+        run_id=term_run.run_id,
         step_index=3,
         kind="model_call",
         status="finished",
@@ -1419,11 +1419,11 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
         started_at="2026-01-01T00:00:05Z",
         finished_at="2026-01-01T00:00:06Z",
     )
-    store.finish_run(run_id=chat_run.run_id)
+    store.finish_run(run_id=term_run.run_id)
 
     task_run = store.start_run(
         run_id="run-task",
-        thread_id="tsk_task-1",
+        thread_id="task_task-1",
         origin="task",
         input=Message.user("do the task"),
     )
@@ -1431,7 +1431,7 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
 
     chore_run = store.start_run(
         run_id="run-chore",
-        thread_id="chr_daily-sync",
+        thread_id="chore_daily-sync",
         origin="chore",
         input=Message.user("run the chore"),
     )
@@ -1532,7 +1532,7 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
     )
     context.store.start_run(
         run_id="run-loop",
-        thread_id="chr_sync",
+        thread_id="chore_sync",
         origin="chore",
         input=Message.user("sync remote tasks"),
     )
@@ -1829,7 +1829,7 @@ def test_poll_loop_queues_channel_deliveries_and_delivers_reply(tmp_path: Path) 
                         origin="chat",
                         channel="telegram",
                         sender="owner",
-                        thread_id="tg_123",
+                        thread_id="script_tg_123",
                         text="hello from poll",
                         reply_target=ReplyTarget(channel="telegram", address="chat:123"),
                     )
@@ -1876,7 +1876,7 @@ def test_poll_loop_queues_channel_deliveries_and_delivers_reply(tmp_path: Path) 
             ):
                 await _wait_for_completed_count(context, 1)
                 run = context.store.list_runs(limit=1)[0]
-                assert run.thread_id == "tg_123"
+                assert run.thread_id == "script_tg_123"
                 assert run.origin == "chat"
 
         asyncio.run(run_test())
@@ -1941,7 +1941,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
             origin="chat",
             channel="telegram",
             sender="owner",
-            thread_id="tg_123",
+            thread_id="script_tg_123",
             text="hello from poll",
             reply_target=ReplyTarget(channel="telegram", address="chat:123"),
         ),
@@ -1956,14 +1956,14 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
             _started(
                 1,
                 run_id="run-1",
-                thread_id="tg_123",
+                thread_id="script_tg_123",
                 kind="model_call",
             )
         )
         on_event(
             PartStart(
                 run_id="run-1",
-                thread_id="tg_123",
+                thread_id="script_tg_123",
                 step_index=1,
                 part_index=0,
                 kind="tool_call",
@@ -1972,7 +1972,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
         on_event(
             PartStart(
                 run_id="run-1",
-                thread_id="tg_123",
+                thread_id="script_tg_123",
                 step_index=1,
                 part_index=1,
                 kind="text",
@@ -1981,7 +1981,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
         on_event(
             PartDelta(
                 run_id="run-1",
-                thread_id="tg_123",
+                thread_id="script_tg_123",
                 step_index=1,
                 part_index=1,
                 delta=TextDelta(text="hel"),
@@ -1991,7 +1991,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
         on_event(
             PartDelta(
                 run_id="run-1",
-                thread_id="tg_123",
+                thread_id="script_tg_123",
                 step_index=1,
                 part_index=1,
                 delta=TextDelta(text="lo"),
@@ -2001,7 +2001,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
         on_event(
             PartDelta(
                 run_id="run-1",
-                thread_id="tg_123",
+                thread_id="script_tg_123",
                 step_index=1,
                 part_index=1,
                 delta=TextDelta(text=" world"),
@@ -2011,7 +2011,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
         on_event(
             PartDelta(
                 run_id="run-1",
-                thread_id="tg_123",
+                thread_id="script_tg_123",
                 step_index=1,
                 part_index=1,
                 delta=TextDelta(text=" and more"),
@@ -2021,7 +2021,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
         on_event(
             PartDelta(
                 run_id="run-1",
-                thread_id="tg_123",
+                thread_id="script_tg_123",
                 step_index=1,
                 part_index=1,
                 delta=TextDelta(text=" from telegram"),
@@ -2031,7 +2031,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
             _completed(
                 1,
                 run_id="run-1",
-                thread_id="tg_123",
+                thread_id="script_tg_123",
                 kind="model_call",
                 output=(
                     ToolCallPart(
@@ -2047,7 +2047,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
         return RunResult(output_text="hello world and more from telegram")
 
     with (
-        patch.object(run_execute_module.RunInput, "from_binding", side_effect=fake_assemble),
+        _patched_run_input_assembly(fake_assemble),
         patch.object(
             run_execute_module,
             "load_loop",
@@ -2120,7 +2120,7 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
             origin="chat",
             channel="telegram",
             sender="owner",
-            thread_id="tg_123",
+            thread_id="script_tg_123",
             text="hello from poll",
             reply_target=ReplyTarget(channel="telegram", address="chat:123"),
         ),
@@ -2135,14 +2135,14 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
             _started(
                 1,
                 run_id="run-1",
-                thread_id="tg_123",
+                thread_id="script_tg_123",
                 kind="model_call",
             )
         )
         on_event(
             PartStart(
                 run_id="run-1",
-                thread_id="tg_123",
+                thread_id="script_tg_123",
                 step_index=1,
                 part_index=0,
                 kind="text",
@@ -2151,7 +2151,7 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
         on_event(
             PartDelta(
                 run_id="run-1",
-                thread_id="tg_123",
+                thread_id="script_tg_123",
                 step_index=1,
                 part_index=0,
                 delta=TextDelta(text="hello"),
@@ -2161,7 +2161,7 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
         on_event(
             PartDelta(
                 run_id="run-1",
-                thread_id="tg_123",
+                thread_id="script_tg_123",
                 step_index=1,
                 part_index=0,
                 delta=TextDelta(text=" world"),
@@ -2171,7 +2171,7 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
             _completed(
                 1,
                 run_id="run-1",
-                thread_id="tg_123",
+                thread_id="script_tg_123",
                 kind="model_call",
                 output=(TextPart(text="hello world"),),
             )
@@ -2179,7 +2179,7 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
         return RunResult(output_text="hello world")
 
     with (
-        patch.object(run_execute_module.RunInput, "from_binding", side_effect=fake_assemble),
+        _patched_run_input_assembly(fake_assemble),
         patch.object(
             run_execute_module,
             "load_loop",
@@ -2332,7 +2332,7 @@ def test_background_features_enqueue_runs(tmp_path: Path) -> None:
                 assert completed[0]["group"] == "pulse:task"
                 assert completed[0]["origin"] == "task"
                 assert completed[0]["input_text"] == "Review the current plan."
-                assert str(completed[0]["thread_id"]).startswith("tsk_")
+                assert str(completed[0]["thread_id"]).startswith("task_")
 
     asyncio.run(run_test())
 
@@ -2382,7 +2382,7 @@ def test_bind_run_request_allocates_normalized_local_ids(tmp_path: Path) -> None
     )
 
     assert bound.run_id.startswith("run_")
-    assert bound.thread_id.startswith("chat_")
+    assert bound.thread_id.startswith("term_")
     assert (toolang_root / "agents" / "alice" / ".runtime" / "ids.json").is_file()
 
 
@@ -2401,8 +2401,8 @@ def test_bind_run_request_uses_explicit_thread_kind_for_new_thread(tmp_path: Pat
     )
 
     assert bound.origin == "chat"
-    assert bound.thread_id.startswith("tui_")
-    assert len(bound.thread_id) == len("tui_") + 8
+    assert bound.thread_id.startswith("term_")
+    assert len(bound.thread_id) == len("term_") + 8
 
 
 def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> None:
@@ -4952,7 +4952,7 @@ def test_new_task_reloads_into_live_state_and_tasks_endpoint(tmp_path: Path) -> 
     assert tasks[0]["status"] == "todo"
     assert tasks[0]["remote_ref"] is None
     assert tasks[0]["remote_status"] is None
-    assert tasks[0]["runtime"]["thread_id"] == f"tsk_{tasks[0]['id']}"
+    assert tasks[0]["runtime"]["thread_id"] == f"task_{tasks[0]['id']}"
     assert tasks[0]["runtime"]["last_run"] is None
     assert tasks[0]["runtime"]["next_run"] is None
     assert tasks[0]["path"] == "tasks/review.md"
@@ -4985,7 +4985,7 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
         assert task["lifecycle"] == "ready"
         assert task["status"] == "todo"
         assert task["body"] == "Review the new API surface."
-        assert task["runtime"]["thread_id"] == f"tsk_{task_id}"
+        assert task["runtime"]["thread_id"] == f"task_{task_id}"
 
         jobs = client.get("/api/v1/jobs").json()["items"]
         assert [(item["kind"], item["id"]) for item in jobs] == [("task", task_id)]
@@ -5118,7 +5118,7 @@ def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
         assert chore["status"] == "todo"
         assert chore["schedule"] == "FREQ=HOURLY;INTERVAL=6"
         assert chore["body"] == "Check stale pull requests."
-        assert chore["runtime"]["thread_id"] == f"chr_{chore_id}"
+        assert chore["runtime"]["thread_id"] == f"chore_{chore_id}"
 
         jobs = client.get("/api/v1/jobs?kind=chore").json()["items"]
         assert [(item["kind"], item["id"]) for item in jobs] == [("chore", chore_id)]
@@ -5226,7 +5226,7 @@ def test_new_task_reloads_and_pulse_runs_it(tmp_path: Path) -> None:
     assert completed[0]["group"] == "pulse:task"
     assert completed[0]["origin"] == "task"
     assert completed[0]["input_text"] == "Review the current plan."
-    assert str(completed[0]["thread_id"]).startswith("tsk_")
+    assert str(completed[0]["thread_id"]).startswith("task_")
 
 
 def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) -> None:
@@ -5522,7 +5522,7 @@ def test_assemble_run_input_uses_activation_default_when_thunk_omits_one(tmp_pat
     assert bundle.debug["activation_default_model"] == "openai/gpt-5[openai]"
 
 
-def test_script_run_thread_id_uses_thunk_name(tmp_path: Path) -> None:
+def test_script_run_thread_id_uses_script_prefix(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -5543,7 +5543,9 @@ def test_script_run_thread_id_uses_thunk_name(tmp_path: Path) -> None:
         ),
     )
 
-    assert bound.thread_id == "thunk_summarize"
+    assert bound.thread_id.startswith("script_")
+    assert len(bound.thread_id) == len("script_") + 8
+    assert bound.thread_id != "script_summarize"
 
 
 def test_assemble_file_run_input_includes_authored_file_thunk_message(tmp_path: Path) -> None:
@@ -5603,7 +5605,7 @@ def test_assemble_run_input_hides_tools_when_activation_has_no_tools(tmp_path: P
             thunk="hello",
         ),
     )
-    chat_bound = bind_run_request(
+    term_bound = bind_run_request(
         context,
         RunRequest(
             group="chat",
@@ -5614,16 +5616,16 @@ def test_assemble_run_input_hides_tools_when_activation_has_no_tools(tmp_path: P
     )
 
     invoke_bundle = RunInput.from_binding(context, invoke_bound)
-    chat_bundle = RunInput.from_binding(context, chat_bound)
+    term_bundle = RunInput.from_binding(context, term_bound)
 
     assert invoke_bundle.tools() == {}
     assert invoke_bundle.snapshot is not None
     assert invoke_bundle.snapshot.tools == ()
     assert invoke_bundle.debug["tool_names"] == []
-    assert chat_bundle.tools() == {}
-    assert chat_bundle.snapshot is not None
-    assert chat_bundle.snapshot.tools == ()
-    assert chat_bundle.debug["tool_names"] == []
+    assert term_bundle.tools() == {}
+    assert term_bundle.snapshot is not None
+    assert term_bundle.snapshot.tools == ()
+    assert term_bundle.debug["tool_names"] == []
 
 
 def test_assemble_run_input_uses_explicit_activation_tools_for_script_runs(tmp_path: Path) -> None:
@@ -5734,7 +5736,7 @@ def test_assemble_run_input_logs_activation_set_math(tmp_path: Path, caplog) -> 
         if record.name == "toolang.run"
     ]
     detail_line = next(message for message in messages if message.startswith("run.activation "))
-    assert "thread=thunk_summarize" in detail_line
+    assert "thread=script_" in detail_line
     assert " run=run_" in detail_line
     assert "summary=models 2 = openai/gpt-5 -> 1" in detail_line
     assert "skills 1 = local-reviewer -> 1" in detail_line
@@ -6351,11 +6353,12 @@ def test_script_execute_run_logs_lifecycle_without_queue_runner(tmp_path: Path, 
         if record.name == "toolang.run"
     ]
     assert outcome.status == "finished"
-    assert messages[0].startswith("Thread created id=thunk_main")
-    assert messages[1].startswith("Run started thread=thunk_main")
+    assert messages[0].startswith("Thread created id=script_")
+    thread_id = messages[0].removeprefix("Thread created id=").split(" ", 1)[0]
+    assert messages[1].startswith(f"Run started thread={thread_id}")
     assert " run=run_" in messages[1]
     assert messages[1].endswith(" input='hello'")
-    assert messages[-1].startswith("Run finished thread=thunk_main")
+    assert messages[-1].startswith(f"Run finished thread={thread_id}")
     assert " run=run_" in messages[-1]
     assert " status=finished " in messages[-1]
 
@@ -7165,6 +7168,18 @@ def _default_step_input(
 
 
 @contextmanager
+def _patched_run_input_assembly(fake_assemble):
+    def fake_from_thunk(context: UptimeContext, bound, _thunk):
+        return fake_assemble(context, bound)
+
+    with (
+        patch.object(run_execute_module.RunInput, "from_binding", side_effect=fake_assemble),
+        patch.object(run_execute_module.RunInput, "from_thunk", side_effect=fake_from_thunk),
+    ):
+        yield
+
+
+@contextmanager
 def _patched_runner_execution():
     current: dict[str, str] = {}
 
@@ -7200,7 +7215,7 @@ def _patched_runner_execution():
         return RunResult(output_text=output_text)
 
     with (
-        patch.object(run_execute_module.RunInput, "from_binding", side_effect=fake_assemble),
+        _patched_run_input_assembly(fake_assemble),
         patch.object(
             run_execute_module,
             "load_loop",
@@ -7420,7 +7435,7 @@ def _patched_runner_execution_with_tools(*, output_text: str):
         return RunResult(output_text=output_text)
 
     with (
-        patch.object(run_execute_module.RunInput, "from_binding", side_effect=fake_assemble),
+        _patched_run_input_assembly(fake_assemble),
         patch.object(
             run_execute_module,
             "load_loop",
@@ -7441,7 +7456,7 @@ def _patched_runner_failure(message: str):
         raise RuntimeError(message)
 
     with (
-        patch.object(run_execute_module.RunInput, "from_binding", side_effect=fake_assemble),
+        _patched_run_input_assembly(fake_assemble),
         patch.object(
             run_execute_module,
             "load_loop",
@@ -7508,7 +7523,7 @@ def _patched_runner_streaming_text(release: threading.Event):
         return RunResult(output_text="streaming hello")
 
     with (
-        patch.object(run_execute_module.RunInput, "from_binding", side_effect=fake_assemble),
+        _patched_run_input_assembly(fake_assemble),
         patch.object(
             run_execute_module,
             "load_loop",

@@ -47,7 +47,7 @@ from .records import (
     step_payload_to_data,
 )
 
-_SCHEMA_VERSION = 6
+_SCHEMA_VERSION = 8
 
 
 class ExecutionStore:
@@ -72,6 +72,13 @@ class ExecutionStore:
         thread_id: str,
         origin: str,
         input: Message,
+        root_run_id: str | None = None,
+        parent_run_id: str | None = None,
+        parent_step_index: int | None = None,
+        executable_kind: str = "thunk",
+        executable_name: str | None = None,
+        call_kind: str = "top",
+        metadata: Mapping[str, Any] | None = None,
         request_id: str | None = None,
         created_at: str | None = None,
         started_at: str | None = None,
@@ -93,18 +100,32 @@ class ExecutionStore:
                     run_id,
                     thread_id,
                     origin,
+                    root_run_id,
+                    parent_run_id,
+                    parent_step_index,
+                    executable_kind,
+                    executable_name,
+                    call_kind,
+                    metadata,
                     status,
                     error,
                     superseded,
                     created_at,
                     started_at,
                     finished_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
                     thread_id,
                     origin,
+                    root_run_id or run_id,
+                    parent_run_id,
+                    parent_step_index,
+                    executable_kind,
+                    executable_name,
+                    call_kind,
+                    _dump_json(dict(metadata or {})),
                     "running",
                     None,
                     None,
@@ -327,7 +348,7 @@ class ExecutionStore:
         return [_run_from_row(row) for row in rows]
 
     def active_run_for_thread(self, *, thread_id: str) -> RunRecord | None:
-        """Return the currently running visible run for one thread, if any."""
+        """Return the currently running run for one thread, if any."""
 
         runs = self.list_runs(thread_id=thread_id, status="running", limit=1)
         return runs[0] if runs else None
@@ -339,7 +360,7 @@ class ExecutionStore:
         limit: int | None = None,
         include_superseded: bool = False,
     ) -> tuple[RunRecord, ...]:
-        """Return one thread's visible runs in durable chronological order."""
+        """Return one thread's runs in durable chronological order."""
 
         clauses = ["thread_id = ?"]
         params: list[object] = [thread_id]
@@ -358,7 +379,7 @@ class ExecutionStore:
         return tuple(_run_from_row(row) for row in rows)
 
     def list_thread_runs_before(self, *, run_id: str) -> tuple[RunRecord, ...]:
-        """Return visible runs in the same thread before one anchor run."""
+        """Return runs in the same thread before one anchor run."""
 
         with self._lock:
             anchor = self._conn.execute(
@@ -395,6 +416,7 @@ class ExecutionStore:
             raise ValueError("source and target run id counts must match")
         if not source_run_ids:
             return ()
+        run_id_map = dict(zip(source_run_ids, target_run_ids, strict=True))
         with self._lock:
             copied: list[sqlite3.Row] = []
             for source_run_id, target_run_id in zip(source_run_ids, target_run_ids, strict=True):
@@ -410,18 +432,36 @@ class ExecutionStore:
                         run_id,
                         thread_id,
                         origin,
+                        root_run_id,
+                        parent_run_id,
+                        parent_step_index,
+                        executable_kind,
+                        executable_name,
+                        call_kind,
+                        metadata,
                         status,
                         error,
                         superseded,
                         created_at,
                         started_at,
                         finished_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         target_run_id,
                         target_thread_id,
                         source_run["origin"],
+                        run_id_map.get(source_run["root_run_id"], target_run_id),
+                        (
+                            run_id_map.get(source_run["parent_run_id"])
+                            if source_run["parent_run_id"] is not None
+                            else None
+                        ),
+                        source_run["parent_step_index"],
+                        source_run["executable_kind"],
+                        source_run["executable_name"],
+                        source_run["call_kind"],
+                        source_run["metadata"],
                         source_run["status"],
                         source_run["error"],
                         source_run["superseded"],
@@ -518,7 +558,7 @@ class ExecutionStore:
         run_id: str,
         superseded: Mapping[str, object],
     ) -> tuple[RunRecord, ...]:
-        """Mark one run and later visible runs in the same thread as superseded."""
+        """Mark one run and later runs in the same thread as superseded."""
 
         anchor = self.get_run(run_id=run_id)
         if anchor is None:
@@ -973,6 +1013,13 @@ class ExecutionStore:
                     run_id TEXT PRIMARY KEY,
                     thread_id TEXT NOT NULL,
                     origin TEXT NOT NULL,
+                    root_run_id TEXT NOT NULL,
+                    parent_run_id TEXT,
+                    parent_step_index INTEGER,
+                    executable_kind TEXT NOT NULL,
+                    executable_name TEXT,
+                    call_kind TEXT NOT NULL,
+                    metadata TEXT NOT NULL,
                     status TEXT NOT NULL,
                     error TEXT,
                     superseded TEXT,
@@ -1153,6 +1200,37 @@ def _run_from_row(row: sqlite3.Row) -> RunRecord:
         run_id=str(row["run_id"]),
         thread_id=str(row["thread_id"]),
         origin=str(row["origin"]),
+        root_run_id=str(row["root_run_id"]) if "root_run_id" in row.keys() else str(row["run_id"]),
+        parent_run_id=(
+            str(row["parent_run_id"])
+            if "parent_run_id" in row.keys() and row["parent_run_id"] is not None
+            else None
+        ),
+        parent_step_index=(
+            int(row["parent_step_index"])
+            if "parent_step_index" in row.keys() and row["parent_step_index"] is not None
+            else None
+        ),
+        executable_kind=(
+            str(row["executable_kind"])
+            if "executable_kind" in row.keys()
+            else "thunk"
+        ),
+        executable_name=(
+            str(row["executable_name"])
+            if "executable_name" in row.keys() and row["executable_name"] is not None
+            else None
+        ),
+        call_kind=(
+            str(row["call_kind"])
+            if "call_kind" in row.keys()
+            else "top"
+        ),
+        metadata=(
+            cast(dict[str, Any], _load_json(str(row["metadata"])))
+            if "metadata" in row.keys() and row["metadata"] is not None
+            else {}
+        ),
         status=cast(RunStatus, row["status"]),
         error=str(row["error"]) if row["error"] is not None else None,
         superseded=cast(dict[str, Any], _load_json(str(raw_superseded))) if raw_superseded is not None else None,
@@ -1309,6 +1387,13 @@ class PersistSink:
                 thread_id=event.thread_id,
                 origin=event.origin,
                 input=event.input,
+                root_run_id=event.root_run_id,
+                parent_run_id=event.parent_run_id,
+                parent_step_index=event.parent_step_index,
+                executable_kind=event.executable_kind,
+                executable_name=event.executable_name,
+                call_kind=event.call_kind,
+                metadata=event.metadata,
                 request_id=event.request_id,
                 created_at=event.created_at,
                 started_at=event.started_at,

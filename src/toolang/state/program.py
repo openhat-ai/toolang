@@ -12,6 +12,8 @@ from ..agents import agent_program_path
 from ..program import (
     ContextBlock,
     DeclBlock,
+    Flow,
+    FlowStage,
     InstructBlock,
     MessageBlock,
     ParamDecl,
@@ -50,16 +52,19 @@ class PreparedProgram:
 
     def to_snapshot(self) -> dict[str, object]:
         program = _parse_body_text(self.body_text)
-        return {
+        data: dict[str, object] = {
             "agent_name": self.agent_name,
             "source_path": self.source_path,
             "thunks": [_thunk_to_data(item) for item in _program_thunks(program)],
         }
+        if program.flows:
+            data["flows"] = [_flow_to_data(item) for item in program.flows]
+        return data
 
     def to_lock_data(self) -> dict[str, object]:
         program = _parse_body_text(self.body_text)
         line_offset = _body_line_offset(source_text=self.source_text, body_text=self.body_text)
-        return {
+        data: dict[str, object] = {
             "source": "program",
             "source_text": self.source_text,
             "body_text": self.body_text,
@@ -70,6 +75,9 @@ class PreparedProgram:
             "caps": [_decl_to_lock_data(item, line_offset=line_offset) for item in program.declarations],
             "thunks": [_thunk_to_lock_data(item, line_offset=line_offset) for item in _program_thunks(program)],
         }
+        if program.flows:
+            data["flows"] = [_flow_to_lock_data(item, line_offset=line_offset) for item in program.flows]
+        return data
 
     def fingerprint(self) -> str:
         payload = json.dumps(
@@ -113,6 +121,10 @@ class LiveProgram:
     def thunks(self) -> tuple[Thunk, ...]:
         return _program_thunks(self.parsed)
 
+    @property
+    def flows(self) -> tuple[Flow, ...]:
+        return tuple(self.parsed.flows)
+
     def get_thunk(self, name: str | None) -> Thunk:
         if name is not None:
             for thunk in self.thunks:
@@ -125,6 +137,19 @@ class LiveProgram:
         if len(self.thunks) == 1:
             return self.thunks[0]
         raise ToolangError("No default thunk found in prepared program.")
+
+    def get_flow(self, name: str | None) -> Flow:
+        if name is not None:
+            flow = self.parsed.get_flow(name)
+            if flow is not None:
+                return flow
+            raise ToolangError(f"Flow not found: {name}")
+        for flow in self.flows:
+            if flow.flow_name() == "main":
+                return flow
+        if len(self.flows) == 1:
+            return self.flows[0]
+        raise ToolangError("No default flow found in prepared program.")
 
     def get_instruct(self, name: str | None) -> InstructBlock | None:
         return self.parsed.get_instruct(name)
@@ -306,6 +331,7 @@ def _validate_program(program: Program) -> None:
     seen_instruct_names: set[str | None] = set()
     seen_struct_names: set[str] = set()
     seen_thunk_names: set[str] = set()
+    seen_flow_names: set[str] = set()
 
     for decl in program.declarations:
         decl_key = (decl.kind, decl.name)
@@ -343,6 +369,14 @@ def _validate_program(program: Program) -> None:
         _validate_thunk_params(thunk, thunk_name=thunk_name)
         _validate_thunk_overlays(thunk, thunk_name=thunk_name)
         _validate_thunk_messages(thunk, thunk_name=thunk_name)
+
+    for flow in program.flows:
+        flow_name = flow.flow_name()
+        if flow_name in seen_flow_names:
+            raise ToolangError(f"Duplicate flow name {flow_name!r}.")
+        seen_flow_names.add(flow_name)
+        _validate_flow_params(flow, flow_name=flow_name)
+        _validate_flow_overlays(flow, flow_name=flow_name)
 
 
 def _validate_decl_params(decl: DeclBlock) -> None:
@@ -416,6 +450,27 @@ def _validate_thunk_messages(thunk: Thunk, *, thunk_name: str) -> None:
         )
 
 
+def _validate_flow_params(flow: Flow, *, flow_name: str) -> None:
+    seen: set[str] = set()
+    if flow.input is not None and flow.input.name in {"runtime"}:
+        raise ToolangError(f"Flow {flow_name!r} must not use reserved parameter name 'runtime'.")
+    for param in flow.params:
+        if param.name == "runtime":
+            raise ToolangError(f"Flow {flow_name!r} must not use reserved parameter name 'runtime'.")
+        if param.name in seen:
+            raise ToolangError(f"Duplicate flow parameter {param.name!r} in {flow_name!r}.")
+        seen.add(param.name)
+
+
+def _validate_flow_overlays(flow: Flow, *, flow_name: str) -> None:
+    model_overlays = [overlay for overlay in flow.overlays if overlay.kind == "model"]
+    if len(model_overlays) > 1:
+        raise ToolangError(f"Flow {flow_name!r} may declare at most one models directive.")
+    recall_overlays = [overlay for overlay in flow.overlays if overlay.kind == "recall"]
+    if len(recall_overlays) > 1:
+        raise ToolangError(f"Flow {flow_name!r} may declare at most one recall directive.")
+
+
 def _param_to_data(param: ParamDecl) -> dict[str, object]:
     return {
         "name": param.name,
@@ -445,6 +500,45 @@ def _thunk_to_data(thunk: Thunk) -> dict[str, object]:
         "instruct": _message_block_to_data(thunk.instruct) if thunk.instruct is not None else None,
         "messages": [_message_block_to_data(item) for item in thunk.messages],
     }
+
+
+def _flow_to_data(flow: Flow) -> dict[str, object]:
+    return {
+        "name": flow.flow_name(),
+        "input": _param_to_data(flow.input) if flow.input is not None else None,
+        "params": [_param_to_data(item) for item in flow.params],
+        "output": flow.output,
+        "directives": [_overlay_to_data(item) for item in flow.overlays],
+        "stages": [_flow_stage_to_data(item) for item in flow.stages],
+    }
+
+
+def _flow_stage_to_data(stage: FlowStage) -> dict[str, object]:
+    data: dict[str, object] = {
+        "kind": stage.kind,
+        "line": stage.span.line,
+    }
+    if stage.target is not None:
+        data["target"] = stage.target
+    if stage.targets:
+        data["targets"] = list(stage.targets)
+    if stage.body is not None:
+        data["body"] = stage.body
+    if stage.doc is not None:
+        data["doc"] = stage.doc
+    if stage.output is not None:
+        data["output"] = stage.output
+    if stage.parallelism is not None:
+        data["parallelism"] = stage.parallelism
+    if stage.limit is not None:
+        data["limit"] = stage.limit
+    if stage.count is not None:
+        data["count"] = stage.count
+    if stage.condition is not None:
+        data["condition"] = stage.condition
+    if stage.stages:
+        data["stages"] = [_flow_stage_to_data(item) for item in stage.stages]
+    return data
 
 
 def _overlay_to_data(overlay: ThunkOverlay) -> dict[str, object]:
@@ -524,6 +618,35 @@ def _thunk_to_lock_data(thunk: Thunk, *, line_offset: int) -> dict[str, object]:
     }
     if thunk.output is not None:
         data["output"] = _source_type_name(thunk.output)
+    return data
+
+
+def _flow_to_lock_data(flow: Flow, *, line_offset: int) -> dict[str, object]:
+    data: dict[str, object] = {
+        "name": flow.flow_name(),
+        "line": flow.span.line + line_offset,
+        "params": _flow_params_to_lock_data(flow),
+        "directives": [_directive_to_lock_data(item, line_offset=line_offset) for item in flow.overlays],
+        "stages": [_flow_stage_to_lock_data(item, line_offset=line_offset) for item in flow.stages],
+    }
+    if flow.output is not None:
+        data["output"] = _source_type_name(flow.output)
+    return data
+
+
+def _flow_params_to_lock_data(flow: Flow) -> list[dict[str, object]]:
+    params: list[dict[str, object]] = []
+    if flow.input is not None:
+        params.append(_param_to_lock_data(flow.input))
+    params.extend(_param_to_lock_data(item) for item in flow.params)
+    return params
+
+
+def _flow_stage_to_lock_data(stage: FlowStage, *, line_offset: int) -> dict[str, object]:
+    data = _flow_stage_to_data(stage)
+    data["line"] = stage.span.line + line_offset
+    if stage.stages:
+        data["stages"] = [_flow_stage_to_lock_data(item, line_offset=line_offset) for item in stage.stages]
     return data
 
 

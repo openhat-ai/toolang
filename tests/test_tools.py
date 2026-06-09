@@ -129,7 +129,7 @@ def test_agent_chat_tool_creates_child_thread_and_sends_peer_request(monkeypatch
     store = ExecutionStore(execution_db_path(root, "alice"))
     store.start_run(
         run_id="run-1",
-        thread_id="chat_user",
+        thread_id="term_user",
         origin="chat",
         input=Message.user("ask bob"),
         created_at="2026-01-01T00:00:00Z",
@@ -143,7 +143,7 @@ def test_agent_chat_tool_creates_child_thread_and_sends_peer_request(monkeypatch
 
         def json(self) -> dict[str, object]:
             return {
-                "thread_id": "chat_bob",
+                "thread_id": "term_bob",
                 "run_id": "run-bob",
                 "assistant": {
                     "role": "assistant",
@@ -191,12 +191,12 @@ def test_agent_chat_tool_creates_child_thread_and_sends_peer_request(monkeypatch
             "timeout": 60.0,
         }
     ]
-    assert result["peer_thread"] == "chat_bob"
+    assert result["peer_thread"] == "term_bob"
     assert result["local_run_id"].startswith("run_")
     assert result["assistant_text"] == "bob says yes"
     assert local is not None
-    assert local.parent == "chat_user"
-    assert local.peer == ThreadPeer(type="agent", name="bob", thread="chat_bob")
+    assert local.parent == "term_user"
+    assert local.peer == ThreadPeer(type="agent", name="bob", thread="term_bob")
     assert [message_text(input.message.parts) for input in local_inputs if input.message is not None] == ["please review"]
     assert [part.text for part in local_steps[0].output if isinstance(part, TextPart)] == ["bob says yes"]
 
@@ -208,7 +208,7 @@ def test_agent_chat_tool_accepts_direct_peer_object_without_config(monkeypatch, 
     store = ExecutionStore(execution_db_path(root, "eve"))
     store.start_run(
         run_id="run-1",
-        thread_id="chat_user",
+        thread_id="term_user",
         origin="chat",
         input=Message.user("ask merkle"),
         created_at="2026-01-01T00:00:00Z",
@@ -222,7 +222,7 @@ def test_agent_chat_tool_accepts_direct_peer_object_without_config(monkeypatch, 
 
         def json(self) -> dict[str, object]:
             return {
-                "thread_id": "chat_merkle",
+                "thread_id": "term_merkle",
                 "run_id": "run-merkle",
                 "assistant": {
                     "role": "assistant",
@@ -266,11 +266,11 @@ def test_agent_chat_tool_accepts_direct_peer_object_without_config(monkeypatch, 
         },
     }
     assert result["peer"] == "merkle"
-    assert result["peer_thread"] == "chat_merkle"
+    assert result["peer_thread"] == "term_merkle"
     assert result["local_run_id"].startswith("run_")
     assert result["assistant_text"] == "pong"
     assert local is not None
-    assert local.peer == ThreadPeer(type="agent", name="merkle", thread="chat_merkle")
+    assert local.peer == ThreadPeer(type="agent", name="merkle", thread="term_merkle")
     assert [message_text(input.message.parts) for input in local_inputs if input.message is not None] == ["ping"]
 
 
@@ -281,7 +281,7 @@ def test_agent_chat_tool_can_call_streaming_peer_chat(monkeypatch, tmp_path: Pat
     store = ExecutionStore(execution_db_path(root, "eve"))
     store.start_run(
         run_id="run-1",
-        thread_id="chat_user",
+        thread_id="term_user",
         origin="chat",
         input=Message.user("ask merkle"),
         created_at="2026-01-01T00:00:00Z",
@@ -300,7 +300,7 @@ def test_agent_chat_tool_can_call_streaming_peer_chat(monkeypatch, tmp_path: Pat
             return None
 
         def iter_lines(self):
-            yield 'data: {"type":"start","messageMetadata":{"threadId":"chat_merkle","runId":"run-merkle"}}'
+            yield 'data: {"type":"start","messageMetadata":{"threadId":"term_merkle","runId":"run-merkle"}}'
             yield 'data: {"type":"text-delta","delta":"po"}'
             yield 'data: {"type":"text-delta","delta":"ng"}'
             yield "data: [DONE]"
@@ -328,7 +328,7 @@ def test_agent_chat_tool_can_call_streaming_peer_chat(monkeypatch, tmp_path: Pat
     assert calls[0]["method"] == "POST"
     assert calls[0]["url"] == "http://127.0.0.1:7002/api/v1/chat/stream"
     assert result["streamed"] is True
-    assert result["peer_thread"] == "chat_merkle"
+    assert result["peer_thread"] == "term_merkle"
     assert result["run_id"] == "run-merkle"
     assert result["assistant_text"] == "pong"
     assert [part.text for part in local_steps[0].output if isinstance(part, TextPart)] == ["pong"]

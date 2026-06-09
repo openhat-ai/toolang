@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
@@ -23,14 +24,17 @@ from uuid import uuid4
 
 import click
 import typer
+from typer import rich_utils
 from typer.core import TyperCommand, TyperGroup
 
 from ... import agents
+from ...base.types.message import message_summary, parts_to_data
 from ...config.log import LoggingPlan, configure_logging, configure_logging_plan, resolve_agent_logging
 from ...execution.db import ExecutionStore, execution_db_path
 from ...execution.detail import run_detail_from_record, thread_info_from_record, thread_info_from_runs
-from ...execution.records import RunStatus
-from ...base.types.message import message_summary
+from ...execution.labels import child_call_summary, executable_label, flow_op_summary
+from ...execution.records import RunStatus, step_input_items_to_data, step_payload_to_data
+from ...execution.stream import event_data
 from ..utils import (
     _PrefixAgentWorkGroup,
     _RequiredPrefixAgentCommand,
@@ -116,6 +120,7 @@ TOP_LEVEL_COMMANDS = frozenset(
         "remove",
         "list",
         "info",
+        "hidden",
         "fmt",
         "model",
         "tool",
@@ -126,6 +131,7 @@ TOP_LEVEL_COMMANDS = frozenset(
         "attach",
         "threads",
         "runs",
+        "inspect",
         "steer",
         "cancel",
         "rewind",
@@ -142,9 +148,10 @@ TOP_LEVEL_COMMANDS = frozenset(
 
 _CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt", "caps")
 _AGENT_PANEL_COMMAND_ORDER = ("new", "clone", "remove", "list", "info", "run", "start", "stop", "chat", "chore", "task")
-_THREAD_PANEL_COMMAND_ORDER = ("steer", "cancel", "rewind", "fork", "runs", "threads")
+_THREAD_PANEL_COMMAND_ORDER = ("steer", "cancel", "rewind", "fork", "runs", "threads", "inspect")
 _RUNTIME_PANEL_COMMAND_ORDER = ("model", "tool", "channel", "sandbox")
 _THREAD_TARGET_COMMANDS = frozenset({"steer", "cancel", "rewind", "fork"})
+_HIDDEN_ALIAS_COMMANDS = frozenset({"send", "attach"})
 
 
 class _ToolangGroup(TyperGroup):
@@ -198,9 +205,9 @@ class _RoamingFileRuntimeOptions:
 
 
 POSTFIX_AGENT_COMMANDS = frozenset(
-    {"run", "start", "stop", "info", "chat", "send", "attach", "threads", "runs", "steer", "cancel", "rewind", "fork"}
+    {"run", "start", "stop", "info", "chat", "send", "attach", "threads", "runs", "inspect", "steer", "cancel", "rewind", "fork"}
 )
-ROAMING_THREAD_COMMANDS = frozenset({"threads", "runs", "steer", "cancel", "rewind", "fork"})
+ROAMING_THREAD_COMMANDS = frozenset({"threads", "runs", "inspect", "steer", "cancel", "rewind", "fork"})
 PREFIX_AGENT_COMMANDS = frozenset(
     {
         "run",
@@ -212,6 +219,7 @@ PREFIX_AGENT_COMMANDS = frozenset(
         "attach",
         "threads",
         "runs",
+        "inspect",
         "steer",
         "cancel",
         "rewind",
@@ -345,6 +353,56 @@ def callback(
         "toolang_root": _toolang_root(toolang_root),
         "agent": _CLI_PREFIX_AGENT,
     }
+
+
+@app.command("hidden", help="Show hidden commands.", hidden=True)
+def hidden_commands(ctx: typer.Context) -> None:
+    console = rich_utils._get_rich_console()
+    console.print(
+        rich_utils.Padding(rich_utils.highlighter(ctx.get_usage()), 1),
+        style=rich_utils.STYLE_USAGE_COMMAND,
+    )
+    group = typer.main.get_command(app)
+    if not isinstance(group, click.Group):
+        typer.echo("No hidden commands.")
+        return
+    hidden_commands = [
+        command
+        for name, command in group.commands.items()
+        if command.hidden and name not in {"hidden", *_HIDDEN_ALIAS_COMMANDS}
+    ]
+    alias_commands = [
+        command
+        for name, command in group.commands.items()
+        if command.hidden and name in _HIDDEN_ALIAS_COMMANDS
+    ]
+    if not hidden_commands and not alias_commands:
+        typer.echo("No hidden commands.")
+        return
+    command_name = ctx.command_path.split()[0] if ctx.command_path else "toolang"
+    console.print(
+        rich_utils.Padding(
+            (
+                "Show commands hidden from the main help.\n\n"
+                f"Run with: {command_name} COMMAND [OPTIONS]"
+            ),
+            (0, 1, 1, 1),
+        )
+    )
+    _print_hidden_command_panel(console, "Advanced Commands", hidden_commands)
+    _print_hidden_command_panel(console, "Alias Commands", alias_commands)
+
+
+def _print_hidden_command_panel(console: Any, name: str, commands: list[click.Command]) -> None:
+    if not commands:
+        return
+    rich_utils._print_commands_panel(
+        name=name,
+        commands=commands,
+        markup_mode="rich",
+        console=console,
+        cmd_len=max(len(command.name or "") for command in commands),
+    )
 
 
 @app.command("new", help="Create an agent.", no_args_is_help=True, rich_help_panel=AGENT_COMMAND_PANEL)
@@ -535,7 +593,7 @@ def chat_command(
     _runtime_stream(ctx, "/api/v1/chat/stream", payload=payload)
 
 
-@app.command("send", hidden=True, cls=_RequiredPrefixAgentCommand)
+@app.command("send", help="Alias to chat --thread THREAD MESSAGE.", hidden=True, cls=_RequiredPrefixAgentCommand)
 def send_command(
     ctx: typer.Context,
     thread: Annotated[str, typer.Argument(help="Thread id.")],
@@ -549,7 +607,7 @@ def send_command(
     _runtime_stream(ctx, "/api/v1/chat/stream", payload=payload)
 
 
-@app.command("attach", hidden=True, cls=_RequiredPrefixAgentCommand)
+@app.command("attach", help="Alias to chat --thread THREAD.", hidden=True, cls=_RequiredPrefixAgentCommand)
 def attach_command(
     ctx: typer.Context,
     thread: Annotated[str, typer.Argument(help="Thread id.")],
@@ -627,6 +685,32 @@ def runs_command(
             if isinstance(item, dict)
         ]
         _echo_table(("THREAD", "RUN", "TITLE", "STATUS", "CREATED"), rows)
+
+
+@app.command("inspect", help="Inspect a thread or run.", no_args_is_help=True, cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
+def inspect_command(
+    ctx: typer.Context,
+    target: Annotated[str, typer.Argument(help="Run id or thread id to inspect.")],
+    view: Annotated[
+        Literal["tree", "steps", "events", "json"],
+        typer.Option("--view", help="Inspection view."),
+    ] = "tree",
+    verbosity: Annotated[int, typer.Option("-v", "--verbose", count=True, help="Expand inspect tree depth.")] = 0,
+    limit: Annotated[int, typer.Option("--limit", help="Maximum events or thread runs to read.")] = 100,
+) -> None:
+    if limit < 1:
+        raise click.ClickException("--limit must be at least 1")
+    if view == "json":
+        typer.echo(json.dumps(_inspect_detail(ctx, target, limit=limit), ensure_ascii=False, indent=2))
+        return
+    if view == "events":
+        _render_inspect_events(ctx, target, limit=limit, verbosity=verbosity)
+        return
+    detail = _inspect_detail(ctx, target, limit=limit, include_thread=view == "tree")
+    if view == "steps":
+        _render_inspect_steps(detail)
+        return
+    _render_inspect_tree(detail, verbosity=verbosity)
 
 
 @app.command(
@@ -1000,6 +1084,925 @@ def _offline_run_item(run, *, inputs: Sequence, steps: Sequence) -> dict[str, An
     }
 
 
+def _inspect_detail(ctx: typer.Context, target: str, *, limit: int, include_thread: bool = True) -> dict[str, Any]:
+    if target.startswith("run_"):
+        run = _inspect_run_detail(ctx, target)
+        info = _mapping(run.get("info"))
+        thread_id = _text(info.get("thread_id"))
+        thread = _inspect_thread_detail(ctx, thread_id, limit=limit) if include_thread and thread_id else None
+        return {"kind": "run", "target": target, "run": run, "thread": thread}
+    thread = _inspect_thread_detail(ctx, target, limit=limit)
+    return {"kind": "thread", "target": target, "thread": thread}
+
+
+def _inspect_run_detail(ctx: typer.Context, run_id: str) -> dict[str, Any]:
+    return _runtime_json_or_offline(
+        ctx,
+        f"/api/v1/runs/{run_id}",
+        lambda: _offline_run_detail_json(ctx, run_id),
+    )
+
+
+def _inspect_thread_detail(ctx: typer.Context, thread_id: str, *, limit: int) -> dict[str, Any]:
+    return _runtime_json_or_offline(
+        ctx,
+        f"/api/v1/threads/{thread_id}?{urlencode({'limit': str(limit)})}",
+        lambda: _offline_thread_detail_json(ctx, thread_id, limit=limit),
+    )
+
+
+def _inspect_events(ctx: typer.Context, target: str, *, limit: int) -> dict[str, Any]:
+    if target.startswith("run_"):
+        return _runtime_json_or_offline(
+            ctx,
+            f"/api/v1/runs/{target}/events?{urlencode({'limit': str(limit)})}",
+            lambda: _offline_events_json(ctx, domain="run", domain_id=target, limit=limit),
+        )
+    return _runtime_json_or_offline(
+        ctx,
+        f"/api/v1/threads/{target}/events?{urlencode({'limit': str(limit)})}",
+        lambda: _offline_events_json(ctx, domain="thread", domain_id=target, limit=limit),
+    )
+
+
+def _offline_run_detail_json(ctx: typer.Context, run_id: str) -> dict[str, Any] | None:
+    store = _open_offline_execution_store(ctx)
+    if store is None:
+        return None
+    try:
+        run = store.get_run(run_id=run_id)
+        if run is None:
+            raise click.ClickException(f"run not found: {run_id}")
+        return _run_detail_json(store, run)
+    finally:
+        store.close()
+
+
+def _offline_thread_detail_json(ctx: typer.Context, thread_id: str, *, limit: int) -> dict[str, Any] | None:
+    store = _open_offline_execution_store(ctx)
+    if store is None:
+        return None
+    try:
+        runs = store.list_thread_runs_chronological(thread_id=thread_id, limit=limit)
+        thread_record = store.get_thread(thread_id=thread_id)
+        if not runs and thread_record is None:
+            raise click.ClickException(f"thread not found: {thread_id}")
+        if runs:
+            all_runs = store.list_thread_runs_chronological(thread_id=thread_id, limit=None)
+            steps_by_run = store.list_steps_for_runs(run_ids=tuple(item.run_id for item in all_runs))
+            inputs_by_run = {run.run_id: store.list_inputs(run_id=run.run_id) for run in all_runs}
+            info = thread_info_from_runs(
+                thread_id,
+                all_runs,
+                inputs_by_run=inputs_by_run,
+                steps_by_run=steps_by_run,
+                thread=thread_record,
+            )
+        else:
+            info = thread_info_from_record(cast(Any, thread_record))
+        return {
+            "info": asdict(info),
+            "runs": [_run_detail_json(store, run) for run in runs],
+            "event_cursor": store.latest_event_cursor(domain="thread", domain_id=thread_id),
+        }
+    finally:
+        store.close()
+
+
+def _offline_events_json(ctx: typer.Context, *, domain: Literal["run", "thread"], domain_id: str, limit: int) -> dict[str, Any] | None:
+    store = _open_offline_execution_store(ctx)
+    if store is None:
+        return None
+    try:
+        return {
+            "cursor": store.latest_event_cursor(domain=domain, domain_id=domain_id),
+            "items": [event_data(item) for item in store.list_events(domain=domain, domain_id=domain_id, limit=limit)],
+        }
+    finally:
+        store.close()
+
+
+def _run_detail_json(store: ExecutionStore, run: Any) -> dict[str, Any]:
+    detail = run_detail_from_record(
+        run,
+        inputs=store.list_inputs(run_id=run.run_id),
+        steps=store.list_steps(run_id=run.run_id),
+    )
+    return {
+        "info": asdict(detail.info),
+        "input": detail.input.to_data() if detail.input is not None else None,
+        "inputs": [
+            {
+                "record": asdict(item.record),
+                "message": item.message.to_data() if item.message is not None else None,
+            }
+            for item in detail.inputs
+        ],
+        "output": {
+            "status": detail.output.status,
+            "error": detail.output.error,
+            "steps": [
+                {
+                    "record": _step_record_json(item.record),
+                    "message": item.message.to_data() if item.message is not None else None,
+                }
+                for item in detail.output.steps
+            ],
+        },
+    }
+
+
+def _step_record_json(step: Any) -> dict[str, Any]:
+    return {
+        "run_id": step.run_id,
+        "step_index": step.step_index,
+        "kind": step.kind,
+        "status": step.status,
+        "input": step_input_items_to_data(step.input),
+        "output": parts_to_data(step.output),
+        "payload": step_payload_to_data(step.payload),
+        "error": step.error,
+        "started_at": step.started_at,
+        "finished_at": step.finished_at,
+    }
+
+
+@dataclass(slots=True)
+class _InspectStageView:
+    key: str
+    index: int | None = None
+    total: int | None = None
+    kind: str = "stage"
+    title: str = "stage"
+    status: str = "running"
+    input_shape: str | None = None
+    output_shape: str | None = None
+    item_total: int | None = None
+    parallelism: int | None = None
+    calls: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class _InspectCallView:
+    key: str
+    stage_key: str
+    label: str
+    run_id: str
+    status: str = "running"
+    item_index: int | None = None
+    item_count: int | None = None
+    lane_index: int | None = None
+    parallelism: int | None = None
+    run: Mapping[str, Any] | None = None
+
+
+def _render_inspect_tree(detail: Mapping[str, Any], *, verbosity: int = 0) -> None:
+    thread = _mapping(detail.get("thread"))
+    thread_info = _mapping(thread.get("info"))
+    target = _text(detail.get("target"))
+    runs = [_mapping(item) for item in _list(thread.get("runs"))]
+    if detail.get("kind") == "run":
+        target_run = _mapping(detail.get("run"))
+        target_info = _mapping(target_run.get("info"))
+        root_id = _text(target_info.get("root_run_id")) or _text(target_info.get("id"))
+        runs = [
+            run for run in runs
+            if (_text(_mapping(run.get("info")).get("root_run_id")) or _text(_mapping(run.get("info")).get("id"))) == root_id
+        ] or [target_run]
+    typer.echo(f"thread {thread_info.get('id', '-')}")
+    if detail.get("kind") == "run":
+        typer.echo(f"target {target}")
+    children: dict[str | None, list[Mapping[str, Any]]] = {}
+    children_by_step: dict[tuple[str, int], list[Mapping[str, Any]]] = {}
+    run_by_id: dict[str, Mapping[str, Any]] = {}
+    for run in runs:
+        info = _mapping(run.get("info"))
+        run_id = _text(info.get("id"))
+        if run_id is not None:
+            run_by_id[run_id] = run
+        parent_id = _text(info.get("parent_run_id"))
+        children.setdefault(parent_id, []).append(run)
+        parent_step = _int_or_none(info.get("parent_step_index"))
+        if parent_id is not None and parent_step is not None:
+            children_by_step.setdefault((parent_id, parent_step), []).append(run)
+    roots = children.get(None, [])
+    if not roots and runs:
+        roots = [runs[0]]
+    for run in roots:
+        if _text(_mapping(run.get("info")).get("executable_kind")) == "flow":
+            _render_flow_tree_node(run, run_by_id=run_by_id, verbosity=verbosity)
+        else:
+            _render_run_tree_node(run, children=children, children_by_step=children_by_step, depth=0)
+
+
+def _render_flow_tree_node(
+    run: Mapping[str, Any],
+    *,
+    run_by_id: Mapping[str, Mapping[str, Any]],
+    verbosity: int,
+) -> None:
+    info = _mapping(run.get("info"))
+    output = _mapping(run.get("output"))
+    typer.echo(f"- {_run_tree_label(info, output)}")
+    stages, calls = _inspect_flow_projection(run, run_by_id=run_by_id)
+    for stage in stages:
+        typer.echo(f"  {_inspect_stage_prefix(stage)} {_inspect_stage_label(stage):<72} {_inspect_stage_tail(stage, calls)}")
+        if verbosity <= 0:
+            continue
+        stage_calls = _inspect_stage_calls(stage, calls)
+        if stage.parallelism and stage.parallelism > 1:
+            lanes = _inspect_lane_calls(stage_calls)
+            for lane_index in range(stage.parallelism):
+                lane_calls = lanes.get(lane_index, [])
+                if not lane_calls:
+                    continue
+                done = sum(1 for call in lane_calls if call.status in {"succeeded", "done", "failed", "canceled"})
+                typer.echo(f"    lane {lane_index + 1}/{stage.parallelism:<3} {done}/{len(lane_calls)} calls")
+                if verbosity <= 1:
+                    continue
+                for call in lane_calls:
+                    _render_inspect_call(call, indent="      ", include_steps=verbosity >= 3)
+            continue
+        for call in stage_calls:
+            _render_inspect_call(call, indent="    ", include_steps=verbosity >= 2)
+
+
+def _inspect_flow_projection(
+    run: Mapping[str, Any],
+    *,
+    run_by_id: Mapping[str, Mapping[str, Any]],
+) -> tuple[list[_InspectStageView], dict[str, _InspectCallView]]:
+    stage_order: list[str] = []
+    stages: dict[str, _InspectStageView] = {}
+    calls: dict[str, _InspectCallView] = {}
+    for step in _run_steps(run):
+        record = _mapping(step.get("record"))
+        payload = _mapping(record.get("payload"))
+        kind = _text(record.get("kind"))
+        if kind == "flow_op":
+            stage = _ensure_inspect_stage(payload, stages=stages, stage_order=stage_order)
+            metadata = _mapping(payload.get("metadata"))
+            op = _text(payload.get("op")) or ""
+            input_preview = metadata.get("input_preview")
+            if input_preview is not None:
+                stage.input_shape = _inspect_shape_label(input_preview)
+            output_preview = payload.get("output_preview")
+            if output_preview is not None:
+                if op.startswith("prepare_"):
+                    stage.item_total = _inspect_preview_count(output_preview) or stage.item_total
+                if op == "set_current":
+                    stage.output_shape = _inspect_shape_label(
+                        output_preview,
+                        fallback_count=_inspect_output_count(record),
+                    )
+                    stage.status = "succeeded"
+            continue
+        if kind != "child_call":
+            continue
+        stage = _ensure_inspect_stage(payload, stages=stages, stage_order=stage_order)
+        for run_id in _inspect_child_run_ids(payload, record):
+            child_run = run_by_id.get(run_id)
+            child_output = _mapping(child_run.get("output")) if child_run is not None else {}
+            call = _ensure_inspect_call(
+                payload,
+                run_id=run_id,
+                stage=stage,
+                calls=calls,
+                child_run=child_run,
+                fallback_status=_display_run_status(record.get("status")),
+            )
+            if child_output:
+                call.status = _display_run_status(child_output.get("status"))
+    ordered_stages = [stages[key] for key in stage_order]
+    for stage in ordered_stages:
+        stage_calls = _inspect_stage_calls(stage, calls)
+        if stage.status == "running" and stage_calls and all(call.status in {"succeeded", "done"} for call in stage_calls):
+            stage.status = "succeeded"
+    return ordered_stages, calls
+
+
+def _ensure_inspect_stage(
+    payload: Mapping[str, Any],
+    *,
+    stages: dict[str, _InspectStageView],
+    stage_order: list[str],
+) -> _InspectStageView:
+    ctx = _inspect_stage_context(payload)
+    stage_index = _int_or_none(ctx.get("stage_index"))
+    key = f"stage:{stage_index}" if stage_index is not None else "stage"
+    stage = stages.get(key)
+    if stage is None:
+        stage = _InspectStageView(key=key)
+        stages[key] = stage
+        stage_order.append(key)
+    stage.index = stage_index if stage_index is not None else stage.index
+    stage.total = _int_or_none(ctx.get("stage_total")) or stage.total
+    stage.kind = _text(ctx.get("stage_kind")) or stage.kind
+    title = _text(ctx.get("stage_title")) or _text(ctx.get("stage_doc")) or _text(ctx.get("stage_target")) or _clean_stage_title(_text(ctx.get("stage_label"))) or stage.title
+    stage.title = title
+    stage.parallelism = _int_or_none(ctx.get("parallelism")) or stage.parallelism
+    if item_count := _int_or_none(ctx.get("item_count")):
+        stage.item_total = item_count
+    if input_preview := ctx.get("input_preview"):
+        stage.input_shape = _inspect_shape_label(input_preview)
+    return stage
+
+
+def _ensure_inspect_call(
+    payload: Mapping[str, Any],
+    *,
+    run_id: str,
+    stage: _InspectStageView,
+    calls: dict[str, _InspectCallView],
+    child_run: Mapping[str, Any] | None,
+    fallback_status: str,
+) -> _InspectCallView:
+    call = calls.get(run_id)
+    ctx = _inspect_stage_context(payload)
+    if call is None:
+        target = executable_label(
+            _text(payload.get("target_kind")) or "run",
+            _text(payload.get("target")),
+            metadata=_mapping(payload.get("metadata")),
+        ).replace(":", " ", 1)
+        call = _InspectCallView(
+            key=run_id,
+            stage_key=stage.key,
+            label=_inspect_call_label(target, ctx),
+            run_id=run_id,
+            status=fallback_status,
+            run=child_run,
+        )
+        calls[run_id] = call
+        stage.calls.append(run_id)
+    call.item_index = _int_or_none(ctx.get("item_index")) if ctx.get("item_index") is not None else call.item_index
+    call.item_count = _int_or_none(ctx.get("item_count")) or call.item_count
+    call.lane_index = _int_or_none(ctx.get("lane_index")) if ctx.get("lane_index") is not None else call.lane_index
+    call.parallelism = _int_or_none(ctx.get("parallelism")) or call.parallelism
+    if call.parallelism is not None:
+        stage.parallelism = call.parallelism
+    if call.item_count is not None:
+        stage.item_total = call.item_count
+    return call
+
+
+def _inspect_stage_context(payload: Mapping[str, Any]) -> dict[str, Any]:
+    metadata = _mapping(payload.get("metadata"))
+    child = _mapping(payload.get("child")) or _mapping(metadata.get("child"))
+    ctx: dict[str, Any] = dict(child)
+    ctx.update(metadata)
+    ctx.update(payload)
+    if "item_index" not in ctx:
+        item_indexes = _list(payload.get("item_indexes"))
+        if item_indexes:
+            ctx["item_index"] = item_indexes[0]
+    return ctx
+
+
+def _inspect_child_run_ids(payload: Mapping[str, Any], record: Mapping[str, Any]) -> tuple[str, ...]:
+    child_ids = tuple(str(item) for item in _list(payload.get("child_run_ids")) if item is not None)
+    if child_ids:
+        return child_ids
+    return (f"{record.get('step_index', 'step')}",)
+
+
+def _inspect_call_label(target: str, ctx: Mapping[str, Any]) -> str:
+    item_index = _int_or_none(ctx.get("item_index"))
+    item_count = _int_or_none(ctx.get("item_count"))
+    if item_index is None:
+        return target
+    item = f"item {item_index + 1}/{item_count}" if item_count else f"item {item_index + 1}"
+    return f"{item} · {target}"
+
+
+def _inspect_stage_prefix(stage: _InspectStageView) -> str:
+    if stage.status in {"succeeded", "done"}:
+        return "✓"
+    if stage.status == "failed":
+        return "✗"
+    return "…"
+
+
+def _inspect_stage_label(stage: _InspectStageView) -> str:
+    index = "?"
+    if stage.index is not None:
+        index = str(stage.index + 1)
+    if stage.total is not None:
+        index = f"{index}/{stage.total}"
+    return f"{index} {stage.kind:<6} {_truncate_table_text(' '.join(stage.title.split()), width=56)}"
+
+
+def _inspect_stage_tail(stage: _InspectStageView, calls: Mapping[str, _InspectCallView]) -> str:
+    lanes = f"{stage.parallelism} lanes" if stage.parallelism and stage.parallelism > 1 else ""
+    if stage.status in {"succeeded", "done"} and (stage.input_shape or stage.output_shape):
+        shape = f"{stage.input_shape or '?'} -> {stage.output_shape or '?'}"
+        return " · ".join(item for item in (shape, lanes) if item)
+    stage_calls = _inspect_stage_calls(stage, calls)
+    done = sum(1 for call in stage_calls if call.status in {"succeeded", "done", "failed", "canceled"})
+    failed = sum(1 for call in stage_calls if call.status == "failed")
+    if stage.item_total is not None:
+        progress = f"{done}/{stage.item_total} items"
+        if failed:
+            progress = f"{progress} · {failed} failed"
+        return " · ".join(item for item in (progress, lanes) if item)
+    if failed:
+        return f"{failed} failed"
+    return "running"
+
+
+def _inspect_stage_calls(stage: _InspectStageView, calls: Mapping[str, _InspectCallView]) -> list[_InspectCallView]:
+    items = [calls[key] for key in stage.calls if key in calls]
+    return sorted(items, key=lambda call: (call.lane_index if call.lane_index is not None else 999_999, call.item_index if call.item_index is not None else 999_999, call.run_id))
+
+
+def _inspect_lane_calls(calls: Sequence[_InspectCallView]) -> dict[int, list[_InspectCallView]]:
+    lanes: dict[int, list[_InspectCallView]] = {}
+    for call in calls:
+        lanes.setdefault(call.lane_index if call.lane_index is not None else 0, []).append(call)
+    return lanes
+
+
+def _render_inspect_call(call: _InspectCallView, *, indent: str, include_steps: bool) -> None:
+    prefix = "✓" if call.status in {"succeeded", "done"} else "✗" if call.status == "failed" else "…"
+    typer.echo(f"{indent}{prefix} {call.label} · {call.run_id} {call.status}")
+    if not include_steps or call.run is None:
+        return
+    for step in _run_steps(call.run):
+        record = _mapping(step.get("record"))
+        typer.echo(f"{indent}  - {_tree_step_label(record, _mapping(step.get('message')))}")
+
+
+def _inspect_shape_label(preview: object, *, fallback_count: int | None = None) -> str:
+    if isinstance(preview, Mapping):
+        preview = cast(Mapping[str, Any], preview)
+        count = _int_or_none(preview.get("count"))
+        if count is not None:
+            return "1 item" if count == 1 else f"{count} items"
+        if preview.get("type") == "list":
+            count = _int_or_none(preview.get("count"))
+            if count is not None:
+                return "1 item" if count == 1 else f"{count} items"
+        if preview.get("type") == "object":
+            if fallback_count is not None:
+                return "1 item" if fallback_count == 1 else f"{fallback_count} items"
+            return "object"
+    if isinstance(preview, str):
+        lines = [line.strip() for line in preview.splitlines() if line.strip()]
+        if 1 < len(lines) <= 20:
+            return f"{len(lines)} items"
+    if preview is None:
+        return "unset"
+    return "1 item"
+
+
+def _inspect_preview_count(preview: object) -> int | None:
+    if isinstance(preview, Mapping):
+        return _int_or_none(cast(Mapping[str, Any], preview).get("count"))
+    return None
+
+
+def _inspect_output_count(record: Mapping[str, Any]) -> int | None:
+    for part in _list(record.get("output")):
+        typed = _mapping(part)
+        if typed.get("type") != "text":
+            continue
+        text = _text(typed.get("text"))
+        if not text:
+            continue
+        try:
+            parsed = ast.literal_eval(text)
+        except (SyntaxError, ValueError):
+            continue
+        if isinstance(parsed, Mapping):
+            return _int_or_none(parsed.get("count"))
+    return None
+
+
+def _clean_stage_title(label: str | None) -> str | None:
+    if not label:
+        return None
+    if ": " in label:
+        return label.split(": ", 1)[1]
+    return label
+
+
+def _render_run_tree_node(
+    run: Mapping[str, Any],
+    *,
+    children: Mapping[str | None, list[Mapping[str, Any]]],
+    children_by_step: Mapping[tuple[str, int], list[Mapping[str, Any]]],
+    depth: int,
+) -> None:
+    info = _mapping(run.get("info"))
+    output = _mapping(run.get("output"))
+    run_id = _text(info.get("id")) or "-"
+    indent = "  " * depth
+    typer.echo(f"{indent}- {_run_tree_label(info, output)}")
+    attached_child_ids: set[str] = set()
+    for step in _run_steps(run):
+        record = _mapping(step.get("record"))
+        step_index = _int_or_none(record.get("step_index"))
+        typer.echo(f"{'  ' * (depth + 1)}- {_tree_step_label(record, _mapping(step.get('message')))}")
+        if step_index is None:
+            continue
+        for child in children_by_step.get((run_id, step_index), []):
+            child_info = _mapping(child.get("info"))
+            child_id = _text(child_info.get("id"))
+            if child_id is not None:
+                attached_child_ids.add(child_id)
+            _render_run_tree_node(child, children=children, children_by_step=children_by_step, depth=depth + 2)
+    for child in children.get(run_id, []):
+        child_id = _text(_mapping(child.get("info")).get("id"))
+        if child_id in attached_child_ids:
+            continue
+        _render_run_tree_node(child, children=children, children_by_step=children_by_step, depth=depth + 1)
+
+
+def _run_tree_label(info: Mapping[str, Any], output: Mapping[str, Any]) -> str:
+    pieces = [_text(info.get("id")) or "-"]
+    pieces.append(
+        executable_label(
+            _text(info.get("executable_kind")) or "run",
+            _text(info.get("executable_name")),
+            metadata=_mapping(info.get("metadata")),
+        )
+    )
+    pieces.append(_display_run_status(output.get("status")))
+    call = _text(info.get("call_kind"))
+    if call and call != "root":
+        pieces.append(f"call={call}")
+    parent_step = info.get("parent_step_index")
+    if parent_step is not None:
+        pieces.append(f"step={parent_step}")
+    return " ".join(str(item) for item in pieces if item)
+
+
+def _tree_step_label(record: Mapping[str, Any], message: Mapping[str, Any]) -> str:
+    step_index = record.get("step_index")
+    kind = _text(record.get("kind")) or "step"
+    status = _text(record.get("status"))
+    summary = _inspect_step_summary(record, message)
+    pieces = [f"step {step_index}" if step_index is not None else "step", kind]
+    if status:
+        pieces.append(status)
+    if summary and summary != "-":
+        pieces.append(f"- {summary}")
+    return " ".join(pieces)
+
+
+def _render_inspect_steps(detail: Mapping[str, Any]) -> None:
+    runs = _inspect_detail_runs(detail)
+    rows: list[tuple[str, ...]] = []
+    include_run = len(runs) > 1
+    for run in runs:
+        info = _mapping(run.get("info"))
+        for step in _run_steps(run):
+            record = _mapping(step.get("record"))
+            row = (
+                _text(info.get("id")) or "-",
+                str(record.get("step_index", "")),
+                _text(record.get("kind")) or "-",
+                _text(record.get("status")) or "-",
+                _inspect_step_summary(record, _mapping(step.get("message"))),
+            )
+            rows.append(row if include_run else row[1:])
+    if include_run:
+        _echo_table(("RUN", "STEP", "KIND", "STATUS", "SUMMARY"), rows)
+    else:
+        _echo_table(("STEP", "KIND", "STATUS", "SUMMARY"), rows)
+
+
+def _render_inspect_events(ctx: typer.Context, target: str, *, limit: int, verbosity: int = 0) -> None:
+    result = _inspect_events(ctx, target, limit=limit)
+    rows = []
+    for item in _list(result.get("items")):
+        if not isinstance(item, Mapping):
+            continue
+        event_type = str(item.get("type", ""))
+        payload = _mapping(item.get("payload"))
+        if _hide_inspect_event(event_type, payload, verbosity=verbosity):
+            continue
+        rows.append(
+            (
+                str(item.get("cursor", "")),
+                event_type,
+                str(item.get("at", "")),
+                _inspect_event_summary(event_type, payload, verbosity=verbosity),
+            )
+        )
+    _echo_table(("#", "EVENT", "AT", "DETAIL"), rows)
+
+
+def _inspect_detail_runs(detail: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    if detail.get("kind") == "run":
+        return [_mapping(detail.get("run"))]
+    thread = _mapping(detail.get("thread"))
+    return [_mapping(item) for item in _list(thread.get("runs"))]
+
+
+def _run_steps(run: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    output = _mapping(run.get("output"))
+    return [_mapping(item) for item in _list(output.get("steps"))]
+
+
+def _inspect_step_summary(record: Mapping[str, Any], message: Mapping[str, Any]) -> str:
+    payload = _mapping(record.get("payload"))
+    kind = _text(record.get("kind"))
+    if kind == "model_call":
+        model = _text(payload.get("model_ref")) or _text(payload.get("model"))
+        text = _message_summary(message)
+        return " ".join(item for item in (model, text) if item)
+    if kind == "child_call":
+        return child_call_summary(payload)
+    if kind == "flow_op":
+        return flow_op_summary(payload)
+    text = _parts_summary(record.get("output"))
+    return text or _text(record.get("error")) or "-"
+
+
+def _hide_inspect_event(event_type: str, payload: Mapping[str, Any], *, verbosity: int) -> bool:
+    del event_type, payload, verbosity
+    return False
+
+
+def _inspect_event_summary(event_type: str, payload: Mapping[str, Any], *, verbosity: int = 0) -> str:
+    if event_type == "run_start":
+        return _format_kv(
+            (
+                ("run", _text(payload.get("run_id"))),
+                ("kind", _text(payload.get("executable_kind"))),
+                ("target", _event_executable_label(payload)),
+                ("call", _text(payload.get("call_kind"))),
+                ("parent", _text(payload.get("parent_run_id"))),
+                ("step", payload.get("parent_step_index")),
+            )
+        )
+    if event_type == "run_input":
+        text = _message_summary(_mapping(payload.get("message")))
+        return _format_kv((("action", _input_action_label(_text(payload.get("action")))), ("text", text)))
+    if event_type == "step_start":
+        return _inspect_event_step_summary(payload, status=None, verbosity=verbosity)
+    if event_type == "part_start":
+        return _format_kv((("part", _event_part_label(payload)),))
+    if event_type == "part_delta":
+        delta = _mapping(payload.get("delta"))
+        text = _text(delta.get("text"))
+        return _format_kv((("part", _event_part_label(payload)), ("text", _truncate_table_text(text, width=72))))
+    if event_type == "part_end":
+        part = _mapping(payload.get("part"))
+        text = _parts_summary([part])
+        return _format_kv((("part", _event_part_label(payload, part=part)), ("text", text)))
+    if event_type == "step_end":
+        status = _text(payload.get("status")) or "finished"
+        error = _text(payload.get("error"))
+        return _inspect_event_step_summary(payload, status=status, verbosity=verbosity, error=error)
+    if event_type == "run_end":
+        status = _display_run_status(payload.get("status"))
+        error = _text(payload.get("error"))
+        return _format_kv((("run", _text(payload.get("run_id"))), ("status", status), ("error", error)))
+    message = _mapping(payload.get("message"))
+    if message:
+        return _format_kv((("text", _message_summary(message)),))
+    if payload.get("delta") is not None:
+        return _format_kv((("delta", json.dumps(payload.get("delta"), ensure_ascii=False, separators=(",", ":"))),))
+    return _format_kv(
+        (
+            ("run", _text(payload.get("run_id"))),
+            ("thread", _text(payload.get("thread_id"))),
+            ("kind", _text(payload.get("kind"))),
+            ("status", _text(payload.get("status"))),
+        )
+    )
+
+
+def _inspect_event_step_summary(
+    payload: Mapping[str, Any],
+    *,
+    status: str | None,
+    verbosity: int,
+    error: str | None = None,
+) -> str:
+    kind = _text(payload.get("kind")) or "step"
+    step_index = payload.get("step_index")
+    step_payload = _mapping(payload.get("payload"))
+    if not step_payload:
+        return _format_kv(
+            (
+                ("step", step_index),
+                ("kind", kind),
+                ("status", _event_status_value(status)),
+                ("error", error),
+            )
+        )
+    if kind == "flow_op":
+        op = _text(step_payload.get("op"))
+        stage_fields = _event_stage_fields(step_payload)
+        output = _event_output_shape(payload)
+        return _format_kv(
+            (
+                ("step", step_index),
+                ("kind", kind),
+                ("op", _event_flow_phase(op)),
+                *stage_fields,
+                ("shape", output),
+                ("status", _event_status_value(status)),
+                ("error", error),
+            )
+        )
+    if kind == "child_call":
+        return _format_kv(
+            (
+                ("step", step_index),
+                ("kind", kind),
+                *_event_child_call_fields(step_payload),
+                ("status", _event_status_value(status)),
+                ("error", error),
+            )
+        )
+    if kind == "model_call":
+        model = _text(step_payload.get("model_ref")) or _text(step_payload.get("model"))
+        text = _parts_summary(payload.get("output"))
+        return _format_kv(
+            (
+                ("step", step_index),
+                ("kind", kind),
+                ("model", model),
+                ("output", text),
+                ("status", _event_status_value(status)),
+                ("error", error),
+            )
+        )
+    return _format_kv(
+        (
+            ("step", step_index),
+            ("kind", kind),
+            ("status", _event_status_value(status)),
+            ("error", error),
+        )
+    )
+
+
+def _event_stage_fields(payload: Mapping[str, Any]) -> tuple[tuple[str, object], ...]:
+    ctx = _inspect_stage_context(payload)
+    index = _int_or_none(ctx.get("stage_index"))
+    kind = _text(ctx.get("stage_kind")) or "stage"
+    title = _text(ctx.get("stage_title")) or _text(ctx.get("stage_doc")) or _text(ctx.get("stage_target")) or _clean_stage_title(_text(ctx.get("stage_label")))
+    return (
+        ("stage", index + 1 if index is not None else None),
+        ("stage_kind", kind),
+        ("title", _truncate_table_text(title, width=56) if title else None),
+    )
+
+
+def _event_flow_phase(op: str | None) -> str:
+    if op is None:
+        return "op"
+    if op.startswith("prepare_"):
+        return "prepare"
+    if op == "set_current":
+        return "done"
+    return op
+
+
+def _event_output_shape(payload: Mapping[str, Any]) -> str | None:
+    step_payload = _mapping(payload.get("payload"))
+    preview = step_payload.get("output_preview")
+    if preview is None:
+        return None
+    return _inspect_shape_label(preview, fallback_count=_inspect_output_count(payload))
+
+
+def _event_child_call_fields(payload: Mapping[str, Any]) -> tuple[tuple[str, object], ...]:
+    target = executable_label(
+        _text(payload.get("target_kind")) or "run",
+        _text(payload.get("target")),
+        metadata=_mapping(payload.get("metadata")),
+    ).replace(":", " ", 1)
+    ctx = _inspect_stage_context(payload)
+    lane_index = _int_or_none(ctx.get("lane_index"))
+    parallelism = _int_or_none(ctx.get("parallelism"))
+    item_index = _int_or_none(ctx.get("item_index"))
+    item_count = _int_or_none(ctx.get("item_count"))
+    children = ", ".join(_inspect_child_run_ids(payload, {}))
+    return (
+        ("stage", (_int_or_none(ctx.get("stage_index")) or 0) + 1 if ctx.get("stage_index") is not None else None),
+        ("target", target),
+        ("item", f"{item_index + 1}/{item_count}" if item_index is not None and item_count else item_index + 1 if item_index is not None else None),
+        ("lane", f"{lane_index + 1}/{parallelism}" if lane_index is not None and parallelism and parallelism > 1 else None),
+        ("child", children),
+    )
+
+
+def _event_status_value(status: str | None) -> str | None:
+    if status is None:
+        return None
+    if status == "finished":
+        return None
+    return status
+
+
+def _format_kv(items: Sequence[tuple[str, object]]) -> str:
+    parts = []
+    for key, value in items:
+        if value is None or value == "":
+            continue
+        parts.append(f"{key}: {_format_kv_value(value)}")
+    return ", ".join(parts) if parts else "-"
+
+
+def _format_kv_value(value: object) -> str:
+    if isinstance(value, str):
+        if not value:
+            return value
+        if any(char in value for char in (",", "{", "}", "[", "]")):
+            return json.dumps(value, ensure_ascii=False)
+        return value
+    return str(value)
+
+
+def _event_executable_label(payload: Mapping[str, Any]) -> str:
+    kind = _text(payload.get("executable_kind")) or "run"
+    name = _text(payload.get("executable_name"))
+    return executable_label(kind, name, metadata=_mapping(payload.get("metadata")))
+
+
+def _event_step_label(payload: Mapping[str, Any]) -> str:
+    step_index = payload.get("step_index")
+    kind = _text(payload.get("kind"))
+    pieces = ["step", str(step_index) if step_index is not None else "?"]
+    if kind:
+        pieces.append(kind)
+    return " ".join(pieces)
+
+
+def _event_part_label(payload: Mapping[str, Any], *, part: Mapping[str, Any] | None = None) -> str:
+    step_index = payload.get("step_index")
+    part_index = payload.get("part_index")
+    kind = _text(payload.get("kind"))
+    if part is not None:
+        kind = _text(part.get("type")) or kind
+    pieces = ["step", str(step_index) if step_index is not None else "?"]
+    if kind:
+        pieces.append(kind)
+    pieces.extend(["part", str(part_index) if part_index is not None else "?"])
+    return " ".join(pieces)
+
+
+def _input_action_label(action: str | None) -> str:
+    if action == "start":
+        return "input"
+    if action == "steer":
+        return "steer"
+    if action == "stop":
+        return "stop"
+    return action or "input"
+
+
+def _message_summary(message: Mapping[str, Any]) -> str:
+    return _parts_summary(message.get("parts"))
+
+
+def _parts_summary(parts: object) -> str:
+    if not isinstance(parts, list):
+        return ""
+    texts: list[str] = []
+    for part in parts:
+        if not isinstance(part, Mapping):
+            continue
+        typed_part = cast(Mapping[str, object], part)
+        if typed_part.get("type") == "text":
+            texts.append(str(typed_part.get("text") or ""))
+    return _truncate_table_text("".join(texts).strip(), width=72)
+
+
+def _mapping(value: object) -> Mapping[str, Any]:
+    return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
+
+
+def _list(value: object) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    return text or None
+
+
+def _int_or_none(value: object) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    if value is None:
+        return None
+    return None
+
+
 def _open_offline_execution_store(ctx: typer.Context) -> ExecutionStore | None:
     agent_name = _required_prefix_agent(ctx, command_name=str(ctx.info_name or "runtime"))
     path = execution_db_path(_context_root(ctx), agent_name)
@@ -1127,7 +2130,7 @@ def _chat_interactive(ctx: typer.Context, *, thread_id: str) -> None:
                 return
             if not text.strip():
                 continue
-            request_id = f"tui_{uuid4().hex}"
+            request_id = f"term_{uuid4().hex}"
             local_request_ids.add(request_id)
             payload: dict[str, Any] = {
                 "thread": thread_id,

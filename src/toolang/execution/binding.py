@@ -129,18 +129,21 @@ def _new_thread_id(context: UptimeContext, origin: str) -> str:
 
 def _request_thread_id(context: UptimeContext, request: RunRequest) -> str:
     if request.origin == "script":
-        return f"thunk_{_thread_id_part(request.thunk_name or 'main')}"
+        return _new_thread_id(context, "script")
     return _new_thread_id(context, request.thread_kind or request.origin)
 
 
 def _thread_id_kind(origin: str) -> str:
     text = "".join(char for char in origin.strip().lower() if char.isalnum())
-    return text or "thread"
-
-
-def _thread_id_part(value: str) -> str:
-    text = "".join(char for char in value.strip() if char.isalnum() or char in {"_", "-"})
-    return text or "main"
+    if text in {"web"}:
+        return "web"
+    if text in {"term", "terminal", "tui", "chat"}:
+        return "term"
+    if text in {"task"}:
+        return "task"
+    if text in {"chore"}:
+        return "chore"
+    return "script"
 
 
 def _request_thread_peer(metadata: Mapping[str, Any]) -> ThreadPeer | None:

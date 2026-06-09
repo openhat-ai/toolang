@@ -47,7 +47,7 @@ class ChatRequest(BaseModel):
     """One formal chat submission."""
 
     thread: str | None = Field(default=None, min_length=1)
-    client: Literal["web", "tui", "chat"] = "web"
+    client: Literal["web", "term", "tui", "chat"] = "web"
     peer: ThreadPeerPayload | None = None
     request_id: str | None = Field(default=None, min_length=1)
     message: ChatMessagePayload
@@ -57,7 +57,7 @@ class ChatRequest(BaseModel):
 class ThreadCreateRequest(BaseModel):
     """Request one empty chat thread."""
 
-    client: Literal["web", "tui", "tg"] = "tui"
+    client: Literal["web", "term", "tui", "chat"] = "term"
     peer: ThreadPeerPayload | None = None
 
 
@@ -309,7 +309,13 @@ def _new_thread_id(context: UptimeContext, client: str) -> str:
         agents.agent_id_state_path(context.root, context.name),
         family=LOCAL_ID_FAMILY,
     ).value
-    return f"{client}_{value}"
+    if client == "web":
+        prefix = "web"
+    elif client in {"term", "tui", "chat"}:
+        prefix = "term"
+    else:
+        prefix = "script"
+    return f"{prefix}_{value}"
 
 
 def _chat_model_item(*, selector: str, context: UptimeContext) -> dict[str, object]:
