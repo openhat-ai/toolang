@@ -6025,6 +6025,10 @@ def test_cli_parse_prints_too_ast(tmp_path: Path) -> None:
     assert result.exit_code == 0
     ast_data = json.loads(result.stdout)
     assert "_source_lines" not in ast_data
+    assert "declarations" not in ast_data
+    assert ast_data["caps"] == []
+    assert ast_data["tasks"] == []
+    assert ast_data["chores"] == []
     assert ast_data["structs"] == [
         {
             "name": "Result",
@@ -6045,7 +6049,8 @@ def test_cli_parse_prints_too_ast(tmp_path: Path) -> None:
         "type_name": None,
     }
     assert ast_data["thunks"][0]["output"] == "json"
-    assert ast_data["thunks"][0]["overlays"] == [
+    assert "overlays" not in ast_data["thunks"][0]
+    assert ast_data["thunks"][0]["directives"] == [
         {
             "kind": "model",
             "op": "set",

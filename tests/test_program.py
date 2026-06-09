@@ -43,23 +43,23 @@ struct ReviewSummary:
 """.strip()
     )
 
-    assert [item.kind for item in program.declarations] == ["service", "prompt", "psyche"]
-    service_decl, prompt_decl, psyche_decl = program.declarations
-    assert service_decl.meta == {
+    assert [item.kind for item in program.caps] == ["service", "prompt", "psyche"]
+    service_cap, prompt_cap, psyche_cap = program.caps
+    assert service_cap.meta == {
         "description": "Use when the agent needs GitHub MCP access.",
         "transport": "http",
         "target": "https://mcp.github.com/mcp",
         "headers": {"Authorization": "Bearer $GITHUB_TOKEN"},
     }
-    assert service_decl.body == "Use this service when the agent needs GitHub access."
-    assert prompt_decl.meta == {"params": "path, focus?"}
-    assert [(item.name, item.optional) for item in prompt_decl.params] == [
+    assert service_cap.body == "Use this service when the agent needs GitHub access."
+    assert prompt_cap.meta == {"params": "path, focus?"}
+    assert [(item.name, item.optional) for item in prompt_cap.params] == [
         ("path", False),
         ("focus", True),
     ]
-    assert prompt_decl.body == "Review {{path}} carefully.\n{{focus}}"
-    assert psyche_decl.meta == {}
-    assert psyche_decl.body == "Prefer concrete findings and direct language."
+    assert prompt_cap.body == "Review {{path}} carefully.\n{{focus}}"
+    assert psyche_cap.meta == {}
+    assert psyche_cap.body == "Prefer concrete findings and direct language."
     assert len(program.structs) == 1
     assert program.structs[0].name == "ReviewSummary"
     assert [(item.name, item.type_name) for item in program.structs[0].fields] == [
@@ -205,8 +205,8 @@ Use this service when the agent needs Linear access.
 """.strip()
     )
 
-    service_decl = program.declarations[0]
-    assert service_decl.meta["env"] == "LINEAR_API_KEY, API_KEY"
+    service_cap = program.caps[0]
+    assert service_cap.meta["env"] == "LINEAR_API_KEY, API_KEY"
 
 
 def test_program_parse_rejects_service_env_map_syntax() -> None:
@@ -246,7 +246,7 @@ thunk review(_, path: path, focus?) -> ReviewSummary:
         ("focus", None, True),
     ]
     assert thunk.output == "ReviewSummary"
-    assert [(item.kind, item.op, item.items) for item in thunk.overlays] == [
+    assert [(item.kind, item.op, item.items) for item in thunk.directives] == [
         ("model", "set", ("gpt-5",)),
         ("skill", "add", ("review", "patch")),
     ]
@@ -384,7 +384,7 @@ thunk review(_, path: path, focus?) -> ReviewResult:
         ("focus", None, True),
     ]
     assert thunk.output == "ReviewResult"
-    assert [(item.kind, item.op, item.items) for item in thunk.overlays] == [
+    assert [(item.kind, item.op, item.items) for item in thunk.directives] == [
         ("model", "set", ("gpt-5",)),
     ]
 
@@ -404,7 +404,7 @@ thunk review():
     prepared = build_prepared_program(durable)
     thunk = load_live_program(prepared).thunks[0]
 
-    assert [(item.kind, item.op, item.items) for item in thunk.overlays] == [
+    assert [(item.kind, item.op, item.items) for item in thunk.directives] == [
         ("model", "set", ("gpt-5", "o3")),
     ]
 
@@ -421,7 +421,7 @@ thunk review():
     )
 
     thunk = program.thunks[0]
-    assert [(item.kind, item.op, item.items) for item in thunk.overlays] == [
+    assert [(item.kind, item.op, item.items) for item in thunk.directives] == [
         ("model", "set", ("deepseek/*",)),
         ("tool", "set", ("shell/*", "filesystem/read")),
     ]
@@ -439,7 +439,7 @@ thunk plan():
     )
 
     thunk = program.thunks[0]
-    assert [(item.kind, item.op, item.items) for item in thunk.overlays] == [
+    assert [(item.kind, item.op, item.items) for item in thunk.directives] == [
         ("hand", "add", ("research", "summarize")),
         ("handoff", "set", ("execute",)),
     ]
@@ -479,7 +479,7 @@ thunk rewrite(_, tone?: string):
     )
 
     thunk = program.thunks[0]
-    assert [(item.kind, item.op, item.items) for item in thunk.overlays] == [
+    assert [(item.kind, item.op, item.items) for item in thunk.directives] == [
         ("model", "set", ("gpt-5",)),
         ("recall", "set", ("history", "memory")),
     ]

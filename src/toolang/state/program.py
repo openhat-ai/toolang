@@ -11,7 +11,7 @@ from re import Match
 from ..agents import agent_program_path
 from ..program import (
     ContextBlock,
-    DeclBlock,
+    CapDecl,
     Flow,
     FlowStage,
     InstructBlock,
@@ -21,7 +21,7 @@ from ..program import (
     SourceSpan,
     StructDecl,
     Thunk,
-    ThunkOverlay,
+    Directive,
     UseDecl,
     parse,
 )
@@ -72,7 +72,7 @@ class PreparedProgram:
             "structs": [_struct_to_lock_data(item, line_offset=line_offset) for item in program.structs],
             "contexts": [_context_to_lock_data(item, line_offset=line_offset) for item in program.contexts],
             "instructs": [_instruct_to_lock_data(item, line_offset=line_offset) for item in program.instructs],
-            "caps": [_decl_to_lock_data(item, line_offset=line_offset) for item in program.declarations],
+            "caps": [_cap_to_lock_data(item, line_offset=line_offset) for item in program.caps],
             "thunks": [_thunk_to_lock_data(item, line_offset=line_offset) for item in _program_thunks(program)],
         }
         if program.flows:
@@ -169,18 +169,18 @@ class LiveProgram:
             return raw_input
 
         prompt_name = match.group(1)
-        prompt_decl = self.parsed.get_decl("prompt", prompt_name)
-        if prompt_decl is None:
+        prompt_cap = self.parsed.get_cap("prompt", prompt_name)
+        if prompt_cap is None:
             raise ToolangError(f"Prompt not found: {prompt_name}")
 
         bindings = _parse_prompt_args(
             match.group(2) or "",
-            params=prompt_decl.params,
+            params=prompt_cap.params,
             prompt_name=prompt_name,
         )
         rendered = TEMPLATE_VAR_RE.sub(
             lambda item: _render_template_var(item, bindings),
-            prompt_decl.body,
+            prompt_cap.body,
         ).strip()
 
         extra_lines = lines[1:]
@@ -326,19 +326,19 @@ def _render_template_var(match: Match[str], bindings: dict[str, str]) -> str:
 
 
 def _validate_program(program: Program) -> None:
-    seen_decl_names: set[tuple[str, str]] = set()
+    seen_cap_names: set[tuple[str, str]] = set()
     seen_context_names: set[str | None] = set()
     seen_instruct_names: set[str | None] = set()
     seen_struct_names: set[str] = set()
     seen_thunk_names: set[str] = set()
     seen_flow_names: set[str] = set()
 
-    for decl in program.declarations:
-        decl_key = (decl.kind, decl.name)
-        if decl_key in seen_decl_names:
-            raise ToolangError(f"Duplicate {decl.kind} name {decl.name!r}.")
-        seen_decl_names.add(decl_key)
-        _validate_decl_params(decl)
+    for cap in program.caps:
+        cap_key = (cap.kind, cap.name)
+        if cap_key in seen_cap_names:
+            raise ToolangError(f"Duplicate {cap.kind} name {cap.name!r}.")
+        seen_cap_names.add(cap_key)
+        _validate_cap_params(cap)
 
     for context in program.contexts:
         if context.name in {"default", "none"}:
@@ -367,7 +367,7 @@ def _validate_program(program: Program) -> None:
             raise ToolangError(f"Duplicate thunk name {thunk_name!r}.")
         seen_thunk_names.add(thunk_name)
         _validate_thunk_params(thunk, thunk_name=thunk_name)
-        _validate_thunk_overlays(thunk, thunk_name=thunk_name)
+        _validate_thunk_directives(thunk, thunk_name=thunk_name)
         _validate_thunk_messages(thunk, thunk_name=thunk_name)
 
     for flow in program.flows:
@@ -376,15 +376,15 @@ def _validate_program(program: Program) -> None:
             raise ToolangError(f"Duplicate flow name {flow_name!r}.")
         seen_flow_names.add(flow_name)
         _validate_flow_params(flow, flow_name=flow_name)
-        _validate_flow_overlays(flow, flow_name=flow_name)
+        _validate_flow_directives(flow, flow_name=flow_name)
 
 
-def _validate_decl_params(decl: DeclBlock) -> None:
+def _validate_cap_params(cap: CapDecl) -> None:
     seen: set[str] = set()
-    for param in decl.params:
+    for param in cap.params:
         if param.name in seen:
             raise ToolangError(
-                f"Duplicate prompt parameter {param.name!r} in {decl.kind} {decl.name}."
+                f"Duplicate prompt parameter {param.name!r} in {cap.kind} {cap.name}."
             )
         seen.add(param.name)
 
@@ -401,29 +401,29 @@ def _validate_thunk_params(thunk: Thunk, *, thunk_name: str) -> None:
         seen.add(param.name)
 
 
-def _validate_thunk_overlays(thunk: Thunk, *, thunk_name: str) -> None:
-    model_overlays = [overlay for overlay in thunk.overlays if overlay.kind == "model"]
-    if len(model_overlays) > 1:
+def _validate_thunk_directives(thunk: Thunk, *, thunk_name: str) -> None:
+    model_directives = [directive for directive in thunk.directives if directive.kind == "model"]
+    if len(model_directives) > 1:
         raise ToolangError(f"Thunk {thunk_name!r} may declare at most one models directive.")
-    if model_overlays:
-        overlay = model_overlays[0]
-        if overlay.op != "set":
+    if model_directives:
+        directive = model_directives[0]
+        if directive.op != "set":
             raise ToolangError(f"Thunk {thunk_name!r} must use '=' for its models directive.")
-        if not overlay.items:
+        if not directive.items:
             raise ToolangError(f"Thunk {thunk_name!r} must declare at least one model selector.")
-        routed = [selector for selector in overlay.items if "@" in selector]
+        routed = [selector for selector in directive.items if "@" in selector]
         if routed:
             joined = ", ".join(routed)
             raise ToolangError(
                 f"Thunk {thunk_name!r} must declare route-neutral model refs, not routed selectors: {joined}"
             )
 
-    recall_overlays = [overlay for overlay in thunk.overlays if overlay.kind == "recall"]
-    if len(recall_overlays) > 1:
+    recall_directives = [directive for directive in thunk.directives if directive.kind == "recall"]
+    if len(recall_directives) > 1:
         raise ToolangError(f"Thunk {thunk_name!r} may declare at most one recall directive.")
-    if not recall_overlays:
+    if not recall_directives:
         return
-    recall = recall_overlays[0]
+    recall = recall_directives[0]
     if recall.op != "set":
         raise ToolangError(f"Thunk {thunk_name!r} must use '=' for its recall directive.")
     values = set(recall.items)
@@ -462,12 +462,12 @@ def _validate_flow_params(flow: Flow, *, flow_name: str) -> None:
         seen.add(param.name)
 
 
-def _validate_flow_overlays(flow: Flow, *, flow_name: str) -> None:
-    model_overlays = [overlay for overlay in flow.overlays if overlay.kind == "model"]
-    if len(model_overlays) > 1:
+def _validate_flow_directives(flow: Flow, *, flow_name: str) -> None:
+    model_directives = [directive for directive in flow.directives if directive.kind == "model"]
+    if len(model_directives) > 1:
         raise ToolangError(f"Flow {flow_name!r} may declare at most one models directive.")
-    recall_overlays = [overlay for overlay in flow.overlays if overlay.kind == "recall"]
-    if len(recall_overlays) > 1:
+    recall_directives = [directive for directive in flow.directives if directive.kind == "recall"]
+    if len(recall_directives) > 1:
         raise ToolangError(f"Flow {flow_name!r} may declare at most one recall directive.")
 
 
@@ -495,7 +495,7 @@ def _thunk_to_data(thunk: Thunk) -> dict[str, object]:
         "input": _param_to_data(thunk.input) if thunk.input is not None else None,
         "params": [_param_to_data(item) for item in thunk.params],
         "output": thunk.output,
-        "directives": [_overlay_to_data(item) for item in thunk.overlays],
+        "directives": [_directive_to_data(item) for item in thunk.directives],
         "context": _message_block_to_data(thunk.context) if thunk.context is not None else None,
         "instruct": _message_block_to_data(thunk.instruct) if thunk.instruct is not None else None,
         "messages": [_message_block_to_data(item) for item in thunk.messages],
@@ -508,7 +508,7 @@ def _flow_to_data(flow: Flow) -> dict[str, object]:
         "input": _param_to_data(flow.input) if flow.input is not None else None,
         "params": [_param_to_data(item) for item in flow.params],
         "output": flow.output,
-        "directives": [_overlay_to_data(item) for item in flow.overlays],
+        "directives": [_directive_to_data(item) for item in flow.directives],
         "stages": [_flow_stage_to_data(item) for item in flow.stages],
     }
 
@@ -541,12 +541,12 @@ def _flow_stage_to_data(stage: FlowStage) -> dict[str, object]:
     return data
 
 
-def _overlay_to_data(overlay: ThunkOverlay) -> dict[str, object]:
+def _directive_to_data(directive: Directive) -> dict[str, object]:
     return {
-        "kind": overlay.kind,
-        "op": overlay.op,
-        "items": list(overlay.items),
-        "line": overlay.span.line,
+        "kind": directive.kind,
+        "op": directive.op,
+        "items": list(directive.items),
+        "line": directive.span.line,
     }
 
 
@@ -599,11 +599,11 @@ def _context_to_lock_data(context: ContextBlock, *, line_offset: int) -> dict[st
     }
 
 
-def _decl_to_lock_data(decl: DeclBlock, *, line_offset: int) -> dict[str, object]:
+def _cap_to_lock_data(cap: CapDecl, *, line_offset: int) -> dict[str, object]:
     return {
-        "kind": decl.kind,
-        "name": decl.name,
-        "line": decl.span.line + line_offset,
+        "kind": cap.kind,
+        "name": cap.name,
+        "line": cap.span.line + line_offset,
     }
 
 
@@ -613,7 +613,7 @@ def _thunk_to_lock_data(thunk: Thunk, *, line_offset: int) -> dict[str, object]:
         "name": _thunk_name(thunk),
         "line": thunk.span.line + line_offset,
         "params": _thunk_params_to_lock_data(thunk),
-        "directives": [_directive_to_lock_data(item, line_offset=line_offset) for item in thunk.overlays],
+        "directives": [_directive_to_lock_data(item, line_offset=line_offset) for item in thunk.directives],
         "blocks": [_block_to_lock_data(item, line_offset=line_offset) for item in blocks],
     }
     if thunk.output is not None:
@@ -626,7 +626,7 @@ def _flow_to_lock_data(flow: Flow, *, line_offset: int) -> dict[str, object]:
         "name": flow.flow_name(),
         "line": flow.span.line + line_offset,
         "params": _flow_params_to_lock_data(flow),
-        "directives": [_directive_to_lock_data(item, line_offset=line_offset) for item in flow.overlays],
+        "directives": [_directive_to_lock_data(item, line_offset=line_offset) for item in flow.directives],
         "stages": [_flow_stage_to_lock_data(item, line_offset=line_offset) for item in flow.stages],
     }
     if flow.output is not None:
@@ -672,12 +672,12 @@ def _param_to_lock_data(param: ParamDecl) -> dict[str, object]:
     }
 
 
-def _directive_to_lock_data(overlay: ThunkOverlay, *, line_offset: int) -> dict[str, object]:
+def _directive_to_lock_data(directive: Directive, *, line_offset: int) -> dict[str, object]:
     return {
-        "key": _directive_key(overlay.kind),
-        "op": _directive_op(overlay.op),
-        "values": list(overlay.items),
-        "line": overlay.span.line + line_offset,
+        "key": _directive_key(directive.kind),
+        "op": _directive_op(directive.op),
+        "values": list(directive.items),
+        "line": directive.span.line + line_offset,
     }
 
 

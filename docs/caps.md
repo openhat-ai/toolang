@@ -64,7 +64,7 @@ Scope tells where a cap is available:
 
 | Origin | Meaning |
 | --- | --- |
-| `local` | Local authored content, including inline program declarations and local files or directories |
+| `local` | Local authored content, including inline program caps and local files or directories |
 | `remote` | A remote authored cap fetched through a ref |
 
 Runtime APIs expose effective caps. They do not expose every authored source

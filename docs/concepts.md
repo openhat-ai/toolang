@@ -93,8 +93,8 @@ Caps are assembled from the materialized root and source:
 | `visiting` | Inline caps and referenced caps from the materialized remote source |
 | `roaming` | Source-local `toolang.toml`, inline caps, and referenced caps from the local `.too` source |
 
-Caps do not have a separate placement allowlist. A program declaration or
-reference makes a cap available to that program, but it does not make the cap
+Caps do not have a separate placement allowlist. A program cap or reference
+makes a cap available to that program, but it does not make the cap
 effective for every thunk by itself.
 
 
@@ -159,8 +159,8 @@ through ordered sets.
 Placement provides a default resource set. CLI options may override or adjust
 that default for one activation. The result is the activation set.
 
-Programs may also declare or reference resources. Those declarations form a
-program set. Program resources are not automatically effective for every thunk.
+Programs may also define inline caps or reference resources. Those items form
+a program set. Program resources are not automatically effective for every thunk.
 
 Thunk directives compute the effective set from the activation set:
 

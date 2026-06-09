@@ -437,7 +437,7 @@ Artifact buckets are:
 
 | Bucket | Meaning |
 | --- | --- |
-| `inline` | Files materialized from inline program declarations |
+| `inline` | Files materialized from inline program caps |
 | `ref` | Files materialized from program `use` refs |
 | `wired` | Files materialized from config refs |
 
@@ -485,9 +485,8 @@ Thunk fields follow grammar names:
 | `directives` | Thunk `directive` items |
 | `blocks` | Thunk `block` items |
 
-Use `directives`, not `overlays`, and `blocks`, not `messages`, in the lock
-format. Those names match `tree-sitter-toolang`; overlay and message concepts
-are runtime projections.
+Use `directives` and `blocks` in the lock format. Those names match
+`tree-sitter-toolang`; directive and message concepts are runtime projections.
 
 Type strings use the canonical source spelling from the grammar. Built-in
 types include `Text`, `Number`, `Boolean`, `Json`, and `Message`. User type

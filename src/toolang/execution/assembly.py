@@ -216,22 +216,22 @@ class RunInput:
     def tools(self) -> dict[str, AgentTool]:
         """Return the effective tool mapping for this run."""
 
-        return select_tools(self.tools_base, self.thunk.overlays_for("tool"))
+        return select_tools(self.tools_base, self.thunk.directives_for("tool"))
 
     def psyches(self) -> tuple[PreparedEntry, ...]:
         """Return the effective psyche entries for this run."""
 
-        return select_entries(self.psyches_base, self.thunk.overlays_for("psyche"))
+        return select_entries(self.psyches_base, self.thunk.directives_for("psyche"))
 
     def skills(self) -> tuple[PreparedEntry, ...]:
         """Return the effective skill entries for this run."""
 
-        return select_entries(self.skills_base, self.thunk.overlays_for("skill"))
+        return select_entries(self.skills_base, self.thunk.directives_for("skill"))
 
     def services(self) -> tuple[PreparedEntry, ...]:
         """Return the effective service entries for this run."""
 
-        return select_entries(self.services_base, self.thunk.overlays_for("service"))
+        return select_entries(self.services_base, self.thunk.directives_for("service"))
 
     def rendered_messages(self) -> tuple[MessageBlock, ...]:
         """Return authored thunk messages rendered with the current params."""

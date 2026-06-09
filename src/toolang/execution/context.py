@@ -779,14 +779,14 @@ def _thunk_to_data(thunk: Thunk) -> dict[str, object]:
             for item in thunk.params
         ],
         "output": thunk.output,
-        "overlays": [
+        "directives": [
             {
                 "kind": item.kind,
                 "op": item.op,
                 "items": list(item.items),
                 "line": item.span.line,
             }
-            for item in thunk.overlays
+            for item in thunk.directives
         ],
         "messages": [
             {
