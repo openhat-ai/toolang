@@ -402,36 +402,36 @@ def _validate_thunk_params(thunk: Thunk, *, thunk_name: str) -> None:
 
 
 def _validate_thunk_directives(thunk: Thunk, *, thunk_name: str) -> None:
-    model_directives = [directive for directive in thunk.directives if directive.kind == "model"]
+    model_directives = [directive for directive in thunk.directives if _directive_family(directive.name) == "model"]
     if len(model_directives) > 1:
         raise ToolangError(f"Thunk {thunk_name!r} may declare at most one models directive.")
     if model_directives:
         directive = model_directives[0]
-        if directive.op != "set":
+        if directive.operator != "=":
             raise ToolangError(f"Thunk {thunk_name!r} must use '=' for its models directive.")
-        if not directive.items:
+        if not directive.values:
             raise ToolangError(f"Thunk {thunk_name!r} must declare at least one model selector.")
-        routed = [selector for selector in directive.items if "@" in selector]
+        routed = [selector for selector in directive.values if "@" in selector]
         if routed:
             joined = ", ".join(routed)
             raise ToolangError(
                 f"Thunk {thunk_name!r} must declare route-neutral model refs, not routed selectors: {joined}"
             )
 
-    recall_directives = [directive for directive in thunk.directives if directive.kind == "recall"]
+    recall_directives = [directive for directive in thunk.directives if _directive_family(directive.name) == "recall"]
     if len(recall_directives) > 1:
         raise ToolangError(f"Thunk {thunk_name!r} may declare at most one recall directive.")
     if not recall_directives:
         return
     recall = recall_directives[0]
-    if recall.op != "set":
+    if recall.operator != "=":
         raise ToolangError(f"Thunk {thunk_name!r} must use '=' for its recall directive.")
-    values = set(recall.items)
+    values = set(recall.values)
     if not values:
         raise ToolangError(f"Thunk {thunk_name!r} must declare at least one recall source.")
     if values in ({"none"}, {"default"}, {"history"}, {"memory"}, {"history", "memory"}):
         return
-    joined = ", ".join(recall.items)
+    joined = ", ".join(recall.values)
     raise ToolangError(f"Thunk {thunk_name!r} has unsupported recall directive values: {joined}.")
 
 
@@ -463,10 +463,10 @@ def _validate_flow_params(flow: Flow, *, flow_name: str) -> None:
 
 
 def _validate_flow_directives(flow: Flow, *, flow_name: str) -> None:
-    model_directives = [directive for directive in flow.directives if directive.kind == "model"]
+    model_directives = [directive for directive in flow.directives if _directive_family(directive.name) == "model"]
     if len(model_directives) > 1:
         raise ToolangError(f"Flow {flow_name!r} may declare at most one models directive.")
-    recall_directives = [directive for directive in flow.directives if directive.kind == "recall"]
+    recall_directives = [directive for directive in flow.directives if _directive_family(directive.name) == "recall"]
     if len(recall_directives) > 1:
         raise ToolangError(f"Flow {flow_name!r} may declare at most one recall directive.")
 
@@ -543,9 +543,9 @@ def _flow_stage_to_data(stage: FlowStage) -> dict[str, object]:
 
 def _directive_to_data(directive: Directive) -> dict[str, object]:
     return {
-        "kind": directive.kind,
-        "op": directive.op,
-        "items": list(directive.items),
+        "name": directive.name,
+        "operator": directive.operator,
+        "values": list(directive.values),
         "line": directive.span.line,
     }
 
@@ -667,16 +667,16 @@ def _thunk_params_to_lock_data(thunk: Thunk) -> list[dict[str, object]]:
 def _param_to_lock_data(param: ParamDecl) -> dict[str, object]:
     return {
         "name": param.name,
-        "type": _source_type_name(param.type_name or "string"),
+        "type": _source_type_name(param.type_name or "Text"),
         "optional": param.optional,
     }
 
 
 def _directive_to_lock_data(directive: Directive, *, line_offset: int) -> dict[str, object]:
     return {
-        "key": _directive_key(directive.kind),
-        "op": _directive_op(directive.op),
-        "values": list(directive.items),
+        "key": directive.name,
+        "op": directive.operator,
+        "values": list(directive.values),
         "line": directive.span.line + line_offset,
     }
 
@@ -695,34 +695,31 @@ def _block_to_lock_data(block: MessageBlock, *, line_offset: int) -> dict[str, o
     return data
 
 
-def _directive_key(kind: str) -> str:
-    if kind == "model":
-        return "models"
-    if kind == "recall":
+def _directive_family(name: str) -> str:
+    normalized = name.strip()
+    if normalized in {"model", "models"}:
+        return "model"
+    if normalized in {"tool", "tools"}:
+        return "tool"
+    if normalized in {"psyche", "psyches"}:
+        return "psyche"
+    if normalized in {"skill", "skills"}:
+        return "skill"
+    if normalized in {"service", "services"}:
+        return "service"
+    if normalized == "hands":
+        return "hand"
+    if normalized == "handoffs":
+        return "handoff"
+    if normalized == "recall":
         return "recall"
-    return f"{kind}s"
-
-
-def _directive_op(op: str) -> str:
-    return {"set": "=", "add": "+=", "remove": "-="}[op]
+    return normalized
 
 
 def _source_type_name(type_name: str | None) -> str:
     if not type_name:
         return "Text"
-    suffix = "[]" if type_name.endswith("[]") else ""
-    base = type_name[:-2] if suffix else type_name
-    aliases = {
-        "string": "Text",
-        "text": "Text",
-        "number": "Number",
-        "boolean": "Boolean",
-        "json": "Json",
-        "message": "Message",
-        "path": "Path",
-        "artifact": "Artifact",
-    }
-    return f"{aliases.get(base, base)}{suffix}"
+    return type_name
 
 
 def _default_span() -> SourceSpan:

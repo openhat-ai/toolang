@@ -1801,7 +1801,7 @@ def test_cli_roaming_invoke_passes_default_thunk_params_and_parts(tmp_path: Path
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk(_, tone?, retries?: number, dry_run?: boolean):
+thunk(_, tone?, retries?: Number, dry_run?: Boolean):
   Rewrite the input using the provided controls.
 """.strip(),
     )
@@ -6048,13 +6048,13 @@ def test_cli_parse_prints_too_ast(tmp_path: Path) -> None:
         "optional": False,
         "type_name": None,
     }
-    assert ast_data["thunks"][0]["output"] == "json"
+    assert ast_data["thunks"][0]["output"] == "Json"
     assert "overlays" not in ast_data["thunks"][0]
     assert ast_data["thunks"][0]["directives"] == [
         {
-            "kind": "model",
-            "op": "set",
-            "items": ["deepseek/*"],
+            "name": "models",
+            "operator": "=",
+            "values": ["deepseek/*"],
             "span": {"line": 5},
         }
     ]
@@ -6091,7 +6091,7 @@ def test_cli_fmt_formats_too_file(tmp_path: Path) -> None:
         "#!/usr/bin/env toolang\n"
         "\n"
         "struct Result:\n"
-        "    title:string\n"
+        "    title:Text\n"
         "\n"
         "thunk review( input:Message)->Json:\n"
         "    model= deepseek/*\n"
@@ -6107,7 +6107,7 @@ def test_cli_fmt_formats_too_file(tmp_path: Path) -> None:
         "#!/usr/bin/env toolang\n"
         "\n"
         "struct Result:\n"
-        "  title: string\n"
+        "  title: Text\n"
         "\n"
         "thunk review(input: Message) -> Json:\n"
         "  models = deepseek/*\n"

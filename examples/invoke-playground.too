@@ -4,11 +4,11 @@
 # It keeps the capabilities minimal and focuses on different thunk shapes.
 
 struct Summary:
-  title: string
-  summary: string
+  title: Text
+  summary: Text
 
 struct BulletList:
-  items: string[]
+  items: Text[]
 
 thunk summarize(_) -> Summary:
   Produce a compact summary with a short title and a short summary paragraph.
@@ -20,6 +20,6 @@ thunk rewrite(_, tone?, audience?):
   Rewrite the input in the requested tone.
   Adjust depth and wording for the requested audience when it is provided.
 
-thunk slug(title) -> text:
+thunk slug(title) -> Text:
   Convert the provided title into a concise lowercase slug.
   Use hyphens between words and return only the slug text.

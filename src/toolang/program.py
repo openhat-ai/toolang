@@ -32,8 +32,6 @@ LEGACY_DELEGATES_RE = re.compile(r"^[ \t]*delegates[ \t]*(?:=|\+=|-=)")
 TOP_LEVEL_RE = re.compile(
     r"^(use|struct|psyche|skill|service|prompt|context|instruct|thunk|flow)\b"
 )
-DirectiveKind = Literal["model", "tool", "psyche", "skill", "service", "hand", "handoff", "recall"]
-DirectiveOperator = Literal["set", "add", "remove"]
 MessageBlockKind = Literal["context", "instruct", "user", "assistant", "tool"]
 FlowStageKind = Literal[
     "bare",
@@ -47,27 +45,6 @@ FlowStageKind = Literal[
     "fold",
     "repeat",
 ]
-TREE_SITTER_TYPE_ALIASES = {
-    "string": "Text",
-    "text": "Text",
-    "number": "Number",
-    "boolean": "Boolean",
-    "json": "Json",
-    "message": "Message",
-    "path": "Path",
-    "artifact": "Artifact",
-}
-AST_TYPE_ALIASES = {
-    "Text": "string",
-    "Number": "number",
-    "Boolean": "boolean",
-    "Json": "json",
-    "Message": "message",
-    "Path": "path",
-    "Artifact": "artifact",
-}
-
-
 @dataclass(slots=True)
 class SourceSpan:
     line: int
@@ -138,9 +115,9 @@ class StructDecl:
 
 @dataclass(frozen=True, slots=True)
 class Directive:
-    kind: DirectiveKind
-    op: DirectiveOperator
-    items: tuple[str, ...]
+    name: str
+    operator: str
+    values: tuple[str, ...]
     span: SourceSpan
 
 
@@ -170,8 +147,8 @@ class Thunk:
     def is_thread_thunk(self) -> bool:
         return self.thunk_name() in {"chat", "task", "chore"}
 
-    def directives_for(self, kind: DirectiveKind) -> tuple[Directive, ...]:
-        return tuple(item for item in self.directives if item.kind == kind)
+    def directives_for(self, name: str) -> tuple[Directive, ...]:
+        return tuple(item for item in self.directives if _directive_family(item.name) == name)
 
     def message_blocks(self, kind: MessageBlockKind) -> tuple[MessageBlock, ...]:
         blocks: list[MessageBlock] = []
@@ -219,8 +196,8 @@ class Flow:
     def flow_name(self) -> str:
         return self.name or "main"
 
-    def directives_for(self, kind: DirectiveKind) -> tuple[Directive, ...]:
-        return tuple(item for item in self.directives if item.kind == kind)
+    def directives_for(self, name: str) -> tuple[Directive, ...]:
+        return tuple(item for item in self.directives if _directive_family(item.name) == name)
 
 
 @dataclass(slots=True)
@@ -811,7 +788,7 @@ def _params_from_node(node: Node | None) -> tuple[ParamDecl | None, list[ParamDe
             optional=parameter.child_by_field_name("optional") is not None,
             type_name=type_name,
         )
-        if param.name == "input" and type_name == "message" and input_param is None and not params:
+        if param.name == "input" and type_name == "Message" and input_param is None and not params:
             input_param = ParamDecl(name="_", optional=False, type_name=None)
         else:
             params.append(param)
@@ -838,16 +815,17 @@ def _directive_from_node(node: Node, syntax_source: _TreeSitterSource) -> Direct
     )
     if raw_values is None:
         raw_values = _optional_text(directive.child_by_field_name("values")) or ""
-    kind = _directive_kind(subject, line_number=line_number)
     items = tuple(
         item
         for item in (part.strip() for part in raw_values.split(","))
         if item
     )
+    _validate_directive_name(subject, line_number=line_number)
+    _validate_directive_operator(operator, line_number=line_number)
     return Directive(
-        kind=kind,
-        op=_directive_operator(operator, line_number=line_number),
-        items=items,
+        name=subject,
+        operator=operator,
+        values=items,
         span=SourceSpan(line_number),
     )
 
@@ -860,9 +838,9 @@ def _raw_directive_values_from_line(line: str) -> str | None:
     return values
 
 
-def _directive_kind(subject: str, *, line_number: int) -> DirectiveKind:
+def _directive_family(subject: str) -> str:
     normalized = subject.strip()
-    if normalized == "models":
+    if normalized in {"model", "models"}:
         return "model"
     if normalized in {"tool", "tools"}:
         return "tool"
@@ -878,17 +856,34 @@ def _directive_kind(subject: str, *, line_number: int) -> DirectiveKind:
         return "handoff"
     if normalized == "recall":
         return "recall"
+    return normalized
+
+
+def _validate_directive_name(subject: str, *, line_number: int) -> None:
+    normalized = subject.strip()
+    if normalized in {
+        "model",
+        "models",
+        "tool",
+        "tools",
+        "psyche",
+        "psyches",
+        "skill",
+        "skills",
+        "service",
+        "services",
+        "hands",
+        "handoffs",
+        "recall",
+    }:
+        return
     raise ToolangError(f"Unsupported thunk directive {subject!r} at line {line_number}.")
 
 
-def _directive_operator(operator: str, *, line_number: int) -> DirectiveOperator:
+def _validate_directive_operator(operator: str, *, line_number: int) -> None:
     normalized = operator.strip()
-    if normalized == "=":
-        return "set"
-    if normalized == "+=":
-        return "add"
-    if normalized == "-=":
-        return "remove"
+    if normalized in {"=", "+=", "-="}:
+        return
     raise ToolangError(f"Unsupported thunk directive operator {operator!r} at line {line_number}.")
 
 
@@ -1323,7 +1318,7 @@ def _tree_sitter_params(raw: str) -> str:
             continue
         name = "input" if match.group("name") == "_" else match.group("name")
         optional = match.group("optional") or ""
-        type_name = _tree_sitter_type_name(match.group("type") or "string")
+        type_name = _tree_sitter_type_name(match.group("type") or "Text")
         rendered.append(f"{name}{optional}: {type_name}")
     return ", ".join(rendered)
 
@@ -1331,17 +1326,13 @@ def _tree_sitter_params(raw: str) -> str:
 def _tree_sitter_type_name(type_name: str | None) -> str:
     if not type_name:
         return ""
-    suffix = "[]" if type_name.endswith("[]") else ""
-    base = type_name[:-2] if suffix else type_name
-    return f"{TREE_SITTER_TYPE_ALIASES.get(base, base)}{suffix}"
+    return type_name
 
 
 def _ast_type_name(type_name: str | None) -> str | None:
     if not type_name:
         return None
-    suffix = "[]" if type_name.endswith("[]") else ""
-    base = type_name[:-2] if suffix else type_name
-    return f"{AST_TYPE_ALIASES.get(base, base)}{suffix}"
+    return type_name
 
 
 def _parse_thunk_header(line: str, *, line_number: int) -> tuple[str | None, str | None, str | None] | None:

@@ -5709,7 +5709,7 @@ def test_assemble_run_input_logs_activation_set_math(tmp_path: Path, caplog) -> 
     assert model_math["activation_ceiling"] == ["openai/gpt-5[openai]", "openai/o3[openai]"]
     assert model_math["thunk_selectors"] == ["openai/gpt-5"]
     assert model_math["effective"] == ["openai/gpt-5[openai]"]
-    assert tool_steps[0]["op"] == "remove"
+    assert tool_steps[0]["op"] == "-="
     assert tool_steps[0]["selectors"] == [
         "service_use/bridge_start",
         "service_use/init",
@@ -5721,7 +5721,7 @@ def test_assemble_run_input_logs_activation_set_math(tmp_path: Path, caplog) -> 
         assert removed_tool not in cast(list[object], tool_math["effective"])
     assert skill_steps == [
         {
-            "op": "set",
+            "op": "=",
             "line": 4,
             "selectors": ["local-reviewer"],
             "matches": ["skill/local-reviewer"],

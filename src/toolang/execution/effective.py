@@ -308,16 +308,17 @@ def _apply_tool_directives_with_trace(
     }
     steps: list[dict[str, object]] = []
     for directive in directives:
-        selectors = tuple(item for item in directive.items if item)
+        selectors = tuple(item for item in directive.values if item)
         before = tuple(current)
         matches = selected_tool_names(refs_by_model_name, selectors)
-        if directive.op == "set":
+        op = _directive_operation(directive)
+        if op == "set":
             current = list(matches)
-        elif directive.op == "add":
+        elif op == "add":
             for name in matches:
                 if name not in current:
                     current.append(name)
-        elif directive.op == "remove":
+        elif op == "remove":
             blocked = set(matches)
             current = [name for name in current if name not in blocked]
         steps.append(
@@ -341,7 +342,7 @@ def _apply_cap_directives_with_trace(
     agent_name = _entry_agent_name(base)
     steps: list[dict[str, object]] = []
     for directive in directives:
-        selectors = tuple(item for item in directive.items if item)
+        selectors = tuple(item for item in directive.values if item)
         before = tuple(current)
         matches = cap_store.select_cap_entries(
             base,
@@ -349,16 +350,17 @@ def _apply_cap_directives_with_trace(
             agent_name=agent_name,
             implicit_kind=kind,
         )
-        if directive.op == "set":
+        op = _directive_operation(directive)
+        if op == "set":
             current = list(matches)
-        elif directive.op == "add":
+        elif op == "add":
             seen = {_entry_identity(entry) for entry in current}
             for entry in matches:
                 identity = _entry_identity(entry)
                 if identity not in seen:
                     current.append(entry)
                     seen.add(identity)
-        elif directive.op == "remove":
+        elif op == "remove":
             blocked = {_entry_identity(entry) for entry in matches}
             current = [entry for entry in current if _entry_identity(entry) not in blocked]
         steps.append(
@@ -380,15 +382,16 @@ def _apply_string_directives_with_trace(
     current = list(dict.fromkeys(item for item in base if item))
     steps: list[dict[str, object]] = []
     for directive in directives:
-        directive_items = tuple(item for item in directive.items if item)
+        directive_items = tuple(item for item in directive.values if item)
         before = tuple(current)
-        if directive.op == "set":
+        op = _directive_operation(directive)
+        if op == "set":
             current = list(dict.fromkeys(directive_items))
-        elif directive.op == "add":
+        elif op == "add":
             for item in directive_items:
                 if item not in current:
                     current.append(item)
-        elif directive.op == "remove":
+        elif op == "remove":
             blocked = set(directive_items)
             current = [item for item in current if item not in blocked]
         steps.append(
@@ -409,16 +412,17 @@ def _apply_string_directives(
 ) -> tuple[str, ...]:
     current = list(dict.fromkeys(item for item in base if item))
     for directive in directives:
-        directive_items = [item for item in directive.items if item]
-        if directive.op == "set":
+        directive_items = [item for item in directive.values if item]
+        op = _directive_operation(directive)
+        if op == "set":
             current = list(dict.fromkeys(directive_items))
             continue
-        if directive.op == "add":
+        if op == "add":
             for item in directive_items:
                 if item not in current:
                     current.append(item)
             continue
-        if directive.op == "remove":
+        if op == "remove":
             blocked = set(directive_items)
             current = [item for item in current if item not in blocked]
     return tuple(current)
@@ -433,7 +437,7 @@ def _directive_step(
     after: tuple[str, ...],
 ) -> dict[str, object]:
     return {
-        "op": directive.op,
+        "op": directive.operator,
         "line": directive.span.line,
         "selectors": list(selectors),
         "matches": list(matches),
@@ -501,10 +505,14 @@ def _set_math_expression(steps: list[object]) -> str:
 
 
 def _directive_op_symbol(value: object) -> str:
-    if value == "set":
-        return "="
-    if value == "add":
-        return "+="
-    if value == "remove":
-        return "-="
     return str(value)
+
+
+def _directive_operation(directive: Directive) -> str:
+    if directive.operator == "=":
+        return "set"
+    if directive.operator == "+=":
+        return "add"
+    if directive.operator == "-=":
+        return "remove"
+    return directive.operator

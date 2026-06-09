@@ -537,16 +537,16 @@ def _parse_boolean_value(raw: str, *, option_name: str) -> bool:
 
 def _coerce_invoke_value(raw: str, *, param: ParamDecl) -> object:
     type_name = param.type_name
-    if type_name == "number":
+    if type_name == "Number":
         try:
             if any(marker in raw for marker in (".", "e", "E")):
                 return float(raw)
             return int(raw)
         except ValueError as exc:
             raise click.ClickException(f"{param.name} expects a number") from exc
-    if type_name == "boolean":
+    if type_name == "Boolean":
         return _parse_boolean_value(raw, option_name=param.name)
-    if type_name == "path":
+    if type_name == "Path":
         return str(Path(raw).expanduser().resolve())
     return raw
 
@@ -1137,11 +1137,11 @@ def _roaming_executable_usage_tail(executable: Thunk | Flow) -> str:
 
 def _param_assignment_label(param: ParamDecl) -> str:
     type_name = param.type_name or "TEXT"
-    if param.type_name == "number":
+    if param.type_name == "Number":
         type_name = "NUMBER"
-    elif param.type_name == "boolean":
+    elif param.type_name == "Boolean":
         type_name = "BOOLEAN"
-    elif param.type_name == "path":
+    elif param.type_name == "Path":
         type_name = "PATH"
     elif type_name.islower():
         type_name = type_name.upper()
@@ -1204,7 +1204,7 @@ def _help_arguments(
                         required=False,
                         default=None,
                         expose_value=False,
-                        help=f"{param.type_name or 'string'}; {required}.",
+                        help=f"{param.type_name or 'Text'}; {required}.",
                         rich_help_panel="Params",
                     )
                 )

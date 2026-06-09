@@ -781,9 +781,9 @@ def _thunk_to_data(thunk: Thunk) -> dict[str, object]:
         "output": thunk.output,
         "directives": [
             {
-                "kind": item.kind,
-                "op": item.op,
-                "items": list(item.items),
+                "name": item.name,
+                "operator": item.operator,
+                "values": list(item.values),
                 "line": item.span.line,
             }
             for item in thunk.directives

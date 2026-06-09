@@ -14,16 +14,6 @@ class ToolangFormatError(ValueError):
     """Raised when a source file cannot be formatted safely."""
 
 
-TREE_SITTER_TYPE_ALIASES = {
-    "string": "Text",
-    "text": "Text",
-    "number": "Number",
-    "boolean": "Boolean",
-    "json": "Json",
-    "message": "Message",
-    "path": "Path",
-    "artifact": "Artifact",
-}
 DIRECTIVE_KEY_ALIASES = {
     "model": "models",
     "models": "models",
@@ -714,7 +704,7 @@ def _tree_sitter_params(raw: str) -> str:
             continue
         name = "input" if match.group("name") == "_" else match.group("name")
         optional = match.group("optional") or ""
-        type_name = _tree_sitter_type_name(match.group("type") or "string")
+        type_name = _tree_sitter_type_name(match.group("type") or "Text")
         rendered.append(f"{name}{optional}: {type_name}")
     return ", ".join(rendered)
 
@@ -722,9 +712,7 @@ def _tree_sitter_params(raw: str) -> str:
 def _tree_sitter_type_name(type_name: str | None) -> str:
     if not type_name:
         return ""
-    suffix = "[]" if type_name.endswith("[]") else ""
-    base = type_name[:-2] if suffix else type_name
-    return f"{TREE_SITTER_TYPE_ALIASES.get(base, base)}{suffix}"
+    return type_name
 
 
 def _parse_thunk_rest(rest: str) -> tuple[str | None, str | None]:

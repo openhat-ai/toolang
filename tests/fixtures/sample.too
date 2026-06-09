@@ -10,8 +10,8 @@ Audience: {{audience}}
 ```
 
 struct WorkspaceSummary:
-  title: string
-  summary: string
+  title: Text
+  summary: Text
 
 thunk summarize(_) -> WorkspaceSummary:
   models = gpt-5

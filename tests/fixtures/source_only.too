@@ -24,8 +24,8 @@ Prefer concrete findings, direct language, and minimal fluff.
 ```
 
 struct ReviewSummary:
-  title: string
-  summary: string
+  title: Text
+  summary: Text
 
 thunk summarize(_) -> ReviewSummary:
   models = gpt-5

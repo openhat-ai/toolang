@@ -38,8 +38,8 @@ Prefer concrete findings and direct language.
 ```
 
 struct ReviewSummary:
-  title: string
-  summary: string
+  title: Text
+  summary: Text
 """.strip()
     )
 
@@ -63,8 +63,8 @@ struct ReviewSummary:
     assert len(program.structs) == 1
     assert program.structs[0].name == "ReviewSummary"
     assert [(item.name, item.type_name) for item in program.structs[0].fields] == [
-        ("title", "string"),
-        ("summary", "string"),
+        ("title", "Text"),
+        ("summary", "Text"),
     ]
 
 
@@ -151,14 +151,14 @@ thunk isolated:
         False,
     )
     assert [(item.name, item.type_name, item.optional) for item in review.params] == [
-        ("path", "path", False),
-        ("focus", "string", True),
-        ("labels", "string[]", False),
+        ('path', 'Path', False),
+        ('focus', 'Text', True),
+        ('labels', 'Text[]', False),
     ]
-    assert review.output == "json"
-    assert [(item.kind, item.op, item.items) for item in review.directives] == [
-        ("model", "set", ("gpt-5",)),
-        ("recall", "set", ("history", "memory")),
+    assert review.output == "Json"
+    assert [(item.name, item.operator, item.values) for item in review.directives] == [
+        ('models', '=', ("gpt-5",)),
+        ('recall', '=', ("history", "memory")),
     ]
     assert review.context is not None
     assert (review.context.kind, review.context.text, review.context.explicit) == (
@@ -179,8 +179,8 @@ thunk isolated:
     ]
 
     isolated = program.thunks[1]
-    assert [(item.kind, item.op, item.items) for item in isolated.directives] == [
-        ("recall", "set", ("none",)),
+    assert [(item.name, item.operator, item.values) for item in isolated.directives] == [
+        ('recall', '=', ("none",)),
     ]
     assert isolated.context is not None
     assert isolated.context.text == "none"
@@ -229,7 +229,7 @@ env:
 def test_program_parse_projects_typed_thunk_params_into_ast() -> None:
     program = parse(
         """
-thunk review(_, path: path, focus?) -> ReviewSummary:
+thunk review(_, path: Path, focus?) -> ReviewSummary:
   models = gpt-5
   skills += review, patch
 
@@ -242,13 +242,13 @@ thunk review(_, path: path, focus?) -> ReviewSummary:
     assert thunk.input is not None
     assert (thunk.input.name, thunk.input.type_name, thunk.input.optional) == ("_", None, False)
     assert [(item.name, item.type_name, item.optional) for item in thunk.params] == [
-        ("path", "path", False),
+        ('path', 'Path', False),
         ("focus", None, True),
     ]
     assert thunk.output == "ReviewSummary"
-    assert [(item.kind, item.op, item.items) for item in thunk.directives] == [
-        ("model", "set", ("gpt-5",)),
-        ("skill", "add", ("review", "patch")),
+    assert [(item.name, item.operator, item.values) for item in thunk.directives] == [
+        ('models', '=', ("gpt-5",)),
+        ('skills', '+=', ("review", "patch")),
     ]
     assert [(item.kind, item.text, item.explicit) for item in thunk.messages] == [
         ("user", "Review the target carefully.", False),
@@ -366,7 +366,7 @@ def test_build_prepared_program_extracts_named_params_and_return_type(tmp_path: 
     root = _write_program(
         tmp_path,
         """
-thunk review(_, path: path, focus?) -> ReviewResult:
+thunk review(_, path: Path, focus?) -> ReviewResult:
   models = gpt-5
 
   Review the target carefully.
@@ -380,12 +380,12 @@ thunk review(_, path: path, focus?) -> ReviewResult:
     assert thunk.name == "review"
     assert thunk.input is not None
     assert [(item.name, item.type_name, item.optional) for item in thunk.params] == [
-        ("path", "path", False),
+        ('path', 'Path', False),
         ("focus", None, True),
     ]
     assert thunk.output == "ReviewResult"
-    assert [(item.kind, item.op, item.items) for item in thunk.directives] == [
-        ("model", "set", ("gpt-5",)),
+    assert [(item.name, item.operator, item.values) for item in thunk.directives] == [
+        ('models', '=', ("gpt-5",)),
     ]
 
 
@@ -404,8 +404,8 @@ thunk review():
     prepared = build_prepared_program(durable)
     thunk = load_live_program(prepared).thunks[0]
 
-    assert [(item.kind, item.op, item.items) for item in thunk.directives] == [
-        ("model", "set", ("gpt-5", "o3")),
+    assert [(item.name, item.operator, item.values) for item in thunk.directives] == [
+        ('models', '=', ("gpt-5", "o3")),
     ]
 
 
@@ -421,9 +421,9 @@ thunk review():
     )
 
     thunk = program.thunks[0]
-    assert [(item.kind, item.op, item.items) for item in thunk.directives] == [
-        ("model", "set", ("deepseek/*",)),
-        ("tool", "set", ("shell/*", "filesystem/read")),
+    assert [(item.name, item.operator, item.values) for item in thunk.directives] == [
+        ('models', '=', ("deepseek/*",)),
+        ('tools', '=', ("shell/*", "filesystem/read")),
     ]
 
 
@@ -439,9 +439,9 @@ thunk plan():
     )
 
     thunk = program.thunks[0]
-    assert [(item.kind, item.op, item.items) for item in thunk.directives] == [
-        ("hand", "add", ("research", "summarize")),
-        ("handoff", "set", ("execute",)),
+    assert [(item.name, item.operator, item.values) for item in thunk.directives] == [
+        ('hands', '+=', ("research", "summarize")),
+        ('handoffs', '=', ("execute",)),
     ]
 
 
@@ -460,7 +460,7 @@ thunk plan():
 def test_program_parse_projects_template_and_message_blocks_into_ast() -> None:
     program = parse(
         """
-thunk rewrite(_, tone?: string):
+thunk rewrite(_, tone?: Text):
   models = gpt-5
   recall = history, memory
 
@@ -479,9 +479,9 @@ thunk rewrite(_, tone?: string):
     )
 
     thunk = program.thunks[0]
-    assert [(item.kind, item.op, item.items) for item in thunk.directives] == [
-        ("model", "set", ("gpt-5",)),
-        ("recall", "set", ("history", "memory")),
+    assert [(item.name, item.operator, item.values) for item in thunk.directives] == [
+        ('models', '=', ("gpt-5",)),
+        ('recall', '=', ("history", "memory")),
     ]
     instruct = thunk.instruct
     assert instruct is not None
