@@ -50,7 +50,7 @@ def bind_run_request(
     """Bind one queued run request to immutable runtime inputs."""
 
     bound_live = live or context.live
-    thread_id = request.thread_id or _new_thread_id(context, request.thread_kind or request.origin)
+    thread_id = request.thread_id or _request_thread_id(context, request)
     thread_peer = _request_thread_peer(request.metadata)
     existing_thread = context.store.get_thread(thread_id=thread_id)
     context.store.ensure_thread(
@@ -127,9 +127,23 @@ def _new_thread_id(context: UptimeContext, origin: str) -> str:
     return f"{_thread_id_kind(origin)}_{value}"
 
 
+def _request_thread_id(context: UptimeContext, request: RunRequest) -> str:
+    if request.origin == "script":
+        return _new_thread_id(context, "script")
+    return _new_thread_id(context, request.thread_kind or request.origin)
+
+
 def _thread_id_kind(origin: str) -> str:
     text = "".join(char for char in origin.strip().lower() if char.isalnum())
-    return text or "thread"
+    if text in {"web"}:
+        return "web"
+    if text in {"term", "terminal", "tui", "chat"}:
+        return "term"
+    if text in {"task"}:
+        return "task"
+    if text in {"chore"}:
+        return "chore"
+    return "script"
 
 
 def _request_thread_peer(metadata: Mapping[str, Any]) -> ThreadPeer | None:

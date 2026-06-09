@@ -10,13 +10,16 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from toolang.base.error import ToolangError
+from toolang.base.types.message import Message
 from toolang.base.types.message import message_summary
 from .context import RunContext
 from .db import PersistSink
 from .events import RunEnd, RunStart, TraceEvent, TraceEventHandler
+from .executor import Executor, Frame, RunCtx
 from .input import RunInput, bind_run_request
 from .model import resolve_model
 from .runner import RunOutcome, RunOutcomeStatus, RunRequest, RunSubmission
+from .binding import invoke_params
 from ..plugin import load_loop
 
 if TYPE_CHECKING:
@@ -41,13 +44,29 @@ async def execute_run(
     response = submission.response
     persist = PersistSink(context.store)
     bound: RunBinding | None = None
-    run_input: RunInput | None = None
+    output_text = ""
     started = False
     run_started_at = time.perf_counter()
     try:
         bound = bind_run_request(context, request, live=submission.live)
+        executable_kind, executable = _select_executable(bound)
         _log_run_start(request=request, bound=bound)
-        run_input = RunInput.from_binding(context, bound)
+        if executable_kind == "thunk":
+            _preflight_thunk_run(context, bound, executable)
+        frame = Frame.from_invocation(
+            input_param=executable.input,
+            input_value=bound.input_text,
+            params=invoke_params(bound),
+        )
+        run_ctx = RunCtx(
+            binding=bound,
+            root=bound.run_id,
+            parent=None,
+            parent_step=None,
+            thread=bound.thread_id,
+            call="top",
+            frame=frame,
+        )
         _emit_event(
             context,
             persist,
@@ -56,38 +75,32 @@ async def execute_run(
                 run_id=bound.run_id,
                 origin=bound.origin,
                 thread_id=bound.thread_id,
-                input=run_input.input_message(),
+                input=bound.message or Message.user(bound.input_text),
                 created_at=bound.created_at,
                 started_at=bound.created_at,
                 request_id=_request_id(bound.metadata),
+                root_run_id=bound.run_id,
+                executable_kind=executable_kind,
+                executable_name=(
+                    executable.thunk_name() if executable_kind == "thunk" else executable.flow_name()
+                ),
+                call_kind="top",
+                metadata=dict(bound.metadata),
             ),
         )
         started = True
-        allowed_model_selectors = run_input.effective_model_selectors(context)
-        model = resolve_model(
+        executor = Executor(
             context,
-            selector=run_input.model_selector(context),
-            allowed_selectors=allowed_model_selectors,
-        )
-        provider = context.model_providers[model.provider]
-        model = provider.prepare_target(model)
-        _log_run_prepared(run=bound, run_input=run_input, model=model)
-        adapter = context.model_adapters.get(model.adapter)
-        if adapter is None:
-            raise ToolangError(f"unknown model adapter: {model.adapter}")
-        loop = load_loop(bound.run_loop)
-        run_context = RunContext(
-            run_input,
-            model,
-            adapter,
-            on_event=_event_handler(context, persist, response),
+            on_event=_event_handler(context, persist, response) or (lambda _event: None),
             consume_inputs=lambda run_id: context.store.pending_inputs(run_id=run_id, action="steer"),
+            load_loop_func=load_loop,
             stream=bool(response is not None and response.wants_stream),
         )
-        if bound.origin == "script":
-            execution = await _run_script_loop(loop.run, run_context, run_id=bound.run_id)
+        if executable_kind == "thunk":
+            value = await executor.execute_thunk(run_ctx, executable)
         else:
-            execution = await asyncio.to_thread(loop.run, run_context)
+            value = await executor.execute_flow(run_ctx, executable)
+        output_text = "" if value is None else str(value)
     except Exception as exc:
         error = str(exc)
         if bound is not None and started:
@@ -159,7 +172,7 @@ async def execute_run(
         delay_sec=delay_sec,
         duration_ms=_elapsed_ms(run_started_at),
         status="failed" if final_status == "canceled" else "finished",
-        output_text=execution.output_text,
+        output_text=output_text,
         error=final_error,
         live_fingerprint=bound.live.fingerprint,
     )
@@ -222,6 +235,40 @@ def _entry_count(run_input: RunInput, method_name: str) -> int:
     if not callable(method):
         return 0
     return len(method())
+
+
+def _preflight_thunk_run(context: UptimeContext, bound: RunBinding, thunk: Any) -> None:
+    run_input = RunInput.from_thunk(context, bound, thunk)
+    allowed_model_selectors = run_input.effective_model_selectors(context)
+    model = resolve_model(
+        context,
+        selector=run_input.model_selector(context),
+        allowed_selectors=allowed_model_selectors,
+    )
+    provider = context.model_providers[model.provider]
+    model = provider.prepare_target(model)
+    _log_run_prepared(run=bound, run_input=run_input, model=model)
+    if model.adapter not in context.model_adapters:
+        raise ToolangError(f"unknown model adapter: {model.adapter}")
+
+
+def _select_executable(bound: RunBinding):
+    program = bound.live.program
+    requested_kind = bound.metadata.get("executable_kind")
+    if requested_kind == "flow":
+        return "flow", program.get_flow(bound.thunk_name)
+    if requested_kind == "thunk":
+        return "thunk", program.get_thunk(bound.thunk_name)
+    name = bound.thunk_name
+    if name is not None:
+        real_thunk = next((item for item in program.parsed.thunks if item.thunk_name() == name), None)
+        flow = program.parsed.get_flow(name)
+        if real_thunk is None and flow is not None:
+            return "flow", flow
+        return "thunk", program.get_thunk(name)
+    if not program.parsed.thunks and program.flows:
+        return "flow", program.get_flow(None)
+    return "thunk", program.get_thunk(None)
 
 
 def _finish_outcome(

@@ -409,6 +409,24 @@ thunk review():
     ]
 
 
+def test_program_parse_preserves_wildcard_selector_directives() -> None:
+    program = parse(
+        """
+thunk review():
+  models = deepseek/*
+  tools = shell/*, filesystem/read
+
+  Review the target carefully.
+""".strip(),
+    )
+
+    thunk = program.thunks[0]
+    assert [(item.kind, item.op, item.items) for item in thunk.overlays] == [
+        ("model", "set", ("deepseek/*",)),
+        ("tool", "set", ("shell/*", "filesystem/read")),
+    ]
+
+
 def test_program_parse_projects_thunk_routing_directives_into_ast() -> None:
     program = parse(
         """

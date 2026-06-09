@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 import shutil
+import threading
 from typing import Any
 
 from toolang.base.error import ToolangError
@@ -25,9 +26,13 @@ class FilesystemPlugin:
     description: str | None = "Inspect and edit files inside the current agent home."
     _max_chars: int = field(init=False, repr=False)
     _tools: dict[str, AgentTool] = field(init=False, repr=False)
+    _path_locks: dict[Path, threading.Lock] = field(init=False, repr=False)
+    _path_locks_guard: threading.Lock = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._max_chars = _int_value(self.config.get("max_chars"), default=DEFAULT_MAX_CHARS)
+        self._path_locks = {}
+        self._path_locks_guard = threading.Lock()
         self._tools = self._build_tools()
 
     def tools(self) -> Mapping[str, AgentTool]:
@@ -71,8 +76,9 @@ class FilesystemPlugin:
         @tool(name="write_text", description="Write one text file inside the current agent home.")
         def write_text(path: str, text: str, context: ToolContext | None = None) -> dict[str, Any]:
             resolved = _resolve_path(path, context=context)
-            resolved.parent.mkdir(parents=True, exist_ok=True)
-            resolved.write_text(text, encoding="utf-8")
+            with self._path_lock(resolved):
+                resolved.parent.mkdir(parents=True, exist_ok=True)
+                resolved.write_text(text, encoding="utf-8")
             return {"path": str(resolved), "bytes_written": len(text.encode("utf-8"))}
 
         @tool(
@@ -81,9 +87,10 @@ class FilesystemPlugin:
         )
         def append_text(path: str, text: str, context: ToolContext | None = None) -> dict[str, Any]:
             resolved = _resolve_path(path, context=context)
-            resolved.parent.mkdir(parents=True, exist_ok=True)
-            with resolved.open("a", encoding="utf-8") as handle:
-                handle.write(text)
+            with self._path_lock(resolved):
+                resolved.parent.mkdir(parents=True, exist_ok=True)
+                with resolved.open("a", encoding="utf-8") as handle:
+                    handle.write(text)
             return {"path": str(resolved), "bytes_appended": len(text.encode("utf-8"))}
 
         @tool(name="glob", description="Match file paths under one directory.")
@@ -147,6 +154,14 @@ class FilesystemPlugin:
             "mkdir": create_function_tool(mkdir),
             "remove": create_function_tool(remove),
         }
+
+    def _path_lock(self, path: Path) -> threading.Lock:
+        with self._path_locks_guard:
+            lock = self._path_locks.get(path)
+            if lock is None:
+                lock = threading.Lock()
+                self._path_locks[path] = lock
+            return lock
 
 
 def create_tool_set(config: Mapping[str, Any]) -> AgentToolSet:

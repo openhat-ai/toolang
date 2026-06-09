@@ -200,7 +200,7 @@ class TelegramChannel:
         sender = self._sender_for_chat(chat_id)
         message_thread_id = message.get("message_thread_id")
         thread_suffix = f"_{message_thread_id}" if isinstance(message_thread_id, int) else ""
-        thread_id = f"tg_{chat_id}{thread_suffix}"
+        thread_id = f"script_tg_{chat_id}{thread_suffix}"
         reply_meta: dict[str, Any] = {"chat_id": chat_id}
         if isinstance(message_thread_id, int):
             reply_meta["message_thread_id"] = message_thread_id

@@ -73,11 +73,18 @@ The proposed full identities are:
 - chore thread: `chr_<id>`
 - web chat thread: `web_<id>`
 - TUI chat thread: `tui_<id>`
+- file request thread: `file_<full-path-sha256-prefix>`
+- script/invoke thunk thread: `thunk_<thunk-name>`
 - Telegram thread: `tg_<external_id>`
 - run id: `run_<id>`
 
-The bare `<id>` stays stable even when a file is renamed, moved, archived, or
-restored.
+For task and chore ids, the bare `<id>` stays stable even when the authored file
+is renamed, moved, archived, or restored.
+
+File request threads use the first 12 hex chars of the SHA-256 of the absolute
+source path, so new file fingerprints at the same path share a thread.
+Script/invoke runs are stable for the invoked thunk name; the default thunk uses
+`thunk_main`.
 
 
 ## Reversible Obfuscation

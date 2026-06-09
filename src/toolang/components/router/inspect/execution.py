@@ -316,7 +316,7 @@ def create_router() -> APIRouter:
 def _require_branchable_thread(context, run) -> None:
     thread = context.store.get_thread(thread_id=run.thread_id)
     origin = thread.origin if thread is not None else run.origin
-    if run.thread_id.startswith(("tsk_", "chr_")) or origin != "chat":
+    if run.thread_id.startswith(("task_", "chore_")) or origin != "chat":
         raise HTTPException(status_code=409, detail=f"thread cannot be rewound or forked: {run.thread_id}")
 
 

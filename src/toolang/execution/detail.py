@@ -48,6 +48,13 @@ class RunInfo:
     id: str
     origin: str
     thread_id: str
+    root_run_id: str
+    parent_run_id: str | None
+    parent_step_index: int | None
+    executable_kind: str
+    executable_name: str | None
+    call_kind: str
+    metadata: dict[str, object]
     superseded: dict[str, object] | None
     created_at: str
     started_at: str
@@ -173,6 +180,13 @@ def run_info_from_record(run: RunRecord) -> RunInfo:
         id=run.run_id,
         origin=run.origin,
         thread_id=run.thread_id,
+        root_run_id=run.root_run_id,
+        parent_run_id=run.parent_run_id,
+        parent_step_index=run.parent_step_index,
+        executable_kind=run.executable_kind,
+        executable_name=run.executable_name,
+        call_kind=run.call_kind,
+        metadata=dict(run.metadata),
         superseded=run.superseded,
         created_at=run.created_at,
         started_at=run.started_at,
@@ -186,7 +200,7 @@ def _thread_channel(thread_id: str, origin: str) -> str:
         return ""
     if thread_id.startswith("web_"):
         return "web"
-    if thread_id.startswith("tg_"):
+    if thread_id.startswith("script_tg_"):
         return "tg"
     return "terminal"
 

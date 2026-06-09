@@ -1447,9 +1447,9 @@ def _event_stream_response(request: Request, stream: AsyncIterator[str]) -> Shut
 
 
 def _thread_metric_kind(thread: ThreadInfo) -> Literal["chat", "chore", "task"]:
-    if thread.id.startswith("tsk_") or thread.origin == "task":
+    if thread.id.startswith("task_") or thread.origin == "task":
         return "task"
-    if thread.id.startswith("chr_") or thread.origin == "chore":
+    if thread.id.startswith("chore_") or thread.origin == "chore":
         return "chore"
     return "chat"
 
@@ -1457,7 +1457,7 @@ def _thread_metric_kind(thread: ThreadInfo) -> Literal["chat", "chore", "task"]:
 def _require_branchable_thread(context: UptimeContext, run: RunRecord) -> None:
     thread = context.store.get_thread(thread_id=run.thread_id)
     origin = thread.origin if thread is not None else run.origin
-    if run.thread_id.startswith(("tsk_", "chr_")) or origin != "chat":
+    if run.thread_id.startswith(("task_", "chore_")) or origin != "chat":
         raise HTTPException(status_code=409, detail=f"thread cannot be rewound or forked: {run.thread_id}")
 
 

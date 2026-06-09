@@ -271,7 +271,7 @@ def _find_or_create_local_thread(
             return thread
     value = allocate_id(context.home / ".runtime" / "ids.json", family=LOCAL_ID_FAMILY).value
     return store.ensure_thread(
-        thread_id=f"chat_{value}",
+        thread_id=f"script_{value}",
         origin="chat",
         peer=ThreadPeer(type="agent", name=peer, thread=None),
         parent=parent,

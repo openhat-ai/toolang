@@ -72,11 +72,12 @@ from .components.registry import (
     format_component_group,
     normalize_component_names,
 )
-from .components.trigger import poll, pulse, watch
+from .components.trigger import files, poll, pulse, watch
 from .common.progress import ProgressSink
 from .state.durable import scan_durable_state
 from .state.live import LiveState, load_live_state
 from .state.prepared import PreparedEntry, PreparedState
+from .state.program import build_prepared_program, load_live_program
 from .models.config import (
     load_default_models,
     load_model_aliases,
@@ -93,6 +94,7 @@ from .plugin import (
 )
 
 DEFAULT_TRIGGER_INTERVAL_MS: dict[str, float] = {
+    "file": files.DEFAULT_INTERVAL_MS,
     "pulse": pulse.DEFAULT_INTERVAL_MS,
     "poll": poll.DEFAULT_INTERVAL_MS,
     "watch": watch.DEFAULT_INTERVAL_MS,
@@ -100,6 +102,7 @@ DEFAULT_TRIGGER_INTERVAL_MS: dict[str, float] = {
 RUN_NAMES = frozenset(component_group(RUNNER_COMPONENTS, "runner"))
 RUN_FEATURES = RUN_NAMES | {"pulse", "poll"}
 DEFAULT_WATCH_DEBOUNCE_MS = watch.DEFAULT_DEBOUNCE_MS
+DEFAULT_FILE_STABLE_MS = files.DEFAULT_STABLE_MS
 RUNTIME_SHUTDOWN_TASK_TIMEOUT_SEC = 1.0
 UVICORN_GRACEFUL_SHUTDOWN_SEC = 1
 DEFAULT_CORS_ORIGINS = [
@@ -153,6 +156,8 @@ class UptimeConfig:
             self._values["components.trigger.watch.interval_ms"] = value
         elif key == "features.watch.debounce_ms":
             self._values["components.trigger.watch.debounce_ms"] = value
+        elif key == "features.file.interval_ms":
+            self._values["components.trigger.file.interval_ms"] = value
         self._migrate_component_keys()
 
     def snapshot(self) -> dict[str, object]:
@@ -172,6 +177,8 @@ class UptimeConfig:
             self._values["components.trigger.watch.interval_ms"] = self._values["features.watch.interval_ms"]
         if "components.trigger.watch.debounce_ms" not in self._values and "features.watch.debounce_ms" in self._values:
             self._values["components.trigger.watch.debounce_ms"] = self._values["features.watch.debounce_ms"]
+        if "components.trigger.file.interval_ms" not in self._values and "features.file.interval_ms" in self._values:
+            self._values["components.trigger.file.interval_ms"] = self._values["features.file.interval_ms"]
 
 
 class UptimeContext:
@@ -306,6 +313,7 @@ class StartupSpec:
     model_selectors: tuple[str, ...]
     tool_selectors: tuple[str, ...] | None
     cap_selectors: tuple[str, ...]
+    file_inboxes: tuple[Path, ...] = ()
     log_spec: str | None = None
 
     @property
@@ -405,6 +413,7 @@ def up(
     models: Sequence[str] | None = None,
     tools: Sequence[str] | None = None,
     caps: Sequence[str] | None = None,
+    file_inboxes: Sequence[Path] | None = None,
     dev: Path | None = None,
     sandbox_child: bool = False,
     component_names: Sequence[str] | None = None,
@@ -425,6 +434,7 @@ def up(
         models=models,
         tools=tools,
         caps=caps,
+        file_inboxes=file_inboxes,
         dev=dev,
         component_names=component_names,
         feature_names=feature_names,
@@ -466,6 +476,7 @@ def start_runtime(
             model_selectors=spec.model_selectors,
             tool_selectors=spec.tool_selectors,
             cap_selectors=spec.cap_selectors,
+            file_inboxes=spec.file_inboxes,
         )
     return _up_local(
         toolang_root=spec.toolang_root,
@@ -479,6 +490,7 @@ def start_runtime(
         model_selectors=spec.model_selectors,
         tool_selectors=spec.tool_selectors,
         cap_selectors=spec.cap_selectors,
+        file_inboxes=spec.file_inboxes,
         log_spec=spec.log_spec,
         progress=progress,
         prepared_state=prepared_state,
@@ -604,6 +616,7 @@ def resolve_startup(
     models: Sequence[str] | None = None,
     tools: Sequence[str] | None = None,
     caps: Sequence[str] | None = None,
+    file_inboxes: Sequence[Path] | None = None,
     dev: Path | None = None,
     component_names: Sequence[str] | None = None,
     feature_names: Sequence[str] | None = None,
@@ -658,6 +671,9 @@ def resolve_startup(
     model_selectors = _normalize_model_selectors(models)
     tool_selectors = _normalize_tool_selectors(tools)
     cap_selectors = _normalize_cap_selectors(caps)
+    resolved_file_inboxes = _normalize_file_inboxes(file_inboxes)
+    if resolved_file_inboxes:
+        enabled_components = _components_with_file_request(enabled_components)
     if _startup_requires_model(enabled_components):
         _validate_startup_models(
             toolang_root=toolang_root,
@@ -665,6 +681,8 @@ def resolve_startup(
             selectors=model_selectors,
             environ=environ,
         )
+    if "runner.file" in enabled_components:
+        _validate_file_thunk(toolang_root=toolang_root, agent_name=agent_name)
     return StartupSpec(
         toolang_root=toolang_root,
         agent_name=agent_name,
@@ -679,12 +697,45 @@ def resolve_startup(
         model_selectors=model_selectors,
         tool_selectors=tool_selectors,
         cap_selectors=cap_selectors,
+        file_inboxes=resolved_file_inboxes,
         log_spec=log_spec.strip() if isinstance(log_spec, str) and log_spec.strip() else None,
     )
 
 
 def _startup_requires_model(enabled_components: Sequence[str]) -> bool:
     return any(component_name in RUNNER_COMPONENTS for component_name in enabled_components)
+
+
+def _components_with_file_request(components: tuple[ComponentName, ...]) -> tuple[ComponentName, ...]:
+    enabled = list(components)
+    for component_name in ("runner.file", "trigger.file"):
+        if component_name not in enabled:
+            enabled.append(cast(ComponentName, component_name))
+    return tuple(enabled)
+
+
+def _normalize_file_inboxes(file_inboxes: Sequence[Path] | None) -> tuple[Path, ...]:
+    if file_inboxes is None:
+        return ()
+    inboxes: list[Path] = []
+    for raw_path in file_inboxes:
+        path = Path(raw_path).expanduser().resolve()
+        if not path.is_dir():
+            raise FileNotFoundError(f"inbox not found: {path}")
+        if path not in inboxes:
+            inboxes.append(path)
+    return tuple(inboxes)
+
+
+def _validate_file_thunk(*, toolang_root: Path, agent_name: str) -> None:
+    program = load_live_program(build_prepared_program(scan_durable_state(toolang_root, agent_name)))
+    thunk = program.get_thunk("file")
+    if thunk.input is None:
+        raise ValueError("file thunk must accept message input")
+    missing_params = [param.name for param in thunk.params if not param.optional]
+    if missing_params:
+        joined = ", ".join(f"{name}=..." for name in missing_params)
+        raise ValueError(f"file thunk cannot have required parameters: {joined}")
 
 
 def _validate_startup_models(
@@ -750,6 +801,8 @@ def build_run_argv(
         command.extend(["--dev", str(spec.dev_artifact)])
     if sandbox_child:
         command.append("--sandbox-child")
+    for inbox in spec.file_inboxes:
+        command.extend(["--inbox", str(inbox)])
     for component_name in spec.enabled_components:
         command.extend(["--enable", component_name])
     return tuple(command)
@@ -774,7 +827,8 @@ def _up_local(
     model_selectors: tuple[str, ...],
     tool_selectors: tuple[str, ...] | None,
     cap_selectors: tuple[str, ...],
-    log_spec: str | None,
+    log_spec: str | None = None,
+    file_inboxes: tuple[Path, ...] = (),
     progress: ProgressSink | None = None,
     prepared_state: PreparedState | None = None,
 ) -> int:
@@ -800,6 +854,7 @@ def _up_local(
         cors_allowed_origins=cors_allowed_origins or [],
         tool_selectors=tool_selectors,
         cap_selectors=cap_selectors,
+        file_inboxes=file_inboxes,
         progress=progress,
         prepared_state=prepared_state,
     )
@@ -848,6 +903,8 @@ def _up_local(
                 bg_tasks.append(poll.spawn(context, stop_signal=stop_signal))
             if "trigger.watch" in enabled_components:
                 bg_tasks.append(watch.spawn(context, stop_signal=stop_signal))
+            if "trigger.file" in enabled_components:
+                bg_tasks.append(files.spawn(context, stop_signal=stop_signal))
 
             runner_task = None
             if any(component in RUNNER_COMPONENTS for component in enabled_components):
@@ -1080,6 +1137,7 @@ def _load_runtime_context(
     host: str = "127.0.0.1",
     port: int = 0,
     cors_allowed_origins: Sequence[str] = (),
+    file_inboxes: Sequence[Path] = (),
     progress: ProgressSink | None = None,
     prepared_state: PreparedState | None = None,
 ) -> UptimeContext:
@@ -1121,6 +1179,9 @@ def _load_runtime_context(
             "components.trigger.poll.interval_ms": DEFAULT_TRIGGER_INTERVAL_MS["poll"],
             "components.trigger.watch.interval_ms": DEFAULT_TRIGGER_INTERVAL_MS["watch"],
             "components.trigger.watch.debounce_ms": DEFAULT_WATCH_DEBOUNCE_MS,
+            "components.trigger.file.interval_ms": DEFAULT_TRIGGER_INTERVAL_MS["file"],
+            "components.trigger.file.stable_ms": DEFAULT_FILE_STABLE_MS,
+            "components.trigger.file.inboxes": tuple(file_inboxes),
             "web.cors_allowed_origins": list(cors_allowed_origins),
             "models.default_selector": default_model_selector,
             "models.allowed_selectors": normalized_model_selectors,
@@ -1309,6 +1370,7 @@ def _up_managed_sandbox(
     model_selectors: tuple[str, ...],
     tool_selectors: tuple[str, ...] | None,
     cap_selectors: tuple[str, ...],
+    file_inboxes: tuple[Path, ...],
 ) -> int:
     endpoint = f"http://{endpoint_host}:{port}"
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -1327,6 +1389,7 @@ def _up_managed_sandbox(
         model_selectors=model_selectors,
         tool_selectors=tool_selectors,
         cap_selectors=cap_selectors,
+        file_inboxes=file_inboxes,
     )
     agents.write_runtime_state(
         toolang_root,

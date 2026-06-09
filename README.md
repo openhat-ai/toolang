@@ -4,7 +4,7 @@
 
 # Toolang
 
-A programming language and runtime for agents.
+A description language and runtime for agents.
 
 Tool calling turned LLMs from chatbots into agents. Toolang makes agents easy to build, run, and share.
 

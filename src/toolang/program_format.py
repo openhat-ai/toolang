@@ -50,7 +50,7 @@ DIRECTIVE_RE = re.compile(
     r"psyche|psyches|hands|handoffs|recall)(?P<space>[ \t]*)(?P<op>=|\+=|-=)"
 )
 LEGACY_DELEGATES_RE = re.compile(r"^[ \t]*delegates[ \t]*(?:=|\+=|-=)")
-TOP_LEVEL_RE = re.compile(r"^(use|struct|psyche|skill|service|prompt|context|instruct|thunk)\b")
+TOP_LEVEL_RE = re.compile(r"^(use|struct|psyche|skill|service|prompt|context|instruct|thunk|flow)\b")
 USE_LINE_RE = re.compile(r"^use[ \t]+(?P<kind>\S+)[ \t]+(?P<reference>.+?)$")
 DECL_HEADER_RE = re.compile(
     r"^(?P<kind>psyche|skill|service|prompt)[ \t]+(?P<name>[^:\s]+)[ \t]*:"

@@ -72,6 +72,13 @@ class RunInput:
             origin=run.origin,
             thunk_name=run.thunk_name,
         )
+        return cls.from_thunk(context, run, thunk)
+
+    @classmethod
+    def from_thunk(cls, context: UptimeContext, run: RunBinding, thunk: Thunk) -> RunInput:
+        """Build one semantic run input from a resolved thunk object."""
+
+        program = run.live.program
         input_text = program.expand_input(run.input_text) if run.input_text else ""
         history = (
             tuple(

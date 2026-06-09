@@ -30,11 +30,23 @@ DIRECTIVE_RE = re.compile(
 )
 LEGACY_DELEGATES_RE = re.compile(r"^[ \t]*delegates[ \t]*(?:=|\+=|-=)")
 TOP_LEVEL_RE = re.compile(
-    r"^(use|struct|psyche|skill|service|prompt|context|instruct|thunk)\b"
+    r"^(use|struct|psyche|skill|service|prompt|context|instruct|thunk|flow)\b"
 )
 OverlayKind = Literal["model", "tool", "psyche", "skill", "service", "hand", "handoff", "recall"]
 OverlayOperator = Literal["set", "add", "remove"]
 MessageBlockKind = Literal["context", "instruct", "user", "assistant", "tool"]
+FlowStageKind = Literal[
+    "bare",
+    "do",
+    "ask",
+    "unfold",
+    "keep",
+    "drop",
+    "rank",
+    "each",
+    "fold",
+    "repeat",
+]
 TREE_SITTER_TYPE_ALIASES = {
     "string": "Text",
     "text": "Text",
@@ -177,6 +189,39 @@ class Thunk:
         ).strip()
 
 
+@dataclass(frozen=True, slots=True)
+class FlowStage:
+    kind: FlowStageKind
+    span: SourceSpan
+    target: str | None = None
+    targets: tuple[str, ...] = ()
+    body: str | None = None
+    doc: str | None = None
+    output: str | None = None
+    parallelism: int | None = None
+    limit: int | None = None
+    count: int | None = None
+    condition: str | None = None
+    stages: tuple["FlowStage", ...] = ()
+
+
+@dataclass(slots=True)
+class Flow:
+    name: str | None
+    input: ParamDecl | None = None
+    params: list[ParamDecl] = field(default_factory=list)
+    output: str | None = None
+    overlays: tuple[ThunkOverlay, ...] = ()
+    stages: tuple[FlowStage, ...] = ()
+    span: SourceSpan = field(default_factory=lambda: SourceSpan(0))
+
+    def flow_name(self) -> str:
+        return self.name or "main"
+
+    def overlays_for(self, kind: OverlayKind) -> tuple[ThunkOverlay, ...]:
+        return tuple(item for item in self.overlays if item.kind == kind)
+
+
 @dataclass(slots=True)
 class Program:
     uses: list[UseDecl] = field(default_factory=list)
@@ -185,6 +230,7 @@ class Program:
     declarations: list[DeclBlock] = field(default_factory=list)
     structs: list[StructDecl] = field(default_factory=list)
     thunks: list[Thunk] = field(default_factory=list)
+    flows: list[Flow] = field(default_factory=list)
     _source_lines: list[str] | None = field(default=None, repr=False, compare=False)
 
     def get_decl(self, kind: str, name: str) -> DeclBlock | None:
@@ -211,12 +257,19 @@ class Program:
                 return item
         return None
 
+    def get_flow(self, name: str) -> Flow | None:
+        for item in self.flows:
+            if item.flow_name() == name:
+                return item
+        return None
+
 
 @dataclass(frozen=True, slots=True)
 class _TreeSitterSource:
     source: str
     line_map: tuple[int | None, ...]
     synthetic_message_rows: frozenset[int]
+    original_lines: tuple[str, ...]
 
     def original_line_index(self, row: int) -> int:
         if 0 <= row < len(self.line_map):
@@ -227,6 +280,12 @@ class _TreeSitterSource:
 
     def original_line_number(self, row: int) -> int:
         return self.original_line_index(row) + 1
+
+    def original_line(self, row: int) -> str:
+        original = self.original_line_index(row)
+        if 0 <= original < len(self.original_lines):
+            return self.original_lines[original]
+        return ""
 
 
 def parse(source: str) -> Program:
@@ -264,6 +323,9 @@ def parse(source: str) -> Program:
         if node.type == "thunk":
             program.thunks.append(_thunk_from_node(node, lines, syntax_source))
             continue
+        if node.type == "flow":
+            program.flows.append(_flow_from_node(node, syntax_source))
+            continue
         raise ToolangError(
             f"Unsupported statement at line {syntax_source.original_line_number(node.start_point.row)}: "
             f"{_node_text(node)!r}"
@@ -274,8 +336,8 @@ def parse(source: str) -> Program:
 
 def _use_from_node(node: Node, syntax_source: _TreeSitterSource) -> UseDecl:
     return UseDecl(
-        kind=_required_text(node, "kind"),
-        reference=_required_text(node, "reference"),
+        kind=_required_text(node, "kind").strip(),
+        reference=_required_text(node, "reference").strip(),
         span=SourceSpan(syntax_source.original_line_number(node.start_point.row)),
     )
 
@@ -404,7 +466,7 @@ def _thunk_from_node(
         span=SourceSpan(original_row + 1),
     )
 
-    for child in body.named_children:
+    for child in _thunk_content_nodes(body):
         if child.type in {"overlay_line", "directive"}:
             overlays.append(_overlay_from_node(child, syntax_source))
             continue
@@ -435,6 +497,263 @@ def _thunk_from_node(
     if implicit_input and thunk.is_thread_thunk():
         thunk.input = None
     return thunk
+
+
+def _thunk_content_nodes(node: Node) -> list[Node]:
+    if node.type in {"overlay_line", "directive", "blank_line", "comment_line", "message", "block"}:
+        return [node]
+    if node.type in {"thunk_body", "thunk_tail", "message_section", "instruction_section", "roled_message", "unroled_message"}:
+        items: list[Node] = []
+        for child in node.named_children:
+            items.extend(_thunk_content_nodes(child))
+        return items
+    return [node]
+
+
+def _flow_from_node(node: Node, syntax_source: _TreeSitterSource) -> Flow:
+    params_node = node.child_by_field_name("params")
+    input_param, params = _flow_params_from_node(params_node)
+    body = _required_child(node, "body")
+    overlays: list[ThunkOverlay] = []
+    stages: list[FlowStage] = []
+    for child in body.named_children:
+        if child.type in {"overlay_line", "directive"}:
+            overlays.append(_overlay_from_node(child, syntax_source))
+            continue
+        if child.type in {"blank_line", "comment_line", "doc_comment"}:
+            continue
+        if child.type == "flow_body_tail":
+            stages.extend(_flow_stages_from_body_tail(child, syntax_source))
+            continue
+        raise ToolangError(
+            f"Unsupported flow content at line {syntax_source.original_line_number(child.start_point.row)}: "
+            f"{child.type!r}"
+        )
+    return Flow(
+        name=_optional_text(node.child_by_field_name("name")),
+        input=input_param,
+        params=params,
+        output=_ast_type_name(_optional_text(node.child_by_field_name("output"))),
+        overlays=tuple(overlays),
+        stages=tuple(stages),
+        span=SourceSpan(syntax_source.original_line_number(node.start_point.row)),
+    )
+
+
+def _flow_params_from_node(node: Node | None) -> tuple[ParamDecl | None, list[ParamDecl]]:
+    if node is None:
+        return ParamDecl(name="in"), []
+    params: list[ParamDecl] = []
+    input_param: ParamDecl | None = None
+    for parameter in node.children_by_field_name("param"):
+        name_node = _required_child(parameter, "name")
+        type_name = _ast_type_name(_optional_text(parameter.child_by_field_name("type")))
+        param = ParamDecl(
+            name=_node_text(name_node),
+            optional=parameter.child_by_field_name("optional") is not None,
+            type_name=type_name,
+        )
+        if param.name in {"in", "_"} and input_param is None and not params:
+            input_param = param
+        else:
+            params.append(param)
+    return input_param, params
+
+
+def _flow_stages_from_body_tail(
+    node: Node,
+    syntax_source: _TreeSitterSource,
+) -> list[FlowStage]:
+    stages: list[FlowStage] = []
+    pending_doc: list[str] = []
+    for child in node.named_children:
+        if child.type == "doc_comment":
+            pending_doc.extend(_doc_comment_lines(_node_text(child)))
+            continue
+        if child.type in {"blank_line", "comment_line", "pass_statement"}:
+            pending_doc.clear()
+            continue
+        if child.type == "flow_body_statement":
+            stages.append(_flow_stage_from_statement(child, syntax_source, doc="\n".join(pending_doc).strip() or None))
+            pending_doc.clear()
+            continue
+        raise ToolangError(
+            f"Unsupported flow statement at line {syntax_source.original_line_number(child.start_point.row)}: "
+            f"{child.type!r}"
+        )
+    return stages
+
+
+def _flow_stage_from_statement(
+    node: Node,
+    syntax_source: _TreeSitterSource,
+    *,
+    doc: str | None = None,
+) -> FlowStage:
+    step = _descendant_of_type(node, "step")
+    if step is None:
+        raise ToolangError(f"Missing flow step at line {syntax_source.original_line_number(node.start_point.row)}.")
+    kind = _flow_stage_kind(step)
+    body_node = step.child_by_field_name("body")
+    head_node = step.child_by_field_name("head")
+    count_node = step.child_by_field_name("count")
+    condition_node = step.child_by_field_name("condition")
+    repeat_body = step.child_by_field_name("body") if kind == "repeat" else None
+    targets = _flow_targets(step)
+    return FlowStage(
+        kind=kind,
+        target=targets[0] if targets else None,
+        targets=targets,
+        body=_flow_stage_body_text(body_node),
+        doc=doc,
+        output=_flow_output_type(head_node),
+        parallelism=_flow_parallelism(head_node),
+        limit=_flow_rank_limit(head_node) if kind == "rank" else None,
+        count=_int_node_text(count_node),
+        condition=_flow_condition_text(condition_node),
+        stages=(
+            tuple(_flow_repeat_stages(repeat_body, syntax_source))
+            if kind == "repeat" and repeat_body is not None
+            else ()
+        ),
+        span=SourceSpan(syntax_source.original_line_number(step.start_point.row)),
+    )
+
+
+def _flow_repeat_stages(
+    node: Node,
+    syntax_source: _TreeSitterSource,
+) -> list[FlowStage]:
+    if node.type != "flow_repeat_block_body":
+        return []
+    stages: list[FlowStage] = []
+    pending_doc: list[str] = []
+    for child in node.named_children:
+        if child.type == "doc_comment":
+            pending_doc.extend(_doc_comment_lines(_node_text(child)))
+            continue
+        if child.type in {"blank_line", "comment_line", "pass_statement"}:
+            pending_doc.clear()
+            continue
+        if child.type == "flow_body_statement":
+            stages.append(_flow_stage_from_statement(child, syntax_source, doc="\n".join(pending_doc).strip() or None))
+            pending_doc.clear()
+    return stages
+
+
+def _doc_comment_lines(text: str) -> list[str]:
+    lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("##"):
+            continue
+        lines.append(stripped.lstrip("#").strip())
+    return lines
+
+
+def _flow_stage_kind(step: Node) -> FlowStageKind:
+    keyword_types: dict[str, FlowStageKind] = {
+        "flow_do_keyword": "do",
+        "flow_ask_keyword": "ask",
+        "flow_unfold_keyword": "unfold",
+        "flow_keep_keyword": "keep",
+        "flow_drop_keyword": "drop",
+        "flow_rank_keyword": "rank",
+        "flow_each_keyword": "each",
+        "flow_fold_keyword": "fold",
+        "flow_repeat_keyword": "repeat",
+    }
+    for child in step.named_children:
+        if child.type in keyword_types:
+            return keyword_types[child.type]
+    return "bare"
+
+
+def _flow_targets(node: Node) -> tuple[str, ...]:
+    targets: list[str] = []
+    stack = list(node.named_children)
+    while stack:
+        current = stack.pop(0)
+        if current.type == "flow_target":
+            targets.append(_node_text(current).strip())
+            continue
+        stack[0:0] = list(current.named_children)
+    return tuple(target for target in targets if target)
+
+
+def _flow_stage_body_text(node: Node | None) -> str | None:
+    if node is None:
+        return None
+    if node.type == "flow_bare_thunk_body":
+        lines: list[tuple[int, str]] = []
+        for child in node.named_children:
+            if child.type == "flow_bare_content_line":
+                content = _required_child(child, "content")
+                lines.append((child.start_point.row + 1, _node_text(content).rstrip()))
+            elif child.type == "blank_line":
+                lines.append((child.start_point.row + 1, ""))
+        return "\n".join(text for _, text in _dedent_line_items(lines)).strip()
+    if node.type == "flow_inline_step_body":
+        value = node.child_by_field_name("value")
+        return _flow_stage_body_text(value)
+    if node.type in {"flow_inline_body", "flow_inline_text"}:
+        return _node_text(node).strip()
+    if node.type == "block_indented_implicit":
+        return _block_value_text(node)
+    if node.type == "flow_repeat_block_body":
+        return None
+    return _node_text(node).strip()
+
+
+def _flow_output_type(node: Node | None) -> str | None:
+    if node is None:
+        return None
+    output_node = _descendant_of_type(node, "flow_inline_output_type")
+    if output_node is not None:
+        return _ast_type_name(_required_text(output_node, "type"))
+    if node.type == "flow_inline_output_type":
+        return _ast_type_name(_required_text(node, "type"))
+    return None
+
+
+def _flow_parallelism(node: Node | None) -> int | None:
+    if node is None:
+        return None
+    parallel = _descendant_of_type(node, "flow_parallelism")
+    if parallel is None and node.type == "flow_parallelism":
+        parallel = node
+    if parallel is None:
+        return None
+    return _int_node_text(parallel.child_by_field_name("count"))
+
+
+def _flow_rank_limit(node: Node | None) -> int | None:
+    if node is None:
+        return None
+    rank = _descendant_of_type(node, "flow_rank_limit")
+    if rank is None and node.type == "flow_rank_limit":
+        rank = node
+    if rank is None:
+        return None
+    return _int_node_text(rank.child_by_field_name("count"))
+
+
+def _flow_condition_text(node: Node | None) -> str | None:
+    if node is None:
+        return None
+    text = node.child_by_field_name("text")
+    if text is None:
+        return _node_text(node).strip() or None
+    if text.type == "block_indented_implicit":
+        return _block_value_text(text)
+    return _node_text(text).strip() or None
+
+
+def _int_node_text(node: Node | None) -> int | None:
+    if node is None:
+        return None
+    text = _node_text(node).strip()
+    return int(text) if text else None
 
 
 def _params_from_node(node: Node | None) -> tuple[ParamDecl | None, list[ParamDecl]]:
@@ -478,8 +797,14 @@ def _overlay_from_node(node: Node, syntax_source: _TreeSitterSource) -> ThunkOve
         if overlay.child_by_field_name("operator") is not None
         else _required_text(overlay, "operator").strip()
     )
-    raw_values = _optional_text(overlay.child_by_field_name("values")) or ""
     line_number = syntax_source.original_line_number(node.start_point.row)
+    raw_values = (
+        _raw_overlay_values_from_line(syntax_source.original_line(node.start_point.row))
+        if node.type in {"overlay_line", "directive"}
+        else None
+    )
+    if raw_values is None:
+        raw_values = _optional_text(overlay.child_by_field_name("values")) or ""
     kind = _overlay_kind(subject, line_number=line_number)
     items = tuple(
         item
@@ -492,6 +817,14 @@ def _overlay_from_node(node: Node, syntax_source: _TreeSitterSource) -> ThunkOve
         items=items,
         span=SourceSpan(line_number),
     )
+
+
+def _raw_overlay_values_from_line(line: str) -> str | None:
+    match = DIRECTIVE_RE.match(line)
+    if match is None:
+        return None
+    values, _comment = _split_inline_comment(line[match.end() :])
+    return values
 
 
 def _overlay_kind(subject: str, *, line_number: int) -> OverlayKind:
@@ -589,7 +922,7 @@ def _block_value_text(node: Node) -> str:
     if node.type == "block_inline":
         content = node.child_by_field_name("content") or node.child_by_field_name("name")
         return _node_text(content).strip()
-    if node.type == "block_indented":
+    if node.type in {"block_indented", "block_indented_implicit"}:
         lines: list[tuple[int, str]] = []
         for child in node.named_children:
             if child.type == "block_indented_content_line":
@@ -881,6 +1214,7 @@ def _tree_sitter_source(source: str) -> _TreeSitterSource:
         source=tree_source,
         line_map=tuple(line_map),
         synthetic_message_rows=frozenset(synthetic_message_rows),
+        original_lines=tuple(original_lines),
     )
 
 
@@ -922,10 +1256,21 @@ def _transform_directive_line(line: str) -> str:
         return line
     key = match.group("key")
     normalized_key = "models" if key == "model" else key
+    values = line[match.end() :]
+    rendered_values = " selector" if values.strip() else values
     return (
         f"{match.group('indent')}{normalized_key}"
-        f"{match.group('space')}{match.group('op')}{line[match.end():]}"
+        f"{match.group('space')}{match.group('op')}{rendered_values}"
     )
+
+
+def _split_inline_comment(line: str) -> tuple[str, str]:
+    match = re.search(r"(?<!\S)#", line)
+    if match is None:
+        return line.rstrip(), ""
+    body = line[: match.start()].rstrip()
+    comment = line[match.start() :].strip()
+    return body, f"  {comment}" if body else comment
 
 
 def _tree_sitter_params(raw: str) -> str:

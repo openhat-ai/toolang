@@ -21,3 +21,5 @@ wheels/
 archive/
 scratch/
 reference/generated/
+
+.zed

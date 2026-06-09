@@ -14,10 +14,11 @@ from typer.testing import CliRunner
 
 from toolang import agents
 from toolang import caps
-from toolang.base.types.message import Message
+from toolang.base.types.message import Message, TextPart
 from toolang.base.types.model import ModelInfo
 from toolang.base.types.tool import ToolContext, ToolDefinition
 import toolang.cli.toolang.app as cli
+import toolang.cli.invoke as cli_invoke
 import toolang.cli.caps.app as caps_cli
 import toolang.cli.caps.commands as caps_commands
 import toolang.cli.logo as cli_logo
@@ -26,7 +27,8 @@ from toolang.cli.progress import CliProgress
 from toolang.components.trigger import watch
 from toolang.config.log import DEFAULT_AGENT_LOG_SPEC
 from toolang.config.log_spec import PY_LOG_ENV_VAR
-from toolang.execution.events import RunStart
+from toolang.execution.events import RunEnd, RunStart, StepEnd, StepStart
+from toolang.execution.records import ChildCallStepPayload, FlowOpStepPayload
 from toolang.common.progress import ProgressEvent
 from toolang import work
 from toolang.execution.db import ExecutionStore, execution_db_path
@@ -180,6 +182,124 @@ def test_cli_main_intercepts_local_too_program_before_typer(monkeypatch, tmp_pat
     assert result == 0
     assert captured["global_args"] == []
     assert captured["body"] == [str(program_path), "--help"]
+    assert captured["prog_name"] == "toolang"
+
+
+def test_cli_main_runs_roaming_file_runtime_for_script_inbox(monkeypatch, tmp_path: Path) -> None:
+    program_path = tmp_path / "demo.too"
+    program_path.write_text("thunk file(_):\n  Process a file.\n", encoding="utf-8")
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    captured: dict[str, object] = {}
+
+    def fake_file_runtime(global_args: list[str], body: list[str]) -> int:
+        captured["global_args"] = list(global_args)
+        captured["body"] = list(body)
+        return 0
+
+    monkeypatch.setattr(cli, "_run_roaming_file_runtime", fake_file_runtime)
+    monkeypatch.setattr(cli.sys, "argv", ["toolang"])
+
+    result = cli.main([str(program_path), "--inbox", str(inbox)])
+
+    assert result == 0
+    assert captured["global_args"] == []
+    assert captured["body"] == [str(program_path), "--inbox", str(inbox)]
+
+
+def test_cli_main_routes_roaming_thread_commands_to_materialized_agent(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    program_path = tmp_path / "demo.too"
+    program_path.write_text("thunk:\n  Reply directly.\n", encoding="utf-8")
+    toolang_root = tmp_path / ".toolang"
+    captured: dict[str, object] = {}
+
+    def fake_materialize(path: Path) -> tuple[Path, str]:
+        captured["source"] = path
+        return toolang_root, "demo"
+
+    def fake_app(*, args, prog_name: str, standalone_mode: bool) -> None:
+        captured["args"] = args
+        captured["prog_name"] = prog_name
+        captured["standalone_mode"] = standalone_mode
+        captured["prefix_agent"] = cli._CLI_PREFIX_AGENT
+
+    monkeypatch.setattr(cli.agents, "materialize_roaming_program", fake_materialize)
+    monkeypatch.setattr(cli, "app", cast(object, fake_app))
+    monkeypatch.setattr(cli.sys, "argv", ["toolang"])
+
+    result = cli.main([str(program_path), "threads"])
+
+    assert result == 0
+    assert captured == {
+        "source": program_path.resolve(),
+        "args": ["--root", str(toolang_root), "threads"],
+        "prog_name": "toolang",
+        "standalone_mode": True,
+        "prefix_agent": "demo",
+    }
+    assert cli._CLI_PREFIX_AGENT is None
+
+
+def test_cli_main_roaming_threads_can_read_offline_materialized_store(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    program_path = _write_roaming_program(tmp_path, "thunk:\n  Reply directly.\n", name="demo")
+    toolang_root, agent_name = agents.materialize_roaming_program(program_path)
+    store = ExecutionStore(execution_db_path(toolang_root, agent_name))
+    try:
+        run = store.start_run(
+            run_id="run_first",
+            thread_id="script_main",
+            origin="script",
+            input=Message.user("roaming input"),
+            created_at="2026-06-06T01:00:00Z",
+            started_at="2026-06-06T01:00:00Z",
+        )
+        store.finish_run(run_id=run.run_id, finished_at="2026-06-06T01:01:00Z")
+    finally:
+        store.close()
+
+    monkeypatch.setattr(cli.sys, "argv", ["toolang"])
+
+    result = cli.main([str(program_path), "threads"])
+    output = capsys.readouterr()
+
+    assert result == 0
+    assert "script_main" in output.out
+    assert "roaming input" in output.out
+
+
+def test_cli_main_keeps_roaming_thunk_invoke_when_thunk_is_present(monkeypatch, tmp_path: Path) -> None:
+    program_path = tmp_path / "demo.too"
+    program_path.write_text("thunk file(_):\n  Process a file.\n", encoding="utf-8")
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    captured: dict[str, object] = {}
+
+    def fake_handle(global_args: list[str], body: list[str], *, prog_name: str) -> int:
+        captured["global_args"] = list(global_args)
+        captured["body"] = list(body)
+        captured["prog_name"] = prog_name
+        return 0
+
+    def fail_file_runtime(global_args: list[str], body: list[str]) -> int:
+        del global_args, body
+        raise AssertionError("file runtime should not be used")
+
+    monkeypatch.setattr(cli, "_run_roaming_file_runtime", fail_file_runtime)
+    monkeypatch.setattr(cli.cli_invoke, "handle_roaming_invoke", fake_handle)
+    monkeypatch.setattr(cli.sys, "argv", ["toolang"])
+
+    result = cli.main([str(program_path), "file", "--inbox", str(inbox)])
+
+    assert result == 0
+    assert captured["global_args"] == []
+    assert captured["body"] == [str(program_path), "file", "--inbox", str(inbox)]
     assert captured["prog_name"] == "toolang"
 
 
@@ -1570,7 +1690,7 @@ def test_roaming_materialize_removes_stale_config_symlink(tmp_path: Path) -> Non
     assert not config_link.is_symlink()
 
 
-def test_cli_roaming_program_help_lists_available_thunks(capsys, tmp_path: Path) -> None:
+def test_cli_roaming_program_help_lists_available_targets(capsys, tmp_path: Path) -> None:
     program_path = _write_roaming_program(
         tmp_path,
         """
@@ -1579,6 +1699,9 @@ thunk:
 
 thunk summarize(_, style?):
   Summarize the current workspace in a concise style.
+
+flow review(in: Text):
+  each: Review one item.
 """.strip(),
     )
 
@@ -1592,8 +1715,8 @@ thunk summarize(_, style?):
 
     assert result == 0
     assert "Usage: toolang" in captured.out
-    assert "SCRIPT THUNK [OPTIONS] [PARAMS] [INPUT]..." in captured.out
-    assert "Invoke a thunk from a Toolang script." in captured.out
+    assert "SCRIPT TARGET [OPTIONS] [PARAMS] [INPUT]..." in captured.out
+    assert "Invoke a thunk or flow from a Toolang script." in captured.out
     assert "Script:" in captured.out
     assert "* SCRIPT" not in captured.out
     assert program_path.name in captured.out
@@ -1615,10 +1738,11 @@ thunk summarize(_, style?):
     assert "@PATH.mp3" not in captured.out
     assert "Modality is inferred from the extension." in captured.out
     assert "Multimodal message input" not in captured.out
-    assert "Thunks" in captured.out
+    assert "Targets" in captured.out
     assert "main" in captured.out
     assert "summarize" in captured.out
-    assert captured.out.index("Options") < captured.out.index("Thunks") < captured.out.index("Params") < captured.out.index("Input")
+    assert "review" in captured.out
+    assert captured.out.index("Options") < captured.out.index("Targets") < captured.out.index("Params") < captured.out.index("Input")
 
 
 def test_cli_roaming_thunk_help_is_dynamic(capsys, tmp_path: Path) -> None:
@@ -1640,12 +1764,12 @@ thunk summarize(_, style?, audience?):
 
     assert result == 0
     assert "Usage: toolang" in captured.out
-    assert "SCRIPT THUNK" in captured.out
+    assert "SCRIPT TARGET" in captured.out
     assert "Summarize the current workspace in a concise style." in captured.out
     assert "Script:" in captured.out
     assert program_path.name in captured.out
     assert "Thunk:  summarize" in captured.out
-    assert "* THUNK" not in captured.out
+    assert "* TARGET" not in captured.out
     assert "summarize" in captured.out
     assert "[OPTIONS]" in captured.out
     assert "[PARAMS]" in captured.out
@@ -2163,7 +2287,7 @@ thunk:
     assert "Run: run_" not in output.err
 
 
-def test_cli_roaming_invoke_requires_explicit_thunk_name(tmp_path: Path, capsys) -> None:
+def test_cli_roaming_invoke_requires_explicit_target_name(tmp_path: Path, capsys) -> None:
     program_path = _write_roaming_program(
         tmp_path,
         """
@@ -2175,8 +2299,8 @@ thunk:
     output = capsys.readouterr()
 
     assert result == 0
-    assert "SCRIPT THUNK [OPTIONS] [PARAMS] [INPUT]..." in output.out
-    assert "Thunks" in output.out
+    assert "SCRIPT TARGET [OPTIONS] [PARAMS] [INPUT]..." in output.out
+    assert "Targets" in output.out
 
 
 def test_cli_roaming_invoke_requires_part_for_message_input(tmp_path: Path, capsys) -> None:
@@ -2193,13 +2317,13 @@ thunk summarize(_):
 
     assert result == 0
     assert "Usage:" in output.out
-    assert "SCRIPT THUNK [OPTIONS] [INPUT]..." in output.out
+    assert "SCRIPT TARGET [OPTIONS] [INPUT]..." in output.out
     assert "Summarize the current workspace in a concise style." in output.out
     assert "Thunk:  summarize" in output.out
     assert output.err == ""
 
 
-def test_cli_roaming_invoke_rejects_unknown_thunk_name(tmp_path: Path, capsys) -> None:
+def test_cli_roaming_invoke_rejects_unknown_target_name(tmp_path: Path, capsys) -> None:
     program_path = _write_roaming_program(
         tmp_path,
         """
@@ -2212,7 +2336,63 @@ thunk:
     output = capsys.readouterr()
 
     assert result == 1
-    assert "unknown thunk: summarize" in output.err
+    assert "unknown target: summarize" in output.err
+
+
+def test_cli_roaming_invoke_passes_flow_executable_kind(tmp_path: Path, monkeypatch, capsys) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+flow review(in: Text):
+  each: Normalize the item.
+""".strip(),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_invoke(
+        *,
+        toolang_root: Path,
+        agent_name: str,
+        thunk_name: str | None,
+        input_text: str | None,
+        models: tuple[str, ...],
+        metadata: dict[str, object] | None,
+        environ: dict[str, str],
+        response,
+        log_spec: str | None = None,
+        prepared_state=None,
+    ):
+        del toolang_root, agent_name, models, environ, response, log_spec, prepared_state
+        captured["thunk_name"] = thunk_name
+        captured["input_text"] = input_text
+        captured["metadata"] = dict(metadata or {})
+
+        class _Outcome:
+            run_id = "run_test"
+            status = "finished"
+            output_text = "done"
+            error = None
+            log_path = None
+
+        return _Outcome()
+
+    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+
+    result = cli.main([str(program_path), "review", "one", "two"])
+    output = capsys.readouterr()
+
+    assert result == 0
+    assert output.out.strip() == "done"
+    assert captured["thunk_name"] == "review"
+    assert captured["input_text"] == "one\n\ntwo"
+    assert captured["metadata"] == {
+        "invoke_params": {},
+        "invoke_parts": [
+            {"type": "text", "text": "one"},
+            {"type": "text", "text": "two"},
+        ],
+        "executable_kind": "flow",
+    }
 
 
 def test_cli_roaming_invoke_supports_end_of_options_separator(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -2382,6 +2562,115 @@ thunk(_):
         "invoke_params": {},
         "invoke_parts": [
             {"type": "text", "text": "# Title\n\nBody text.\n", "path": str(note.resolve())},
+        ],
+    }
+
+
+def test_cli_roaming_invoke_reads_mdx_path_as_text_part(tmp_path: Path, monkeypatch, capsys) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+thunk(_):
+  Reply directly.
+""".strip(),
+    )
+    note = tmp_path / "note.mdx"
+    note.write_text("# Title\n\n<Callout>Body text.</Callout>\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def fake_invoke(
+        *,
+        toolang_root: Path,
+        agent_name: str,
+        thunk_name: str | None,
+        input_text: str | None,
+        models: tuple[str, ...],
+        metadata: dict[str, object] | None,
+        environ: dict[str, str],
+        response,
+        log_spec: str | None = None,
+        prepared_state=None,
+    ):
+        del toolang_root, agent_name, thunk_name, models, environ, response, log_spec, prepared_state
+        captured["input_text"] = input_text
+        captured["metadata"] = dict(metadata or {})
+
+        class _Outcome:
+            run_id = "run_test"
+            status = "finished"
+            output_text = "done"
+            error = None
+            log_path = None
+
+        return _Outcome()
+
+    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+
+    result = cli.main([str(program_path), "main", f"@{note}"])
+    output = capsys.readouterr()
+
+    text = "# Title\n\n<Callout>Body text.</Callout>\n"
+    assert result == 0
+    assert output.out.strip() == "done"
+    assert captured["input_text"] == text
+    assert captured["metadata"] == {
+        "invoke_params": {},
+        "invoke_parts": [
+            {"type": "text", "text": text, "path": str(note.resolve())},
+        ],
+    }
+
+
+def test_cli_roaming_invoke_passes_video_path_part(tmp_path: Path, monkeypatch, capsys) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+thunk(_):
+  Reply directly.
+""".strip(),
+    )
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"mp4")
+    captured: dict[str, object] = {}
+
+    def fake_invoke(
+        *,
+        toolang_root: Path,
+        agent_name: str,
+        thunk_name: str | None,
+        input_text: str | None,
+        models: tuple[str, ...],
+        metadata: dict[str, object] | None,
+        environ: dict[str, str],
+        response,
+        log_spec: str | None = None,
+        prepared_state=None,
+    ):
+        del toolang_root, agent_name, thunk_name, models, environ, response, log_spec, prepared_state
+        captured["input_text"] = input_text
+        captured["metadata"] = dict(metadata or {})
+
+        class _Outcome:
+            run_id = "run_test"
+            status = "finished"
+            output_text = "done"
+            error = None
+            log_path = None
+
+        return _Outcome()
+
+    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+
+    result = cli.main([str(program_path), "main", f"@{video}"])
+    output = capsys.readouterr()
+
+    assert result == 0
+    assert output.out.strip() == "done"
+    assert captured["input_text"] == f"Attached video: {video.resolve()}"
+    assert captured["metadata"] == {
+        "invoke_params": {},
+        "invoke_parts": [
+            {"type": "video", "path": str(video.resolve())},
         ],
     }
 
@@ -6573,6 +6862,32 @@ def test_cli_threads_lists_title_and_run_count(monkeypatch) -> None:
     assert title not in result.stdout
 
 
+def test_cli_threads_lists_offline_runs_when_agent_is_not_running(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    store = ExecutionStore(execution_db_path(toolang_root, "alice"))
+    try:
+        run = store.start_run(
+            run_id="run_first",
+            thread_id="script_main",
+            origin="script",
+            input=Message.user("index docs"),
+            created_at="2026-06-06T01:00:00Z",
+            started_at="2026-06-06T01:00:00Z",
+        )
+        store.finish_run(run_id=run.run_id, finished_at="2026-06-06T01:01:00Z")
+    finally:
+        store.close()
+
+    result = _invoke_app(
+        ["threads", "alice"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+    )
+
+    assert result.exit_code == 0
+    assert "script_main" in result.stdout
+    assert "index docs" in result.stdout
+
+
 def test_cli_runs_lists_title(monkeypatch) -> None:
     title = "This is a very long run summary that should be truncated before display"
 
@@ -6607,15 +6922,50 @@ def test_cli_runs_lists_title(monkeypatch) -> None:
     assert title not in result.stdout
 
 
+def test_cli_runs_falls_back_to_offline_store_when_api_is_unavailable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    store = ExecutionStore(execution_db_path(toolang_root, "alice"))
+    try:
+        run = store.start_run(
+            run_id="run_first",
+            thread_id="script_abc123",
+            origin="file",
+            input=Message.user("summarize file"),
+            created_at="2026-06-06T01:00:00Z",
+            started_at="2026-06-06T01:00:00Z",
+        )
+        store.finish_run(run_id=run.run_id, finished_at="2026-06-06T01:01:00Z")
+    finally:
+        store.close()
+
+    monkeypatch.setattr(
+        cli,
+        "_runtime_json",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(cli.click.ClickException("runtime request failed")),
+    )
+
+    result = _invoke_app(
+        ["runs", "alice", "--thread", "script_abc123"],
+        env={"TOOLANG_ROOT": str(toolang_root)},
+    )
+
+    assert result.exit_code == 0
+    assert "run_first" in result.stdout
+    assert "summarize file" in result.stdout
+
+
 def test_cli_runs_hides_thread_column_when_filtered_by_thread(monkeypatch) -> None:
     def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
-        assert request_path == "/api/v1/runs?thread_id=tui_bzrh67se"
+        assert request_path == "/api/v1/runs?thread_id=term_bzrh67se"
         return {
             "items": [
                 {
                     "id": "run_abc12345",
                     "summary": "one run",
-                    "thread_id": "tui_bzrh67se",
+                    "thread_id": "term_bzrh67se",
                     "origin": "chat",
                     "status": "running",
                     "created_at": "2026-06-04T09:00:00Z",
@@ -6625,11 +6975,11 @@ def test_cli_runs_hides_thread_column_when_filtered_by_thread(monkeypatch) -> No
 
     monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
 
-    result = _invoke_app(["runs", "dev", "--thread", "tui_bzrh67se"])
+    result = _invoke_app(["runs", "dev", "--thread", "term_bzrh67se"])
 
     assert result.exit_code == 0
     assert "THREAD" not in result.stdout
-    assert "tui_bzrh67se" not in result.stdout
+    assert "term_bzrh67se" not in result.stdout
     assert "RUN" in result.stdout
     assert "run_abc12345" in result.stdout
     assert "one run" in result.stdout
@@ -6664,7 +7014,7 @@ def test_cli_chat_without_args_creates_terminal_thread(monkeypatch) -> None:
 
     def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
         calls.append((request_path, payload))
-        return {"thread_id": "tui_new"}
+        return {"thread_id": "term_new"}
 
     monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
     monkeypatch.setattr(cli, "_start_thread_event_listener", lambda _ctx, _thread_id, **_kwargs: FakeListener())
@@ -6685,7 +7035,7 @@ def test_cli_chat_without_args_creates_terminal_thread(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert calls == [("/api/v1/threads", {"client": "tui"})]
-    assert "thread tui_new" in result.stdout
+    assert "thread term_new" in result.stdout
 
 
 def test_cli_chat_thread_without_message_sends_interactive_lines(monkeypatch) -> None:
@@ -6706,19 +7056,19 @@ def test_cli_chat_thread_without_message_sends_interactive_lines(monkeypatch) ->
     monkeypatch.setattr(cli, "_start_thread_event_listener", fake_start_thread_event_listener)
     monkeypatch.setattr(cli, "_runtime_consume_stream", fake_runtime_consume_stream)
 
-    result = _invoke_app(["chat", "dev", "--thread", "tui_existing"], input="hello\n/exit\n")
+    result = _invoke_app(["chat", "dev", "--thread", "term_existing"], input="hello\n/exit\n")
 
     assert result.exit_code == 0
-    assert "thread tui_existing" in result.stdout
-    assert listeners == ["tui_existing", "stopped"]
+    assert "thread term_existing" in result.stdout
+    assert listeners == ["term_existing", "stopped"]
     assert len(calls) == 1
     request_path, payload = calls[0]
     assert request_path == "/api/v1/chat/stream"
-    assert payload["thread"] == "tui_existing"
+    assert payload["thread"] == "term_existing"
     assert payload["client"] == "tui"
     assert payload["message"] == {"role": "user", "parts": [{"type": "text", "text": "hello"}]}
     assert isinstance(payload["request_id"], str)
-    assert payload["request_id"].startswith("tui_")
+    assert payload["request_id"].startswith("term_")
 
 
 def test_cli_thread_event_renderer_prints_thread_messages(capsys) -> None:
@@ -6761,7 +7111,7 @@ def test_cli_thread_event_renderer_skips_prompt_during_local_stream(capsys) -> N
 
 
 def test_cli_thread_event_renderer_skips_prompt_for_local_request(capsys) -> None:
-    local_request_ids = {"tui_req"}
+    local_request_ids = {"term_req"}
     renderer = cli._ThreadEventRenderer(redraw_prompt=True, local_request_ids=local_request_ids)
 
     renderer.render(
@@ -6769,7 +7119,7 @@ def test_cli_thread_event_renderer_skips_prompt_for_local_request(capsys) -> Non
             "type": "run_input",
             "payload": {
                 "run_id": "run_tui",
-                "request_id": "tui_req",
+                "request_id": "term_req",
                 "action": "start",
                 "message": {"role": "user", "parts": [{"type": "text", "text": "local"}]},
             },
@@ -6813,6 +7163,520 @@ def test_cli_chat_help_uses_thread_option() -> None:
     assert "Thread id to continue; run id accepted." in result.stdout
 
 
+def test_cli_hidden_lists_hidden_commands_without_help_leak() -> None:
+    help_result = _invoke_app(["--help"])
+    hidden_result = _invoke_app(["hidden"])
+
+    assert help_result.exit_code == 0
+    assert "hidden" not in help_result.stdout
+    assert hidden_result.exit_code == 0
+    assert "Usage:" in hidden_result.stdout
+    assert " hidden [OPTIONS]" in hidden_result.stdout
+    assert "Show commands hidden from the main help." in hidden_result.stdout
+    assert "Run with: root COMMAND [OPTIONS]" in hidden_result.stdout
+    assert "Advanced Commands" in hidden_result.stdout
+    assert "Alias Commands" in hidden_result.stdout
+    assert "send" in hidden_result.stdout
+    assert "Alias to chat --thread THREAD MESSAGE." in hidden_result.stdout
+    assert "attach" in hidden_result.stdout
+    assert "Alias to chat --thread THREAD." in hidden_result.stdout
+    assert "fmt" in hidden_result.stdout
+    assert "Show hidden commands." not in hidden_result.stdout
+
+
+def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        calls.append(request_path)
+        if request_path == "/api/v1/runs/run_parent":
+            return _inspect_run_detail("run_parent", thread_id="term_thread", root_run_id="run_parent")
+        if request_path == "/api/v1/threads/term_thread?limit=100":
+            return {
+                "info": {"id": "term_thread"},
+                "runs": [
+                    _inspect_run_detail(
+                        "run_parent",
+                        thread_id="term_thread",
+                        root_run_id="run_parent",
+                        steps=[
+                            {
+                                "record": {
+                                    "step_index": 1,
+                                    "kind": "flow_op",
+                                    "status": "finished",
+                                    "payload": {
+                                        "stage_index": 0,
+                                        "stage_total": 2,
+                                        "stage_kind": "rank",
+                                        "stage_title": "Rank candidates",
+                                        "op": "prepare_rank",
+                                        "output_preview": {"count": 3},
+                                        "metadata": {"input_preview": {"count": 3}, "parallelism": 2},
+                                    },
+                                    "output": [],
+                                },
+                                "message": None,
+                            },
+                            {
+                                "record": {
+                                    "step_index": 2,
+                                    "kind": "child_call",
+                                    "status": "finished",
+                                    "payload": {
+                                        "target_kind": "thunk",
+                                        "target": "score",
+                                        "child_run_ids": ["run_child"],
+                                        "parallelism": 2,
+                                        "lane_index": 0,
+                                        "stage_index": 0,
+                                        "stage_total": 2,
+                                        "stage_kind": "rank",
+                                        "item_indexes": [0],
+                                        "metadata": {
+                                            "stage_title": "Rank candidates",
+                                            "parallelism": 2,
+                                            "item_count": 3,
+                                        },
+                                    },
+                                    "output": [],
+                                },
+                                "message": None,
+                            },
+                            {
+                                "record": {
+                                    "step_index": 3,
+                                    "kind": "flow_op",
+                                    "status": "finished",
+                                    "payload": {
+                                        "stage_index": 0,
+                                        "stage_total": 2,
+                                        "stage_kind": "rank",
+                                        "stage_title": "Rank candidates",
+                                        "op": "set_current",
+                                        "output_preview": {"count": 2},
+                                        "metadata": {"input_preview": {"count": 3}, "parallelism": 2},
+                                    },
+                                    "output": [],
+                                },
+                                "message": None,
+                            },
+                            {
+                                "record": {
+                                    "step_index": 4,
+                                    "kind": "child_call",
+                                    "status": "finished",
+                                    "payload": {
+                                        "target_kind": "thunk",
+                                        "child_run_ids": ["run_inline"],
+                                        "stage_index": 1,
+                                        "stage_total": 2,
+                                        "stage_kind": "do",
+                                        "metadata": {"source_line": 34, "stage_title": "Inline summary"},
+                                    },
+                                    "output": [],
+                                },
+                                "message": None,
+                            },
+                        ],
+                    ),
+                    _inspect_run_detail(
+                        "run_child",
+                        thread_id="term_thread",
+                        root_run_id="run_parent",
+                        parent_run_id="run_parent",
+                        parent_step_index=2,
+                        executable_kind="thunk",
+                        executable_name="score",
+                        call_kind="stage",
+                    ),
+                    _inspect_run_detail(
+                        "run_inline",
+                        thread_id="term_thread",
+                        root_run_id="run_parent",
+                        parent_run_id="run_parent",
+                        parent_step_index=4,
+                        executable_kind="thunk",
+                        executable_name=None,
+                        call_kind="stage",
+                        metadata={"child": {"source_line": 34}},
+                    ),
+                ],
+            }
+        raise AssertionError(request_path)
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+
+    result = _invoke_app(["inspect", "dev", "run_parent"])
+
+    assert result.exit_code == 0
+    assert calls == ["/api/v1/runs/run_parent", "/api/v1/threads/term_thread?limit=100"]
+    assert "thread term_thread" in result.stdout
+    assert "run_parent flow:research succeeded" in result.stdout
+    assert "✓ 1/2 rank" in result.stdout
+    assert "Rank candidates" in result.stdout
+    assert "3 items -> 2 items · 2 lanes" in result.stdout
+    assert "✓ 2/2 do" in result.stdout
+    assert "Inline summary" in result.stdout
+    assert "run_child" not in result.stdout
+    assert "step 1 model_call" not in result.stdout
+
+    verbose_result = _invoke_app(["inspect", "dev", "run_parent", "-vv"])
+
+    assert verbose_result.exit_code == 0
+    assert "lane 1/2" in verbose_result.stdout
+    assert "item 1/3 · thunk score · run_child succeeded" in verbose_result.stdout
+    assert "thunk <L34> · run_inline succeeded" in verbose_result.stdout
+
+
+def test_script_progress_defaults_to_stage_summary() -> None:
+    sink = cli_invoke._ScriptProgressSink(thunk_name="research", render=False)
+
+    sink.on_event(
+        RunStart(
+            run_id="run_parent",
+            origin="script",
+            thread_id="script_1",
+            input=Message.user("query"),
+            created_at="2026-01-01T00:00:00Z",
+            started_at="2026-01-01T00:00:00Z",
+            executable_kind="flow",
+            executable_name="research",
+        )
+    )
+    sink.on_event(
+        RunStart(
+            run_id="run_child",
+            origin="script",
+            thread_id="script_1",
+            input=Message.user("query"),
+            created_at="2026-01-01T00:00:01Z",
+            started_at="2026-01-01T00:00:01Z",
+            parent_run_id="run_parent",
+            parent_step_index=2,
+            executable_kind="thunk",
+            executable_name="search_web",
+            call_kind="stage",
+            metadata={
+                "child": {
+                    "stage_label": "each: Search the web",
+                    "stage_index": 1,
+                    "stage_kind": "each",
+                    "parallelism": 2,
+                    "lane_index": 0,
+                    "item_index": 0,
+                    "item_count": 3,
+                }
+            },
+        )
+    )
+    sink.on_event(
+        StepStart(
+            run_id="run_child",
+            thread_id="script_1",
+            step_index=1,
+            kind="model_call",
+            input=(),
+            started_at="2026-01-01T00:00:01Z",
+        )
+    )
+    sink.on_event(
+        StepEnd(
+            run_id="run_parent",
+            thread_id="script_1",
+            step_index=1,
+            kind="flow_op",
+            status="finished",
+            output=(),
+            payload=FlowOpStepPayload(
+                op="prepare_each",
+                stage_index=1,
+                stage_kind="each",
+                output_preview={"count": 3},
+                metadata={"stage_label": "each: Search the web", "stage_index": 1, "stage_kind": "each"},
+            ),
+            started_at="2026-01-01T00:00:00Z",
+            finished_at="2026-01-01T00:00:01Z",
+        )
+    )
+    sink.on_event(
+        StepEnd(
+            run_id="run_parent",
+            thread_id="script_1",
+            step_index=2,
+            kind="child_call",
+            status="finished",
+            output=(TextPart(text="done"),),
+            payload=ChildCallStepPayload(
+                call="stage",
+                target_kind="thunk",
+                target="search_web",
+                child_run_ids=("run_child",),
+                parallelism=2,
+                lane_index=0,
+                stage_index=1,
+                stage_kind="each",
+                item_indexes=(0,),
+                metadata={
+                    "stage_label": "each: Search the web",
+                    "stage_index": 1,
+                    "stage_kind": "each",
+                    "parallelism": 2,
+                    "item_count": 3,
+                },
+            ),
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+    )
+    sink.on_event(
+        RunEnd(
+            run_id="run_unknown_child",
+            thread_id="script_1",
+            status="finished",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+    )
+    sink.on_event(
+        StepEnd(
+            run_id="run_parent",
+            thread_id="script_1",
+            step_index=3,
+            kind="flow_op",
+            status="finished",
+            output=(),
+            payload=FlowOpStepPayload(
+                op="set_current",
+                stage_index=1,
+                stage_kind="each",
+                output_preview={"count": 3},
+                metadata={
+                    "stage_label": "each: Search the web",
+                    "stage_index": 1,
+                    "stage_kind": "each",
+                    "input_preview": {"count": 3},
+                    "parallelism": 2,
+                },
+            ),
+            started_at="2026-01-01T00:00:02Z",
+            finished_at="2026-01-01T00:00:03Z",
+        )
+    )
+    sink.on_event(
+        RunEnd(
+            run_id="run_parent",
+            thread_id="script_1",
+            status="finished",
+            finished_at="2026-01-01T00:00:03Z",
+        )
+    )
+
+    assert sink._title == "Running flow:research: run_parent"
+    lines = sink._render_lines()
+    assert len(lines) == 3
+    assert lines[1].startswith("✓ 2 each")
+    assert "Search the web" in lines[1]
+    assert "3 items -> 3 items" in lines[1]
+    assert "2 lanes" in lines[1]
+    assert lines[2] == "Done · 1 stages · 1 calls · 0 failed"
+    assert "run_child" not in "\n".join(lines)
+
+
+def test_script_progress_expands_lanes_with_verbosity() -> None:
+    sink = cli_invoke._ScriptProgressSink(thunk_name="research", render=False, verbosity=2)
+    sink.on_event(
+        RunStart(
+            run_id="run_parent",
+            origin="script",
+            thread_id="script_1",
+            input=Message.user("query"),
+            created_at="2026-01-01T00:00:00Z",
+            started_at="2026-01-01T00:00:00Z",
+            executable_kind="flow",
+            executable_name="research",
+        )
+    )
+    for run_id, item_index in (("run_second", 1), ("run_first", 0)):
+        sink.on_event(
+            RunStart(
+                run_id=run_id,
+                origin="script",
+                thread_id="script_1",
+                input=Message.user("query"),
+                created_at="2026-01-01T00:00:01Z",
+                started_at="2026-01-01T00:00:01Z",
+                parent_run_id="run_parent",
+                parent_step_index=item_index + 1,
+                executable_kind="thunk",
+                executable_name="search_web",
+                call_kind="stage",
+                metadata={
+                    "child": {
+                        "stage_label": "each: Search the web",
+                        "stage_index": 0,
+                        "stage_kind": "each",
+                        "parallelism": 2,
+                        "lane_index": item_index,
+                        "item_index": item_index,
+                        "item_count": 2,
+                    }
+                },
+            )
+        )
+
+    lines = sink._render_lines()
+    assert lines[0] == "Running flow:research: run_parent"
+    assert any("lane 1/2" in line for line in lines)
+    assert any("lane 2/2" in line for line in lines)
+    assert "\n".join(lines).index("item 1/2") < "\n".join(lines).index("item 2/2")
+    assert "batch" not in "\n".join(lines)
+
+
+def test_script_progress_keeps_final_frame_visible(monkeypatch) -> None:
+    live_kwargs: dict[str, object] = {}
+
+    class FakeLive:
+        def __init__(self, _text: object, **kwargs: object) -> None:
+            live_kwargs.update(kwargs)
+
+        def start(self, *, refresh: bool = False) -> None:
+            del refresh
+
+        def update(self, _text: object, *, refresh: bool = False) -> None:
+            del refresh
+
+        def stop(self) -> None:
+            pass
+
+    monkeypatch.setattr(cli_invoke, "Live", FakeLive)
+    sink = cli_invoke._ScriptProgressSink(thunk_name="research", render=True)
+
+    sink.on_event(
+        RunStart(
+            run_id="run_parent",
+            origin="script",
+            thread_id="script_1",
+            input=Message.user("query"),
+            created_at="2026-01-01T00:00:00Z",
+            started_at="2026-01-01T00:00:00Z",
+            executable_kind="flow",
+            executable_name="research",
+        )
+    )
+
+    assert live_kwargs["transient"] is False
+
+
+def test_cli_inspect_run_steps_lists_step_summaries(monkeypatch) -> None:
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        assert request_path == "/api/v1/runs/run_parent"
+        return _inspect_run_detail(
+            "run_parent",
+            thread_id="term_thread",
+            steps=[
+                {
+                    "record": {
+                        "step_index": 1,
+                        "kind": "flow_op",
+                        "status": "finished",
+                        "payload": {"stage_kind": "rank", "op": "prepare_rank"},
+                        "output": [],
+                    },
+                    "message": None,
+                },
+                {
+                    "record": {
+                        "step_index": 2,
+                        "kind": "child_call",
+                        "status": "finished",
+                        "payload": {
+                            "target_kind": "thunk",
+                            "target": "score",
+                            "child_run_ids": ["run_child"],
+                        },
+                        "output": [],
+                    },
+                    "message": None,
+                },
+            ],
+        )
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+
+    result = _invoke_app(["inspect", "dev", "run_parent", "--view", "steps"])
+
+    assert result.exit_code == 0
+    assert "STEP" in result.stdout
+    assert "flow_op" in result.stdout
+    assert "stage rank prepare" in result.stdout
+    assert "thunk:score run_child" in result.stdout
+
+
+def test_cli_inspect_events_reads_run_events(monkeypatch) -> None:
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        assert request_path == "/api/v1/runs/run_parent/events?limit=25"
+        return {
+            "cursor": 2,
+            "items": [
+                {
+                    "cursor": 1,
+                    "type": "run_start",
+                    "at": "2026-01-01T00:00:00Z",
+                    "payload": {
+                        "run_id": "run_parent",
+                        "thread_id": "term_thread",
+                        "executable_kind": "flow",
+                        "executable_name": "research",
+                        "status": "running",
+                    },
+                },
+                {
+                    "cursor": 2,
+                    "type": "run_start",
+                    "at": "2026-01-01T00:00:01Z",
+                    "payload": {
+                        "run_id": "run_inline",
+                        "thread_id": "term_thread",
+                        "executable_kind": "thunk",
+                        "executable_name": None,
+                        "metadata": {"child": {"source_line": 34}},
+                        "status": "running",
+                    },
+                },
+                {
+                    "cursor": 3,
+                    "type": "step_start",
+                    "at": "2026-01-01T00:00:02Z",
+                    "payload": {
+                        "run_id": "run_parent",
+                        "thread_id": "term_thread",
+                        "step_index": 1,
+                        "kind": "model_call",
+                    },
+                },
+                {
+                    "cursor": 4,
+                    "type": "run_end",
+                    "at": "2026-01-01T00:00:03Z",
+                    "payload": {"run_id": "run_parent", "thread_id": "term_thread", "status": "finished"},
+                },
+            ],
+        }
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+
+    result = _invoke_app(["inspect", "dev", "run_parent", "--view", "events", "--limit", "25"])
+
+    assert result.exit_code == 0
+    assert "EVENT" in result.stdout
+    assert "DETAIL" in result.stdout
+    assert "run_start" in result.stdout
+    assert "target: flow:research" in result.stdout
+    assert "target: thunk:<L34>" in result.stdout
+    assert "step: 1, kind: model_call" in result.stdout
+    assert "status: succeeded" in result.stdout
+
+
 def test_cli_thread_control_help_lists_agent_with_arguments() -> None:
     result = _invoke_app(["steer", "dev", "--help"])
 
@@ -6842,7 +7706,7 @@ def test_cli_rewind_and_fork_help_describe_latest_run_target() -> None:
     assert "Open the terminal UI after forking." in fork.stdout
 
 
-def test_cli_chat_tui_opens_terminal_loop(monkeypatch) -> None:
+def test_cli_chat_term_opens_terminal_loop(monkeypatch) -> None:
     class FakeListener:
         def stop(self) -> None:
             pass
@@ -6850,7 +7714,7 @@ def test_cli_chat_tui_opens_terminal_loop(monkeypatch) -> None:
     def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
         assert request_path == "/api/v1/threads"
         assert payload == {"client": "tui"}
-        return {"thread_id": "tui_new"}
+        return {"thread_id": "term_new"}
 
     monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
     monkeypatch.setattr(cli, "_start_thread_event_listener", lambda _ctx, _thread_id, **_kwargs: FakeListener())
@@ -6858,7 +7722,7 @@ def test_cli_chat_tui_opens_terminal_loop(monkeypatch) -> None:
     result = _invoke_app(["chat", "dev", "--tui"], input="/exit\n")
 
     assert result.exit_code == 0
-    assert "thread tui_new" in result.stdout
+    assert "thread term_new" in result.stdout
 
 
 @pytest.mark.parametrize("command", ("steer", "cancel", "rewind", "fork"))
@@ -6880,16 +7744,16 @@ def test_cli_rewind_accepts_thread_target(monkeypatch) -> None:
 
     def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
         calls.append(("post", (request_path, payload)))
-        return {"thread_id": "tui_thread", "run_id": "run_new"}
+        return {"thread_id": "term_thread", "run_id": "run_new"}
 
     monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
     monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
 
-    result = _invoke_app(["rewind", "dev", "tui_thread", "try again"])
+    result = _invoke_app(["rewind", "dev", "term_thread", "try again"])
 
     assert result.exit_code == 0
     assert calls == [
-        ("json", "/api/v1/threads/tui_thread"),
+        ("json", "/api/v1/threads/term_thread"),
         (
             "post",
             (
@@ -6909,21 +7773,21 @@ def test_cli_rewind_without_message_does_not_send_empty_message(monkeypatch) -> 
 
     def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
         calls.append(("post", (request_path, payload)))
-        return {"thread_id": "tui_thread", "run_id": None}
+        return {"thread_id": "term_thread", "run_id": None}
 
     monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
     monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
 
-    result = _invoke_app(["rewind", "dev", "tui_thread"])
+    result = _invoke_app(["rewind", "dev", "term_thread"])
 
     assert result.exit_code == 0
     assert calls == [
-        ("json", "/api/v1/threads/tui_thread"),
+        ("json", "/api/v1/threads/term_thread"),
         ("post", ("/api/v1/runs/run_latest/rewind", {})),
     ]
 
 
-def test_cli_rewind_tui_streams_created_run_before_prompt(monkeypatch) -> None:
+def test_cli_rewind_term_streams_created_run_before_prompt(monkeypatch) -> None:
     calls: list[tuple[str, object]] = []
 
     def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
@@ -6932,7 +7796,7 @@ def test_cli_rewind_tui_streams_created_run_before_prompt(monkeypatch) -> None:
 
     def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
         calls.append(("post", (request_path, payload)))
-        return {"thread_id": "tui_thread", "run_id": "run_new"}
+        return {"thread_id": "term_thread", "run_id": "run_new"}
 
     def fake_runtime_get_stream(_ctx: Any, request_path: str) -> None:
         calls.append(("stream", request_path))
@@ -6945,11 +7809,11 @@ def test_cli_rewind_tui_streams_created_run_before_prompt(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_runtime_get_stream", fake_runtime_get_stream)
     monkeypatch.setattr(cli, "_chat_interactive", fake_chat_interactive)
 
-    result = _invoke_app(["rewind", "dev", "tui_thread", "--tui", "try again"])
+    result = _invoke_app(["rewind", "dev", "term_thread", "--tui", "try again"])
 
     assert result.exit_code == 0
     assert calls == [
-        ("json", "/api/v1/threads/tui_thread"),
+        ("json", "/api/v1/threads/term_thread"),
         (
             "post",
             (
@@ -6958,7 +7822,7 @@ def test_cli_rewind_tui_streams_created_run_before_prompt(monkeypatch) -> None:
             ),
         ),
         ("stream", "/api/v1/runs/run_new/stream"),
-        ("tui", "tui_thread"),
+        ("tui", "term_thread"),
     ]
 
 
@@ -7283,18 +8147,20 @@ def test_cli_help_lists_cap_commands() -> None:
     assert "Cancel an active run." in result.stdout
     assert "Rewind a thread from a run." in result.stdout
     assert "Fork a thread from a run." in result.stdout
+    assert "Inspect a thread or run." in result.stdout
     assert "send" not in result.stdout
     assert "attach" not in result.stdout
     chore_index = result.stdout.index("chore")
     task_index = result.stdout.index("task")
     stop_index = result.stdout.index("stop")
-    chat_index = result.stdout.index("chat")
+    term_index = result.stdout.index("chat")
     steer_index = result.stdout.index("steer")
     cancel_index = result.stdout.index("cancel")
     rewind_index = result.stdout.index("rewind")
     fork_index = result.stdout.index("fork")
     runs_index = result.stdout.index("runs")
     threads_index = result.stdout.index("threads")
+    inspect_index = result.stdout.index("inspect")
     model_index = result.stdout.index("model")
     tool_index = result.stdout.index("tool")
     channel_index = result.stdout.index("channel")
@@ -7305,7 +8171,7 @@ def test_cli_help_lists_cap_commands() -> None:
     prompt_index = result.stdout.index("prompt")
     caps_index = result.stdout.rindex("caps")
     assert "plugin" not in result.stdout
-    assert result.stdout.index("Agent Commands") < stop_index < chat_index < chore_index < task_index < result.stdout.index("Cap Commands")
+    assert result.stdout.index("Agent Commands") < stop_index < term_index < chore_index < task_index < result.stdout.index("Cap Commands")
     assert (
         result.stdout.index("Thread Commands")
         < steer_index
@@ -7314,6 +8180,7 @@ def test_cli_help_lists_cap_commands() -> None:
         < fork_index
         < runs_index
         < threads_index
+        < inspect_index
         < result.stdout.index("Runtime Commands")
         < model_index
         < tool_index
@@ -7322,6 +8189,47 @@ def test_cli_help_lists_cap_commands() -> None:
     )
     assert result.stdout.index("Cap Commands") < psyche_index
     assert psyche_index < skill_index < service_index < prompt_index < caps_index
+
+
+def _inspect_run_detail(
+    run_id: str,
+    *,
+    thread_id: str,
+    root_run_id: str | None = None,
+    parent_run_id: str | None = None,
+    parent_step_index: int | None = None,
+    executable_kind: str = "flow",
+    executable_name: str | None = "research",
+    call_kind: str = "root",
+    metadata: dict[str, object] | None = None,
+    steps: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    return {
+        "info": {
+            "id": run_id,
+            "origin": "script",
+            "thread_id": thread_id,
+            "root_run_id": root_run_id or run_id,
+            "parent_run_id": parent_run_id,
+            "parent_step_index": parent_step_index,
+            "executable_kind": executable_kind,
+            "executable_name": executable_name,
+            "call_kind": call_kind,
+            "metadata": metadata or {},
+            "superseded": None,
+            "created_at": "2026-01-01T00:00:00Z",
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": "2026-01-01T00:00:01Z",
+            "updated_at": "2026-01-01T00:00:01Z",
+        },
+        "input": {"role": "user", "parts": [{"type": "text", "text": "query"}]},
+        "inputs": [],
+        "output": {
+            "status": "finished",
+            "error": None,
+            "steps": steps or [],
+        },
+    }
 
 
 def _write_roaming_program(tmp_path: Path, body_text: str, *, name: str = "demo") -> Path:

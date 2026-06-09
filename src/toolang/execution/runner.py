@@ -21,6 +21,7 @@ DEFAULT_GROUP_LIMITS: dict[str, int] = {
     "pulse:chore": 2,
     "pulse:task": 4,
     "poll": 1,
+    "file": 10,
     "hook": 1,
 }
 

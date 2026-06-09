@@ -82,6 +82,7 @@ toolang list
 PY_LOG=toolang.run=info toolang ./examples/invoke-playground.too summarize "Summarize this workspace"
 toolang ./examples/invoke-playground.too --help
 toolang ./examples/invoke-playground.too summarize "Summarize this workspace"
+toolang ./examples/file-agent.too --inbox ./inbox
 toolang run alice
 toolang run brice/alice
 toolang run https://toolang.ai/alice.too
@@ -136,7 +137,8 @@ Foreground runtime port selection depends on the agent mode:
 | --- | --- | --- |
 | Resident | Local managed name such as `alice` | Reuse the agent's last port when available, otherwise choose from `7001-7999` |
 | Visiting | Remote selector such as `brice/alice` or `https://toolang.ai/alice.too` | Reuse the visiting root's last port when available, otherwise choose an OS temporary port |
-| Roaming | Local `.too` path invocation | No HTTP runtime port; the thunk is invoked directly |
+| Roaming invoke | Local `.too` path with a thunk name | No HTTP runtime port; the thunk is invoked directly |
+| Roaming file runtime | Local `.too` path with `--inbox` and no thunk name | Choose an OS temporary port |
 
 
 ## Invoke Surface
@@ -169,15 +171,40 @@ Behavior:
 - `NAME=VALUE` sets one thunk named param when `NAME` matches the thunk signature
 - `INPUT` rules:
   - `TEXT` adds one text part; use `@@TEXT` for literal text beginning with `@`
-  - `@PATH` adds one path-based part; `.txt` and `.md` paths become text parts
+  - `@PATH` adds one path-based part; text-like paths become text parts
   - image extensions such as `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, and `.svg` infer image parts
   - audio extensions such as `.mp3`, `.wav`, `.m4a`, `.aac`, `.ogg`, and `.flac` infer audio parts
+  - video extensions such as `.mp4`, `.mov`, `.m4v`, `.webm`, `.mkv`, `.avi`, `.mpeg`, `.mpg`, `.3gp`, and `.ogv` infer video parts
   - all other path extensions infer generic file parts
 - `--` ends option parsing so later arguments stay `INPUT` values
 - `--option` is reserved for Toolang runtime options
 - `PY_LOG` uses env_logger-style directive formatting and does not affect stdout
 - key execution events are recorded in `runs.db` for script runs just like chat,
   task, and chore runs
+
+## File Request Runtime
+
+Roaming scripts can also start a foreground file request runtime without naming
+a thunk:
+
+```bash
+toolang SCRIPT --inbox PATH [--inbox PATH...]
+```
+
+Behavior:
+
+- `SCRIPT` is materialized into its sibling `.toolang` roaming root.
+- Each `--inbox` value must name an existing directory.
+- Startup enables `runner.file`, `trigger.file`, and `trigger.watch`.
+- Startup requires a thunk named `file` that accepts message input and has no
+  required parameters.
+- Files already present in an inbox at startup are eligible for processing.
+- Newly discovered stable files are passed to the `file` thunk using the same
+  file input part rules as `@PATH`.
+- File request progress is stored in `.runtime/files.db`.
+- Finished, failed, and canceled file fingerprints are not automatically retried.
+- When a thunk name is present, such as `toolang SCRIPT file ...`, Toolang uses
+  normal one-shot thunk invocation.
 
 
 ## Runtime Commands

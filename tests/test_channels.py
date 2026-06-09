@@ -82,7 +82,7 @@ def test_telegram_channel_polls_and_delivers(monkeypatch) -> None:
     assert delivery.origin == "chat"
     assert delivery.sender == "owner"
     assert delivery.channel == "telegram"
-    assert delivery.thread_id == "tg_123"
+    assert delivery.thread_id == "script_tg_123"
     assert delivery.reply_target is not None
     assert delivery.reply_target.address == "chat:123"
     assert polled.next_state.cursor == "42"
