@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
 from functools import lru_cache
 import re
 from typing import Any, Literal, cast
@@ -332,6 +332,36 @@ def parse(source: str) -> Program:
         )
 
     return program
+
+
+def program_to_ast_data(program: Program, *, include_source_lines: bool = False) -> dict[str, object]:
+    """Return one JSON-compatible representation of a parsed program AST."""
+
+    return cast(
+        dict[str, object],
+        _ast_value_to_data(program, include_source_lines=include_source_lines),
+    )
+
+
+def _ast_value_to_data(value: object, *, include_source_lines: bool) -> object:
+    if is_dataclass(value) and not isinstance(value, type):
+        data: dict[str, object] = {}
+        for item in fields(value):
+            if item.name == "_source_lines" and not include_source_lines:
+                continue
+            data[item.name] = _ast_value_to_data(
+                getattr(value, item.name),
+                include_source_lines=include_source_lines,
+            )
+        return data
+    if isinstance(value, list | tuple):
+        return [_ast_value_to_data(item, include_source_lines=include_source_lines) for item in value]
+    if isinstance(value, dict):
+        return {
+            str(key): _ast_value_to_data(item, include_source_lines=include_source_lines)
+            for key, item in value.items()
+        }
+    return value
 
 
 def _use_from_node(node: Node, syntax_source: _TreeSitterSource) -> UseDecl:

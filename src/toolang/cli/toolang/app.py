@@ -60,6 +60,7 @@ from ..utils import (
 )
 from .caps import CAP_KINDS, register_caps_commands
 from .fmt import register_fmt_command
+from .parse import register_parse_command
 
 if TYPE_CHECKING:
     from ... import caps as cap_store
@@ -122,6 +123,7 @@ TOP_LEVEL_COMMANDS = frozenset(
         "info",
         "hidden",
         "fmt",
+        "parse",
         "model",
         "tool",
         "channel",
@@ -3533,6 +3535,7 @@ app.add_typer(tool_app, name="tool", no_args_is_help=True, rich_help_panel=RUNTI
 app.add_typer(channel_app, name="channel", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
 app.add_typer(sandbox_app, name="sandbox", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
 register_fmt_command(app)
+register_parse_command(app)
 register_caps_commands(app, rich_help_panel=CAPS_COMMAND_PANEL)
 register_work_commands()
 

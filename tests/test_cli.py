@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 import hashlib
 import io
+import json
 from pathlib import Path
 import os
 import time
@@ -5995,6 +5996,88 @@ def test_cli_fmt_is_hidden_but_available() -> None:
     assert " fmt " not in help_result.stdout
     assert fmt_result.exit_code == 0
     assert "Format .too files." in fmt_result.stdout
+
+
+def test_cli_parse_is_hidden_but_available() -> None:
+    help_result = runner.invoke(cli.app, ["--help"])
+    parse_result = runner.invoke(cli.app, ["parse", "--help"])
+
+    assert help_result.exit_code == 0
+    assert " parse " not in help_result.stdout
+    assert parse_result.exit_code == 0
+    assert "Parse a .too file and print its AST." in parse_result.stdout
+
+
+def test_cli_parse_prints_too_ast(tmp_path: Path) -> None:
+    source_path = tmp_path / "agent.too"
+    source_path.write_text(
+        "struct Result:\n"
+        "  title: Text\n"
+        "\n"
+        "thunk review(input: Message) -> Json:\n"
+        "  models = deepseek/*\n"
+        "  user: Review it.\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(cli.app, ["parse", str(source_path)])
+
+    assert result.exit_code == 0
+    ast_data = json.loads(result.stdout)
+    assert "_source_lines" not in ast_data
+    assert ast_data["structs"] == [
+        {
+            "name": "Result",
+            "fields": [
+                {
+                    "name": "title",
+                    "type_name": "Text",
+                    "span": {"line": 2},
+                }
+            ],
+            "span": {"line": 1},
+        }
+    ]
+    assert ast_data["thunks"][0]["name"] == "review"
+    assert ast_data["thunks"][0]["input"] == {
+        "name": "_",
+        "optional": False,
+        "type_name": None,
+    }
+    assert ast_data["thunks"][0]["output"] == "json"
+    assert ast_data["thunks"][0]["overlays"] == [
+        {
+            "kind": "model",
+            "op": "set",
+            "items": ["deepseek/*"],
+            "span": {"line": 5},
+        }
+    ]
+
+
+def test_cli_parse_supports_stdin_and_compact_output() -> None:
+    result = runner.invoke(
+        cli.app,
+        ["parse", "--compact", "--stdin-filepath", "buffer.too", "-"],
+        input="thunk:\n  hello\n",
+    )
+
+    assert result.exit_code == 0
+    assert "\n  " not in result.stdout
+    ast_data = json.loads(result.stdout)
+    assert ast_data["thunks"][0]["messages"][0]["text"] == "hello"
+
+
+def test_cli_parse_include_source_lines() -> None:
+    result = runner.invoke(
+        cli.app,
+        ["parse", "--source-lines", "-"],
+        input="thunk:\n  hello\n",
+    )
+
+    assert result.exit_code == 0
+    ast_data = json.loads(result.stdout)
+    assert ast_data["_source_lines"] == ["thunk:", "  hello"]
 
 
 def test_cli_fmt_formats_too_file(tmp_path: Path) -> None:
