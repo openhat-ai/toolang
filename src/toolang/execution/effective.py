@@ -11,7 +11,7 @@ from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.model import ModelTarget
 
 from .. import caps as cap_store
-from ..program import SourceSpan, Thunk, ThunkOverlay
+from ..program import SourceSpan, Thunk, Directive
 from ..state.live import LiveState
 from ..state.prepared import PreparedEntry
 from ..tools.registry import selected_tool_names, tool_ref_for_model_tool
@@ -95,7 +95,7 @@ def effective_run_sets(
     services_base = cap_entries(run.live, kind="service")
     effective_tools, tool_math = select_tools_with_trace(
         tools_base,
-        thunk.overlays_for("tool"),
+        thunk.directives_for("tool"),
     )
     effective_models, model_math = model_set_math(
         context,
@@ -104,15 +104,15 @@ def effective_run_sets(
     )
     effective_psyches, psyche_math = select_entries_with_trace(
         psyches_base,
-        thunk.overlays_for("psyche"),
+        thunk.directives_for("psyche"),
     )
     effective_skills, skill_math = select_entries_with_trace(
         skills_base,
-        thunk.overlays_for("skill"),
+        thunk.directives_for("skill"),
     )
     effective_services, service_math = select_entries_with_trace(
         services_base,
-        thunk.overlays_for("service"),
+        thunk.directives_for("service"),
     )
     set_math: dict[str, object] = {
         "models": model_math,
@@ -174,9 +174,9 @@ def model_set_math(
     thunk: Thunk,
     models_base: tuple[str, ...],
 ) -> tuple[tuple[str, ...], dict[str, object]]:
-    thunk_selectors, thunk_steps = _apply_string_overlays_with_trace(
+    thunk_selectors, thunk_steps = _apply_string_directives_with_trace(
         (),
-        thunk.overlays_for("model"),
+        thunk.directives_for("model"),
     )
     effective = select_model_selectors(
         context,
@@ -190,8 +190,8 @@ def model_set_math(
             "activation_ceiling": list(models_base),
             "activation_default": activation_default_model_selector(context),
             "requested": None,
-            "thunk_overlay_base": [],
-            "thunk_overlay_steps": thunk_steps,
+            "thunk_directive_base": [],
+            "thunk_directive_steps": thunk_steps,
             "thunk_selectors": list(thunk_selectors),
             "effective": list(effective),
         },
@@ -199,22 +199,22 @@ def model_set_math(
 
 
 def thunk_model_refs(thunk: Thunk) -> tuple[str, ...]:
-    return _apply_string_overlays((), thunk.overlays_for("model"))
+    return _apply_string_directives((), thunk.directives_for("model"))
 
 
 def select_tools(
     tools_base: dict[str, AgentTool],
-    overlays: tuple[ThunkOverlay, ...],
+    directives: tuple[Directive, ...],
 ) -> dict[str, AgentTool]:
-    selected, _math = select_tools_with_trace(tools_base, overlays)
+    selected, _math = select_tools_with_trace(tools_base, directives)
     return selected
 
 
 def select_tools_with_trace(
     tools_base: dict[str, AgentTool],
-    overlays: tuple[ThunkOverlay, ...],
+    directives: tuple[Directive, ...],
 ) -> tuple[dict[str, AgentTool], dict[str, object]]:
-    names, steps = _apply_tool_overlays_with_trace(tools_base, overlays)
+    names, steps = _apply_tool_directives_with_trace(tools_base, directives)
     selected = {
         name: tools_base[name]
         for name in names
@@ -224,7 +224,7 @@ def select_tools_with_trace(
         selected,
         {
             "activation_ceiling": list(tools_base),
-            "overlay_steps": steps,
+            "directive_steps": steps,
             "effective": list(selected),
         },
     )
@@ -232,22 +232,22 @@ def select_tools_with_trace(
 
 def select_entries(
     base: tuple[PreparedEntry, ...],
-    overlays: tuple[ThunkOverlay, ...],
+    directives: tuple[Directive, ...],
 ) -> tuple[PreparedEntry, ...]:
-    selected, _math = select_entries_with_trace(base, overlays)
+    selected, _math = select_entries_with_trace(base, directives)
     return selected
 
 
 def select_entries_with_trace(
     base: tuple[PreparedEntry, ...],
-    overlays: tuple[ThunkOverlay, ...],
+    directives: tuple[Directive, ...],
 ) -> tuple[tuple[PreparedEntry, ...], dict[str, object]]:
-    entries, steps = _apply_cap_overlays_with_trace(base, overlays)
+    entries, steps = _apply_cap_directives_with_trace(base, directives)
     return (
         entries,
         {
             "activation_ceiling": [_entry_label(entry) for entry in base],
-            "overlay_steps": steps,
+            "directive_steps": steps,
             "effective": [_entry_label(entry) for entry in entries],
         },
     )
@@ -297,9 +297,9 @@ def _default_thread_thunk(origin: str) -> Thunk:
     )
 
 
-def _apply_tool_overlays_with_trace(
+def _apply_tool_directives_with_trace(
     tools_base: dict[str, AgentTool],
-    overlays: tuple[ThunkOverlay, ...],
+    directives: tuple[Directive, ...],
 ) -> tuple[tuple[str, ...], list[dict[str, object]]]:
     current = list(tools_base)
     refs_by_model_name = {
@@ -307,22 +307,23 @@ def _apply_tool_overlays_with_trace(
         for name, tool in tools_base.items()
     }
     steps: list[dict[str, object]] = []
-    for overlay in overlays:
-        selectors = tuple(item for item in overlay.items if item)
+    for directive in directives:
+        selectors = tuple(item for item in directive.values if item)
         before = tuple(current)
         matches = selected_tool_names(refs_by_model_name, selectors)
-        if overlay.op == "set":
+        op = _directive_operation(directive)
+        if op == "set":
             current = list(matches)
-        elif overlay.op == "add":
+        elif op == "add":
             for name in matches:
                 if name not in current:
                     current.append(name)
-        elif overlay.op == "remove":
+        elif op == "remove":
             blocked = set(matches)
             current = [name for name in current if name not in blocked]
         steps.append(
-            _overlay_step(
-                overlay=overlay,
+            _directive_step(
+                directive=directive,
                 selectors=selectors,
                 matches=matches,
                 before=before,
@@ -332,16 +333,16 @@ def _apply_tool_overlays_with_trace(
     return tuple(current), steps
 
 
-def _apply_cap_overlays_with_trace(
+def _apply_cap_directives_with_trace(
     base: tuple[PreparedEntry, ...],
-    overlays: tuple[ThunkOverlay, ...],
+    directives: tuple[Directive, ...],
 ) -> tuple[tuple[PreparedEntry, ...], list[dict[str, object]]]:
     current = list(base)
     kind = base[0].kind if base else None
     agent_name = _entry_agent_name(base)
     steps: list[dict[str, object]] = []
-    for overlay in overlays:
-        selectors = tuple(item for item in overlay.items if item)
+    for directive in directives:
+        selectors = tuple(item for item in directive.values if item)
         before = tuple(current)
         matches = cap_store.select_cap_entries(
             base,
@@ -349,21 +350,22 @@ def _apply_cap_overlays_with_trace(
             agent_name=agent_name,
             implicit_kind=kind,
         )
-        if overlay.op == "set":
+        op = _directive_operation(directive)
+        if op == "set":
             current = list(matches)
-        elif overlay.op == "add":
+        elif op == "add":
             seen = {_entry_identity(entry) for entry in current}
             for entry in matches:
                 identity = _entry_identity(entry)
                 if identity not in seen:
                     current.append(entry)
                     seen.add(identity)
-        elif overlay.op == "remove":
+        elif op == "remove":
             blocked = {_entry_identity(entry) for entry in matches}
             current = [entry for entry in current if _entry_identity(entry) not in blocked]
         steps.append(
-            _overlay_step(
-                overlay=overlay,
+            _directive_step(
+                directive=directive,
                 selectors=selectors,
                 matches=tuple(_entry_label(entry) for entry in matches),
                 before=tuple(_entry_label(entry) for entry in before),
@@ -373,29 +375,30 @@ def _apply_cap_overlays_with_trace(
     return tuple(current), steps
 
 
-def _apply_string_overlays_with_trace(
+def _apply_string_directives_with_trace(
     base: tuple[str, ...],
-    overlays: tuple[ThunkOverlay, ...],
+    directives: tuple[Directive, ...],
 ) -> tuple[tuple[str, ...], list[dict[str, object]]]:
     current = list(dict.fromkeys(item for item in base if item))
     steps: list[dict[str, object]] = []
-    for overlay in overlays:
-        overlay_items = tuple(item for item in overlay.items if item)
+    for directive in directives:
+        directive_items = tuple(item for item in directive.values if item)
         before = tuple(current)
-        if overlay.op == "set":
-            current = list(dict.fromkeys(overlay_items))
-        elif overlay.op == "add":
-            for item in overlay_items:
+        op = _directive_operation(directive)
+        if op == "set":
+            current = list(dict.fromkeys(directive_items))
+        elif op == "add":
+            for item in directive_items:
                 if item not in current:
                     current.append(item)
-        elif overlay.op == "remove":
-            blocked = set(overlay_items)
+        elif op == "remove":
+            blocked = set(directive_items)
             current = [item for item in current if item not in blocked]
         steps.append(
-            _overlay_step(
-                overlay=overlay,
-                selectors=overlay_items,
-                matches=overlay_items,
+            _directive_step(
+                directive=directive,
+                selectors=directive_items,
+                matches=directive_items,
                 before=before,
                 after=tuple(current),
             )
@@ -403,38 +406,39 @@ def _apply_string_overlays_with_trace(
     return tuple(current), steps
 
 
-def _apply_string_overlays(
+def _apply_string_directives(
     base: tuple[str, ...],
-    overlays: tuple[ThunkOverlay, ...],
+    directives: tuple[Directive, ...],
 ) -> tuple[str, ...]:
     current = list(dict.fromkeys(item for item in base if item))
-    for overlay in overlays:
-        overlay_items = [item for item in overlay.items if item]
-        if overlay.op == "set":
-            current = list(dict.fromkeys(overlay_items))
+    for directive in directives:
+        directive_items = [item for item in directive.values if item]
+        op = _directive_operation(directive)
+        if op == "set":
+            current = list(dict.fromkeys(directive_items))
             continue
-        if overlay.op == "add":
-            for item in overlay_items:
+        if op == "add":
+            for item in directive_items:
                 if item not in current:
                     current.append(item)
             continue
-        if overlay.op == "remove":
-            blocked = set(overlay_items)
+        if op == "remove":
+            blocked = set(directive_items)
             current = [item for item in current if item not in blocked]
     return tuple(current)
 
 
-def _overlay_step(
+def _directive_step(
     *,
-    overlay: ThunkOverlay,
+    directive: Directive,
     selectors: tuple[str, ...],
     matches: tuple[str, ...],
     before: tuple[str, ...],
     after: tuple[str, ...],
 ) -> dict[str, object]:
     return {
-        "op": overlay.op,
-        "line": overlay.span.line,
+        "op": directive.operator,
+        "line": directive.span.line,
         "selectors": list(selectors),
         "matches": list(matches),
         "before": list(before),
@@ -474,9 +478,9 @@ def _domain_set_math_summary(domain: str, value: dict[str, object]) -> str:
     effective = value.get("effective")
     base_count = len(base) if isinstance(base, list) else 0
     effective_count = len(effective) if isinstance(effective, list) else 0
-    steps = value.get("thunk_overlay_steps")
+    steps = value.get("thunk_directive_steps")
     if not isinstance(steps, list):
-        steps = value.get("overlay_steps")
+        steps = value.get("directive_steps")
     expression = _set_math_expression(cast(list[object], steps) if isinstance(steps, list) else [])
     return f"{domain} {base_count} {expression} -> {effective_count}"
 
@@ -489,7 +493,7 @@ def _set_math_expression(steps: list[object]) -> str:
         if not isinstance(step, dict):
             continue
         step_data = cast(dict[str, object], step)
-        op = _overlay_op_symbol(step_data.get("op"))
+        op = _directive_op_symbol(step_data.get("op"))
         selectors = step_data.get("selectors")
         selector_text = (
             ",".join(str(item) for item in selectors)
@@ -500,11 +504,15 @@ def _set_math_expression(steps: list[object]) -> str:
     return " ; ".join(expressions) if expressions else "activation"
 
 
-def _overlay_op_symbol(value: object) -> str:
-    if value == "set":
-        return "="
-    if value == "add":
-        return "+="
-    if value == "remove":
-        return "-="
+def _directive_op_symbol(value: object) -> str:
     return str(value)
+
+
+def _directive_operation(directive: Directive) -> str:
+    if directive.operator == "=":
+        return "set"
+    if directive.operator == "+=":
+        return "add"
+    if directive.operator == "-=":
+        return "remove"
+    return directive.operator

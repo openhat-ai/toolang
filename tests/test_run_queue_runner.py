@@ -5703,13 +5703,13 @@ def test_assemble_run_input_logs_activation_set_math(tmp_path: Path, caplog) -> 
     model_math = cast(dict[str, object], set_math["models"])
     tool_math = cast(dict[str, object], set_math["tools"])
     skill_math = cast(dict[str, object], set_math["skills"])
-    tool_steps = cast(list[dict[str, object]], tool_math["overlay_steps"])
-    skill_steps = cast(list[dict[str, object]], skill_math["overlay_steps"])
+    tool_steps = cast(list[dict[str, object]], tool_math["directive_steps"])
+    skill_steps = cast(list[dict[str, object]], skill_math["directive_steps"])
 
     assert model_math["activation_ceiling"] == ["openai/gpt-5[openai]", "openai/o3[openai]"]
     assert model_math["thunk_selectors"] == ["openai/gpt-5"]
     assert model_math["effective"] == ["openai/gpt-5[openai]"]
-    assert tool_steps[0]["op"] == "remove"
+    assert tool_steps[0]["op"] == "-="
     assert tool_steps[0]["selectors"] == [
         "service_use/bridge_start",
         "service_use/init",
@@ -5721,7 +5721,7 @@ def test_assemble_run_input_logs_activation_set_math(tmp_path: Path, caplog) -> 
         assert removed_tool not in cast(list[object], tool_math["effective"])
     assert skill_steps == [
         {
-            "op": "set",
+            "op": "=",
             "line": 4,
             "selectors": ["local-reviewer"],
             "matches": ["skill/local-reviewer"],

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
 from functools import lru_cache
 import re
 from typing import Any, Literal, cast
@@ -32,8 +32,6 @@ LEGACY_DELEGATES_RE = re.compile(r"^[ \t]*delegates[ \t]*(?:=|\+=|-=)")
 TOP_LEVEL_RE = re.compile(
     r"^(use|struct|psyche|skill|service|prompt|context|instruct|thunk|flow)\b"
 )
-OverlayKind = Literal["model", "tool", "psyche", "skill", "service", "hand", "handoff", "recall"]
-OverlayOperator = Literal["set", "add", "remove"]
 MessageBlockKind = Literal["context", "instruct", "user", "assistant", "tool"]
 FlowStageKind = Literal[
     "bare",
@@ -47,27 +45,6 @@ FlowStageKind = Literal[
     "fold",
     "repeat",
 ]
-TREE_SITTER_TYPE_ALIASES = {
-    "string": "Text",
-    "text": "Text",
-    "number": "Number",
-    "boolean": "Boolean",
-    "json": "Json",
-    "message": "Message",
-    "path": "Path",
-    "artifact": "Artifact",
-}
-AST_TYPE_ALIASES = {
-    "Text": "string",
-    "Number": "number",
-    "Boolean": "boolean",
-    "Json": "json",
-    "Message": "message",
-    "Path": "path",
-    "Artifact": "artifact",
-}
-
-
 @dataclass(slots=True)
 class SourceSpan:
     line: int
@@ -88,7 +65,7 @@ class ParamDecl:
 
 
 @dataclass(slots=True)
-class DeclBlock:
+class CapDecl:
     kind: str
     name: str
     body: str
@@ -96,6 +73,14 @@ class DeclBlock:
     language: str | None = None
     meta: dict[str, Any] = field(default_factory=dict)
     params: list[ParamDecl] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class WorkDecl:
+    name: str
+    body: str
+    span: SourceSpan
+    meta: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -129,10 +114,10 @@ class StructDecl:
 
 
 @dataclass(frozen=True, slots=True)
-class ThunkOverlay:
-    kind: OverlayKind
-    op: OverlayOperator
-    items: tuple[str, ...]
+class Directive:
+    name: str
+    operator: str
+    values: tuple[str, ...]
     span: SourceSpan
 
 
@@ -150,7 +135,7 @@ class Thunk:
     input: ParamDecl | None = None
     params: list[ParamDecl] = field(default_factory=list)
     output: str | None = None
-    overlays: tuple[ThunkOverlay, ...] = ()
+    directives: tuple[Directive, ...] = ()
     context: MessageBlock | None = None
     instruct: MessageBlock | None = None
     messages: tuple[MessageBlock, ...] = ()
@@ -162,8 +147,8 @@ class Thunk:
     def is_thread_thunk(self) -> bool:
         return self.thunk_name() in {"chat", "task", "chore"}
 
-    def overlays_for(self, kind: OverlayKind) -> tuple[ThunkOverlay, ...]:
-        return tuple(item for item in self.overlays if item.kind == kind)
+    def directives_for(self, name: str) -> tuple[Directive, ...]:
+        return tuple(item for item in self.directives if _directive_family(item.name) == name)
 
     def message_blocks(self, kind: MessageBlockKind) -> tuple[MessageBlock, ...]:
         blocks: list[MessageBlock] = []
@@ -173,13 +158,6 @@ class Thunk:
             blocks.append(self.instruct)
         blocks.extend(item for item in self.messages if item.kind == kind)
         return tuple(blocks)
-
-    @property
-    def directives(self) -> tuple[ThunkOverlay, ...]:
-        return self.overlays
-
-    def directives_for(self, kind: OverlayKind) -> tuple[ThunkOverlay, ...]:
-        return self.overlays_for(kind)
 
     def messages_text(self) -> str:
         return "\n\n".join(
@@ -211,30 +189,32 @@ class Flow:
     input: ParamDecl | None = None
     params: list[ParamDecl] = field(default_factory=list)
     output: str | None = None
-    overlays: tuple[ThunkOverlay, ...] = ()
+    directives: tuple[Directive, ...] = ()
     stages: tuple[FlowStage, ...] = ()
     span: SourceSpan = field(default_factory=lambda: SourceSpan(0))
 
     def flow_name(self) -> str:
         return self.name or "main"
 
-    def overlays_for(self, kind: OverlayKind) -> tuple[ThunkOverlay, ...]:
-        return tuple(item for item in self.overlays if item.kind == kind)
+    def directives_for(self, name: str) -> tuple[Directive, ...]:
+        return tuple(item for item in self.directives if _directive_family(item.name) == name)
 
 
 @dataclass(slots=True)
 class Program:
     uses: list[UseDecl] = field(default_factory=list)
+    caps: list[CapDecl] = field(default_factory=list)
+    tasks: list[WorkDecl] = field(default_factory=list)
+    chores: list[WorkDecl] = field(default_factory=list)
+    structs: list[StructDecl] = field(default_factory=list)
     contexts: list[ContextBlock] = field(default_factory=list)
     instructs: list[InstructBlock] = field(default_factory=list)
-    declarations: list[DeclBlock] = field(default_factory=list)
-    structs: list[StructDecl] = field(default_factory=list)
     thunks: list[Thunk] = field(default_factory=list)
     flows: list[Flow] = field(default_factory=list)
     _source_lines: list[str] | None = field(default=None, repr=False, compare=False)
 
-    def get_decl(self, kind: str, name: str) -> DeclBlock | None:
-        for item in self.declarations:
+    def get_cap(self, kind: str, name: str) -> CapDecl | None:
+        for item in self.caps:
             if item.kind == kind and item.name == name:
                 return item
         return None
@@ -309,7 +289,7 @@ def parse(source: str) -> Program:
             program.uses.append(_use_from_node(node, syntax_source))
             continue
         if node.type in {"fenced_declaration", "psyche", "skill", "service", "prompt"}:
-            program.declarations.append(_decl_from_node(node, syntax_source))
+            program.caps.append(_cap_from_node(node, syntax_source))
             continue
         if node.type == "instruct":
             program.instructs.append(_instruct_from_node(node, syntax_source))
@@ -334,6 +314,36 @@ def parse(source: str) -> Program:
     return program
 
 
+def program_to_ast_data(program: Program, *, include_source_lines: bool = False) -> dict[str, object]:
+    """Return one JSON-compatible representation of a parsed program AST."""
+
+    return cast(
+        dict[str, object],
+        _ast_value_to_data(program, include_source_lines=include_source_lines),
+    )
+
+
+def _ast_value_to_data(value: object, *, include_source_lines: bool) -> object:
+    if is_dataclass(value) and not isinstance(value, type):
+        data: dict[str, object] = {}
+        for item in fields(value):
+            if item.name == "_source_lines" and not include_source_lines:
+                continue
+            data[item.name] = _ast_value_to_data(
+                getattr(value, item.name),
+                include_source_lines=include_source_lines,
+            )
+        return data
+    if isinstance(value, list | tuple):
+        return [_ast_value_to_data(item, include_source_lines=include_source_lines) for item in value]
+    if isinstance(value, dict):
+        return {
+            str(key): _ast_value_to_data(item, include_source_lines=include_source_lines)
+            for key, item in value.items()
+        }
+    return value
+
+
 def _use_from_node(node: Node, syntax_source: _TreeSitterSource) -> UseDecl:
     return UseDecl(
         kind=_required_text(node, "kind").strip(),
@@ -342,7 +352,7 @@ def _use_from_node(node: Node, syntax_source: _TreeSitterSource) -> UseDecl:
     )
 
 
-def _decl_from_node(node: Node, syntax_source: _TreeSitterSource) -> DeclBlock:
+def _cap_from_node(node: Node, syntax_source: _TreeSitterSource) -> CapDecl:
     header = node.child_by_field_name("header")
     body_node = _required_child(node, "body")
     kind = _required_text(header, "kind") if header is not None else _required_text(node, "kind")
@@ -355,13 +365,13 @@ def _decl_from_node(node: Node, syntax_source: _TreeSitterSource) -> DeclBlock:
     line_number = syntax_source.original_line_number(node.start_point.row)
     raw_body = _cap_body_text(body_node)
     frontmatter_present = _descendant_of_type(body_node, "frontmatter") is not None
-    meta, body, params = _declaration_semantics(
+    meta, body, params = _cap_semantics(
         kind=kind,
         raw_body=raw_body,
         frontmatter_present=frontmatter_present,
         line_number=line_number,
     )
-    return DeclBlock(
+    return CapDecl(
         kind=kind,
         name=name,
         language=language,
@@ -447,7 +457,7 @@ def _thunk_from_node(
         if header is not None
         else _params_from_node(params_node)
     )
-    overlays: list[ThunkOverlay] = []
+    directives: list[Directive] = []
     context_block: MessageBlock | None = None
     instruct_block: MessageBlock | None = None
     messages: list[MessageBlock] = []
@@ -468,7 +478,7 @@ def _thunk_from_node(
 
     for child in _thunk_content_nodes(body):
         if child.type in {"overlay_line", "directive"}:
-            overlays.append(_overlay_from_node(child, syntax_source))
+            directives.append(_directive_from_node(child, syntax_source))
             continue
         if child.type in {"blank_line", "comment_line"}:
             continue
@@ -490,7 +500,7 @@ def _thunk_from_node(
             f"{child.type!r}"
         )
 
-    thunk.overlays = tuple(overlays)
+    thunk.directives = tuple(directives)
     thunk.context = context_block
     thunk.instruct = instruct_block
     thunk.messages = tuple(messages)
@@ -514,11 +524,11 @@ def _flow_from_node(node: Node, syntax_source: _TreeSitterSource) -> Flow:
     params_node = node.child_by_field_name("params")
     input_param, params = _flow_params_from_node(params_node)
     body = _required_child(node, "body")
-    overlays: list[ThunkOverlay] = []
+    directives: list[Directive] = []
     stages: list[FlowStage] = []
     for child in body.named_children:
         if child.type in {"overlay_line", "directive"}:
-            overlays.append(_overlay_from_node(child, syntax_source))
+            directives.append(_directive_from_node(child, syntax_source))
             continue
         if child.type in {"blank_line", "comment_line", "doc_comment"}:
             continue
@@ -534,7 +544,7 @@ def _flow_from_node(node: Node, syntax_source: _TreeSitterSource) -> Flow:
         input=input_param,
         params=params,
         output=_ast_type_name(_optional_text(node.child_by_field_name("output"))),
-        overlays=tuple(overlays),
+        directives=tuple(directives),
         stages=tuple(stages),
         span=SourceSpan(syntax_source.original_line_number(node.start_point.row)),
     )
@@ -778,48 +788,49 @@ def _params_from_node(node: Node | None) -> tuple[ParamDecl | None, list[ParamDe
             optional=parameter.child_by_field_name("optional") is not None,
             type_name=type_name,
         )
-        if param.name == "input" and type_name == "message" and input_param is None and not params:
+        if param.name == "input" and type_name == "Message" and input_param is None and not params:
             input_param = ParamDecl(name="_", optional=False, type_name=None)
         else:
             params.append(param)
     return input_param, params
 
 
-def _overlay_from_node(node: Node, syntax_source: _TreeSitterSource) -> ThunkOverlay:
-    overlay = node.child_by_field_name("overlay") or node
+def _directive_from_node(node: Node, syntax_source: _TreeSitterSource) -> Directive:
+    directive = node.child_by_field_name("directive") or node
     subject = (
-        _required_text(overlay, "subject").strip()
-        if overlay.child_by_field_name("subject") is not None
-        else _required_text(overlay, "key").strip()
+        _required_text(directive, "subject").strip()
+        if directive.child_by_field_name("subject") is not None
+        else _required_text(directive, "key").strip()
     )
     operator = (
-        _required_text(overlay, "operator").strip()
-        if overlay.child_by_field_name("operator") is not None
-        else _required_text(overlay, "operator").strip()
+        _required_text(directive, "operator").strip()
+        if directive.child_by_field_name("operator") is not None
+        else _required_text(directive, "operator").strip()
     )
     line_number = syntax_source.original_line_number(node.start_point.row)
     raw_values = (
-        _raw_overlay_values_from_line(syntax_source.original_line(node.start_point.row))
+        _raw_directive_values_from_line(syntax_source.original_line(node.start_point.row))
         if node.type in {"overlay_line", "directive"}
         else None
     )
     if raw_values is None:
-        raw_values = _optional_text(overlay.child_by_field_name("values")) or ""
-    kind = _overlay_kind(subject, line_number=line_number)
+        raw_values = _optional_text(directive.child_by_field_name("values")) or ""
     items = tuple(
         item
         for item in (part.strip() for part in raw_values.split(","))
         if item
     )
-    return ThunkOverlay(
-        kind=kind,
-        op=_overlay_operator(operator, line_number=line_number),
-        items=items,
+    _validate_directive_name(subject, line_number=line_number)
+    _validate_directive_operator(operator, line_number=line_number)
+    return Directive(
+        name=subject,
+        operator=operator,
+        values=items,
         span=SourceSpan(line_number),
     )
 
 
-def _raw_overlay_values_from_line(line: str) -> str | None:
+def _raw_directive_values_from_line(line: str) -> str | None:
     match = DIRECTIVE_RE.match(line)
     if match is None:
         return None
@@ -827,9 +838,9 @@ def _raw_overlay_values_from_line(line: str) -> str | None:
     return values
 
 
-def _overlay_kind(subject: str, *, line_number: int) -> OverlayKind:
+def _directive_family(subject: str) -> str:
     normalized = subject.strip()
-    if normalized == "models":
+    if normalized in {"model", "models"}:
         return "model"
     if normalized in {"tool", "tools"}:
         return "tool"
@@ -845,17 +856,34 @@ def _overlay_kind(subject: str, *, line_number: int) -> OverlayKind:
         return "handoff"
     if normalized == "recall":
         return "recall"
+    return normalized
+
+
+def _validate_directive_name(subject: str, *, line_number: int) -> None:
+    normalized = subject.strip()
+    if normalized in {
+        "model",
+        "models",
+        "tool",
+        "tools",
+        "psyche",
+        "psyches",
+        "skill",
+        "skills",
+        "service",
+        "services",
+        "hands",
+        "handoffs",
+        "recall",
+    }:
+        return
     raise ToolangError(f"Unsupported thunk directive {subject!r} at line {line_number}.")
 
 
-def _overlay_operator(operator: str, *, line_number: int) -> OverlayOperator:
+def _validate_directive_operator(operator: str, *, line_number: int) -> None:
     normalized = operator.strip()
-    if normalized == "=":
-        return "set"
-    if normalized == "+=":
-        return "add"
-    if normalized == "-=":
-        return "remove"
+    if normalized in {"=", "+=", "-="}:
+        return
     raise ToolangError(f"Unsupported thunk directive operator {operator!r} at line {line_number}.")
 
 
@@ -972,7 +1000,7 @@ def _fenced_node_inner_text(node: Node) -> str:
     return body.rstrip()
 
 
-def _declaration_semantics(
+def _cap_semantics(
     *,
     kind: str,
     raw_body: str,
@@ -981,22 +1009,22 @@ def _declaration_semantics(
 ) -> tuple[dict[str, Any], str, list[ParamDecl]]:
     if kind == "psyche":
         if frontmatter_present:
-            raise ToolangError(f"Psyche {line_number} must not declare frontmatter.")
+            raise ToolangError(f"Psyche cap at line {line_number} must not declare frontmatter.")
         return {}, raw_body.rstrip(), []
     if kind == "service":
         if not frontmatter_present:
-            raise ToolangError(f"Service declaration at line {line_number} is missing frontmatter.")
-        return _service_declaration(raw_body=raw_body, line_number=line_number)
+            raise ToolangError(f"Service cap at line {line_number} is missing frontmatter.")
+        return _service_cap(raw_body=raw_body, line_number=line_number)
     if kind == "prompt":
-        return _prompt_declaration(
+        return _prompt_cap(
             raw_body=raw_body,
             frontmatter_present=frontmatter_present,
             line_number=line_number,
         )
-    raise ToolangError(f"Unsupported declaration kind {kind!r} at line {line_number}.")
+    raise ToolangError(f"Unsupported cap kind {kind!r} at line {line_number}.")
 
 
-def _service_declaration(*, raw_body: str, line_number: int) -> tuple[dict[str, Any], str, list[ParamDecl]]:
+def _service_cap(*, raw_body: str, line_number: int) -> tuple[dict[str, Any], str, list[ParamDecl]]:
     post = frontmatter.loads(raw_body)
     meta = dict(post.metadata)
     _require_exact_fields(
@@ -1007,31 +1035,31 @@ def _service_declaration(*, raw_body: str, line_number: int) -> tuple[dict[str, 
     )
     description = meta.get("description")
     if not isinstance(description, str) or not description:
-        raise ToolangError(f"Service declaration at line {line_number} is missing description.")
+        raise ToolangError(f"Service cap at line {line_number} is missing description.")
     transport = meta.get("transport")
     if not isinstance(transport, str) or not transport:
-        raise ToolangError(f"Service declaration at line {line_number} is missing transport.")
+        raise ToolangError(f"Service cap at line {line_number} is missing transport.")
     if transport not in {"http", "stdio"}:
         raise ToolangError(
-            f"Service declaration at line {line_number} uses unsupported transport {transport!r}."
+            f"Service cap at line {line_number} uses unsupported transport {transport!r}."
         )
     target = meta.get("target")
     if not isinstance(target, str) or not target:
-        raise ToolangError(f"Service declaration at line {line_number} is missing target.")
+        raise ToolangError(f"Service cap at line {line_number} is missing target.")
     headers = meta.get("headers")
     if headers is not None and not _is_string_map(headers):
         raise ToolangError(
-            f"Service declaration at line {line_number} must define headers as a string map."
+            f"Service cap at line {line_number} must define headers as a string map."
         )
     env = meta.get("env")
     if env is not None and not _is_env_names(env):
         raise ToolangError(
-            f"Service declaration at line {line_number} must list environment variable names."
+            f"Service cap at line {line_number} must list environment variable names."
         )
     return meta, post.content.rstrip(), []
 
 
-def _prompt_declaration(
+def _prompt_cap(
     *,
     raw_body: str,
     frontmatter_present: bool,
@@ -1051,7 +1079,7 @@ def _prompt_declaration(
     params_value = meta.get("params")
     if params_value is not None and not isinstance(params_value, str):
         raise ToolangError(
-            f"Prompt declaration at line {line_number} must define params as a string."
+            f"Prompt cap at line {line_number} must define params as a string."
         )
     params = _parse_signature_params(params_value or "", line_number=line_number)
     return meta, post.content.rstrip(), params
@@ -1094,7 +1122,7 @@ def _require_exact_fields(
     if unknown:
         joined = ", ".join(repr(item) for item in unknown)
         raise ToolangError(
-            f"{kind.capitalize()} declaration at line {line_number} has unsupported frontmatter fields: {joined}."
+            f"{kind.capitalize()} cap at line {line_number} has unsupported frontmatter fields: {joined}."
         )
 
 
@@ -1290,7 +1318,7 @@ def _tree_sitter_params(raw: str) -> str:
             continue
         name = "input" if match.group("name") == "_" else match.group("name")
         optional = match.group("optional") or ""
-        type_name = _tree_sitter_type_name(match.group("type") or "string")
+        type_name = _tree_sitter_type_name(match.group("type") or "Text")
         rendered.append(f"{name}{optional}: {type_name}")
     return ", ".join(rendered)
 
@@ -1298,17 +1326,13 @@ def _tree_sitter_params(raw: str) -> str:
 def _tree_sitter_type_name(type_name: str | None) -> str:
     if not type_name:
         return ""
-    suffix = "[]" if type_name.endswith("[]") else ""
-    base = type_name[:-2] if suffix else type_name
-    return f"{TREE_SITTER_TYPE_ALIASES.get(base, base)}{suffix}"
+    return type_name
 
 
 def _ast_type_name(type_name: str | None) -> str | None:
     if not type_name:
         return None
-    suffix = "[]" if type_name.endswith("[]") else ""
-    base = type_name[:-2] if suffix else type_name
-    return f"{AST_TYPE_ALIASES.get(base, base)}{suffix}"
+    return type_name
 
 
 def _parse_thunk_header(line: str, *, line_number: int) -> tuple[str | None, str | None, str | None] | None:

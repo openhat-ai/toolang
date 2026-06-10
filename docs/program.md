@@ -39,12 +39,12 @@ thunk pay:
 ```
 
 
-## Embedded Cap Declarations
+## Embedded Caps
 
-Program-level `psyche`, `service`, and `prompt` declarations are embedded inline caps.
+Program-level `psyche`, `service`, and `prompt` blocks are embedded inline caps.
 During prepare, Toolang materializes them into the agent-specific prepared cap
 set under `.caps/inline`, preserving the `.too` file as the definition
-source. This makes embedded declarations visible through cap APIs and WebUI
+source. This makes embedded caps visible through cap APIs and WebUI
 surfaces before any thunk selects them. The prepared cap has `form=inline`,
 `scope=here`, and `origin=local`.
 
@@ -347,9 +347,9 @@ thunk review(input: Message, path?: Path) -> ReviewResult:
 
 ### Scalar and Set Directives
 
-Directives are ordered set overlays on the activation set. The activation set is
+Directives are ordered set operations on the activation set. The activation set is
 computed before the program runs from placement defaults and CLI options.
-Program declarations and references form the program set.
+Program caps and references form the program set.
 
 | Form | Meaning |
 | --- | --- |
@@ -367,7 +367,7 @@ Rules:
 | `+=` | union the current set with named program-set items |
 | `-=` | subtract matching selectors from the current set |
 | `=` | intersect the current set with matching selectors |
-| ordered CSV | preserve declaration order |
+| ordered CSV | preserve source order |
 | no `default` keyword | `default` is treated like any other selector text |
 | model selectors | `models = ...` may use refs, aliases, globs, and bracket filters |
 | program-scoped additions | `+=` operands must name items from the program set |
@@ -503,9 +503,9 @@ The runtime expands the prompt before normal run-input assembly. The slash-style
 `/name ...` invocation remains the user-facing call shape.
 
 
-## Service Declarations
+## Service Caps
 
-`service` declarations use fenced markdown bodies. Service metadata lives in
+`service` caps use fenced markdown bodies. Service metadata lives in
 frontmatter inside that markdown.
 
 `service` frontmatter uses one minimal schema. `description` is the progressive

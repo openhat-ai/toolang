@@ -43,7 +43,7 @@ from .state.prepared import (
     shared_lock_path,
     shared_prepared_dir,
 )
-from .program import DeclBlock
+from .program import CapDecl
 from .state.program import build_prepared_program, load_live_program
 from .selectors import Selector, filter_value_matches, parse_selector, split_selector_list, selector_identity_matches
 
@@ -56,7 +56,7 @@ EntryOrigin = SourceOrigin
 EntryForm = SourceForm
 EntryScope = Literal["root", "home", "here"]
 MANAGED_KINDS = frozenset((*CAP_KINDS, *JOB_KINDS))
-EMBEDDED_DECL_KINDS = frozenset({"psyche", "service", "prompt"})
+EMBEDDED_CAP_KINDS = frozenset({"psyche", "service", "prompt"})
 FILE_BACKED_KINDS = frozenset({"psyche", "service", "prompt", "task", "chore"})
 SKILL_FIELDS = frozenset({"description"})
 SERVICE_FIELDS = frozenset({"description", "transport", "target", "headers", "env"})
@@ -1471,59 +1471,59 @@ def _collect_program_embedded_entries(
     entries: list[PreparedEntry] = []
     files: dict[str, bytes] = {}
     seen: dict[tuple[EntryKind, str], int] = {}
-    for decl in live_program.parsed.declarations:
-        kind = _embedded_decl_kind(decl)
+    for cap in live_program.parsed.caps:
+        kind = _embedded_cap_kind(cap)
         if kind is None:
             continue
         if kinds is not None and kind not in kinds:
             continue
-        key = (kind, decl.name)
+        key = (kind, cap.name)
         existing_line = seen.get(key)
         if existing_line is not None:
             raise ValueError(
-                f"duplicate embedded {kind} declaration: {decl.name} "
-                f"(lines {existing_line} and {decl.span.line + line_offset})"
+                f"duplicate embedded {kind} cap: {cap.name} "
+                f"(lines {existing_line} and {cap.span.line + line_offset})"
             )
-        seen[key] = decl.span.line + line_offset
-        entry, entry_files = _embedded_entry_from_decl(
+        seen[key] = cap.span.line + line_offset
+        entry, entry_files = _embedded_entry_from_cap(
             durable.toolang_root,
             durable.agent_name,
             kind=kind,
-            decl=decl,
+            cap=cap,
             relative_program_path=relative_program_path,
             program_path=program_path,
-            source_line=decl.span.line + line_offset,
+            source_line=cap.span.line + line_offset,
         )
         entries.append(entry)
         files.update(entry_files)
     return tuple(sorted(entries, key=_entry_sort_key)), files
 
 
-def _embedded_decl_kind(decl: DeclBlock) -> EntryKind | None:
-    if decl.kind not in EMBEDDED_DECL_KINDS:
+def _embedded_cap_kind(cap: CapDecl) -> EntryKind | None:
+    if cap.kind not in EMBEDDED_CAP_KINDS:
         return None
-    return cast(EntryKind, decl.kind)
+    return cast(EntryKind, cap.kind)
 
 
-def _embedded_entry_from_decl(
+def _embedded_entry_from_cap(
     toolang_root: Path,
     agent_name: str,
     *,
     kind: EntryKind,
-    decl: DeclBlock,
+    cap: CapDecl,
     relative_program_path: Path,
     program_path: Path,
     source_line: int,
 ) -> tuple[PreparedEntry, dict[str, bytes]]:
     del toolang_root
-    relative_entry_path = _relative_embedded_entry_path(agent_name, kind=kind, name=decl.name)
-    content = _embedded_materialized_content(decl)
+    relative_entry_path = _relative_embedded_entry_path(agent_name, kind=kind, name=cap.name)
+    content = _embedded_materialized_content(cap)
     return (
         PreparedEntry(
             kind=kind,
-            name=decl.name,
+            name=cap.name,
             shape="file",
-            ref=f"inline://{DIR_NAME_BY_KIND[kind]}/{decl.name}",
+            ref=f"inline://{DIR_NAME_BY_KIND[kind]}/{cap.name}",
             path=str(relative_entry_path),
             source=_source_record(
                 root_relative_path=relative_program_path,
@@ -1548,10 +1548,10 @@ def _relative_embedded_entry_path(
     return Path("agents") / agent_name / ".caps" / "inline" / DIR_NAME_BY_KIND[kind] / f"{name}.md"
 
 
-def _embedded_materialized_content(decl: DeclBlock) -> bytes:
-    if not decl.meta:
-        return decl.body.encode("utf-8")
-    post = frontmatter.Post(decl.body, **dict(decl.meta))
+def _embedded_materialized_content(cap: CapDecl) -> bytes:
+    if not cap.meta:
+        return cap.body.encode("utf-8")
+    post = frontmatter.Post(cap.body, **dict(cap.meta))
     return frontmatter.dumps(post).encode("utf-8")
 
 

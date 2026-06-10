@@ -235,7 +235,7 @@ def recall_values(thunk: Thunk) -> tuple[str, ...]:
     directives = thunk.directives_for("recall")
     if not directives:
         return ()
-    return tuple(item for item in directives[0].items if item)
+    return tuple(item for item in directives[0].values if item)
 
 
 def _expanded_run_message(message: Message, *, input_text: str, context_text: str) -> Message:

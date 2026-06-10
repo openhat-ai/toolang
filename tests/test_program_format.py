@@ -6,7 +6,7 @@ def test_format_source_normalizes_too_spacing() -> None:
 use   skill   briceyan/pdf-processing
 
 struct ReviewSummary:
-    title:string
+    title:Text
     summary?:   Text
 
 thunk review( input:Message,path?:Path)->Json:
@@ -19,7 +19,7 @@ thunk review( input:Message,path?:Path)->Json:
         "use skill briceyan/pdf-processing\n"
         "\n"
         "struct ReviewSummary:\n"
-        "  title: string\n"
+        "  title: Text\n"
         "  summary?: Text\n"
         "\n"
         "thunk review(input: Message, path?: Path) -> Json:\n"
@@ -33,7 +33,7 @@ thunk review( input:Message,path?:Path)->Json:
 def test_format_source_uses_configured_tab_size() -> None:
     source = """
 struct ReviewSummary:
-  title:string
+  title:Text
 
 thunk review(input:Message):
   user:
@@ -42,7 +42,7 @@ thunk review(input:Message):
 
     assert format_source(source, tab_size=4) == (
         "struct ReviewSummary:\n"
-        "    title: string\n"
+        "    title: Text\n"
         "\n"
         "thunk review(input: Message):\n"
         "    user:\n"
@@ -199,7 +199,7 @@ thunk followup:
 
 def test_format_source_does_not_absorb_implicit_message_after_control_block() -> None:
     source = """
-thunk slug(title) -> text:
+thunk slug(title) -> Text:
     models = sss
 
     instruct: hello
@@ -212,7 +212,7 @@ thunk slug(title) -> text:
 """.strip()
 
     assert format_source(source, tab_size=4) == (
-        "thunk slug(title) -> text:\n"
+        "thunk slug(title) -> Text:\n"
         "    models = sss\n"
         "\n"
         "    instruct: hello\n"
@@ -227,7 +227,7 @@ thunk slug(title) -> text:
 
 def test_format_source_does_not_absorb_same_indent_implicit_message_after_control_block() -> None:
     source = """
-thunk slug(title) -> text:
+thunk slug(title) -> Text:
     context:
         abcdef sdfss
     Convert the provided title into a concise lowercase slug.
@@ -235,7 +235,7 @@ thunk slug(title) -> text:
 """.strip()
 
     assert format_source(source, tab_size=4) == (
-        "thunk slug(title) -> text:\n"
+        "thunk slug(title) -> Text:\n"
         "    context:\n"
         "        abcdef sdfss\n"
         "\n"
@@ -286,7 +286,7 @@ def test_format_source_preserves_top_comment_spacing() -> None:
 #
 
 struct Summary:
-  title: string
+  title: Text
 """.lstrip()
 
     assert format_source(source) == (
@@ -299,7 +299,7 @@ struct Summary:
         "#\n"
         "\n"
         "struct Summary:\n"
-        "  title: string\n"
+        "  title: Text\n"
     )
 
 
@@ -309,12 +309,12 @@ def test_format_source_formats_program_comments_and_keeps_attached_comments() ->
 ##!    second program comment
 ## attached comments
 struct Summary:
-    title: string
-    summary: string
+    title: Text
+    summary: Text
 
 #normal comments
 struct BulletList:
-    items: string[]
+    items: Text[]
 """.strip()
 
     assert format_source(source, tab_size=4) == (
@@ -323,12 +323,12 @@ struct BulletList:
         "\n"
         "## attached comments\n"
         "struct Summary:\n"
-        "    title: string\n"
-        "    summary: string\n"
+        "    title: Text\n"
+        "    summary: Text\n"
         "\n"
         "# normal comments\n"
         "struct BulletList:\n"
-        "    items: string[]\n"
+        "    items: Text[]\n"
     )
 
 
@@ -338,11 +338,11 @@ def test_format_source_moves_program_comments_after_shebang() -> None:
 
 # attached comments
 struct Summary:
-    title: string
+    title: Text
 
 ##!later program comment
 struct BulletList:
-    items: string[]
+    items: Text[]
 """.lstrip()
 
     assert format_source(source, tab_size=4) == (
@@ -352,8 +352,8 @@ struct BulletList:
         "\n"
         "# attached comments\n"
         "struct Summary:\n"
-        "    title: string\n"
+        "    title: Text\n"
         "\n"
         "struct BulletList:\n"
-        "    items: string[]\n"
+        "    items: Text[]\n"
     )

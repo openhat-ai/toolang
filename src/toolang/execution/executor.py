@@ -576,7 +576,7 @@ class Executor:
             raise ToolangError(f"Flow stage {stage.kind!r} requires a target or body.")
         return Thunk(
             name=None,
-            input=ParamDecl(name="in", type_name="string"),
+            input=ParamDecl(name="in", type_name="Text"),
             messages=(MessageBlock(kind="user", text=body, span=stage.span),),
             span=stage.span,
         )
