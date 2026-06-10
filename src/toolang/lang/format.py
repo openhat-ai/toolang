@@ -50,6 +50,17 @@ NAMED_BLOCK_HEADER_RE = re.compile(
 MESSAGE_HEADER_RE = re.compile(
     r"^(?P<kind>context|instruct|user|assistant|tool)[ \t]*:(?P<body>[ \t]*.*)$"
 )
+COMMENT_SPLIT_KINDS = {
+    "directive",
+    "control",
+    "control_block_header",
+    "message_header",
+    "message_block_header",
+    "message_body",
+    "block_body",
+}
+
+
 @dataclass(frozen=True, slots=True)
 class _TreeSitterSource:
     source: str
@@ -453,6 +464,7 @@ def _normalize_blank_lines(lines: list[str], *, tab_size: int) -> list[str]:
     in_fence = False
     in_thunk = False
     previous_kind: str | None = None
+    previous_significant_kind: str | None = None
     pending_blank = False
 
     for line in lines:
@@ -470,6 +482,8 @@ def _normalize_blank_lines(lines: list[str], *, tab_size: int) -> list[str]:
         kind = _formatted_line_kind(line, in_thunk=in_thunk, tab_size=tab_size)
         if _needs_blank_line(previous_kind, kind, pending_blank=pending_blank):
             _append_blank_line(normalized)
+        elif previous_kind == "comment" and _needs_blank_line_after_comment(previous_significant_kind, kind):
+            _append_blank_line(normalized)
         elif pending_blank and _preserves_blank_line(previous_kind, kind):
             _append_blank_line(normalized)
         normalized.append(line)
@@ -481,6 +495,8 @@ def _normalize_blank_lines(lines: list[str], *, tab_size: int) -> list[str]:
         if _opens_fence(line):
             in_fence = True
         previous_kind = kind
+        if kind != "comment":
+            previous_significant_kind = kind
 
     return normalized
 
@@ -557,6 +573,16 @@ def _needs_blank_line(previous_kind: str | None, current_kind: str, *, pending_b
             "thunk_header",
         }
     return False
+
+
+def _needs_blank_line_after_comment(previous_significant_kind: str | None, current_kind: str) -> bool:
+    if previous_significant_kind not in COMMENT_SPLIT_KINDS or current_kind not in COMMENT_SPLIT_KINDS:
+        return False
+    return previous_significant_kind == current_kind or _needs_blank_line(
+        previous_significant_kind,
+        current_kind,
+        pending_blank=False,
+    )
 
 
 def _preserves_blank_line(previous_kind: str | None, current_kind: str) -> bool:

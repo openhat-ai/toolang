@@ -318,6 +318,7 @@ thunk is_relevant(in: Part[]):
         "  Decide whether this evidence bundle contains concrete information about agent workflow implementations.\n"
         "\n"
         "  # comments\n"
+        "\n"
         "  user:\n"
         "    abc\n"
         "\n"
@@ -341,6 +342,34 @@ thunk split:
         "  # Plain comment splits messages.\n"
         "\n"
         "  second message\n"
+    )
+
+
+def test_format_source_keeps_comment_separators_between_thunk_sections() -> None:
+    source = """
+thunk split:
+  models = gpt-5
+  # directive comment
+  context: repo
+  # control comment
+  user: hi
+  # role comment
+  assistant: ok
+""".strip()
+
+    assert format_source(source) == (
+        "thunk split:\n"
+        "  models = gpt-5\n"
+        "  # directive comment\n"
+        "\n"
+        "  context: repo\n"
+        "  # control comment\n"
+        "\n"
+        "  user: hi\n"
+        "\n"
+        "  # role comment\n"
+        "\n"
+        "  assistant: ok\n"
     )
 
 
