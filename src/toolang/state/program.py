@@ -9,7 +9,7 @@ import shlex
 from re import Match
 
 from ..agents import agent_program_path
-from ..program import (
+from ..lang.ast import (
     ContextBlock,
     CapDecl,
     Flow,
@@ -23,8 +23,9 @@ from ..program import (
     Thunk,
     Directive,
     UseDecl,
-    parse,
 )
+from ..lang.lower import parse
+from ..lang.validate import validate_program
 from .durable import DurableState
 from toolang.base.error import ToolangError
 
@@ -239,7 +240,7 @@ def _parse_body_text(body_text: str) -> Program:
     if not body_text.strip():
         return Program(_source_lines=[])
     program = parse(body_text)
-    _validate_program(program)
+    validate_program(program)
     return program
 
 
@@ -264,7 +265,7 @@ def _body_line_offset(*, source_text: str, body_text: str) -> int:
 def _default_thunk() -> Thunk:
     return Thunk(
         name="main",
-        input=ParamDecl(name="_"),
+        input=ParamDecl(name="in", type_name="Pack"),
         span=_default_span(),
     )
 
@@ -323,152 +324,6 @@ def _render_template_var(match: Match[str], bindings: dict[str, str]) -> str:
     if name not in bindings:
         raise ToolangError(f"Unknown template variable {name!r}.")
     return bindings[name]
-
-
-def _validate_program(program: Program) -> None:
-    seen_cap_names: set[tuple[str, str]] = set()
-    seen_context_names: set[str | None] = set()
-    seen_instruct_names: set[str | None] = set()
-    seen_struct_names: set[str] = set()
-    seen_thunk_names: set[str] = set()
-    seen_flow_names: set[str] = set()
-
-    for cap in program.caps:
-        cap_key = (cap.kind, cap.name)
-        if cap_key in seen_cap_names:
-            raise ToolangError(f"Duplicate {cap.kind} name {cap.name!r}.")
-        seen_cap_names.add(cap_key)
-        _validate_cap_params(cap)
-
-    for context in program.contexts:
-        if context.name in {"default", "none"}:
-            raise ToolangError(f"Context name {context.name!r} is reserved.")
-        if context.name in seen_context_names:
-            label = "default" if context.name is None else context.name
-            raise ToolangError(f"Duplicate context name {label!r}.")
-        seen_context_names.add(context.name)
-
-    for instruct in program.instructs:
-        if instruct.name in {"default", "none"}:
-            raise ToolangError(f"Instruct name {instruct.name!r} is reserved.")
-        if instruct.name in seen_instruct_names:
-            label = "default" if instruct.name is None else instruct.name
-            raise ToolangError(f"Duplicate instruct name {label!r}.")
-        seen_instruct_names.add(instruct.name)
-
-    for struct in program.structs:
-        if struct.name in seen_struct_names:
-            raise ToolangError(f"Duplicate struct name {struct.name!r}.")
-        seen_struct_names.add(struct.name)
-
-    for thunk in program.thunks:
-        thunk_name = _thunk_name(thunk)
-        if thunk_name in seen_thunk_names:
-            raise ToolangError(f"Duplicate thunk name {thunk_name!r}.")
-        seen_thunk_names.add(thunk_name)
-        _validate_thunk_params(thunk, thunk_name=thunk_name)
-        _validate_thunk_directives(thunk, thunk_name=thunk_name)
-        _validate_thunk_messages(thunk, thunk_name=thunk_name)
-
-    for flow in program.flows:
-        flow_name = flow.flow_name()
-        if flow_name in seen_flow_names:
-            raise ToolangError(f"Duplicate flow name {flow_name!r}.")
-        seen_flow_names.add(flow_name)
-        _validate_flow_params(flow, flow_name=flow_name)
-        _validate_flow_directives(flow, flow_name=flow_name)
-
-
-def _validate_cap_params(cap: CapDecl) -> None:
-    seen: set[str] = set()
-    for param in cap.params:
-        if param.name in seen:
-            raise ToolangError(
-                f"Duplicate prompt parameter {param.name!r} in {cap.kind} {cap.name}."
-            )
-        seen.add(param.name)
-
-
-def _validate_thunk_params(thunk: Thunk, *, thunk_name: str) -> None:
-    if thunk.input is not None and thunk.input.name == "runtime":
-        raise ToolangError(f"Thunk {thunk_name!r} must not use reserved parameter name 'runtime'.")
-    seen: set[str] = set()
-    for param in thunk.params:
-        if param.name == "runtime":
-            raise ToolangError(f"Thunk {thunk_name!r} must not use reserved parameter name 'runtime'.")
-        if param.name in seen:
-            raise ToolangError(f"Duplicate thunk parameter {param.name!r} in {thunk_name!r}.")
-        seen.add(param.name)
-
-
-def _validate_thunk_directives(thunk: Thunk, *, thunk_name: str) -> None:
-    model_directives = [directive for directive in thunk.directives if _directive_family(directive.name) == "model"]
-    if len(model_directives) > 1:
-        raise ToolangError(f"Thunk {thunk_name!r} may declare at most one models directive.")
-    if model_directives:
-        directive = model_directives[0]
-        if directive.operator != "=":
-            raise ToolangError(f"Thunk {thunk_name!r} must use '=' for its models directive.")
-        if not directive.values:
-            raise ToolangError(f"Thunk {thunk_name!r} must declare at least one model selector.")
-        routed = [selector for selector in directive.values if "@" in selector]
-        if routed:
-            joined = ", ".join(routed)
-            raise ToolangError(
-                f"Thunk {thunk_name!r} must declare route-neutral model refs, not routed selectors: {joined}"
-            )
-
-    recall_directives = [directive for directive in thunk.directives if _directive_family(directive.name) == "recall"]
-    if len(recall_directives) > 1:
-        raise ToolangError(f"Thunk {thunk_name!r} may declare at most one recall directive.")
-    if not recall_directives:
-        return
-    recall = recall_directives[0]
-    if recall.operator != "=":
-        raise ToolangError(f"Thunk {thunk_name!r} must use '=' for its recall directive.")
-    values = set(recall.values)
-    if not values:
-        raise ToolangError(f"Thunk {thunk_name!r} must declare at least one recall source.")
-    if values in ({"none"}, {"default"}, {"history"}, {"memory"}, {"history", "memory"}):
-        return
-    joined = ", ".join(recall.values)
-    raise ToolangError(f"Thunk {thunk_name!r} has unsupported recall directive values: {joined}.")
-
-
-def _validate_thunk_messages(thunk: Thunk, *, thunk_name: str) -> None:
-    instruct_count = len(thunk.message_blocks("instruct"))
-    if instruct_count > 1:
-        raise ToolangError(f"Thunk {thunk_name!r} may declare at most one instruct block.")
-    context_count = len(thunk.message_blocks("context"))
-    if context_count > 1:
-        raise ToolangError(f"Thunk {thunk_name!r} may declare at most one context block.")
-    unsupported = [block.kind for block in thunk.messages if block.kind not in {"user", "assistant", "tool"}]
-    if unsupported:
-        joined = ", ".join(unsupported)
-        raise ToolangError(
-            f"Thunk {thunk_name!r} does not yet support message blocks: {joined}."
-        )
-
-
-def _validate_flow_params(flow: Flow, *, flow_name: str) -> None:
-    seen: set[str] = set()
-    if flow.input is not None and flow.input.name in {"runtime"}:
-        raise ToolangError(f"Flow {flow_name!r} must not use reserved parameter name 'runtime'.")
-    for param in flow.params:
-        if param.name == "runtime":
-            raise ToolangError(f"Flow {flow_name!r} must not use reserved parameter name 'runtime'.")
-        if param.name in seen:
-            raise ToolangError(f"Duplicate flow parameter {param.name!r} in {flow_name!r}.")
-        seen.add(param.name)
-
-
-def _validate_flow_directives(flow: Flow, *, flow_name: str) -> None:
-    model_directives = [directive for directive in flow.directives if _directive_family(directive.name) == "model"]
-    if len(model_directives) > 1:
-        raise ToolangError(f"Flow {flow_name!r} may declare at most one models directive.")
-    recall_directives = [directive for directive in flow.directives if _directive_family(directive.name) == "recall"]
-    if len(recall_directives) > 1:
-        raise ToolangError(f"Flow {flow_name!r} may declare at most one recall directive.")
 
 
 def _param_to_data(param: ParamDecl) -> dict[str, object]:
@@ -653,13 +508,7 @@ def _flow_stage_to_lock_data(stage: FlowStage, *, line_offset: int) -> dict[str,
 def _thunk_params_to_lock_data(thunk: Thunk) -> list[dict[str, object]]:
     params: list[dict[str, object]] = []
     if thunk.input is not None:
-        params.append(
-            {
-                "name": "input" if thunk.input.name == "_" else thunk.input.name,
-                "type": "Message",
-                "optional": False,
-            }
-        )
+        params.append(_param_to_lock_data(thunk.input))
     params.extend(_param_to_lock_data(item) for item in thunk.params)
     return params
 
@@ -693,27 +542,6 @@ def _block_to_lock_data(block: MessageBlock, *, line_offset: int) -> dict[str, o
     if not block.explicit:
         data["explicit"] = False
     return data
-
-
-def _directive_family(name: str) -> str:
-    normalized = name.strip()
-    if normalized in {"model", "models"}:
-        return "model"
-    if normalized in {"tool", "tools"}:
-        return "tool"
-    if normalized in {"psyche", "psyches"}:
-        return "psyche"
-    if normalized in {"skill", "skills"}:
-        return "skill"
-    if normalized in {"service", "services"}:
-        return "service"
-    if normalized == "hands":
-        return "hand"
-    if normalized == "handoffs":
-        return "handoff"
-    if normalized == "recall":
-        return "recall"
-    return normalized
 
 
 def _source_type_name(type_name: str | None) -> str:

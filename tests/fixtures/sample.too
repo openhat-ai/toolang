@@ -1,19 +1,16 @@
 use skill briceyan/pdf-processing
 
-prompt summarize: ```md
----
-params: style, audience?
----
+prompt summarize:
+  params = style, audience?
 
-Summarize the request in a {{style}} style.
-Audience: {{audience}}
-```
+  Summarize the request in a {{style}} style.
+  Audience: {{audience}}
 
 struct WorkspaceSummary:
   title: Text
   summary: Text
 
-thunk summarize(_) -> WorkspaceSummary:
+thunk summarize(in: Part[]) -> WorkspaceSummary:
   models = gpt-5
   skills = review
 

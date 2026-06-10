@@ -1,11 +1,11 @@
-thunk expand_queries(_):
+thunk expand_queries(in: Part[]):
   Research question:
   {{ _ }}
 
   Turn this research question into 6 diverse web search queries.
   Return one query per line. No bullets, no numbering.
 
-thunk search_web(_):
+thunk search_web(in: Part[]):
   tools = web_search/*
 
   Query:
@@ -18,7 +18,7 @@ thunk search_web(_):
   - title, url, date if available
   - one sentence on why it matters
 
-thunk extract_findings(_):
+thunk extract_findings(in: Part[]):
   Evidence bundle:
   {{ _ }}
 
@@ -26,7 +26,7 @@ thunk extract_findings(_):
   Prefer source-backed claims.
   Return concise bullets with URLs preserved.
 
-thunk synthesize_report(_):
+thunk synthesize_report(in: Part[]):
   Findings:
   {{ _ }}
 
@@ -53,7 +53,7 @@ flow research(in: Text):
   ## Synthesize the final research brief
   do synthesize_report
 
-thunk is_relevant(_):
+thunk is_relevant(in: Part[]):
   Evidence bundle:
   {{ _ }}
 

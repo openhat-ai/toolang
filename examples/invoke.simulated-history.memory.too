@@ -6,11 +6,11 @@
 #
 #   toolang examples/invoke.simulated-history.memory.too followup "What did I ask you to remember?"
 
-thunk followup(_):
+thunk followup(in: Part[]):
   recall = memory
 
-  context: none
-  instruct: none
+  context none
+  instruct none
 
   user:
     Remember that the deployment window is Friday morning.

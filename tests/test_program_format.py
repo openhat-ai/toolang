@@ -1,4 +1,4 @@
-from toolang.program_format import format_source
+from toolang.lang.format import format_source
 
 
 def test_format_source_normalizes_too_spacing() -> None:
@@ -22,7 +22,7 @@ thunk review( input:Message,path?:Path)->Json:
         "  title: Text\n"
         "  summary?: Text\n"
         "\n"
-        "thunk review(input: Message, path?: Path) -> Json:\n"
+        "thunk review(in: Pack, path?: Path) -> Json:\n"
         "  models = gpt-5\n"
         "  skills += review, patch\n"
         "\n"
@@ -44,7 +44,7 @@ thunk review(input:Message):
         "struct ReviewSummary:\n"
         "    title: Text\n"
         "\n"
-        "thunk review(input: Message):\n"
+        "thunk review(in: Pack):\n"
         "    user:\n"
         "        Review it.\n"
     )
@@ -52,15 +52,34 @@ thunk review(input:Message):
 
 def test_format_source_uses_syntax_without_program_semantics() -> None:
     source = """
-service search: ```md
-This is syntactically valid even before service metadata is authored.
-```
+service search:
+  This is syntactically valid even before service metadata is authored.
 """.strip()
 
     assert format_source(source) == (
-        "service search: ```md\n"
-        "This is syntactically valid even before service metadata is authored.\n"
-        "```\n"
+        "service search:\n"
+        "  This is syntactically valid even before service metadata is authored.\n"
+    )
+
+
+def test_format_source_formats_inline_job_headers() -> None:
+    source = """
+task   review_api  :
+  title = Review API changes
+
+  Review the API changes.
+
+chore stale_prs  :
+  schedule = FREQ=HOURLY;INTERVAL=6
+""".strip()
+
+    assert format_source(source) == (
+        "task review_api:\n"
+        "  title = Review API changes\n"
+        "  Review the API changes.\n"
+        "\n"
+        "chore stale_prs:\n"
+        "  schedule = FREQ=HOURLY;INTERVAL=6\n"
     )
 
 
@@ -102,7 +121,7 @@ thunk review(input: Message):
     tools = shell
     context: repo
 
-    instruct: strict-json
+    instruct: strict_json
     user:
         Review it.
     assistant: Ready.
@@ -111,12 +130,12 @@ thunk review(input: Message):
 """.strip()
 
     assert format_source(source) == (
-        "thunk review(input: Message):\n"
+        "thunk review(in: Pack):\n"
         "  models = gpt-5\n"
         "  tools = shell\n"
         "\n"
         "  context: repo\n"
-        "  instruct: strict-json\n"
+        "  instruct: strict_json\n"
         "\n"
         "  user:\n"
         "    Review it.\n"
@@ -272,6 +291,85 @@ thunk:
         "  Use the selected skills when they apply.\n"
         "\n"
         "  Otherwise answer directly.\n"
+    )
+
+
+def test_format_source_keeps_explicit_roles_after_implicit_messages() -> None:
+    source = """
+thunk is_relevant(in: Part[]):
+    Evidence bundle:
+    {{ _ }}
+
+    Decide whether this evidence bundle contains concrete information about agent workflow implementations.
+
+    # comments
+    user:
+        abc
+
+    assistant:
+        def
+""".strip()
+
+    assert format_source(source) == (
+        "thunk is_relevant(in: Part[]):\n"
+        "  Evidence bundle:\n"
+        "  {{ _ }}\n"
+        "\n"
+        "  Decide whether this evidence bundle contains concrete information about agent workflow implementations.\n"
+        "\n"
+        "  # comments\n"
+        "\n"
+        "  user:\n"
+        "    abc\n"
+        "\n"
+        "  assistant:\n"
+        "    def\n"
+    )
+
+
+def test_format_source_uses_comments_to_split_implicit_messages() -> None:
+    source = """
+thunk split:
+    first message
+    # Plain comment splits messages.
+    second message
+""".strip()
+
+    assert format_source(source) == (
+        "thunk split:\n"
+        "  first message\n"
+        "\n"
+        "  # Plain comment splits messages.\n"
+        "\n"
+        "  second message\n"
+    )
+
+
+def test_format_source_keeps_comment_separators_between_thunk_sections() -> None:
+    source = """
+thunk split:
+  models = gpt-5
+  # directive comment
+  context: repo
+  # control comment
+  user: hi
+  # role comment
+  assistant: ok
+""".strip()
+
+    assert format_source(source) == (
+        "thunk split:\n"
+        "  models = gpt-5\n"
+        "  # directive comment\n"
+        "\n"
+        "  context: repo\n"
+        "  # control comment\n"
+        "\n"
+        "  user: hi\n"
+        "\n"
+        "  # role comment\n"
+        "\n"
+        "  assistant: ok\n"
     )
 
 

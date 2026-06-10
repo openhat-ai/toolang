@@ -35,7 +35,7 @@ from toolang.up import load_model_providers
 from toolang.models.adapters import chat_completions as chat_completions_models
 from toolang.models.adapters import responses as responses_models
 from toolang.models.adapters.responses import encode_message, response_payload
-from toolang.program import MessageBlock, ParamDecl, SourceSpan, Thunk
+from toolang.lang.ast import MessageBlock, ParamDecl, SourceSpan, Thunk
 from toolang.plugin import load_loop, load_loops
 from toolang.models.config import load_default_models, load_model_aliases
 

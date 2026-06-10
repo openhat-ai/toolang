@@ -10,7 +10,7 @@
 
 use skill briceyan/review
 
-thunk gpt_only(_):
+thunk gpt_only(in: Part[]):
   model = openai/gpt-5
 
   Rewrite the input into one concise paragraph.

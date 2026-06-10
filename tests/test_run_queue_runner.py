@@ -316,7 +316,7 @@ def test_collect_file_submissions_scans_existing_inbox_files_once(tmp_path: Path
     inbox = tmp_path / "inbox"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk file(_):\n  Process a file.\n",
+        "agent alice\n\nthunk file(in: Part[]):\n  Process a file.\n",
     )
     _write_text(inbox / "note.txt", "hello")
     context = _build_context(
@@ -4556,24 +4556,17 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
         toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
-            "psyche reviewer: ```md\n"
-            "Prefer concrete findings.\n"
-            "```\n\n"
-            "service github: ```md\n"
-            "---\n"
-            "description: Use when the agent needs GitHub MCP access.\n"
-            "transport: http\n"
-            "target: https://mcp.github.com/mcp\n"
-            "---\n\n"
-            "Use this service when the agent needs GitHub access.\n"
-            "```\n\n"
-            "prompt summarize: ```md\n"
-            "---\n"
-            "params: style, audience?\n"
-            "---\n\n"
-            "Summarize the user's request in a {{style}} style.\n"
-            "Target audience: {{audience}}\n"
-            "```\n"
+            "psyche reviewer:\n"
+            "  Prefer concrete findings.\n\n"
+            "service github:\n"
+            "  description = Use when the agent needs GitHub MCP access.\n"
+            "  protocol = http\n"
+            "  target = https://mcp.github.com/mcp\n\n"
+            "  Use this service when the agent needs GitHub access.\n\n"
+            "prompt summarize:\n"
+            "  params = style, audience?\n\n"
+            "  Summarize the user's request in a {{style}} style.\n"
+            "  Target audience: {{audience}}\n"
         ),
     )
 
@@ -4605,13 +4598,13 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
     assert entries_by_kind["service"].name == "github"
     assert entries_by_kind["service"].ref == "inline://services/github"
     assert entries_by_kind["service"].source.form == "inline"
-    assert entries_by_kind["service"].source.line == 7
+    assert entries_by_kind["service"].source.line == 6
     assert entries_by_kind["prompt"].name == "summarize"
     assert entries_by_kind["prompt"].ref == "inline://prompts/summarize"
     assert entries_by_kind["prompt"].source.origin == "local"
     assert entries_by_kind["prompt"].source.form == "inline"
     assert entries_by_kind["prompt"].source.path == "agents/alice/agent.too"
-    assert entries_by_kind["prompt"].source.line == 17
+    assert entries_by_kind["prompt"].source.line == 13
     assert live.caps == (
         "agents/alice/.caps/inline/prompts/summarize.md",
         "agents/alice/.caps/inline/psyches/reviewer.md",
@@ -4654,7 +4647,7 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
         assert service_detail["form"] == "inline"
         assert service_detail["scope"] == "here"
         assert service_detail["definition_file"] == "agents/alice/agent.too"
-        assert service_detail["line"] == 7
+        assert service_detail["line"] == 6
         assert service_detail["content"] == service_content
 
         list_response = client.get("/api/v1/prompts")
@@ -4669,7 +4662,7 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
                 "ref": "inline://prompts/summarize",
                 "definition_file": "agents/alice/agent.too",
                 "editable": False,
-                "line": 17,
+                "line": 13,
             }
         ]
 
@@ -4687,12 +4680,10 @@ def test_prepare_rejects_duplicate_embedded_cap_names(tmp_path: Path) -> None:
         toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
-            "prompt summarize: ```md\n"
-            "First body.\n"
-            "```\n\n"
-            "prompt summarize: ```md\n"
-            "Second body.\n"
-            "```\n"
+            "prompt summarize:\n"
+            "  First body.\n\n"
+            "prompt summarize:\n"
+            "  Second body.\n"
         ),
     )
 
@@ -5503,7 +5494,7 @@ def test_assemble_run_input_uses_activation_default_when_thunk_omits_one(tmp_pat
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk chat:\n  Reply directly.\n",
+        "agent alice\n\nthunk chat:\n  instruct:\n    Reply directly.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -5526,7 +5517,7 @@ def test_script_run_thread_id_uses_script_prefix(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk summarize(_):\n  Summarize it.\n",
+        "agent alice\n\nthunk summarize(in: Part[]):\n  Summarize it.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -5554,7 +5545,7 @@ def test_assemble_file_run_input_includes_authored_file_thunk_message(tmp_path: 
         toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
-            "thunk file(input: Message):\n"
+            "thunk file(in: Part[]):\n"
             "  tools = filesystem/*\n\n"
             "  user:\n"
             "    Write one short text summary to outbox/index.md.\n"
@@ -5587,7 +5578,7 @@ def test_assemble_run_input_hides_tools_when_activation_has_no_tools(tmp_path: P
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk summarize(_):\n  Reply directly.\n",
+        "agent alice\n\nthunk summarize(in: Part[]):\n  Reply directly.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -5632,7 +5623,7 @@ def test_assemble_run_input_uses_explicit_activation_tools_for_script_runs(tmp_p
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk summarize(_):\n  Reply directly.\n",
+        "agent alice\n\nthunk summarize(in: Part[]):\n  Reply directly.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -5665,7 +5656,7 @@ def test_assemble_run_input_logs_activation_set_math(tmp_path: Path, caplog) -> 
         toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
-            "thunk summarize(_):\n"
+            "thunk summarize(in: Part[]):\n"
             "  models = openai/gpt-5\n"
             "  tools -= service_use/bridge_start, service_use/init, service_use/auth_start, service_use/tool_call\n"
             "  skills = local-reviewer\n\n"
@@ -5749,7 +5740,7 @@ def test_assemble_run_input_uses_thunk_user_message_for_script_runs(tmp_path: Pa
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk rewrite(_):\n  Rewrite the input for a technical audience.\n",
+        "agent alice\n\nthunk rewrite(in: Part[]):\n  Rewrite the input for a technical audience.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -5789,10 +5780,10 @@ def test_script_run_can_simulate_history_with_explicit_message_blocks(
         toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
-            "thunk replay(_):\n"
+            "thunk replay(in: Part[]):\n"
             f"  recall = {recall}\n"
-            "  context: none\n"
-            "  instruct: none\n\n"
+            "  context none\n"
+            "  instruct none\n\n"
             "  user:\n"
             "    My name is Ada.\n\n"
             "  assistant:\n"
@@ -5852,9 +5843,9 @@ def test_script_run_keeps_implicit_user_block_as_single_invoke_message(tmp_path:
         toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
-            "thunk replay(_):\n"
+            "thunk replay(in: Part[]):\n"
             "  recall = none\n"
-            "  context: none\n\n"
+            "  context none\n\n"
             "  Use one invoke message.\n"
         ),
     )
@@ -5884,7 +5875,7 @@ def test_assemble_run_input_keeps_thread_messages_out_of_system_instructions(tmp
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk chat:\n  Reply directly.\n",
+        "agent alice\n\nthunk chat:\n  instruct:\n    Reply directly.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -5905,7 +5896,6 @@ def test_assemble_run_input_keeps_thread_messages_out_of_system_instructions(tmp
     assert "agent_name: alice" in text
     assert text.endswith("hello")
     instructions = bundle.instructions()
-    assert "You are the alice Toolang agent." in instructions
     assert "Reply directly." in instructions
     assert "<skills>" not in instructions
     assert "<services>" not in instructions
@@ -5918,13 +5908,10 @@ def test_assemble_run_input_expands_embedded_prompt_for_chat_message(tmp_path: P
         toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
-            "prompt summarize: ```md\n"
-            "---\n"
-            "params: style, audience?\n"
-            "---\n\n"
-            "Summarize the user's request in a {{style}} style.\n"
-            "Target audience: {{audience}}\n"
-            "```\n"
+            "prompt summarize:\n"
+            "  params = style, audience?\n\n"
+            "  Summarize the user's request in a {{style}} style.\n"
+            "  Target audience: {{audience}}\n"
         ),
     )
     context = _build_context(
@@ -5963,7 +5950,7 @@ def test_run_input_prepends_selected_context_to_user_message(tmp_path: Path) -> 
             "context report:\n"
             "  Agent {{runtime.agent.name}} is preparing a report.\n\n"
             "thunk chat:\n"
-            "  context: report\n"
+            "  context report\n"
         ),
     )
     context = _build_context(
@@ -6028,7 +6015,8 @@ def test_chat_run_prefers_named_chat_thunk_over_main(tmp_path: Path) -> None:
             "thunk:\n"
             "  Script default.\n\n"
             "thunk chat:\n"
-            "  Reply directly.\n"
+            "  instruct:\n"
+            "    Reply directly.\n"
         ),
     )
     context = _build_context(
@@ -6045,7 +6033,6 @@ def test_chat_run_prefers_named_chat_thunk_over_main(tmp_path: Path) -> None:
 
     assert bundle.thunk.name == "chat"
     instructions = bundle.instructions()
-    assert "You are the alice Toolang agent." in instructions
     assert "Reply directly." in instructions
 
 
@@ -6056,9 +6043,10 @@ def test_program_default_instruct_overrides_runtime_default(tmp_path: Path) -> N
         (
             "agent alice\n\n"
             "instruct:\n"
-            "  Agent {{runtime.agent.name}} in sandbox {{runtime.sandbox}}.\n\n"
+            "  Agent {{runtime.agent.name}} in sandbox {{runtime.sandbox}}.\n"
+            "  Reply directly.\n\n"
             "thunk chat:\n"
-            "  Reply directly.\n"
+            "  user: hello\n"
         ),
     )
     context = _build_context(
@@ -6087,7 +6075,7 @@ def test_thunk_instruct_can_select_named_instruct(tmp_path: Path) -> None:
             "instruct reviewer:\n"
             "  Review with {{runtime.thunk.name}}.\n\n"
             "thunk review:\n"
-            "  instruct: reviewer\n\n"
+            "  instruct reviewer\n\n"
             "  Review the target carefully.\n"
         ),
     )
@@ -6115,7 +6103,7 @@ def test_thunk_instruct_none_suppresses_agent_instruct_layer(tmp_path: Path) -> 
         (
             "agent alice\n\n"
             "thunk quiet:\n"
-            "  instruct: none\n\n"
+            "  instruct none\n\n"
             "  Reply directly.\n"
         ),
     )

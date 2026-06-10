@@ -11,7 +11,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from .. import agents, work
-from ..program import Thunk
+from ..lang.ast import Thunk
 from toolang.base.error import ToolangError
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.protocols.tool import AgentTool

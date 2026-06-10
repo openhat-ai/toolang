@@ -36,7 +36,7 @@ def fmt(
         ),
     ] = None,
 ) -> None:
-    from ...program_format import ToolangFormatError, format_source
+    from ...lang.format import ToolangFormatError, format_source
 
     if tab_size < 1:
         raise click.ClickException("--tab-size must be at least 1")

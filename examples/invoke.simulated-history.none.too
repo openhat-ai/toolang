@@ -6,9 +6,9 @@
 #
 #   toolang examples/invoke.simulated-history.none.too followup "What is my name?"
 
-thunk followup(_):
+thunk followup(in: Part[]):
   recall = none
-  context: none
+  context none
 
   user:
     My name is Ada.

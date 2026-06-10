@@ -17,27 +17,27 @@
 # Qwen3 Coder Next:
 #   toolang examples/invoke.openrouter-smoke.too qwen "Summarize this repository." --model qwen/qwen3-coder-next@openrouter
 
-thunk gpt(_):
+thunk gpt(in: Part[]):
   model = openai/gpt-5
 
   Summarize the input into three short technical bullet points.
 
-thunk claude(_):
+thunk claude(in: Part[]):
   model = anthropic/claude-sonnet-4.5
 
   Summarize the input into three short technical bullet points.
 
-thunk gemini(_):
+thunk gemini(in: Part[]):
   model = google/gemini-3.1-pro-preview
 
   Summarize the input into three short technical bullet points.
 
-thunk grok(_):
+thunk grok(in: Part[]):
   model = x-ai/grok-4.20
 
   Summarize the input into three short technical bullet points.
 
-thunk qwen(_):
+thunk qwen(in: Part[]):
   model = qwen/qwen3-coder-next
 
   Summarize the input into three short technical bullet points.

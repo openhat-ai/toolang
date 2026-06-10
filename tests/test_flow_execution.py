@@ -66,7 +66,7 @@ class _FakeAdapter:
 
 
 def test_program_parse_flow_stages() -> None:
-    from toolang.program import parse
+    from toolang.lang.lower import parse
 
     program = parse(
         "flow review(in: Text):\n"
@@ -89,7 +89,7 @@ def test_program_parse_flow_stages() -> None:
 
 
 def test_program_parse_flow_stage_doc_comments() -> None:
-    from toolang.program import parse
+    from toolang.lang.lower import parse
 
     program = parse(
         "flow review(in: Text):\n"
@@ -110,7 +110,7 @@ def test_flow_run_records_child_thunk_run(tmp_path: Path) -> None:
         toolang_root = tmp_path / "toolang"
         source = (
             "agent alice\n\n"
-            "thunk summarize(_):\n"
+            "thunk summarize(in: Part[]):\n"
             "  Summarize the input.\n\n"
             "flow review(in: Text):\n"
             "  do summarize\n"
