@@ -11,7 +11,7 @@ from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import Message, MessageRole, TextPart, message_summary, message_text
 from toolang.base.types.model import ModelTarget
 
-from ..program import MessageBlock, Thunk
+from ..lang.ast import MessageBlock, Thunk
 from ..state.prepared import PreparedEntry
 from .binding import RunBinding, invoke_params, run_selected_model_selector
 from .context import RunSnapshot, build_run_snapshot
@@ -93,6 +93,7 @@ class RunInput:
         params = invoke_params(run)
         if thunk.input is not None and input_text:
             params = {thunk.input.name: input_text, **params}
+            params.setdefault("_", input_text)
         sets = effective_run_sets(context, run=run, thunk=thunk)
         model_math = sets.set_math.get("models")
         if isinstance(model_math, dict):

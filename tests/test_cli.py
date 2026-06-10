@@ -188,7 +188,7 @@ def test_cli_main_intercepts_local_too_program_before_typer(monkeypatch, tmp_pat
 
 def test_cli_main_runs_roaming_file_runtime_for_script_inbox(monkeypatch, tmp_path: Path) -> None:
     program_path = tmp_path / "demo.too"
-    program_path.write_text("thunk file(_):\n  Process a file.\n", encoding="utf-8")
+    program_path.write_text("thunk file(in: Part[]):\n  Process a file.\n", encoding="utf-8")
     inbox = tmp_path / "inbox"
     inbox.mkdir()
     captured: dict[str, object] = {}
@@ -277,7 +277,7 @@ def test_cli_main_roaming_threads_can_read_offline_materialized_store(
 
 def test_cli_main_keeps_roaming_thunk_invoke_when_thunk_is_present(monkeypatch, tmp_path: Path) -> None:
     program_path = tmp_path / "demo.too"
-    program_path.write_text("thunk file(_):\n  Process a file.\n", encoding="utf-8")
+    program_path.write_text("thunk file(in: Part[]):\n  Process a file.\n", encoding="utf-8")
     inbox = tmp_path / "inbox"
     inbox.mkdir()
     captured: dict[str, object] = {}
@@ -1698,7 +1698,7 @@ def test_cli_roaming_program_help_lists_available_targets(capsys, tmp_path: Path
 thunk:
   Reply directly.
 
-thunk summarize(_, style?):
+thunk summarize(in: Part[], style?):
   Summarize the current workspace in a concise style.
 
 flow review(in: Text):
@@ -1750,7 +1750,7 @@ def test_cli_roaming_thunk_help_is_dynamic(capsys, tmp_path: Path) -> None:
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk summarize(_, style?, audience?):
+thunk summarize(in: Part[], style?, audience?):
   Summarize the current workspace in a concise style.
 """.strip(),
     )
@@ -1801,7 +1801,7 @@ def test_cli_roaming_invoke_passes_default_thunk_params_and_parts(tmp_path: Path
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk(_, tone?, retries?: Number, dry_run?: Boolean):
+thunk(in: Part[], tone?, retries?: Number, dry_run?: Boolean):
   Rewrite the input using the provided controls.
 """.strip(),
     )
@@ -1887,7 +1887,7 @@ def test_cli_roaming_invoke_passes_explicit_tool_selectors(tmp_path: Path, monke
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk(_):
+thunk(in: Part[]):
   Reply directly.
 """.strip(),
     )
@@ -1944,7 +1944,7 @@ def test_cli_roaming_invoke_passes_explicit_cap_selectors(tmp_path: Path, monkey
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk(_):
+thunk(in: Part[]):
   Reply directly.
 """.strip(),
     )
@@ -2308,7 +2308,7 @@ def test_cli_roaming_invoke_requires_part_for_message_input(tmp_path: Path, caps
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk summarize(_):
+thunk summarize(in: Part[]):
   Summarize the current workspace in a concise style.
 """.strip(),
     )
@@ -2463,7 +2463,7 @@ def test_cli_roaming_invoke_treats_unknown_name_equals_value_as_message_part(
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk(_, tone?):
+thunk(in: Part[], tone?):
   Reply directly.
 """.strip(),
     )
@@ -2517,7 +2517,7 @@ def test_cli_roaming_invoke_reads_md_path_as_text_part(tmp_path: Path, monkeypat
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk(_):
+thunk(in: Part[]):
   Reply directly.
 """.strip(),
     )
@@ -2571,7 +2571,7 @@ def test_cli_roaming_invoke_reads_mdx_path_as_text_part(tmp_path: Path, monkeypa
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk(_):
+thunk(in: Part[]):
   Reply directly.
 """.strip(),
     )
@@ -2626,7 +2626,7 @@ def test_cli_roaming_invoke_passes_video_path_part(tmp_path: Path, monkeypatch, 
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk(_):
+thunk(in: Part[]):
   Reply directly.
 """.strip(),
     )
@@ -6014,7 +6014,7 @@ def test_cli_parse_prints_too_ast(tmp_path: Path) -> None:
         "struct Result:\n"
         "  title: Text\n"
         "\n"
-        "thunk review(input: Message) -> Json:\n"
+        "thunk review(in: Pack) -> Json:\n"
         "  models = deepseek/*\n"
         "  user: Review it.\n",
         encoding="utf-8",
@@ -6026,38 +6026,49 @@ def test_cli_parse_prints_too_ast(tmp_path: Path) -> None:
     ast_data = json.loads(result.stdout)
     assert "_source_lines" not in ast_data
     assert "declarations" not in ast_data
-    assert ast_data["caps"] == []
-    assert ast_data["tasks"] == []
-    assert ast_data["chores"] == []
-    assert ast_data["structs"] == [
-        {
-            "name": "Result",
-            "fields": [
-                {
-                    "name": "title",
-                    "type_name": "Text",
-                    "span": {"line": 2},
-                }
-            ],
-            "span": {"line": 1},
-        }
-    ]
-    assert ast_data["thunks"][0]["name"] == "review"
-    assert ast_data["thunks"][0]["input"] == {
-        "name": "_",
-        "optional": False,
-        "type_name": None,
+    assert ast_data["node"] == "program"
+    assert [item["node"] for item in ast_data["items"]] == ["struct", "thunk"]
+    assert ast_data["items"][0] == {
+        "node": "struct",
+        "name": "Result",
+        "fields": [
+            {
+                "name": "title",
+                "type": {"kind": "builtin", "name": "Text", "array_depth": 0},
+                "optional": False,
+                "span": {"line": 2},
+            }
+        ],
+        "span": {"line": 1},
     }
-    assert ast_data["thunks"][0]["output"] == "Json"
-    assert "overlays" not in ast_data["thunks"][0]
-    assert ast_data["thunks"][0]["directives"] == [
-        {
-            "name": "models",
-            "operator": "=",
-            "values": ["deepseek/*"],
-            "span": {"line": 5},
-        }
-    ]
+    assert ast_data["items"][1] == {
+        "node": "thunk",
+        "directives": [
+            {
+                "name": "models",
+                "op": "=",
+                "values": ["deepseek/*"],
+                "span": {"line": 5},
+            }
+        ],
+        "messages": [
+            {
+                "content": "Review it.",
+                "span": {"line": 6},
+                "role": "user",
+            }
+        ],
+        "span": {"line": 4},
+        "name": "review",
+        "params": [
+            {
+                "name": "in",
+                "optional": False,
+                "type": {"kind": "builtin", "name": "Pack", "array_depth": 0},
+            }
+        ],
+        "return": {"kind": "builtin", "name": "Json", "array_depth": 0},
+    }
 
 
 def test_cli_parse_supports_stdin_and_compact_output() -> None:
@@ -6070,7 +6081,7 @@ def test_cli_parse_supports_stdin_and_compact_output() -> None:
     assert result.exit_code == 0
     assert "\n  " not in result.stdout
     ast_data = json.loads(result.stdout)
-    assert ast_data["thunks"][0]["messages"][0]["text"] == "hello"
+    assert ast_data["items"][0]["messages"][0]["content"] == "hello"
 
 
 def test_cli_parse_include_source_lines() -> None:
@@ -6109,7 +6120,7 @@ def test_cli_fmt_formats_too_file(tmp_path: Path) -> None:
         "struct Result:\n"
         "  title: Text\n"
         "\n"
-        "thunk review(input: Message) -> Json:\n"
+        "thunk review(in: Pack) -> Json:\n"
         "  models = deepseek/*\n"
         "\n"
         "  user: Review it.\n"
@@ -6137,7 +6148,7 @@ def test_cli_fmt_formats_stdin_with_filepath() -> None:
 
     assert result.exit_code == 0
     assert result.stdout == (
-        "thunk review(input: Message):\n"
+        "thunk review(in: Pack):\n"
         "  user: Review it.\n"
     )
 
@@ -6151,7 +6162,7 @@ def test_cli_fmt_formats_dash_as_stdin() -> None:
 
     assert result.exit_code == 0
     assert result.stdout == (
-        "thunk review(input: Message):\n"
+        "thunk review(in: Pack):\n"
         "  user: Review it.\n"
     )
 
@@ -6165,7 +6176,7 @@ def test_cli_fmt_formats_stdin_with_tab_size() -> None:
 
     assert result.exit_code == 0
     assert result.stdout == (
-        "thunk review(input: Message):\n"
+        "thunk review(in: Pack):\n"
         "    user:\n"
         "        Review it.\n"
     )
@@ -6845,9 +6856,8 @@ def test_standalone_caps_command_treats_here_caps_as_not_root(tmp_path: Path) ->
     (toolang_root / "agents" / "alice" / "agent.too").write_text(
         (
             "agent alice\n\n"
-            "psyche reviewer: ```md\n"
-            "Prefer concrete findings.\n"
-            "```\n"
+                "psyche reviewer:\n"
+                "  Prefer concrete findings.\n"
         ),
         encoding="utf-8",
     )

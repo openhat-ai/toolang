@@ -11,7 +11,7 @@ from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.model import ModelTarget
 
 from .. import caps as cap_store
-from ..program import SourceSpan, Thunk, Directive
+from ..lang.ast import SourceSpan, Thunk, Directive
 from ..state.live import LiveState
 from ..state.prepared import PreparedEntry
 from ..tools.registry import selected_tool_names, tool_ref_for_model_tool

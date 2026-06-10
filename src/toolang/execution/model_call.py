@@ -12,7 +12,7 @@ from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.model import ModelTarget
 
 from .. import caps as cap_store, work
-from ..program import MessageBlock, Thunk
+from ..lang.ast import MessageBlock, Thunk
 from ..state.prepared import PreparedEntry
 from ..common.template import render_text_template
 from . import prompts
@@ -341,6 +341,7 @@ def _template_param_values(thunk: Thunk, params: dict[str, Any]) -> dict[str, ob
     values: dict[str, object] = {}
     if thunk.input is not None:
         values[thunk.input.name] = params.get(thunk.input.name)
+        values["_"] = params.get("_", values[thunk.input.name])
     for param in thunk.params:
         values[param.name] = params.get(param.name)
     return values

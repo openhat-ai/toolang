@@ -43,7 +43,7 @@ from .state.prepared import (
     shared_lock_path,
     shared_prepared_dir,
 )
-from .program import CapDecl
+from .lang.ast import CapDecl
 from .state.program import build_prepared_program, load_live_program
 from .selectors import Selector, filter_value_matches, parse_selector, split_selector_list, selector_identity_matches
 
@@ -59,7 +59,7 @@ MANAGED_KINDS = frozenset((*CAP_KINDS, *JOB_KINDS))
 EMBEDDED_CAP_KINDS = frozenset({"psyche", "service", "prompt"})
 FILE_BACKED_KINDS = frozenset({"psyche", "service", "prompt", "task", "chore"})
 SKILL_FIELDS = frozenset({"description"})
-SERVICE_FIELDS = frozenset({"description", "transport", "target", "headers", "env"})
+SERVICE_FIELDS = frozenset({"description", "transport", "protocol", "target", "headers", "env"})
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 DIR_NAME_BY_KIND: dict[EntryKind, str] = {
     "psyche": "psyches",
@@ -1173,7 +1173,7 @@ def _validate_authored_entry_text(*, kind: EntryKind, text: str) -> None:
     description = meta.get("description")
     if not isinstance(description, str) or not description.strip():
         raise ValueError("service description is required")
-    transport = meta.get("transport")
+    transport = meta.get("transport") or meta.get("protocol")
     if transport not in {"http", "stdio"}:
         raise ValueError("service transport must be http or stdio")
     target = meta.get("target")

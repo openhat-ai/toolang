@@ -14,7 +14,7 @@ from toolang.base.types.run import ModelCall, RunResult
 
 from ..common.ids import RUN_ID_FAMILY, allocate_id
 from .. import agents
-from ..program import Flow, FlowStage, MessageBlock, ParamDecl, Thunk
+from ..lang.ast import Flow, FlowStage, MessageBlock, ParamDecl, Thunk
 from ..plugin import load_loop as _default_load_loop
 from .assembly import RunInput
 from .binding import RunBinding

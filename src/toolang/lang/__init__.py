@@ -1,8 +1,6 @@
-"""Compatibility facade for Toolang language AST and lowering APIs."""
+"""Toolang language services."""
 
-from __future__ import annotations
-
-from .lang.ast import (
+from .ast import (
     CapDecl,
     ContextBlock,
     Directive,
@@ -21,8 +19,9 @@ from .lang.ast import (
     UseDecl,
     WorkDecl,
 )
-from .lang.lower import parse, program_to_ast_data
-from .lang.validate import validate_program, validate_service_meta
+from .format import ToolangFormatError, format_source
+from .lower import parse, program_to_ast_data
+from .validate import validate_program, validate_service_meta
 
 __all__ = [
     "CapDecl",
@@ -40,8 +39,10 @@ __all__ = [
     "StructDecl",
     "StructFieldDecl",
     "Thunk",
+    "ToolangFormatError",
     "UseDecl",
     "WorkDecl",
+    "format_source",
     "parse",
     "program_to_ast_data",
     "validate_program",

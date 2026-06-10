@@ -10,7 +10,7 @@
 # The `file` thunk turns each file into a concise wiki page in:
 #
 # examples/.toolang/agents/llm-wiki/wiki/
-thunk file(input: Message):
+thunk file(in: Part[]):
   tools = filesystem/*
 
   user:
@@ -24,7 +24,7 @@ thunk file(input: Message):
   visible, a compact summary, key facts, and searchable keywords.
   After writing, reply with only: Wikified `<file name or path>`.
 
-thunk chat(input: Message):
+thunk chat(in: Part[]):
   tools = filesystem/*
 
   user:

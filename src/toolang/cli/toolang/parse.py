@@ -36,7 +36,7 @@ def parse_program(
     ] = None,
 ) -> None:
     from ...base.error import ToolangError
-    from ...program import parse, program_to_ast_data
+    from ...lang.lower import parse, program_to_ast_data
 
     label, text = _read_source(source, stdin_filepath=stdin_filepath)
     try:

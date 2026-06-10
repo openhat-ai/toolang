@@ -29,7 +29,7 @@ from ..execution.events import RunEnd, RunStart, StepEnd, StepStart, TraceEvent
 from ..execution.labels import executable_label
 from ..execution.runner import RunOutcome
 from ..models.errors import NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSAGE
-from ..program import Flow, ParamDecl, Thunk
+from ..lang.ast import Flow, ParamDecl, Thunk
 from ..state.prepared import PreparedState
 from ..caps import split_cap_selectors
 from ..state.program import LiveProgram, load_live_program
