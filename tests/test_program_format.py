@@ -294,6 +294,53 @@ thunk:
     )
 
 
+def test_format_source_keeps_explicit_roles_after_implicit_messages() -> None:
+    source = """
+thunk is_relevant(in: Part[]):
+    Evidence bundle:
+    {{ _ }}
+
+    Decide whether this evidence bundle contains concrete information about agent workflow implementations.
+
+    user:
+        abc
+
+    assistant:
+        def
+""".strip()
+
+    assert format_source(source) == (
+        "thunk is_relevant(in: Part[]):\n"
+        "  Evidence bundle:\n"
+        "  {{ _ }}\n"
+        "\n"
+        "  Decide whether this evidence bundle contains concrete information about agent workflow implementations.\n"
+        "\n"
+        "  user:\n"
+        "    abc\n"
+        "\n"
+        "  assistant:\n"
+        "    def\n"
+    )
+
+
+def test_format_source_uses_comments_to_split_implicit_messages() -> None:
+    source = """
+thunk split:
+    first message
+    # Plain comment splits messages.
+    second message
+""".strip()
+
+    assert format_source(source) == (
+        "thunk split:\n"
+        "  first message\n"
+        "  # Plain comment splits messages.\n"
+        "\n"
+        "  second message\n"
+    )
+
+
 def test_format_source_preserves_top_comment_spacing() -> None:
     source = """
 #!/usr/bin/env toolang 

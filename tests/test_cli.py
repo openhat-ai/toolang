@@ -6167,6 +6167,37 @@ def test_cli_fmt_formats_dash_as_stdin() -> None:
     )
 
 
+def test_cli_fmt_handles_implicit_message_before_roles() -> None:
+    result = runner.invoke(
+        cli.app,
+        ["fmt", "-"],
+        input=(
+            "thunk is_relevant(in:Part[]):\n"
+            "    Evidence bundle:\n"
+            "    {{ _ }}\n"
+            "\n"
+            "    user:\n"
+            "        abc\n"
+            "\n"
+            "    assistant:\n"
+            "        def\n"
+        ),
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == (
+        "thunk is_relevant(in: Part[]):\n"
+        "  Evidence bundle:\n"
+        "  {{ _ }}\n"
+        "\n"
+        "  user:\n"
+        "    abc\n"
+        "\n"
+        "  assistant:\n"
+        "    def\n"
+    )
+
+
 def test_cli_fmt_formats_stdin_with_tab_size() -> None:
     result = runner.invoke(
         cli.app,
