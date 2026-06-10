@@ -37,7 +37,6 @@ DIRECTIVE_RE = re.compile(
     r"^(?P<indent>[ \t]*)(?P<key>model|models|tool|tools|skill|skills|service|services|"
     r"psyche|psyches|hands|handoffs|recall)(?P<space>[ \t]*)(?P<op>=|\+=|-=)"
 )
-LEGACY_DELEGATES_RE = re.compile(r"^[ \t]*delegates[ \t]*(?:=|\+=|-=)")
 TOP_LEVEL_RE = re.compile(r"^(use|struct|psyche|skill|service|prompt|task|chore|context|instruct|thunk|flow)\b")
 USE_LINE_RE = re.compile(r"^use[ \t]+(?P<kind>\S+)[ \t]+(?P<reference>.+?)$")
 DECL_HEADER_RE = re.compile(
@@ -55,7 +54,6 @@ MESSAGE_HEADER_RE = re.compile(
 class _TreeSitterSource:
     source: str
     line_map: tuple[int | None, ...]
-    synthetic_message_rows: frozenset[int]
 
     def original_line_index(self, row: int) -> int:
         if 0 <= row < len(self.line_map):
@@ -536,6 +534,8 @@ def _needs_blank_line(previous_kind: str | None, current_kind: str, *, pending_b
         return previous_kind not in {"shebang", "top_comment"}
     if current_kind == "program_comment":
         return previous_kind not in {"program_comment", "top_comment"}
+    if current_kind == "comment":
+        return previous_kind in {"block_body", "message_body", "message_header"}
     if current_kind == "directive":
         return previous_kind not in {"thunk_header", "directive"}
     if current_kind == "control":
@@ -578,7 +578,6 @@ def _tree_sitter_source(source: str) -> _TreeSitterSource:
     original_lines = source.splitlines()
     transformed: list[str] = []
     line_map: list[int | None] = []
-    synthetic_message_rows: set[int] = set()
     index = 0
 
     while index < len(original_lines):
@@ -592,7 +591,6 @@ def _tree_sitter_source(source: str) -> _TreeSitterSource:
 
         transformed.append(_transform_thunk_header(line))
         line_map.append(index)
-        thunk_name = _thunk_name_from_header(line)
         index += 1
 
         while index < len(original_lines):
@@ -618,20 +616,6 @@ def _tree_sitter_source(source: str) -> _TreeSitterSource:
                     line_map.append(index)
                     index += 1
                 continue
-            if _is_implicit_message_line(body_line):
-                synthetic_indent = _leading_whitespace(body_line)
-                synthetic_row = len(transformed)
-                transformed.append(f"{synthetic_indent}{_implicit_message_kind(thunk_name)}:")
-                line_map.append(None)
-                synthetic_message_rows.add(synthetic_row)
-                while index < len(original_lines):
-                    message_line = original_lines[index]
-                    if TOP_LEVEL_RE.match(message_line) or not _is_implicit_message_line(message_line):
-                        break
-                    transformed.append(_indent_message_line(message_line))
-                    line_map.append(index)
-                    index += 1
-                continue
 
             transformed.append(_transform_non_thunk_line(body_line))
             line_map.append(index)
@@ -644,7 +628,6 @@ def _tree_sitter_source(source: str) -> _TreeSitterSource:
     return _TreeSitterSource(
         source=tree_source,
         line_map=tuple(line_map),
-        synthetic_message_rows=frozenset(synthetic_message_rows),
     )
 
 
@@ -741,38 +724,6 @@ def _parse_thunk_rest(rest: str) -> tuple[str | None, str | None]:
         return rest.strip() or None, None
     name = rest[:params_start].strip() or None
     return name, rest[params_start + 1 : params_end]
-
-
-def _thunk_name_from_header(line: str) -> str:
-    match = THUNK_HEADER_RE.match(line)
-    if match is None:
-        return "main"
-    name, _params = _parse_thunk_rest(match.group("rest").strip())
-    return name or "main"
-
-
-def _is_implicit_message_line(line: str) -> bool:
-    if not line.strip():
-        return False
-    stripped = line.lstrip(" \t")
-    if stripped.startswith("#"):
-        return False
-    if LEGACY_DELEGATES_RE.match(line):
-        return False
-    if DIRECTIVE_RE.match(line):
-        return False
-    if re.match(r"^[ \t]*(context|instruct|system|user|assistant|tool):", line):
-        return False
-    return line.startswith((" ", "\t"))
-
-
-def _implicit_message_kind(thunk_name: str) -> str:
-    return "instruct" if thunk_name in {"chat", "task", "chore"} else "user"
-
-
-def _indent_message_line(line: str) -> str:
-    indent = _leading_whitespace(line)
-    return f"{indent}  {line[len(indent):]}"
 
 
 def _first_error_node(node: Node) -> Node | None:

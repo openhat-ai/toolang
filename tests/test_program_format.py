@@ -302,6 +302,7 @@ thunk is_relevant(in: Part[]):
 
     Decide whether this evidence bundle contains concrete information about agent workflow implementations.
 
+    # comments
     user:
         abc
 
@@ -316,6 +317,7 @@ thunk is_relevant(in: Part[]):
         "\n"
         "  Decide whether this evidence bundle contains concrete information about agent workflow implementations.\n"
         "\n"
+        "  # comments\n"
         "  user:\n"
         "    abc\n"
         "\n"
@@ -335,6 +337,7 @@ thunk split:
     assert format_source(source) == (
         "thunk split:\n"
         "  first message\n"
+        "\n"
         "  # Plain comment splits messages.\n"
         "\n"
         "  second message\n"
