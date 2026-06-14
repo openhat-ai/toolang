@@ -132,8 +132,55 @@ def test_runner_queue_is_fifo() -> None:
     asyncio.run(run_test())
 
 
+def test_runner_enqueue_emits_queue_event_to_response() -> None:
+    class CaptureResponse:
+        wants_stream = True
+
+        def __init__(self) -> None:
+            self.queue_events: list[tuple[str, dict[str, Any]]] = []
+
+        def on_event(self, event: object) -> None:
+            del event
+
+        def on_queue_event(self, event_type: str, payload: dict[str, Any]) -> None:
+            self.queue_events.append((event_type, payload))
+
+    runner = QueueRunner(delay_sec=0.0)
+    response = CaptureResponse()
+    request = RunRequest(
+        group="chat",
+        origin="chat",
+        run_id="run_queuedtest",
+        thread_id="term_queue",
+        thunk_name="research",
+        metadata={"request_id": "req_queue", "executable_kind": "flow"},
+    )
+
+    assert runner.enqueue(request, response=response) == 1
+    assert len(response.queue_events) == 1
+    event_type, payload = response.queue_events[0]
+    assert event_type == "run_queued"
+    assert isinstance(payload.pop("created_at"), str)
+    assert payload == {
+        "type": "run_queued",
+        "run_id": "run_queuedtest",
+        "thread_id": "term_queue",
+        "origin": "chat",
+        "group": "chat",
+        "request_id": "req_queue",
+        "executable_kind": "flow",
+        "executable_name": "research",
+        "waiting_for": "queue",
+        "position": 1,
+    }
+
+
 def test_file_runner_default_concurrency_is_ten() -> None:
     assert DEFAULT_GROUP_LIMITS["file"] == 10
+
+
+def test_chat_runner_default_concurrency_is_one_hundred() -> None:
+    assert DEFAULT_GROUP_LIMITS["chat"] == 100
 
 
 def test_runner_pending_requests_include_group_waiters(tmp_path: Path) -> None:
@@ -1200,6 +1247,7 @@ def test_chat_fork_copies_prior_runs_into_new_thread(tmp_path: Path) -> None:
     assert fork.status_code == 200
     assert fork.json()["source_thread_id"] == source_thread_id
     assert fork.json()["from_run_id"] == second.json()["run_id"]
+    assert fork.json()["include_anchor"] is False
     assert fork.json()["copied_run_ids"] == [copied_run_id]
     assert copied_run_id != first_run_id
     assert copied_detail["info"]["thread_id"] == fork_thread_id
@@ -1209,6 +1257,59 @@ def test_chat_fork_copies_prior_runs_into_new_thread(tmp_path: Path) -> None:
         "fork input",
     ]
     assert thread_detail["info"]["run_count"] == 2
+
+
+def test_chat_fork_can_include_anchor_run_in_new_thread(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat", "inspect"),
+    )
+    app = _create_test_app(context)
+
+    with _patched_runner_execution():
+        with TestClient(app) as client:
+            first = client.post(
+                "/api/v1/chat",
+                json={"message": _chat_message("first input")},
+            )
+            source_thread_id = first.json()["thread_id"]
+            second = client.post(
+                "/api/v1/chat",
+                json={"thread": source_thread_id, "message": _chat_message("second input")},
+            )
+            fork = client.post(
+                f"/api/v1/runs/{second.json()['run_id']}/fork",
+                json={
+                    "include_anchor": True,
+                    "message": _chat_message("fork input"),
+                },
+            )
+            fork_thread_id = fork.json()["thread_id"]
+            fork_run_id = fork.json()["run_id"]
+
+            for _ in range(100):
+                thread_detail = client.get(f"/api/v1/threads/{fork_thread_id}").json()
+                run_ids = [item["info"]["id"] for item in thread_detail["runs"]]
+                if run_ids[-1:] == [fork_run_id] and len(run_ids) == 3:
+                    break
+                time.sleep(0.01)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert fork.status_code == 200
+    assert fork.json()["source_thread_id"] == source_thread_id
+    assert fork.json()["from_run_id"] == second.json()["run_id"]
+    assert fork.json()["include_anchor"] is True
+    assert len(fork.json()["copied_run_ids"]) == 2
+    assert [item["input"]["parts"][0]["text"] for item in thread_detail["runs"]] == [
+        "first input",
+        "second input",
+        "fork input",
+    ]
+    assert thread_detail["info"]["run_count"] == 3
 
 
 def test_chat_api_records_peer_for_new_thread_and_rejects_mismatch(tmp_path: Path) -> None:
@@ -1334,6 +1435,115 @@ def test_chat_models_returns_all_discoverable_when_unrestricted(tmp_path: Path) 
     items_by_ref = {item["ref"]: item for item in body["items"]}
     assert items_by_ref["openai/gpt-5.5"]["model"] == "gpt-5.5"
     assert items_by_ref["openai/o3"]["model"] == "o3"
+
+
+def test_chat_executable_endpoints_list_thunks_and_flows(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        (
+            "agent alice\n\n"
+            "thunk chat:\n"
+            "  Reply directly.\n\n"
+            "thunk summarize:\n"
+            "  Summarize it.\n\n"
+            "flow review:\n"
+            "  do chat\n"
+        ),
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat", "inspect"),
+    )
+    app = _create_test_app(context)
+
+    with TestClient(app) as client:
+        thunks = client.get("/api/v1/chat/thunks")
+        flows = client.get("/api/v1/chat/flows")
+
+    assert thunks.status_code == 200
+    assert thunks.json() == {
+        "default": "chat",
+        "items": [{"name": "chat"}, {"name": "summarize"}, {"name": "default"}],
+    }
+    assert flows.status_code == 200
+    assert flows.json() == {
+        "default": None,
+        "items": [{"name": "review"}],
+    }
+
+
+def test_chat_request_passes_selected_thunk_and_flow_to_runner(tmp_path: Path, monkeypatch) -> None:
+    async def run_test() -> None:
+        toolang_root = tmp_path / "toolang"
+        _write_text(
+            toolang_root / "agents" / "alice" / "agent.too",
+            (
+                "agent alice\n\n"
+                "thunk chat:\n"
+                "  Reply directly.\n\n"
+                "thunk summarize:\n"
+                "  Summarize it.\n\n"
+                "flow review:\n"
+                "  do chat\n"
+            ),
+        )
+        context = _build_context(
+            toolang_root=toolang_root,
+            agent_name="alice",
+            enabled_features=("chat", "inspect"),
+        )
+        captured: list[RunRequest] = []
+
+        def fake_enqueue(
+            request: RunRequest,
+            *,
+            response: object | None = None,
+            live: object | None = None,
+            completion: asyncio.Future[RunOutcome] | None = None,
+        ) -> int:
+            del response, live
+            captured.append(request)
+            if completion is not None:
+                completion.set_result(
+                    RunOutcome(
+                        run_id="run_test",
+                        group=request.group,
+                        origin=request.origin,
+                        input_text="hello",
+                        thunk_name=request.thunk_name,
+                        thread_id="term_test",
+                        delay_sec=0.0,
+                        status="finished",
+                    )
+                )
+            return len(captured)
+
+        monkeypatch.setattr(context.runner, "enqueue", fake_enqueue)
+        message = chat_loop.ChatMessagePayload(
+            role="user",
+            parts=[{"type": "text", "text": "hello"}],
+            meta={},
+        )
+
+        await chat_loop._submit_chat_run(
+            context,
+            chat_loop.ChatRequest(message=message, thunk="summarize"),
+            thread_id=None,
+        )
+        await chat_loop._submit_chat_run(
+            context,
+            chat_loop.ChatRequest(message=message, flow="review"),
+            thread_id=None,
+        )
+
+        assert captured[0].thunk_name == "summarize"
+        assert captured[0].metadata["executable_kind"] == "thunk"
+        assert captured[1].thunk_name == "review"
+        assert captured[1].metadata["executable_kind"] == "flow"
+
+    asyncio.run(run_test())
 
 
 def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
@@ -1707,6 +1917,122 @@ def test_chat_stream_emits_before_run_completion(tmp_path: Path) -> None:
         assert elapsed < 0.8
         assert '"type":"text-delta"' in stream_text
         assert '"delta":"streaming hello"' in stream_text
+        assert "data: [DONE]" in stream_text
+
+    asyncio.run(run_test())
+
+
+def test_chat_default_executable_uses_default_thunk_not_single_flow(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        """
+thunk expand(in: Part[]):
+  Expand.
+
+thunk search(in: Part[]):
+  Search.
+
+flow research(in: Text):
+  do expand
+""",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat",),
+    )
+    bound = bind_run_request(
+        context,
+        RunRequest(group="chat", origin="chat", message=Message.user("hello")),
+        live=context.live,
+    )
+
+    kind, executable = run_execute_module._select_executable(bound)
+
+    assert kind == "thunk"
+    assert executable.thunk_name() == "default"
+
+
+def test_chat_stream_flow_emits_single_message_start(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        """
+thunk expand(in: Part[]):
+  Expand.
+
+thunk search(in: Part[]):
+  Search.
+
+flow research(in: Text):
+  do expand
+""",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat", "inspect"),
+    )
+    app = _create_test_app(context)
+
+    with _patched_runner_execution():
+        with TestClient(app) as client:
+            with client.stream(
+                "POST",
+                "/api/v1/chat/stream",
+                json={"flow": "research", "message": _chat_message("flow me")},
+            ) as response:
+                assert response.status_code == 200
+                stream_text = "".join(chunk.decode("utf-8") for chunk in response.iter_raw())
+
+    assert stream_text.count('"type":"start"') == 1
+    assert stream_text.count('"type":"message-metadata"') == 1
+    assert '"type":"step_start"' in stream_text
+    assert '"type":"step_end"' in stream_text
+    assert '"kind":"flow_op"' in stream_text
+    assert '"kind":"child_call"' in stream_text
+    assert '"type":"finish"' in stream_text
+    assert "data: [DONE]" in stream_text
+
+
+def test_chat_stream_pre_start_failure_emits_error_and_done(tmp_path: Path) -> None:
+    async def run_test() -> None:
+        toolang_root = tmp_path / "toolang"
+        _write_text(
+            toolang_root / "agents" / "alice" / "agent.too",
+            """
+thunk expand(in: Part[]):
+  Expand.
+
+thunk search(in: Part[]):
+  Search.
+""",
+        )
+        context = _build_context(
+            toolang_root=toolang_root,
+            agent_name="alice",
+            enabled_features=("chat", "inspect"),
+            runner=QueueRunner(delay_sec=0.0),
+        )
+        async with _running_context(context, enabled_features=("chat", "inspect")):
+            stream = chat_loop._stream_chat_run(
+                context,
+                chat_loop.ChatRequest(
+                    thunk="missing",
+                    message=chat_loop.ChatMessagePayload(
+                        role="user",
+                        parts=[{"type": "text", "text": "stream me"}],
+                        meta={},
+                    ),
+                ),
+                thread_id=None,
+            )
+            stream_text = "".join([chunk async for chunk in stream])
+
+        assert '"type":"error"' in stream_text
+        assert "Thunk not found: missing" in stream_text
+        assert '"type":"finish"' in stream_text
         assert "data: [DONE]" in stream_text
 
     asyncio.run(run_test())
@@ -4711,7 +5037,7 @@ def test_prepare_builds_program_into_private_lock(tmp_path: Path) -> None:
     program_snapshot = prepared.program.to_snapshot()
     thunks = cast(list[dict[str, object]], program_snapshot["thunks"])
     assert len(thunks) == 1
-    assert thunks[0]["name"] == "main"
+    assert thunks[0]["name"] == "default"
     program_snapshot = cast(dict[str, object], prepared.private_lock.to_snapshot()["program"])
     assert program_snapshot["agent_name"] == "alice"
     assert lock_data["schema"] == 1
@@ -5650,6 +5976,55 @@ def test_assemble_run_input_uses_explicit_activation_tools_for_script_runs(tmp_p
     assert invoke_bundle.debug["tool_names"] == ["shell__execute"]
 
 
+def test_assemble_run_input_applies_run_resource_selectors(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        "agent alice\n\nthunk chat:\n  Reply directly.\n",
+    )
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="local-reviewer",
+        text="---\ndescription: Review local changes\n---\n# Local Reviewer\n",
+    )
+    caps.put_local_entry_text(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="skill",
+        name="extra-skill",
+        text="---\ndescription: Extra\n---\n# Extra\n",
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat",),
+    )
+    context.config.set("models.allowed_selectors", ("openai/gpt-5[openai]", "openai/o3[openai]"))
+    bound = bind_run_request(
+        context,
+        RunRequest(
+            group="chat",
+            origin="chat",
+            thunk="hello",
+            model_selectors=("openai/o3",),
+            tool_selectors=("shell/*",),
+            cap_selectors=("skill/local-reviewer",),
+        ),
+    )
+
+    bundle = RunInput.from_binding(context, bound)
+
+    assert bundle.effective_model_selectors(context) == ("openai/o3[openai]",)
+    assert tuple(bundle.tools()) == ("shell__execute",)
+    assert [entry.name for entry in bundle.skills()] == ["local-reviewer"]
+    assert bundle.debug["tool_names"] == ["shell__execute"]
+    assert bundle.debug["skill_names"] == ["local-reviewer"]
+
+
 def test_assemble_run_input_logs_activation_set_math(tmp_path: Path, caplog) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
@@ -6006,7 +6381,7 @@ def test_run_input_debug_logs_computed_prompt_bundle(tmp_path: Path, caplog) -> 
     assert any(message.startswith("prompt.messages thread=") and '"role": "user"' in message and "hi" in message for message in messages)
 
 
-def test_chat_run_prefers_named_chat_thunk_over_main(tmp_path: Path) -> None:
+def test_chat_run_prefers_named_chat_thunk_over_default(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -6178,7 +6553,7 @@ def test_agent_markdown_psyche_files_change_default_behavior(tmp_path: Path) -> 
     assert "Prefer agent-home behavior." in instructions
 
 
-def test_chat_run_uses_default_template_when_chat_thunk_is_missing(tmp_path: Path) -> None:
+def test_chat_run_uses_program_default_when_chat_thunk_is_missing(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -6219,7 +6594,7 @@ def test_chat_run_uses_default_template_when_chat_thunk_is_missing(tmp_path: Pat
     bundle = RunInput.from_binding(context, bound)
     instructions = bundle.instructions()
 
-    assert bundle.thunk.name == "chat"
+    assert bundle.thunk.thunk_name() == "default"
     assert "Script default." not in instructions
     assert "<psyches>" in instructions
     assert "Be precise." in instructions

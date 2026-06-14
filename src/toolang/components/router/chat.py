@@ -15,8 +15,10 @@ from ...common.ids import LOCAL_ID_FAMILY, allocate_id
 from toolang.base.error import ToolangError
 from toolang.base.types.message import Message
 from ...execution.detail import run_detail_from_record, thread_info_from_record, thread_info_from_runs
-from ...execution.input import effective_origin_model_selectors
-from ...models.resolution import resolve_model
+from ...execution.input import allocate_run_id, effective_origin_model_selectors, select_origin_thunk
+from ...models.resolution import resolve_model, split_model_selectors
+from ...tools.registry import split_tool_selectors
+from ...caps import split_cap_selectors
 from ...execution.records import ThreadPeer
 from ...execution.response import BufferedResponseSink, SseResponseSink
 from ...execution.runner import RunRequest
@@ -52,6 +54,11 @@ class ChatRequest(BaseModel):
     request_id: str | None = Field(default=None, min_length=1)
     message: ChatMessagePayload
     model: str | None = None
+    models: list[str] = Field(default_factory=list)
+    thunk: str | None = None
+    flow: str | None = None
+    tools: list[str] | None = None
+    caps: list[str] = Field(default_factory=list)
 
 
 class ThreadCreateRequest(BaseModel):
@@ -88,6 +95,8 @@ def create_router() -> APIRouter:
         result, response = await _submit_chat_run(context, payload, thread_id=thread_id)
         run = context.store.get_run(run_id=result.run_id)
         if run is None:
+            if result.status == "failed" and result.error:
+                raise HTTPException(status_code=500, detail=result.error)
             raise HTTPException(status_code=500, detail=f"run not found after completion: {result.run_id}")
         detail = run_detail_from_record(
             run,
@@ -141,6 +150,22 @@ def create_router() -> APIRouter:
             "items": items,
         }
 
+    @router.get("/chat/thunks", summary="List Chat Thunks")
+    async def chat_thunks(request: Request) -> dict[str, object]:
+        program = request.app.state.runtime.live.program
+        return {
+            "default": _default_thunk_name(program, origin="chat"),
+            "items": [{"name": thunk.thunk_name()} for thunk in program.thunks],
+        }
+
+    @router.get("/chat/flows", summary="List Chat Flows")
+    async def chat_flows(request: Request) -> dict[str, object]:
+        program = request.app.state.runtime.live.program
+        return {
+            "default": None,
+            "items": [{"name": flow.flow_name()} for flow in program.flows],
+        }
+
     @router.post("/chat/stream", summary="Submit Chat Stream")
     async def submit_chat_stream(request: Request, payload: ChatRequest) -> ShutdownAwareStreamingResponse:
         context = request.app.state.runtime
@@ -171,15 +196,21 @@ async def _submit_chat_run(
     loop = asyncio.get_running_loop()
     completion: asyncio.Future[RunOutcome] = loop.create_future()
     user_message = _chat_user_message(payload)
+    run_id = allocate_run_id(context)
 
     context.runner.enqueue(
         RunRequest(
             group="chat",
             origin="chat",
+            run_id=run_id,
             thread_id=thread_id,
             thread_kind=payload.client,
             message=user_message,
             model_selector=payload.model,
+            model_selectors=_model_selectors(payload),
+            thunk_name=_executable_name(payload),
+            tool_selectors=_tool_selectors(payload),
+            cap_selectors=_cap_selectors(payload),
             metadata=_thread_metadata(payload),
         ),
         response=response,
@@ -197,14 +228,20 @@ async def _stream_chat_run(
     _require_chat_runner(context)
     response = SseResponseSink(thread_id=thread_id)
     user_message = _chat_user_message(payload)
+    run_id = allocate_run_id(context)
     context.runner.enqueue(
         RunRequest(
             group="chat",
             origin="chat",
+            run_id=run_id,
             thread_id=thread_id,
             thread_kind=payload.client,
             message=user_message,
             model_selector=payload.model,
+            model_selectors=_model_selectors(payload),
+            thunk_name=_executable_name(payload),
+            tool_selectors=_tool_selectors(payload),
+            cap_selectors=_cap_selectors(payload),
             metadata=_thread_metadata(payload),
         ),
         response=response,
@@ -280,10 +317,48 @@ def _thread_metadata(payload: ChatRequest) -> dict[str, object]:
     metadata: dict[str, object] = {}
     if payload.request_id is not None:
         metadata["request_id"] = payload.request_id
+    executable_kind = _executable_kind(payload)
+    if executable_kind is not None:
+        metadata["executable_kind"] = executable_kind
     peer = _request_peer(payload)
     if peer is not None:
         metadata["thread_peer"] = peer.to_data()
     return metadata
+
+
+def _executable_kind(payload: ChatRequest) -> str | None:
+    if _text_or_none(payload.thunk) is not None and _text_or_none(payload.flow) is not None:
+        raise HTTPException(status_code=422, detail="chat request cannot specify both thunk and flow")
+    if _text_or_none(payload.flow) is not None:
+        return "flow"
+    if _text_or_none(payload.thunk) is not None:
+        return "thunk"
+    return None
+
+
+def _executable_name(payload: ChatRequest) -> str | None:
+    return _text_or_none(payload.flow) or _text_or_none(payload.thunk)
+
+
+def _text_or_none(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
+
+
+def _model_selectors(payload: ChatRequest) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(split_model_selectors(tuple(payload.models))))
+
+
+def _tool_selectors(payload: ChatRequest) -> tuple[str, ...] | None:
+    if payload.tools is None:
+        return None
+    return tuple(dict.fromkeys(split_tool_selectors(tuple(payload.tools))))
+
+
+def _cap_selectors(payload: ChatRequest) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(split_cap_selectors(tuple(payload.caps))))
 
 
 def _thread_info(context: UptimeContext, thread_id: str):
@@ -333,3 +408,10 @@ def _chat_model_item(*, selector: str, context: UptimeContext) -> dict[str, obje
         "tools": target.tools,
         "streaming": target.streaming,
     }
+
+
+def _default_thunk_name(program: Any, *, origin: str) -> str | None:
+    try:
+        return select_origin_thunk(program, origin=origin).thunk_name()
+    except ToolangError:
+        return None

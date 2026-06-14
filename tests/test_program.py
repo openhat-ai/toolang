@@ -424,7 +424,7 @@ thunk:
     live = load_live_program(prepared)
 
     thunk = live.thunks[0]
-    assert (thunk.name or "main") == "main"
+    assert thunk.thunk_name() == "default"
     assert thunk.input is not None
     assert thunk.params == []
     assert thunk.messages[0].kind == "user"
@@ -660,13 +660,13 @@ def test_build_prepared_program_rejects_duplicate_default_thunk_name(tmp_path: P
 thunk:
   Reply directly.
 
-thunk main:
+thunk default:
   Reply again.
 """.strip(),
     )
 
     durable = scan_durable_state(root, "alice")
-    with pytest.raises(ToolangError, match="Duplicate thunk name 'main'"):
+    with pytest.raises(ToolangError, match="Duplicate thunk name 'default'"):
         build_prepared_program(durable)
 
 
@@ -685,7 +685,7 @@ def test_build_prepared_program_strips_shebang_before_agent_header(tmp_path: Pat
     assert prepared.body_text == "thunk:\n  Reply directly."
     snapshot = prepared.to_snapshot()
     thunks = cast(list[dict[str, object]], snapshot["thunks"])
-    assert thunks[0]["name"] == "main"
+    assert thunks[0]["name"] == "default"
 
 
 def test_live_program_expands_prompt_calls_with_positional_args_and_extra_body(tmp_path: Path) -> None:

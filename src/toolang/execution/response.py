@@ -13,6 +13,7 @@ from toolang.base.protocols.channel import AgentChannel
 from toolang.base.types.channel import ChannelContext, OutboundMessage, ReplyTarget
 from toolang.base.types.message import TextDelta, TextPart, ToolCallDelta, ToolCallPart, ToolResultPart, message_text
 from .events import RunEnd, RunStart, StepEnd, StepStart, PartStart, PartDelta, PartEnd, TraceEvent, message_data_for_step
+from .stream import trace_event_data
 
 
 class ResponseSink(Protocol):
@@ -72,6 +73,9 @@ class BufferedResponseSink:
                 error=event.error,
             )
 
+    def on_queue_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        del event_type, payload
+
 
 class SseResponseSink:
     """Emit one AI SDK data-stream subset for one chat caller."""
@@ -83,6 +87,7 @@ class SseResponseSink:
         self._loop = asyncio.get_running_loop()
         self._queue: asyncio.Queue[str | None] = asyncio.Queue()
         self._run_id: str | None = None
+        self._child_run_ids: set[str] = set()
         self._text_started = False
         self._text_ended = False
         self._started_tool_inputs: set[str] = set()
@@ -95,10 +100,25 @@ class SseResponseSink:
                 return
             yield item
 
+    def on_queue_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        if self._closed:
+            return
+        data: dict[str, object] = {
+            "type": event_type,
+            "event_type": event_type,
+            "payload": dict(payload),
+        }
+        self._enqueue_payload(data)
+
     def on_event(self, event: TraceEvent) -> None:
         if self._closed:
             return
         if isinstance(event, RunStart):
+            if self._run_id is not None:
+                if event.root_run_id == self._run_id or event.parent_run_id in self._child_run_ids or event.parent_run_id == self._run_id:
+                    self._child_run_ids.add(event.run_id)
+                    self._enqueue_payload(trace_event_data(event))
+                return
             self._run_id = event.run_id
             self._thread_id = event.thread_id
             message_metadata = _message_metadata(
@@ -119,7 +139,18 @@ class SseResponseSink:
                 }
             )
             return
-        if isinstance(event, StepStart) and event.kind == "model_call":
+        event_run_id = getattr(event, "run_id", self._run_id)
+        if self._run_id is not None and event_run_id != self._run_id:
+            if isinstance(event_run_id, str) and event_run_id in self._child_run_ids:
+                if isinstance(event, (StepStart, StepEnd, RunEnd)):
+                    self._enqueue_payload(trace_event_data(event))
+                if isinstance(event, PartEnd) and isinstance(event.data, ToolCallPart):
+                    self._enqueue_payload(trace_event_data(event))
+            return
+        if isinstance(event, StepStart):
+            if event.kind != "model_call":
+                self._enqueue_payload(trace_event_data(event))
+                return
             self._enqueue_payload({"type": "start-step"})
             return
         if isinstance(event, PartStart) and event.kind == "text":
@@ -187,10 +218,15 @@ class SseResponseSink:
                     }
                 )
                 return
-        if isinstance(event, StepEnd) and event.kind == "model_call":
+        if isinstance(event, StepEnd):
+            if event.kind != "model_call":
+                self._enqueue_payload(trace_event_data(event))
+                return
             self._enqueue_payload({"type": "finish-step"})
             return
         if isinstance(event, RunEnd):
+            if self._run_id is not None and event.run_id != self._run_id:
+                return
             if event.status != "finished":
                 if event.error:
                     self._enqueue_payload({"type": "error", "errorText": event.error})
@@ -316,6 +352,9 @@ class ChannelResponseSink:
             self._wake.set()
             if self._sender is not None:
                 self._sender.join()
+
+    def on_queue_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        del event_type, payload
 
     def _start_sender(self) -> None:
         if self._sender is not None:

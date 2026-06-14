@@ -243,7 +243,7 @@ def _is_env_names(value: object) -> bool:
 
 
 def _thunk_name(thunk: Thunk) -> str:
-    return thunk.name or "main"
+    return thunk.name or "default"
 
 
 def _directive_family(name: str) -> str:

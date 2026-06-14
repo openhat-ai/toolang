@@ -84,7 +84,7 @@ is renamed, moved, archived, or restored.
 File request threads use the first 12 hex chars of the SHA-256 of the absolute
 source path, so new file fingerprints at the same path share a thread.
 Script/invoke runs are stable for the invoked thunk name; the default thunk uses
-`thunk_main`.
+`thunk_default`.
 
 
 ## Reversible Obfuscation

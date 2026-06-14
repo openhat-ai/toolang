@@ -142,6 +142,17 @@ def event_data(event: EventRecord) -> dict[str, Any]:
     }
 
 
+def trace_event_data(event: TraceEvent) -> dict[str, Any]:
+    """Return public stream data for one live trace event."""
+
+    event_type = _trace_event_type(event)
+    return {
+        "type": event_type,
+        "event_type": event_type,
+        "payload": _trace_event_payload(event),
+    }
+
+
 def _sse_event(event: EventRecord) -> str:
     data = json.dumps(event_data(event), separators=(",", ":"))
     return f"id: {event.seq}\nevent: event\ndata: {data}\n\n"

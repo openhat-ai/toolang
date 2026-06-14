@@ -133,7 +133,7 @@ class LiveProgram:
                     return thunk
             raise ToolangError(f"Thunk not found: {name}")
         for thunk in self.thunks:
-            if _thunk_name(thunk) == "main":
+            if _thunk_name(thunk) == "default":
                 return thunk
         if len(self.thunks) == 1:
             return self.thunks[0]
@@ -148,8 +148,6 @@ class LiveProgram:
         for flow in self.flows:
             if flow.flow_name() == "main":
                 return flow
-        if len(self.flows) == 1:
-            return self.flows[0]
         raise ToolangError("No default flow found in prepared program.")
 
     def get_instruct(self, name: str | None) -> InstructBlock | None:
@@ -245,9 +243,10 @@ def _parse_body_text(body_text: str) -> Program:
 
 
 def _program_thunks(program: Program) -> tuple[Thunk, ...]:
-    if program.thunks:
-        return tuple(program.thunks)
-    return (_default_thunk(),)
+    thunks = tuple(program.thunks)
+    if any(thunk.thunk_name() == "default" for thunk in thunks):
+        return thunks
+    return (*thunks, _default_thunk())
 
 
 def _body_line_offset(*, source_text: str, body_text: str) -> int:
@@ -264,7 +263,7 @@ def _body_line_offset(*, source_text: str, body_text: str) -> int:
 
 def _default_thunk() -> Thunk:
     return Thunk(
-        name="main",
+        name="default",
         input=ParamDecl(name="in", type_name="Pack"),
         span=_default_span(),
     )
@@ -341,7 +340,7 @@ def _sha256_text(value: str) -> str:
 
 
 def _thunk_name(thunk: Thunk) -> str:
-    return thunk.name or "main"
+    return thunk.name or "default"
 
 
 def _thunk_to_data(thunk: Thunk) -> dict[str, object]:

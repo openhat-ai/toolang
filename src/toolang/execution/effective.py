@@ -8,10 +8,11 @@ import logging
 from typing import TYPE_CHECKING, cast
 
 from toolang.base.protocols.tool import AgentTool
+from toolang.base.error import ToolangError
 from toolang.base.types.model import ModelTarget
 
 from .. import caps as cap_store
-from ..lang.ast import SourceSpan, Thunk, Directive
+from ..lang.ast import Thunk, Directive
 from ..state.live import LiveState
 from ..state.prepared import PreparedEntry
 from ..tools.registry import selected_tool_names, tool_ref_for_model_tool
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
     from .binding import RunBinding
 
 _LOGGER = logging.getLogger("toolang.run")
-_THREAD_THUNK_NAMES = frozenset({"chat", "task", "chore"})
+_THREAD_THUNK_NAMES = frozenset({"chat", "task", "chore", "file"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +59,7 @@ def select_origin_thunk(
         thunk = _find_named_thunk(program.thunks, origin)
         if thunk is not None:
             return thunk
-        return _default_thread_thunk(origin)
+        return program.get_thunk(None)
     return program.get_thunk(None)
 
 
@@ -88,11 +89,12 @@ def effective_run_sets(
     run: RunBinding,
     thunk: Thunk,
 ) -> EffectiveRunSets:
-    models_base = activation_allowed_model_selectors(context)
-    tools_base = dict(context.tools)
-    psyches_base = cap_entries(run.live, kind="psyche")
-    skills_base = cap_entries(run.live, kind="skill")
-    services_base = cap_entries(run.live, kind="service")
+    models_base = run_allowed_model_selectors(context, run=run)
+    tools_base = run_tools_base(context, run=run)
+    selected_cap_entries = run_cap_entries(context, run=run)
+    psyches_base = cap_entries(selected_cap_entries, kind="psyche")
+    skills_base = cap_entries(selected_cap_entries, kind="skill")
+    services_base = cap_entries(selected_cap_entries, kind="service")
     effective_tools, tool_math = select_tools_with_trace(
         tools_base,
         thunk.directives_for("tool"),
@@ -152,6 +154,73 @@ def activation_allowed_model_selectors(context: UptimeContext) -> tuple[str, ...
     if isinstance(value, list):
         return tuple(item for item in value if isinstance(item, str) and item.strip())
     return ()
+
+
+def run_allowed_model_selectors(context: UptimeContext, *, run: RunBinding) -> tuple[str, ...]:
+    activation_selectors = activation_allowed_model_selectors(context)
+    if not run.model_selectors:
+        return activation_selectors
+    if activation_selectors:
+        return select_model_selectors(
+            context,
+            thunk_selectors=run.model_selectors,
+            activation_selectors=activation_selectors,
+            default_selector=activation_default_model_selector(context),
+        )
+    return select_model_selectors(
+        context,
+        activation_selectors=run.model_selectors,
+        default_selector=activation_default_model_selector(context),
+    )
+
+
+def run_tools_base(context: UptimeContext, *, run: RunBinding) -> dict[str, AgentTool]:
+    tools = dict(context.tools)
+    selectors = run.tool_selectors
+    if selectors is None:
+        return tools
+    if not selectors:
+        return {}
+    refs_by_model_name = {
+        name: tool_ref_for_model_tool(name, tool)
+        for name, tool in tools.items()
+    }
+    missing = [
+        selector
+        for selector in selectors
+        if not selected_tool_names(refs_by_model_name, (selector,))
+    ]
+    if missing:
+        raise ToolangError(f"tool selector matched no tools: {', '.join(missing)}")
+    selected_names = selected_tool_names(refs_by_model_name, selectors)
+    return {
+        name: tools[name]
+        for name in selected_names
+        if name in tools
+    }
+
+
+def run_cap_entries(context: UptimeContext, *, run: RunBinding) -> tuple[PreparedEntry, ...]:
+    entries = tuple(run.live.cap_entries)
+    selectors = run.cap_selectors
+    if not selectors:
+        return entries
+    missing = [
+        selector
+        for selector in selectors
+        if not cap_store.select_cap_entries(
+            entries,
+            (selector,),
+            agent_name=context.name,
+        )
+    ]
+    if missing:
+        raise ToolangError(f"cap selector matched no caps: {', '.join(missing)}")
+    return cap_store.select_cap_entries(
+        entries,
+        selectors,
+        agent_name=context.name,
+    )
 
 
 def effective_model_selectors(
@@ -253,8 +322,9 @@ def select_entries_with_trace(
     )
 
 
-def cap_entries(live: LiveState, *, kind: str) -> tuple[PreparedEntry, ...]:
-    return tuple(entry for entry in live.cap_entries if entry.kind == kind)
+def cap_entries(entries: LiveState | tuple[PreparedEntry, ...], *, kind: str) -> tuple[PreparedEntry, ...]:
+    cap_entries = entries.cap_entries if isinstance(entries, LiveState) else entries
+    return tuple(entry for entry in cap_entries if entry.kind == kind)
 
 
 def resolve_runtime_models(
@@ -288,13 +358,6 @@ def _find_named_thunk(thunks: tuple[Thunk, ...], name: str) -> Thunk | None:
         if thunk.thunk_name() == name:
             return thunk
     return None
-
-
-def _default_thread_thunk(origin: str) -> Thunk:
-    return Thunk(
-        name=origin,
-        span=SourceSpan(0),
-    )
 
 
 def _apply_tool_directives_with_trace(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+import asyncio
+from collections.abc import Callable, Mapping
 import hashlib
 import io
 import json
@@ -1740,7 +1741,7 @@ flow review(in: Text):
     assert "Modality is inferred from the extension." in captured.out
     assert "Multimodal message input" not in captured.out
     assert "Targets" in captured.out
-    assert "main" in captured.out
+    assert "default" in captured.out
     assert "summarize" in captured.out
     assert "review" in captured.out
     assert captured.out.index("Options") < captured.out.index("Targets") < captured.out.index("Params") < captured.out.index("Input")
@@ -1848,7 +1849,7 @@ thunk(in: Part[], tone?, retries?: Number, dry_run?: Boolean):
             str(program_path),
             "--models",
             "gpt-5",
-            "main",
+            "default",
             "rewrite this",
             f"@{attachment}",
             "tone=concise",
@@ -1864,7 +1865,7 @@ thunk(in: Part[], tone?, retries?: Number, dry_run?: Boolean):
     assert output.out.strip() == "done"
     assert captured["agent_name"] == "demo"
     assert captured["toolang_root"] == program_path.parent / ".toolang"
-    assert captured["thunk_name"] == "main"
+    assert captured["thunk_name"] == "default"
     assert captured["models"] == ("gpt-5", "o3")
     assert captured["log_spec"] is None
     assert captured["prepared_state"] is not None
@@ -1927,7 +1928,7 @@ thunk(in: Part[]):
             str(program_path),
             "--tools",
             "filesystem,shell",
-            "main",
+            "default",
             "hello",
             "--tools",
             "service_use",
@@ -1984,7 +1985,7 @@ thunk(in: Part[]):
             str(program_path),
             "--caps",
             "skill/reviewer,service/*[home]",
-            "main",
+            "default",
             "hello",
             "--caps",
             "[here]",
@@ -2037,7 +2038,7 @@ thunk:
     monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
     monkeypatch.setattr(cli.cli_invoke.sys.stderr, "isatty", lambda: True)
 
-    result = cli.main([str(program_path), "main", "--quiet", "hello"])
+    result = cli.main([str(program_path), "default", "--quiet", "hello"])
     output = capsys.readouterr()
 
     assert result == 0
@@ -2086,7 +2087,7 @@ thunk:
     monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
     monkeypatch.setattr(cli.cli_invoke.sys.stderr, "isatty", lambda: True)
 
-    result = cli.main([str(program_path), "main", "hello"])
+    result = cli.main([str(program_path), "default", "hello"])
     output = capsys.readouterr()
 
     assert result == 0
@@ -2143,7 +2144,7 @@ thunk:
     monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
     monkeypatch.setattr(cli.cli_invoke.sys.stderr, "isatty", lambda: True)
 
-    result = cli.main([str(program_path), "main", "hello"])
+    result = cli.main([str(program_path), "default", "hello"])
     output = capsys.readouterr()
 
     assert result == 0
@@ -2200,7 +2201,7 @@ thunk:
     monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
     monkeypatch.setattr(cli.cli_invoke.sys.stderr, "isatty", lambda: True)
 
-    result = cli.main([str(program_path), "main", "hello", "-q"])
+    result = cli.main([str(program_path), "default", "hello", "-q"])
     output = capsys.readouterr()
 
     assert result == 0
@@ -2249,14 +2250,14 @@ thunk:
     monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
     monkeypatch.setenv(PY_LOG_ENV_VAR, "toolang.run=debug")
 
-    result = cli.main([str(program_path), "main", "hello"])
+    result = cli.main([str(program_path), "default", "hello"])
     output = capsys.readouterr()
 
     assert result == 130
     assert output.err.splitlines() == [
         "toolang interrupted",
         "Run: run_test",
-        f"Log: {agents.agent_script_run_log_path(program_path.parent / '.toolang', 'demo', thunk_name='main', run_id='run_test')}",
+        f"Log: {agents.agent_script_run_log_path(program_path.parent / '.toolang', 'demo', thunk_name='default', run_id='run_test')}",
     ]
     assert "Traceback" not in output.err
 
@@ -2279,7 +2280,7 @@ thunk:
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setenv("OLLAMA_HOST", "http://127.0.0.1:9")
 
-    result = cli.main([str(program_path), "main", "hello"])
+    result = cli.main([str(program_path), "default", "hello"])
     output = capsys.readouterr()
 
     assert result == 1
@@ -2437,7 +2438,7 @@ thunk:
     result = cli.main(
         [
             str(program_path),
-            "main",
+            "default",
             "--",
             "--leading-text",
             "@@literal-at",
@@ -2497,7 +2498,7 @@ thunk(in: Part[], tone?):
 
     monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
 
-    result = cli.main([str(program_path), "main", "style=concise", "tone=direct"])
+    result = cli.main([str(program_path), "default", "style=concise", "tone=direct"])
     output = capsys.readouterr()
 
     assert result == 0
@@ -2553,7 +2554,7 @@ thunk(in: Part[]):
 
     monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
 
-    result = cli.main([str(program_path), "main", f"@{note}"])
+    result = cli.main([str(program_path), "default", f"@{note}"])
     output = capsys.readouterr()
 
     assert result == 0
@@ -2607,7 +2608,7 @@ thunk(in: Part[]):
 
     monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
 
-    result = cli.main([str(program_path), "main", f"@{note}"])
+    result = cli.main([str(program_path), "default", f"@{note}"])
     output = capsys.readouterr()
 
     text = "# Title\n\n<Callout>Body text.</Callout>\n"
@@ -2662,7 +2663,7 @@ thunk(in: Part[]):
 
     monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
 
-    result = cli.main([str(program_path), "main", f"@{video}"])
+    result = cli.main([str(program_path), "default", f"@{video}"])
     output = capsys.readouterr()
 
     assert result == 0
@@ -6449,6 +6450,18 @@ def test_cli_caps_option_help_is_consistent_for_run_commands() -> None:
         assert expected in result.stdout
 
 
+def test_cli_chat_help_supports_model_tool_and_cap_options() -> None:
+    result = runner.invoke(cli.app, ["chat", "--help"])
+
+    assert result.exit_code == 0
+    assert "--models" in result.stdout
+    assert "Limit available models. Pass CSV or repeat." in result.stdout
+    assert "--tools" in result.stdout
+    assert "Allow selected tools. Pass CSV or repeat." in result.stdout
+    assert "--caps" in result.stdout
+    assert "Allow selected caps. Pass CSV or repeat." in result.stdout
+
+
 def test_cli_runtime_option_help_order_and_descriptions() -> None:
     expected = (
         ("--sandbox", "Run the agent in a sandbox."),
@@ -7114,7 +7127,7 @@ def test_cli_runs_hides_thread_column_when_filtered_by_thread(monkeypatch) -> No
     assert "one run" in result.stdout
 
 
-def test_cli_chat_uses_terminal_client_and_streams(monkeypatch) -> None:
+def test_cli_send_uses_terminal_client_and_streams(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     def fake_runtime_stream(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> None:
@@ -7123,30 +7136,69 @@ def test_cli_chat_uses_terminal_client_and_streams(monkeypatch) -> None:
 
     monkeypatch.setattr(cli, "_runtime_stream", fake_runtime_stream)
 
-    result = _invoke_app(["chat", "dev", "review this repo"])
+    result = _invoke_app(["send", "dev", "term_thread", "review this repo"])
 
     assert result.exit_code == 0
     assert captured["path"] == "/api/v1/chat/stream"
     assert captured["payload"] == {
-        "thread": None,
+        "thread": "term_thread",
         "client": "tui",
         "message": {"role": "user", "parts": [{"type": "text", "text": "review this repo"}]},
     }
 
 
-def test_cli_chat_without_args_creates_terminal_thread(monkeypatch) -> None:
-    calls: list[tuple[str, object]] = []
+def test_cli_chat_passes_model_tool_cap_and_executable_selectors(monkeypatch) -> None:
+    captured: dict[str, object] = {}
 
-    class FakeListener:
-        def stop(self) -> None:
-            pass
+    def fake_chat_interactive(
+        _ctx: Any,
+        *,
+        thread_id: str | None,
+        selector_payload: dict[str, object] | None = None,
+    ) -> None:
+        captured["thread_id"] = thread_id
+        captured["selector_payload"] = selector_payload
+
+    monkeypatch.setattr(cli, "_chat_interactive", fake_chat_interactive)
+
+    result = _invoke_app(
+        [
+            "chat",
+            "dev",
+            "--models",
+            "openai/gpt-5,openai/o3",
+            "--models",
+            "openai/gpt-5",
+            "--tools",
+            "filesystem,shell",
+            "--tools",
+            "service_use",
+            "--caps",
+            "skill/reviewer,service/*[home]",
+            "--caps",
+            "[here]",
+            "--thunk",
+            "summarize",
+        ]
+    )
+
+    assert result.exit_code == 0
+    assert captured["thread_id"] is None
+    payload = cast(dict[str, object], captured["selector_payload"])
+    assert payload["models"] == ["openai/gpt-5", "openai/o3"]
+    assert payload["tools"] == ["filesystem", "shell", "service_use"]
+    assert payload["caps"] == ["skill/reviewer", "service/*[home]", "[here]"]
+    assert payload["thunk"] == "summarize"
+
+
+def test_cli_chat_without_args_does_not_create_thread_until_first_message(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
 
     def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
         calls.append((request_path, payload))
         return {"thread_id": "term_new"}
 
     monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
-    monkeypatch.setattr(cli, "_start_thread_event_listener", lambda _ctx, _thread_id, **_kwargs: FakeListener())
     monkeypatch.setattr(
         cli.agents,
         "get_agent_status",
@@ -7163,8 +7215,93 @@ def test_cli_chat_without_args_creates_terminal_thread(monkeypatch) -> None:
     result = _invoke_app(["chat", "dev"], input="/exit\n")
 
     assert result.exit_code == 0
-    assert calls == [("/api/v1/threads", {"client": "tui"})]
+    assert calls == []
+    assert "thread term_new" not in result.stdout
+
+
+def test_cli_chat_scripted_help_command_does_not_create_thread(monkeypatch) -> None:
+    posts: list[tuple[str, object]] = []
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        posts.append((request_path, payload))
+        return {"thread_id": "term_new"}
+
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(
+        cli.agents,
+        "get_agent_status",
+        lambda *_args, **_kwargs: cli.agents.AgentStatus(
+            name="dev",
+            status="stopped",
+            endpoint=None,
+            api_url=None,
+            webui_url=None,
+            sandbox=None,
+        ),
+    )
+
+    result = _invoke_app(["chat", "dev"], input="/help\n/exit\n")
+
+    assert result.exit_code == 0
+    assert posts == []
+    assert "chat help" in result.stdout
+    assert "/model <selector>  use a model for new runs" in result.stdout
+
+
+def test_cli_chat_without_thread_creates_thread_for_first_scripted_message(monkeypatch) -> None:
+    posts: list[tuple[str, object]] = []
+    streams: list[tuple[str, dict[str, object]]] = []
+    listeners: list[str] = []
+
+    class FakeListener:
+        def stop(self) -> None:
+            listeners.append("stopped")
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        posts.append((request_path, payload))
+        return {"thread_id": "term_new"}
+
+    def fake_start_thread_event_listener(_ctx: Any, thread_id: str, **_kwargs: object) -> FakeListener:
+        listeners.append(thread_id)
+        return FakeListener()
+
+    def fake_runtime_consume_stream(
+        _ctx: Any,
+        request_path: str,
+        *,
+        payload: dict[str, object],
+        event_handler: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
+        del event_handler
+        streams.append((request_path, payload))
+
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(cli, "_start_thread_event_listener", fake_start_thread_event_listener)
+    monkeypatch.setattr(cli, "_runtime_consume_stream", fake_runtime_consume_stream)
+    monkeypatch.setattr(
+        cli.agents,
+        "get_agent_status",
+        lambda *_args, **_kwargs: cli.agents.AgentStatus(
+            name="dev",
+            status="stopped",
+            endpoint=None,
+            api_url=None,
+            webui_url=None,
+            sandbox=None,
+        ),
+    )
+
+    result = _invoke_app(["chat", "dev"], input="hello\n/exit\n")
+
+    assert result.exit_code == 0
+    assert posts == [("/api/v1/threads", {"client": "tui"})]
+    assert listeners == ["term_new", "stopped"]
     assert "thread term_new" in result.stdout
+    assert len(streams) == 1
+    request_path, payload = streams[0]
+    assert request_path == "/api/v1/chat/stream"
+    assert payload["thread"] == "term_new"
+    assert payload["message"] == {"role": "user", "parts": [{"type": "text", "text": "hello"}]}
 
 
 def test_cli_chat_thread_without_message_sends_interactive_lines(monkeypatch) -> None:
@@ -7185,7 +7322,7 @@ def test_cli_chat_thread_without_message_sends_interactive_lines(monkeypatch) ->
     monkeypatch.setattr(cli, "_start_thread_event_listener", fake_start_thread_event_listener)
     monkeypatch.setattr(cli, "_runtime_consume_stream", fake_runtime_consume_stream)
 
-    result = _invoke_app(["chat", "dev", "--thread", "term_existing"], input="hello\n/exit\n")
+    result = _invoke_app(["chat", "dev", "term_existing"], input="hello\n/exit\n")
 
     assert result.exit_code == 0
     assert "thread term_existing" in result.stdout
@@ -7198,6 +7335,1153 @@ def test_cli_chat_thread_without_message_sends_interactive_lines(monkeypatch) ->
     assert payload["message"] == {"role": "user", "parts": [{"type": "text", "text": "hello"}]}
     assert isinstance(payload["request_id"], str)
     assert payload["request_id"].startswith("term_")
+
+
+def test_cli_chat_interactive_tty_uses_prompt_toolkit(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
+
+    def fake_prompt_toolkit(
+        ctx: Any,
+        *,
+        thread_id: str,
+        selector_payload: dict[str, object] | None = None,
+    ) -> None:
+        captured["ctx"] = ctx
+        captured["thread_id"] = thread_id
+        captured["selector_payload"] = selector_payload
+
+    monkeypatch.setattr(cli, "_chat_interactive_prompt_toolkit", fake_prompt_toolkit)
+
+    cli._chat_interactive(cast(Any, object()), thread_id="term_existing", selector_payload={"models": ["openai/gpt-5"]})
+
+    assert captured["thread_id"] == "term_existing"
+    assert captured["selector_payload"] == {"models": ["openai/gpt-5"]}
+
+
+def test_cli_chat_interactive_tty_accepts_missing_thread_without_creating_thread(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    posts: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        posts.append((request_path, payload))
+        return {"thread_id": "term_new"}
+
+    def fake_prompt_toolkit(
+        ctx: Any,
+        *,
+        thread_id: str | None,
+        selector_payload: dict[str, object] | None = None,
+    ) -> None:
+        del ctx
+        captured["thread_id"] = thread_id
+        captured["selector_payload"] = selector_payload
+
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(cli, "_chat_interactive_prompt_toolkit", fake_prompt_toolkit)
+    cli._chat_interactive(cast(Any, object()), thread_id=None, selector_payload={})
+
+    assert posts == []
+    assert captured["thread_id"] is None
+    assert captured["selector_payload"] == {}
+
+
+def test_cli_chat_run_lines_render_events_without_status_or_truncating_assistant() -> None:
+    long_text = "first sentence. " + ("full assistant output " * 12).strip()
+    run = cli._ChatRun(run_id="run_long", message="summarize", status="succeeded")
+    run.completed_steps[1] = {
+        "kind": "tool_call",
+        "step_index": 1,
+        "output": [{"type": "tool_result", "tool_name": "web_search", "output": {"ok": True}}],
+    }
+    run.completed_steps[2] = {
+        "kind": "model_call",
+        "step_index": 2,
+        "payload": {"model_ref": "openai/gpt-5"},
+        "output": [{"type": "text", "text": long_text}],
+    }
+    run.completed_steps[3] = {
+        "kind": "tool_call",
+        "step_index": 3,
+        "error": "rate limited",
+        "output": [{"type": "tool_result", "tool_name": "weather", "output": {}}],
+    }
+    run.completed_steps[4] = {
+        "kind": "runtime",
+        "step_index": 4,
+        "payload": {"message": "runtime checkpoint saved"},
+    }
+
+    lines = cli._chat_run_lines(run, include_steps=True)
+    rendered = "\n".join(lines)
+    visible = " ".join(cli._chat_visible_text(rendered).split())
+
+    assert long_text in visible
+    assert f"• {long_text[:120]}" not in rendered
+    assert "= succeeded" not in rendered
+    assert "..." not in rendered
+    assert "› ran web_search" in rendered
+    assert "› ran weather failed: rate limited" in rendered
+    assert "─ runtime checkpoint saved" in rendered
+    assert "steps:" not in rendered
+    assert "model call completed" not in rendered
+
+
+def test_cli_chat_run_lines_render_tool_requests_and_inputs() -> None:
+    run = cli._ChatRun(run_id="run_tool", message="在terminal里，纯文本格式输出", status="succeeded")
+    tool_part = {
+        "type": "tool_call",
+        "tool_call_id": "call_1",
+        "tool_name": "shell__execute",
+        "tool_family": "shell__execute",
+        "input": {"command": "date '+%Y-%m-%d %H:%M:%S %Z'"},
+    }
+    run.record_part({"step_index": 1, "part_index": 0, "part": tool_part})
+    run.completed_steps[1] = {
+        "kind": "model_call",
+        "step_index": 1,
+        "payload": {"model_ref": "deepseek/deepseek-v4-flash"},
+        "output": [tool_part],
+    }
+    run.completed_steps[2] = {
+        "kind": "tool_call",
+        "step_index": 2,
+        "input": [{"step_index": 1, "part_index": 0}],
+        "output": [{"type": "tool_result", "tool_name": "shell__execute", "output": {"stdout": "2026-06-12 19:17:13 CST\n"}}],
+    }
+
+    rendered = "\n".join(cli._chat_run_lines(run, include_steps=True))
+
+    assert "• requested shell__execute: date '+%Y-%m-%d %H:%M:%S %Z'" in rendered
+    assert "› ran shell__execute: date '+%Y-%m-%d %H:%M:%S %Z'" in rendered
+    lines = cli._chat_run_lines(run, include_steps=True)
+    requested_line = next(line for line in lines if "requested shell__execute" in line)
+    assert "\x1b[2m" not in requested_line
+    assert "model call completed" not in rendered
+    assert "› ran shell__execute\n" not in rendered
+
+
+def test_cli_chat_flow_run_lines_render_stage_summary() -> None:
+    run = cli._ChatRun(run_id="run_flow", message="agent framework impl", status="succeeded")
+    child = cli._ChatRun(run_id="run_child_1", message="agent framework impl", status="succeeded")
+    tool_part = {
+        "type": "tool_call",
+        "tool_call_id": "tool_1",
+        "tool_name": "filesystem__read_text",
+        "tool_family": "filesystem__read_text",
+        "input": {"path": "task.md"},
+    }
+    child.record_part({"step_index": 1, "part_index": 0, "part": tool_part})
+    child.completed_steps[1] = {
+        "kind": "model_call",
+        "step_index": 1,
+        "status": "finished",
+        "output": [tool_part],
+    }
+    child.completed_steps[2] = {
+        "kind": "tool_call",
+        "step_index": 2,
+        "status": "finished",
+        "input": [{"step_index": 1, "part_index": 0}],
+        "output": [{"type": "tool_result", "tool_name": "filesystem__read_text", "output": "ok"}],
+    }
+    run.child_runs[child.run_id] = child
+    run.completed_steps[1] = {
+        "kind": "flow_op",
+        "step_index": 1,
+        "status": "finished",
+        "payload": {
+            "op": "prepare_do",
+            "stage_index": 0,
+            "stage_kind": "do",
+            "metadata": {
+                "stage_index": 0,
+                "stage_total": 2,
+                "stage_title": "Expand the research question into diverse search queries",
+                "input_preview": "agent framework impl",
+                "stage_target": "expand_queries",
+            },
+        },
+        "output": [],
+    }
+    run.completed_steps[2] = {
+        "kind": "child_call",
+        "step_index": 2,
+        "status": "finished",
+        "payload": {
+            "target_kind": "thunk",
+            "target": "expand_queries",
+            "child_run_ids": ["run_child_1"],
+            "stage_index": 0,
+            "stage_kind": "do",
+            "metadata": {
+                "stage_index": 0,
+                "stage_total": 2,
+                "stage_title": "Expand the research question into diverse search queries",
+                "stage_target": "expand_queries",
+            },
+        },
+        "output": [{"type": "text", "text": "query 1\nquery 2\nquery 3"}],
+    }
+    run.completed_steps[3] = {
+        "kind": "flow_op",
+        "step_index": 3,
+        "status": "finished",
+        "payload": {
+            "op": "set_current",
+            "stage_index": 0,
+            "stage_kind": "do",
+            "output_preview": "query 1\nquery 2\nquery 3",
+            "metadata": {
+                "stage_index": 0,
+                "stage_total": 2,
+                "stage_title": "Expand the research question into diverse search queries",
+                "input_preview": "agent framework impl",
+            },
+        },
+        "output": [{"type": "text", "text": "query 1\nquery 2\nquery 3"}],
+    }
+    run.completed_steps[4] = {
+        "kind": "flow_op",
+        "step_index": 4,
+        "status": "finished",
+        "payload": {
+            "op": "prepare_each",
+            "stage_index": 1,
+            "stage_kind": "each",
+            "output_preview": {"count": 3},
+            "metadata": {
+                "stage_index": 1,
+                "stage_total": 2,
+                "stage_title": "Search the web for each query",
+                "parallelism": 4,
+                "input_preview": {"count": 3},
+            },
+        },
+        "output": [],
+    }
+    run.completed_steps[5] = {
+        "kind": "child_call",
+        "step_index": 5,
+        "status": "finished",
+        "payload": {
+            "target_kind": "thunk",
+            "target": "search_web",
+            "child_run_ids": ["run_child_2"],
+            "stage_index": 1,
+            "stage_kind": "each",
+            "metadata": {
+                "stage_index": 1,
+                "stage_total": 2,
+                "stage_title": "Search the web for each query",
+                "parallelism": 4,
+                "item_count": 3,
+                "item_index": 0,
+                "lane_index": 0,
+            },
+        },
+        "output": [],
+    }
+    run.completed_steps[6] = {
+        "kind": "model_call",
+        "step_index": 6,
+        "status": "finished",
+        "output": [{"type": "text", "text": "child internal answer"}],
+    }
+
+    rendered = "\n".join(cli._chat_run_lines(run, include_steps=True))
+
+    assert "[1] Expand the research question into diverse search queries" in rendered
+    assert "1 item -> 3 items" in rendered
+    assert "[2] Search the web for each query" in rendered
+    assert "1/3 calls" in rendered
+    assert "4 lanes" in rendered
+    assert "\x1b[2m  ‣ thunk expand_queries · run_child_1 succeeded\x1b[22m" in rendered
+    assert "  • requested filesystem__read_text: task.md" in rendered
+    assert "  \x1b[2m› ran filesystem__read_text: task.md\x1b[22m" in rendered
+    assert "\x1b[2m    ok\x1b[22m" in rendered
+    assert "\x1b[2m    ok\x1b[22m\n\n[2] Search the web for each query" in rendered
+    assert "lane 1/4 · 1/1 calls" in rendered
+    assert "\x1b[2m  ‣ item 1/3 · thunk search_web · run_child_2 succeeded\x1b[22m" in rendered
+    assert "child internal answer" not in rendered
+
+
+def test_cli_chat_run_lines_render_queue_state() -> None:
+    run = cli._ChatRun(run_id="run_queue", message="agent framework impl", status="queued")
+    run.update_queue(
+        "run_queued",
+        {
+            "run_id": "run_queue",
+            "waiting_for": "queue",
+            "position": 2,
+        },
+    )
+
+    rendered = "\n".join(cli._chat_run_lines(run, include_steps=True))
+
+    assert "◇ queued run_queue · position 2" in rendered
+
+    run.update_queue(
+        "run_waiting",
+        {
+            "run_id": "run_queue",
+            "waiting_for": "thread",
+        },
+    )
+
+    rendered = "\n".join(cli._chat_run_lines(run, include_steps=True))
+
+    assert "◇ waiting run_queue for thread" in rendered
+
+
+def test_cli_chat_flow_run_lines_keep_terminal_error_message() -> None:
+    run = cli._ChatRun(run_id="run_flow_failed", message="agent framework impl", status="failed")
+    run.completed_steps[1] = {
+        "kind": "flow_op",
+        "step_index": 1,
+        "status": "finished",
+        "payload": {
+            "op": "prepare_do",
+            "stage_index": 0,
+            "stage_kind": "do",
+            "metadata": {
+                "stage_index": 0,
+                "stage_total": 1,
+                "stage_title": "Expand the research question",
+            },
+        },
+        "output": [],
+    }
+    cli._chat_record_system_event(run, "error: backend rejected the request", clear_active=True)
+
+    rendered = "\n".join(cli._chat_run_lines(run, include_steps=True))
+
+    assert "◇ stopped run_flow_failed: failed" in rendered
+    assert "[1] Expand the research question" in rendered
+    assert "! backend rejected the request" in rendered
+
+
+def test_cli_chat_header_does_not_show_thread_id() -> None:
+    rendered = "\n".join(cli._chat_header_lines("runtime model"))
+    visible = cli._chat_visible_text(rendered)
+
+    assert "Toolang" in visible
+    assert "model:     runtime model" in visible
+    assert "history:   terminal stdout scrollback" in visible
+    assert "thread:" not in visible
+
+
+def test_cli_chat_model_output_renders_markdown_without_dimming() -> None:
+    text = "# Result\n\n**Done**\n\n- first\n- second\n\n```text\nhello\n```"
+    run = cli._ChatRun(run_id="run_md", message="format this", status="succeeded")
+    run.completed_steps[1] = {
+        "kind": "model_call",
+        "step_index": 1,
+        "output": [{"type": "text", "text": text}],
+    }
+
+    lines = cli._chat_run_lines(run, include_steps=True)
+    rendered = "\n".join(lines)
+    model_lines = [line for line in lines if "Result" in line or "Done" in line or "first" in line or "hello" in line]
+
+    assert "Result" in rendered
+    assert "Done" in rendered
+    assert "first" in rendered
+    assert "hello" in rendered
+    assert "**Done**" not in rendered
+    assert all("\x1b[2m" not in line for line in model_lines)
+
+
+def test_cli_chat_markdown_width_accounts_for_message_prefix(monkeypatch) -> None:
+    monkeypatch.setattr(cli.shutil, "get_terminal_size", lambda _fallback: os.terminal_size((120, 24)))
+
+    assert cli._chat_markdown_width() == 100
+
+
+def test_cli_chat_plain_model_output_wraps_to_content_width(monkeypatch) -> None:
+    monkeypatch.setattr(cli.shutil, "get_terminal_size", lambda _fallback: os.terminal_size((44, 24)))
+    text = "What can I do for you? Need a hand with files, tasks, services, or a shell command?"
+    run = cli._ChatRun(run_id="run_plain", message="hello", status="succeeded")
+    run.completed_steps[1] = {
+        "kind": "model_call",
+        "step_index": 1,
+        "output": [{"type": "text", "text": text}],
+    }
+
+    lines = cli._chat_run_lines(run, include_steps=True)
+    message_start = next(index for index, line in enumerate(lines) if "What can" in line)
+    message_lines = []
+    for line in lines[message_start:]:
+        if not cli._chat_visible_text(line).strip():
+            break
+        message_lines.append(line)
+    visible = " ".join(cli._chat_visible_text("\n".join(message_lines)).split())
+
+    assert len(message_lines) >= 2
+    assert text in visible
+    assert all(cli._chat_display_len(line) <= 44 for line in message_lines)
+
+
+def test_cli_chat_markdown_preserves_section_spacing() -> None:
+    lines = cli._chat_render_markdown_lines("# First\n\none\n\n## Second\n\ntwo")
+
+    first_index = next(index for index, line in enumerate(lines) if "First" in line)
+    second_index = next(index for index, line in enumerate(lines) if "Second" in line)
+
+    assert lines[first_index + 1] == ""
+    assert lines[second_index - 1] == ""
+    assert lines[second_index + 1] == ""
+    assert "" not in cli._chat_render_markdown_lines("one\n\ntwo")
+
+
+def test_cli_chat_tool_message_stays_on_one_recommended_width_line(monkeypatch) -> None:
+    monkeypatch.setattr(cli.shutil, "get_terminal_size", lambda _fallback: os.terminal_size((42, 24)))
+    payload = {
+        "output": [
+            {
+                "type": "tool_result",
+                "tool_name": "shell__execute",
+                "output": "first line\nsecond line with enough content to exceed the terminal width",
+            }
+        ]
+    }
+
+    lines = cli._chat_tool_message_lines(payload, indent="  ")
+
+    assert len(lines) == 1
+    assert "\n" not in lines[0]
+    assert cli._chat_visible_text(lines[0]).startswith("    first line second line")
+    assert cli._chat_visible_text(lines[0]).endswith("...")
+    assert cli._chat_display_len(lines[0]) <= cli._chat_markdown_width()
+
+
+def test_cli_chat_palette_uses_fixed_neutral_panel_colors() -> None:
+    palette = cli._chat_ui_palette()
+
+    assert palette["queue"] == "fg:#f2f2f2 bg:#3a3a3a"
+    assert palette["input"] == "fg:#f5f5f5 bg:#444444"
+    assert palette["status"] == "fg:#f2f2f2 bg:#5a5a5a"
+    assert len({palette["status.model"], palette["status.thunk"], palette["status.flow"]}) == 3
+    assert palette["cursor"] == "fg:#111111 bg:#eeeeee"
+    assert palette["input.cursor"] == "fg:#111111 bg:#eeeeee"
+
+
+def test_cli_chat_user_block_uses_input_panel_colors(monkeypatch) -> None:
+    monkeypatch.setattr(cli.shutil, "get_terminal_size", lambda _fallback: os.terminal_size((20, 24)))
+
+    line = cli._chat_input_block_line("hello")
+
+    assert cli._chat_ui_palette()["input"] == cli._chat_prompt_style(cli._CHAT_INPUT_FG, cli._CHAT_INPUT_BG)
+    assert line.startswith(cli._chat_ansi_style(cli._CHAT_INPUT_FG, cli._CHAT_INPUT_BG))
+    assert cli._chat_visible_text(line) == "hello               "
+
+
+def test_cli_chat_prompt_text_change_does_not_force_app_invalidation() -> None:
+    invalidations = 0
+
+    def invalidate() -> None:
+        nonlocal invalidations
+        invalidations += 1
+
+    prompt = cli._ChatPromptBox(lambda _event: None, invalidate, "runtime model")
+
+    prompt.buffer.text = "hello"
+
+    assert invalidations == 0
+
+
+def test_cli_chat_prompt_status_uses_horizontal_padding() -> None:
+    prompt = cli._ChatPromptBox(lambda _event: None, lambda: None, "runtime model")
+
+    status_text = "".join(text for _style, text in prompt.render_status())
+
+    assert status_text.startswith("  runtime model")
+    assert "^j newline  ↑↓ history" in status_text
+    assert status_text.endswith("  ")
+
+    prompt.set_error("failed")
+    error_text = "".join(text for _style, text in prompt.render_status())
+
+    assert error_text == "  ! failed  "
+
+
+def test_cli_chat_prompt_status_colors_model_thunk_and_flow() -> None:
+    flow_segments = cli._ChatPromptBox(lambda _event: None, lambda: None, "runtime model  flow:review").render_status()
+    thunk_segments = cli._ChatPromptBox(lambda _event: None, lambda: None, "openai/o3  thunk:summarize").render_status()
+
+    assert ("class:status.model", "  runtime model") in flow_segments
+    assert ("class:status.flow", "flow:review") in flow_segments
+    assert ("class:status.model", "  openai/o3") in thunk_segments
+    assert ("class:status.thunk", "thunk:summarize") in thunk_segments
+
+
+def test_cli_chat_bottom_layout_can_shrink_to_compact_prompt() -> None:
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    root = app.build_layout().container
+    height = root.preferred_height(80, 1)
+
+    assert height.min == 1
+    assert height.preferred == app.bottom_rows()
+
+
+def test_cli_chat_model_command_lists_models_without_starting_run(monkeypatch) -> None:
+    writes: list[list[str]] = []
+    posts: list[tuple[str, object]] = []
+
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        assert request_path == "/api/v1/chat/models"
+        return {
+            "default": "openai/o3[openai]",
+            "items": [
+                {"selector": "openai/o3[openai]", "provider": "openai", "adapter": "responses"},
+                {"selector": "openai/gpt-5[openai]", "provider": "openai", "adapter": "responses"},
+            ],
+        }
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        posts.append((request_path, payload))
+        return {"thread_id": "term_new"}
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: writes.append(lines))
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+
+    app.handle_submit("/model")
+
+    rendered = "\n".join(writes[0])
+    visible = cli._chat_visible_text(rendered)
+    assert posts == []
+    assert app.active_run is None
+    assert "chat command" not in visible
+    assert "◇ available models" in visible
+    assert "\x1b[2m◇ available models" not in rendered
+    assert "openai/o3[openai] default  openai responses" in visible
+    assert "openai/gpt-5[openai]  openai responses" in visible
+
+
+def test_cli_chat_model_command_updates_selected_model(monkeypatch) -> None:
+    writes: list[list[str]] = []
+    posts: list[tuple[str, object]] = []
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        posts.append((request_path, payload))
+        return {"thread_id": "term_new"}
+
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: writes.append(lines))
+
+    selector_payload: dict[str, object] = {}
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload=selector_payload)
+
+    app.handle_submit("/model openai/o3")
+
+    assert posts == []
+    assert app.active_run is None
+    assert selector_payload["models"] == ["openai/o3"]
+    assert app.prompt.status_label == "openai/o3"
+    assert "model: openai/o3" in cli._chat_visible_text("\n".join(writes[0]))
+
+
+def test_cli_chat_thunk_and_flow_commands_list_and_switch(monkeypatch) -> None:
+    writes: list[list[str]] = []
+    posts: list[tuple[str, object]] = []
+
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        if request_path == "/api/v1/chat/thunks":
+            return {"default": "chat", "items": [{"name": "chat"}, {"name": "summarize"}]}
+        if request_path == "/api/v1/chat/flows":
+            return {"default": None, "items": [{"name": "review"}]}
+        raise AssertionError(request_path)
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        posts.append((request_path, payload))
+        return {"thread_id": "term_new"}
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: writes.append(lines))
+
+    selector_payload: dict[str, object] = {}
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload=selector_payload)
+
+    app.handle_submit("/thunk")
+    app.handle_submit("/thunk summarize")
+    app.handle_submit("/flow review")
+    app.handle_submit("/flow")
+
+    visible = cli._chat_visible_text("\n".join(line for lines in writes for line in lines))
+    assert posts == []
+    assert app.active_run is None
+    assert "◇ available thunks" in visible
+    assert "chat  default" in visible
+    assert "summarize" in visible
+    assert "thunk: summarize" in visible
+    assert "flow: review" in visible
+    assert "review  current" in visible
+    assert selector_payload == {"flow": "review"}
+    assert app.prompt.status_label == "runtime model  flow:review"
+
+
+def test_cli_chat_normal_submit_after_flow_selection_still_starts_run(monkeypatch) -> None:
+    streams: list[tuple[str, dict[str, object]]] = []
+    posts: list[tuple[str, object]] = []
+
+    class FakeListener:
+        def stop(self) -> None:
+            pass
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        posts.append((request_path, payload))
+        return {"thread_id": "term_new"}
+
+    def fake_runtime_consume_stream(
+        _ctx: Any,
+        request_path: str,
+        *,
+        payload: dict[str, object],
+        event_handler: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
+        del event_handler
+        streams.append((request_path, payload))
+
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(cli, "_runtime_consume_stream", fake_runtime_consume_stream)
+    monkeypatch.setattr(cli, "_start_thread_event_listener", lambda _ctx, _thread_id, **_kwargs: FakeListener())
+
+    selector_payload: dict[str, object] = {}
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload=selector_payload)
+
+    app.handle_submit("/flow review")
+    app.handle_submit("hello")
+    time.sleep(0.1)
+
+    assert posts == [("/api/v1/threads", {"client": "tui"})]
+    assert len(streams) == 1
+    request_path, payload = streams[0]
+    assert request_path == "/api/v1/chat/stream"
+    assert payload["message"] == {"role": "user", "parts": [{"type": "text", "text": "hello"}]}
+    assert payload["flow"] == "review"
+    assert "thunk" not in payload
+
+
+def test_cli_chat_flow_submit_renders_flow_stream_steps(monkeypatch) -> None:
+    printed: list[list[str]] = []
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        assert request_path == "/api/v1/threads"
+        assert payload == {"client": "tui"}
+        return {"thread_id": "term_new"}
+
+    def fake_runtime_consume_stream(
+        _ctx: Any,
+        request_path: str,
+        *,
+        payload: dict[str, object],
+        event_handler: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
+        assert request_path == "/api/v1/chat/stream"
+        assert payload["flow"] == "research"
+        assert event_handler is not None
+        event_handler(
+            {
+                "type": "start",
+                "messageId": "run_flow",
+                "messageMetadata": {"run_id": "run_flow", "thread_id": "term_new"},
+            }
+        )
+        event_handler(
+            {
+                "type": "step_start",
+                "payload": {
+                    "run_id": "run_flow",
+                    "thread_id": "term_new",
+                    "step_index": 1,
+                    "kind": "flow_op",
+                },
+            }
+        )
+        event_handler(
+            {
+                "type": "step_end",
+                "payload": {
+                    "run_id": "run_flow",
+                    "thread_id": "term_new",
+                    "step_index": 1,
+                    "kind": "flow_op",
+                    "status": "finished",
+                    "output": [],
+                    "payload": {
+                        "op": "prepare_do",
+                        "stage_kind": "do",
+                        "stage_index": 0,
+                        "stage_total": 6,
+                        "metadata": {"stage_title": "Expand the research question into diverse search queries"},
+                    },
+                },
+            }
+        )
+        event_handler({"type": "finish"})
+
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(cli, "_runtime_consume_stream", fake_runtime_consume_stream)
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: printed.append(lines))
+
+    selector_payload: dict[str, object] = {}
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload=selector_payload)
+    monkeypatch.setattr(app, "emit_from_thread", lambda event: app.handle_runtime_event(cast(dict[str, Any], event.value)))
+
+    app.handle_submit("/flow research")
+    app.handle_submit("agent framewrok implemenations")
+    time.sleep(0.1)
+
+    visible = cli._chat_visible_text("\n".join(line for lines in printed for line in lines))
+    assert selector_payload == {"flow": "research"}
+    assert app.active_run is None
+    assert "flow: research" in visible
+    assert "[1] Expand the research question into diverse search queries" in visible
+    assert "ran prepare_do" not in visible
+
+
+def test_cli_chat_submit_does_not_start_thread_listener(monkeypatch) -> None:
+    streams: list[tuple[str, dict[str, object]]] = []
+    listener_started = False
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        assert request_path == "/api/v1/threads"
+        assert payload == {"client": "tui"}
+        return {"thread_id": "term_new"}
+
+    def fake_runtime_consume_stream(
+        _ctx: Any,
+        request_path: str,
+        *,
+        payload: dict[str, object],
+        event_handler: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
+        del event_handler
+        streams.append((request_path, payload))
+
+    def fake_start_thread_event_listener(_ctx: Any, _thread_id: str, **_kwargs: object) -> object:
+        nonlocal listener_started
+        listener_started = True
+        return object()
+
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(cli, "_runtime_consume_stream", fake_runtime_consume_stream)
+    monkeypatch.setattr(cli, "_start_thread_event_listener", fake_start_thread_event_listener)
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+
+    app.handle_submit("hello")
+    time.sleep(0.1)
+
+    assert not listener_started
+    assert streams
+    assert app.active_run is not None
+    assert app.active_run.message == "hello"
+
+
+def test_cli_chat_start_run_consumes_own_stream_events(monkeypatch) -> None:
+    printed: list[list[str]] = []
+
+    class FakeListener:
+        def stop(self) -> None:
+            pass
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        assert request_path == "/api/v1/threads"
+        assert payload == {"client": "tui"}
+        return {"thread_id": "term_new"}
+
+    def fake_runtime_consume_stream(
+        _ctx: Any,
+        request_path: str,
+        *,
+        payload: dict[str, object],
+        event_handler: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
+        assert request_path == "/api/v1/chat/stream"
+        assert event_handler is not None
+        request_id = cast(str, payload["request_id"])
+        event_handler(
+            {
+                "type": "run_input",
+                "payload": {
+                    "action": "start",
+                    "run_id": "run_local",
+                    "request_id": request_id,
+                    "message": payload["message"],
+                },
+            }
+        )
+        event_handler(
+            {
+                "type": "step_end",
+                "payload": {
+                    "run_id": "run_local",
+                    "step_index": 1,
+                    "kind": "model_call",
+                    "output": [{"type": "text", "text": "done"}],
+                },
+            }
+        )
+        event_handler({"type": "run_end", "payload": {"run_id": "run_local", "status": "finished"}})
+
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(cli, "_runtime_consume_stream", fake_runtime_consume_stream)
+    monkeypatch.setattr(cli, "_start_thread_event_listener", lambda _ctx, _thread_id, **_kwargs: FakeListener())
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: printed.append(lines))
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    loop = asyncio.new_event_loop()
+    app.loop = loop
+    try:
+        monkeypatch.setattr(app, "emit_from_thread", lambda event: app.handle_runtime_event(cast(dict[str, Any], event.value)))
+        app.handle_submit("hello")
+        time.sleep(0.1)
+        assert printed
+        assert "done" in cli._chat_visible_text("\n".join(line for lines in printed for line in lines))
+        assert app.active_run is None
+    finally:
+        loop.close()
+
+
+def test_cli_chat_start_run_handles_ai_sdk_stream_events(monkeypatch) -> None:
+    printed: list[list[str]] = []
+
+    class FakeListener:
+        def stop(self) -> None:
+            pass
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        assert request_path == "/api/v1/threads"
+        assert payload == {"client": "tui"}
+        return {"thread_id": "term_new"}
+
+    def fake_runtime_consume_stream(
+        _ctx: Any,
+        request_path: str,
+        *,
+        payload: dict[str, object],
+        event_handler: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
+        assert request_path == "/api/v1/chat/stream"
+        assert payload["message"] == {"role": "user", "parts": [{"type": "text", "text": "hello"}]}
+        assert event_handler is not None
+        event_handler(
+            {
+                "type": "start",
+                "messageId": "run_ai",
+                "messageMetadata": {"run_id": "run_ai", "thread_id": "term_new"},
+            }
+        )
+        event_handler({"type": "start-step"})
+        event_handler({"type": "text-start", "id": "msg_run_ai"})
+        event_handler({"type": "text-delta", "id": "msg_run_ai", "delta": "hello"})
+        event_handler({"type": "text-delta", "id": "msg_run_ai", "delta": " world"})
+        event_handler({"type": "text-end", "id": "msg_run_ai"})
+        event_handler({"type": "finish-step"})
+        event_handler(
+            {
+                "type": "finish",
+                "finishReason": "stop",
+                "messageMetadata": {"run_id": "run_ai", "thread_id": "term_new"},
+            }
+        )
+
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(cli, "_runtime_consume_stream", fake_runtime_consume_stream)
+    monkeypatch.setattr(cli, "_start_thread_event_listener", lambda _ctx, _thread_id, **_kwargs: FakeListener())
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: printed.append(lines))
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    monkeypatch.setattr(app, "emit_from_thread", lambda event: app.handle_runtime_event(cast(dict[str, Any], event.value)))
+
+    app.handle_submit("hello")
+    time.sleep(0.1)
+
+    assert app.active_run is None
+    assert printed
+    visible = cli._chat_visible_text("\n".join(line for lines in printed for line in lines))
+    assert "hello world" in visible
+    assert "run_ai" in visible
+
+
+def test_cli_chat_stream_thread_exceptions_surface_as_ui_errors(monkeypatch) -> None:
+    printed: list[list[str]] = []
+
+    class FakeListener:
+        def stop(self) -> None:
+            pass
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        assert request_path == "/api/v1/threads"
+        assert payload == {"client": "tui"}
+        return {"thread_id": "term_new"}
+
+    def fake_runtime_consume_stream(
+        _ctx: Any,
+        request_path: str,
+        *,
+        payload: dict[str, object],
+        event_handler: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
+        del payload, event_handler
+        assert request_path == "/api/v1/chat/stream"
+        raise RuntimeError("stream parser exploded")
+
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(cli, "_runtime_consume_stream", fake_runtime_consume_stream)
+    monkeypatch.setattr(cli, "_start_thread_event_listener", lambda _ctx, _thread_id, **_kwargs: FakeListener())
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: printed.append(lines))
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    monkeypatch.setattr(app, "emit_from_thread", lambda event: app.handle_error(str(event.value)))
+
+    app.handle_submit("hello")
+    time.sleep(0.1)
+
+    assert app.active_run is None
+    assert app.prompt.error_message == ""
+    assert printed
+    visible = cli._chat_visible_text("\n".join(line for lines in printed for line in lines))
+    assert "◇ stopped" in visible
+    assert "! RuntimeError: stream parser exploded" in visible
+
+
+def test_cli_chat_ai_sdk_stream_error_survives_finish_event(monkeypatch) -> None:
+    printed: list[list[str]] = []
+
+    class FakeListener:
+        def stop(self) -> None:
+            pass
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        assert request_path == "/api/v1/threads"
+        assert payload == {"client": "tui"}
+        return {"thread_id": "term_new"}
+
+    def fake_runtime_consume_stream(
+        _ctx: Any,
+        request_path: str,
+        *,
+        payload: dict[str, object],
+        event_handler: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
+        del payload
+        assert request_path == "/api/v1/chat/stream"
+        assert event_handler is not None
+        event_handler(
+            {
+                "type": "start",
+                "messageId": "run_failed",
+                "messageMetadata": {"run_id": "run_failed", "thread_id": "term_new"},
+            }
+        )
+        event_handler({"type": "error", "errorText": "backend rejected the request"})
+        event_handler({"type": "finish"})
+
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(cli, "_runtime_consume_stream", fake_runtime_consume_stream)
+    monkeypatch.setattr(cli, "_start_thread_event_listener", lambda _ctx, _thread_id, **_kwargs: FakeListener())
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: printed.append(lines))
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    monkeypatch.setattr(app, "emit_from_thread", lambda event: app.handle_runtime_event(cast(dict[str, Any], event.value)))
+
+    app.handle_submit("hello")
+    time.sleep(0.1)
+
+    assert app.active_run is None
+    assert app.prompt.error_message == ""
+    assert printed
+    visible = cli._chat_visible_text("\n".join(line for lines in printed for line in lines))
+    assert "◇ stopped run_failed: failed" in visible
+    assert "! backend rejected the request" in visible
+
+
+def test_cli_chat_existing_thread_does_not_start_thread_listener(monkeypatch) -> None:
+    listener_started = False
+
+    def fake_start_thread_event_listener(_ctx: Any, _thread_id: str, **_kwargs: object) -> object:
+        nonlocal listener_started
+        listener_started = True
+        return object()
+
+    monkeypatch.setattr(cli, "_start_thread_event_listener", fake_start_thread_event_listener)
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id="term_test", selector_payload={"thunk": "summarize"})
+
+    assert app.ensure_thread_id() == "term_test"
+    assert not listener_started
+
+
+def test_cli_chat_thread_listener_ignores_child_run_trace_events() -> None:
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id="term_existing", selector_payload={})
+    app.active_run = cli._ChatRun(run_id="run_top", message="hello", status="running")
+
+    app.handle_runtime_event(
+        {
+            "type": "run_start",
+            "payload": {
+                "run_id": "run_child",
+                "thread_id": "term_existing",
+                "parent_run_id": "run_top",
+                "call_kind": "child",
+                "input": {"role": "user", "parts": [{"type": "text", "text": "child"}]},
+            },
+        }
+    )
+    app.handle_runtime_event(
+        {
+            "type": "step_end",
+            "payload": {
+                "run_id": "run_child",
+                "thread_id": "term_existing",
+                "step_index": 1,
+                "kind": "model_call",
+                "output": [{"type": "text", "text": "child output"}],
+            },
+        }
+    )
+
+    assert app.active_run is not None
+    assert app.active_run.run_id == "run_top"
+    assert app.active_run.completed_steps == {}
+
+
+def test_cli_chat_own_stream_projects_child_run_trace_events() -> None:
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id="term_existing", selector_payload={})
+    app.active_run = cli._ChatRun(
+        run_id="run_top",
+        message="hello",
+        status="running",
+        executable_kind="flow",
+        executable_name="research",
+        accept_child_trace=True,
+    )
+    app.active_run.completed_steps[1] = {
+        "kind": "flow_op",
+        "step_index": 1,
+        "status": "finished",
+        "payload": {
+            "op": "prepare_do",
+            "stage_index": 0,
+            "stage_kind": "do",
+            "metadata": {"stage_index": 0, "stage_title": "Expand query"},
+        },
+        "output": [],
+    }
+    app.active_run.completed_steps[2] = {
+        "kind": "child_call",
+        "step_index": 2,
+        "status": "finished",
+        "payload": {
+            "target_kind": "thunk",
+            "target": "expand",
+            "child_run_ids": ["run_child"],
+            "stage_index": 0,
+            "stage_kind": "do",
+            "metadata": {"stage_index": 0, "stage_title": "Expand query"},
+        },
+        "output": [],
+    }
+
+    app.handle_runtime_event(
+        {
+            "type": "run_start",
+            "payload": {
+                "run_id": "run_child",
+                "root_run_id": "run_top",
+                "parent_run_id": "run_top",
+                "thread_id": "term_existing",
+                "executable_kind": "thunk",
+                "executable_name": "expand",
+                "input": {"role": "user", "parts": [{"type": "text", "text": "child"}]},
+            },
+        }
+    )
+    app.handle_runtime_event(
+        {
+            "type": "step_end",
+            "payload": {
+                "run_id": "run_child",
+                "thread_id": "term_existing",
+                "step_index": 1,
+                "kind": "model_call",
+                "status": "finished",
+                "output": [{"type": "text", "text": "child output"}],
+            },
+        }
+    )
+
+    rendered = "\n".join(cli._chat_run_lines(app.active_run, include_steps=True))
+
+    assert "thunk expand · run_child running" in rendered
+    assert "• child output" in rendered
+
+
+def test_cli_chat_help_command_shows_local_help_without_starting_run(monkeypatch) -> None:
+    writes: list[list[str]] = []
+    posts: list[tuple[str, object]] = []
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        posts.append((request_path, payload))
+        return {"thread_id": "term_new"}
+
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: writes.append(lines))
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+
+    app.handle_submit("/?")
+
+    visible = cli._chat_visible_text("\n".join(writes[0]))
+    rendered = "\n".join(writes[0])
+    assert posts == []
+    assert app.active_run is None
+    assert "◇ chat help" in visible
+    assert "\x1b[2m◇ chat help" not in rendered
+    assert "/model <selector>  use a model for new runs" in visible
+    assert "/thunk [name]      list or use a thunk" in visible
+    assert "/flow [name]       list or use a flow" in visible
+    assert "/exit, /quit       exit chat" in visible
+
+
+def test_cli_chat_active_step_lines_use_lightweight_event_text() -> None:
+    run = cli._ChatRun(run_id="run_active", message="check weather", status="running")
+    run.tool_calls_by_part[(1, 0)] = cli._ChatToolCall("weather", {"query": "杭州天气"})
+
+    run.start_step({"kind": "model_call", "step_index": 1})
+    run.start_step({"kind": "tool_call", "step_index": 2, "input": [{"step_index": 1, "part_index": 0}]})
+
+    assert cli._chat_active_step_line(run.steps[1]) == "• thinking..."
+    assert "› running weather" in cli._chat_active_step_line(run.steps[2])
+
+
+def test_cli_chat_error_replaces_active_step_with_friendly_system_line() -> None:
+    run = cli._ChatRun(run_id="run_failed", message="再来一次", status="running")
+    run.start_step({"kind": "model_call", "step_index": 1})
+    error = (
+        "Error code: 400 - {'error': {'message': \"Messages with role 'tool' must be a response\", "
+        "'type': 'invalid_request_error'}}"
+    )
+
+    cli._chat_record_system_event(run, f"error: {cli._chat_friendly_error(error)}", clear_active=True)
+    rendered = "\n".join(cli._chat_run_lines(run, include_steps=True))
+
+    assert "thinking..." not in rendered
+    assert "! Messages with role 'tool' must be a response" in rendered
+    assert "Messages with role 'tool' must be a response" in rendered
+    assert "invalid_request_error" not in rendered
+    assert "! run run_failed" not in rendered
 
 
 def test_cli_thread_event_renderer_prints_thread_messages(capsys) -> None:
@@ -7283,13 +8567,18 @@ def test_cli_chat_help_uses_thread_option() -> None:
 
     assert result.exit_code == 0
     assert "TARGET_OR_MESSAGE" not in result.stdout
-    assert "[MESSAGE]" in result.stdout
-    assert "--thread" in result.stdout
-    assert "--tui" in result.stdout
+    assert "[TARGET]" in result.stdout
+    assert "--thread" not in result.stdout
+    assert "--tui" not in result.stdout
     assert "--ui" not in result.stdout
-    assert "--model" not in result.stdout
-    assert "Message to send. Omit to open the TUI." in result.stdout
-    assert "Thread id to continue; run id accepted." in result.stdout
+    assert "--models" in result.stdout
+    assert "--tools" in result.stdout
+    assert "--caps" in result.stdout
+    assert "--thunk" in result.stdout
+    assert "--flow" in result.stdout
+    assert "--model         " not in result.stdout
+    assert "Thread id or run id to continue." in result.stdout
+    assert "new terminal thread" in result.stdout
 
 
 def test_cli_hidden_lists_hidden_commands_without_help_leak() -> None:
@@ -7306,9 +8595,9 @@ def test_cli_hidden_lists_hidden_commands_without_help_leak() -> None:
     assert "Advanced Commands" in hidden_result.stdout
     assert "Alias Commands" in hidden_result.stdout
     assert "send" in hidden_result.stdout
-    assert "Alias to chat --thread THREAD MESSAGE." in hidden_result.stdout
+    assert "Send one message to a thread." in hidden_result.stdout
     assert "attach" in hidden_result.stdout
-    assert "Alias to chat --thread THREAD." in hidden_result.stdout
+    assert "Open chat on a thread." in hidden_result.stdout
     assert "fmt" in hidden_result.stdout
     assert "Show hidden commands." not in hidden_result.stdout
 
@@ -7418,6 +8707,26 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
                         executable_kind="thunk",
                         executable_name="score",
                         call_kind="stage",
+                        steps=[
+                            {
+                                "record": {
+                                    "step_index": 1,
+                                    "kind": "tool_call",
+                                    "status": "finished",
+                                    "payload": {},
+                                    "input": [],
+                                    "output": [
+                                        {
+                                            "type": "tool_result",
+                                            "tool_name": "filesystem__read_text",
+                                            "input": {"path": "tasks/qf7y0d8k.md"},
+                                            "output": "tool output",
+                                        }
+                                    ],
+                                },
+                                "message": None,
+                            }
+                        ],
                     ),
                     _inspect_run_detail(
                         "run_inline",
@@ -7442,12 +8751,18 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
     assert calls == ["/api/v1/runs/run_parent", "/api/v1/threads/term_thread?limit=100"]
     assert "thread term_thread" in result.stdout
     assert "run_parent flow:research succeeded" in result.stdout
-    assert "✓ 1/2 rank" in result.stdout
+    assert "[1] Rank candidates" in result.stdout
     assert "Rank candidates" in result.stdout
     assert "3 items -> 2 items · 2 lanes" in result.stdout
-    assert "✓ 2/2 do" in result.stdout
+    assert "[2] Inline summary" in result.stdout
     assert "Inline summary" in result.stdout
-    assert "run_child" not in result.stdout
+    assert "lane 1/2 · 1/1 calls" in result.stdout
+    assert "item 1/3 · thunk score · run_child succeeded" in result.stdout
+    assert "\x1b[2m" in result.stdout
+    assert "› ran filesystem__read_text: tasks/qf7y0d8k.md" in result.stdout
+    assert "\x1b[2m    tool output\x1b[22m" in result.stdout
+    assert "\x1b[2m    tool output\x1b[22m\n\n[2] Inline summary" in result.stdout
+    assert "thunk <L34> · run_inline succeeded" in result.stdout
     assert "step 1 model_call" not in result.stdout
 
     verbose_result = _invoke_app(["inspect", "dev", "run_parent", "-vv"])
@@ -7456,6 +8771,249 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
     assert "lane 1/2" in verbose_result.stdout
     assert "item 1/3 · thunk score · run_child succeeded" in verbose_result.stdout
     assert "thunk <L34> · run_inline succeeded" in verbose_result.stdout
+
+
+def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> None:
+    calls: list[str] = []
+
+    child = _inspect_run_detail(
+        "run_child",
+        thread_id="term_thread",
+        root_run_id="run_parent",
+        parent_run_id="run_parent",
+        parent_step_index=2,
+        executable_kind="thunk",
+        executable_name="expand_queries",
+        call_kind="stage",
+        steps=[
+            {
+                "record": {
+                    "step_index": 1,
+                    "kind": "model_call",
+                    "status": "finished",
+                    "payload": {"model_ref": "deepseek/deepseek-chat-v3"},
+                    "output": [
+                        {"type": "text", "text": "I should inspect services.\n"},
+                        {
+                            "type": "tool_call",
+                            "tool_name": "service_use__service_list",
+                            "tool_family": "service_use__service_list",
+                            "input": {"visibility": "all"},
+                        },
+                    ],
+                },
+                "message": {
+                    "role": "assistant",
+                    "parts": [
+                        {"type": "text", "text": "I should inspect services.\n"},
+                        {
+                            "type": "tool_call",
+                            "tool_name": "service_use__service_list",
+                            "tool_family": "service_use__service_list",
+                            "input": {"visibility": "all"},
+                        },
+                    ],
+                },
+            },
+            {
+                "record": {
+                    "step_index": 2,
+                    "kind": "runtime",
+                    "status": "failed",
+                    "payload": {},
+                    "output": [{"type": "text", "text": "unknown tool call: service_use__service_list"}],
+                    "error": "unknown tool call: service_use__service_list",
+                },
+                "message": None,
+            },
+        ],
+    )
+    child["output"] = {
+        **cast(dict[str, object], child["output"]),
+        "status": "failed",
+        "error": "unknown tool call: service_use__service_list",
+        "failure": {
+            "reason": "unknown tool call: service_use__service_list",
+            "step_index": 2,
+            "step_kind": "runtime",
+        },
+    }
+
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        calls.append(request_path)
+        if request_path == "/api/v1/runs/run_child":
+            return child
+        if request_path == "/api/v1/threads/term_thread?limit=100":
+            return {
+                "info": {"id": "term_thread"},
+                "runs": [
+                    _inspect_run_detail("run_parent", thread_id="term_thread", root_run_id="run_parent"),
+                    child,
+                ],
+            }
+        raise AssertionError(request_path)
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+
+    result = _invoke_app(["inspect", "dev", "run_child"])
+
+    assert result.exit_code == 0
+    assert calls == ["/api/v1/runs/run_child", "/api/v1/threads/term_thread?limit=100"]
+    assert "thread term_thread" in result.stdout
+    assert "run run_child" in result.stdout
+    assert "type thunk:expand_queries" in result.stdout
+    assert "status failed" in result.stdout
+    assert "root run_parent" in result.stdout
+    assert "parent run_parent step 2" in result.stdout
+    assert "failure unknown tool call: service_use__service_list (step 2 runtime)" in result.stdout
+    assert "• I should inspect services." in result.stdout
+    assert "• requested service_use__service_list: all" in result.stdout
+    assert "─ unknown tool call: service_use__service_list" in result.stdout
+    assert "✓ step" not in result.stdout
+    assert "- run_parent flow:research" not in result.stdout
+
+
+def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
+    calls: list[str] = []
+    run = _inspect_run_detail(
+        "run_thunk",
+        thread_id="term_thread",
+        executable_kind="thunk",
+        executable_name="summarize",
+        steps=[
+            {
+                "record": {
+                    "step_index": 1,
+                    "kind": "model_call",
+                    "status": "finished",
+                    "payload": {"model_ref": "deepseek/deepseek-chat-v3"},
+                    "output": [
+                        {"type": "text", "text": "Ready to read the task."},
+                        {
+                            "type": "tool_call",
+                            "tool_name": "filesystem__read_text",
+                            "input": {"path": "task.md"},
+                        },
+                    ],
+                },
+                "message": None,
+            },
+            {
+                "record": {
+                    "step_index": 2,
+                    "kind": "tool_call",
+                    "status": "finished",
+                    "payload": {},
+                    "input": [],
+                    "output": [
+                        {
+                            "type": "tool_result",
+                            "tool_name": "filesystem__read_text",
+                            "input": {"path": "task.md"},
+                            "output": "task body",
+                        }
+                    ],
+                },
+                "message": None,
+            },
+            {
+                "record": {
+                    "step_index": 3,
+                    "kind": "model_call",
+                    "status": "finished",
+                    "payload": {"model_ref": "deepseek/deepseek-chat-v3"},
+                    "output": [{"type": "text", "text": "Summary complete."}],
+                },
+                "message": None,
+            },
+        ],
+    )
+
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        calls.append(request_path)
+        if request_path == "/api/v1/runs/run_thunk":
+            return run
+        if request_path == "/api/v1/threads/term_thread?limit=100":
+            return {"info": {"id": "term_thread"}, "runs": [run]}
+        raise AssertionError(request_path)
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+
+    result = _invoke_app(["inspect", "dev", "run_thunk"])
+
+    assert result.exit_code == 0
+    assert calls == ["/api/v1/runs/run_thunk", "/api/v1/threads/term_thread?limit=100"]
+    assert "type thunk:summarize" in result.stdout
+    assert "• Ready to read the task." in result.stdout
+    assert "• requested filesystem__read_text: task.md" in result.stdout
+    assert "\x1b[2m› ran filesystem__read_text: task.md\x1b[22m" in result.stdout
+    assert "\x1b[2m  task body\x1b[22m" in result.stdout
+    assert "• Summary complete." in result.stdout
+    assert "✓ step" not in result.stdout
+
+
+def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
+    calls: list[str] = []
+    parent = _inspect_run_detail(
+        "run_parent",
+        thread_id="term_thread",
+        root_run_id="run_parent",
+        executable_kind="flow",
+        executable_name="research",
+    )
+    parent["output"] = {
+        **cast(dict[str, object], parent["output"]),
+        "status": "failed",
+        "error": "unknown tool call: service_use__service_list",
+        "failure": {
+            "reason": "unknown tool call: service_use__service_list",
+            "step_index": 3,
+            "step_kind": "runtime",
+        },
+    }
+    child = _inspect_run_detail(
+        "run_child",
+        thread_id="term_thread",
+        root_run_id="run_parent",
+        parent_run_id="run_parent",
+        parent_step_index=2,
+        executable_kind="thunk",
+        executable_name="expand_queries",
+        call_kind="stage",
+    )
+
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        calls.append(request_path)
+        if request_path == "/api/v1/threads/term_thread?limit=100":
+            return {
+                "info": {
+                    "id": "term_thread",
+                    "title": "agent framework implementations",
+                    "status": "idle",
+                    "origin": "chat",
+                    "run_count": 2,
+                    "latest_run": {"id": "run_child", "status": "failed"},
+                },
+                "runs": [parent, child],
+            }
+        raise AssertionError(request_path)
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+
+    result = _invoke_app(["inspect", "dev", "term_thread"])
+
+    assert result.exit_code == 0
+    assert calls == ["/api/v1/threads/term_thread?limit=100"]
+    assert "thread term_thread" in result.stdout
+    assert "title agent framework implementations" in result.stdout
+    assert "status idle" in result.stdout
+    assert "runs 2 total, 1 top-level" in result.stdout
+    assert "latest run_child failed" in result.stdout
+    assert "1. run_parent flow:research failed" in result.stdout
+    assert "input query" in result.stdout
+    assert "failure unknown tool call: service_use__service_list (step 3 runtime)" in result.stdout
+    assert "run_child thunk:expand_queries" not in result.stdout
+    assert "step 1" not in result.stdout
 
 
 def test_script_progress_defaults_to_stage_summary() -> None:
@@ -7603,7 +9161,7 @@ def test_script_progress_defaults_to_stage_summary() -> None:
     assert sink._title == "Running flow:research: run_parent"
     lines = sink._render_lines()
     assert len(lines) == 3
-    assert lines[1].startswith("✓ 2 each")
+    assert lines[1].startswith("[2] Search the web")
     assert "Search the web" in lines[1]
     assert "3 items -> 3 items" in lines[1]
     assert "2 lanes" in lines[1]
@@ -7807,16 +9365,23 @@ def test_cli_inspect_events_reads_run_events(monkeypatch) -> None:
 
 
 def test_cli_thread_control_help_lists_agent_with_arguments() -> None:
-    result = _invoke_app(["steer", "dev", "--help"])
+    steer = _invoke_app(["steer", "dev", "--help"])
+    cancel = _invoke_app(["cancel", "dev", "--help"])
 
-    assert result.exit_code == 0
-    assert "Scope" not in result.stdout
+    assert steer.exit_code == 0
+    assert "Usage: root AGENT steer [OPTIONS] RUN MESSAGE" in steer.stdout
+    assert "Scope" not in steer.stdout
     positions = [
-        result.stdout.index("Agent name."),
-        result.stdout.index("Run id, or thread id with an active run."),
-        result.stdout.index("Instruction to steer the run."),
+        steer.stdout.index("Agent name."),
+        steer.stdout.index("Run id to steer."),
+        steer.stdout.index("Thread id means its active run."),
+        steer.stdout.index("Instruction to steer the run."),
     ]
     assert positions == sorted(positions)
+    assert cancel.exit_code == 0
+    assert "Usage: root AGENT cancel [OPTIONS] RUN" in cancel.stdout
+    assert "Run id to cancel." in cancel.stdout
+    assert "Thread id means its active run." in cancel.stdout
 
 
 def test_cli_rewind_and_fork_help_describe_latest_run_target() -> None:
@@ -7824,34 +9389,38 @@ def test_cli_rewind_and_fork_help_describe_latest_run_target() -> None:
     fork = _invoke_app(["fork", "dev", "--help"])
 
     assert rewind.exit_code == 0
-    assert "Run id to rewind from, or thread id to use its" in rewind.stdout
-    assert "latest run." in rewind.stdout
-    assert "Message to send after rewinding." in rewind.stdout
-    assert "Open the terminal UI after rewinding." in rewind.stdout
+    assert "Usage: root AGENT rewind [OPTIONS] POINT" in rewind.stdout
+    assert "Rewind a thread to an earlier point." in rewind.stdout
+    assert "Run id to rewind before." in rewind.stdout
+    assert "Thread id means rewind before" in rewind.stdout
+    assert "its latest run." in rewind.stdout
+    assert "Message to send after rewinding." not in rewind.stdout
+    assert "Open chat on the rewound thread." in rewind.stdout
     assert fork.exit_code == 0
-    assert "Run id to fork from, or thread id to use its" in fork.stdout
+    assert "Usage: root AGENT fork [OPTIONS] POINT" in fork.stdout
+    assert "Fork a thread from a branch point." in fork.stdout
+    assert "Run id to fork before." in fork.stdout
+    assert "Thread id means fork after its" in fork.stdout
     assert "latest run." in fork.stdout
-    assert "Message to send in the forked thread." in fork.stdout
-    assert "Open the terminal UI after forking." in fork.stdout
+    assert "[MESSAGE]" not in fork.stdout
+    assert "Optional first message to send in the forked" not in fork.stdout
+    assert "Open chat on the forked thread." in fork.stdout
 
 
-def test_cli_chat_term_opens_terminal_loop(monkeypatch) -> None:
-    class FakeListener:
-        def stop(self) -> None:
-            pass
+def test_cli_chat_term_without_message_exits_without_creating_thread(monkeypatch) -> None:
+    posts: list[tuple[str, object]] = []
 
     def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
-        assert request_path == "/api/v1/threads"
-        assert payload == {"client": "tui"}
+        posts.append((request_path, payload))
         return {"thread_id": "term_new"}
 
     monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
-    monkeypatch.setattr(cli, "_start_thread_event_listener", lambda _ctx, _thread_id, **_kwargs: FakeListener())
 
-    result = _invoke_app(["chat", "dev", "--tui"], input="/exit\n")
+    result = _invoke_app(["chat", "dev"], input="/exit\n")
 
     assert result.exit_code == 0
-    assert "thread term_new" in result.stdout
+    assert posts == []
+    assert "thread term_new" not in result.stdout
 
 
 @pytest.mark.parametrize("command", ("steer", "cancel", "rewind", "fork"))
@@ -7873,12 +9442,12 @@ def test_cli_rewind_accepts_thread_target(monkeypatch) -> None:
 
     def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
         calls.append(("post", (request_path, payload)))
-        return {"thread_id": "term_thread", "run_id": "run_new"}
+        return {"thread_id": "term_thread", "run_id": None}
 
     monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
     monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
 
-    result = _invoke_app(["rewind", "dev", "term_thread", "try again"])
+    result = _invoke_app(["rewind", "dev", "term_thread"])
 
     assert result.exit_code == 0
     assert calls == [
@@ -7887,7 +9456,7 @@ def test_cli_rewind_accepts_thread_target(monkeypatch) -> None:
             "post",
             (
                 "/api/v1/runs/run_latest/rewind",
-                {"message": {"role": "user", "parts": [{"type": "text", "text": "try again"}]}},
+                {},
             ),
         ),
     ]
@@ -7916,7 +9485,7 @@ def test_cli_rewind_without_message_does_not_send_empty_message(monkeypatch) -> 
     ]
 
 
-def test_cli_rewind_term_streams_created_run_before_prompt(monkeypatch) -> None:
+def test_cli_rewind_chat_opens_rewound_thread(monkeypatch) -> None:
     calls: list[tuple[str, object]] = []
 
     def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
@@ -7925,20 +9494,46 @@ def test_cli_rewind_term_streams_created_run_before_prompt(monkeypatch) -> None:
 
     def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
         calls.append(("post", (request_path, payload)))
-        return {"thread_id": "term_thread", "run_id": "run_new"}
+        return {"thread_id": "term_thread", "run_id": None}
 
-    def fake_runtime_get_stream(_ctx: Any, request_path: str) -> None:
-        calls.append(("stream", request_path))
-
-    def fake_chat_interactive(_ctx: Any, *, thread_id: str) -> None:
-        calls.append(("tui", thread_id))
+    def fake_chat_interactive(
+        _ctx: Any,
+        *,
+        thread_id: str | None,
+        selector_payload: dict[str, object] | None = None,
+    ) -> None:
+        del selector_payload
+        calls.append(("chat", thread_id))
 
     monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
     monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
-    monkeypatch.setattr(cli, "_runtime_get_stream", fake_runtime_get_stream)
     monkeypatch.setattr(cli, "_chat_interactive", fake_chat_interactive)
 
-    result = _invoke_app(["rewind", "dev", "term_thread", "--tui", "try again"])
+    result = _invoke_app(["rewind", "dev", "term_thread", "--chat"])
+
+    assert result.exit_code == 0
+    assert calls == [
+        ("json", "/api/v1/threads/term_thread"),
+        ("post", ("/api/v1/runs/run_latest/rewind", {})),
+        ("chat", "term_thread"),
+    ]
+
+
+def test_cli_fork_thread_target_copies_through_latest_run(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        calls.append(("json", request_path))
+        return {"info": {"latest_run": {"id": "run_latest"}}}
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        calls.append(("post", (request_path, payload)))
+        return {"thread_id": "term_fork", "run_id": None}
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+
+    result = _invoke_app(["fork", "dev", "term_thread"])
 
     assert result.exit_code == 0
     assert calls == [
@@ -7946,12 +9541,45 @@ def test_cli_rewind_term_streams_created_run_before_prompt(monkeypatch) -> None:
         (
             "post",
             (
-                "/api/v1/runs/run_latest/rewind",
-                {"message": {"role": "user", "parts": [{"type": "text", "text": "try again"}]}},
+                "/api/v1/runs/run_latest/fork",
+                {"include_anchor": True},
             ),
         ),
-        ("stream", "/api/v1/runs/run_new/stream"),
-        ("tui", "term_thread"),
+    ]
+    assert "forked term_fork through run_latest" in result.stdout
+
+
+def test_cli_fork_chat_opens_forked_thread(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        calls.append(("json", request_path))
+        return {"info": {"latest_run": {"id": "run_latest"}}}
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        calls.append(("post", (request_path, payload)))
+        return {"thread_id": "term_fork", "run_id": None}
+
+    def fake_chat_interactive(
+        _ctx: Any,
+        *,
+        thread_id: str | None,
+        selector_payload: dict[str, object] | None = None,
+    ) -> None:
+        del selector_payload
+        calls.append(("chat", thread_id))
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(cli, "_chat_interactive", fake_chat_interactive)
+
+    result = _invoke_app(["fork", "dev", "term_thread", "--chat"])
+
+    assert result.exit_code == 0
+    assert calls == [
+        ("json", "/api/v1/threads/term_thread"),
+        ("post", ("/api/v1/runs/run_latest/fork", {"include_anchor": True})),
+        ("chat", "term_fork"),
     ]
 
 
@@ -8271,18 +9899,18 @@ def test_cli_help_lists_cap_commands() -> None:
     assert "Manage skill caps." in result.stdout
     assert "Manage service caps." in result.stdout
     assert "Manage prompt caps." in result.stdout
-    assert "Chat with an agent." in result.stdout
-    assert "Guide an active run." in result.stdout
+    assert "Open a terminal chat session." in result.stdout
+    assert "Steer an active run." in result.stdout
     assert "Cancel an active run." in result.stdout
-    assert "Rewind a thread from a run." in result.stdout
-    assert "Fork a thread from a run." in result.stdout
+    assert "Rewind a thread to an earlier point." in result.stdout
+    assert "Fork a thread from a branch point." in result.stdout
     assert "Inspect a thread or run." in result.stdout
     assert "send" not in result.stdout
     assert "attach" not in result.stdout
     chore_index = result.stdout.index("chore")
     task_index = result.stdout.index("task")
     stop_index = result.stdout.index("stop")
-    term_index = result.stdout.index("chat")
+    chat_index = result.stdout.index("chat")
     steer_index = result.stdout.index("steer")
     cancel_index = result.stdout.index("cancel")
     rewind_index = result.stdout.index("rewind")
@@ -8300,16 +9928,17 @@ def test_cli_help_lists_cap_commands() -> None:
     prompt_index = result.stdout.index("prompt")
     caps_index = result.stdout.rindex("caps")
     assert "plugin" not in result.stdout
-    assert result.stdout.index("Agent Commands") < stop_index < term_index < chore_index < task_index < result.stdout.index("Cap Commands")
+    assert result.stdout.index("Agent Commands") < stop_index < chore_index < task_index < result.stdout.index("Thread Commands")
     assert (
         result.stdout.index("Thread Commands")
-        < steer_index
+        < chat_index
         < cancel_index
+        < steer_index
         < rewind_index
         < fork_index
+        < inspect_index
         < runs_index
         < threads_index
-        < inspect_index
         < result.stdout.index("Runtime Commands")
         < model_index
         < tool_index

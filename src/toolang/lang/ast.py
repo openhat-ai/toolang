@@ -128,10 +128,10 @@ class Thunk:
     params_explicit: bool = False
 
     def thunk_name(self) -> str:
-        return self.name or "main"
+        return self.name or "default"
 
     def is_thread_thunk(self) -> bool:
-        return self.thunk_name() in {"chat", "task", "chore"}
+        return self.thunk_name() in {"chat", "task", "chore", "file"}
 
     def directives_for(self, name: str) -> tuple[Directive, ...]:
         return tuple(item for item in self.directives if _directive_family(item.name) == name)

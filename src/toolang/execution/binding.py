@@ -35,6 +35,9 @@ class RunBinding:
     input_text: str
     message: Message | None
     model_selector: str | None
+    model_selectors: tuple[str, ...]
+    tool_selectors: tuple[str, ...] | None
+    cap_selectors: tuple[str, ...]
     run_loop: RunLoop
     metadata: dict[str, Any]
     live: LiveState
@@ -75,6 +78,9 @@ def bind_run_request(
         input_text=_request_input_text(request),
         message=request.message,
         model_selector=_request_model_selector(request),
+        model_selectors=tuple(request.model_selectors),
+        tool_selectors=None if request.tool_selectors is None else tuple(request.tool_selectors),
+        cap_selectors=tuple(request.cap_selectors),
         run_loop=run_loop,
         metadata=dict(request.metadata),
         live=bound_live,

@@ -16,7 +16,7 @@ from .context import RunContext
 from .db import PersistSink
 from .events import RunEnd, RunStart, TraceEvent, TraceEventHandler
 from .executor import Executor, Frame, RunCtx
-from .input import RunInput, bind_run_request
+from .input import RunInput, bind_run_request, select_origin_thunk
 from .model import resolve_model
 from .runner import RunOutcome, RunOutcomeStatus, RunRequest, RunSubmission
 from .binding import invoke_params
@@ -131,6 +131,7 @@ async def execute_run(
                 live_fingerprint=bound.live.fingerprint,
             )
         if bound is not None:
+            _emit_pre_start_failure(context, response, bound=bound, error=error)
             return _finish_outcome(
                 run_id=bound.run_id,
                 group=bound.group,
@@ -259,16 +260,34 @@ def _select_executable(bound: RunBinding):
         return "flow", program.get_flow(bound.thunk_name)
     if requested_kind == "thunk":
         return "thunk", program.get_thunk(bound.thunk_name)
-    name = bound.thunk_name
-    if name is not None:
-        real_thunk = next((item for item in program.parsed.thunks if item.thunk_name() == name), None)
-        flow = program.parsed.get_flow(name)
-        if real_thunk is None and flow is not None:
-            return "flow", flow
-        return "thunk", program.get_thunk(name)
-    if not program.parsed.thunks and program.flows:
-        return "flow", program.get_flow(None)
-    return "thunk", program.get_thunk(None)
+    return "thunk", select_origin_thunk(
+        program,
+        origin=bound.origin,
+        thunk_name=bound.thunk_name,
+    )
+
+
+def _emit_pre_start_failure(
+    context: UptimeContext,
+    response: ResponseSink | None,
+    *,
+    bound: RunBinding,
+    error: str,
+) -> None:
+    if response is None:
+        return
+    _emit_event(
+        context,
+        None,
+        response,
+        RunEnd(
+            run_id=bound.run_id,
+            thread_id=bound.thread_id,
+            status="failed",
+            error=error,
+            finished_at=_utc_now(),
+        ),
+    )
 
 
 def _finish_outcome(
