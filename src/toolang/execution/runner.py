@@ -16,6 +16,7 @@ from ..state.live import LiveState
 
 if TYPE_CHECKING:
     from ..up import UptimeContext
+    from .records import RunRecord
     from .response import ResponseSink
 
 DEFAULT_GROUP_LIMITS: dict[str, int] = {
@@ -115,6 +116,8 @@ class QueueRunner:
         self._completed: list[RunOutcome] = []
         self._waiting_requests: dict[int, RunSubmission] = {}
         self._active_requests: dict[int, RunSubmission] = {}
+        self._responses_by_run: dict[str, ResponseSink] = {}
+        self._tasks_by_run: dict[str, asyncio.Task[RunOutcome]] = {}
 
     def enqueue(
         self,
@@ -136,6 +139,8 @@ class QueueRunner:
                 completion=completion,
             )
         )
+        if request.run_id and response is not None:
+            self._responses_by_run[request.run_id] = response
         self._ready.set()
         self._emit_queue_event(
             "run_queued",
@@ -177,6 +182,11 @@ class QueueRunner:
         self._closed = True
         self._ready.set()
 
+    def attach(self, context: UptimeContext) -> None:
+        """Attach the runtime context used for execution and control commands."""
+
+        self._context = context
+
     def spawn(self, context: UptimeContext) -> asyncio.Task[list[RunOutcome]]:
         """Attach one runtime context and drain in the background."""
 
@@ -184,7 +194,7 @@ class QueueRunner:
 
     async def drain(self, context: UptimeContext | None = None) -> list[RunOutcome]:
         if context is not None:
-            self._context = context
+            self.attach(context)
         tasks: list[asyncio.Task[RunOutcome]] = []
         async with asyncio.TaskGroup() as task_group:
             while True:
@@ -235,9 +245,43 @@ class QueueRunner:
 
         return tuple(item.request for item in self._active_requests.values())
 
+    def notify_run_command(self, *, run_id: str, payload: dict[str, Any]) -> None:
+        """Publish one run command to durable events and the active response sink."""
+
+        self._emit_response_event(run_id=run_id, event_type="run_command", payload=payload)
+        context = self._context
+        if context is None:
+            return
+        context.events.publish(domain="run", domain_id=run_id, type="run_command", payload=payload)
+        thread_id = payload.get("thread_id")
+        if isinstance(thread_id, str) and thread_id:
+            context.events.publish(domain="thread", domain_id=thread_id, type="run_command", payload=payload)
+
+    def cancel_run(self, *, run_id: str, error: str | None = None) -> RunRecord:
+        """Cancel one active run and notify its response sink."""
+
+        context = self._context
+        if context is None:
+            raise RuntimeError("runner context is not attached")
+        run = context.store.cancel_run(run_id=run_id, error=error)
+        event = RunEnd(
+            run_id=run.run_id,
+            thread_id=run.thread_id,
+            status="canceled",
+            error=run.error,
+            finished_at=run.finished_at or utc_now(),
+        )
+        self._emit_response_trace_event(run_id=run.run_id, event=event)
+        context.events.publish_trace(event)
+        self._cancel_task(run.run_id)
+        return run
+
     async def _run_request(self, submission: RunSubmission) -> RunOutcome:
         request = submission.request
         request_key = id(submission)
+        current_task = asyncio.current_task()
+        if request.run_id and current_task is not None:
+            self._tasks_by_run[request.run_id] = current_task
         try:
             if await self._group_is_full(request.group):
                 self._emit_queue_event(
@@ -256,6 +300,12 @@ class QueueRunner:
                         submission.completion.set_result(result)
                     self._completed.append(result)
                     return result
+                except asyncio.CancelledError:
+                    result = self._cancel_submission(submission)
+                    if submission.completion is not None and not submission.completion.done():
+                        submission.completion.set_result(result)
+                    self._completed.append(result)
+                    return result
                 except Exception as exc:
                     result = self._fail_submission(submission, exc)
                     if submission.completion is not None and not submission.completion.done():
@@ -264,9 +314,12 @@ class QueueRunner:
                     return result
                 finally:
                     self._active_requests.pop(request_key, None)
+                    self._forget_response(submission)
+                    self._forget_task(submission)
                     await self._update_group_in_flight(request.group, delta=-1)
         finally:
             self._waiting_requests.pop(request_key, None)
+            self._forget_task(submission)
 
     async def _execute_thread_locked(self, submission: RunSubmission) -> RunOutcome:
         request = submission.request
@@ -362,6 +415,56 @@ class QueueRunner:
         if thread_id:
             context.events.publish(domain="thread", domain_id=thread_id, type=event_type, payload=payload)
 
+    def _emit_response_event(self, *, run_id: str, event_type: str, payload: dict[str, Any]) -> None:
+        response = self._response_for_run(run_id)
+        if response is None:
+            return
+        on_queue_event = getattr(response, "on_queue_event", None)
+        if callable(on_queue_event):
+            try:
+                on_queue_event(event_type, payload)
+            except Exception:
+                _LOGGER.exception("response sink event handling failed")
+
+    def _emit_response_trace_event(self, *, run_id: str, event: RunEnd) -> None:
+        response = self._response_for_run(run_id)
+        if response is None:
+            return
+        try:
+            response.on_event(event)
+        except Exception:
+            _LOGGER.exception("response sink event handling failed")
+
+    def _response_for_run(self, run_id: str) -> ResponseSink | None:
+        return self._responses_by_run.get(run_id) or next(
+            (
+                submission.response
+                for submission in self._active_requests.values()
+                if submission.request.run_id == run_id and submission.response is not None
+            ),
+            None,
+        )
+
+    def _forget_response(self, submission: RunSubmission) -> None:
+        run_id = submission.request.run_id
+        if not run_id or submission.response is None:
+            return
+        if self._responses_by_run.get(run_id) is submission.response:
+            self._responses_by_run.pop(run_id, None)
+
+    def _cancel_task(self, run_id: str) -> None:
+        task = self._tasks_by_run.get(run_id)
+        if task is not None and not task.done():
+            task.cancel()
+
+    def _forget_task(self, submission: RunSubmission) -> None:
+        run_id = submission.request.run_id
+        if not run_id:
+            return
+        task = self._tasks_by_run.get(run_id)
+        if task is not None and task is asyncio.current_task():
+            self._tasks_by_run.pop(run_id, None)
+
     def _fail_submission(self, submission: RunSubmission, exc: Exception) -> RunOutcome:
         request = submission.request
         error = str(exc) or type(exc).__name__
@@ -388,6 +491,20 @@ class QueueRunner:
             delay_sec=0.0,
             status="failed",
             error=error,
+        )
+
+    def _cancel_submission(self, submission: RunSubmission) -> RunOutcome:
+        request = submission.request
+        return RunOutcome(
+            run_id=request.run_id or "",
+            group=request.group,
+            origin=request.origin,
+            input_text=_request_input_text(request),
+            thunk_name=request.thunk_name,
+            thread_id=request.thread_id or "",
+            delay_sec=0.0,
+            status="failed",
+            error="canceled",
         )
 
     def __len__(self) -> int:

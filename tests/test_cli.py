@@ -7936,6 +7936,18 @@ def test_cli_chat_prompt_status_colors_model_thunk_and_flow() -> None:
     assert ("class:status.thunk", "thunk:summarize") in thunk_segments
 
 
+def test_cli_chat_prompt_esc_keys_cancel() -> None:
+    prompt = cli._ChatPromptBox(lambda _event: None, lambda: None, "runtime model")
+    keys = cli.KeyBindings()
+
+    prompt.bind(keys)
+
+    bindings = {tuple(str(key) for key in binding.keys) for binding in keys.bindings}
+    assert ("Keys.Escape",) in bindings
+    assert ("Keys.Escape", "Keys.Escape") in bindings
+    assert ("Keys.Escape", "Keys.ControlM") in bindings
+
+
 def test_cli_chat_input_history_store_persists_multiline_entries(tmp_path: Path) -> None:
     path = tmp_path / "chat-input-history.jsonl"
     store = ChatInputHistoryStore(path, limit=10)
@@ -8438,6 +8450,110 @@ def test_cli_chat_start_run_handles_ai_sdk_stream_events(monkeypatch) -> None:
     visible = cli._chat_visible_text("\n".join(line for lines in printed for line in lines))
     assert "hello world" in visible
     assert "run_ai" in visible
+
+
+def test_cli_chat_cancel_active_run_posts_cancel(monkeypatch) -> None:
+    sent: list[str] = []
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.active_run = cli._ChatRun(run_id="run_cancel", message="hello", status="running", accept_child_trace=True)
+    app.active_run.mark_running()
+    monkeypatch.setattr(app, "send_cancel_request", sent.append)
+
+    app.handle_cancel()
+
+    assert app.active_run is not None
+    assert app.active_run.status == "canceling"
+    assert app.active_run.cancel_requested is True
+    assert sent == ["run_cancel"]
+    assert app.prompt.error_message == ""
+
+
+def test_cli_chat_send_cancel_request_uses_empty_payload(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        calls.append((request_path, payload))
+        return {}
+
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.send_cancel_request("run_cancel")
+
+    deadline = time.monotonic() + 1
+    while not calls and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    assert calls == [("/api/v1/runs/run_cancel/cancel", {})]
+
+
+def test_cli_chat_cancel_waits_until_run_starts(monkeypatch) -> None:
+    sent: list[str] = []
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.active_run = cli._ChatRun(run_id="", message="hello", status="submitting", accept_child_trace=True)
+    monkeypatch.setattr(app, "send_cancel_request", sent.append)
+
+    app.handle_cancel()
+    app.handle_chat_stream_start({"messageMetadata": {"run_id": "run_late", "thread_id": "term_new"}})
+
+    assert app.active_run is not None
+    assert app.active_run.status == "canceling"
+    assert app.active_run.started is True
+    assert sent == ["run_late"]
+
+
+def test_cli_chat_cancel_failure_stays_in_active_run_progress() -> None:
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.active_run = cli._ChatRun(run_id="run_cancel", message="hello", status="running", accept_child_trace=True)
+    app.active_run.mark_running()
+    app.active_run.request_cancel()
+
+    app.handle_cancel_error(
+        "runtime request failed: Error code: 409 - {'error': {'message': 'run is not running'}}"
+    )
+
+    assert app.active_run is not None
+    assert app.active_run.status == "running"
+    assert app.prompt.error_message == ""
+    visible = cli._chat_visible_text("\n".join(cli._chat_run_lines(app.active_run, include_steps=True)))
+    assert "! cancel failed: run is not running" in visible
+
+
+def test_cli_chat_canceled_run_state_line_is_dim() -> None:
+    line = cli._chat_run_state_line(cli._ChatRun(run_id="run_cancel", message="hello", status="canceled"))
+
+    assert cli._chat_visible_text(line) == "◇ stopped run_cancel: canceled"
+    assert line.startswith(cli._CHAT_DIM)
+
+
+def test_cli_chat_canceled_run_end_finishes_active_progress(monkeypatch) -> None:
+    printed: list[list[str]] = []
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.active_run = cli._ChatRun(run_id="run_cancel", message="hello", status="running", accept_child_trace=True)
+    app.active_run.mark_running()
+    app.active_run.request_cancel()
+    app.local_streaming.set()
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: printed.append(lines))
+
+    app.handle_runtime_event(
+        {
+            "type": "run_end",
+            "event_type": "run_end",
+            "payload": {
+                "run_id": "run_cancel",
+                "thread_id": "term_new",
+                "status": "canceled",
+                "finished_at": "2026-01-01T00:00:01Z",
+            },
+        }
+    )
+
+    assert app.active_run is None
+    assert not app.has_active_run()
+    visible = cli._chat_visible_text("\n".join(line for lines in printed for line in lines))
+    assert "◇ stopped run_cancel: canceled" in visible
 
 
 def test_cli_chat_stream_thread_exceptions_surface_as_ui_errors(monkeypatch) -> None:

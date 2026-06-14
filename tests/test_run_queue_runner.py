@@ -90,6 +90,7 @@ from toolang.execution import execute as run_execute_module
 from toolang.execution.input import RunInput, bind_run_request
 from toolang.execution.runner import DEFAULT_GROUP_LIMITS, QueueRunner, RunOutcome, RunRequest, RunSubmission
 from toolang.execution.db import ExecutionStore, execution_db_path
+from toolang.execution.response import SseResponseSink
 from toolang.execution.stream import RuntimeEventBus
 from toolang.components.router import chat as chat_loop, inspect
 from toolang.components.router._streaming import ShutdownAwareStreamingResponse
@@ -173,6 +174,171 @@ def test_runner_enqueue_emits_queue_event_to_response() -> None:
         "waiting_for": "queue",
         "position": 1,
     }
+
+
+def test_runner_control_command_notifies_response_and_events(tmp_path: Path) -> None:
+    class CaptureResponse:
+        wants_stream = True
+
+        def __init__(self) -> None:
+            self.queue_events: list[tuple[str, dict[str, Any]]] = []
+            self.events: list[object] = []
+
+        def on_event(self, event: object) -> None:
+            self.events.append(event)
+
+        def on_queue_event(self, event_type: str, payload: dict[str, Any]) -> None:
+            self.queue_events.append((event_type, payload))
+
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("inspect",),
+    )
+    run = context.store.start_run(
+        run_id="run-1",
+        thread_id="thread-1",
+        origin="chat",
+        input=Message.user("hello"),
+        created_at="2026-01-01T00:00:00Z",
+        started_at="2026-01-01T00:00:00Z",
+    )
+    command = context.store.append_command(run_id=run.run_id, kind="stop", mode="immediate")
+    payload = {
+        "run_id": run.run_id,
+        "thread_id": run.thread_id,
+        "ref": {"kind": "command", "index": command.index},
+        "kind": command.kind,
+        "mode": command.mode,
+        "created_at": command.created_at,
+    }
+    response = CaptureResponse()
+    context.runner.enqueue(
+        RunRequest(group="chat", origin="chat", run_id=run.run_id, thread_id=run.thread_id),
+        response=response,
+    )
+
+    context.runner.notify_run_command(run_id=run.run_id, payload=payload)
+    canceled = context.runner.cancel_run(run_id=run.run_id)
+
+    assert canceled.status == "canceled"
+    assert [event_type for event_type, _payload in response.queue_events] == ["run_queued", "run_command"]
+    assert response.queue_events[1] == ("run_command", payload)
+    assert len(response.events) == 1
+    assert isinstance(response.events[0], RunEnd)
+    assert response.events[0].status == "canceled"
+    assert [item.type for item in context.store.list_events(domain="run", domain_id=run.run_id)] == [
+        "run_queued",
+        "run_command",
+        "run_end",
+    ]
+    assert [item.type for item in context.store.list_events(domain="thread", domain_id=run.thread_id)] == [
+        "run_queued",
+        "run_command",
+        "run_end",
+    ]
+
+
+def test_runner_cancel_releases_thread_lock_for_next_run(tmp_path: Path) -> None:
+    class BlockingRunner(QueueRunner):
+        first_started: asyncio.Event
+        release_first: asyncio.Event
+        second_started: asyncio.Event
+
+        async def _execute(self, submission: RunSubmission) -> RunOutcome:
+            context = self._context
+            assert context is not None
+            request = submission.request
+            if request.run_id == "run-1":
+                context.store.start_run(
+                    run_id="run-1",
+                    thread_id="thread-1",
+                    origin="chat",
+                    input=Message.user("first"),
+                    created_at="2026-01-01T00:00:00Z",
+                    started_at="2026-01-01T00:00:00Z",
+                )
+                self.first_started.set()
+                await self.release_first.wait()
+            else:
+                self.second_started.set()
+            return RunOutcome(
+                run_id=request.run_id or "",
+                group=request.group,
+                origin=request.origin,
+                input_text="",
+                thunk_name=request.thunk_name,
+                thread_id=request.thread_id,
+                delay_sec=0.0,
+                status="finished",
+            )
+
+    async def run_test() -> None:
+        toolang_root = tmp_path / "toolang"
+        _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
+        runner = BlockingRunner(delay_sec=0.0)
+        runner.first_started = asyncio.Event()
+        runner.release_first = asyncio.Event()
+        runner.second_started = asyncio.Event()
+        context = _build_context(
+            toolang_root=toolang_root,
+            agent_name="alice",
+            enabled_features=("inspect",),
+            runner=runner,
+        )
+        runner.enqueue(RunRequest(group="chat", origin="chat", run_id="run-1", thread_id="thread-1"))
+        drain_task = asyncio.create_task(runner.drain(context))
+
+        await asyncio.wait_for(runner.first_started.wait(), timeout=1)
+        runner.cancel_run(run_id="run-1")
+        runner.enqueue(RunRequest(group="chat", origin="chat", run_id="run-2", thread_id="thread-1"))
+
+        await asyncio.wait_for(runner.second_started.wait(), timeout=1)
+        runner.close()
+        results = await asyncio.wait_for(drain_task, timeout=1)
+
+        assert [item.run_id for item in results] == ["run-1", "run-2"]
+        assert results[0].error == "canceled"
+
+    asyncio.run(run_test())
+
+
+def test_sse_response_sink_streams_canceled_run_end() -> None:
+    async def run_test() -> None:
+        response = SseResponseSink(thread_id="thread-1")
+        response.on_event(
+            RunStart(
+                run_id="run-1",
+                origin="chat",
+                thread_id="thread-1",
+                input=Message.user("hello"),
+                created_at="2026-01-01T00:00:00Z",
+                started_at="2026-01-01T00:00:00Z",
+            )
+        )
+        response.on_event(
+            RunEnd(
+                run_id="run-1",
+                thread_id="thread-1",
+                status="canceled",
+                finished_at="2026-01-01T00:00:01Z",
+            )
+        )
+
+        chunks = [chunk async for chunk in response.stream()]
+
+        payloads = [_sse_data(chunk) for chunk in chunks if chunk.startswith("data: {")]
+        assert [payload["type"] for payload in payloads] == [
+            "start",
+            "message-metadata",
+            "run_end",
+            "finish",
+        ]
+        assert payloads[2]["payload"]["status"] == "canceled"
+
+    asyncio.run(run_test())
 
 
 def test_runner_submission_exception_fails_response_without_stopping_drain() -> None:
@@ -7467,6 +7633,11 @@ async def _wait_for_completed_count(context: UptimeContext, count: int) -> None:
 def _write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def _sse_data(chunk: str) -> dict[str, Any]:
+    data_line = next(line for line in chunk.splitlines() if line.startswith("data: "))
+    return cast(dict[str, Any], json.loads(data_line.removeprefix("data: ")))
 
 
 def _chat_message(text: str) -> dict[str, object]:
