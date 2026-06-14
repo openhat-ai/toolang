@@ -110,6 +110,7 @@ class StepStart:
     started_at: str
     instruct: str | None = None
     context: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
     type: str = "step-start"
 
 

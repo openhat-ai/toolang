@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+import io
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 import json
 from pathlib import Path
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -23,18 +26,49 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 import click
+from prompt_toolkit.application import Application
+from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.filters import Condition
+from prompt_toolkit.formatted_text import ANSI
+from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.layout import HSplit, Layout, VSplit, Window
+from prompt_toolkit.layout.containers import ConditionalContainer
+from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.styles import Style
+from prompt_toolkit.utils import get_cwidth
+from rich.console import Console
+from rich.markdown import Markdown
 import typer
 from typer import rich_utils
 from typer.core import TyperCommand, TyperGroup
 
 from ... import agents
+from ...caps import split_cap_selectors
 from ...base.types.message import message_summary, parts_to_data
 from ...config.log import LoggingPlan, configure_logging, configure_logging_plan, resolve_agent_logging
 from ...execution.db import ExecutionStore, execution_db_path
 from ...execution.detail import run_detail_from_record, thread_info_from_record, thread_info_from_runs
 from ...execution.labels import child_call_summary, executable_label, flow_op_summary
+from ...execution.projection import (
+    FlowCallView,
+    FlowStageView,
+    child_run_ids,
+    flow_stage_context,
+    output_count,
+    project_flow_from_run,
+    project_flow_from_step_payloads,
+    shape_label,
+    stage_calls,
+    stage_lanes,
+    stage_title_label,
+)
 from ...execution.records import RunStatus, step_input_items_to_data, step_payload_to_data
 from ...execution.stream import event_data
+from ...models.resolution import split_model_selectors
+from ...tools.registry import split_tool_selectors
 from ..utils import (
     _PrefixAgentWorkGroup,
     _RequiredPrefixAgentCommand,
@@ -149,11 +183,28 @@ TOP_LEVEL_COMMANDS = frozenset(
 )
 
 _CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt", "caps")
-_AGENT_PANEL_COMMAND_ORDER = ("new", "clone", "remove", "list", "info", "run", "start", "stop", "chat", "chore", "task")
-_THREAD_PANEL_COMMAND_ORDER = ("steer", "cancel", "rewind", "fork", "runs", "threads", "inspect")
+_AGENT_PANEL_COMMAND_ORDER = ("new", "clone", "remove", "list", "info", "run", "start", "stop", "chore", "task")
+_THREAD_PANEL_COMMAND_ORDER = ("chat", "cancel", "steer", "rewind", "fork", "inspect", "runs", "threads")
 _RUNTIME_PANEL_COMMAND_ORDER = ("model", "tool", "channel", "sandbox")
 _THREAD_TARGET_COMMANDS = frozenset({"steer", "cancel", "rewind", "fork"})
 _HIDDEN_ALIAS_COMMANDS = frozenset({"send", "attach"})
+_CHAT_MAX_INPUT_ROWS = 6
+_CHAT_MAX_QUEUE_ROWS = 4
+_CHAT_DIM = "\x1b[2m"
+_CHAT_NORMAL_INTENSITY = "\x1b[22m"
+_CHAT_RESET = "\x1b[0m"
+_CHAT_BOLD = "\x1b[1m"
+_CHAT_QUEUE_FG = "#f2f2f2"
+_CHAT_QUEUE_BG = "#3a3a3a"
+_CHAT_INPUT_FG = "#f5f5f5"
+_CHAT_INPUT_BG = "#444444"
+_CHAT_STATUS_FG = "#f2f2f2"
+_CHAT_STATUS_BG = "#5a5a5a"
+_CHAT_CURSOR_FG = "#111111"
+_CHAT_CURSOR_BG = "#eeeeee"
+_CHAT_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+_CHAT_FLOW_DETAIL_INDENT = "  "
+_CHAT_FLOW_STATEMENT_MARKER = "‣"
 
 
 class _ToolangGroup(TyperGroup):
@@ -561,41 +612,46 @@ def info_agent(
 
 @app.command(
     "chat",
-    help="Chat with an agent.",
+    help="Open a terminal chat session.",
     cls=_RequiredPrefixAgentCommand,
-    rich_help_panel=AGENT_COMMAND_PANEL,
+    rich_help_panel=THREAD_COMMAND_PANEL,
 )
 def chat_command(
     ctx: typer.Context,
-    message: Annotated[str | None, typer.Argument(help="Message to send. Omit to open the TUI.")] = None,
-    thread: Annotated[str | None, typer.Option("--thread", help="Thread id to continue; run id accepted.")] = None,
-    tui: Annotated[bool, typer.Option("--tui", help="Open the terminal UI after the command.")] = False,
+    target: Annotated[
+        str | None,
+        typer.Argument(help="Thread id or run id to continue. Omit to start a new terminal thread."),
+    ] = None,
+    models: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--models",
+            help="Limit available models. Pass CSV or repeat.",
+        ),
+    ] = None,
+    tools: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--tools",
+            help="Allow selected tools. Pass CSV or repeat.",
+        ),
+    ] = None,
+    caps: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--caps",
+            help="Allow selected caps. Pass CSV or repeat.",
+        ),
+    ] = None,
+    thunk: Annotated[str | None, typer.Option("--thunk", help="Use a thunk for new runs.")] = None,
+    flow: Annotated[str | None, typer.Option("--flow", help="Use a flow for new runs.")] = None,
 ) -> None:
-    thread_id = _target_thread_id(ctx, thread) if thread is not None else None
-    if message is None:
-        if thread_id is None:
-            result = _runtime_post(ctx, "/api/v1/threads", payload={"client": "tui"})
-            created = result.get("thread_id")
-            if not isinstance(created, str):
-                raise click.ClickException("runtime did not return a thread id")
-            thread_id = created
-        if tui:
-            _open_thread_ui(ctx, thread_id)
-            return
-        _chat_interactive(ctx, thread_id=thread_id)
-        return
-    payload: dict[str, Any] = {"thread": thread_id, "client": "tui", "message": _message_payload(message)}
-    if tui:
-        result = _runtime_post(ctx, "/api/v1/chat", payload=payload)
-        thread = result.get("thread_id")
-        if isinstance(thread, str):
-            _open_thread_ui(ctx, thread)
-        typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
-        return
-    _runtime_stream(ctx, "/api/v1/chat/stream", payload=payload)
+    thread_id = _target_thread_id(ctx, target) if target is not None else None
+    selectors = _chat_selector_payload(models=models, tools=tools, caps=caps, thunk=thunk, flow=flow)
+    _chat_interactive(ctx, thread_id=thread_id, selector_payload=selectors)
 
 
-@app.command("send", help="Alias to chat --thread THREAD MESSAGE.", hidden=True, cls=_RequiredPrefixAgentCommand)
+@app.command("send", help="Send one message to a thread.", hidden=True, cls=_RequiredPrefixAgentCommand)
 def send_command(
     ctx: typer.Context,
     thread: Annotated[str, typer.Argument(help="Thread id.")],
@@ -609,7 +665,7 @@ def send_command(
     _runtime_stream(ctx, "/api/v1/chat/stream", payload=payload)
 
 
-@app.command("attach", help="Alias to chat --thread THREAD.", hidden=True, cls=_RequiredPrefixAgentCommand)
+@app.command("attach", help="Open chat on a thread.", hidden=True, cls=_RequiredPrefixAgentCommand)
 def attach_command(
     ctx: typer.Context,
     thread: Annotated[str, typer.Argument(help="Thread id.")],
@@ -717,21 +773,18 @@ def inspect_command(
 
 @app.command(
     "steer",
-    help="Guide an active run.",
+    help="Steer an active run.",
     no_args_is_help=True,
     cls=_RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
 )
 def steer_command(
     ctx: typer.Context,
-    target: str = typer.Argument(..., help="Run id, or thread id with an active run."),
+    run: str = typer.Argument(..., help="Run id to steer. Thread id means its active run."),
     message: str = typer.Argument(..., help="Instruction to steer the run."),
-    tui: Annotated[bool, typer.Option("--tui", help="Open the terminal UI after steering.")] = False,
 ) -> None:
-    run_id = _target_run_id(ctx, target)
+    run_id = _target_run_id(ctx, run)
     _runtime_post(ctx, f"/api/v1/runs/{run_id}/steer", payload={"message": _message_payload(message)})
-    if tui:
-        _open_thread_ui(ctx, _target_thread_id(ctx, target))
     typer.echo(f"steered {run_id}")
 
 
@@ -744,58 +797,59 @@ def steer_command(
 )
 def cancel_command(
     ctx: typer.Context,
-    target: str = typer.Argument(..., help="Run id, or thread id with an active run."),
-    tui: Annotated[bool, typer.Option("--tui", help="Open the terminal UI after canceling.")] = False,
+    run: str = typer.Argument(..., help="Run id to cancel. Thread id means its active run."),
 ) -> None:
-    run_id = _target_run_id(ctx, target)
+    run_id = _target_run_id(ctx, run)
     _runtime_post(ctx, f"/api/v1/runs/{run_id}/cancel", payload={})
-    if tui:
-        _open_thread_ui(ctx, _target_thread_id(ctx, target))
     typer.echo(f"canceled {run_id}")
 
 
 @app.command(
     "rewind",
-    help="Rewind a thread from a run.",
+    help="Rewind a thread to an earlier point.",
     no_args_is_help=True,
     cls=_RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
 )
 def rewind_command(
     ctx: typer.Context,
-    target: str = typer.Argument(..., help="Run id to rewind from, or thread id to use its latest run."),
-    message: Annotated[str | None, typer.Argument(help="Message to send after rewinding.")] = None,
-    tui: Annotated[bool, typer.Option("--tui", help="Open the terminal UI after rewinding.")] = False,
+    point: str = typer.Argument(
+        ...,
+        help="Run id to rewind before. Thread id means rewind before its latest run.",
+    ),
+    chat: Annotated[bool, typer.Option("--chat", help="Open chat on the rewound thread.")] = False,
 ) -> None:
-    run_id = _target_latest_run_id(ctx, target)
-    payload = {"message": _message_payload(message)} if message is not None else {}
-    result = _runtime_post(ctx, f"/api/v1/runs/{run_id}/rewind", payload=payload)
-    typer.echo(f"rewound {result.get('thread_id')}\t{result.get('run_id')}")
-    if tui:
+    run_id = _target_latest_run_id(ctx, point)
+    result = _runtime_post(ctx, f"/api/v1/runs/{run_id}/rewind", payload={})
+    typer.echo(f"rewound {result.get('thread_id')} before {run_id}")
+    if chat:
         thread = result.get("thread_id")
-        _stream_result_run(ctx, result)
-        _open_thread_ui(ctx, str(thread) if isinstance(thread, str) else _target_thread_id(ctx, target))
+        _open_thread_ui(ctx, str(thread) if isinstance(thread, str) else _target_thread_id(ctx, point))
 
 
 @app.command(
     "fork",
-    help="Fork a thread from a run.",
+    help="Fork a thread from a branch point.",
     no_args_is_help=True,
     cls=_RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
 )
 def fork_command(
     ctx: typer.Context,
-    target: str = typer.Argument(..., help="Run id to fork from, or thread id to use its latest run."),
-    message: Annotated[str | None, typer.Argument(help="Message to send in the forked thread.")] = None,
-    tui: Annotated[bool, typer.Option("--tui", help="Open the terminal UI after forking.")] = False,
+    point: str = typer.Argument(
+        ...,
+        help="Run id to fork before. Thread id means fork after its latest run.",
+    ),
+    chat: Annotated[bool, typer.Option("--chat", help="Open chat on the forked thread.")] = False,
 ) -> None:
-    run_id = _target_latest_run_id(ctx, target)
-    payload = {"message": _message_payload(message)} if message is not None else {}
+    run_id, include_anchor = _fork_anchor_run(ctx, point)
+    payload: dict[str, object] = {}
+    if include_anchor:
+        payload["include_anchor"] = True
     result = _runtime_post(ctx, f"/api/v1/runs/{run_id}/fork", payload=payload)
-    typer.echo(f"forked {result.get('thread_id')}\t{result.get('run_id')}")
-    if tui:
-        _stream_result_run(ctx, result)
+    boundary = "through" if include_anchor else "before"
+    typer.echo(f"forked {result.get('thread_id')} {boundary} {run_id}")
+    if chat:
         thread = result.get("thread_id")
         if isinstance(thread, str):
             _open_thread_ui(ctx, thread)
@@ -1229,72 +1283,100 @@ def _step_record_json(step: Any) -> dict[str, Any]:
     }
 
 
-@dataclass(slots=True)
-class _InspectStageView:
-    key: str
-    index: int | None = None
-    total: int | None = None
-    kind: str = "stage"
-    title: str = "stage"
-    status: str = "running"
-    input_shape: str | None = None
-    output_shape: str | None = None
-    item_total: int | None = None
-    parallelism: int | None = None
-    calls: list[str] = field(default_factory=list)
-
-
-@dataclass(slots=True)
-class _InspectCallView:
-    key: str
-    stage_key: str
-    label: str
-    run_id: str
-    status: str = "running"
-    item_index: int | None = None
-    item_count: int | None = None
-    lane_index: int | None = None
-    parallelism: int | None = None
-    run: Mapping[str, Any] | None = None
-
-
 def _render_inspect_tree(detail: Mapping[str, Any], *, verbosity: int = 0) -> None:
+    if detail.get("kind") == "run":
+        _render_inspect_run_focus(detail, verbosity=verbosity)
+        return
+    thread = _mapping(detail.get("thread"))
+    _render_inspect_thread_summary(thread)
+
+
+def _render_inspect_thread_summary(thread: Mapping[str, Any]) -> None:
+    thread_info = _mapping(thread.get("info"))
+    runs = [_mapping(item) for item in _list(thread.get("runs"))]
+    top_runs = _inspect_top_level_runs(runs)
+    typer.echo(f"thread {_text(thread_info.get('id')) or '-'}")
+    if title := _text(thread_info.get("title")):
+        typer.echo(f"title {title}")
+    if status := _text(thread_info.get("status")):
+        typer.echo(f"status {status}")
+    if origin := _text(thread_info.get("origin")):
+        typer.echo(f"origin {origin}")
+    run_count = thread_info.get("run_count")
+    if run_count is not None:
+        top_count = len(top_runs)
+        suffix = f", {top_count} top-level" if top_count != run_count else ""
+        typer.echo(f"runs {run_count} total{suffix}")
+    latest = _mapping(thread_info.get("latest_run"))
+    latest_id = _text(latest.get("id"))
+    if latest_id:
+        latest_status = _display_run_status(latest.get("status"))
+        typer.echo(f"latest {latest_id}{f' {latest_status}' if latest_status else ''}")
+    if top_runs:
+        typer.echo("")
+    for index, run in enumerate(top_runs, start=1):
+        _render_inspect_thread_run_summary(index, run)
+
+
+def _inspect_top_level_runs(runs: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    roots = [run for run in runs if _text(_mapping(run.get("info")).get("parent_run_id")) is None]
+    return roots or list(runs)
+
+
+def _render_inspect_thread_run_summary(index: int, run: Mapping[str, Any]) -> None:
+    info = _mapping(run.get("info"))
+    output = _mapping(run.get("output"))
+    label = _run_tree_label(info, output)
+    typer.echo(f"{index}. {label}")
+    if created_at := _text(info.get("created_at")):
+        timing = created_at
+        if finished_at := _text(info.get("finished_at")):
+            timing = f"{timing} -> {finished_at}"
+        typer.echo(f"   time {timing}")
+    input_summary = _inspect_run_input_summary(run)
+    if input_summary:
+        typer.echo(f"   input {input_summary}")
+    failure = _inspect_failure_summary(run)
+    if failure:
+        typer.echo(f"   failure {failure}")
+
+
+def _render_inspect_run_focus(detail: Mapping[str, Any], *, verbosity: int) -> None:
+    run = _mapping(detail.get("run"))
+    info = _mapping(run.get("info"))
+    output = _mapping(run.get("output"))
     thread = _mapping(detail.get("thread"))
     thread_info = _mapping(thread.get("info"))
-    target = _text(detail.get("target"))
-    runs = [_mapping(item) for item in _list(thread.get("runs"))]
-    if detail.get("kind") == "run":
-        target_run = _mapping(detail.get("run"))
-        target_info = _mapping(target_run.get("info"))
-        root_id = _text(target_info.get("root_run_id")) or _text(target_info.get("id"))
-        runs = [
-            run for run in runs
-            if (_text(_mapping(run.get("info")).get("root_run_id")) or _text(_mapping(run.get("info")).get("id"))) == root_id
-        ] or [target_run]
-    typer.echo(f"thread {thread_info.get('id', '-')}")
-    if detail.get("kind") == "run":
-        typer.echo(f"target {target}")
-    children: dict[str | None, list[Mapping[str, Any]]] = {}
-    children_by_step: dict[tuple[str, int], list[Mapping[str, Any]]] = {}
-    run_by_id: dict[str, Mapping[str, Any]] = {}
-    for run in runs:
-        info = _mapping(run.get("info"))
-        run_id = _text(info.get("id"))
-        if run_id is not None:
-            run_by_id[run_id] = run
-        parent_id = _text(info.get("parent_run_id"))
-        children.setdefault(parent_id, []).append(run)
-        parent_step = _int_or_none(info.get("parent_step_index"))
-        if parent_id is not None and parent_step is not None:
-            children_by_step.setdefault((parent_id, parent_step), []).append(run)
-    roots = children.get(None, [])
-    if not roots and runs:
-        roots = [runs[0]]
-    for run in roots:
-        if _text(_mapping(run.get("info")).get("executable_kind")) == "flow":
-            _render_flow_tree_node(run, run_by_id=run_by_id, verbosity=verbosity)
-        else:
-            _render_run_tree_node(run, children=children, children_by_step=children_by_step, depth=0)
+    thread_id = _text(info.get("thread_id")) or _text(thread_info.get("id")) or "-"
+    run_id = _text(info.get("id")) or "-"
+    kind = _text(info.get("executable_kind")) or "run"
+    target = executable_label(kind, _text(info.get("executable_name")), metadata=_mapping(info.get("metadata")))
+    status = _display_run_status(output.get("status"))
+
+    typer.echo(f"thread {thread_id}")
+    typer.echo(f"run {run_id}")
+    typer.echo(f"type {target}")
+    typer.echo(f"status {status}")
+    parent = _text(info.get("parent_run_id"))
+    root = _text(info.get("root_run_id"))
+    if root and root != run_id:
+        typer.echo(f"root {root}")
+    if parent:
+        parent_step = info.get("parent_step_index")
+        suffix = f" step {parent_step}" if parent_step is not None else ""
+        typer.echo(f"parent {parent}{suffix}")
+    input_summary = _inspect_run_input_summary(run)
+    if input_summary:
+        typer.echo(f"input {input_summary}")
+    failure = _inspect_failure_summary(run)
+    if failure:
+        typer.echo(f"failure {failure}")
+    run_by_id = _inspect_thread_run_map(thread, fallback=run)
+    display_run = run_by_id.get(run_id, run)
+    if kind == "flow":
+        _render_flow_tree_node(display_run, run_by_id=run_by_id, verbosity=verbosity)
+        return
+    _render_inspect_run_steps_tree(display_run, verbosity=verbosity)
 
 
 def _render_flow_tree_node(
@@ -1306,227 +1388,20 @@ def _render_flow_tree_node(
     info = _mapping(run.get("info"))
     output = _mapping(run.get("output"))
     typer.echo(f"- {_run_tree_label(info, output)}")
-    stages, calls = _inspect_flow_projection(run, run_by_id=run_by_id)
+    stages, calls = project_flow_from_run(run, run_by_id=run_by_id)
     for stage in stages:
-        typer.echo(f"  {_inspect_stage_prefix(stage)} {_inspect_stage_label(stage):<72} {_inspect_stage_tail(stage, calls)}")
-        if verbosity <= 0:
-            continue
-        stage_calls = _inspect_stage_calls(stage, calls)
-        if stage.parallelism and stage.parallelism > 1:
-            lanes = _inspect_lane_calls(stage_calls)
-            for lane_index in range(stage.parallelism):
-                lane_calls = lanes.get(lane_index, [])
-                if not lane_calls:
-                    continue
-                done = sum(1 for call in lane_calls if call.status in {"succeeded", "done", "failed", "canceled"})
-                typer.echo(f"    lane {lane_index + 1}/{stage.parallelism:<3} {done}/{len(lane_calls)} calls")
-                if verbosity <= 1:
-                    continue
-                for call in lane_calls:
-                    _render_inspect_call(call, indent="      ", include_steps=verbosity >= 3)
-            continue
-        for call in stage_calls:
-            _render_inspect_call(call, indent="    ", include_steps=verbosity >= 2)
+        typer.echo(_chat_flow_stage_line(stage, calls))
+        for line in _chat_flow_stage_detail_lines(stage, calls, child_run_for=lambda call: call.run):
+            typer.echo(line, color=True)
+        typer.echo()
 
 
-def _inspect_flow_projection(
-    run: Mapping[str, Any],
-    *,
-    run_by_id: Mapping[str, Mapping[str, Any]],
-) -> tuple[list[_InspectStageView], dict[str, _InspectCallView]]:
-    stage_order: list[str] = []
-    stages: dict[str, _InspectStageView] = {}
-    calls: dict[str, _InspectCallView] = {}
-    for step in _run_steps(run):
-        record = _mapping(step.get("record"))
-        payload = _mapping(record.get("payload"))
-        kind = _text(record.get("kind"))
-        if kind == "flow_op":
-            stage = _ensure_inspect_stage(payload, stages=stages, stage_order=stage_order)
-            metadata = _mapping(payload.get("metadata"))
-            op = _text(payload.get("op")) or ""
-            input_preview = metadata.get("input_preview")
-            if input_preview is not None:
-                stage.input_shape = _inspect_shape_label(input_preview)
-            output_preview = payload.get("output_preview")
-            if output_preview is not None:
-                if op.startswith("prepare_"):
-                    stage.item_total = _inspect_preview_count(output_preview) or stage.item_total
-                if op == "set_current":
-                    stage.output_shape = _inspect_shape_label(
-                        output_preview,
-                        fallback_count=_inspect_output_count(record),
-                    )
-                    stage.status = "succeeded"
-            continue
-        if kind != "child_call":
-            continue
-        stage = _ensure_inspect_stage(payload, stages=stages, stage_order=stage_order)
-        for run_id in _inspect_child_run_ids(payload, record):
-            child_run = run_by_id.get(run_id)
-            child_output = _mapping(child_run.get("output")) if child_run is not None else {}
-            call = _ensure_inspect_call(
-                payload,
-                run_id=run_id,
-                stage=stage,
-                calls=calls,
-                child_run=child_run,
-                fallback_status=_display_run_status(record.get("status")),
-            )
-            if child_output:
-                call.status = _display_run_status(child_output.get("status"))
-    ordered_stages = [stages[key] for key in stage_order]
-    for stage in ordered_stages:
-        stage_calls = _inspect_stage_calls(stage, calls)
-        if stage.status == "running" and stage_calls and all(call.status in {"succeeded", "done"} for call in stage_calls):
-            stage.status = "succeeded"
-    return ordered_stages, calls
-
-
-def _ensure_inspect_stage(
-    payload: Mapping[str, Any],
-    *,
-    stages: dict[str, _InspectStageView],
-    stage_order: list[str],
-) -> _InspectStageView:
-    ctx = _inspect_stage_context(payload)
-    stage_index = _int_or_none(ctx.get("stage_index"))
-    key = f"stage:{stage_index}" if stage_index is not None else "stage"
-    stage = stages.get(key)
-    if stage is None:
-        stage = _InspectStageView(key=key)
-        stages[key] = stage
-        stage_order.append(key)
-    stage.index = stage_index if stage_index is not None else stage.index
-    stage.total = _int_or_none(ctx.get("stage_total")) or stage.total
-    stage.kind = _text(ctx.get("stage_kind")) or stage.kind
-    title = _text(ctx.get("stage_title")) or _text(ctx.get("stage_doc")) or _text(ctx.get("stage_target")) or _clean_stage_title(_text(ctx.get("stage_label"))) or stage.title
-    stage.title = title
-    stage.parallelism = _int_or_none(ctx.get("parallelism")) or stage.parallelism
-    if item_count := _int_or_none(ctx.get("item_count")):
-        stage.item_total = item_count
-    if input_preview := ctx.get("input_preview"):
-        stage.input_shape = _inspect_shape_label(input_preview)
-    return stage
-
-
-def _ensure_inspect_call(
-    payload: Mapping[str, Any],
-    *,
-    run_id: str,
-    stage: _InspectStageView,
-    calls: dict[str, _InspectCallView],
-    child_run: Mapping[str, Any] | None,
-    fallback_status: str,
-) -> _InspectCallView:
-    call = calls.get(run_id)
-    ctx = _inspect_stage_context(payload)
-    if call is None:
-        target = executable_label(
-            _text(payload.get("target_kind")) or "run",
-            _text(payload.get("target")),
-            metadata=_mapping(payload.get("metadata")),
-        ).replace(":", " ", 1)
-        call = _InspectCallView(
-            key=run_id,
-            stage_key=stage.key,
-            label=_inspect_call_label(target, ctx),
-            run_id=run_id,
-            status=fallback_status,
-            run=child_run,
-        )
-        calls[run_id] = call
-        stage.calls.append(run_id)
-    call.item_index = _int_or_none(ctx.get("item_index")) if ctx.get("item_index") is not None else call.item_index
-    call.item_count = _int_or_none(ctx.get("item_count")) or call.item_count
-    call.lane_index = _int_or_none(ctx.get("lane_index")) if ctx.get("lane_index") is not None else call.lane_index
-    call.parallelism = _int_or_none(ctx.get("parallelism")) or call.parallelism
-    if call.parallelism is not None:
-        stage.parallelism = call.parallelism
-    if call.item_count is not None:
-        stage.item_total = call.item_count
-    return call
-
-
-def _inspect_stage_context(payload: Mapping[str, Any]) -> dict[str, Any]:
-    metadata = _mapping(payload.get("metadata"))
-    child = _mapping(payload.get("child")) or _mapping(metadata.get("child"))
-    ctx: dict[str, Any] = dict(child)
-    ctx.update(metadata)
-    ctx.update(payload)
-    if "item_index" not in ctx:
-        item_indexes = _list(payload.get("item_indexes"))
-        if item_indexes:
-            ctx["item_index"] = item_indexes[0]
-    return ctx
-
-
-def _inspect_child_run_ids(payload: Mapping[str, Any], record: Mapping[str, Any]) -> tuple[str, ...]:
-    child_ids = tuple(str(item) for item in _list(payload.get("child_run_ids")) if item is not None)
-    if child_ids:
-        return child_ids
-    return (f"{record.get('step_index', 'step')}",)
-
-
-def _inspect_call_label(target: str, ctx: Mapping[str, Any]) -> str:
-    item_index = _int_or_none(ctx.get("item_index"))
-    item_count = _int_or_none(ctx.get("item_count"))
-    if item_index is None:
-        return target
-    item = f"item {item_index + 1}/{item_count}" if item_count else f"item {item_index + 1}"
-    return f"{item} · {target}"
-
-
-def _inspect_stage_prefix(stage: _InspectStageView) -> str:
-    if stage.status in {"succeeded", "done"}:
-        return "✓"
-    if stage.status == "failed":
-        return "✗"
-    return "…"
-
-
-def _inspect_stage_label(stage: _InspectStageView) -> str:
-    index = "?"
-    if stage.index is not None:
-        index = str(stage.index + 1)
-    if stage.total is not None:
-        index = f"{index}/{stage.total}"
-    return f"{index} {stage.kind:<6} {_truncate_table_text(' '.join(stage.title.split()), width=56)}"
-
-
-def _inspect_stage_tail(stage: _InspectStageView, calls: Mapping[str, _InspectCallView]) -> str:
-    lanes = f"{stage.parallelism} lanes" if stage.parallelism and stage.parallelism > 1 else ""
-    if stage.status in {"succeeded", "done"} and (stage.input_shape or stage.output_shape):
-        shape = f"{stage.input_shape or '?'} -> {stage.output_shape or '?'}"
-        return " · ".join(item for item in (shape, lanes) if item)
-    stage_calls = _inspect_stage_calls(stage, calls)
-    done = sum(1 for call in stage_calls if call.status in {"succeeded", "done", "failed", "canceled"})
-    failed = sum(1 for call in stage_calls if call.status == "failed")
-    if stage.item_total is not None:
-        progress = f"{done}/{stage.item_total} items"
-        if failed:
-            progress = f"{progress} · {failed} failed"
-        return " · ".join(item for item in (progress, lanes) if item)
-    if failed:
-        return f"{failed} failed"
-    return "running"
-
-
-def _inspect_stage_calls(stage: _InspectStageView, calls: Mapping[str, _InspectCallView]) -> list[_InspectCallView]:
-    items = [calls[key] for key in stage.calls if key in calls]
-    return sorted(items, key=lambda call: (call.lane_index if call.lane_index is not None else 999_999, call.item_index if call.item_index is not None else 999_999, call.run_id))
-
-
-def _inspect_lane_calls(calls: Sequence[_InspectCallView]) -> dict[int, list[_InspectCallView]]:
-    lanes: dict[int, list[_InspectCallView]] = {}
-    for call in calls:
-        lanes.setdefault(call.lane_index if call.lane_index is not None else 0, []).append(call)
-    return lanes
-
-
-def _render_inspect_call(call: _InspectCallView, *, indent: str, include_steps: bool) -> None:
+def _render_inspect_call(call: FlowCallView, *, indent: str, include_steps: bool) -> None:
     prefix = "✓" if call.status in {"succeeded", "done"} else "✗" if call.status == "failed" else "…"
     typer.echo(f"{indent}{prefix} {call.label} · {call.run_id} {call.status}")
+    failure = _inspect_failure_summary(call.run or {})
+    if failure:
+        typer.echo(f"{indent}  failure {failure}")
     if not include_steps or call.run is None:
         return
     for step in _run_steps(call.run):
@@ -1534,58 +1409,77 @@ def _render_inspect_call(call: _InspectCallView, *, indent: str, include_steps: 
         typer.echo(f"{indent}  - {_tree_step_label(record, _mapping(step.get('message')))}")
 
 
-def _inspect_shape_label(preview: object, *, fallback_count: int | None = None) -> str:
-    if isinstance(preview, Mapping):
-        preview = cast(Mapping[str, Any], preview)
-        count = _int_or_none(preview.get("count"))
-        if count is not None:
-            return "1 item" if count == 1 else f"{count} items"
-        if preview.get("type") == "list":
-            count = _int_or_none(preview.get("count"))
-            if count is not None:
-                return "1 item" if count == 1 else f"{count} items"
-        if preview.get("type") == "object":
-            if fallback_count is not None:
-                return "1 item" if fallback_count == 1 else f"{fallback_count} items"
-            return "object"
-    if isinstance(preview, str):
-        lines = [line.strip() for line in preview.splitlines() if line.strip()]
-        if 1 < len(lines) <= 20:
-            return f"{len(lines)} items"
-    if preview is None:
-        return "unset"
-    return "1 item"
+def _render_inspect_run_steps_tree(run: Mapping[str, Any], *, verbosity: int) -> None:
+    del verbosity
+    for step in _run_steps(run):
+        record = _mapping(step.get("record"))
+        for line in _chat_child_completed_step_lines(record, run=None, indent=""):
+            typer.echo(line, color=True)
 
 
-def _inspect_preview_count(preview: object) -> int | None:
-    if isinstance(preview, Mapping):
-        return _int_or_none(cast(Mapping[str, Any], preview).get("count"))
-    return None
+def _inspect_thread_run_map(thread: Mapping[str, Any], *, fallback: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    runs = [_mapping(item) for item in _list(thread.get("runs"))]
+    if not runs:
+        runs = [fallback]
+    result: dict[str, Mapping[str, Any]] = {}
+    for run in runs:
+        run_id = _text(_mapping(run.get("info")).get("id"))
+        if run_id is not None:
+            result[run_id] = run
+    return result
 
 
-def _inspect_output_count(record: Mapping[str, Any]) -> int | None:
+def _inspect_run_input_summary(run: Mapping[str, Any]) -> str:
+    input_message = _mapping(run.get("input"))
+    return _message_summary(input_message)
+
+
+def _inspect_failure_summary(run: Mapping[str, Any]) -> str:
+    output = _mapping(run.get("output"))
+    failure = _mapping(output.get("failure"))
+    reason = _text(failure.get("reason")) or _text(output.get("error"))
+    if not reason:
+        return ""
+    step_index = failure.get("step_index")
+    step_kind = _text(failure.get("step_kind"))
+    if step_index is not None and step_kind:
+        return f"{reason} (step {step_index} {step_kind})"
+    if step_index is not None:
+        return f"{reason} (step {step_index})"
+    return reason
+
+
+def _inspect_step_detail_lines(record: Mapping[str, Any], message: Mapping[str, Any]) -> list[str]:
+    lines: list[str] = []
+    message_text = _message_summary(message)
+    if message_text:
+        lines.append(f"message {message_text}")
+    tool_requests = _inspect_tool_request_lines(record)
+    lines.extend(tool_requests)
+    error = _text(record.get("error"))
+    if error:
+        lines.append(f"error {error}")
+    return lines
+
+
+def _inspect_tool_request_lines(record: Mapping[str, Any]) -> list[str]:
+    lines: list[str] = []
     for part in _list(record.get("output")):
         typed = _mapping(part)
-        if typed.get("type") != "text":
+        if typed.get("type") != "tool_call":
             continue
-        text = _text(typed.get("text"))
-        if not text:
-            continue
-        try:
-            parsed = ast.literal_eval(text)
-        except (SyntaxError, ValueError):
-            continue
-        if isinstance(parsed, Mapping):
-            return _int_or_none(parsed.get("count"))
-    return None
+        name = _text(typed.get("tool_name")) or _text(typed.get("tool_family")) or "tool"
+        tool_input = typed.get("input")
+        input_summary = _inspect_tool_input_summary(tool_input)
+        suffix = f": {input_summary}" if input_summary else ""
+        lines.append(f"requested {name}{suffix}")
+    return lines
 
 
-def _clean_stage_title(label: str | None) -> str | None:
-    if not label:
-        return None
-    if ": " in label:
-        return label.split(": ", 1)[1]
-    return label
+def _inspect_tool_input_summary(tool_input: object) -> str:
+    if not isinstance(tool_input, Mapping) or not tool_input:
+        return ""
+    return ", ".join(f"{key}={_chat_plain_value(value)}" for key, value in tool_input.items())
 
 
 def _render_run_tree_node(
@@ -1713,7 +1607,9 @@ def _inspect_step_summary(record: Mapping[str, Any], message: Mapping[str, Any])
     if kind == "model_call":
         model = _text(payload.get("model_ref")) or _text(payload.get("model"))
         text = _message_summary(message)
-        return " ".join(item for item in (model, text) if item)
+        requests = "; ".join(line.removeprefix("requested ") for line in _inspect_tool_request_lines(record))
+        request_summary = f"requested {requests}" if requests else ""
+        return " ".join(item for item in (model, text, request_summary) if item)
     if kind == "child_call":
         return child_call_summary(payload)
     if kind == "flow_op":
@@ -1728,6 +1624,17 @@ def _hide_inspect_event(event_type: str, payload: Mapping[str, Any], *, verbosit
 
 
 def _inspect_event_summary(event_type: str, payload: Mapping[str, Any], *, verbosity: int = 0) -> str:
+    if event_type in {"run_queued", "run_waiting"}:
+        return _format_kv(
+            (
+                ("run", _text(payload.get("run_id"))),
+                ("thread", _text(payload.get("thread_id"))),
+                ("group", _text(payload.get("group"))),
+                ("target", _event_executable_label(payload)),
+                ("waiting", _text(payload.get("waiting_for"))),
+                ("position", payload.get("position")),
+            )
+        )
     if event_type == "run_start":
         return _format_kv(
             (
@@ -1788,6 +1695,8 @@ def _inspect_event_step_summary(
     step_index = payload.get("step_index")
     step_payload = _mapping(payload.get("payload"))
     if not step_payload:
+        step_payload = _mapping(payload.get("metadata"))
+    if not step_payload:
         return _format_kv(
             (
                 ("step", step_index),
@@ -1845,10 +1754,10 @@ def _inspect_event_step_summary(
 
 
 def _event_stage_fields(payload: Mapping[str, Any]) -> tuple[tuple[str, object], ...]:
-    ctx = _inspect_stage_context(payload)
+    ctx = flow_stage_context(payload)
     index = _int_or_none(ctx.get("stage_index"))
     kind = _text(ctx.get("stage_kind")) or "stage"
-    title = _text(ctx.get("stage_title")) or _text(ctx.get("stage_doc")) or _text(ctx.get("stage_target")) or _clean_stage_title(_text(ctx.get("stage_label")))
+    title = _text(ctx.get("stage_title")) or _text(ctx.get("stage_doc")) or _text(ctx.get("stage_target"))
     return (
         ("stage", index + 1 if index is not None else None),
         ("stage_kind", kind),
@@ -1871,7 +1780,7 @@ def _event_output_shape(payload: Mapping[str, Any]) -> str | None:
     preview = step_payload.get("output_preview")
     if preview is None:
         return None
-    return _inspect_shape_label(preview, fallback_count=_inspect_output_count(payload))
+    return shape_label(preview, fallback_count=output_count(payload))
 
 
 def _event_child_call_fields(payload: Mapping[str, Any]) -> tuple[tuple[str, object], ...]:
@@ -1880,12 +1789,12 @@ def _event_child_call_fields(payload: Mapping[str, Any]) -> tuple[tuple[str, obj
         _text(payload.get("target")),
         metadata=_mapping(payload.get("metadata")),
     ).replace(":", " ", 1)
-    ctx = _inspect_stage_context(payload)
+    ctx = flow_stage_context(payload)
     lane_index = _int_or_none(ctx.get("lane_index"))
     parallelism = _int_or_none(ctx.get("parallelism"))
     item_index = _int_or_none(ctx.get("item_index"))
     item_count = _int_or_none(ctx.get("item_count"))
-    children = ", ".join(_inspect_child_run_ids(payload, {}))
+    children = ", ".join(child_run_ids(payload, {}))
     return (
         ("stage", (_int_or_none(ctx.get("stage_index")) or 0) + 1 if ctx.get("stage_index") is not None else None),
         ("target", target),
@@ -2058,7 +1967,13 @@ def _runtime_get_stream(ctx: typer.Context, path: str) -> None:
         raise click.ClickException(f"runtime request failed: {exc.reason}") from exc
 
 
-def _runtime_consume_stream(ctx: typer.Context, path: str, *, payload: dict[str, Any]) -> None:
+def _runtime_consume_stream(
+    ctx: typer.Context,
+    path: str,
+    *,
+    payload: dict[str, Any],
+    event_handler: Callable[[dict[str, Any]], None] | None = None,
+) -> None:
     url = f"{_runtime_base_url(ctx)}{path}"
     request = Request(
         url,
@@ -2066,10 +1981,15 @@ def _runtime_consume_stream(ctx: typer.Context, path: str, *, payload: dict[str,
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+    stop_event = threading.Event()
     try:
         with urlopen(request, timeout=None) as response:
-            for _raw_line in response:
-                pass
+            if event_handler is None:
+                for _raw_line in response:
+                    pass
+                return
+            for event in _iter_sse_events(response, stop_event=stop_event):
+                event_handler(event)
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         raise click.ClickException(f"runtime request failed: {exc.code} {detail}") from exc
@@ -2090,6 +2010,33 @@ def _message_payload(text: str) -> dict[str, object]:
     }
 
 
+def _chat_selector_payload(
+    *,
+    models: list[str] | None,
+    tools: list[str] | None,
+    caps: list[str] | None,
+    thunk: str | None = None,
+    flow: str | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {}
+    if thunk is not None and flow is not None:
+        raise click.ClickException("--thunk and --flow cannot be used together")
+    model_selectors = tuple(dict.fromkeys(split_model_selectors(tuple(models or ()))))
+    if model_selectors:
+        payload["models"] = list(model_selectors)
+    if tools is not None:
+        tool_selectors = tuple(dict.fromkeys(split_tool_selectors(tuple(tools))))
+        payload["tools"] = list(tool_selectors)
+    cap_selectors = tuple(dict.fromkeys(split_cap_selectors(tuple(caps or ()))))
+    if cap_selectors:
+        payload["caps"] = list(cap_selectors)
+    if thunk is not None:
+        payload["thunk"] = thunk
+    if flow is not None:
+        payload["flow"] = flow
+    return payload
+
+
 def _query_params(**items: str | None) -> str:
     return urlencode([(key, value) for key, value in items.items() if value is not None])
 
@@ -2103,22 +2050,59 @@ def _display_run_status(status: object) -> str:
     return "succeeded" if text == "finished" else text
 
 
-def _open_thread_ui(ctx: typer.Context, thread_id: str | None) -> None:
-    if thread_id is None:
-        raise click.ClickException("terminal UI requires an existing thread; pass a message to start a terminal chat")
-    _chat_interactive(ctx, thread_id=thread_id)
+def _open_thread_ui(
+    ctx: typer.Context,
+    thread_id: str | None,
+    *,
+    selector_payload: dict[str, object] | None = None,
+) -> None:
+    _chat_interactive(ctx, thread_id=thread_id, selector_payload=selector_payload)
 
 
-def _chat_interactive(ctx: typer.Context, *, thread_id: str) -> None:
-    typer.echo(f"thread {thread_id}")
+def _chat_interactive(
+    ctx: typer.Context,
+    *,
+    thread_id: str | None,
+    selector_payload: dict[str, object] | None = None,
+) -> None:
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        _chat_interactive_scripted(ctx, thread_id=thread_id, selector_payload=selector_payload)
+        return
+    _chat_interactive_prompt_toolkit(ctx, thread_id=thread_id, selector_payload=selector_payload)
+
+
+def _chat_interactive_scripted(
+    ctx: typer.Context,
+    *,
+    thread_id: str | None,
+    selector_payload: dict[str, object] | None = None,
+) -> None:
+    selectors = dict(selector_payload or {})
     local_streaming = threading.Event()
     local_request_ids: set[str] = set()
-    listener = _start_thread_event_listener(
-        ctx,
-        thread_id,
-        local_streaming=local_streaming,
-        local_request_ids=local_request_ids,
-    )
+    listener: _ThreadEventListener | None = None
+
+    def ensure_thread_id() -> str:
+        nonlocal listener, thread_id
+        if thread_id is None:
+            result = _runtime_post(ctx, "/api/v1/threads", payload={"client": "tui"})
+            created = result.get("thread_id")
+            if not isinstance(created, str):
+                raise click.ClickException("runtime did not return a thread id")
+            thread_id = created
+            typer.echo(f"thread {thread_id}")
+        if listener is None:
+            listener = _start_thread_event_listener(
+                ctx,
+                thread_id,
+                local_streaming=local_streaming,
+                local_request_ids=local_request_ids,
+            )
+        return thread_id
+
+    if thread_id is not None:
+        typer.echo(f"thread {thread_id}")
+        ensure_thread_id()
     try:
         while True:
             try:
@@ -2132,21 +2116,2068 @@ def _chat_interactive(ctx: typer.Context, *, thread_id: str) -> None:
                 return
             if not text.strip():
                 continue
+            if _chat_handle_scripted_command(ctx, text, selectors):
+                continue
+            active_thread_id = ensure_thread_id()
             request_id = f"term_{uuid4().hex}"
             local_request_ids.add(request_id)
             payload: dict[str, Any] = {
-                "thread": thread_id,
+                "thread": active_thread_id,
                 "client": "tui",
                 "request_id": request_id,
                 "message": _message_payload(text),
+                **selectors,
             }
             local_streaming.set()
             try:
                 _runtime_consume_stream(ctx, "/api/v1/chat/stream", payload=payload)
             finally:
                 local_streaming.clear()
+                local_request_ids.discard(request_id)
     finally:
-        listener.stop()
+        if listener is not None:
+            listener.stop()
+
+
+@dataclass(frozen=True, slots=True)
+class _ChatUIEvent:
+    type: str
+    value: str | dict[str, Any] | None = None
+
+
+@dataclass(slots=True)
+class _ChatStep:
+    index: int
+    kind: str
+    label: str
+    payload: dict[str, Any] = field(default_factory=dict)
+    frame: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _ChatToolCall:
+    name: str
+    input: dict[str, Any]
+
+
+@dataclass(slots=True)
+class _ChatRun:
+    run_id: str
+    message: str
+    status: str
+    executable_kind: str = "thunk"
+    executable_name: str | None = None
+    accept_child_trace: bool = False
+    queue_state: str | None = None
+    waiting_for: str | None = None
+    queue_position: int | None = None
+    steps: dict[int, _ChatStep] = field(default_factory=dict)
+    completed_steps: dict[int, dict[str, Any]] = field(default_factory=dict)
+    tool_calls_by_part: dict[tuple[int, int], _ChatToolCall] = field(default_factory=dict)
+    child_runs: dict[str, _ChatRun] = field(default_factory=dict)
+
+    def start_step(self, payload: dict[str, Any]) -> None:
+        index = _chat_step_index(payload)
+        stored_payload = dict(payload)
+        if stored_payload.get("kind") in {"flow_op", "child_call"} and "payload" not in stored_payload:
+            stored_payload["payload"] = dict(_mapping(stored_payload.get("metadata")))
+        self.steps[index] = _ChatStep(
+            index,
+            str(stored_payload.get("kind") or "unknown"),
+            _chat_step_label(stored_payload, self),
+            stored_payload,
+        )
+
+    def complete_step(self, payload: dict[str, Any]) -> None:
+        index = _chat_step_index(payload)
+        self.completed_steps[index] = payload
+        self.steps.pop(index, None)
+
+    def record_part(self, payload: dict[str, Any]) -> None:
+        part = _mapping(payload.get("part"))
+        if part.get("type") != "tool_call":
+            return
+        tool_name = _text(part.get("tool_name")) or _text(part.get("tool_family"))
+        if tool_name is None:
+            return
+        step_index = _chat_step_index(payload)
+        part_index = _chat_part_index(payload)
+        tool_input = part.get("input")
+        self.tool_calls_by_part[(step_index, part_index)] = _ChatToolCall(
+            name=tool_name,
+            input=dict(tool_input) if isinstance(tool_input, Mapping) else {},
+        )
+
+    def update_queue(self, event_type: str, payload: Mapping[str, Any]) -> None:
+        if run_id := _text(payload.get("run_id")):
+            self.run_id = run_id
+        self.status = "waiting" if event_type == "run_waiting" else "queued"
+        self.queue_state = self.status
+        self.waiting_for = _text(payload.get("waiting_for"))
+        self.queue_position = _int_or_none(payload.get("position"))
+
+    def mark_running(self) -> None:
+        self.status = "running"
+        self.queue_state = None
+        self.waiting_for = None
+        self.queue_position = None
+
+    def start_child_run(self, payload: Mapping[str, Any]) -> None:
+        run_id = _text(payload.get("run_id"))
+        if run_id is None:
+            return
+        child = self.child_runs.get(run_id)
+        if child is None:
+            child = _ChatRun(
+                run_id=run_id,
+                message=_event_message_text(payload.get("input")),
+                status="running",
+                executable_kind=_text(payload.get("executable_kind")) or "thunk",
+                executable_name=_text(payload.get("executable_name")),
+                accept_child_trace=True,
+            )
+            self.child_runs[run_id] = child
+        else:
+            child.status = "running"
+            child.executable_kind = _text(payload.get("executable_kind")) or child.executable_kind
+            child.executable_name = _text(payload.get("executable_name")) or child.executable_name
+
+    def child_run(self, run_id: str | None) -> _ChatRun | None:
+        if run_id is None:
+            return None
+        return self.child_runs.get(run_id)
+
+    def tick(self) -> None:
+        for step in self.steps.values():
+            step.frame += 1
+
+    def step_indexes(self) -> list[int]:
+        return sorted(set(self.steps) | set(self.completed_steps))
+
+
+class _ChatLastRunPanel:
+    def __init__(self, get_run: Callable[[], _ChatRun | None]) -> None:
+        self.get_run = get_run
+        self.user_view = FormattedTextControl(self.render_user)
+        self.activity_view = FormattedTextControl(self.render_activity)
+
+    def container(self) -> ConditionalContainer:
+        return ConditionalContainer(
+            HSplit(
+                [
+                    Window(
+                        self.user_view,
+                        height=self.user_rows,
+                        wrap_lines=False,
+                        always_hide_cursor=True,
+                        style="class:input",
+                        char=" ",
+                    ),
+                    Window(
+                        self.activity_view,
+                        height=self.activity_rows,
+                        wrap_lines=False,
+                        always_hide_cursor=True,
+                        style="class:last-run",
+                    ),
+                ],
+                height=self.height_dimension,
+                window_too_small=Window(style="class:last-run", always_hide_cursor=True),
+            ),
+            filter=Condition(lambda: bool(self.lines())),
+        )
+
+    def render_user(self) -> ANSI:
+        return ANSI("\n".join(self.user_lines()))
+
+    def render_activity(self) -> ANSI:
+        return ANSI("\n".join(self.activity_lines()))
+
+    def lines(self) -> list[str]:
+        return [*self.user_lines(), *self.activity_lines()]
+
+    def user_lines(self) -> list[str]:
+        run = self.get_run()
+        if run is None:
+            return []
+        return _chat_panel_user_block(run)
+
+    def activity_lines(self) -> list[str]:
+        run = self.get_run()
+        if run is None:
+            return []
+        return ["", *_chat_run_activity_lines(run, self.step_line), ""]
+
+    def step_line(self, run: _ChatRun, index: int) -> str:
+        if index in run.completed_steps:
+            return _chat_completed_step_line(run.completed_steps[index], run=run)
+        return _chat_active_step_line(run.steps[index])
+
+    def rows(self) -> int:
+        return len(self.lines())
+
+    def height_dimension(self) -> Dimension:
+        return Dimension(min=0, preferred=self.rows(), weight=1)
+
+    def user_rows(self) -> int:
+        return len(self.user_lines())
+
+    def activity_rows(self) -> int:
+        return len(self.activity_lines())
+
+
+class _ChatSubmissionQueue:
+    def __init__(self, get_items: Callable[[], list[str]]) -> None:
+        self.get_items = get_items
+        self.view = FormattedTextControl(self.render)
+
+    def container(self) -> ConditionalContainer:
+        return ConditionalContainer(
+            VSplit(
+                [
+                    Window(width=2),
+                    Window(
+                        self.view,
+                        height=self.rows,
+                        wrap_lines=False,
+                        always_hide_cursor=True,
+                        style="class:queue",
+                        char=" ",
+                    ),
+                    Window(width=2),
+                ],
+                height=self.height_dimension,
+            ),
+            filter=Condition(lambda: bool(self.get_items())),
+        )
+
+    def render(self) -> ANSI:
+        return ANSI("\n".join(self.lines()))
+
+    def lines(self) -> list[str]:
+        items = self.get_items()
+        shown = items[:_CHAT_MAX_QUEUE_ROWS]
+        hidden = len(items) - len(shown)
+        summary = "  Queued for submission."
+        if hidden:
+            summary += f" ({hidden} more not shown)"
+        return [summary, *[f"  - {_chat_summarize(message)}" for message in shown]]
+
+    def rows(self) -> int:
+        return len(self.lines()) if self.get_items() else 0
+
+    def height_dimension(self) -> Dimension:
+        return Dimension(min=0, preferred=self.rows(), weight=1)
+
+
+class _ChatPromptBox:
+    def __init__(self, emit: Callable[[_ChatUIEvent], None], invalidate: Callable[[], None], status_label: str) -> None:
+        self.emit = emit
+        self.invalidate = invalidate
+        self.status_label = status_label
+        self.history = InMemoryHistory()
+        self.buffer = Buffer(multiline=True, history=self.history)
+        self.error_message = ""
+        self.history_index: int | None = None
+        self.history_draft = ""
+        self.status = FormattedTextControl(self.render_status)
+        self.buffer.on_text_changed += self.handle_text_changed
+
+    def container(self) -> HSplit:
+        return HSplit(
+            [
+                Window(height=1, style="class:input", always_hide_cursor=True, char=" "),
+                VSplit(
+                    [
+                        Window(FormattedTextControl(ANSI(f"{_CHAT_DIM}> {_CHAT_NORMAL_INTENSITY}")), width=2, style="class:input", char=" "),
+                        Window(
+                            BufferControl(buffer=self.buffer),
+                            height=self.input_rows,
+                            wrap_lines=True,
+                            style="class:input",
+                            char=" ",
+                        ),
+                    ],
+                    height=self.input_rows,
+                    style="class:input",
+                ),
+                Window(height=1, style="class:input", always_hide_cursor=True, char=" "),
+                Window(self.status, height=1, style="class:status", always_hide_cursor=True, char=" "),
+            ],
+            height=self.height_dimension,
+            window_too_small=self.compact_container(),
+        )
+
+    def compact_container(self) -> VSplit:
+        return VSplit(
+            [
+                Window(FormattedTextControl(ANSI(f"{_CHAT_DIM}> {_CHAT_NORMAL_INTENSITY}")), width=2, style="class:input", char=" "),
+                Window(
+                    BufferControl(buffer=self.buffer),
+                    height=1,
+                    wrap_lines=False,
+                    style="class:input",
+                    char=" ",
+                ),
+            ],
+            height=1,
+            style="class:input",
+        )
+
+    def render_status(self) -> list[tuple[str, str]]:
+        if self.error_message:
+            return [("class:status.error", f"  ! {self.error_message}  ")]
+        segments = _chat_status_segments(self.status_label)
+        if segments:
+            style, text = segments[0]
+            segments[0] = (style, f"  {text}")
+        return [
+            *segments,
+            ("class:status.text", "  ^j newline  ↑↓ history"),
+            ("class:status.text", "  "),
+        ]
+
+    def bind(self, keys: KeyBindings) -> None:
+        @keys.add("enter")
+        def submit(_event: Any) -> None:
+            message = self.buffer.text.strip()
+            if not message:
+                return
+            self.record_history(message)
+            self.buffer.text = ""
+            self.history_index = None
+            self.history_draft = ""
+            self.emit(_ChatUIEvent("submit", message))
+            self.invalidate()
+
+        @keys.add("c-c")
+        def cancel_or_exit(_event: Any) -> None:
+            self.emit(_ChatUIEvent("cancel"))
+
+        @keys.add("c-d")
+        @keys.add("c-q")
+        def quit_app(_event: Any) -> None:
+            self.emit(_ChatUIEvent("quit"))
+
+        @keys.add("c-l")
+        def clear_screen(_event: Any) -> None:
+            self.emit(_ChatUIEvent("clear"))
+
+        @keys.add("c-j")
+        @keys.add("escape", "enter")
+        def insert_newline(_event: Any) -> None:
+            self.insert_newline()
+
+        @keys.add("up")
+        @keys.add("c-p")
+        def previous_history(_event: Any) -> None:
+            self.previous_history()
+
+        @keys.add("down")
+        @keys.add("c-n")
+        def next_history(_event: Any) -> None:
+            self.next_history()
+
+        try:
+            keys.add("s-enter")(lambda _event: self.insert_newline())
+        except ValueError:
+            pass
+
+    def insert_newline(self) -> None:
+        self.buffer.insert_text("\n")
+        self.invalidate()
+
+    def record_history(self, message: str) -> None:
+        entries = self.history_entries()
+        if not entries or entries[-1] != message:
+            self.history.append_string(message)
+
+    def previous_history(self) -> None:
+        if self.buffer.document.cursor_position_row > 0:
+            self.buffer.cursor_up()
+            return
+        entries = self.history_entries()
+        if not entries:
+            return
+        if self.history_index is None:
+            self.history_draft = self.buffer.text
+            self.history_index = len(entries) - 1
+        else:
+            self.history_index = max(0, self.history_index - 1)
+        self.replace_input(entries[self.history_index])
+
+    def next_history(self) -> None:
+        if self.buffer.document.cursor_position_row < self.buffer.document.line_count - 1:
+            self.buffer.cursor_down()
+            return
+        if self.history_index is None:
+            return
+        entries = self.history_entries()
+        if self.history_index < len(entries) - 1:
+            self.history_index += 1
+            self.replace_input(entries[self.history_index])
+        else:
+            self.history_index = None
+            self.replace_input(self.history_draft)
+            self.history_draft = ""
+
+    def history_entries(self) -> list[str]:
+        return list(self.history.get_strings())
+
+    def replace_input(self, text: str) -> None:
+        self.buffer.text = text
+        self.buffer.cursor_position = len(text)
+        self.invalidate()
+
+    def handle_text_changed(self, _buffer: Buffer) -> None:
+        if self.error_message:
+            self.error_message = ""
+        if self.history_index is not None:
+            entries = self.history_entries()
+            if self.buffer.text != entries[self.history_index]:
+                self.history_index = None
+                self.history_draft = ""
+
+    def set_error(self, message: str) -> None:
+        self.error_message = message
+        self.invalidate()
+
+    def clear_error(self) -> None:
+        if self.error_message:
+            self.error_message = ""
+            self.invalidate()
+
+    def input_rows(self) -> int:
+        return min(_CHAT_MAX_INPUT_ROWS, max(1, self.buffer.document.line_count))
+
+    def rows(self) -> int:
+        return self.input_rows() + 3
+
+    def height_dimension(self) -> Dimension:
+        return Dimension(min=1, preferred=self.rows(), weight=8)
+
+
+class _ChatBottomApp:
+    """Use terminal scrollback for history and prompt-toolkit for the bottom UI."""
+
+    def __init__(self, ctx: typer.Context, *, thread_id: str | None, selector_payload: dict[str, object]) -> None:
+        self.ctx = ctx
+        self.thread_id = thread_id
+        self.selector_payload = selector_payload
+        self.events: asyncio.Queue[_ChatUIEvent] = asyncio.Queue()
+        self.pending: list[str] = []
+        self.active_run: _ChatRun | None = None
+        self.local_streaming = threading.Event()
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self.dispatcher: asyncio.Task[None] | None = None
+        self.ticker: asyncio.Task[None] | None = None
+        self.stream_step_index: int | None = None
+        self.stream_text_parts: list[str] = []
+
+        self.last_run_panel = _ChatLastRunPanel(lambda: self.active_run)
+        self.queue_panel = _ChatSubmissionQueue(lambda: self.pending)
+        self.prompt = _ChatPromptBox(self.emit, self.invalidate, self.status_label())
+        self.app = Application(
+            layout=self.build_layout(),
+            key_bindings=self.build_keys(),
+            style=self.build_style(),
+            full_screen=False,
+            erase_when_done=True,
+            mouse_support=False,
+        )
+
+    def status_label(self) -> str:
+        models = self.selector_payload.get("models")
+        if isinstance(models, list) and models:
+            model_label = ", ".join(str(item) for item in models)
+        else:
+            model_label = "runtime model"
+        executable_label = _chat_executable_status_label(self.selector_payload)
+        if executable_label:
+            return f"{model_label}  {executable_label}"
+        return model_label
+
+    def build_layout(self) -> Layout:
+        root = HSplit(
+            [
+                self.last_run_panel.container(),
+                self.queue_panel.container(),
+                self.prompt.container(),
+            ],
+            height=self.bottom_dimension,
+            window_too_small=self.prompt.compact_container(),
+        )
+        return Layout(root, focused_element=self.prompt.buffer)
+
+    def build_keys(self) -> KeyBindings:
+        keys = KeyBindings()
+        self.prompt.bind(keys)
+        return keys
+
+    def emit(self, event: _ChatUIEvent) -> None:
+        self.events.put_nowait(event)
+
+    def emit_from_thread(self, event: _ChatUIEvent) -> None:
+        if self.loop is None:
+            return
+        self.loop.call_soon_threadsafe(self.events.put_nowait, event)
+
+    def invalidate(self) -> None:
+        if hasattr(self, "app"):
+            self.app.invalidate()
+
+    def build_style(self) -> Style:
+        return Style.from_dict(_chat_ui_palette())
+
+    def bottom_rows(self) -> int:
+        return self.last_run_panel.rows() + self.queue_panel.rows() + self.prompt.rows()
+
+    def bottom_dimension(self) -> Dimension:
+        return Dimension(min=1, preferred=self.bottom_rows(), weight=1)
+
+    async def run(self) -> None:
+        self.loop = asyncio.get_running_loop()
+        self.print_header()
+        self.dispatcher = asyncio.create_task(self.dispatch_events())
+        self.ticker = asyncio.create_task(self.emit_ticks())
+        try:
+            with patch_stdout(raw=True):
+                await self.app.run_async()
+        finally:
+            self.events.put_nowait(_ChatUIEvent("quit"))
+            await self.stop_tasks()
+
+    async def stop_tasks(self) -> None:
+        if self.ticker and not self.ticker.done():
+            self.ticker.cancel()
+        if self.dispatcher and not self.dispatcher.done():
+            await self.dispatcher
+
+    async def emit_ticks(self) -> None:
+        while True:
+            await asyncio.sleep(0.12)
+            if self.active_run and self.active_run.steps:
+                self.events.put_nowait(_ChatUIEvent("tick"))
+
+    async def dispatch_events(self) -> None:
+        while True:
+            event = await self.events.get()
+            try:
+                if event.type == "submit":
+                    self.handle_submit(str(event.value))
+                elif event.type == "runtime" and isinstance(event.value, dict):
+                    self.handle_runtime_event(event.value)
+                elif event.type == "error":
+                    self.handle_error(str(event.value or "runtime request failed"))
+                elif event.type == "tick":
+                    self.handle_tick()
+                elif event.type == "cancel":
+                    self.handle_cancel()
+                elif event.type == "clear":
+                    self.handle_clear()
+                elif event.type == "quit":
+                    self.handle_quit()
+                    return
+            finally:
+                self.events.task_done()
+
+    def handle_submit(self, message: str) -> None:
+        self.prompt.clear_error()
+        if self.handle_local_command(message):
+            self.app.invalidate()
+            return
+        if self.has_active_run():
+            self.pending.append(message)
+        else:
+            self.start_run(message)
+        self.app.invalidate()
+
+    def handle_clear(self) -> None:
+        if self.has_active_run():
+            self.prompt.set_error("Cannot clear while a run is active.")
+            return
+        self.prompt.clear_error()
+        self.app.renderer.clear()
+        self.app.invalidate()
+
+    def handle_cancel(self) -> None:
+        if not self.has_active_run():
+            self.handle_quit()
+            return
+        self.prompt.set_error("Cancel the run from another terminal with `too cancel`.")
+
+    def handle_quit(self) -> None:
+        if self.app.is_running:
+            self.app.exit()
+
+    def handle_tick(self) -> None:
+        if self.active_run and self.active_run.steps:
+            self.active_run.tick()
+            self.app.invalidate()
+
+    def handle_error(self, message: str) -> None:
+        friendly = _chat_friendly_error(message)
+        if self.active_run:
+            self.active_run.status = "error"
+            _chat_record_system_event(self.active_run, f"error: {friendly}", clear_active=True)
+            self.print_run(self.active_run)
+        else:
+            self.prompt.set_error(friendly)
+        self.active_run = None
+        self.start_next_run()
+        self.app.invalidate()
+
+    def handle_runtime_event(self, event: dict[str, Any]) -> None:
+        event_type = str(event.get("type") or event.get("event_type") or "")
+        if self.handle_chat_stream_event(event_type, event):
+            self.app.invalidate()
+            return
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            return
+        if self.handle_child_trace_event(event_type, payload):
+            self.app.invalidate()
+            return
+        if self.should_ignore_trace_event(event_type, payload):
+            return
+        if event_type in {"run_queued", "run_waiting"}:
+            self.handle_queue_event(event_type, payload)
+        elif event_type == "run_input":
+            self.handle_run_input(payload)
+        elif event_type == "run_start":
+            self.handle_run_start(payload)
+        elif event_type == "step_start" and self.active_run:
+            self.active_run.start_step(payload)
+        elif event_type == "part_end" and self.active_run:
+            self.active_run.record_part(payload)
+        elif event_type == "step_end" and self.active_run:
+            self.active_run.complete_step(payload)
+        elif event_type == "run_end":
+            self.finish_run(payload)
+        self.app.invalidate()
+
+    def should_ignore_trace_event(self, event_type: str, payload: Mapping[str, Any]) -> bool:
+        run_id = _text(payload.get("run_id"))
+        if event_type in {"run_queued", "run_waiting"}:
+            return self.active_run is not None and bool(self.active_run.run_id) and run_id is not None and run_id != self.active_run.run_id
+        if event_type == "run_input":
+            return self.active_run is not None and bool(self.active_run.run_id) and run_id != self.active_run.run_id
+        if event_type == "run_start":
+            parent_run_id = _text(payload.get("parent_run_id"))
+            call_kind = _text(payload.get("call_kind")) or "top"
+            if parent_run_id or call_kind != "top":
+                return True
+        if event_type in {"run_start", "step_start", "part_end", "step_end", "run_end"}:
+            return self.active_run is not None and bool(self.active_run.run_id) and run_id != self.active_run.run_id
+        return False
+
+    def handle_queue_event(self, event_type: str, payload: Mapping[str, Any]) -> None:
+        if self.active_run is None:
+            self.active_run = _ChatRun(
+                run_id=_text(payload.get("run_id")) or "",
+                message="",
+                status="queued",
+                accept_child_trace=True,
+            )
+        self.active_run.update_queue(event_type, payload)
+
+    def handle_child_trace_event(self, event_type: str, payload: Mapping[str, Any]) -> bool:
+        if self.active_run is None or not self.active_run.accept_child_trace:
+            return False
+        run_id = _text(payload.get("run_id"))
+        if event_type == "run_start":
+            parent_run_id = _text(payload.get("parent_run_id"))
+            root_run_id = _text(payload.get("root_run_id"))
+            if parent_run_id == self.active_run.run_id or root_run_id == self.active_run.run_id or parent_run_id in self.active_run.child_runs:
+                self.active_run.start_child_run(payload)
+                return True
+            return False
+        child = self.active_run.child_run(run_id)
+        if child is None:
+            return False
+        if event_type == "step_start":
+            child.start_step(dict(payload))
+            return True
+        if event_type == "part_end":
+            child.record_part(dict(payload))
+            return True
+        if event_type == "step_end":
+            child.complete_step(dict(payload))
+            return True
+        if event_type == "run_end":
+            child.status = _display_run_status(payload.get("status")) or "completed"
+            error = _text(payload.get("error"))
+            if child.status in {"failed", "error", "canceled", "cancelled"}:
+                message = _chat_stopped_run_message(child.status, error)
+                if error:
+                    message = f"error: {message}"
+                _chat_record_system_event(child, message, clear_active=True)
+            return True
+        return False
+
+    def handle_chat_stream_event(self, event_type: str, event: Mapping[str, Any]) -> bool:
+        if event_type == "start":
+            self.handle_chat_stream_start(event)
+            return True
+        if event_type == "message-metadata":
+            self.handle_chat_stream_metadata(event)
+            return True
+        if event_type in {"start-step", "text-start"}:
+            self.start_chat_stream_step()
+            return True
+        if event_type == "text-delta":
+            self.append_chat_stream_text(event)
+            return True
+        if event_type == "finish-step":
+            self.complete_chat_stream_step()
+            return True
+        if event_type == "tool-input-available":
+            self.record_chat_stream_tool_request(event)
+            return True
+        if event_type == "tool-output-available":
+            self.record_chat_stream_tool_result(event)
+            return True
+        if event_type == "error":
+            self.handle_error(_text(event.get("errorText")) or _text(event.get("error")) or "runtime request failed")
+            return True
+        if event_type == "finish":
+            if self.active_run is None:
+                return True
+            self.complete_chat_stream_step()
+            self.finish_run(
+                {
+                    "run_id": self.active_run.run_id if self.active_run is not None else "",
+                    "status": "finished",
+                }
+            )
+            return True
+        return event_type == "text-end"
+
+    def handle_chat_stream_start(self, event: Mapping[str, Any]) -> None:
+        metadata = _mapping(event.get("messageMetadata"))
+        run_id = _text(metadata.get("run_id")) or _text(event.get("messageId")) or ""
+        thread_id = _text(metadata.get("thread_id"))
+        if thread_id:
+            self.thread_id = thread_id
+        if self.active_run is None:
+            self.active_run = _ChatRun(run_id=run_id, message="", status="running", accept_child_trace=True)
+            return
+        if run_id:
+            self.active_run.run_id = run_id
+        self.active_run.mark_running()
+
+    def handle_chat_stream_metadata(self, event: Mapping[str, Any]) -> None:
+        metadata = _mapping(event.get("messageMetadata"))
+        thread_id = _text(metadata.get("thread_id"))
+        if thread_id:
+            self.thread_id = thread_id
+        run_id = _text(metadata.get("run_id"))
+        if run_id and self.active_run is not None:
+            self.active_run.run_id = run_id
+
+    def start_chat_stream_step(self) -> None:
+        if self.active_run is None:
+            return
+        if self.stream_step_index is not None:
+            return
+        index = self.next_chat_stream_step_index()
+        self.stream_step_index = index
+        self.stream_text_parts = []
+        self.active_run.start_step({"step_index": index, "kind": "model_call"})
+
+    def append_chat_stream_text(self, event: Mapping[str, Any]) -> None:
+        if self.active_run is None:
+            return
+        self.start_chat_stream_step()
+        delta = _text(event.get("delta"))
+        if delta:
+            self.stream_text_parts.append(delta)
+
+    def complete_chat_stream_step(self) -> None:
+        if self.active_run is None or self.stream_step_index is None:
+            return
+        index = self.stream_step_index
+        text = "".join(self.stream_text_parts)
+        output: list[dict[str, object]] = []
+        if text:
+            output.append({"type": "text", "text": text})
+        self.active_run.complete_step(
+            {
+                "run_id": self.active_run.run_id,
+                "step_index": index,
+                "kind": "model_call",
+                "output": output,
+            }
+        )
+        self.stream_step_index = None
+        self.stream_text_parts = []
+
+    def record_chat_stream_tool_request(self, event: Mapping[str, Any]) -> None:
+        if self.active_run is None:
+            return
+        self.complete_chat_stream_step()
+        index = self.next_chat_stream_step_index()
+        tool_name = _text(event.get("toolName")) or "tool"
+        tool_input = event.get("input")
+        part = {
+            "type": "tool_call",
+            "tool_name": tool_name,
+            "input": dict(tool_input) if isinstance(tool_input, Mapping) else {},
+        }
+        self.active_run.record_part({"step_index": index, "part_index": 0, "part": part})
+        self.active_run.complete_step(
+            {
+                "run_id": self.active_run.run_id,
+                "step_index": index,
+                "kind": "model_call",
+                "output": [part],
+            }
+        )
+
+    def record_chat_stream_tool_result(self, event: Mapping[str, Any]) -> None:
+        if self.active_run is None:
+            return
+        self.complete_chat_stream_step()
+        index = self.next_chat_stream_step_index()
+        tool_name = _text(event.get("toolName")) or "tool"
+        self.active_run.complete_step(
+            {
+                "run_id": self.active_run.run_id,
+                "step_index": index,
+                "kind": "tool_call",
+                "input": [{"step_index": index - 1, "part_index": 0}],
+                "output": [
+                    {
+                        "type": "tool_result",
+                        "tool_name": tool_name,
+                        "output": event.get("output"),
+                    }
+                ],
+            }
+        )
+
+    def next_chat_stream_step_index(self) -> int:
+        if self.active_run is None:
+            return 1
+        return max(self.active_run.step_indexes(), default=0) + 1
+
+    def handle_run_input(self, payload: dict[str, Any]) -> None:
+        if payload.get("action") != "start":
+            return
+        run_id = str(payload.get("run_id") or "")
+        message = _event_message_text(payload.get("message"))
+        if not message:
+            message = self.active_run.message if self.active_run is not None else ""
+        if self.active_run and (not self.active_run.run_id or self.active_run.run_id == run_id):
+            self.active_run.run_id = run_id
+            self.active_run.message = message
+            self.active_run.mark_running()
+            return
+        self.active_run = _ChatRun(run_id=run_id, message=message, status="running")
+
+    def handle_run_start(self, payload: dict[str, Any]) -> None:
+        run_id = str(payload.get("run_id") or "")
+        if self.active_run and (not self.active_run.run_id or self.active_run.run_id == run_id):
+            self.active_run.run_id = run_id
+            self.active_run.mark_running()
+            return
+        message = _event_message_text(payload.get("input"))
+        self.active_run = _ChatRun(run_id=run_id, message=message, status="running")
+
+    def finish_run(self, payload: dict[str, Any]) -> None:
+        completed_run = self.active_run
+        if completed_run is not None:
+            completed_run.status = _display_run_status(payload.get("status")) or "completed"
+            error = _text(payload.get("error"))
+            if completed_run.status in {"failed", "error", "canceled", "cancelled"}:
+                message = _chat_stopped_run_message(completed_run.status, error)
+                if error:
+                    message = f"error: {message}"
+                _chat_record_system_event(completed_run, message, clear_active=True)
+        self.active_run = None
+        self.prompt.clear_error()
+        if completed_run is not None:
+            self.print_run(completed_run)
+        self.start_next_run()
+        self.app.invalidate()
+
+    def start_next_run(self) -> None:
+        if self.pending:
+            self.start_run(self.pending.pop(0))
+
+    def handle_local_command(self, message: str) -> bool:
+        parsed = _chat_local_command(message)
+        if parsed is None:
+            return False
+        command, argument = parsed
+        if command in {"help", "?"}:
+            _chat_write_lines(_chat_local_command_lines(message, _chat_help_lines()))
+            return True
+        if command in {"thunk", "flow"}:
+            return self.handle_executable_command(command, argument, message)
+        if command not in {"model", "models"}:
+            self.prompt.set_error(f"Unknown command: /{command}")
+            return True
+        if argument:
+            if self.has_active_run():
+                self.prompt.set_error("Cannot change model while a run is active.")
+                return True
+            selectors = _chat_model_command_selectors(argument)
+            if not selectors:
+                self.prompt.set_error("/model requires a selector.")
+                return True
+            self.selector_payload["models"] = list(selectors)
+            self.prompt.status_label = self.status_label()
+            _chat_write_lines(_chat_local_command_lines(message, [f"model: {', '.join(selectors)}"]))
+            return True
+        try:
+            payload = _runtime_json(self.ctx, "/api/v1/chat/models")
+        except click.ClickException as exc:
+            self.prompt.set_error(_chat_friendly_error(exc.message))
+            return True
+        _chat_write_lines(_chat_local_command_lines(message, ["available models", *_chat_model_list_lines(payload)]))
+        return True
+
+    def handle_executable_command(self, command: str, argument: str, message: str) -> bool:
+        if argument:
+            if self.has_active_run():
+                self.prompt.set_error(f"Cannot change {command} while a run is active.")
+                return True
+            _chat_set_executable_selector(self.selector_payload, kind=command, name=argument)
+            self.prompt.status_label = self.status_label()
+            _chat_write_lines(_chat_local_command_lines(message, [f"{command}: {argument}"]))
+            return True
+        try:
+            payload = _runtime_json(self.ctx, f"/api/v1/chat/{command}s")
+        except click.ClickException as exc:
+            self.prompt.set_error(_chat_friendly_error(exc.message))
+            return True
+        selected = _text(self.selector_payload.get(command))
+        _chat_write_lines(
+            _chat_local_command_lines(
+                message,
+                [f"available {command}s", *_chat_executable_list_lines(payload, selected=selected)],
+            )
+        )
+        return True
+
+    def start_run(self, message: str) -> None:
+        self.active_run = _ChatRun(run_id="", message=message, status="submitting", accept_child_trace=True)
+        try:
+            thread_id = self.ensure_thread_id()
+        except click.ClickException as exc:
+            self.handle_error(exc.message)
+            return
+        request_id = f"term_{uuid4().hex}"
+        payload: dict[str, Any] = {
+            "thread": thread_id,
+            "client": "tui",
+            "request_id": request_id,
+            "message": _message_payload(message),
+            **self.selector_payload,
+        }
+
+        def consume() -> None:
+            self.local_streaming.set()
+            try:
+                _runtime_consume_stream(
+                    self.ctx,
+                    "/api/v1/chat/stream",
+                    payload=payload,
+                    event_handler=lambda event: self.emit_from_thread(_ChatUIEvent("runtime", event)),
+                )
+            except click.ClickException as exc:
+                self.emit_from_thread(_ChatUIEvent("error", exc.message))
+            except Exception as exc:
+                self.emit_from_thread(_ChatUIEvent("error", f"{type(exc).__name__}: {exc}"))
+            finally:
+                self.local_streaming.clear()
+
+        threading.Thread(target=consume, daemon=True).start()
+
+    def ensure_thread_id(self) -> str:
+        if self.thread_id is None:
+            result = _runtime_post(self.ctx, "/api/v1/threads", payload={"client": "tui"})
+            created = result.get("thread_id")
+            if not isinstance(created, str):
+                raise click.ClickException("runtime did not return a thread id")
+            self.thread_id = created
+        return self.thread_id
+
+    def has_active_run(self) -> bool:
+        return self.active_run is not None or self.local_streaming.is_set()
+
+    def print_header(self) -> None:
+        _chat_write_lines(_chat_header_lines(self.status_label()), hide_cursor=False)
+
+    def print_run(self, run: _ChatRun) -> None:
+        lines = _chat_run_lines(run, include_steps=True)
+        _chat_write_lines(lines)
+
+
+def _chat_interactive_prompt_toolkit(
+    ctx: typer.Context,
+    *,
+    thread_id: str | None,
+    selector_payload: dict[str, object] | None = None,
+) -> None:
+    asyncio.run(_ChatBottomApp(ctx, thread_id=thread_id, selector_payload=dict(selector_payload or {})).run())
+
+
+def _chat_step_index(payload: Mapping[str, Any]) -> int:
+    value = payload.get("step_index")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            pass
+    return 0
+
+
+def _chat_part_index(payload: Mapping[str, Any]) -> int:
+    value = payload.get("part_index")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            pass
+    return 0
+
+
+def _chat_step_label(payload: Mapping[str, Any], run: _ChatRun | None = None) -> str:
+    kind = str(payload.get("kind") or "")
+    step_payload = _mapping(payload.get("payload"))
+    if kind == "model_call":
+        return "thinking..."
+    if kind == "tool_call":
+        return f"running {_chat_tool_name(payload, run=run)}"
+    if kind == "child_call":
+        target = executable_label(
+            _text(step_payload.get("target_kind")) or "run",
+            _text(step_payload.get("target")),
+            metadata=_mapping(step_payload.get("metadata")),
+        ).replace(":", " ", 1)
+        return f"running {target}"
+    if kind == "flow_op":
+        op = _text(step_payload.get("op")) or "flow"
+        return f"running {op}"
+    if kind in {"runtime", "system"}:
+        return _text(step_payload.get("message")) or _text(step_payload.get("op")) or kind
+    return "running"
+
+
+def _chat_active_step_line(step: _ChatStep) -> str:
+    line = f"{_chat_marker_for(step.kind)} {step.label}"
+    if step.kind in {"tool_call", "runtime", "system"}:
+        return _chat_dim(line)
+    return line
+
+
+def _chat_completed_step_line(payload: Mapping[str, Any], *, run: _ChatRun | None = None) -> str:
+    kind = str(payload.get("kind") or "")
+    step_payload = _mapping(payload.get("payload"))
+    marker = _chat_marker_for(kind)
+    if kind == "model_call":
+        text = _event_parts_text(payload.get("output"))
+        if text:
+            return f"{marker} assistant message"
+        requests = _chat_model_tool_request_summary(payload)
+        if requests:
+            return f"{marker} requested {requests}"
+        model = _text(step_payload.get("model_ref")) or _text(step_payload.get("model"))
+        return f"{marker} model call completed{f' ({model})' if model else ''}"
+    if kind == "tool_call":
+        tool = _chat_tool_call(payload, run=run)
+        detail = _chat_tool_call_display(tool)
+        error = _text(payload.get("error"))
+        if error:
+            return _chat_dim(f"{marker} ran {detail} failed: {_chat_summarize(error, width=120)}")
+        return _chat_dim(f"{marker} ran {detail}")
+    if kind == "child_call":
+        target = executable_label(
+            _text(step_payload.get("target_kind")) or "run",
+            _text(step_payload.get("target")),
+            metadata=_mapping(step_payload.get("metadata")),
+        ).replace(":", " ", 1)
+        return _chat_dim(f"{marker} ran {target}")
+    if kind == "flow_op":
+        op = _text(step_payload.get("op")) or "flow"
+        return _chat_dim(f"{marker} ran {op}")
+    if kind in {"runtime", "system", "error"}:
+        return _chat_system_line(payload)
+    return _chat_dim(f"{marker} ran {kind or 'step'}")
+
+
+def _chat_record_system_event(run: _ChatRun, message: str, *, clear_active: bool) -> None:
+    if clear_active:
+        run.steps.clear()
+    index = max(run.step_indexes(), default=0) + 1
+    kind = "error" if message.startswith("error:") else "system"
+    if kind == "error":
+        message = message.removeprefix("error:").strip()
+    run.completed_steps[index] = {
+        "kind": kind,
+        "step_index": index,
+        "payload": {"message": message},
+    }
+
+
+def _chat_stopped_run_message(status: str, error: str | None) -> str:
+    if error:
+        return _chat_friendly_error(error)
+    if status in {"canceled", "cancelled"}:
+        return "canceled"
+    if status in {"failed", "error"}:
+        return "failed"
+    return status
+
+
+def _chat_friendly_error(message: str) -> str:
+    text = message.strip()
+    if text.startswith("runtime request failed:"):
+        text = text.removeprefix("runtime request failed:").strip()
+    extracted = _chat_extract_error_message(text)
+    if extracted:
+        return extracted
+    return text
+
+
+def _chat_extract_error_message(text: str) -> str | None:
+    candidates = [text]
+    if " - " in text:
+        candidates.append(text.split(" - ", 1)[1].strip())
+    for candidate in candidates:
+        parsed = _chat_parse_error_payload(candidate)
+        if parsed is None:
+            continue
+        error = parsed.get("error")
+        if isinstance(error, Mapping):
+            message = _text(error.get("message"))
+            if message is not None:
+                return message
+        message = _text(parsed.get("message"))
+        if message is not None:
+            return message
+    return None
+
+
+def _chat_parse_error_payload(text: str) -> Mapping[str, Any] | None:
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        try:
+            parsed = ast.literal_eval(text)
+        except (SyntaxError, ValueError):
+            return None
+    return cast(Mapping[str, Any], parsed) if isinstance(parsed, Mapping) else None
+
+
+def _chat_marker_for(kind: str | None) -> str:
+    return {
+        "model_call": "•",
+        "tool_call": "›",
+        "child_call": "›",
+        "flow_op": "─",
+        "runtime": "─",
+        "system": "◇",
+        "error": "!",
+    }.get(kind or "", "·")
+
+
+def _chat_tool_name(payload: Mapping[str, Any], *, run: _ChatRun | None = None) -> str:
+    return _chat_tool_call(payload, run=run).name
+
+
+def _chat_tool_call(payload: Mapping[str, Any], *, run: _ChatRun | None = None) -> _ChatToolCall:
+    output_tool: _ChatToolCall | None = None
+    for part in _list(payload.get("output")):
+        if not isinstance(part, Mapping):
+            continue
+        name = _text(part.get("tool_name")) or _text(part.get("tool_family"))
+        if name is not None:
+            tool_input = part.get("input")
+            output_tool = _ChatToolCall(name=name, input=dict(tool_input) if isinstance(tool_input, Mapping) else {})
+            if output_tool.input:
+                return output_tool
+    for part in _list(payload.get("input")):
+        if not isinstance(part, Mapping):
+            continue
+        name = _text(part.get("tool_name")) or _text(part.get("tool_family"))
+        if name is not None:
+            tool_input = part.get("input")
+            return _ChatToolCall(name=name, input=dict(tool_input) if isinstance(tool_input, Mapping) else {})
+        if run is None:
+            continue
+        ref_step = _int_or_none(part.get("step_index"))
+        ref_part = _int_or_none(part.get("part_index"))
+        if ref_step is not None and ref_part is not None:
+            tool = run.tool_calls_by_part.get((ref_step, ref_part))
+            if tool is not None:
+                return tool
+    if output_tool is not None:
+        return output_tool
+    step_payload = _mapping(payload.get("payload"))
+    name = _text(step_payload.get("tool_name")) or _text(step_payload.get("tool")) or _text(step_payload.get("name"))
+    tool_input = step_payload.get("input")
+    return _ChatToolCall(name=name or "tool", input=dict(tool_input) if isinstance(tool_input, Mapping) else {})
+
+
+def _chat_tool_call_display(tool: _ChatToolCall) -> str:
+    input_summary = _chat_tool_input_summary(tool.input)
+    if input_summary:
+        return f"{tool.name}: {input_summary}"
+    return tool.name
+
+
+def _chat_model_tool_request_summary(payload: Mapping[str, Any]) -> str:
+    tools: list[str] = []
+    for part in _list(payload.get("output")):
+        if not isinstance(part, Mapping) or part.get("type") != "tool_call":
+            continue
+        name = _text(part.get("tool_name")) or _text(part.get("tool_family")) or "tool"
+        tool_input = part.get("input")
+        tool = _ChatToolCall(name=name, input=dict(tool_input) if isinstance(tool_input, Mapping) else {})
+        tools.append(_chat_tool_call_display(tool))
+    return "; ".join(tools)
+
+
+def _chat_tool_input_summary(tool_input: Mapping[str, Any]) -> str:
+    if not tool_input:
+        return ""
+    for key in ("command", "cmd", "query", "path", "url", "prompt", "text"):
+        value = tool_input.get(key)
+        if value is not None:
+            return _chat_plain_value(value)
+    if len(tool_input) == 1:
+        value = next(iter(tool_input.values()))
+        return _chat_plain_value(value)
+    pieces = [f"{key}={_chat_plain_value(value)}" for key, value in tool_input.items()]
+    return ", ".join(pieces)
+
+
+def _chat_plain_value(value: object) -> str:
+    if isinstance(value, str):
+        return _chat_summarize(value, width=160)
+    if isinstance(value, (int, float, bool)) or value is None:
+        return str(value)
+    return _chat_summarize(json.dumps(value, ensure_ascii=False, separators=(",", ":")), width=160)
+
+
+def _chat_system_line(payload: Mapping[str, Any]) -> str:
+    kind = str(payload.get("kind") or "system")
+    step_payload = _mapping(payload.get("payload"))
+    message = (
+        _text(payload.get("error"))
+        or _text(step_payload.get("message"))
+        or _text(step_payload.get("op"))
+        or _text(step_payload.get("status"))
+        or "runtime event"
+    )
+    marker = _chat_marker_for(kind)
+    line = f"{marker} {message}"
+    if kind in {"error", "system"}:
+        return line
+    return _chat_dim(line)
+
+
+def _chat_dim(text: str) -> str:
+    return f"{_CHAT_DIM}{text}{_CHAT_NORMAL_INTENSITY}"
+
+
+def _chat_panel_user_block(run: _ChatRun) -> list[str]:
+    lines = [""]
+    lines.extend(_chat_user_message_line(index, line) for index, line in enumerate(run.message.splitlines() or [""]))
+    lines.append(_chat_run_id_line(run))
+    return lines
+
+
+def _chat_scrollback_user_block(run: _ChatRun) -> list[str]:
+    lines = [_chat_input_block_line("")]
+    lines.extend(
+        _chat_input_block_line(_chat_user_message_line(index, line))
+        for index, line in enumerate(run.message.splitlines() or [""])
+    )
+    if run.run_id:
+        lines.append(_chat_input_block_line(_chat_run_id_line(run)))
+    return lines
+
+
+def _chat_user_message_line(index: int, line: str) -> str:
+    if index == 0:
+        return f"{_CHAT_DIM}>{_CHAT_NORMAL_INTENSITY} {line}"
+    return f"  {line}"
+
+
+def _chat_run_id_line(run: _ChatRun) -> str:
+    return f"{_CHAT_DIM}  {run.run_id}{_CHAT_NORMAL_INTENSITY}" if run.run_id else ""
+
+
+def _chat_input_block_line(content: str) -> str:
+    return f"{_chat_ansi_style(_CHAT_INPUT_FG, _CHAT_INPUT_BG)}{_chat_pad_visible(content, _chat_terminal_width())}{_CHAT_RESET}"
+
+
+def _chat_pad_visible(content: str, width: int) -> str:
+    return content + " " * max(0, width - _chat_display_len(content))
+
+
+def _chat_terminal_width(default: int = 100) -> int:
+    return shutil.get_terminal_size((default, 24)).columns
+
+
+def _chat_ui_palette() -> dict[str, str]:
+    return {
+        "": "",
+        "last-run": "",
+        "queue": _chat_prompt_style(_CHAT_QUEUE_FG, _CHAT_QUEUE_BG),
+        "input": _chat_prompt_style(_CHAT_INPUT_FG, _CHAT_INPUT_BG),
+        "cursor": _chat_prompt_style(_CHAT_CURSOR_FG, _CHAT_CURSOR_BG),
+        "input.cursor": _chat_prompt_style(_CHAT_CURSOR_FG, _CHAT_CURSOR_BG),
+        "status": _chat_prompt_style(_CHAT_STATUS_FG, _CHAT_STATUS_BG),
+        "status.model": "fg:#ffd866",
+        "status.thunk": "fg:#8fd7ff",
+        "status.flow": "fg:#d7b3ff",
+        "status.text": "fg:ansigray",
+        "status.error": "fg:ansired",
+    }
+
+
+def _chat_prompt_style(fg: str, bg: str) -> str:
+    return f"fg:{fg} bg:{bg}"
+
+
+def _chat_ansi_style(fg: str, bg: str) -> str:
+    if fg.startswith("#") or bg.startswith("#"):
+        return f"\x1b[{_chat_sgr_color(fg, foreground=True)};{_chat_sgr_color(bg, foreground=False)}m"
+    foreground = {
+        "ansiblack": "30",
+        "ansired": "31",
+        "ansigreen": "32",
+        "ansiyellow": "33",
+        "ansiblue": "34",
+        "ansimagenta": "35",
+        "ansicyan": "36",
+        "ansiwhite": "37",
+        "ansibrightblack": "90",
+        "ansibrightred": "91",
+        "ansibrightgreen": "92",
+        "ansibrightyellow": "93",
+        "ansibrightblue": "94",
+        "ansibrightmagenta": "95",
+        "ansibrightcyan": "96",
+        "ansibrightwhite": "97",
+    }
+    background = {
+        "ansiblack": "40",
+        "ansired": "41",
+        "ansigreen": "42",
+        "ansiyellow": "43",
+        "ansiblue": "44",
+        "ansimagenta": "45",
+        "ansicyan": "46",
+        "ansiwhite": "47",
+        "ansibrightblack": "100",
+        "ansibrightred": "101",
+        "ansibrightgreen": "102",
+        "ansibrightyellow": "103",
+        "ansibrightblue": "104",
+        "ansibrightmagenta": "105",
+        "ansibrightcyan": "106",
+        "ansibrightwhite": "107",
+    }
+    return f"\x1b[{foreground[fg]};{background[bg]}m"
+
+
+def _chat_sgr_color(color: str, *, foreground: bool) -> str:
+    if not color.startswith("#") or len(color) != 7:
+        raise ValueError(f"unsupported color: {color}")
+    red = int(color[1:3], 16)
+    green = int(color[3:5], 16)
+    blue = int(color[5:7], 16)
+    prefix = "38" if foreground else "48"
+    return f"{prefix};2;{red};{green};{blue}"
+
+
+def _chat_run_lines(run: _ChatRun, *, include_steps: bool) -> list[str]:
+    lines = [*_chat_scrollback_user_block(run), ""]
+    if include_steps:
+        lines.extend(_chat_run_activity_lines(run, _chat_completed_line_for))
+    lines.append(" ")
+    return lines
+
+
+def _chat_completed_line_for(run: _ChatRun, index: int) -> str:
+    if index in run.completed_steps:
+        return _chat_completed_step_line(run.completed_steps[index], run=run)
+    return _chat_active_step_line(run.steps[index])
+
+
+def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, int], str]) -> list[str]:
+    state_line = _chat_run_state_line(run)
+    queue_line = _chat_queue_activity_line(run)
+    if queue_line:
+        return [queue_line]
+    flow_lines = _chat_flow_stage_lines(run)
+    if flow_lines:
+        lines = [state_line, *flow_lines] if state_line else list(flow_lines)
+        lines.extend(_chat_terminal_event_lines(run, step_renderer))
+        return lines
+    lines: list[str] = []
+    if state_line:
+        lines.append(state_line)
+    for index in run.step_indexes():
+        if index in run.steps:
+            lines.append(step_renderer(run, index))
+            continue
+        payload = run.completed_steps[index]
+        if payload.get("kind") == "model_call":
+            text = _event_parts_text(payload.get("output"))
+            if text:
+                lines.extend(_chat_message_lines(_chat_marker_for("model_call"), text))
+                continue
+        lines.append(step_renderer(run, index))
+    return lines
+
+
+def _chat_terminal_event_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, int], str]) -> list[str]:
+    lines: list[str] = []
+    for index in run.step_indexes():
+        payload = run.completed_steps.get(index)
+        if payload is None:
+            continue
+        if payload.get("kind") not in {"error", "system", "runtime"}:
+            continue
+        lines.append(step_renderer(run, index))
+    return lines
+
+
+def _chat_run_state_line(run: _ChatRun) -> str:
+    run_id = run.run_id or "run"
+    status = _chat_run_display_status(run.status)
+    if not status:
+        return ""
+    if status in {"queued", "waiting", "submitting"}:
+        return ""
+    if status == "running":
+        return f"◇ running {run_id}"
+    if status in {"succeeded", "finished", "completed", "done"}:
+        return f"◇ stopped {run_id}: succeeded"
+    if status in {"failed", "error"}:
+        return f"◇ stopped {run_id}: failed"
+    if status in {"canceled", "cancelled"}:
+        return f"◇ stopped {run_id}: canceled"
+    return f"◇ stopped {run_id}: {status}"
+
+
+def _chat_run_display_status(status: str) -> str:
+    if status == "finished":
+        return "succeeded"
+    return status.strip().lower()
+
+
+def _chat_queue_activity_line(run: _ChatRun) -> str:
+    if run.queue_state == "waiting":
+        reason = run.waiting_for or "queue"
+        run_id = f" {run.run_id}" if run.run_id else ""
+        return f"◇ waiting{run_id} for {reason}"
+    if run.queue_state == "queued":
+        suffix = f" · position {run.queue_position}" if run.queue_position else ""
+        run_id = f" {run.run_id}" if run.run_id else ""
+        return f"◇ queued{run_id}{suffix}"
+    if run.status == "submitting":
+        return "◇ submitting"
+    return ""
+
+
+def _chat_flow_stage_lines(run: _ChatRun) -> list[str]:
+    stages, calls = _chat_flow_projection(run)
+    if not stages:
+        return []
+    lines: list[str] = []
+    for stage in stages:
+        lines.append(_chat_flow_stage_line(stage, calls))
+        lines.extend(_chat_flow_stage_detail_lines(stage, calls, child_run_for=lambda call: run.child_run(call.run_id)))
+        lines.append("")
+    return lines
+
+
+def _chat_flow_projection(run: _ChatRun) -> tuple[list[FlowStageView], dict[str, FlowCallView]]:
+    steps: list[Mapping[str, Any]] = []
+    for step in run.step_indexes():
+        payload = run.completed_steps.get(step)
+        if payload is not None:
+            steps.append(payload)
+            continue
+        active = run.steps.get(step)
+        if active is None or active.kind not in {"flow_op", "child_call"}:
+            continue
+        active_payload = dict(active.payload)
+        if "payload" not in active_payload:
+            active_payload["payload"] = dict(_mapping(active_payload.get("metadata")))
+        steps.append(active_payload)
+    return project_flow_from_step_payloads(steps)
+
+
+def _chat_flow_stage_line(stage: FlowStageView, calls: Mapping[str, FlowCallView]) -> str:
+    pieces = [stage_title_label(stage)]
+    tail = _chat_flow_stage_tail(stage, calls)
+    if tail:
+        pieces.append(tail)
+    return " · ".join(pieces)
+
+
+def _chat_flow_stage_tail(stage: FlowStageView, calls: Mapping[str, FlowCallView]) -> str:
+    stage_call_items = stage_calls(stage, calls)
+    total = len(stage_call_items)
+    failed = sum(1 for call in stage_call_items if call.status == "failed")
+    done = sum(1 for call in stage_call_items if call.status in {"succeeded", "done", "failed", "canceled"})
+    parts: list[str] = []
+    if stage.output_shape:
+        parts.append(f"{stage.input_shape or '?'} -> {stage.output_shape or '?'}")
+    elif stage.item_total is not None and total:
+        parts.append(f"{done}/{stage.item_total} calls")
+    elif total:
+        parts.append(f"{done}/{total} calls")
+    if failed:
+        parts.append(f"{failed} failed")
+    if stage.parallelism and stage.parallelism > 1:
+        parts.append(f"{stage.parallelism} lanes")
+    return " · ".join(parts)
+
+
+def _chat_flow_stage_detail_lines(
+    stage: FlowStageView,
+    calls: Mapping[str, FlowCallView],
+    *,
+    child_run_for: Callable[[FlowCallView], object | None],
+) -> list[str]:
+    stage_call_items = stage_calls(stage, calls)
+    if not stage_call_items:
+        return []
+    if stage.parallelism and stage.parallelism > 1:
+        lines: list[str] = []
+        lanes = stage_lanes(stage_call_items)
+        for lane_index in range(stage.parallelism):
+            lane_calls = lanes.get(lane_index, [])
+            if not lane_calls:
+                continue
+            done = sum(1 for call in lane_calls if call.status in {"succeeded", "done", "failed", "canceled"})
+            lines.append(
+                _chat_dim(
+                    f"{_CHAT_FLOW_DETAIL_INDENT}{_CHAT_FLOW_STATEMENT_MARKER} "
+                    f"lane {lane_index + 1}/{stage.parallelism} · {done}/{len(lane_calls)} calls"
+                )
+            )
+            for call in lane_calls:
+                lines.extend(_chat_flow_call_lines(call, child_run_for(call), indent=_CHAT_FLOW_DETAIL_INDENT))
+        return lines
+    lines = []
+    for call in stage_call_items:
+        lines.extend(_chat_flow_call_lines(call, child_run_for(call), indent=_CHAT_FLOW_DETAIL_INDENT))
+    return lines
+
+
+def _chat_flow_call_lines(call: FlowCallView, child_run: object | None, *, indent: str) -> list[str]:
+    header = _chat_dim(f"{indent}{_CHAT_FLOW_STATEMENT_MARKER} {_chat_flow_call_label(call, child_run)}")
+    lines = [header]
+    step_lines = _chat_child_run_step_lines(child_run, indent=indent)
+    lines.extend(step_lines)
+    return lines
+
+
+def _chat_flow_call_label(call: FlowCallView, child_run: object | None) -> str:
+    if isinstance(child_run, _ChatRun):
+        status = child_run.status or call.status
+        target = (
+            executable_label(child_run.executable_kind, child_run.executable_name).replace(":", " ", 1)
+            if child_run.executable_name
+            else call.label
+        )
+        return f"{call.label if call.item_index is not None else target} · {call.run_id} {status}"
+    if isinstance(child_run, Mapping):
+        child_mapping = cast(Mapping[str, Any], child_run)
+        info = _mapping(child_mapping.get("info"))
+        output = _mapping(child_mapping.get("output"))
+        status = _display_run_status(output.get("status")) or call.status
+        name = _text(info.get("executable_name"))
+        target = (
+            executable_label(
+                _text(info.get("executable_kind")) or "run",
+                name,
+                metadata=_mapping(info.get("metadata")),
+            ).replace(":", " ", 1)
+            if name
+            else call.label
+        )
+        return f"{call.label if call.item_index is not None else target} · {call.run_id} {status}"
+    return f"{call.label} · {call.run_id} {call.status}"
+
+
+def _chat_child_run_step_lines(child_run: object | None, *, indent: str) -> list[str]:
+    if isinstance(child_run, _ChatRun):
+        return _chat_child_chat_run_step_lines(child_run, indent=indent)
+    if isinstance(child_run, Mapping):
+        return _chat_child_mapping_run_step_lines(cast(Mapping[str, Any], child_run), indent=indent)
+    return []
+
+
+def _chat_child_chat_run_step_lines(run: _ChatRun, *, indent: str) -> list[str]:
+    lines: list[str] = []
+    if run.executable_kind == "flow":
+        for line in _chat_flow_stage_lines(run):
+            lines.append(f"{indent}{line}" if line else "")
+        return lines
+    for index in run.step_indexes():
+        if index in run.steps:
+            lines.append(f"{indent}{_chat_active_step_line(run.steps[index])}")
+            continue
+        payload = run.completed_steps[index]
+        lines.extend(_chat_child_completed_step_lines(payload, run=run, indent=indent))
+    return lines
+
+
+def _chat_child_mapping_run_step_lines(run: Mapping[str, Any], *, indent: str) -> list[str]:
+    info = _mapping(run.get("info"))
+    if _text(info.get("executable_kind")) == "flow":
+        stages, calls = project_flow_from_run(run)
+        lines: list[str] = []
+        for stage in stages:
+            lines.append(f"{indent}{_chat_flow_stage_line(stage, calls)}")
+            lines.append("")
+        return lines
+    lines: list[str] = []
+    for step in _run_steps(run):
+        record = _mapping(step.get("record"))
+        lines.extend(_chat_child_completed_step_lines(record, run=None, indent=indent))
+    return lines
+
+
+def _chat_child_completed_step_lines(
+    payload: Mapping[str, Any],
+    *,
+    run: _ChatRun | None,
+    indent: str,
+) -> list[str]:
+    kind = _text(payload.get("kind"))
+    if kind == "model_call":
+        text = _event_parts_text(payload.get("output"))
+        lines: list[str] = []
+        if text:
+            lines.extend(f"{indent}{line}" for line in _chat_message_lines(_chat_marker_for("model_call"), text))
+        requests = _chat_model_tool_request_summary(payload)
+        if requests:
+            lines.append(f"{indent}{_chat_marker_for('model_call')} requested {requests}")
+        if lines:
+            return lines
+    line = f"{indent}{_chat_completed_step_line(payload, run=run)}"
+    if kind != "tool_call":
+        return [line]
+    return [line, *_chat_tool_message_lines(payload, indent=indent)]
+
+
+def _chat_tool_message_lines(payload: Mapping[str, Any], *, indent: str) -> list[str]:
+    text = _chat_tool_message_text(payload)
+    if not text:
+        return []
+    prefix = f"{indent}  "
+    width = max(8, _chat_markdown_width() - _chat_display_len(prefix))
+    message = _chat_truncate_display(" ".join(_chat_visible_text(text).split()), width=width)
+    return [_chat_dim(f"{prefix}{message}")]
+
+
+def _chat_tool_message_text(payload: Mapping[str, Any]) -> str:
+    messages: list[str] = []
+    for part in _list(payload.get("output")):
+        if not isinstance(part, Mapping) or part.get("type") != "tool_result":
+            continue
+        output = part.get("output")
+        if isinstance(output, str):
+            messages.append(output.strip())
+            continue
+        if isinstance(output, Mapping):
+            stdout = _text(output.get("stdout"))
+            stderr = _text(output.get("stderr"))
+            if stdout:
+                messages.append(stdout)
+            if stderr:
+                messages.append(stderr)
+            if stdout or stderr:
+                continue
+        if output is not None:
+            messages.append(_chat_plain_value(output))
+    return "\n".join(item for item in messages if item).strip()
+
+
+def _chat_assistant_lines(run: _ChatRun) -> list[str]:
+    lines: list[str] = []
+    for index in run.step_indexes():
+        payload = run.completed_steps.get(index)
+        if payload is None or payload.get("kind") != "model_call":
+            continue
+        text = _event_parts_text(payload.get("output"))
+        if not text:
+            continue
+        lines.extend(_chat_message_lines(_chat_marker_for("model_call"), text))
+    return lines
+
+
+def _chat_message_lines(marker: str, text: str) -> list[str]:
+    source_lines = _chat_render_markdown_lines(text)
+    source_lines = source_lines or [""]
+    lines = [f"{marker} {source_lines[0]}"]
+    lines.extend(f"  {line}" for line in source_lines[1:])
+    return lines
+
+
+def _chat_handle_scripted_command(ctx: typer.Context, message: str, selector_payload: dict[str, object]) -> bool:
+    parsed = _chat_local_command(message)
+    if parsed is None:
+        return False
+    command, argument = parsed
+    if command in {"help", "?"}:
+        for line in _chat_help_lines():
+            typer.echo(line)
+        return True
+    if command in {"thunk", "flow"}:
+        return _chat_handle_scripted_executable_command(ctx, command, argument, selector_payload)
+    if command not in {"model", "models"}:
+        typer.echo(f"Unknown command: /{command}")
+        return True
+    if argument:
+        selectors = _chat_model_command_selectors(argument)
+        if not selectors:
+            typer.echo("/model requires a selector")
+            return True
+        selector_payload["models"] = list(selectors)
+        typer.echo(f"model: {', '.join(selectors)}")
+        return True
+    try:
+        payload = _runtime_json(ctx, "/api/v1/chat/models")
+    except click.ClickException as exc:
+        typer.echo(_chat_friendly_error(exc.message))
+        return True
+    typer.echo("available models")
+    for line in _chat_model_list_lines(payload):
+        typer.echo(line)
+    return True
+
+
+def _chat_handle_scripted_executable_command(
+    ctx: typer.Context,
+    command: str,
+    argument: str,
+    selector_payload: dict[str, object],
+) -> bool:
+    if argument:
+        _chat_set_executable_selector(selector_payload, kind=command, name=argument)
+        typer.echo(f"{command}: {argument}")
+        return True
+    try:
+        payload = _runtime_json(ctx, f"/api/v1/chat/{command}s")
+    except click.ClickException as exc:
+        typer.echo(_chat_friendly_error(exc.message))
+        return True
+    selected = _text(selector_payload.get(command))
+    typer.echo(f"available {command}s")
+    for line in _chat_executable_list_lines(payload, selected=selected):
+        typer.echo(line)
+    return True
+
+
+def _chat_local_command(message: str) -> tuple[str, str] | None:
+    stripped = message.strip()
+    if not stripped.startswith("/"):
+        return None
+    command, _, argument = stripped[1:].partition(" ")
+    if not command:
+        return None
+    return command, argument.strip()
+
+
+def _chat_model_command_selectors(argument: str) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(split_model_selectors((argument,))))
+
+
+def _chat_set_executable_selector(selector_payload: dict[str, object], *, kind: str, name: str) -> None:
+    selector_payload[kind] = name.strip()
+    if kind == "thunk":
+        selector_payload.pop("flow", None)
+    elif kind == "flow":
+        selector_payload.pop("thunk", None)
+
+
+def _chat_executable_status_label(selector_payload: Mapping[str, object]) -> str:
+    flow = _text(selector_payload.get("flow"))
+    if flow:
+        return f"flow:{flow}"
+    thunk = _text(selector_payload.get("thunk"))
+    if thunk:
+        return f"thunk:{thunk}"
+    return ""
+
+
+def _chat_status_segments(label: str) -> list[tuple[str, str]]:
+    pieces = [piece for piece in label.split("  ") if piece]
+    if not pieces:
+        return []
+    segments: list[tuple[str, str]] = [("class:status.model", pieces[0])]
+    for piece in pieces[1:]:
+        if piece.startswith("thunk:"):
+            segments.append(("class:status.text", "  "))
+            segments.append(("class:status.thunk", piece))
+        elif piece.startswith("flow:"):
+            segments.append(("class:status.text", "  "))
+            segments.append(("class:status.flow", piece))
+        else:
+            segments.append(("class:status.text", f"  {piece}"))
+    return segments
+
+
+def _chat_help_lines() -> list[str]:
+    return [
+        "chat help",
+        "/help, /?           show this help",
+        "/model             list available models",
+        "/model <selector>  use a model for new runs",
+        "/thunk [name]      list or use a thunk",
+        "/flow [name]       list or use a flow",
+        "/exit, /quit       exit chat",
+    ]
+
+
+def _chat_local_command_lines(message: str, body: Sequence[str]) -> list[str]:
+    return [
+        *_chat_scrollback_user_message_block(message),
+        "",
+        *_chat_system_block_lines(body),
+        "",
+    ]
+
+
+def _chat_scrollback_user_message_block(message: str) -> list[str]:
+    lines = [_chat_input_block_line("")]
+    lines.extend(
+        _chat_input_block_line(_chat_user_message_line(index, line))
+        for index, line in enumerate(message.splitlines() or [""])
+    )
+    lines.append(_chat_input_block_line(""))
+    return lines
+
+
+def _chat_system_block_lines(body: Sequence[str]) -> list[str]:
+    if not body:
+        return []
+    first, *rest = body
+    return [f"{_chat_marker_for('system')} {first}", *[f"  {line}" for line in rest]]
+
+
+def _chat_model_list_lines(payload: Mapping[str, Any]) -> list[str]:
+    items = payload.get("items")
+    if not isinstance(items, list) or not items:
+        return ["No available chat models."]
+    default = _text(payload.get("default"))
+    lines: list[str] = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        selector = _text(item.get("selector"))
+        if selector is None:
+            continue
+        suffix = " default" if selector == default else ""
+        detail = _chat_model_item_detail(item)
+        lines.append(f"{selector}{suffix}{f'  {detail}' if detail else ''}")
+    return lines or ["No available chat models."]
+
+
+def _chat_executable_list_lines(payload: Mapping[str, Any], *, selected: str | None) -> list[str]:
+    items = payload.get("items")
+    if not isinstance(items, list) or not items:
+        return ["No available items."]
+    default = _text(payload.get("default"))
+    lines: list[str] = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        name = _text(item.get("name"))
+        if name is None:
+            continue
+        labels: list[str] = []
+        if name == selected:
+            labels.append("current")
+        if name == default:
+            labels.append("default")
+        suffix = f"  {' '.join(labels)}" if labels else ""
+        lines.append(f"{name}{suffix}")
+    return lines or ["No available items."]
+
+
+def _chat_model_item_detail(item: Mapping[str, Any]) -> str:
+    pieces = [
+        _text(item.get("provider")),
+        _text(item.get("adapter")),
+    ]
+    return " ".join(piece for piece in pieces if piece)
+
+
+def _chat_render_markdown_lines(text: str) -> list[str]:
+    stream = io.StringIO()
+    section_titles = _chat_markdown_section_titles(text)
+    try:
+        console = Console(
+            file=stream,
+            force_terminal=True,
+            color_system="standard",
+            width=_chat_markdown_width(),
+            soft_wrap=False,
+        )
+        console.print(Markdown(text), width=_chat_markdown_width(), end="")
+    except Exception:
+        return text.splitlines()
+    rendered = stream.getvalue().rstrip("\n")
+    return _chat_compact_markdown_lines(rendered.splitlines(), section_titles=section_titles)
+
+
+def _chat_compact_markdown_lines(lines: Sequence[str], *, section_titles: set[str]) -> list[str]:
+    compact: list[str] = []
+    normalized_lines = [line.rstrip() for line in lines]
+    for index, normalized in enumerate(normalized_lines):
+        visible = _chat_visible_text(normalized)
+        if not visible.strip():
+            if _chat_should_keep_markdown_blank(normalized_lines, index, section_titles=section_titles):
+                if compact and compact[-1] != "":
+                    compact.append("")
+            continue
+        compact.append(normalized)
+    return compact
+
+
+def _chat_should_keep_markdown_blank(lines: Sequence[str], index: int, *, section_titles: set[str]) -> bool:
+    previous = _chat_previous_visible_line(lines, index)
+    next_line = _chat_next_visible_line(lines, index)
+    return _chat_is_section_title(previous, section_titles) or _chat_is_section_title(next_line, section_titles)
+
+
+def _chat_previous_visible_line(lines: Sequence[str], index: int) -> str | None:
+    for candidate in reversed(lines[:index]):
+        visible = _chat_visible_text(candidate).strip()
+        if visible:
+            return visible
+    return None
+
+
+def _chat_next_visible_line(lines: Sequence[str], index: int) -> str | None:
+    for candidate in lines[index + 1 :]:
+        visible = _chat_visible_text(candidate).strip()
+        if visible:
+            return visible
+    return None
+
+
+def _chat_is_section_title(line: str | None, section_titles: set[str]) -> bool:
+    return line is not None and line in section_titles
+
+
+def _chat_markdown_section_titles(text: str) -> set[str]:
+    titles: set[str] = set()
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("#"):
+            continue
+        prefix, _, title = stripped.partition(" ")
+        if 1 <= len(prefix) <= 6 and set(prefix) == {"#"} and title.strip():
+            titles.add(title.strip())
+    return titles
+
+
+def _chat_markdown_width() -> int:
+    return min(100, max(40, _chat_terminal_width() - 4))
+
+
+def _chat_visible_text(text: str) -> str:
+    visible: list[str] = []
+    in_escape = False
+    for char in text:
+        if char == "\x1b":
+            in_escape = True
+        elif in_escape and char == "m":
+            in_escape = False
+        elif not in_escape:
+            visible.append(char)
+    return "".join(visible)
+
+
+def _chat_header_lines(model_label: str) -> list[str]:
+    content = [
+        (
+            f"{_CHAT_DIM}{_CHAT_BOLD}T··⅃{_CHAT_NORMAL_INTENSITY}  "
+            f"{_CHAT_BOLD}Toolang{_CHAT_NORMAL_INTENSITY} "
+            f"{_CHAT_DIM}(v{_toolang_version()}){_CHAT_NORMAL_INTENSITY}"
+        ),
+        "",
+        f"model:     {model_label}",
+        "history:   terminal stdout scrollback",
+    ]
+    width = max(_chat_display_len(line) for line in content) + 2
+    top = f"{_CHAT_DIM}╭{'─' * width}╮{_CHAT_NORMAL_INTENSITY}"
+    bottom = f"{_CHAT_DIM}╰{'─' * width}╯{_CHAT_NORMAL_INTENSITY}"
+    body = [
+        f"{_CHAT_DIM}│{_CHAT_NORMAL_INTENSITY} {line}{' ' * (width - 1 - _chat_display_len(line))}{_CHAT_DIM}│{_CHAT_NORMAL_INTENSITY}"
+        for line in content
+    ]
+    return [top, *body, bottom, " "]
+
+
+def _chat_display_len(text: str) -> int:
+    in_escape = False
+    visible: list[str] = []
+    for char in text:
+        if char == "\x1b":
+            in_escape = True
+        elif in_escape and char == "m":
+            in_escape = False
+        elif not in_escape:
+            visible.append(char)
+    return get_cwidth("".join(visible))
+
+
+def _chat_write_lines(lines: list[str], *, hide_cursor: bool = True) -> None:
+    if hide_cursor:
+        sys.stdout.write("\x1b[?25l")
+    try:
+        sys.stdout.write("\n".join(lines) + "\n")
+        sys.stdout.flush()
+    finally:
+        if hide_cursor:
+            sys.stdout.write("\x1b[?25h")
+            sys.stdout.flush()
+
+
+def _chat_summarize(message: str, *, width: int = 72) -> str:
+    text = " ".join(message.split())
+    if len(text) <= width:
+        return text
+    return f"{text[: width - 3].rstrip()}..."
+
+
+def _chat_truncate_display(text: str, *, width: int) -> str:
+    if width <= 0 or _chat_display_len(text) <= width:
+        return text
+    ellipsis = "..."
+    if width <= len(ellipsis):
+        return ellipsis[:width]
+    limit = width - len(ellipsis)
+    pieces: list[str] = []
+    used = 0
+    for char in text:
+        char_width = get_cwidth(char)
+        if used + char_width > limit:
+            break
+        pieces.append(char)
+        used += char_width
+    return f"{''.join(pieces).rstrip()}{ellipsis}"
 
 
 class _ThreadEventListener:
@@ -2163,16 +4194,13 @@ def _start_thread_event_listener(
     *,
     local_streaming: threading.Event | None = None,
     local_request_ids: set[str] | None = None,
+    redraw_prompt: bool = True,
+    event_handler: Callable[[dict[str, Any]], None] | None = None,
 ) -> _ThreadEventListener:
     stop_event = threading.Event()
-    try:
-        after = _thread_event_cursor(ctx, thread_id)
-    except click.ClickException:
-        stop_event.set()
-        return _ThreadEventListener(stop_event)
     thread = threading.Thread(
-        target=_run_thread_event_listener,
-        args=(ctx, thread_id, after, stop_event, local_streaming, local_request_ids),
+        target=_run_thread_event_listener_from_cursor,
+        args=(ctx, thread_id, stop_event, local_streaming, local_request_ids, redraw_prompt, event_handler),
         daemon=True,
     )
     thread.start()
@@ -2187,6 +4215,33 @@ def _thread_event_cursor(ctx: typer.Context, thread_id: str) -> int | None:
     return None
 
 
+def _run_thread_event_listener_from_cursor(
+    ctx: typer.Context,
+    thread_id: str,
+    stop_event: threading.Event,
+    local_streaming: threading.Event | None,
+    local_request_ids: set[str] | None,
+    redraw_prompt: bool,
+    event_handler: Callable[[dict[str, Any]], None] | None,
+) -> None:
+    try:
+        after = _thread_event_cursor(ctx, thread_id)
+    except click.ClickException:
+        return
+    if stop_event.is_set():
+        return
+    _run_thread_event_listener(
+        ctx,
+        thread_id,
+        after,
+        stop_event,
+        local_streaming,
+        local_request_ids,
+        redraw_prompt,
+        event_handler,
+    )
+
+
 def _run_thread_event_listener(
     ctx: typer.Context,
     thread_id: str,
@@ -2194,9 +4249,11 @@ def _run_thread_event_listener(
     stop_event: threading.Event,
     local_streaming: threading.Event | None,
     local_request_ids: set[str] | None,
+    redraw_prompt: bool,
+    event_handler: Callable[[dict[str, Any]], None] | None,
 ) -> None:
     renderer = _ThreadEventRenderer(
-        redraw_prompt=True,
+        redraw_prompt=redraw_prompt,
         local_streaming=local_streaming,
         local_request_ids=local_request_ids,
     )
@@ -2209,7 +4266,10 @@ def _run_thread_event_listener(
             for event in _iter_sse_events(response, stop_event=stop_event):
                 if stop_event.is_set():
                     return
-                renderer.render(event)
+                if event_handler is not None:
+                    event_handler(event)
+                else:
+                    renderer.render(event)
     except Exception:
         if not stop_event.is_set():
             typer.echo("thread event stream closed", err=True)
@@ -2420,6 +4480,12 @@ def _target_latest_run_id(ctx: typer.Context, target: str) -> str:
     if not isinstance(latest, dict) or not isinstance(latest.get("id"), str):
         raise click.ClickException(f"thread has no runs: {target}")
     return str(latest["id"])
+
+
+def _fork_anchor_run(ctx: typer.Context, target: str) -> tuple[str, bool]:
+    if target.startswith("run_"):
+        return target, False
+    return _target_latest_run_id(ctx, target), True
 
 
 def _offline_thread_id_for_run(ctx: typer.Context, run_id: str) -> str | None:

@@ -36,6 +36,7 @@ dependencies = [
     "json5>=0.12,<1.0",
     "openai>=1.109.1",
     "pydantic>=2.11,<3",
+    "prompt-toolkit>=3.0,<4",
     "python-dotenv>=1.0,<2",
     "python-frontmatter>=1.1.0",
     "rich>=14,<15",

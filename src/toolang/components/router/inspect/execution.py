@@ -155,7 +155,12 @@ def create_router() -> APIRouter:
                 separators=(",", ":"),
             ),
         )
-        copied_runs = _shared._copy_fork_history(context, source_run=run, target_thread_id=new_thread_id)
+        copied_runs = _shared._copy_fork_history(
+            context,
+            source_run=run,
+            target_thread_id=new_thread_id,
+            include_anchor=payload.include_anchor,
+        )
         if message is not None and new_run_id is not None:
             context.runner.enqueue(
                 _shared.RunRequest(
@@ -169,6 +174,7 @@ def create_router() -> APIRouter:
             )
         event_payload = {
             "from_run_id": run.run_id,
+            "include_anchor": payload.include_anchor,
             "source_thread_id": run.thread_id,
             "thread_id": new_thread_id,
             "run_id": new_run_id,
@@ -184,6 +190,7 @@ def create_router() -> APIRouter:
             "thread_id": new_thread_id,
             "source_thread_id": run.thread_id,
             "from_run_id": run.run_id,
+            "include_anchor": payload.include_anchor,
             "copied_run_ids": [item.run_id for item in copied_runs],
             "message": message.to_data() if message is not None else None,
         }

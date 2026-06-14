@@ -82,6 +82,7 @@ class RunRestartRequest(BaseModel):
 
     request_id: str | None = None
     message: RunInputMessagePayload | None = None
+    include_anchor: bool = False
 
 
 class RunSteerRequest(BaseModel):
@@ -338,7 +339,12 @@ def create_router() -> APIRouter:
                 separators=(",", ":"),
             ),
         )
-        copied_runs = _copy_fork_history(context, source_run=run, target_thread_id=new_thread_id)
+        copied_runs = _copy_fork_history(
+            context,
+            source_run=run,
+            target_thread_id=new_thread_id,
+            include_anchor=payload.include_anchor,
+        )
         if message is not None and new_run_id is not None:
             context.runner.enqueue(
                 RunRequest(
@@ -352,6 +358,7 @@ def create_router() -> APIRouter:
             )
         event_payload = {
             "from_run_id": run.run_id,
+            "include_anchor": payload.include_anchor,
             "source_thread_id": run.thread_id,
             "thread_id": new_thread_id,
             "run_id": new_run_id,
@@ -367,6 +374,7 @@ def create_router() -> APIRouter:
             "thread_id": new_thread_id,
             "source_thread_id": run.thread_id,
             "from_run_id": run.run_id,
+            "include_anchor": payload.include_anchor,
             "copied_run_ids": [item.run_id for item in copied_runs],
             "message": message.to_data() if message is not None else None,
         }
@@ -1482,8 +1490,11 @@ def _copy_fork_history(
     *,
     source_run: RunRecord,
     target_thread_id: str,
+    include_anchor: bool = False,
 ) -> tuple[RunRecord, ...]:
     source_runs = context.store.list_thread_runs_before(run_id=source_run.run_id)
+    if include_anchor:
+        source_runs = (*source_runs, source_run)
     target_run_ids = tuple(allocate_run_id(context) for _ in source_runs)
     return context.store.copy_runs_to_thread(
         source_run_ids=tuple(run.run_id for run in source_runs),

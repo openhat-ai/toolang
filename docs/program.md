@@ -148,13 +148,13 @@ Thunk names follow these rules:
 | Rule | Meaning |
 | --- | --- |
 | explicit name | One stable callable name |
-| omitted name | Canonical name is `main` |
-| `main` | Reserved default entrypoint name |
+| omitted name | Canonical name is `default` |
+| `default` | Reserved default implementation name |
 
 Examples:
 
 ```toolang
-thunk main(input: Message):
+thunk default(input: Message):
   user:
     Help the user directly.
 ```
@@ -583,10 +583,11 @@ Recommended default thunk resolution is:
 
 | Surface | Default thunk |
 | --- | --- |
-| `script` | explicit thunk, else `main` |
-| `chat` | `chat`, else `main` |
-| `task` | `task`, else `main` |
-| `chore` | `chore`, else `main` |
+| `script` | explicit thunk, else `default` |
+| `chat` | `chat`, else `default` |
+| `task` | `task`, else `default` |
+| `chore` | `chore`, else `default` |
+| `file` | `file`, else `default` |
 
 
 ## Script Context

@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from toolang.base.types.message import Message
+from .db import utc_now
 from ..state.live import LiveState
 
 if TYPE_CHECKING:
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
     from .response import ResponseSink
 
 DEFAULT_GROUP_LIMITS: dict[str, int] = {
-    "chat": 1,
+    "chat": 100,
     "pulse": 1,
     "pulse:chore": 2,
     "pulse:task": 4,
@@ -39,6 +40,9 @@ class RunRequest:
     thread_id: str | None = None
     thread_kind: str | None = None
     model_selector: str | None = None
+    model_selectors: tuple[str, ...] = ()
+    tool_selectors: tuple[str, ...] | None = None
+    cap_selectors: tuple[str, ...] = ()
     run_loop: str = "basic"
     delay_sec: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -121,7 +125,7 @@ class QueueRunner:
         if self._closed:
             raise RuntimeError("run queue is closed")
         self._pending.append(
-            RunSubmission(
+            submission := RunSubmission(
                 request=request,
                 response=response,
                 live=live,
@@ -129,6 +133,12 @@ class QueueRunner:
             )
         )
         self._ready.set()
+        self._emit_queue_event(
+            "run_queued",
+            submission,
+            position=len(self._pending),
+            waiting_for="queue",
+        )
         return len(self._pending)
 
     async def dequeue(self) -> RunRequest | None:
@@ -225,6 +235,12 @@ class QueueRunner:
         request = submission.request
         request_key = id(submission)
         try:
+            if await self._group_is_full(request.group):
+                self._emit_queue_event(
+                    "run_waiting",
+                    submission,
+                    waiting_for="group",
+                )
             semaphore = await self._semaphore_for_group(request.group)
             async with semaphore:
                 self._waiting_requests.pop(request_key, None)
@@ -251,6 +267,12 @@ class QueueRunner:
         if request.thread_id is None:
             return await self._execute(submission)
         lock = await self._lock_for_thread(request.thread_id)
+        if lock.locked():
+            self._emit_queue_event(
+                "run_waiting",
+                submission,
+                waiting_for="thread",
+            )
         async with lock:
             return await self._execute(submission)
 
@@ -293,5 +315,56 @@ class QueueRunner:
             current = self._group_in_flight.get(group, 0)
             self._group_in_flight[group] = max(current + delta, 0)
 
+    async def _group_is_full(self, group: str) -> bool:
+        async with self._group_lock:
+            limit = self._group_limits.get(group, self._default_group_limit)
+            return self._group_in_flight.get(group, 0) >= limit
+
+    def _emit_queue_event(
+        self,
+        event_type: str,
+        submission: RunSubmission,
+        *,
+        waiting_for: str,
+        position: int | None = None,
+    ) -> None:
+        request = submission.request
+        payload = {
+            "type": event_type,
+            "run_id": request.run_id,
+            "thread_id": request.thread_id,
+            "origin": request.origin,
+            "group": request.group,
+            "request_id": _request_id(request),
+            "executable_kind": _request_executable_kind(request),
+            "executable_name": request.thunk_name,
+            "waiting_for": waiting_for,
+            "position": position,
+            "created_at": utc_now(),
+        }
+        if submission.response is not None:
+            on_queue_event = getattr(submission.response, "on_queue_event", None)
+            if callable(on_queue_event):
+                on_queue_event(event_type, payload)
+        context = self._context
+        if context is None:
+            return
+        run_id = request.run_id
+        thread_id = request.thread_id
+        if run_id:
+            context.events.publish(domain="run", domain_id=run_id, type=event_type, payload=payload)
+        if thread_id:
+            context.events.publish(domain="thread", domain_id=thread_id, type=event_type, payload=payload)
+
     def __len__(self) -> int:
         return len(self._pending) + len(self._waiting_requests)
+
+
+def _request_id(request: RunRequest) -> str | None:
+    value = request.metadata.get("request_id")
+    return str(value) if value is not None else None
+
+
+def _request_executable_kind(request: RunRequest) -> str:
+    value = request.metadata.get("executable_kind")
+    return str(value) if value is not None else "thunk"

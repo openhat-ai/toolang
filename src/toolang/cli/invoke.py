@@ -594,7 +594,7 @@ def _is_model_selection_error(error: str) -> bool:
 
 def _script_progress_sink(*, thunk_name: str | None, quiet: bool, verbosity: int) -> "_ScriptProgressSink":
     return _ScriptProgressSink(
-        thunk_name=thunk_name or "main",
+        thunk_name=thunk_name or "default",
         render=not quiet and sys.stderr.isatty(),
         verbosity=verbosity,
     )
@@ -769,7 +769,9 @@ class _ScriptProgressSink:
         stage.index = self._int_payload(ctx.get("stage_index")) if ctx.get("stage_index") is not None else stage.index
         stage.total = self._int_payload(ctx.get("stage_total")) or stage.total
         stage.kind = str(ctx.get("stage_kind") or stage.kind)
-        title = str(ctx.get("stage_title") or ctx.get("stage_doc") or ctx.get("stage_target") or ctx.get("stage_label") or stage.title).strip()
+        title = self._clean_stage_title(
+            str(ctx.get("stage_title") or ctx.get("stage_doc") or ctx.get("stage_target") or ctx.get("stage_label") or stage.title).strip()
+        )
         if title:
             stage.title = title
         stage.parallelism = self._int_payload(ctx.get("parallelism")) or stage.parallelism
@@ -863,21 +865,17 @@ class _ScriptProgressSink:
     def _status_word(self, status: str) -> str:
         return "done" if status == "finished" else status
 
-    def _stage_prefix(self, stage: _StageProgress) -> str:
-        if stage.status == "done":
-            return "✓"
-        if stage.status == "failed":
-            return "✗"
-        return "…"
+    def _clean_stage_title(self, title: str) -> str:
+        if ": " in title:
+            return title.split(": ", 1)[1]
+        return title
 
     def _stage_label(self, stage: _StageProgress) -> str:
         index = "?"
         if stage.index is not None:
             index = str(stage.index + 1)
-        if stage.total is not None:
-            index = f"{index}/{stage.total}"
         title = self._truncate(stage.title, 56 if self._verbosity == 0 else 84)
-        return f"{index} {stage.kind:<6} {title}"
+        return f"[{index}] {title}"
 
     def _stage_tail(self, stage: _StageProgress) -> str:
         lanes = f"{stage.parallelism} lanes" if stage.parallelism and stage.parallelism > 1 else ""
@@ -916,7 +914,11 @@ class _ScriptProgressSink:
         lines = [self._title or f"Running {self._thunk_name}"]
         for stage_key in self._stage_order:
             stage = self._stages[stage_key]
-            lines.append(f"{self._stage_prefix(stage)} {self._stage_label(stage):<72} {self._stage_tail(stage)}")
+            tail = self._stage_tail(stage)
+            line = self._stage_label(stage)
+            if tail:
+                line = f"{line} · {tail}"
+            lines.append(line)
             if self._verbosity <= 0:
                 continue
             if stage.parallelism and stage.parallelism > 1:
@@ -1236,7 +1238,7 @@ def _help_arguments(
 
 
 def _thunk_name(thunk: Thunk) -> str:
-    return thunk.name or "main"
+    return thunk.name or "default"
 
 
 def _executable_name(executable: Thunk | Flow) -> str:

@@ -1592,8 +1592,6 @@ def _parse_thunk_header(line: str, *, line_number: int) -> tuple[str | None, str
         rest, raw_output = rest.rsplit("->", 1)
         output = _ast_type_name(raw_output.strip()) or None
     name, params = _parse_thunk_rest(rest)
-    if name == "main":
-        name = "main"
     if params is not None:
         _validate_signature_params(params, line_number=line_number)
     return name, params, output
@@ -1616,8 +1614,8 @@ def _parse_thunk_rest(rest: str) -> tuple[str | None, str | None]:
 def _thunk_name_from_header(line: str) -> str:
     parsed = _parse_thunk_header(line, line_number=1)
     if parsed is None:
-        return "main"
-    return parsed[0] or "main"
+        return "default"
+    return parsed[0] or "default"
 
 
 def _validate_signature_params(raw: str, *, line_number: int) -> None:

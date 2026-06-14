@@ -280,7 +280,18 @@ class Executor:
             parent_step_index=step_index,
             meta=child_meta,
         )
-        self._emit_child_step_start(parent, step_index=step_index, started_at=started_at)
+        self._emit_child_step_start(
+            parent,
+            step_index=step_index,
+            started_at=started_at,
+            metadata={
+                **child_meta,
+                "target_kind": "thunk",
+                "target": thunk.name,
+                "call": call,
+                "child_run_ids": (child.id,),
+            },
+        )
         self._emit_run_start(child, executable_name=thunk.name, executable_kind="thunk")
         try:
             value = await self.execute_thunk(child, thunk)
@@ -339,7 +350,18 @@ class Executor:
             parent_step_index=step_index,
             meta=child_meta,
         )
-        self._emit_child_step_start(parent, step_index=step_index, started_at=started_at)
+        self._emit_child_step_start(
+            parent,
+            step_index=step_index,
+            started_at=started_at,
+            metadata={
+                **child_meta,
+                "target_kind": "flow",
+                "target": flow.name,
+                "call": call,
+                "child_run_ids": (child.id,),
+            },
+        )
         self._emit_run_start(child, executable_name=flow.name, executable_kind="flow")
         try:
             value = await self.execute_flow(child, flow)
@@ -614,6 +636,9 @@ class Executor:
             input_text=_value_to_text(input_value),
             message=None,
             model_selector=parent.binding.model_selector,
+            model_selectors=parent.binding.model_selectors,
+            tool_selectors=parent.binding.tool_selectors,
+            cap_selectors=parent.binding.cap_selectors,
             run_loop=parent.binding.run_loop,
             metadata={"invoke_params": dict(params), "child": dict(meta)},
             live=parent.binding.live,
@@ -659,7 +684,14 @@ class Executor:
             )
         )
 
-    def _emit_child_step_start(self, parent: RunCtx, *, step_index: int, started_at: str) -> None:
+    def _emit_child_step_start(
+        self,
+        parent: RunCtx,
+        *,
+        step_index: int,
+        started_at: str,
+        metadata: Mapping[str, object],
+    ) -> None:
         self._on_event(
             StepStart(
                 run_id=parent.id,
@@ -668,6 +700,7 @@ class Executor:
                 kind="child_call",
                 input=(RunInputRef(),),
                 started_at=started_at,
+                metadata=dict(metadata),
             )
         )
 
@@ -726,6 +759,7 @@ class Executor:
     ) -> None:
         step_index = ctx.next_step()
         now = _utc_now()
+        metadata = {"op": op, **_stage_meta(ctx, stage, index, total=total, input_value=input_value)}
         self._on_event(
             StepStart(
                 run_id=ctx.id,
@@ -734,6 +768,7 @@ class Executor:
                 kind="flow_op",
                 input=(RunInputRef(),),
                 started_at=now,
+                metadata=metadata,
             )
         )
         self._on_event(
@@ -749,7 +784,7 @@ class Executor:
                     stage_index=index,
                     stage_kind=stage.kind,
                     output_preview=_json_preview(output),
-                    metadata=_stage_meta(ctx, stage, index, total=total, input_value=input_value),
+                    metadata=metadata,
                 ),
                 started_at=now,
                 finished_at=_utc_now(),
