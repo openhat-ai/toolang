@@ -9,9 +9,12 @@ from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult
 from toolang.components.trigger import watch
 from toolang.execution.db import ExecutionStore, execution_db_path
+from toolang.execution.executor import _stage_thunk_with_default_recall
+from toolang.execution.model_call import recall_values, recalls_history
 from toolang.execution.records import ChildCallStepPayload, FlowOpStepPayload
 from toolang.execution.runner import QueueRunner, RunRequest
 from toolang.execution.stream import RuntimeEventBus
+from toolang.lang.ast import Directive, SourceSpan, Thunk
 from toolang.models.config import load_model_aliases
 from toolang.state.durable import scan_durable_state
 from toolang.state.live import load_live_state
@@ -63,6 +66,32 @@ class _FakeAdapter:
     def stream(self, target: ModelTarget, request: ModelCall, *, on_event):
         del on_event
         return self.invoke(target, request)
+
+
+def test_flow_stage_thunk_defaults_recall_to_none_without_mutating_source() -> None:
+    thunk = Thunk(name="search", span=SourceSpan(10))
+
+    stage_thunk = _stage_thunk_with_default_recall(thunk)
+
+    assert stage_thunk is not thunk
+    assert recall_values(stage_thunk) == ("none",)
+    assert not recalls_history(stage_thunk)
+    assert recall_values(thunk) == ()
+    assert recalls_history(thunk)
+
+
+def test_flow_stage_thunk_preserves_explicit_recall_directive() -> None:
+    thunk = Thunk(
+        name="search",
+        directives=(Directive(name="recall", operator="=", values=("history",), span=SourceSpan(11)),),
+        span=SourceSpan(10),
+    )
+
+    stage_thunk = _stage_thunk_with_default_recall(thunk)
+
+    assert stage_thunk is thunk
+    assert recall_values(stage_thunk) == ("history",)
+    assert recalls_history(stage_thunk)
 
 
 def test_program_parse_flow_stages() -> None:

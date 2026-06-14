@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import time
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -14,7 +14,7 @@ from toolang.base.types.run import ModelCall, RunResult
 
 from ..common.ids import RUN_ID_FAMILY, allocate_id
 from .. import agents
-from ..lang.ast import Flow, FlowStage, MessageBlock, ParamDecl, Thunk
+from ..lang.ast import Directive, Flow, FlowStage, MessageBlock, ParamDecl, Thunk
 from ..plugin import load_loop as _default_load_loop
 from .assembly import RunInput
 from .binding import RunBinding
@@ -278,6 +278,7 @@ class Executor:
         step_index = parent.next_step()
         started_at = _utc_now()
         actual_input = parent.frame.require_current() if input_value is _DEFAULT_PARENT_CURRENT else input_value
+        thunk = _stage_thunk_with_default_recall(thunk) if call == "stage" else thunk
         child_meta = _child_meta(thunk, meta or {}, live_program=parent.binding.live.program)
         child = self._create_child_ctx(
             parent,
@@ -928,6 +929,23 @@ def _child_meta(executable: Thunk | Flow, meta: Mapping[str, object], *, live_pr
     if executable.name is None and "source_line" not in child_meta:
         child_meta["source_line"] = _source_line(live_program, executable.span.line)
     return child_meta
+
+
+def _stage_thunk_with_default_recall(thunk: Thunk) -> Thunk:
+    if thunk.directives_for("recall"):
+        return thunk
+    return replace(
+        thunk,
+        directives=(
+            Directive(
+                name="recall",
+                operator="=",
+                values=("none",),
+                span=thunk.span,
+            ),
+            *thunk.directives,
+        ),
+    )
 
 
 def _stage_meta(
