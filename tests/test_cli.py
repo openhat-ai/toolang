@@ -7192,6 +7192,49 @@ def test_cli_chat_passes_model_tool_cap_and_executable_selectors(monkeypatch) ->
     assert payload["thunk"] == "summarize"
 
 
+def test_cli_chat_without_agent_shows_help_without_opening_ui(monkeypatch) -> None:
+    opened = False
+
+    def fake_chat_interactive(
+        _ctx: Any,
+        *,
+        thread_id: str | None,
+        selector_payload: dict[str, object] | None = None,
+    ) -> None:
+        del thread_id, selector_payload
+        nonlocal opened
+        opened = True
+
+    monkeypatch.setattr(cli, "_chat_interactive", fake_chat_interactive)
+
+    result = _invoke_app(["chat"])
+
+    assert result.exit_code == 0
+    assert opened is False
+    assert "Usage:" in result.stdout
+    assert "Open a terminal chat session." in result.stdout
+    assert "Toolang (v" not in result.stdout
+
+
+@pytest.mark.parametrize("command", ("chat", "threads", "runs"))
+def test_cli_required_agent_thread_commands_without_agent_exit_after_help(monkeypatch, command: str) -> None:
+    runtime_calls: list[str] = []
+
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        runtime_calls.append(request_path)
+        return {"items": []}
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(cli, "_chat_interactive", lambda *_args, **_kwargs: runtime_calls.append("chat"))
+
+    result = _invoke_app([command])
+
+    assert result.exit_code == 0
+    assert runtime_calls == []
+    assert "Usage:" in result.stdout
+    assert "AGENT" in result.stdout
+
+
 def test_cli_chat_without_args_does_not_create_thread_until_first_message(monkeypatch) -> None:
     calls: list[tuple[str, object]] = []
 
