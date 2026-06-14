@@ -2188,6 +2188,9 @@ class _ChatRun:
     queue_state: str | None = None
     waiting_for: str | None = None
     queue_position: int | None = None
+    cancel_requested: bool = False
+    cancel_sent_run_id: str | None = None
+    started: bool = False
     steps: dict[int, _ChatStep] = field(default_factory=dict)
     completed_steps: dict[int, dict[str, Any]] = field(default_factory=dict)
     tool_calls_by_part: dict[tuple[int, int], _ChatToolCall] = field(default_factory=dict)
@@ -2228,16 +2231,35 @@ class _ChatRun:
     def update_queue(self, event_type: str, payload: Mapping[str, Any]) -> None:
         if run_id := _text(payload.get("run_id")):
             self.run_id = run_id
+        if self.cancel_requested:
+            self.status = "canceling"
+            self.queue_state = None
+            self.waiting_for = None
+            self.queue_position = None
+            return
         self.status = "waiting" if event_type == "run_waiting" else "queued"
         self.queue_state = self.status
         self.waiting_for = _text(payload.get("waiting_for"))
         self.queue_position = _int_or_none(payload.get("position"))
 
     def mark_running(self) -> None:
-        self.status = "running"
+        self.started = True
+        self.status = "canceling" if self.cancel_requested else "running"
         self.queue_state = None
         self.waiting_for = None
         self.queue_position = None
+
+    def request_cancel(self) -> None:
+        self.cancel_requested = True
+        self.status = "canceling"
+        self.queue_state = None
+        self.waiting_for = None
+        self.queue_position = None
+
+    def clear_cancel_request(self) -> None:
+        self.cancel_requested = False
+        if self.status == "canceling":
+            self.status = "running" if self.started else "submitting"
 
     def start_child_run(self, payload: Mapping[str, Any]) -> None:
         run_id = _text(payload.get("run_id"))
@@ -2479,6 +2501,8 @@ class _ChatPromptBox:
             self.invalidate()
 
         @keys.add("c-c")
+        @keys.add("escape")
+        @keys.add("escape", "escape")
         def cancel_or_exit(_event: Any) -> None:
             self.emit(_ChatUIEvent("cancel"))
 
@@ -2706,6 +2730,8 @@ class _ChatBottomApp:
                     self.handle_runtime_event(event.value)
                 elif event.type == "error":
                     self.handle_error(str(event.value or "runtime request failed"))
+                elif event.type == "cancel_error":
+                    self.handle_cancel_error(str(event.value or "cancel request failed"))
                 elif event.type == "tick":
                     self.handle_tick()
                 elif event.type == "cancel":
@@ -2741,7 +2767,12 @@ class _ChatBottomApp:
         if not self.has_active_run():
             self.handle_quit()
             return
-        self.prompt.set_error("Cancel the run from another terminal with `too cancel`.")
+        if self.active_run is None or self.active_run.cancel_requested:
+            return
+        self.prompt.clear_error()
+        self.active_run.request_cancel()
+        self.maybe_send_cancel_request()
+        self.app.invalidate()
 
     def handle_quit(self) -> None:
         if self.app.is_running:
@@ -2763,6 +2794,40 @@ class _ChatBottomApp:
         self.active_run = None
         self.start_next_run()
         self.app.invalidate()
+
+    def handle_cancel_error(self, message: str) -> None:
+        friendly = _chat_friendly_error(message)
+        if self.active_run is None:
+            self.prompt.set_error(friendly)
+            self.app.invalidate()
+            return
+        self.active_run.clear_cancel_request()
+        _chat_record_system_event(self.active_run, f"error: cancel failed: {friendly}", clear_active=False)
+        self.app.invalidate()
+
+    def maybe_send_cancel_request(self) -> None:
+        run = self.active_run
+        if run is None or not run.cancel_requested or not run.started or not run.run_id:
+            return
+        if run.cancel_sent_run_id == run.run_id:
+            return
+        run.cancel_sent_run_id = run.run_id
+        self.send_cancel_request(run.run_id)
+
+    def send_cancel_request(self, run_id: str) -> None:
+        def consume() -> None:
+            try:
+                _runtime_post(
+                    self.ctx,
+                    f"/api/v1/runs/{run_id}/cancel",
+                    payload={},
+                )
+            except click.ClickException as exc:
+                self.emit_from_thread(_ChatUIEvent("cancel_error", exc.message))
+            except Exception as exc:  # pragma: no cover - defensive cross-thread reporting
+                self.emit_from_thread(_ChatUIEvent("cancel_error", f"{type(exc).__name__}: {exc}"))
+
+        threading.Thread(target=consume, daemon=True).start()
 
     def handle_runtime_event(self, event: dict[str, Any]) -> None:
         event_type = str(event.get("type") or event.get("event_type") or "")
@@ -2881,10 +2946,11 @@ class _ChatBottomApp:
             if self.active_run is None:
                 return True
             self.complete_chat_stream_step()
+            status = "canceled" if self.active_run.cancel_requested else "finished"
             self.finish_run(
                 {
                     "run_id": self.active_run.run_id if self.active_run is not None else "",
-                    "status": "finished",
+                    "status": status,
                 }
             )
             return True
@@ -2898,10 +2964,13 @@ class _ChatBottomApp:
             self.thread_id = thread_id
         if self.active_run is None:
             self.active_run = _ChatRun(run_id=run_id, message="", status="running", accept_child_trace=True)
+            self.active_run.mark_running()
+            self.maybe_send_cancel_request()
             return
         if run_id:
             self.active_run.run_id = run_id
         self.active_run.mark_running()
+        self.maybe_send_cancel_request()
 
     def handle_chat_stream_metadata(self, event: Mapping[str, Any]) -> None:
         metadata = _mapping(event.get("messageMetadata"))
@@ -2911,6 +2980,7 @@ class _ChatBottomApp:
         run_id = _text(metadata.get("run_id"))
         if run_id and self.active_run is not None:
             self.active_run.run_id = run_id
+            self.maybe_send_cancel_request()
 
     def start_chat_stream_step(self) -> None:
         if self.active_run is None:
@@ -3025,17 +3095,23 @@ class _ChatBottomApp:
             self.active_run.run_id = run_id
             self.active_run.message = message
             self.active_run.mark_running()
+            self.maybe_send_cancel_request()
             return
         self.active_run = _ChatRun(run_id=run_id, message=message, status="running")
+        self.active_run.mark_running()
+        self.maybe_send_cancel_request()
 
     def handle_run_start(self, payload: dict[str, Any]) -> None:
         run_id = str(payload.get("run_id") or "")
         if self.active_run and (not self.active_run.run_id or self.active_run.run_id == run_id):
             self.active_run.run_id = run_id
             self.active_run.mark_running()
+            self.maybe_send_cancel_request()
             return
         message = _event_message_text(payload.get("input"))
         self.active_run = _ChatRun(run_id=run_id, message=message, status="running")
+        self.active_run.mark_running()
+        self.maybe_send_cancel_request()
 
     def finish_run(self, payload: dict[str, Any]) -> None:
         completed_run = self.active_run
@@ -3664,12 +3740,14 @@ def _chat_run_state_line(run: _ChatRun) -> str:
         return ""
     if status == "running":
         return f"◇ running {run_id}"
+    if status == "canceling":
+        return _chat_dim(f"◇ canceling {run_id}")
     if status in {"succeeded", "finished", "completed", "done"}:
         return f"◇ stopped {run_id}: succeeded"
     if status in {"failed", "error"}:
         return f"◇ stopped {run_id}: failed"
     if status in {"canceled", "cancelled"}:
-        return f"◇ stopped {run_id}: canceled"
+        return _chat_dim(f"◇ stopped {run_id}: canceled")
     return f"◇ stopped {run_id}: {status}"
 
 
