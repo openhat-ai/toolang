@@ -69,6 +69,7 @@ from ...execution.records import RunStatus, step_input_items_to_data, step_paylo
 from ...execution.stream import event_data
 from ...models.resolution import split_model_selectors
 from ...tools.registry import split_tool_selectors
+from ..chat_history import ChatInputHistoryStore
 from ..utils import (
     _PrefixAgentWorkGroup,
     _RequiredPrefixAgentCommand,
@@ -77,6 +78,7 @@ from ..utils import (
     _StartAgentCommand,
     _agent_avatar,
     _append_agent_update,
+    _context_agent,
     _context_root,
     _created_time,
     _echo_pairs_table,
@@ -2075,6 +2077,17 @@ def _chat_interactive(
     _chat_interactive_prompt_toolkit(ctx, thread_id=thread_id, selector_payload=selector_payload)
 
 
+def _chat_input_history_store(ctx: typer.Context) -> ChatInputHistoryStore | None:
+    try:
+        agent = _context_agent(ctx)
+        root = _context_root(ctx)
+    except (AttributeError, KeyError, TypeError):
+        return None
+    if not agent:
+        return None
+    return ChatInputHistoryStore(agents.agent_room(root, agent) / "chat-input-history.jsonl")
+
+
 def _chat_interactive_scripted(
     ctx: typer.Context,
     *,
@@ -2376,11 +2389,21 @@ class _ChatSubmissionQueue:
 
 
 class _ChatPromptBox:
-    def __init__(self, emit: Callable[[_ChatUIEvent], None], invalidate: Callable[[], None], status_label: str) -> None:
+    def __init__(
+        self,
+        emit: Callable[[_ChatUIEvent], None],
+        invalidate: Callable[[], None],
+        status_label: str,
+        *,
+        history_store: ChatInputHistoryStore | None = None,
+    ) -> None:
         self.emit = emit
         self.invalidate = invalidate
         self.status_label = status_label
         self.history = InMemoryHistory()
+        self.history_store = history_store
+        for entry in history_store.load() if history_store is not None else ():
+            self.history.append_string(entry)
         self.buffer = Buffer(multiline=True, history=self.history)
         self.error_message = ""
         self.history_index: int | None = None
@@ -2496,6 +2519,11 @@ class _ChatPromptBox:
         entries = self.history_entries()
         if not entries or entries[-1] != message:
             self.history.append_string(message)
+            if self.history_store is not None:
+                try:
+                    self.history_store.append(message)
+                except OSError:
+                    pass
 
     def previous_history(self) -> None:
         if self.buffer.document.cursor_position_row > 0:
@@ -2582,7 +2610,12 @@ class _ChatBottomApp:
 
         self.last_run_panel = _ChatLastRunPanel(lambda: self.active_run)
         self.queue_panel = _ChatSubmissionQueue(lambda: self.pending)
-        self.prompt = _ChatPromptBox(self.emit, self.invalidate, self.status_label())
+        self.prompt = _ChatPromptBox(
+            self.emit,
+            self.invalidate,
+            self.status_label(),
+            history_store=_chat_input_history_store(ctx),
+        )
         self.app = Application(
             layout=self.build_layout(),
             key_bindings=self.build_keys(),

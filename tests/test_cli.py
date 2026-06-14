@@ -19,6 +19,7 @@ from toolang import caps
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.model import ModelInfo
 from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.cli.chat_history import ChatInputHistoryStore
 import toolang.cli.toolang.app as cli
 import toolang.cli.invoke as cli_invoke
 import toolang.cli.caps.app as caps_cli
@@ -7840,6 +7841,44 @@ def test_cli_chat_prompt_status_colors_model_thunk_and_flow() -> None:
     assert ("class:status.flow", "flow:review") in flow_segments
     assert ("class:status.model", "  openai/o3") in thunk_segments
     assert ("class:status.thunk", "thunk:summarize") in thunk_segments
+
+
+def test_cli_chat_input_history_store_persists_multiline_entries(tmp_path: Path) -> None:
+    path = tmp_path / "chat-input-history.jsonl"
+    store = ChatInputHistoryStore(path, limit=10)
+
+    store.append("hello")
+    store.append("line 1\nline 2")
+    with path.open("a", encoding="utf-8") as file:
+        file.write("not json\n")
+        file.write('{"text": ""}\n')
+
+    assert store.load() == ["hello", "line 1\nline 2"]
+
+
+def test_cli_chat_prompt_loads_and_records_persistent_history(tmp_path: Path) -> None:
+    store = ChatInputHistoryStore(tmp_path / "chat-input-history.jsonl", limit=10)
+    store.append("first")
+    store.append("second")
+
+    prompt = cli._ChatPromptBox(lambda _event: None, lambda: None, "runtime model", history_store=store)
+    assert prompt.history_entries() == ["first", "second"]
+
+    prompt.record_history("third")
+    prompt.record_history("third")
+
+    assert prompt.history_entries() == ["first", "second", "third"]
+    assert ChatInputHistoryStore(store.path, limit=10).load() == ["first", "second", "third"]
+
+
+def test_cli_chat_input_history_store_compacts_old_entries(tmp_path: Path) -> None:
+    store = ChatInputHistoryStore(tmp_path / "chat-input-history.jsonl", limit=3, compact_limit=3)
+
+    for index in range(7):
+        store.append(f"message {index}")
+
+    assert store.load() == ["message 4", "message 5", "message 6"]
+    assert len(store.path.read_text(encoding="utf-8").splitlines()) == 3
 
 
 def test_cli_chat_startup_resolves_selected_model_label(monkeypatch) -> None:
