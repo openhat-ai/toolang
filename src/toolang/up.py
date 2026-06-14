@@ -222,6 +222,7 @@ class UptimeContext:
         self.store = store
         self.events = events
         self.config = config
+        self.runner.attach(self)
 
     def tool_context(self, tool_name: str, *, run_id: str, wd: Path | None = None) -> ToolContext:
         """Return one resolved tool context for a model-facing tool name."""

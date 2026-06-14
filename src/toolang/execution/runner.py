@@ -16,6 +16,7 @@ from ..state.live import LiveState
 
 if TYPE_CHECKING:
     from ..up import UptimeContext
+    from .records import RunRecord
     from .response import ResponseSink
 
 DEFAULT_GROUP_LIMITS: dict[str, int] = {
@@ -177,6 +178,11 @@ class QueueRunner:
         self._closed = True
         self._ready.set()
 
+    def attach(self, context: UptimeContext) -> None:
+        """Attach the runtime context used for execution and control commands."""
+
+        self._context = context
+
     def spawn(self, context: UptimeContext) -> asyncio.Task[list[RunOutcome]]:
         """Attach one runtime context and drain in the background."""
 
@@ -184,7 +190,7 @@ class QueueRunner:
 
     async def drain(self, context: UptimeContext | None = None) -> list[RunOutcome]:
         if context is not None:
-            self._context = context
+            self.attach(context)
         tasks: list[asyncio.Task[RunOutcome]] = []
         async with asyncio.TaskGroup() as task_group:
             while True:
@@ -234,6 +240,36 @@ class QueueRunner:
         """Return a snapshot of currently executing requests."""
 
         return tuple(item.request for item in self._active_requests.values())
+
+    def notify_run_command(self, *, run_id: str, payload: dict[str, Any]) -> None:
+        """Publish one run command to durable events and the active response sink."""
+
+        self._emit_response_event(run_id=run_id, event_type="run_command", payload=payload)
+        context = self._context
+        if context is None:
+            return
+        context.events.publish(domain="run", domain_id=run_id, type="run_command", payload=payload)
+        thread_id = payload.get("thread_id")
+        if isinstance(thread_id, str) and thread_id:
+            context.events.publish(domain="thread", domain_id=thread_id, type="run_command", payload=payload)
+
+    def cancel_run(self, *, run_id: str, error: str | None = None) -> RunRecord:
+        """Cancel one active run and notify its response sink."""
+
+        context = self._context
+        if context is None:
+            raise RuntimeError("runner context is not attached")
+        run = context.store.cancel_run(run_id=run_id, error=error)
+        event = RunEnd(
+            run_id=run.run_id,
+            thread_id=run.thread_id,
+            status="canceled",
+            error=run.error,
+            finished_at=run.finished_at or utc_now(),
+        )
+        self._emit_response_trace_event(run_id=run.run_id, event=event)
+        context.events.publish_trace(event)
+        return run
 
     async def _run_request(self, submission: RunSubmission) -> RunOutcome:
         request = submission.request
@@ -361,6 +397,36 @@ class QueueRunner:
             context.events.publish(domain="run", domain_id=run_id, type=event_type, payload=payload)
         if thread_id:
             context.events.publish(domain="thread", domain_id=thread_id, type=event_type, payload=payload)
+
+    def _emit_response_event(self, *, run_id: str, event_type: str, payload: dict[str, Any]) -> None:
+        submission = self._active_submission(run_id)
+        if submission is None or submission.response is None:
+            return
+        on_queue_event = getattr(submission.response, "on_queue_event", None)
+        if callable(on_queue_event):
+            try:
+                on_queue_event(event_type, payload)
+            except Exception:
+                _LOGGER.exception("response sink event handling failed")
+
+    def _emit_response_trace_event(self, *, run_id: str, event: RunEnd) -> None:
+        submission = self._active_submission(run_id)
+        if submission is None or submission.response is None:
+            return
+        try:
+            submission.response.on_event(event)
+        except Exception:
+            _LOGGER.exception("response sink event handling failed")
+
+    def _active_submission(self, run_id: str) -> RunSubmission | None:
+        return next(
+            (
+                submission
+                for submission in self._active_requests.values()
+                if submission.request.run_id == run_id
+            ),
+            None,
+        )
 
     def _fail_submission(self, submission: RunSubmission, exc: Exception) -> RunOutcome:
         request = submission.request

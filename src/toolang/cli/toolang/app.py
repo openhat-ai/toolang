@@ -3124,6 +3124,7 @@ class _ChatBottomApp:
                     message = f"error: {message}"
                 _chat_record_system_event(completed_run, message, clear_active=True)
         self.active_run = None
+        self.local_streaming.clear()
         self.prompt.clear_error()
         if completed_run is not None:
             self.print_run(completed_run)

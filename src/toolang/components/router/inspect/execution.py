@@ -82,13 +82,8 @@ def create_router() -> APIRouter:
             request_id=payload.request_id if payload else None,
         )
         input_payload = _shared._input_event_payload(run, command_record)
-        context.events.publish(domain="run", domain_id=run.run_id, type="run_command", payload=input_payload)
-        context.events.publish(domain="thread", domain_id=run.thread_id, type="run_command", payload=input_payload)
-        run = context.store.cancel_run(run_id=run_id, error=payload.reason if payload else None)
-        event_payload = _shared._run_event_payload(run)
-        context.events.publish(domain="run", domain_id=run.run_id, type="run_end", payload=event_payload)
-        context.events.publish(domain="thread", domain_id=run.thread_id, type="run_end", payload=event_payload)
-        context.events.publish(domain="agent", domain_id=context.name, type="thread_update", payload=event_payload)
+        context.runner.notify_run_command(run_id=run.run_id, payload=input_payload)
+        run = context.runner.cancel_run(run_id=run_id, error=payload.reason if payload else None)
         return {
             "run": _shared._run_item(
                 run,
@@ -210,8 +205,7 @@ def create_router() -> APIRouter:
             message=message,
         )
         event_payload = _shared._input_event_payload(run, command_record)
-        context.events.publish(domain="run", domain_id=run.run_id, type="run_command", payload=event_payload)
-        context.events.publish(domain="thread", domain_id=run.thread_id, type="run_command", payload=event_payload)
+        context.runner.notify_run_command(run_id=run.run_id, payload=event_payload)
         return {"input": event_payload}
 
     @router.get("/instruct/{prompt_hash}", tags=["activity"], summary="Get Instruct Prompt")

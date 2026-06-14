@@ -227,6 +227,11 @@ class SseResponseSink:
         if isinstance(event, RunEnd):
             if self._run_id is not None and event.run_id != self._run_id:
                 return
+            if event.status in {"canceled", "cancelled"}:
+                self._enqueue_payload(trace_event_data(event))
+                self._enqueue_payload({"type": "finish"})
+                self._enqueue_done()
+                return
             if event.status != "finished":
                 if event.error:
                     self._enqueue_payload({"type": "error", "errorText": event.error})

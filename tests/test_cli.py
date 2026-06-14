@@ -8528,6 +8528,34 @@ def test_cli_chat_canceled_run_state_line_is_dim() -> None:
     assert line.startswith(cli._CHAT_DIM)
 
 
+def test_cli_chat_canceled_run_end_finishes_active_progress(monkeypatch) -> None:
+    printed: list[list[str]] = []
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.active_run = cli._ChatRun(run_id="run_cancel", message="hello", status="running", accept_child_trace=True)
+    app.active_run.mark_running()
+    app.active_run.request_cancel()
+    app.local_streaming.set()
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: printed.append(lines))
+
+    app.handle_runtime_event(
+        {
+            "type": "run_end",
+            "event_type": "run_end",
+            "payload": {
+                "run_id": "run_cancel",
+                "thread_id": "term_new",
+                "status": "canceled",
+                "finished_at": "2026-01-01T00:00:01Z",
+            },
+        }
+    )
+
+    assert app.active_run is None
+    assert not app.has_active_run()
+    visible = cli._chat_visible_text("\n".join(line for lines in printed for line in lines))
+    assert "◇ stopped run_cancel: canceled" in visible
+
+
 def test_cli_chat_stream_thread_exceptions_surface_as_ui_errors(monkeypatch) -> None:
     printed: list[list[str]] = []
 
