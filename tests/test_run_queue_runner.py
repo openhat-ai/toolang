@@ -241,6 +241,70 @@ def test_runner_control_command_notifies_response_and_events(tmp_path: Path) -> 
     ]
 
 
+def test_runner_cancel_releases_thread_lock_for_next_run(tmp_path: Path) -> None:
+    class BlockingRunner(QueueRunner):
+        first_started: asyncio.Event
+        release_first: asyncio.Event
+        second_started: asyncio.Event
+
+        async def _execute(self, submission: RunSubmission) -> RunOutcome:
+            context = self._context
+            assert context is not None
+            request = submission.request
+            if request.run_id == "run-1":
+                context.store.start_run(
+                    run_id="run-1",
+                    thread_id="thread-1",
+                    origin="chat",
+                    input=Message.user("first"),
+                    created_at="2026-01-01T00:00:00Z",
+                    started_at="2026-01-01T00:00:00Z",
+                )
+                self.first_started.set()
+                await self.release_first.wait()
+            else:
+                self.second_started.set()
+            return RunOutcome(
+                run_id=request.run_id or "",
+                group=request.group,
+                origin=request.origin,
+                input_text="",
+                thunk_name=request.thunk_name,
+                thread_id=request.thread_id,
+                delay_sec=0.0,
+                status="finished",
+            )
+
+    async def run_test() -> None:
+        toolang_root = tmp_path / "toolang"
+        _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
+        runner = BlockingRunner(delay_sec=0.0)
+        runner.first_started = asyncio.Event()
+        runner.release_first = asyncio.Event()
+        runner.second_started = asyncio.Event()
+        context = _build_context(
+            toolang_root=toolang_root,
+            agent_name="alice",
+            enabled_features=("inspect",),
+            runner=runner,
+        )
+        runner.enqueue(RunRequest(group="chat", origin="chat", run_id="run-1", thread_id="thread-1"))
+        drain_task = asyncio.create_task(runner.drain(context))
+
+        await asyncio.wait_for(runner.first_started.wait(), timeout=1)
+        runner.cancel_run(run_id="run-1")
+        runner.enqueue(RunRequest(group="chat", origin="chat", run_id="run-2", thread_id="thread-1"))
+
+        await asyncio.wait_for(runner.second_started.wait(), timeout=1)
+        runner.close()
+        results = await asyncio.wait_for(drain_task, timeout=1)
+
+        assert [item.run_id for item in results] == ["run-1", "run-2"]
+        assert results[0].error == "canceled"
+
+    asyncio.run(run_test())
+
+
 def test_sse_response_sink_streams_canceled_run_end() -> None:
     async def run_test() -> None:
         response = SseResponseSink(thread_id="thread-1")

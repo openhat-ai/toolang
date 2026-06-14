@@ -117,6 +117,7 @@ class QueueRunner:
         self._waiting_requests: dict[int, RunSubmission] = {}
         self._active_requests: dict[int, RunSubmission] = {}
         self._responses_by_run: dict[str, ResponseSink] = {}
+        self._tasks_by_run: dict[str, asyncio.Task[RunOutcome]] = {}
 
     def enqueue(
         self,
@@ -272,11 +273,15 @@ class QueueRunner:
         )
         self._emit_response_trace_event(run_id=run.run_id, event=event)
         context.events.publish_trace(event)
+        self._cancel_task(run.run_id)
         return run
 
     async def _run_request(self, submission: RunSubmission) -> RunOutcome:
         request = submission.request
         request_key = id(submission)
+        current_task = asyncio.current_task()
+        if request.run_id and current_task is not None:
+            self._tasks_by_run[request.run_id] = current_task
         try:
             if await self._group_is_full(request.group):
                 self._emit_queue_event(
@@ -295,6 +300,12 @@ class QueueRunner:
                         submission.completion.set_result(result)
                     self._completed.append(result)
                     return result
+                except asyncio.CancelledError:
+                    result = self._cancel_submission(submission)
+                    if submission.completion is not None and not submission.completion.done():
+                        submission.completion.set_result(result)
+                    self._completed.append(result)
+                    return result
                 except Exception as exc:
                     result = self._fail_submission(submission, exc)
                     if submission.completion is not None and not submission.completion.done():
@@ -304,9 +315,11 @@ class QueueRunner:
                 finally:
                     self._active_requests.pop(request_key, None)
                     self._forget_response(submission)
+                    self._forget_task(submission)
                     await self._update_group_in_flight(request.group, delta=-1)
         finally:
             self._waiting_requests.pop(request_key, None)
+            self._forget_task(submission)
 
     async def _execute_thread_locked(self, submission: RunSubmission) -> RunOutcome:
         request = submission.request
@@ -439,6 +452,19 @@ class QueueRunner:
         if self._responses_by_run.get(run_id) is submission.response:
             self._responses_by_run.pop(run_id, None)
 
+    def _cancel_task(self, run_id: str) -> None:
+        task = self._tasks_by_run.get(run_id)
+        if task is not None and not task.done():
+            task.cancel()
+
+    def _forget_task(self, submission: RunSubmission) -> None:
+        run_id = submission.request.run_id
+        if not run_id:
+            return
+        task = self._tasks_by_run.get(run_id)
+        if task is not None and task is asyncio.current_task():
+            self._tasks_by_run.pop(run_id, None)
+
     def _fail_submission(self, submission: RunSubmission, exc: Exception) -> RunOutcome:
         request = submission.request
         error = str(exc) or type(exc).__name__
@@ -465,6 +491,20 @@ class QueueRunner:
             delay_sec=0.0,
             status="failed",
             error=error,
+        )
+
+    def _cancel_submission(self, submission: RunSubmission) -> RunOutcome:
+        request = submission.request
+        return RunOutcome(
+            run_id=request.run_id or "",
+            group=request.group,
+            origin=request.origin,
+            input_text=_request_input_text(request),
+            thunk_name=request.thunk_name,
+            thread_id=request.thread_id or "",
+            delay_sec=0.0,
+            status="failed",
+            error="canceled",
         )
 
     def __len__(self) -> int:
