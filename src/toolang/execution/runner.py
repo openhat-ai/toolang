@@ -116,6 +116,7 @@ class QueueRunner:
         self._completed: list[RunOutcome] = []
         self._waiting_requests: dict[int, RunSubmission] = {}
         self._active_requests: dict[int, RunSubmission] = {}
+        self._responses_by_run: dict[str, ResponseSink] = {}
 
     def enqueue(
         self,
@@ -137,6 +138,8 @@ class QueueRunner:
                 completion=completion,
             )
         )
+        if request.run_id and response is not None:
+            self._responses_by_run[request.run_id] = response
         self._ready.set()
         self._emit_queue_event(
             "run_queued",
@@ -300,6 +303,7 @@ class QueueRunner:
                     return result
                 finally:
                     self._active_requests.pop(request_key, None)
+                    self._forget_response(submission)
                     await self._update_group_in_flight(request.group, delta=-1)
         finally:
             self._waiting_requests.pop(request_key, None)
@@ -399,10 +403,10 @@ class QueueRunner:
             context.events.publish(domain="thread", domain_id=thread_id, type=event_type, payload=payload)
 
     def _emit_response_event(self, *, run_id: str, event_type: str, payload: dict[str, Any]) -> None:
-        submission = self._active_submission(run_id)
-        if submission is None or submission.response is None:
+        response = self._response_for_run(run_id)
+        if response is None:
             return
-        on_queue_event = getattr(submission.response, "on_queue_event", None)
+        on_queue_event = getattr(response, "on_queue_event", None)
         if callable(on_queue_event):
             try:
                 on_queue_event(event_type, payload)
@@ -410,23 +414,30 @@ class QueueRunner:
                 _LOGGER.exception("response sink event handling failed")
 
     def _emit_response_trace_event(self, *, run_id: str, event: RunEnd) -> None:
-        submission = self._active_submission(run_id)
-        if submission is None or submission.response is None:
+        response = self._response_for_run(run_id)
+        if response is None:
             return
         try:
-            submission.response.on_event(event)
+            response.on_event(event)
         except Exception:
             _LOGGER.exception("response sink event handling failed")
 
-    def _active_submission(self, run_id: str) -> RunSubmission | None:
-        return next(
+    def _response_for_run(self, run_id: str) -> ResponseSink | None:
+        return self._responses_by_run.get(run_id) or next(
             (
-                submission
+                submission.response
                 for submission in self._active_requests.values()
-                if submission.request.run_id == run_id
+                if submission.request.run_id == run_id and submission.response is not None
             ),
             None,
         )
+
+    def _forget_response(self, submission: RunSubmission) -> None:
+        run_id = submission.request.run_id
+        if not run_id or submission.response is None:
+            return
+        if self._responses_by_run.get(run_id) is submission.response:
+            self._responses_by_run.pop(run_id, None)
 
     def _fail_submission(self, submission: RunSubmission, exc: Exception) -> RunOutcome:
         request = submission.request

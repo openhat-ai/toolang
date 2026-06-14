@@ -215,28 +215,27 @@ def test_runner_control_command_notifies_response_and_events(tmp_path: Path) -> 
         "created_at": command.created_at,
     }
     response = CaptureResponse()
-    submission = RunSubmission(
-        request=RunRequest(group="chat", origin="chat", run_id=run.run_id, thread_id=run.thread_id),
+    context.runner.enqueue(
+        RunRequest(group="chat", origin="chat", run_id=run.run_id, thread_id=run.thread_id),
         response=response,
     )
-    context.runner._active_requests[id(submission)] = submission
 
-    try:
-        context.runner.notify_run_command(run_id=run.run_id, payload=payload)
-        canceled = context.runner.cancel_run(run_id=run.run_id)
-    finally:
-        context.runner._active_requests.clear()
+    context.runner.notify_run_command(run_id=run.run_id, payload=payload)
+    canceled = context.runner.cancel_run(run_id=run.run_id)
 
     assert canceled.status == "canceled"
-    assert response.queue_events == [("run_command", payload)]
+    assert [event_type for event_type, _payload in response.queue_events] == ["run_queued", "run_command"]
+    assert response.queue_events[1] == ("run_command", payload)
     assert len(response.events) == 1
     assert isinstance(response.events[0], RunEnd)
     assert response.events[0].status == "canceled"
     assert [item.type for item in context.store.list_events(domain="run", domain_id=run.run_id)] == [
+        "run_queued",
         "run_command",
         "run_end",
     ]
     assert [item.type for item in context.store.list_events(domain="thread", domain_id=run.thread_id)] == [
+        "run_queued",
         "run_command",
         "run_end",
     ]
