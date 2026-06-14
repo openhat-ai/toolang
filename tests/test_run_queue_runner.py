@@ -175,6 +175,50 @@ def test_runner_enqueue_emits_queue_event_to_response() -> None:
     }
 
 
+def test_runner_submission_exception_fails_response_without_stopping_drain() -> None:
+    class BrokenRunner(QueueRunner):
+        async def _execute(self, submission: RunSubmission) -> RunOutcome:
+            del submission
+            raise RuntimeError("boom")
+
+    class CaptureResponse:
+        wants_stream = True
+
+        def __init__(self) -> None:
+            self.events: list[object] = []
+
+        def on_event(self, event: object) -> None:
+            self.events.append(event)
+
+        def on_queue_event(self, event_type: str, payload: dict[str, Any]) -> None:
+            del event_type, payload
+
+    async def run_test() -> None:
+        runner = BrokenRunner(delay_sec=0.0)
+        first_response = CaptureResponse()
+        second_response = CaptureResponse()
+        runner.enqueue(
+            RunRequest(group="chat", origin="chat", run_id="run_fail_1", message=Message.user("first")),
+            response=first_response,
+        )
+        runner.enqueue(
+            RunRequest(group="chat", origin="chat", run_id="run_fail_2", message=Message.user("second")),
+            response=second_response,
+        )
+        runner.close()
+
+        outcomes = await runner.drain()
+
+        assert [outcome.status for outcome in outcomes] == ["failed", "failed"]
+        assert [outcome.run_id for outcome in outcomes] == ["run_fail_1", "run_fail_2"]
+        assert len(first_response.events) == 1
+        assert len(second_response.events) == 1
+        assert getattr(first_response.events[0], "status") == "failed"
+        assert getattr(second_response.events[0], "status") == "failed"
+
+    asyncio.run(run_test())
+
+
 def test_file_runner_default_concurrency_is_ten() -> None:
     assert DEFAULT_GROUP_LIMITS["file"] == 10
 

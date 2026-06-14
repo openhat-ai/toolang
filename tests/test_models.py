@@ -23,6 +23,7 @@ from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.base.error import ToolangError
 from toolang.execution.context import RunContext, RunSnapshot, SnapshotAgent, SnapshotProgram, SnapshotRun
 from toolang.execution.input import RunBinding, RunInput
+from toolang.models.discovery import model_infos
 from toolang.models.resolution import resolve_model, select_model_selectors
 from toolang.models.views import model_target_profile
 from toolang.models.providers import deepseek as deepseek_models
@@ -611,6 +612,169 @@ def test_model_info_discovery_is_cached_within_one_process() -> None:
     assert selectors == ("anthropic/claude-4.5-sonnet-20250929[openrouter]",)
     assert target.ref == "anthropic/claude-4.5-sonnet-20250929"
     assert openrouter.list_models_calls == 1
+
+
+def test_model_info_discovery_uses_persistent_cache(tmp_path: Path) -> None:
+    cached_provider = _FakeModelProvider(
+        name="openrouter",
+        models=(
+            ModelInfo(
+                ref="anthropic/claude-4.5-sonnet-20250929",
+                provider="openrouter",
+                name="claude-4.5-sonnet-20250929",
+                model="anthropic/claude-sonnet-4.5",
+                selectors=("anthropic/claude-sonnet-4.5",),
+                adapter="responses",
+            ),
+        ),
+        required_env_vars=("OPENROUTER_API_KEY",),
+    )
+    cache_dir = tmp_path / "model-cache"
+    environ = {"OPENROUTER_API_KEY": "secret"}
+
+    assert model_infos(cached_provider, environ=environ, cache_dir=cache_dir)[0].ref == (
+        "anthropic/claude-4.5-sonnet-20250929"
+    )
+    assert cached_provider.list_models_calls == 1
+
+    same_provider = _FakeModelProvider(
+        name="openrouter",
+        models=(
+            ModelInfo(
+                ref="anthropic/claude-4.5-sonnet-20250929",
+                provider="openrouter",
+                name="claude-4.5-sonnet-20250929",
+                model="anthropic/claude-sonnet-4.5",
+                selectors=("anthropic/claude-sonnet-4.5",),
+                adapter="responses",
+            ),
+        ),
+        required_env_vars=("OPENROUTER_API_KEY",),
+    )
+    changed_provider = _FakeModelProvider(
+        name="openrouter",
+        models=(
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openrouter",
+                name="gpt-5",
+                model="openai/gpt-5",
+                adapter="responses",
+            ),
+        ),
+        required_env_vars=("OPENROUTER_API_KEY",),
+    )
+
+    cached = model_infos(same_provider, environ=environ, cache_dir=cache_dir)
+
+    assert cached[0].ref == "anthropic/claude-4.5-sonnet-20250929"
+    assert same_provider.list_models_calls == 0
+
+    changed = model_infos(changed_provider, environ=environ, cache_dir=cache_dir)
+    refreshed = model_infos(changed_provider, environ=environ, cache_dir=cache_dir, refresh=True)
+
+    assert changed[0].ref == "openai/gpt-5"
+    assert refreshed[0].ref == "openai/gpt-5"
+    assert changed_provider.list_models_calls == 2
+
+
+def test_model_info_persistent_cache_ignores_projection_only_provider_state(tmp_path: Path) -> None:
+    models = (
+        ModelInfo(
+            ref="openai/gpt-5",
+            provider="openai",
+            name="gpt-5",
+            model="gpt-5",
+            selectors=("gpt-5",),
+            adapter="responses",
+        ),
+    )
+    provider = _FakeModelProvider(
+        name="openai",
+        models=models,
+        required_env_vars=("OPENAI_API_KEY",),
+        default_base_url="https://api.openai.com/v1",
+    )
+    provider.adapter = "responses"  # type: ignore[attr-defined]
+    provider.options = {"temperature": 0}  # type: ignore[attr-defined]
+    provider.scope = "remote"  # type: ignore[attr-defined]
+    cache_dir = tmp_path / "model-cache"
+
+    assert model_infos(provider, environ={"OPENAI_API_KEY": "secret"}, cache_dir=cache_dir)[0].ref == "openai/gpt-5"
+    assert provider.list_models_calls == 1
+
+    same_source_provider = _FakeModelProvider(
+        name="openai",
+        models=models,
+        required_env_vars=("OPENAI_API_KEY",),
+        default_base_url="https://api.openai.com/v1",
+    )
+    same_source_provider.adapter = "chat_completions"  # type: ignore[attr-defined]
+    same_source_provider.options = {"temperature": 1}  # type: ignore[attr-defined]
+    same_source_provider.scope = "local"  # type: ignore[attr-defined]
+
+    assert model_infos(same_source_provider, environ={"OPENAI_API_KEY": "secret"}, cache_dir=cache_dir)[0].ref == (
+        "openai/gpt-5"
+    )
+    assert same_source_provider.list_models_calls == 0
+
+
+def test_model_selection_discovers_all_providers_before_filtering(tmp_path: Path) -> None:
+    openai = _FakeModelProvider(
+        name="openai",
+        models=(
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openai",
+                name="gpt-5",
+                model="gpt-5",
+                selectors=("gpt-5",),
+                adapter="responses",
+            ),
+        ),
+        required_env_vars=("OPENAI_API_KEY",),
+    )
+    openrouter = _FakeModelProvider(
+        name="openrouter",
+        models=(
+            ModelInfo(
+                ref="anthropic/claude-sonnet-4.5",
+                provider="openrouter",
+                name="claude-sonnet-4.5",
+                model="anthropic/claude-sonnet-4.5",
+                selectors=("claude",),
+                adapter="responses",
+            ),
+        ),
+        required_env_vars=("OPENROUTER_API_KEY",),
+    )
+    cache_dir = tmp_path / "model-cache"
+    context = SimpleNamespace(
+        model_providers={"openai": openai, "openrouter": openrouter},
+        model_aliases={},
+        default_models=(),
+        model_environ={"OPENAI_API_KEY": "secret", "OPENROUTER_API_KEY": "secret"},
+        model_cache_dir=cache_dir,
+    )
+
+    selectors = select_model_selectors(context, activation_selectors=("openai/gpt-5[openai]",))
+
+    assert selectors == ("openai/gpt-5[openai]",)
+    assert openai.list_models_calls == 1
+    assert openrouter.list_models_calls == 1
+
+    same_openrouter = _FakeModelProvider(
+        name="openrouter",
+        models=openrouter._models,
+        required_env_vars=("OPENROUTER_API_KEY",),
+    )
+
+    assert model_infos(
+        same_openrouter,
+        environ={"OPENROUTER_API_KEY": "secret"},
+        cache_dir=cache_dir,
+    )[0].ref == "anthropic/claude-sonnet-4.5"
+    assert same_openrouter.list_models_calls == 0
 
 
 def test_model_route_can_override_provider_defaults(tmp_path: Path) -> None:

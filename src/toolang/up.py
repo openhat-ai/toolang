@@ -214,6 +214,8 @@ class UptimeContext:
         self.model_aliases = dict(model_aliases)
         self.default_models = tuple(default_models)
         self.model_environ = dict(model_environ)
+        self.model_cache_dir = self.root / ".runtime" / "model-cache"
+        self.model_cache_refresh = False
         self.channel_bindings = dict(channel_bindings)
         self.channel_plugins = dict(channel_plugins)
         self.runner = runner
@@ -327,6 +329,8 @@ class _StartupModelSelection:
     model_aliases: Mapping[str, ModelAlias]
     default_models: tuple[str, ...]
     model_environ: Mapping[str, str]
+    model_cache_dir: Path | None = None
+    model_cache_refresh: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -750,6 +754,7 @@ def _validate_startup_models(
         model_aliases=load_model_aliases(toolang_root, agent_name),
         default_models=load_default_models(toolang_root, agent_name),
         model_environ=environ,
+        model_cache_dir=toolang_root / ".runtime" / "model-cache",
     )
     if not selectors:
         select_model_selectors(context)
@@ -1163,6 +1168,7 @@ def _load_runtime_context(
                 model_aliases=model_aliases,
                 default_models=default_models,
                 model_environ=environ,
+                model_cache_dir=toolang_root / ".runtime" / "model-cache",
             ),
             normalized_model_selectors,
         )
