@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from toolang.base.types.message import message_summary
 from .events import MessageData, run_input_record_message_data, run_input_message_data, step_message_data
-from .records import InputRecord, RunRecord, RunStatus, StepRecord, ThreadPeer, ThreadRecord
+from .records import RunCommandRecord, RunRecord, RunStatus, StepRecord, ThreadPeer, ThreadRecord
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +74,7 @@ class StepDetail:
 class InputDetail:
     """One run input detail payload."""
 
-    record: InputRecord
+    record: RunCommandRecord
     message: MessageData | None
 
 
@@ -109,7 +109,7 @@ def thread_info_from_runs(
     thread_id: str,
     runs: Sequence[RunRecord],
     *,
-    inputs_by_run: Mapping[str, Sequence[InputRecord]],
+    commands_by_run: Mapping[str, Sequence[RunCommandRecord]],
     steps_by_run: Mapping[str, Sequence[StepRecord]],
     thread: ThreadRecord | None = None,
 ) -> ThreadInfo:
@@ -118,7 +118,7 @@ def thread_info_from_runs(
     first = runs[0]
     last = runs[-1]
     active = next((run for run in reversed(runs) if run.status == "running"), None)
-    first_input = run_input_message_data(first, _start_input(inputs_by_run.get(first.run_id, ())))
+    first_input = run_input_message_data(first, _start_input(commands_by_run.get(first.run_id, ())))
     title = message_summary(first_input.parts) or first.origin
     updated_at = last.finished_at or last.started_at
     if thread is not None:
@@ -209,14 +209,14 @@ def _thread_status(active: RunRecord | None) -> str:
     return "running" if active is not None else "idle"
 
 
-def run_input_from_records(run: RunRecord, *, inputs: Sequence[InputRecord]) -> MessageData | None:
+def run_input_from_records(run: RunRecord, *, inputs: Sequence[RunCommandRecord]) -> MessageData | None:
     """Build the start input payload from durable input records."""
 
     start = _start_input(inputs)
     return run_input_message_data(run, start)
 
 
-def run_inputs_from_records(run: RunRecord, *, inputs: Sequence[InputRecord]) -> list[InputDetail]:
+def run_inputs_from_records(run: RunRecord, *, inputs: Sequence[RunCommandRecord]) -> list[InputDetail]:
     """Build run input details from durable input records."""
 
     return [
@@ -247,7 +247,7 @@ def run_detail_from_record(
     run: RunRecord,
     *,
     steps: Sequence[StepRecord],
-    inputs: Sequence[InputRecord] = (),
+    inputs: Sequence[RunCommandRecord] = (),
 ) -> RunDetail:
     """Build one run detail payload from one durable run record."""
 
@@ -259,8 +259,8 @@ def run_detail_from_record(
     )
 
 
-def _start_input(inputs: Sequence[InputRecord]) -> InputRecord:
+def _start_input(inputs: Sequence[RunCommandRecord]) -> RunCommandRecord:
     for input in inputs:
-        if input.index == 0 and input.action == "start":
+        if input.index == 0 and input.kind == "start":
             return input
     raise ValueError("run start input not found")

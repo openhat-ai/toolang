@@ -64,8 +64,8 @@ class RuntimeEventBus:
                 self.publish(
                     domain="run",
                     domain_id=run_id,
-                    type="run_input",
-                    payload=_run_input_payload(event),
+                    type="run_command",
+                    payload=_run_command_payload(event),
                 )
         if self._agent_id and isinstance(event, (RunStart, RunEnd)):
             agent_payload = dict(payload)
@@ -78,8 +78,8 @@ class RuntimeEventBus:
                 self.publish(
                     domain="thread",
                     domain_id=thread_id,
-                    type="run_input",
-                    payload=_run_input_payload(event),
+                    type="run_command",
+                    payload=_run_command_payload(event),
                 )
 
     async def stream(
@@ -193,15 +193,15 @@ def _prompt_hash(body: str) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
-def _run_input_payload(event: RunStart) -> dict[str, Any]:
+def _run_command_payload(event: RunStart) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "run_id": event.run_id,
         "thread_id": event.thread_id,
-        "ref": {"kind": "input", "index": 0},
-        "action": "start",
+        "ref": {"kind": "command", "index": 0},
+        "kind": "start",
         "message": event.input.to_data(),
         "created_at": event.created_at,
-        "type": "run_input",
+        "type": "run_command",
     }
     if event.request_id is not None:
         payload["request_id"] = event.request_id

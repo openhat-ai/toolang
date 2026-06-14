@@ -25,9 +25,9 @@ from .events import RunEnd, RunStart, StepStart, StepEnd, TraceEvent
 from .records import (
     EventDomain,
     EventRecord,
-    InputAction,
-    InputMode,
-    InputRecord,
+    RunCommandKind,
+    RunCommandMode,
+    RunCommandRecord,
     ModelCallStepPayload,
     RunRecord,
     RunStatus,
@@ -47,7 +47,7 @@ from .records import (
     step_payload_to_data,
 )
 
-_SCHEMA_VERSION = 8
+_SCHEMA_VERSION = 9
 
 
 class ExecutionStore:
@@ -136,13 +136,13 @@ class ExecutionStore:
             )
             self._conn.execute(
                 """
-                INSERT INTO inputs(
-                    run_id,
-                    "index",
-                    action,
-                    mode,
-                    request_id,
-                    message,
+                    INSERT INTO commands(
+                        run_id,
+                        "index",
+                        kind,
+                        mode,
+                        request_id,
+                        message,
                     created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
@@ -410,7 +410,7 @@ class ExecutionStore:
         target_thread_id: str,
         target_run_ids: Sequence[str],
     ) -> tuple[RunRecord, ...]:
-        """Copy durable run records, inputs, and steps into another thread."""
+        """Copy durable run records, commands, and steps into another thread."""
 
         if len(source_run_ids) != len(target_run_ids):
             raise ValueError("source and target run id counts must match")
@@ -470,9 +470,9 @@ class ExecutionStore:
                         source_run["finished_at"],
                     ),
                 )
-                input_rows = self._conn.execute(
+                command_rows = self._conn.execute(
                     """
-                    SELECT * FROM inputs
+                    SELECT * FROM commands
                     WHERE run_id = ?
                     ORDER BY "index" ASC
                     """,
@@ -480,10 +480,10 @@ class ExecutionStore:
                 ).fetchall()
                 self._conn.executemany(
                     """
-                    INSERT INTO inputs(
+                    INSERT INTO commands(
                         run_id,
                         "index",
-                        action,
+                        kind,
                         mode,
                         request_id,
                         message,
@@ -494,13 +494,13 @@ class ExecutionStore:
                         (
                             target_run_id,
                             row["index"],
-                            row["action"],
+                            row["kind"],
                             row["mode"],
                             row["request_id"],
                             row["message"],
                             row["created_at"],
                         )
-                        for row in input_rows
+                        for row in command_rows
                     ],
                 )
                 step_rows = self._conn.execute(
@@ -704,12 +704,12 @@ class ExecutionStore:
         steps_by_run = self.list_steps_for_runs(run_ids=tuple(run.run_id for run in runs))
         results: list[Message] = []
         for run in runs:
-            inputs = self.list_inputs(run_id=run.run_id)
+            inputs = self.list_commands(run_id=run.run_id)
             if inputs:
                 results.extend(item.message for item in inputs if item.message is not None)
             for step in steps_by_run.get(run.run_id, ()):
                 results.extend(_replay_messages_from_step(step))
-        return results[-limit:]
+        return _recent_valid_model_history(results, limit=limit)
 
     def recent_text_conversation_messages(
         self,
@@ -723,7 +723,7 @@ class ExecutionStore:
         steps_by_run = self.list_steps_for_runs(run_ids=tuple(run.run_id for run in runs))
         results: list[Message] = []
         for run in runs:
-            inputs = self.list_inputs(run_id=run.run_id)
+            inputs = self.list_commands(run_id=run.run_id)
             input_messages = [item.message for item in inputs if item.message is not None]
             for input_message in input_messages:
                 actor_message = _actor_text_message(input_message)
@@ -869,16 +869,16 @@ class ExecutionStore:
             ).fetchone()
         return int(row["seq"]) if row is not None else 0
 
-    def append_input(
+    def append_command(
         self,
         *,
         run_id: str,
-        action: InputAction,
-        mode: InputMode | None = None,
+        kind: RunCommandKind,
+        mode: RunCommandMode | None = None,
         request_id: str | None = None,
         message: Message | None = None,
         created_at: str | None = None,
-    ) -> InputRecord:
+    ) -> RunCommandRecord:
         """Append one client-side input to one run."""
 
         now = created_at or utc_now()
@@ -886,7 +886,7 @@ class ExecutionStore:
             index_row = self._conn.execute(
                 """
                 SELECT COALESCE(MAX("index"), -1) + 1 AS next_index
-                FROM inputs
+                FROM commands
                 WHERE run_id = ?
                 """,
                 (run_id,),
@@ -894,10 +894,10 @@ class ExecutionStore:
             index = int(index_row["next_index"]) if index_row is not None else 0
             self._conn.execute(
                 """
-                INSERT INTO inputs(
+                INSERT INTO commands(
                     run_id,
                     "index",
-                    action,
+                    kind,
                     mode,
                     request_id,
                     message,
@@ -907,7 +907,7 @@ class ExecutionStore:
                 (
                     run_id,
                     index,
-                    action,
+                    kind,
                     mode,
                     request_id,
                     _dump_json(message.to_data()) if message is not None else None,
@@ -915,61 +915,61 @@ class ExecutionStore:
                 ),
             )
             row = self._conn.execute(
-                'SELECT * FROM inputs WHERE run_id = ? AND "index" = ?',
+                'SELECT * FROM commands WHERE run_id = ? AND "index" = ?',
                 (run_id, index),
             ).fetchone()
             self._conn.commit()
         if row is None:
-            raise RuntimeError("input insert returned no row")
-        return _input_from_row(row)
+            raise RuntimeError("command insert returned no row")
+        return _command_from_row(row)
 
-    def get_input(self, *, run_id: str, index: int) -> InputRecord | None:
+    def get_command(self, *, run_id: str, index: int) -> RunCommandRecord | None:
         with self._lock:
             row = self._conn.execute(
-                'SELECT * FROM inputs WHERE run_id = ? AND "index" = ?',
+                'SELECT * FROM commands WHERE run_id = ? AND "index" = ?',
                 (run_id, index),
             ).fetchone()
-        return _input_from_row(row) if row is not None else None
+        return _command_from_row(row) if row is not None else None
 
-    def list_inputs(
+    def list_commands(
         self,
         *,
         run_id: str,
-        action: InputAction | None = None,
-    ) -> tuple[InputRecord, ...]:
+        kind: RunCommandKind | None = None,
+    ) -> tuple[RunCommandRecord, ...]:
         clauses = ["run_id = ?"]
         params: list[object] = [run_id]
-        if action is not None:
-            clauses.append("action = ?")
-            params.append(action)
+        if kind is not None:
+            clauses.append("kind = ?")
+            params.append(kind)
         where = " AND ".join(clauses)
         with self._lock:
             rows = self._conn.execute(
                 f"""
-                SELECT * FROM inputs
+                SELECT * FROM commands
                 WHERE {where}
                 ORDER BY "index" ASC
                 """,
                 tuple(params),
             ).fetchall()
-        return tuple(_input_from_row(row) for row in rows)
+        return tuple(_command_from_row(row) for row in rows)
 
-    def pending_inputs(
+    def pending_commands(
         self,
         *,
         run_id: str,
-        action: InputAction,
-    ) -> tuple[InputRecord, ...]:
-        """Return run inputs not yet referenced by any step input."""
+        kind: RunCommandKind,
+    ) -> tuple[RunCommandRecord, ...]:
+        """Return run commands not yet referenced by any step input."""
 
         with self._lock:
-            input_rows = self._conn.execute(
+            command_rows = self._conn.execute(
                 """
-                SELECT * FROM inputs
-                WHERE run_id = ? AND action = ?
+                SELECT * FROM commands
+                WHERE run_id = ? AND kind = ?
                 ORDER BY "index" ASC
                 """,
-                (run_id, action),
+                (run_id, kind),
             ).fetchall()
             step_rows = self._conn.execute(
                 """
@@ -978,8 +978,8 @@ class ExecutionStore:
                 """,
                 (run_id,),
             ).fetchall()
-        used = _used_input_indexes(step_rows)
-        return tuple(_input_from_row(row) for row in input_rows if int(row["index"]) not in used)
+        used = _used_command_indexes(step_rows)
+        return tuple(_command_from_row(row) for row in command_rows if int(row["index"]) not in used)
 
     def _init_schema(self) -> None:
         with self._lock:
@@ -990,6 +990,7 @@ class ExecutionStore:
                 self._conn.execute("DROP TABLE IF EXISTS steps")
                 self._conn.execute("DROP TABLE IF EXISTS runs")
                 self._conn.execute("DROP TABLE IF EXISTS inputs")
+                self._conn.execute("DROP TABLE IF EXISTS commands")
                 self._conn.execute("DROP TABLE IF EXISTS threads")
                 self._conn.execute("DROP TABLE IF EXISTS updates")
                 self._conn.execute("DROP TABLE IF EXISTS events")
@@ -1031,10 +1032,10 @@ class ExecutionStore:
             )
             self._conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS inputs (
+                CREATE TABLE IF NOT EXISTS commands (
                     run_id TEXT NOT NULL,
                     "index" INTEGER NOT NULL,
-                    action TEXT NOT NULL,
+                    kind TEXT NOT NULL,
                     mode TEXT,
                     request_id TEXT,
                     message TEXT,
@@ -1107,7 +1108,7 @@ class ExecutionStore:
                 "CREATE INDEX IF NOT EXISTS idx_updates_created ON updates(created_at)"
             )
             self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_inputs_request_id ON inputs(request_id) WHERE request_id IS NOT NULL"
+                "CREATE INDEX IF NOT EXISTS idx_commands_request_id ON commands(request_id) WHERE request_id IS NOT NULL"
             )
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_events_domain_seq ON events(domain, domain_id, seq)"
@@ -1312,20 +1313,20 @@ def _event_from_row(row: sqlite3.Row) -> EventRecord:
     )
 
 
-def _input_from_row(row: sqlite3.Row) -> InputRecord:
+def _command_from_row(row: sqlite3.Row) -> RunCommandRecord:
     message_raw = _load_json(str(row["message"])) if row["message"] is not None else None
-    return InputRecord(
+    return RunCommandRecord(
         run_id=str(row["run_id"]),
         index=int(row["index"]),
-        action=cast(InputAction, row["action"]),
-        mode=cast(InputMode, row["mode"]) if row["mode"] is not None else None,
+        kind=cast(RunCommandKind, row["kind"]),
+        mode=cast(RunCommandMode, row["mode"]) if row["mode"] is not None else None,
         request_id=str(row["request_id"]) if row["request_id"] is not None else None,
         message=Message.from_data(message_raw) if isinstance(message_raw, Mapping) else None,
         created_at=str(row["created_at"]),
     )
 
 
-def _used_input_indexes(rows: Sequence[sqlite3.Row]) -> set[int]:
+def _used_command_indexes(rows: Sequence[sqlite3.Row]) -> set[int]:
     used: set[int] = set()
     for row in rows:
         raw = _load_json(str(row["input"]))
@@ -1334,7 +1335,7 @@ def _used_input_indexes(rows: Sequence[sqlite3.Row]) -> set[int]:
         for item in raw:
             if not isinstance(item, Mapping):
                 continue
-            if item.get("kind") == "input":
+            if item.get("kind") == "command":
                 used.add(int(item.get("index", 0)))
     return used
 
@@ -1352,9 +1353,9 @@ def _replay_messages_from_step(step: StepRecord) -> list[Message]:
 
 
 def _role_for_step(kind: StepKind) -> MessageRole | None:
-    if kind == "model_call":
+    if kind == "model":
         return "assistant"
-    if kind == "tool_call":
+    if kind == "tool":
         return "tool"
     return None
 
@@ -1370,6 +1371,65 @@ def _actor_text_message(message: Message) -> Message | None:
     if not parts:
         return None
     return Message(role=message.role, parts=parts, meta=dict(message.meta))
+
+
+def _recent_valid_model_history(messages: Sequence[Message], *, limit: int) -> list[Message]:
+    if limit <= 0:
+        return []
+    groups = _valid_model_history_groups(messages)
+    selected: list[tuple[Message, ...]] = []
+    count = 0
+    for group in reversed(groups):
+        group_size = len(group)
+        if selected and count + group_size > limit:
+            break
+        selected.append(group)
+        count += group_size
+        if count >= limit:
+            break
+    selected.reverse()
+    return [message for group in selected for message in group]
+
+
+def _valid_model_history_groups(messages: Sequence[Message]) -> list[tuple[Message, ...]]:
+    groups: list[tuple[Message, ...]] = []
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        if message.role == "tool":
+            index += 1
+            continue
+        if message.role != "assistant":
+            groups.append((message,))
+            index += 1
+            continue
+        tool_call_ids = _message_tool_call_ids(message)
+        if not tool_call_ids:
+            groups.append((message,))
+            index += 1
+            continue
+        tool_group: list[Message] = []
+        remaining = set(tool_call_ids)
+        cursor = index + 1
+        while cursor < len(messages) and messages[cursor].role == "tool":
+            tool_message = messages[cursor]
+            matched = _message_tool_result_ids(tool_message) & remaining
+            if matched:
+                tool_group.append(tool_message)
+                remaining -= matched
+            cursor += 1
+        if not remaining:
+            groups.append((message, *tool_group))
+        index = cursor
+    return groups
+
+
+def _message_tool_call_ids(message: Message) -> tuple[str, ...]:
+    return tuple(part.tool_call_id for part in message.parts if isinstance(part, ToolCallPart) and part.tool_call_id)
+
+
+def _message_tool_result_ids(message: Message) -> set[str]:
+    return {part.tool_call_id for part in message.parts if isinstance(part, ToolResultPart) and part.tool_call_id}
 
 
 class PersistSink:
@@ -1468,7 +1528,7 @@ class PersistSink:
         self._store.append_step(
             run_id=event.run_id,
             step_index=step_index,
-            kind="runtime",
+            kind="system",
             status="failed",
             input=(),
             output=(TextPart(text=event.error or "Run failed."),),

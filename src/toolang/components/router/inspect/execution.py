@@ -28,11 +28,11 @@ def create_router() -> APIRouter:
         context = request.app.state.runtime
         runs = context.store.list_runs(limit=limit, thread_id=thread_id, status=status)
         steps_by_run = context.store.list_steps_for_runs(run_ids=tuple(item.run_id for item in runs))
-        inputs_by_run = {run.run_id: context.store.list_inputs(run_id=run.run_id) for run in runs}
+        commands_by_run = {run.run_id: context.store.list_commands(run_id=run.run_id) for run in runs}
         items = [
             _shared._run_item(
                 item,
-                inputs=inputs_by_run.get(item.run_id, ()),
+                inputs=commands_by_run.get(item.run_id, ()),
                 steps=steps_by_run.get(item.run_id, ()),
             )
             for item in runs
@@ -75,15 +75,15 @@ def create_router() -> APIRouter:
         run = _shared._run_or_404(context, run_id)
         if run.status != "running":
             raise HTTPException(status_code=409, detail=f"run is not running: {run_id}")
-        input_record = context.store.append_input(
+        command_record = context.store.append_command(
             run_id=run.run_id,
-            action="stop",
+            kind="stop",
             mode=_shared._input_mode(payload.mode if payload else "immediate"),
             request_id=payload.request_id if payload else None,
         )
-        input_payload = _shared._input_event_payload(run, input_record)
-        context.events.publish(domain="run", domain_id=run.run_id, type="run_input", payload=input_payload)
-        context.events.publish(domain="thread", domain_id=run.thread_id, type="run_input", payload=input_payload)
+        input_payload = _shared._input_event_payload(run, command_record)
+        context.events.publish(domain="run", domain_id=run.run_id, type="run_command", payload=input_payload)
+        context.events.publish(domain="thread", domain_id=run.thread_id, type="run_command", payload=input_payload)
         run = context.store.cancel_run(run_id=run_id, error=payload.reason if payload else None)
         event_payload = _shared._run_event_payload(run)
         context.events.publish(domain="run", domain_id=run.run_id, type="run_end", payload=event_payload)
@@ -92,7 +92,7 @@ def create_router() -> APIRouter:
         return {
             "run": _shared._run_item(
                 run,
-                inputs=context.store.list_inputs(run_id=run.run_id),
+                inputs=context.store.list_commands(run_id=run.run_id),
                 steps=context.store.list_steps(run_id=run.run_id),
             ),
             "input": input_payload,
@@ -202,16 +202,16 @@ def create_router() -> APIRouter:
         if run.status != "running":
             raise HTTPException(status_code=409, detail=f"run is not running: {run_id}")
         message = _shared._input_message(payload.message)
-        input_record = context.store.append_input(
+        command_record = context.store.append_command(
             run_id=run.run_id,
-            action="steer",
+            kind="steer",
             mode=_shared._input_mode(payload.mode),
             request_id=payload.request_id,
             message=message,
         )
-        event_payload = _shared._input_event_payload(run, input_record)
-        context.events.publish(domain="run", domain_id=run.run_id, type="run_input", payload=event_payload)
-        context.events.publish(domain="thread", domain_id=run.thread_id, type="run_input", payload=event_payload)
+        event_payload = _shared._input_event_payload(run, command_record)
+        context.events.publish(domain="run", domain_id=run.run_id, type="run_command", payload=event_payload)
+        context.events.publish(domain="thread", domain_id=run.thread_id, type="run_command", payload=event_payload)
         return {"input": event_payload}
 
     @router.get("/instruct/{prompt_hash}", tags=["activity"], summary="Get Instruct Prompt")

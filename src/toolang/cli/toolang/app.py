@@ -190,6 +190,7 @@ _THREAD_TARGET_COMMANDS = frozenset({"steer", "cancel", "rewind", "fork"})
 _HIDDEN_ALIAS_COMMANDS = frozenset({"send", "attach"})
 _CHAT_MAX_INPUT_ROWS = 6
 _CHAT_MAX_QUEUE_ROWS = 4
+_CHAT_MAX_ACTIVE_RUN_ACTIVITY_ROWS = 12
 _CHAT_DIM = "\x1b[2m"
 _CHAT_NORMAL_INTENSITY = "\x1b[22m"
 _CHAT_RESET = "\x1b[0m"
@@ -618,9 +619,12 @@ def info_agent(
 )
 def chat_command(
     ctx: typer.Context,
-    target: Annotated[
+    thread: Annotated[
         str | None,
-        typer.Argument(help="Thread id or run id to continue. Omit to start a new terminal thread."),
+        typer.Argument(
+            help="Thread id to continue. Run id also accepted. Omit to start a new one.",
+            metavar="THREAD",
+        ),
     ] = None,
     models: Annotated[
         list[str] | None,
@@ -646,7 +650,7 @@ def chat_command(
     thunk: Annotated[str | None, typer.Option("--thunk", help="Use a thunk for new runs.")] = None,
     flow: Annotated[str | None, typer.Option("--flow", help="Use a flow for new runs.")] = None,
 ) -> None:
-    thread_id = _target_thread_id(ctx, target) if target is not None else None
+    thread_id = _target_thread_id(ctx, thread) if thread is not None else None
     selectors = _chat_selector_payload(models=models, tools=tools, caps=caps, thunk=thunk, flow=flow)
     _chat_interactive(ctx, thread_id=thread_id, selector_payload=selectors)
 
@@ -1057,7 +1061,7 @@ def _offline_threads_json(
             for run in store.list_thread_runs_chronological(thread_id=thread_id)
         ]
         steps_by_run = store.list_steps_for_runs(run_ids=tuple(item.run_id for item in ordered_runs))
-        inputs_by_run = {run.run_id: store.list_inputs(run_id=run.run_id) for run in ordered_runs}
+        commands_by_run = {run.run_id: store.list_commands(run_id=run.run_id) for run in ordered_runs}
         grouped_runs: dict[str, list[Any]] = {}
         for run in ordered_runs:
             grouped_runs.setdefault(run.thread_id, []).append(run)
@@ -1067,7 +1071,7 @@ def _offline_threads_json(
             info = thread_info_from_runs(
                 thread_id,
                 thread_runs,
-                inputs_by_run=inputs_by_run,
+                commands_by_run=commands_by_run,
                 steps_by_run=steps_by_run,
                 thread=thread_records.get(thread_id),
             )
@@ -1100,12 +1104,12 @@ def _offline_runs_json(
         run_status = _run_status_or_none(status)
         runs = store.list_runs(limit=50, thread_id=thread, status=run_status)
         steps_by_run = store.list_steps_for_runs(run_ids=tuple(item.run_id for item in runs))
-        inputs_by_run = {run.run_id: store.list_inputs(run_id=run.run_id) for run in runs}
+        commands_by_run = {run.run_id: store.list_commands(run_id=run.run_id) for run in runs}
         return {
             "items": [
                 _offline_run_item(
                     run,
-                    inputs=inputs_by_run.get(run.run_id, ()),
+                    inputs=commands_by_run.get(run.run_id, ()),
                     steps=steps_by_run.get(run.run_id, ()),
                 )
                 for run in runs
@@ -1206,11 +1210,11 @@ def _offline_thread_detail_json(ctx: typer.Context, thread_id: str, *, limit: in
         if runs:
             all_runs = store.list_thread_runs_chronological(thread_id=thread_id, limit=None)
             steps_by_run = store.list_steps_for_runs(run_ids=tuple(item.run_id for item in all_runs))
-            inputs_by_run = {run.run_id: store.list_inputs(run_id=run.run_id) for run in all_runs}
+            commands_by_run = {run.run_id: store.list_commands(run_id=run.run_id) for run in all_runs}
             info = thread_info_from_runs(
                 thread_id,
                 all_runs,
-                inputs_by_run=inputs_by_run,
+                commands_by_run=commands_by_run,
                 steps_by_run=steps_by_run,
                 thread=thread_record,
             )
@@ -1241,7 +1245,7 @@ def _offline_events_json(ctx: typer.Context, *, domain: Literal["run", "thread"]
 def _run_detail_json(store: ExecutionStore, run: Any) -> dict[str, Any]:
     detail = run_detail_from_record(
         run,
-        inputs=store.list_inputs(run_id=run.run_id),
+        inputs=store.list_commands(run_id=run.run_id),
         steps=store.list_steps(run_id=run.run_id),
     )
     return {
@@ -1604,15 +1608,15 @@ def _run_steps(run: Mapping[str, Any]) -> list[Mapping[str, Any]]:
 def _inspect_step_summary(record: Mapping[str, Any], message: Mapping[str, Any]) -> str:
     payload = _mapping(record.get("payload"))
     kind = _text(record.get("kind"))
-    if kind == "model_call":
+    if kind == "model":
         model = _text(payload.get("model_ref")) or _text(payload.get("model"))
         text = _message_summary(message)
         requests = "; ".join(line.removeprefix("requested ") for line in _inspect_tool_request_lines(record))
         request_summary = f"requested {requests}" if requests else ""
         return " ".join(item for item in (model, text, request_summary) if item)
-    if kind == "child_call":
+    if kind == "run":
         return child_call_summary(payload)
-    if kind == "flow_op":
+    if kind in {"step", "parallel", "bind"}:
         return flow_op_summary(payload)
     text = _parts_summary(record.get("output"))
     return text or _text(record.get("error")) or "-"
@@ -1646,9 +1650,9 @@ def _inspect_event_summary(event_type: str, payload: Mapping[str, Any], *, verbo
                 ("step", payload.get("parent_step_index")),
             )
         )
-    if event_type == "run_input":
+    if event_type == "run_command":
         text = _message_summary(_mapping(payload.get("message")))
-        return _format_kv((("action", _input_action_label(_text(payload.get("action")))), ("text", text)))
+        return _format_kv((("kind", _input_action_label(_text(payload.get("kind")))), ("text", text)))
     if event_type == "step_start":
         return _inspect_event_step_summary(payload, status=None, verbosity=verbosity)
     if event_type == "part_start":
@@ -1705,7 +1709,7 @@ def _inspect_event_step_summary(
                 ("error", error),
             )
         )
-    if kind == "flow_op":
+    if kind in {"step", "parallel", "bind"}:
         op = _text(step_payload.get("op"))
         stage_fields = _event_stage_fields(step_payload)
         output = _event_output_shape(payload)
@@ -1720,7 +1724,7 @@ def _inspect_event_step_summary(
                 ("error", error),
             )
         )
-    if kind == "child_call":
+    if kind == "run":
         return _format_kv(
             (
                 ("step", step_index),
@@ -1730,7 +1734,7 @@ def _inspect_event_step_summary(
                 ("error", error),
             )
         )
-    if kind == "model_call":
+    if kind == "model":
         model = _text(step_payload.get("model_ref")) or _text(step_payload.get("model"))
         text = _parts_summary(payload.get("output"))
         return _format_kv(
@@ -2179,7 +2183,7 @@ class _ChatRun:
     def start_step(self, payload: dict[str, Any]) -> None:
         index = _chat_step_index(payload)
         stored_payload = dict(payload)
-        if stored_payload.get("kind") in {"flow_op", "child_call"} and "payload" not in stored_payload:
+        if stored_payload.get("kind") in {"step", "parallel", "bind", "run"} and "payload" not in stored_payload:
             stored_payload["payload"] = dict(_mapping(stored_payload.get("metadata")))
         self.steps[index] = _ChatStep(
             index,
@@ -2306,7 +2310,8 @@ class _ChatLastRunPanel:
         run = self.get_run()
         if run is None:
             return []
-        return ["", *_chat_run_activity_lines(run, self.step_line), ""]
+        lines = _chat_run_activity_lines(run, self.step_line)
+        return ["", *_chat_tail_activity_lines(lines, max_lines=_CHAT_MAX_ACTIVE_RUN_ACTIVITY_ROWS), ""]
 
     def step_line(self, run: _ChatRun, index: int) -> str:
         if index in run.completed_steps:
@@ -2573,6 +2578,7 @@ class _ChatBottomApp:
         self.ticker: asyncio.Task[None] | None = None
         self.stream_step_index: int | None = None
         self.stream_text_parts: list[str] = []
+        self.model_label = _chat_resolved_model_label(ctx, self.selector_payload)
 
         self.last_run_panel = _ChatLastRunPanel(lambda: self.active_run)
         self.queue_panel = _ChatSubmissionQueue(lambda: self.pending)
@@ -2587,11 +2593,7 @@ class _ChatBottomApp:
         )
 
     def status_label(self) -> str:
-        models = self.selector_payload.get("models")
-        if isinstance(models, list) and models:
-            model_label = ", ".join(str(item) for item in models)
-        else:
-            model_label = "runtime model"
+        model_label = self.model_label
         executable_label = _chat_executable_status_label(self.selector_payload)
         if executable_label:
             return f"{model_label}  {executable_label}"
@@ -2742,8 +2744,8 @@ class _ChatBottomApp:
             return
         if event_type in {"run_queued", "run_waiting"}:
             self.handle_queue_event(event_type, payload)
-        elif event_type == "run_input":
-            self.handle_run_input(payload)
+        elif event_type == "run_command":
+            self.handle_run_command(payload)
         elif event_type == "run_start":
             self.handle_run_start(payload)
         elif event_type == "step_start" and self.active_run:
@@ -2760,7 +2762,7 @@ class _ChatBottomApp:
         run_id = _text(payload.get("run_id"))
         if event_type in {"run_queued", "run_waiting"}:
             return self.active_run is not None and bool(self.active_run.run_id) and run_id is not None and run_id != self.active_run.run_id
-        if event_type == "run_input":
+        if event_type == "run_command":
             return self.active_run is not None and bool(self.active_run.run_id) and run_id != self.active_run.run_id
         if event_type == "run_start":
             parent_run_id = _text(payload.get("parent_run_id"))
@@ -2883,7 +2885,7 @@ class _ChatBottomApp:
         index = self.next_chat_stream_step_index()
         self.stream_step_index = index
         self.stream_text_parts = []
-        self.active_run.start_step({"step_index": index, "kind": "model_call"})
+        self.active_run.start_step({"step_index": index, "kind": "model"})
 
     def append_chat_stream_text(self, event: Mapping[str, Any]) -> None:
         if self.active_run is None:
@@ -2905,7 +2907,7 @@ class _ChatBottomApp:
             {
                 "run_id": self.active_run.run_id,
                 "step_index": index,
-                "kind": "model_call",
+                "kind": "model",
                 "output": output,
             }
         )
@@ -2929,7 +2931,7 @@ class _ChatBottomApp:
             {
                 "run_id": self.active_run.run_id,
                 "step_index": index,
-                "kind": "model_call",
+                "kind": "model",
                 "output": [part],
             }
         )
@@ -2944,7 +2946,7 @@ class _ChatBottomApp:
             {
                 "run_id": self.active_run.run_id,
                 "step_index": index,
-                "kind": "tool_call",
+                "kind": "tool",
                 "input": [{"step_index": index - 1, "part_index": 0}],
                 "output": [
                     {
@@ -2961,8 +2963,8 @@ class _ChatBottomApp:
             return 1
         return max(self.active_run.step_indexes(), default=0) + 1
 
-    def handle_run_input(self, payload: dict[str, Any]) -> None:
-        if payload.get("action") != "start":
+    def handle_run_command(self, payload: dict[str, Any]) -> None:
+        if payload.get("kind") != "start":
             return
         run_id = str(payload.get("run_id") or "")
         message = _event_message_text(payload.get("message"))
@@ -3027,8 +3029,9 @@ class _ChatBottomApp:
                 self.prompt.set_error("/model requires a selector.")
                 return True
             self.selector_payload["models"] = list(selectors)
+            self.model_label = _chat_resolved_model_label(self.ctx, self.selector_payload)
             self.prompt.status_label = self.status_label()
-            _chat_write_lines(_chat_local_command_lines(message, [f"model: {', '.join(selectors)}"]))
+            _chat_write_lines(_chat_local_command_lines(message, [f"model: {self.model_label}"]))
             return True
         try:
             payload = _runtime_json(self.ctx, "/api/v1/chat/models")
@@ -3151,28 +3154,28 @@ def _chat_part_index(payload: Mapping[str, Any]) -> int:
 def _chat_step_label(payload: Mapping[str, Any], run: _ChatRun | None = None) -> str:
     kind = str(payload.get("kind") or "")
     step_payload = _mapping(payload.get("payload"))
-    if kind == "model_call":
+    if kind == "model":
         return "thinking..."
-    if kind == "tool_call":
+    if kind == "tool":
         return f"running {_chat_tool_name(payload, run=run)}"
-    if kind == "child_call":
+    if kind == "run":
         target = executable_label(
             _text(step_payload.get("target_kind")) or "run",
             _text(step_payload.get("target")),
             metadata=_mapping(step_payload.get("metadata")),
         ).replace(":", " ", 1)
         return f"running {target}"
-    if kind == "flow_op":
+    if kind in {"step", "parallel", "bind"}:
         op = _text(step_payload.get("op")) or "flow"
         return f"running {op}"
-    if kind in {"runtime", "system"}:
+    if kind == "system":
         return _text(step_payload.get("message")) or _text(step_payload.get("op")) or kind
     return "running"
 
 
 def _chat_active_step_line(step: _ChatStep) -> str:
     line = f"{_chat_marker_for(step.kind)} {step.label}"
-    if step.kind in {"tool_call", "runtime", "system"}:
+    if step.kind in {"tool", "step", "parallel", "bind", "system"}:
         return _chat_dim(line)
     return line
 
@@ -3181,7 +3184,7 @@ def _chat_completed_step_line(payload: Mapping[str, Any], *, run: _ChatRun | Non
     kind = str(payload.get("kind") or "")
     step_payload = _mapping(payload.get("payload"))
     marker = _chat_marker_for(kind)
-    if kind == "model_call":
+    if kind == "model":
         text = _event_parts_text(payload.get("output"))
         if text:
             return f"{marker} assistant message"
@@ -3190,24 +3193,24 @@ def _chat_completed_step_line(payload: Mapping[str, Any], *, run: _ChatRun | Non
             return f"{marker} requested {requests}"
         model = _text(step_payload.get("model_ref")) or _text(step_payload.get("model"))
         return f"{marker} model call completed{f' ({model})' if model else ''}"
-    if kind == "tool_call":
+    if kind == "tool":
         tool = _chat_tool_call(payload, run=run)
         detail = _chat_tool_call_display(tool)
         error = _text(payload.get("error"))
         if error:
             return _chat_dim(f"{marker} ran {detail} failed: {_chat_summarize(error, width=120)}")
         return _chat_dim(f"{marker} ran {detail}")
-    if kind == "child_call":
+    if kind == "run":
         target = executable_label(
             _text(step_payload.get("target_kind")) or "run",
             _text(step_payload.get("target")),
             metadata=_mapping(step_payload.get("metadata")),
         ).replace(":", " ", 1)
         return _chat_dim(f"{marker} ran {target}")
-    if kind == "flow_op":
+    if kind in {"step", "parallel", "bind"}:
         op = _text(step_payload.get("op")) or "flow"
         return _chat_dim(f"{marker} ran {op}")
-    if kind in {"runtime", "system", "error"}:
+    if kind in {"system", "error"}:
         return _chat_system_line(payload)
     return _chat_dim(f"{marker} ran {kind or 'step'}")
 
@@ -3278,11 +3281,12 @@ def _chat_parse_error_payload(text: str) -> Mapping[str, Any] | None:
 
 def _chat_marker_for(kind: str | None) -> str:
     return {
-        "model_call": "•",
-        "tool_call": "›",
-        "child_call": "›",
-        "flow_op": "─",
-        "runtime": "─",
+        "model": "•",
+        "tool": "›",
+        "run": "›",
+        "step": "─",
+        "parallel": "⋯",
+        "bind": "→",
         "system": "◇",
         "error": "!",
     }.get(kind or "", "·")
@@ -3509,6 +3513,18 @@ def _chat_run_lines(run: _ChatRun, *, include_steps: bool) -> list[str]:
     return lines
 
 
+def _chat_tail_activity_lines(lines: Sequence[str], *, max_lines: int) -> list[str]:
+    if len(lines) <= max_lines:
+        return list(lines)
+    if max_lines <= 0:
+        return []
+    if max_lines == 1:
+        return [_chat_dim(f"... {len(lines)} earlier lines")]
+    tail_count = max_lines - 1
+    hidden = len(lines) - tail_count
+    return [_chat_dim(f"... {hidden} earlier lines"), *lines[-tail_count:]]
+
+
 def _chat_completed_line_for(run: _ChatRun, index: int) -> str:
     if index in run.completed_steps:
         return _chat_completed_step_line(run.completed_steps[index], run=run)
@@ -3533,10 +3549,10 @@ def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, i
             lines.append(step_renderer(run, index))
             continue
         payload = run.completed_steps[index]
-        if payload.get("kind") == "model_call":
+        if payload.get("kind") == "model":
             text = _event_parts_text(payload.get("output"))
             if text:
-                lines.extend(_chat_message_lines(_chat_marker_for("model_call"), text))
+                lines.extend(_chat_message_lines(_chat_marker_for("model"), text))
                 continue
         lines.append(step_renderer(run, index))
     return lines
@@ -3548,7 +3564,7 @@ def _chat_terminal_event_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun,
         payload = run.completed_steps.get(index)
         if payload is None:
             continue
-        if payload.get("kind") not in {"error", "system", "runtime"}:
+        if payload.get("kind") not in {"error", "system"}:
             continue
         lines.append(step_renderer(run, index))
     return lines
@@ -3612,7 +3628,7 @@ def _chat_flow_projection(run: _ChatRun) -> tuple[list[FlowStageView], dict[str,
             steps.append(payload)
             continue
         active = run.steps.get(step)
-        if active is None or active.kind not in {"flow_op", "child_call"}:
+        if active is None or active.kind not in {"step", "parallel", "bind", "run"}:
             continue
         active_payload = dict(active.payload)
         if "payload" not in active_payload:
@@ -3762,18 +3778,18 @@ def _chat_child_completed_step_lines(
     indent: str,
 ) -> list[str]:
     kind = _text(payload.get("kind"))
-    if kind == "model_call":
+    if kind == "model":
         text = _event_parts_text(payload.get("output"))
         lines: list[str] = []
         if text:
-            lines.extend(f"{indent}{line}" for line in _chat_message_lines(_chat_marker_for("model_call"), text))
+            lines.extend(f"{indent}{line}" for line in _chat_message_lines(_chat_marker_for("model"), text))
         requests = _chat_model_tool_request_summary(payload)
         if requests:
-            lines.append(f"{indent}{_chat_marker_for('model_call')} requested {requests}")
+            lines.append(f"{indent}{_chat_marker_for('model')} requested {requests}")
         if lines:
             return lines
     line = f"{indent}{_chat_completed_step_line(payload, run=run)}"
-    if kind != "tool_call":
+    if kind != "tool":
         return [line]
     return [line, *_chat_tool_message_lines(payload, indent=indent)]
 
@@ -3815,12 +3831,12 @@ def _chat_assistant_lines(run: _ChatRun) -> list[str]:
     lines: list[str] = []
     for index in run.step_indexes():
         payload = run.completed_steps.get(index)
-        if payload is None or payload.get("kind") != "model_call":
+        if payload is None or payload.get("kind") != "model":
             continue
         text = _event_parts_text(payload.get("output"))
         if not text:
             continue
-        lines.extend(_chat_message_lines(_chat_marker_for("model_call"), text))
+        lines.extend(_chat_message_lines(_chat_marker_for("model"), text))
     return lines
 
 
@@ -3899,6 +3915,69 @@ def _chat_local_command(message: str) -> tuple[str, str] | None:
 
 def _chat_model_command_selectors(argument: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(split_model_selectors((argument,))))
+
+
+def _chat_resolved_model_label(ctx: typer.Context, selector_payload: Mapping[str, object]) -> str:
+    requested = _chat_requested_model_selectors(selector_payload)
+    fallback = ", ".join(requested) if requested else "runtime model"
+    try:
+        payload = _runtime_json(ctx, "/api/v1/chat/models")
+    except Exception:
+        return fallback
+    items = [_mapping(item) for item in _list(payload.get("items"))]
+    if requested:
+        labels = [
+            _chat_model_item_label(item) if item is not None else selector
+            for selector in requested
+            for item in (_chat_find_model_item(items, selector),)
+        ]
+        return ", ".join(label for label in labels if label) or fallback
+    default_selector = _text(payload.get("default"))
+    if default_selector is not None:
+        item = _chat_find_model_item(items, default_selector)
+        if item is not None:
+            return _chat_model_item_label(item)
+        return default_selector
+    if items:
+        return _chat_model_item_label(items[0])
+    return fallback
+
+
+def _chat_requested_model_selectors(selector_payload: Mapping[str, object]) -> tuple[str, ...]:
+    models = selector_payload.get("models")
+    if not isinstance(models, Sequence) or isinstance(models, (str, bytes, bytearray)):
+        return ()
+    return tuple(str(item) for item in models if str(item))
+
+
+def _chat_find_model_item(items: Sequence[Mapping[str, Any]], selector: str) -> Mapping[str, Any] | None:
+    normalized = _chat_model_selector_key(selector)
+    for item in items:
+        values = (
+            _text(item.get("selector")),
+            _text(item.get("ref")),
+            _text(item.get("name")),
+            _text(item.get("model")),
+            _text(item.get("provider")),
+        )
+        if any(_chat_model_selector_key(value) == normalized for value in values if value is not None):
+            return item
+    return None
+
+
+def _chat_model_selector_key(selector: str) -> str:
+    return selector.strip().removeprefix("[").removesuffix("]")
+
+
+def _chat_model_item_label(item: Mapping[str, Any]) -> str:
+    ref = _text(item.get("ref"))
+    if ref is not None:
+        return ref
+    provider = _text(item.get("provider"))
+    model = _text(item.get("model"))
+    if provider is not None and model is not None:
+        return f"{provider}/{model}"
+    return _text(item.get("selector")) or _text(item.get("name")) or "runtime model"
 
 
 def _chat_set_executable_selector(selector_payload: dict[str, object], *, kind: str, name: str) -> None:
@@ -4316,8 +4395,8 @@ class _ThreadEventRenderer:
         payload = event.get("payload")
         if not isinstance(payload, dict):
             return
-        if event_type == "run_input":
-            self._render_run_input(payload)
+        if event_type == "run_command":
+            self._render_run_command(payload)
         elif event_type == "part_delta":
             self._render_part_delta(payload)
         elif event_type == "step_end":
@@ -4328,8 +4407,8 @@ class _ThreadEventRenderer:
                 run_id=str(payload.get("run_id") or "") or None,
             )
 
-    def _render_run_input(self, payload: dict[str, Any]) -> None:
-        if payload.get("action") != "start":
+    def _render_run_command(self, payload: dict[str, Any]) -> None:
+        if payload.get("kind") != "start":
             return
         self._remember_local_run(payload)
         text = _event_message_text(payload.get("message"))
@@ -4354,7 +4433,7 @@ class _ThreadEventRenderer:
         typer.echo(text, nl=False)
 
     def _render_step_end(self, payload: dict[str, Any]) -> None:
-        if payload.get("kind") != "model_call":
+        if payload.get("kind") != "model":
             return
         run_id = payload.get("run_id")
         if isinstance(run_id, str) and run_id in self._text_delta_runs:

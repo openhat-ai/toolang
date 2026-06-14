@@ -696,7 +696,7 @@ class _ScriptProgressSink:
                 self._render()
             return
         if isinstance(event, StepStart):
-            if event.kind not in {"flow_op", "child_call"}:
+            if event.kind not in {"step", "parallel", "bind", "run"}:
                 self._update_call_step(event.run_id, event.step_index, f"{event.kind} running")
             return
         if isinstance(event, StepEnd):
@@ -724,7 +724,7 @@ class _ScriptProgressSink:
 
     def _update_step(self, event: StepEnd) -> None:
         payload = event.payload.to_data()
-        if event.kind == "flow_op":
+        if event.kind in {"step", "parallel", "bind"}:
             stage = self._ensure_stage(payload)
             op = str(payload.get("op", ""))
             metadata = self._metadata(payload)
@@ -740,7 +740,7 @@ class _ScriptProgressSink:
                     stage.status = "running"
             self._render()
             return
-        if event.kind == "child_call":
+        if event.kind == "run":
             stage = self._ensure_stage(payload)
             for run_id in self._child_run_ids(payload, event):
                 call = self._ensure_call(

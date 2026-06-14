@@ -63,7 +63,7 @@ from toolang.execution.context import (
 )
 from toolang.execution.records import (
     ModelCallStepPayload,
-    RunInputRef,
+    RunCommandRef,
     RuntimeStepPayload,
     StepOutputRef,
     ToolCallStepPayload,
@@ -439,7 +439,7 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
             }
             assert profile["metrics"] == {
                 "threads": {"total": 1, "chat": 1, "chore": 0, "task": 0},
-                "steps": {"total": 1, "model_call": 1, "tool_call": 0, "runtime": 0},
+                "steps": {"total": 1, "model": 1, "tool": 0, "system": 0},
                 "tokens": {"input": 0, "output": 0, "total": 0},
             }
             assert caps_response["agent"] == "alice"
@@ -475,7 +475,7 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
             assert run_detail["input"]["role"] == "user"
             assert run_detail["input"]["parts"][0]["text"] == "say hello"
             assert run_detail["output"]["status"] == "finished"
-            assert [item["record"]["kind"] for item in run_detail["output"]["steps"]] == ["model_call"]
+            assert [item["record"]["kind"] for item in run_detail["output"]["steps"]] == ["model"]
             assert run_detail["output"]["steps"][0]["message"]["role"] == "assistant"
             assert (
                 run_detail["output"]["steps"][0]["message"]["parts"][0]["text"]
@@ -705,16 +705,16 @@ def test_run_start_trace_emits_run_input_after_run_start(tmp_path: Path) -> None
 
     events = context.store.list_events(domain="run", domain_id="run-1")
 
-    assert [item.type for item in events] == ["run_start", "run_input"]
+    assert [item.type for item in events] == ["run_start", "run_command"]
     assert [item.seq for item in events] == [1, 2]
     assert events[1].payload == {
         "run_id": "run-1",
         "thread_id": "thread-1",
-        "ref": {"kind": "input", "index": 0},
-        "action": "start",
+        "ref": {"kind": "command", "index": 0},
+        "kind": "start",
         "message": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
         "created_at": "2026-01-01T00:00:00Z",
-        "type": "run_input",
+        "type": "run_command",
         "request_id": "req-start",
     }
 
@@ -751,11 +751,11 @@ def test_steer_run_appends_run_input_event(tmp_path: Path) -> None:
         ).json()
         events = client.get("/api/v1/runs/run-1/events").json()["items"]
 
-    assert response["input"]["ref"] == {"kind": "input", "index": 1}
-    assert response["input"]["action"] == "steer"
+    assert response["input"]["ref"] == {"kind": "command", "index": 1}
+    assert response["input"]["kind"] == "steer"
     assert response["input"]["request_id"] == "req-steer"
-    assert [item["type"] for item in events] == ["run_input"]
-    assert events[0]["payload"]["ref"] == {"kind": "input", "index": 1}
+    assert [item["type"] for item in events] == ["run_command"]
+    assert events[0]["payload"]["ref"] == {"kind": "command", "index": 1}
     assert events[0]["payload"]["message"]["parts"] == [
         {"type": "text", "text": "focus on events"}
     ]
@@ -796,8 +796,8 @@ def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
                 run_id="run-1",
                 thread_id="thread-1",
                 step_index=2,
-                kind="model_call",
-                input=(StepOutputRef(step_index=1), RunInputRef(index=1)),
+                kind="model",
+                input=(StepOutputRef(step_index=1), RunCommandRef(index=1)),
                 started_at="2026-01-01T00:00:01Z",
                 instruct="call prompt",
                 context="call context",
@@ -805,12 +805,12 @@ def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
         )
         events = client.get("/api/v1/threads/thread-1/events").json()["items"]
 
-    assert [item["type"] for item in events] == ["run_input", "step_start"]
+    assert [item["type"] for item in events] == ["run_command", "step_start"]
     assert [item["cursor"] for item in events] == [1, 2]
-    assert events[0]["payload"]["ref"] == {"kind": "input", "index": 1}
+    assert events[0]["payload"]["ref"] == {"kind": "command", "index": 1}
     assert events[1]["payload"]["input"] == [
         {"kind": "step", "index": 1},
-        {"kind": "input", "index": 1},
+        {"kind": "command", "index": 1},
     ]
     assert events[1]["payload"]["instruct"] == hashlib.sha256(
         b"call prompt"
@@ -836,9 +836,9 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
         created_at="2026-01-01T00:00:00Z",
         started_at="2026-01-01T00:00:00Z",
     )
-    context.store.append_input(
+    context.store.append_command(
         run_id="run-1",
-        action="steer",
+        kind="steer",
         mode="next_step",
         request_id="req-steer",
         message=Message.user("focus on events"),
@@ -847,9 +847,9 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
     context.store.append_step(
         run_id="run-1",
         step_index=2,
-        kind="model_call",
+        kind="model",
         status="finished",
-        input=(StepOutputRef(step_index=1), RunInputRef(index=1)),
+        input=(StepOutputRef(step_index=1), RunCommandRef(index=1)),
         output=(TextPart(text="ok"),),
         payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
         started_at="2026-01-01T00:00:02Z",
@@ -862,7 +862,7 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
 
     assert detail["output"]["steps"][0]["record"]["input"] == [
         {"kind": "step", "index": 1},
-        {"kind": "input", "index": 1},
+        {"kind": "command", "index": 1},
     ]
 
 
@@ -930,7 +930,7 @@ def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
         context,
         persist,
         None,
-        _started(1, run_id="run-1", thread_id="thread-1", kind="model_call"),
+        _started(1, run_id="run-1", thread_id="thread-1", kind="model"),
     )
     run_execute_module._emit_event(
         context,
@@ -940,7 +940,7 @@ def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
             1,
             run_id="run-1",
             thread_id="thread-1",
-            kind="model_call",
+            kind="model",
             output=(TextPart(text="late output"),),
         ),
     )
@@ -960,7 +960,7 @@ def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
     assert context.store.list_steps(run_id="run-1") == []
     assert [item.type for item in context.store.list_events(domain="thread", domain_id="thread-1")] == [
         "run_start",
-        "run_input",
+        "run_command",
     ]
 
 
@@ -1577,9 +1577,9 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
     store.append_step(
         run_id=term_run.run_id,
         step_index=1,
-        kind="model_call",
+        kind="model",
         status="finished",
-        input=(RunInputRef(),),
+        input=(RunCommandRef(),),
         output=(
             ToolCallPart(
                 tool_call_id="call-1",
@@ -1599,7 +1599,7 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
     store.append_step(
         run_id=term_run.run_id,
         step_index=2,
-        kind="tool_call",
+        kind="tool",
         status="finished",
         input=(StepOutputRef(step_index=1, part_index=0),),
         output=(
@@ -1617,9 +1617,9 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
     store.append_step(
         run_id=term_run.run_id,
         step_index=3,
-        kind="model_call",
+        kind="model",
         status="finished",
-        input=(RunInputRef(), StepOutputRef(step_index=2)),
+        input=(RunCommandRef(), StepOutputRef(step_index=2)),
         output=(TextPart(text="done"),),
         payload=ModelCallStepPayload(
             model_ref="gpt-5",
@@ -1657,7 +1657,7 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
         }
         assert profile.json()["metrics"] == {
             "threads": {"total": 3, "chat": 1, "chore": 1, "task": 1},
-            "steps": {"total": 3, "model_call": 2, "tool_call": 1, "runtime": 0},
+            "steps": {"total": 3, "model": 2, "tool": 1, "system": 0},
             "tokens": {"input": 14, "output": 12, "total": 26},
         }
 
@@ -1710,7 +1710,7 @@ def test_chat_returns_failed_run_as_assistant_message(tmp_path: Path) -> None:
     assert runs[0]["failure"] == {
         "reason": "model boom",
         "step_index": 1,
-        "step_kind": "runtime",
+        "step_kind": "system",
         "step_error": "model boom",
     }
     assert run_detail["output"]["steps"] == [
@@ -1718,7 +1718,7 @@ def test_chat_returns_failed_run_as_assistant_message(tmp_path: Path) -> None:
             "record": {
                 "run_id": runs[0]["id"],
                 "step_index": 1,
-                "kind": "runtime",
+                "kind": "system",
                 "status": "failed",
                 "input": [],
                 "output": [{"type": "text", "text": "model boom"}],
@@ -1749,9 +1749,9 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
     context.store.append_step(
         run_id="run-loop",
         step_index=1,
-        kind="tool_call",
+        kind="tool",
         status="finished",
-        input=(RunInputRef(),),
+        input=(RunCommandRef(),),
         output=(
             ToolResultPart(
                 tool_call_id="call-1",
@@ -1786,14 +1786,14 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
     assert detail["output"]["failure"] == {
         "reason": "Model tool loop exceeded the maximum number of rounds.",
         "step_index": 2,
-        "step_kind": "runtime",
+        "step_kind": "system",
         "step_error": "Model tool loop exceeded the maximum number of rounds.",
     }
     assert detail["output"]["steps"][-1] == {
         "record": {
             "run_id": "run-loop",
             "step_index": 2,
-            "kind": "runtime",
+            "kind": "system",
             "status": "failed",
             "input": [],
             "output": [
@@ -1990,8 +1990,8 @@ flow research(in: Text):
     assert stream_text.count('"type":"message-metadata"') == 1
     assert '"type":"step_start"' in stream_text
     assert '"type":"step_end"' in stream_text
-    assert '"kind":"flow_op"' in stream_text
-    assert '"kind":"child_call"' in stream_text
+    assert '"kind":"step"' in stream_text
+    assert '"kind":"run"' in stream_text
     assert '"type":"finish"' in stream_text
     assert "data: [DONE]" in stream_text
 
@@ -2283,7 +2283,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
                 1,
                 run_id="run-1",
                 thread_id="script_tg_123",
-                kind="model_call",
+                kind="model",
             )
         )
         on_event(
@@ -2358,7 +2358,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
                 1,
                 run_id="run-1",
                 thread_id="script_tg_123",
-                kind="model_call",
+                kind="model",
                 output=(
                     ToolCallPart(
                         tool_call_id="call_1",
@@ -2462,7 +2462,7 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
                 1,
                 run_id="run-1",
                 thread_id="script_tg_123",
-                kind="model_call",
+                kind="model",
             )
         )
         on_event(
@@ -2498,7 +2498,7 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
                 1,
                 run_id="run-1",
                 thread_id="script_tg_123",
-                kind="model_call",
+                kind="model",
                 output=(TextPart(text="hello world"),),
             )
         )
@@ -6181,9 +6181,9 @@ def test_script_run_can_simulate_history_with_explicit_message_blocks(
     context.store.append_step(
         run_id=previous.run_id,
         step_index=1,
-        kind="model_call",
+        kind="model",
         status="finished",
-        input=(RunInputRef(),),
+        input=(RunCommandRef(),),
         output=(TextPart(text="stored answer should not appear"),),
         payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
         started_at="2026-01-01T00:00:01Z",
@@ -6774,9 +6774,9 @@ def test_execution_store_records_runs_steps_and_messages(tmp_path: Path) -> None
         store.append_step(
             run_id=run.run_id,
             step_index=1,
-            kind="model_call",
+            kind="model",
             status="finished",
-            input=(RunInputRef(),),
+            input=(RunCommandRef(),),
             output=(TextPart(text="assistant:hello"),),
             payload=ModelCallStepPayload(
                 model_ref="gpt-5",
@@ -6789,7 +6789,7 @@ def test_execution_store_records_runs_steps_and_messages(tmp_path: Path) -> None
         finished = store.finish_run(run_id=run.run_id)
 
         assert finished.status == "finished"
-        assert [item.kind for item in store.list_steps(run_id=run.run_id)] == ["model_call"]
+        assert [item.kind for item in store.list_steps(run_id=run.run_id)] == ["model"]
         assert [item.to_data() for item in store.recent_conversation_messages(thread_id="thread-1")] == [
             {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
             {"role": "assistant", "parts": [{"type": "text", "text": "assistant:hello"}]},
@@ -6851,9 +6851,9 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
         store.append_step(
             run_id=run.run_id,
             step_index=1,
-            kind="model_call",
+            kind="model",
             status="finished",
-            input=(RunInputRef(),),
+            input=(RunCommandRef(),),
             output=(
                 ToolCallPart(
                     tool_call_id="tool-1",
@@ -6873,7 +6873,7 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
         store.append_step(
             run_id=run.run_id,
             step_index=2,
-            kind="tool_call",
+            kind="tool",
             status="finished",
             input=(StepOutputRef(step_index=1, part_index=0),),
             output=(
@@ -6891,7 +6891,7 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
         store.append_step(
             run_id=run.run_id,
             step_index=3,
-            kind="model_call",
+            kind="model",
             status="finished",
             input=(StepOutputRef(step_index=2),),
             output=(TextPart(text="15"),),
@@ -6939,6 +6939,73 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
         store.close()
 
 
+def test_execution_store_does_not_return_orphan_tool_history_when_limited(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    store = ExecutionStore(execution_db_path(toolang_root, "alice"))
+    try:
+        run = store.start_run(
+            run_id="run-1",
+            thread_id="thread-1",
+            origin="chat",
+            input=Message.user("sum 7 and 8"),
+        )
+        store.append_step(
+            run_id=run.run_id,
+            step_index=1,
+            kind="model",
+            status="finished",
+            input=(RunCommandRef(),),
+            output=(
+                ToolCallPart(
+                    tool_call_id="tool-1",
+                    tool_name="math_add",
+                    tool_family="math_add",
+                    input={"a": 7, "b": 8},
+                ),
+            ),
+            payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+        store.append_step(
+            run_id=run.run_id,
+            step_index=2,
+            kind="tool",
+            status="finished",
+            input=(StepOutputRef(step_index=1, part_index=0),),
+            output=(
+                ToolResultPart(
+                    tool_call_id="tool-1",
+                    tool_name="math_add",
+                    tool_family="math_add",
+                    output={"value": 15},
+                ),
+            ),
+            payload=ToolCallStepPayload(),
+            started_at="2026-01-01T00:00:03Z",
+            finished_at="2026-01-01T00:00:04Z",
+        )
+        store.append_step(
+            run_id=run.run_id,
+            step_index=3,
+            kind="model",
+            status="finished",
+            input=(StepOutputRef(step_index=2),),
+            output=(TextPart(text="15"),),
+            payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
+            started_at="2026-01-01T00:00:05Z",
+            finished_at="2026-01-01T00:00:06Z",
+        )
+
+        messages = store.recent_conversation_messages(thread_id="thread-1", limit=2)
+
+        assert [item.to_data() for item in messages] == [
+            {"role": "assistant", "parts": [{"type": "text", "text": "15"}]},
+        ]
+    finally:
+        store.close()
+
+
 def test_execution_store_replays_model_reasoning_content(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     store = ExecutionStore(execution_db_path(toolang_root, "alice"))
@@ -6952,17 +7019,10 @@ def test_execution_store_replays_model_reasoning_content(tmp_path: Path) -> None
         store.append_step(
             run_id=run.run_id,
             step_index=1,
-            kind="model_call",
+            kind="model",
             status="finished",
-            input=(RunInputRef(),),
-            output=(
-                ToolCallPart(
-                    tool_call_id="tool-1",
-                    tool_name="filesystem__list",
-                    tool_family="filesystem__list",
-                    input={"path": "."},
-                ),
-            ),
+            input=(RunCommandRef(),),
+            output=(TextPart(text="Listing files now."),),
             payload=ModelCallStepPayload(
                 model_ref="deepseek/deepseek-v4-flash",
                 input_tokens=0,
@@ -7002,9 +7062,9 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
     context.store.append_step(
         run_id=previous.run_id,
         step_index=1,
-        kind="model_call",
+        kind="model",
         status="finished",
-        input=(RunInputRef(),),
+        input=(RunCommandRef(),),
         output=(
             ToolCallPart(
                 tool_call_id="tool-list-call",
@@ -7021,7 +7081,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
     context.store.append_step(
         run_id=previous.run_id,
         step_index=2,
-        kind="tool_call",
+        kind="tool",
         status="finished",
         input=(StepOutputRef(step_index=1, part_index=0),),
         output=(
@@ -7066,7 +7126,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
     context.store.append_step(
         run_id=previous.run_id,
         step_index=3,
-        kind="model_call",
+        kind="model",
         status="finished",
         input=(StepOutputRef(step_index=2),),
         output=(
@@ -7085,7 +7145,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
     context.store.append_step(
         run_id=previous.run_id,
         step_index=4,
-        kind="tool_call",
+        kind="tool",
         status="finished",
         input=(StepOutputRef(step_index=3, part_index=0),),
         output=(
@@ -7119,7 +7179,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
     context.store.append_step(
         run_id=previous.run_id,
         step_index=5,
-        kind="model_call",
+        kind="model",
         status="finished",
         input=(StepOutputRef(step_index=4),),
         output=(TextPart(text="created XBY-31"),),
@@ -7180,9 +7240,9 @@ def test_run_input_recall_none_disables_thread_history_and_tool_context(tmp_path
     context.store.append_step(
         run_id=previous.run_id,
         step_index=1,
-        kind="model_call",
+        kind="model",
         status="finished",
-        input=(RunInputRef(),),
+        input=(RunCommandRef(),),
         output=(TextPart(text="old answer"),),
         payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
         started_at="2026-01-01T00:00:01Z",
@@ -7431,7 +7491,7 @@ def _started(
     *,
     run_id: str,
     thread_id: str,
-    kind: Literal["model_call", "tool_call", "runtime"],
+    kind: Literal["model", "tool", "system"],
     input=(),
     instructions: str | None = None,
     context: str | None = None,
@@ -7453,16 +7513,16 @@ def _completed(
     *,
     run_id: str,
     thread_id: str,
-    kind: Literal["model_call", "tool_call", "runtime"],
+    kind: Literal["model", "tool", "system"],
     output=(),
     input_step_index: int | None = 0,
     input_part_index: int | None = None,
     error: str | None = None,
 ) -> StepEnd:
     del input_step_index, input_part_index
-    if kind == "model_call":
+    if kind == "model":
         payload = ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0)
-    elif kind == "tool_call":
+    elif kind == "tool":
         payload = ToolCallStepPayload()
     else:
         payload = RuntimeStepPayload()
@@ -7519,13 +7579,13 @@ def test_prompt_store_uses_content_hash_for_all_prompt_kinds(tmp_path: Path) -> 
 def _default_step_input(
     *,
     step_index: int,
-    kind: Literal["model_call", "tool_call", "runtime"],
+    kind: Literal["model", "tool", "system"],
 ):
-    if kind == "runtime":
+    if kind == "system":
         return ()
-    if kind == "model_call":
+    if kind == "model":
         if step_index == 1:
-            return (RunInputRef(),)
+            return (RunCommandRef(),)
         return (StepOutputRef(step_index=step_index - 1),)
     return (StepOutputRef(step_index=max(step_index - 1, 1), part_index=0),)
 
@@ -7561,7 +7621,7 @@ def _patched_runner_execution():
                     1,
                     run_id=current["run_id"],
                     thread_id=current["thread_id"],
-                    kind="model_call",
+                    kind="model",
                     instructions=instructions,
                     context="Context for this run.",
                 )
@@ -7571,7 +7631,7 @@ def _patched_runner_execution():
                     1,
                     run_id=current["run_id"],
                     thread_id=current["thread_id"],
-                    kind="model_call",
+                    kind="model",
                     output=(TextPart(text=output_text),),
                 )
             )
@@ -7606,7 +7666,7 @@ def _patched_runner_execution_with_tools(*, output_text: str):
                     1,
                     run_id=current["run_id"],
                     thread_id=current["thread_id"],
-                    kind="model_call",
+                    kind="model",
                 )
             )
             context.on_event(
@@ -7614,7 +7674,7 @@ def _patched_runner_execution_with_tools(*, output_text: str):
                     1,
                     run_id=current["run_id"],
                     thread_id=current["thread_id"],
-                    kind="model_call",
+                    kind="model",
                     output=(
                         ToolCallPart(
                             tool_call_id="call_1",
@@ -7630,7 +7690,7 @@ def _patched_runner_execution_with_tools(*, output_text: str):
                     2,
                     run_id=current["run_id"],
                     thread_id=current["thread_id"],
-                    kind="tool_call",
+                    kind="tool",
                     input=(StepOutputRef(step_index=1, part_index=0),),
                 )
             )
@@ -7639,7 +7699,7 @@ def _patched_runner_execution_with_tools(*, output_text: str):
                     2,
                     run_id=current["run_id"],
                     thread_id=current["thread_id"],
-                    kind="tool_call",
+                    kind="tool",
                     input_step_index=1,
                     input_part_index=0,
                     output=(
@@ -7662,7 +7722,7 @@ def _patched_runner_execution_with_tools(*, output_text: str):
                     1,
                     run_id=current["run_id"],
                     thread_id=current["thread_id"],
-                    kind="model_call",
+                    kind="model",
                 )
             )
             on_event(
@@ -7705,7 +7765,7 @@ def _patched_runner_execution_with_tools(*, output_text: str):
                     1,
                     run_id=current["run_id"],
                     thread_id=current["thread_id"],
-                    kind="model_call",
+                    kind="model",
                     output=(
                         ToolCallPart(
                             tool_call_id="call_1",
@@ -7721,7 +7781,7 @@ def _patched_runner_execution_with_tools(*, output_text: str):
                     2,
                     run_id=current["run_id"],
                     thread_id=current["thread_id"],
-                    kind="tool_call",
+                    kind="tool",
                     input=(StepOutputRef(step_index=1, part_index=0),),
                 )
             )
@@ -7744,7 +7804,7 @@ def _patched_runner_execution_with_tools(*, output_text: str):
                     2,
                     run_id=current["run_id"],
                     thread_id=current["thread_id"],
-                    kind="tool_call",
+                    kind="tool",
                     input_step_index=1,
                     input_part_index=0,
                     output=(
@@ -7763,7 +7823,7 @@ def _patched_runner_execution_with_tools(*, output_text: str):
                     3,
                     run_id=current["run_id"],
                     thread_id=current["thread_id"],
-                    kind="model_call",
+                    kind="model",
                 )
             )
             on_event(
@@ -7789,7 +7849,7 @@ def _patched_runner_execution_with_tools(*, output_text: str):
                     3,
                     run_id=current["run_id"],
                     thread_id=current["thread_id"],
-                    kind="model_call",
+                    kind="model",
                     input_step_index=2,
                     input_part_index=None,
                     output=(TextPart(text=output_text),),
@@ -7851,7 +7911,7 @@ def _patched_runner_streaming_text(release: threading.Event):
                     1,
                     run_id=current["run_id"],
                     thread_id=current["thread_id"],
-                    kind="model_call",
+                    kind="model",
                 )
             )
             on_event(
@@ -7879,7 +7939,7 @@ def _patched_runner_streaming_text(release: threading.Event):
                     1,
                     run_id=current["run_id"],
                     thread_id=current["thread_id"],
-                    kind="model_call",
+                    kind="model",
                     output=(TextPart(text="streaming hello"),),
                 )
             )
