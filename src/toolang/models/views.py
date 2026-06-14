@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.types.model import ModelAlias, ModelInfo, ModelTarget
@@ -22,6 +23,8 @@ def model_list_rows(
     aliases: Mapping[str, ModelAlias],
     environ: Mapping[str, str],
     selectors: Sequence[str] = (),
+    cache_dir: Path | None = None,
+    refresh: bool = False,
 ) -> list[tuple[str, str, str]]:
     """Return table rows for selectable model listings."""
 
@@ -31,12 +34,20 @@ def model_list_rows(
         aliases=aliases,
         environ=environ,
         selectors=selectors,
+        cache_dir=cache_dir,
+        refresh=refresh,
     ):
         rows.append(
             (
                 target.ref,
                 target.provider,
-                model_target_profile(target, provider=providers.get(target.provider), environ=environ),
+                model_target_profile(
+                    target,
+                    provider=providers.get(target.provider),
+                    environ=environ,
+                    cache_dir=cache_dir,
+                    refresh=refresh,
+                ),
             )
         )
     return rows
@@ -48,15 +59,22 @@ def model_provider_rows(
     aliases: Mapping[str, ModelAlias],
     provider_configs: Mapping[str, object],
     environ: Mapping[str, str],
+    cache_dir: Path | None = None,
+    refresh: bool = False,
 ) -> list[tuple[str, str, str]]:
     """Return table rows for model provider configuration status."""
 
-    available_counts = _available_model_counts_by_provider(providers=providers, environ=environ)
+    available_counts = _available_model_counts_by_provider(
+        providers=providers,
+        environ=environ,
+        cache_dir=cache_dir,
+        refresh=refresh,
+    )
     rows: list[tuple[str, str, str]] = []
     for name, provider in sorted(providers.items()):
         if name == "custom":
             continue
-        models = model_infos(provider, environ=environ)
+        models = model_infos(provider, environ=environ, cache_dir=cache_dir, refresh=refresh)
         adapter = model_provider_adapter_summary(models)
         model_count = _model_provider_model_count(
             models=models,
@@ -92,10 +110,12 @@ def model_target_profile(
     *,
     provider: ModelProvider | None,
     environ: Mapping[str, str],
+    cache_dir: Path | None = None,
+    refresh: bool = False,
 ) -> str:
     """Return a compact profile string for one selectable model target."""
 
-    info = _find_model_info(target, provider=provider, environ=environ)
+    info = _find_model_info(target, provider=provider, environ=environ, cache_dir=cache_dir, refresh=refresh)
     parts: list[str] = []
     parts.append(f"streaming={'y' if target.streaming else 'n'}")
     parts.append(f"tools={'y' if target.tools else 'n'}")
@@ -175,12 +195,16 @@ def _available_model_counts_by_provider(
     *,
     providers: Mapping[str, ModelProvider],
     environ: Mapping[str, str],
+    cache_dir: Path | None = None,
+    refresh: bool = False,
 ) -> dict[str, int]:
     counts: dict[str, int] = {}
     for _selector, target in selectable_model_targets(
         providers=providers,
         aliases={},
         environ=environ,
+        cache_dir=cache_dir,
+        refresh=refresh,
     ):
         counts[target.provider] = counts.get(target.provider, 0) + 1
     return counts
@@ -260,10 +284,12 @@ def _find_model_info(
     *,
     provider: ModelProvider | None,
     environ: Mapping[str, str],
+    cache_dir: Path | None = None,
+    refresh: bool = False,
 ) -> ModelInfo | None:
     if provider is None:
         return None
-    for info in model_infos(provider, environ=environ):
+    for info in model_infos(provider, environ=environ, cache_dir=cache_dir, refresh=refresh):
         if info.ref == target.ref:
             return info
     return None

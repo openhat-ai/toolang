@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
+from pathlib import Path
 from typing import Protocol
 
 from toolang.base.error import ToolangError
@@ -51,6 +52,15 @@ class SupportsModelSelection(Protocol):
     model_environ: Mapping[str, str]
 
 
+def _context_model_cache_dir(context: SupportsModelSelection) -> Path | None:
+    value = getattr(context, "model_cache_dir", None)
+    return value if isinstance(value, Path) else None
+
+
+def _context_model_cache_refresh(context: SupportsModelSelection) -> bool:
+    return bool(getattr(context, "model_cache_refresh", False))
+
+
 @dataclass(frozen=True, slots=True)
 class _Candidate:
     selector: str
@@ -68,11 +78,15 @@ def resolve_model(
 ) -> ModelTarget:
     """Resolve one model selector against one uptime context."""
 
+    cache_dir = _context_model_cache_dir(context)
+    cache_refresh = _context_model_cache_refresh(context)
     resolved_allowed = _resolve_allowed_targets(
         allowed_selectors,
         providers=context.model_providers,
         aliases=context.model_aliases,
         environ=context.model_environ,
+        cache_dir=cache_dir,
+        refresh=cache_refresh,
     )
     effective_selector = _first_non_empty(
         selector,
@@ -85,6 +99,8 @@ def resolve_model(
         providers=context.model_providers,
         aliases=context.model_aliases,
         environ=context.model_environ,
+        cache_dir=cache_dir,
+        refresh=cache_refresh,
     )
     if not matches:
         raise ToolangError(
@@ -92,6 +108,8 @@ def resolve_model(
                 providers=context.model_providers,
                 aliases=context.model_aliases,
                 environ=context.model_environ,
+                cache_dir=cache_dir,
+                refresh=cache_refresh,
             )
         )
     if len(matches) > 1:
@@ -111,17 +129,23 @@ def select_model_selectors(
 ) -> tuple[str, ...]:
     """Return the effective ordered model selectors for one run."""
 
+    cache_dir = _context_model_cache_dir(context)
+    cache_refresh = _context_model_cache_refresh(context)
     thunk_candidates = _resolve_selector_targets(
         thunk_selectors,
         providers=context.model_providers,
         aliases=context.model_aliases,
         environ=context.model_environ,
+        cache_dir=cache_dir,
+        refresh=cache_refresh,
     )
     activation_candidates = _resolve_selector_targets(
         activation_selectors,
         providers=context.model_providers,
         aliases=context.model_aliases,
         environ=context.model_environ,
+        cache_dir=cache_dir,
+        refresh=cache_refresh,
     )
     if thunk_selectors and not thunk_candidates:
         raise ToolangError(
@@ -129,6 +153,8 @@ def select_model_selectors(
                 providers=context.model_providers,
                 aliases=context.model_aliases,
                 environ=context.model_environ,
+                cache_dir=cache_dir,
+                refresh=cache_refresh,
             )
         )
     if activation_selectors and not activation_candidates:
@@ -137,6 +163,8 @@ def select_model_selectors(
                 providers=context.model_providers,
                 aliases=context.model_aliases,
                 environ=context.model_environ,
+                cache_dir=cache_dir,
+                refresh=cache_refresh,
             )
         )
     if thunk_candidates and activation_candidates:
@@ -160,6 +188,8 @@ def select_model_selectors(
         providers=context.model_providers,
         aliases=context.model_aliases,
         environ=context.model_environ,
+        cache_dir=cache_dir,
+        refresh=cache_refresh,
     )
     defaults = (
         (default_selector,)
@@ -171,6 +201,8 @@ def select_model_selectors(
         providers=context.model_providers,
         aliases=context.model_aliases,
         environ=context.model_environ,
+        cache_dir=cache_dir,
+        refresh=cache_refresh,
     )
     ordered: list[str] = []
     seen: set[str] = set()
@@ -186,6 +218,8 @@ def select_model_selectors(
             providers=context.model_providers,
             aliases=context.model_aliases,
             environ=context.model_environ,
+            cache_dir=cache_dir,
+            refresh=cache_refresh,
         )
     )
 
@@ -196,6 +230,8 @@ def selectable_model_targets(
     aliases: Mapping[str, ModelAlias],
     environ: Mapping[str, str],
     selectors: Sequence[str] | None = None,
+    cache_dir: Path | None = None,
+    refresh: bool = False,
 ) -> tuple[tuple[str, ModelTarget], ...]:
     """Return selectable model targets for CLI/API listing."""
 
@@ -207,6 +243,8 @@ def selectable_model_targets(
                 providers=providers,
                 aliases=aliases,
                 environ=environ,
+                cache_dir=cache_dir,
+                refresh=refresh,
             )
         )
     return tuple(
@@ -215,6 +253,8 @@ def selectable_model_targets(
             providers=providers,
             aliases=aliases,
             environ=environ,
+            cache_dir=cache_dir,
+            refresh=refresh,
         )
     )
 
@@ -225,6 +265,8 @@ def _resolve_allowed_targets(
     providers: Mapping[str, ModelProvider],
     aliases: Mapping[str, ModelAlias],
     environ: Mapping[str, str],
+    cache_dir: Path | None = None,
+    refresh: bool = False,
 ) -> tuple[ModelTarget, ...]:
     targets: list[ModelTarget] = []
     for candidate in _resolve_selector_targets(
@@ -232,6 +274,8 @@ def _resolve_allowed_targets(
         providers=providers,
         aliases=aliases,
         environ=environ,
+        cache_dir=cache_dir,
+        refresh=refresh,
     ):
         targets.append(candidate.target)
     return tuple(targets)
@@ -242,11 +286,20 @@ def _discover_available_candidates(
     providers: Mapping[str, ModelProvider],
     aliases: Mapping[str, ModelAlias],
     environ: Mapping[str, str],
+    cache_dir: Path | None = None,
+    refresh: bool = False,
 ) -> tuple[_Candidate, ...]:
     candidates: list[_Candidate] = []
     seen: set[tuple[str, str, str, str | None]] = set()
     for name, alias in aliases.items():
-        target = _target_from_alias(alias, providers=providers, environ=environ, strict=False)
+        target = _target_from_alias(
+            alias,
+            providers=providers,
+            environ=environ,
+            strict=False,
+            cache_dir=cache_dir,
+            refresh=refresh,
+        )
         if target is None:
             continue
         identity = _target_identity(target)
@@ -264,7 +317,7 @@ def _discover_available_candidates(
     for provider in providers.values():
         if provider.name == CUSTOM_MODEL_PROVIDER or missing_provider_env_vars(provider, environ=environ):
             continue
-        for info in model_infos(provider, environ=environ):
+        for info in model_infos(provider, environ=environ, cache_dir=cache_dir, refresh=refresh):
             target = _target_from_info(provider, info, environ=environ)
             identity = _target_identity(target)
             if identity in seen:
@@ -287,8 +340,16 @@ def _resolve_selector_targets(
     providers: Mapping[str, ModelProvider],
     aliases: Mapping[str, ModelAlias],
     environ: Mapping[str, str],
+    cache_dir: Path | None = None,
+    refresh: bool = False,
 ) -> tuple[_Candidate, ...]:
-    candidates = _discover_available_candidates(providers=providers, aliases=aliases, environ=environ)
+    candidates = _discover_available_candidates(
+        providers=providers,
+        aliases=aliases,
+        environ=environ,
+        cache_dir=cache_dir,
+        refresh=refresh,
+    )
     selected: list[_Candidate] = []
     seen: set[tuple[str, str, str, str | None]] = set()
     for raw in selectors or ():
@@ -296,7 +357,14 @@ def _resolve_selector_targets(
         if not text:
             continue
         if text in aliases:
-            target = _target_from_alias(aliases[text], providers=providers, environ=environ, strict=True)
+            target = _target_from_alias(
+                aliases[text],
+                providers=providers,
+                environ=environ,
+                strict=True,
+                cache_dir=cache_dir,
+                refresh=refresh,
+            )
             if target is None:
                 continue
             identity = _target_identity(target)
@@ -314,7 +382,14 @@ def _resolve_selector_targets(
         selector = parse_model_selector(text)
         matches = tuple(candidate for candidate in candidates if _candidate_matches(candidate, selector))
         if not matches and _looks_exact_ref(selector):
-            matches = _resolve_exact_ref(selector.pattern, providers=providers, aliases=aliases, environ=environ)
+            matches = _resolve_exact_ref(
+                selector.pattern,
+                providers=providers,
+                aliases=aliases,
+                environ=environ,
+                cache_dir=cache_dir,
+                refresh=refresh,
+            )
         for candidate in matches:
             identity = _target_identity(candidate.target)
             if identity in seen:
@@ -330,12 +405,14 @@ def _resolve_exact_ref(
     providers: Mapping[str, ModelProvider],
     aliases: Mapping[str, ModelAlias],
     environ: Mapping[str, str],
+    cache_dir: Path | None = None,
+    refresh: bool = False,
 ) -> tuple[_Candidate, ...]:
     matches: list[_Candidate] = []
     for provider in providers.values():
         if provider.name == CUSTOM_MODEL_PROVIDER or missing_provider_env_vars(provider, environ=environ):
             continue
-        target = _target_from_provider_ref(provider, ref, environ=environ)
+        target = _target_from_provider_ref(provider, ref, environ=environ, cache_dir=cache_dir, refresh=refresh)
         if target is None:
             continue
         matches.append(
@@ -348,7 +425,14 @@ def _resolve_exact_ref(
     for name, alias in aliases.items():
         if alias.ref != ref:
             continue
-        target = _target_from_alias(alias, providers=providers, environ=environ, strict=False)
+        target = _target_from_alias(
+            alias,
+            providers=providers,
+            environ=environ,
+            strict=False,
+            cache_dir=cache_dir,
+            refresh=refresh,
+        )
         if target is None:
             continue
         matches.append(
@@ -422,8 +506,10 @@ def _target_from_provider_ref(
     ref: str,
     *,
     environ: Mapping[str, str],
+    cache_dir: Path | None = None,
+    refresh: bool = False,
 ) -> ModelTarget | None:
-    info = _find_model_info_by_ref(provider, ref, environ=environ)
+    info = _find_model_info_by_ref(provider, ref, environ=environ, cache_dir=cache_dir, refresh=refresh)
     if info is not None:
         return _target_from_info(provider, info, environ=environ)
     return None
@@ -435,6 +521,8 @@ def _target_from_alias(
     providers: Mapping[str, ModelProvider],
     environ: Mapping[str, str],
     strict: bool,
+    cache_dir: Path | None = None,
+    refresh: bool = False,
 ) -> ModelTarget | None:
     provider = providers.get(alias.provider)
     if provider is None:
@@ -451,7 +539,7 @@ def _target_from_alias(
         if strict:
             raise ToolangError(f"model alias {alias.name!r} is missing endpoint")
         return None
-    info = _find_model_info_by_ref(provider, alias.ref, environ=environ)
+    info = _find_model_info_by_ref(provider, alias.ref, environ=environ, cache_dir=cache_dir, refresh=refresh)
     if info is not None:
         return _target_from_info(provider, info, environ=environ, alias=alias)
     return _target_from_alias_only(provider, alias, environ=environ)
@@ -462,8 +550,10 @@ def _find_model_info_by_ref(
     ref: str,
     *,
     environ: Mapping[str, str],
+    cache_dir: Path | None = None,
+    refresh: bool = False,
 ) -> ModelInfo | None:
-    for info in model_infos(provider, environ=environ):
+    for info in model_infos(provider, environ=environ, cache_dir=cache_dir, refresh=refresh):
         if info.ref == ref:
             return info
     return None
@@ -634,11 +724,15 @@ def _empty_model_selection_message(
     providers: Mapping[str, ModelProvider],
     aliases: Mapping[str, ModelAlias],
     environ: Mapping[str, str],
+    cache_dir: Path | None = None,
+    refresh: bool = False,
 ) -> str:
     available = _discover_available_candidates(
         providers=providers,
         aliases=aliases,
         environ=environ,
+        cache_dir=cache_dir,
+        refresh=refresh,
     )
     if available:
         return NO_MATCHED_MODELS_MESSAGE

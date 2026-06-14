@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Request
@@ -16,7 +17,7 @@ from toolang.base.error import ToolangError
 from toolang.base.types.message import Message
 from ...execution.detail import run_detail_from_record, thread_info_from_record, thread_info_from_runs
 from ...execution.input import allocate_run_id, effective_origin_model_selectors, select_origin_thunk
-from ...models.resolution import resolve_model, split_model_selectors
+from ...models.resolution import selectable_model_targets, split_model_selectors
 from ...tools.registry import split_tool_selectors
 from ...caps import split_cap_selectors
 from ...execution.records import ThreadPeer
@@ -136,14 +137,22 @@ def create_router() -> APIRouter:
         context = request.app.state.runtime
         try:
             selectors = effective_origin_model_selectors(context, origin="chat")
+            targets = selectable_model_targets(
+                providers=context.model_providers,
+                aliases=context.model_aliases,
+                environ=context.model_environ,
+                selectors=selectors,
+                cache_dir=_model_cache_dir(context),
+                refresh=_model_cache_refresh(context),
+            )
         except ToolangError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         items = [
             _chat_model_item(
                 selector=selector,
-                context=context,
+                target=target,
             )
-            for selector in selectors
+            for selector, target in targets
         ]
         return {
             "default": selectors[0] if selectors else None,
@@ -393,11 +402,7 @@ def _new_thread_id(context: UptimeContext, client: str) -> str:
     return f"{prefix}_{value}"
 
 
-def _chat_model_item(*, selector: str, context: UptimeContext) -> dict[str, object]:
-    target = resolve_model(
-        context,
-        selector=selector,
-    )
+def _chat_model_item(*, selector: str, target: Any) -> dict[str, object]:
     return {
         "selector": selector,
         "name": target.name,
@@ -408,6 +413,15 @@ def _chat_model_item(*, selector: str, context: UptimeContext) -> dict[str, obje
         "tools": target.tools,
         "streaming": target.streaming,
     }
+
+
+def _model_cache_dir(context: UptimeContext) -> Path | None:
+    value = getattr(context, "model_cache_dir", None)
+    return value if isinstance(value, Path) else None
+
+
+def _model_cache_refresh(context: UptimeContext) -> bool:
+    return bool(getattr(context, "model_cache_refresh", False))
 
 
 def _default_thunk_name(program: Any, *, origin: str) -> str | None:

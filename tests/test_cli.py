@@ -7480,13 +7480,105 @@ def test_cli_chat_run_lines_render_tool_requests_and_inputs() -> None:
 
     rendered = "\n".join(cli._chat_run_lines(run, include_steps=True))
 
-    assert "• requested shell__execute: date '+%Y-%m-%d %H:%M:%S %Z'" in rendered
+    assert "requested shell__execute" not in rendered
     assert "› ran shell__execute: date '+%Y-%m-%d %H:%M:%S %Z'" in rendered
-    lines = cli._chat_run_lines(run, include_steps=True)
-    requested_line = next(line for line in lines if "requested shell__execute" in line)
-    assert "\x1b[2m" not in requested_line
     assert "model call completed" not in rendered
     assert "› ran shell__execute\n" not in rendered
+
+
+def test_cli_chat_run_lines_render_pending_tool_request_until_result() -> None:
+    run = cli._ChatRun(run_id="run_tool", message="search", status="running")
+    tool_part = {
+        "type": "tool_call",
+        "tool_call_id": "call_1",
+        "tool_name": "web_search__search",
+        "input": {"query": "李荣浩 热门歌曲 代表作"},
+    }
+    run.record_part({"step_index": 1, "part_index": 0, "part": tool_part})
+    run.completed_steps[1] = {
+        "kind": "model",
+        "step_index": 1,
+        "output": [tool_part],
+    }
+
+    rendered = "\n".join(cli._chat_run_lines(run, include_steps=True))
+
+    assert "• requested web_search__search: 李荣浩 热门歌曲 代表作" in rendered
+
+
+def test_cli_chat_model_step_uses_recorded_tool_part_when_output_is_empty() -> None:
+    run = cli._ChatRun(run_id="run_tool", message="search", status="running")
+    run.record_part(
+        {
+            "step_index": 1,
+            "part_index": 0,
+            "part": {
+                "type": "tool_call",
+                "tool_call_id": "call_1",
+                "tool_name": "web_search__search",
+                "input": {"query": "李荣浩 热门歌曲 代表作"},
+            },
+        }
+    )
+    run.completed_steps[1] = {
+        "kind": "model",
+        "step_index": 1,
+        "output": [],
+    }
+
+    rendered = "\n".join(cli._chat_run_lines(run, include_steps=True))
+
+    assert "• requested web_search__search: 李荣浩 热门歌曲 代表作" in rendered
+    assert "model call completed" not in rendered
+
+
+def test_cli_chat_empty_model_step_says_no_message() -> None:
+    run = cli._ChatRun(run_id="run_empty", message="continue", status="running")
+    run.completed_steps[1] = {
+        "kind": "model",
+        "step_index": 1,
+        "payload": {"model_ref": "deepseek/deepseek-v4-flash"},
+        "output": [],
+    }
+
+    rendered = "\n".join(cli._chat_run_lines(run, include_steps=True))
+
+    assert "• model returned no message (deepseek/deepseek-v4-flash)" in rendered
+    assert "model call completed" not in rendered
+
+
+def test_cli_chat_ai_sdk_tool_result_replaces_running_tool_line(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli,
+        "_runtime_json",
+        lambda _ctx, _path: {"default": None, "items": []},
+    )
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.active_run = cli._ChatRun(run_id="run_tool", message="search", status="running")
+
+    app.record_chat_stream_tool_request(
+        {
+            "toolCallId": "call_1",
+            "toolName": "web_search__search",
+            "input": {"query": "李荣浩 热门歌曲 代表作"},
+        }
+    )
+
+    active = "\n".join(cli._chat_run_lines(app.active_run, include_steps=True))
+    assert "› running web_search__search: 李荣浩 热门歌曲 代表作" in active
+
+    app.record_chat_stream_tool_result(
+        {
+            "toolCallId": "call_1",
+            "toolName": "web_search__search",
+            "output": {"results": []},
+        }
+    )
+
+    rendered = "\n".join(cli._chat_run_lines(app.active_run, include_steps=True))
+    assert "requested web_search__search" not in rendered
+    assert rendered.count("web_search__search") == 1
+    assert "› ran web_search__search: 李荣浩 热门歌曲 代表作" in rendered
 
 
 def test_cli_chat_flow_run_lines_render_stage_summary() -> None:
@@ -7690,12 +7782,13 @@ def test_cli_chat_flow_run_lines_keep_terminal_error_message() -> None:
 
 
 def test_cli_chat_header_does_not_show_thread_id() -> None:
-    rendered = "\n".join(cli._chat_header_lines("runtime model"))
+    rendered = "\n".join(cli._chat_header_lines("runtime model", home_label="/tmp/toolang/agents/alice"))
     visible = cli._chat_visible_text(rendered)
 
     assert "Toolang" in visible
-    assert "model:     runtime model" in visible
-    assert "history:   terminal stdout scrollback" in visible
+    assert "model: runtime model" in visible
+    assert "home:  /tmp/toolang/agents/alice" in visible
+    assert "history:" not in visible
     assert "thread:" not in visible
 
 
@@ -7882,7 +7975,11 @@ def test_cli_chat_input_history_store_compacts_old_entries(tmp_path: Path) -> No
 
 
 def test_cli_chat_startup_resolves_selected_model_label(monkeypatch) -> None:
+    calls = 0
+
     def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
         assert request_path == "/api/v1/chat/models"
         return {
             "default": "openai/o3",
@@ -7900,10 +7997,38 @@ def test_cli_chat_startup_resolves_selected_model_label(monkeypatch) -> None:
 
     app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={"models": ["[deepseek]"]})
 
+    assert calls == 1
     assert app.status_label() == "deepseek/deepseek-v4-flash"
-    assert "model:     deepseek/deepseek-v4-flash" in cli._chat_visible_text(
-        "\n".join(cli._chat_header_lines(app.status_label()))
+    assert "model: deepseek/deepseek-v4-flash" in cli._chat_visible_text(
+        "\n".join(cli._chat_header_lines(app.status_label(), home_label=app.home_label))
     )
+
+
+def test_cli_chat_model_command_keeps_previous_selector_on_miss(monkeypatch) -> None:
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        assert request_path == "/api/v1/chat/models"
+        return {
+            "default": "openai/o3[openai]",
+            "items": [
+                {
+                    "selector": "openai/o3[openai]",
+                    "ref": "openai/o3",
+                    "provider": "openai",
+                    "model": "o3",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+
+    selector_payload: dict[str, object] = {"models": ["openai/o3[openai]"]}
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload=selector_payload)
+
+    app.handle_submit("/model no/such-model")
+
+    assert selector_payload == {"models": ["openai/o3[openai]"]}
+    assert app.model_label == "openai/o3"
+    assert app.prompt.error_message == "Model selector matched no models: no/such-model"
 
 
 def test_cli_chat_bottom_layout_can_shrink_to_compact_prompt() -> None:
@@ -7960,6 +8085,21 @@ def test_cli_chat_model_command_updates_selected_model(monkeypatch) -> None:
         posts.append((request_path, payload))
         return {"thread_id": "term_new"}
 
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        assert request_path == "/api/v1/chat/models"
+        return {
+            "default": "openai/o3[openai]",
+            "items": [
+                {
+                    "selector": "openai/o3[openai]",
+                    "ref": "openai/o3",
+                    "provider": "openai",
+                    "model": "o3",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
     monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
     monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: writes.append(lines))
 
@@ -8337,9 +8477,56 @@ def test_cli_chat_stream_thread_exceptions_surface_as_ui_errors(monkeypatch) -> 
     assert app.active_run is None
     assert app.prompt.error_message == ""
     assert printed
+
+
+def test_cli_chat_stream_error_after_queue_clears_active_run(monkeypatch) -> None:
+    printed: list[list[str]] = []
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        assert request_path == "/api/v1/threads"
+        assert payload == {"client": "tui"}
+        return {"thread_id": "term_new"}
+
+    def fake_runtime_consume_stream(
+        _ctx: Any,
+        request_path: str,
+        *,
+        payload: dict[str, object],
+        event_handler: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
+        assert request_path == "/api/v1/chat/stream"
+        assert payload["models"] == ["missing"]
+        assert event_handler is not None
+        event_handler(
+            {
+                "type": "run_queued",
+                "event_type": "run_queued",
+                "payload": {
+                    "run_id": "run_missing",
+                    "thread_id": "term_new",
+                    "position": 1,
+                    "waiting_for": "queue",
+                },
+            }
+        )
+        event_handler({"type": "error", "errorText": "No matched models."})
+        event_handler({"type": "finish"})
+
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(cli, "_runtime_consume_stream", fake_runtime_consume_stream)
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: printed.append(lines))
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={"models": ["missing"]})
+    monkeypatch.setattr(app, "emit_from_thread", lambda event: app.handle_runtime_event(cast(dict[str, Any], event.value)))
+
+    app.handle_submit("hello")
+    time.sleep(0.1)
+
+    assert app.active_run is None
     visible = cli._chat_visible_text("\n".join(line for lines in printed for line in lines))
-    assert "◇ stopped" in visible
-    assert "! RuntimeError: stream parser exploded" in visible
+    assert "queued run_missing" in visible
+    assert "! No matched models." in visible
+    assert "◇ stopped run_missing: failed" in visible
 
 
 def test_cli_chat_ai_sdk_stream_error_survives_finish_event(monkeypatch) -> None:

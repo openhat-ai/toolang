@@ -2606,7 +2606,9 @@ class _ChatBottomApp:
         self.ticker: asyncio.Task[None] | None = None
         self.stream_step_index: int | None = None
         self.stream_text_parts: list[str] = []
+        self.stream_tool_steps: dict[str, int] = {}
         self.model_label = _chat_resolved_model_label(ctx, self.selector_payload)
+        self.home_label = _chat_home_label(ctx)
 
         self.last_run_panel = _ChatLastRunPanel(lambda: self.active_run)
         self.queue_panel = _ChatSubmissionQueue(lambda: self.pending)
@@ -2952,20 +2954,23 @@ class _ChatBottomApp:
             return
         self.complete_chat_stream_step()
         index = self.next_chat_stream_step_index()
+        tool_call_id = _text(event.get("toolCallId")) or f"tool_{index}"
         tool_name = _text(event.get("toolName")) or "tool"
         tool_input = event.get("input")
         part = {
             "type": "tool_call",
+            "tool_call_id": tool_call_id,
             "tool_name": tool_name,
             "input": dict(tool_input) if isinstance(tool_input, Mapping) else {},
         }
         self.active_run.record_part({"step_index": index, "part_index": 0, "part": part})
-        self.active_run.complete_step(
+        self.stream_tool_steps[tool_call_id] = index
+        self.active_run.start_step(
             {
                 "run_id": self.active_run.run_id,
                 "step_index": index,
-                "kind": "model",
-                "output": [part],
+                "kind": "tool",
+                "input": [part],
             }
         )
 
@@ -2973,17 +2978,30 @@ class _ChatBottomApp:
         if self.active_run is None:
             return
         self.complete_chat_stream_step()
-        index = self.next_chat_stream_step_index()
+        tool_call_id = _text(event.get("toolCallId"))
+        index = self.stream_tool_steps.pop(tool_call_id, None) if tool_call_id is not None else None
+        if index is None:
+            index = self.next_chat_stream_step_index()
         tool_name = _text(event.get("toolName")) or "tool"
+        input_part = None
+        active_step = self.active_run.steps.get(index)
+        if active_step is not None:
+            for item in _list(active_step.payload.get("input")):
+                if isinstance(item, Mapping):
+                    input_part = dict(item)
+                    break
+        if input_part is None:
+            input_part = {"tool_name": tool_name, "input": {}}
         self.active_run.complete_step(
             {
                 "run_id": self.active_run.run_id,
                 "step_index": index,
                 "kind": "tool",
-                "input": [{"step_index": index - 1, "part_index": 0}],
+                "input": [input_part],
                 "output": [
                     {
                         "type": "tool_result",
+                        "tool_call_id": tool_call_id or "",
                         "tool_name": tool_name,
                         "output": event.get("output"),
                     }
@@ -3061,8 +3079,12 @@ class _ChatBottomApp:
             if not selectors:
                 self.prompt.set_error("/model requires a selector.")
                 return True
+            labels = _chat_resolve_model_command_labels(self.ctx, selectors)
+            if labels is None:
+                self.prompt.set_error(f"Model selector matched no models: {', '.join(selectors)}")
+                return True
             self.selector_payload["models"] = list(selectors)
-            self.model_label = _chat_resolved_model_label(self.ctx, self.selector_payload)
+            self.model_label = ", ".join(labels)
             self.prompt.status_label = self.status_label()
             _chat_write_lines(_chat_local_command_lines(message, [f"model: {self.model_label}"]))
             return True
@@ -3144,7 +3166,7 @@ class _ChatBottomApp:
         return self.active_run is not None or self.local_streaming.is_set()
 
     def print_header(self) -> None:
-        _chat_write_lines(_chat_header_lines(self.status_label()), hide_cursor=False)
+        _chat_write_lines(_chat_header_lines(self.status_label(), home_label=self.home_label), hide_cursor=False)
 
     def print_run(self, run: _ChatRun) -> None:
         lines = _chat_run_lines(run, include_steps=True)
@@ -3190,7 +3212,7 @@ def _chat_step_label(payload: Mapping[str, Any], run: _ChatRun | None = None) ->
     if kind == "model":
         return "thinking..."
     if kind == "tool":
-        return f"running {_chat_tool_name(payload, run=run)}"
+        return f"running {_chat_tool_call_display(_chat_tool_call(payload, run=run))}"
     if kind == "run":
         target = executable_label(
             _text(step_payload.get("target_kind")) or "run",
@@ -3221,11 +3243,11 @@ def _chat_completed_step_line(payload: Mapping[str, Any], *, run: _ChatRun | Non
         text = _event_parts_text(payload.get("output"))
         if text:
             return f"{marker} assistant message"
-        requests = _chat_model_tool_request_summary(payload)
+        requests = _chat_model_tool_request_summary(payload, run=run)
         if requests:
             return f"{marker} requested {requests}"
         model = _text(step_payload.get("model_ref")) or _text(step_payload.get("model"))
-        return f"{marker} model call completed{f' ({model})' if model else ''}"
+        return f"{marker} model returned no message{f' ({model})' if model else ''}"
     if kind == "tool":
         tool = _chat_tool_call(payload, run=run)
         detail = _chat_tool_call_display(tool)
@@ -3370,7 +3392,7 @@ def _chat_tool_call_display(tool: _ChatToolCall) -> str:
     return tool.name
 
 
-def _chat_model_tool_request_summary(payload: Mapping[str, Any]) -> str:
+def _chat_model_tool_request_summary(payload: Mapping[str, Any], *, run: _ChatRun | None = None) -> str:
     tools: list[str] = []
     for part in _list(payload.get("output")):
         if not isinstance(part, Mapping) or part.get("type") != "tool_call":
@@ -3379,6 +3401,13 @@ def _chat_model_tool_request_summary(payload: Mapping[str, Any]) -> str:
         tool_input = part.get("input")
         tool = _ChatToolCall(name=name, input=dict(tool_input) if isinstance(tool_input, Mapping) else {})
         tools.append(_chat_tool_call_display(tool))
+    if not tools and run is not None:
+        step_index = _chat_step_index(payload)
+        tools.extend(
+            _chat_tool_call_display(tool)
+            for (tool_step_index, _part_index), tool in sorted(run.tool_calls_by_part.items())
+            if tool_step_index == step_index
+        )
     return "; ".join(tools)
 
 
@@ -3568,7 +3597,11 @@ def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, i
     state_line = _chat_run_state_line(run)
     queue_line = _chat_queue_activity_line(run)
     if queue_line:
-        return [queue_line]
+        lines = [queue_line]
+        if state_line:
+            lines.append(state_line)
+        lines.extend(_chat_terminal_event_lines(run, step_renderer))
+        return lines
     flow_lines = _chat_flow_stage_lines(run)
     if flow_lines:
         lines = [state_line, *flow_lines] if state_line else list(flow_lines)
@@ -3587,6 +3620,8 @@ def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, i
             if text:
                 lines.extend(_chat_message_lines(_chat_marker_for("model"), text))
                 continue
+            if _chat_model_tool_requests_have_results(run, index):
+                continue
         lines.append(step_renderer(run, index))
     return lines
 
@@ -3601,6 +3636,23 @@ def _chat_terminal_event_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun,
             continue
         lines.append(step_renderer(run, index))
     return lines
+
+
+def _chat_model_tool_requests_have_results(run: _ChatRun, model_step_index: int) -> bool:
+    model_payload = run.completed_steps.get(model_step_index)
+    if model_payload is None or not _chat_model_tool_request_summary(model_payload, run=run):
+        return False
+    for payload in run.completed_steps.values():
+        if payload.get("kind") != "tool":
+            continue
+        for item in _list(payload.get("input")):
+            if not isinstance(item, Mapping):
+                continue
+            if _int_or_none(item.get("step_index")) == model_step_index:
+                return True
+        if payload.get("step_index") == model_step_index:
+            return True
+    return False
 
 
 def _chat_run_state_line(run: _ChatRun) -> str:
@@ -3816,7 +3868,7 @@ def _chat_child_completed_step_lines(
         lines: list[str] = []
         if text:
             lines.extend(f"{indent}{line}" for line in _chat_message_lines(_chat_marker_for("model"), text))
-        requests = _chat_model_tool_request_summary(payload)
+        requests = _chat_model_tool_request_summary(payload, run=run)
         if requests:
             lines.append(f"{indent}{_chat_marker_for('model')} requested {requests}")
         if lines:
@@ -3900,8 +3952,12 @@ def _chat_handle_scripted_command(ctx: typer.Context, message: str, selector_pay
         if not selectors:
             typer.echo("/model requires a selector")
             return True
+        labels = _chat_resolve_model_command_labels(ctx, selectors)
+        if labels is None:
+            typer.echo(f"Model selector matched no models: {', '.join(selectors)}")
+            return True
         selector_payload["models"] = list(selectors)
-        typer.echo(f"model: {', '.join(selectors)}")
+        typer.echo(f"model: {', '.join(labels)}")
         return True
     try:
         payload = _runtime_json(ctx, "/api/v1/chat/models")
@@ -3950,9 +4006,14 @@ def _chat_model_command_selectors(argument: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(split_model_selectors((argument,))))
 
 
+def _chat_initial_model_label(selector_payload: Mapping[str, object]) -> str:
+    requested = _chat_requested_model_selectors(selector_payload)
+    return ", ".join(requested) if requested else "runtime model"
+
+
 def _chat_resolved_model_label(ctx: typer.Context, selector_payload: Mapping[str, object]) -> str:
     requested = _chat_requested_model_selectors(selector_payload)
-    fallback = ", ".join(requested) if requested else "runtime model"
+    fallback = _chat_initial_model_label(selector_payload)
     try:
         payload = _runtime_json(ctx, "/api/v1/chat/models")
     except Exception:
@@ -3976,11 +4037,36 @@ def _chat_resolved_model_label(ctx: typer.Context, selector_payload: Mapping[str
     return fallback
 
 
+def _chat_resolve_model_command_labels(ctx: typer.Context, selectors: Sequence[str]) -> tuple[str, ...] | None:
+    try:
+        payload = _runtime_json(ctx, "/api/v1/chat/models")
+    except click.ClickException:
+        return None
+    items = [_mapping(item) for item in _list(payload.get("items"))]
+    labels: list[str] = []
+    for selector in selectors:
+        item = _chat_find_model_item(items, selector)
+        if item is None:
+            return None
+        labels.append(_chat_model_item_label(item))
+    return tuple(labels)
+
+
 def _chat_requested_model_selectors(selector_payload: Mapping[str, object]) -> tuple[str, ...]:
     models = selector_payload.get("models")
     if not isinstance(models, Sequence) or isinstance(models, (str, bytes, bytearray)):
         return ()
     return tuple(str(item) for item in models if str(item))
+
+
+def _chat_home_label(ctx: typer.Context) -> str:
+    try:
+        agent_name = _context_agent(ctx)
+        if agent_name is None:
+            return "agent home"
+        return str(agents.agent_home(_context_root(ctx), agent_name))
+    except Exception:
+        return "agent home"
 
 
 def _chat_find_model_item(items: Sequence[Mapping[str, Any]], selector: str) -> Mapping[str, Any] | None:
@@ -4221,16 +4307,16 @@ def _chat_visible_text(text: str) -> str:
     return "".join(visible)
 
 
-def _chat_header_lines(model_label: str) -> list[str]:
+def _chat_header_lines(model_label: str, *, home_label: str) -> list[str]:
     content = [
         (
-            f"{_CHAT_DIM}{_CHAT_BOLD}T··⅃{_CHAT_NORMAL_INTENSITY}  "
-            f"{_CHAT_BOLD}Toolang{_CHAT_NORMAL_INTENSITY} "
+            f"{_CHAT_DIM}T··⅃ "
+            f"{_CHAT_NORMAL_INTENSITY}{_CHAT_BOLD}Toolang{_CHAT_NORMAL_INTENSITY} "
             f"{_CHAT_DIM}(v{_toolang_version()}){_CHAT_NORMAL_INTENSITY}"
         ),
         "",
-        f"model:     {model_label}",
-        "history:   terminal stdout scrollback",
+        f"model: {model_label}",
+        f"home:  {home_label}",
     ]
     width = max(_chat_display_len(line) for line in content) + 2
     top = f"{_CHAT_DIM}╭{'─' * width}╮{_CHAT_NORMAL_INTENSITY}"
@@ -5055,6 +5141,7 @@ def list_models(
             help="Filter models with selector-list syntax. Pass CSV or repeat.",
         ),
     ] = None,
+    refresh: Annotated[bool, typer.Option("--refresh", help="Refresh cached provider model lists.")] = False,
 ) -> None:
     from ...models.errors import NO_AVAILABLE_MODELS_MESSAGE
     from ...models.resolution import split_model_selectors
@@ -5062,9 +5149,9 @@ def list_models(
     environ = dict(os.environ)
     root = _toolang_root(None)
     selectors = split_model_selectors(tuple(filter_ or ()))
-    rows = _model_rows(root, environ, model_selectors=selectors)
+    rows = _model_rows(root, environ, model_selectors=selectors, refresh=refresh)
     if not rows:
-        if selectors and _model_rows(root, environ):
+        if selectors and _model_rows(root, environ, refresh=refresh):
             typer.echo("No matched models.")
             typer.echo("Try: toolang model list --filter <selector>")
             typer.echo("Alias: toolang model list --select <selector>")
@@ -5152,6 +5239,7 @@ def _model_rows(
     *,
     agent_name: str = "",
     model_selectors: Sequence[str] = (),
+    refresh: bool = False,
 ) -> list[tuple[str, str, str]]:
     from ...models.config import load_model_aliases
     from ...models.views import model_list_rows
@@ -5163,6 +5251,8 @@ def _model_rows(
         aliases=aliases,
         environ=environ,
         selectors=model_selectors,
+        cache_dir=_model_cache_dir(root, agent_name),
+        refresh=refresh,
     )
 
 
@@ -5178,7 +5268,13 @@ def _model_provider_rows(root: Path, environ: dict[str, str]) -> list[tuple[str,
         aliases=aliases,
         provider_configs=provider_configs,
         environ=environ,
+        cache_dir=_model_cache_dir(root, ""),
     )
+
+
+def _model_cache_dir(root: Path, agent_name: str) -> Path:
+    del agent_name
+    return root / ".runtime" / "model-cache"
 
 
 def _tool_rows(

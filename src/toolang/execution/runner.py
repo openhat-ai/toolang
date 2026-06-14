@@ -6,10 +6,12 @@ import asyncio
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+import logging
 from typing import TYPE_CHECKING, Any, Literal
 
-from toolang.base.types.message import Message
+from toolang.base.types.message import Message, message_text
 from .db import utc_now
+from .events import RunEnd
 from ..state.live import LiveState
 
 if TYPE_CHECKING:
@@ -25,6 +27,8 @@ DEFAULT_GROUP_LIMITS: dict[str, int] = {
     "file": 10,
     "hook": 1,
 }
+
+_LOGGER = logging.getLogger("toolang.run")
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,9 +257,11 @@ class QueueRunner:
                     self._completed.append(result)
                     return result
                 except Exception as exc:
+                    result = self._fail_submission(submission, exc)
                     if submission.completion is not None and not submission.completion.done():
-                        submission.completion.set_exception(exc)
-                    raise
+                        submission.completion.set_result(result)
+                    self._completed.append(result)
+                    return result
                 finally:
                     self._active_requests.pop(request_key, None)
                     await self._update_group_in_flight(request.group, delta=-1)
@@ -350,11 +356,39 @@ class QueueRunner:
         if context is None:
             return
         run_id = request.run_id
-        thread_id = request.thread_id
+        thread_id = request.thread_id or ""
         if run_id:
             context.events.publish(domain="run", domain_id=run_id, type=event_type, payload=payload)
         if thread_id:
             context.events.publish(domain="thread", domain_id=thread_id, type=event_type, payload=payload)
+
+    def _fail_submission(self, submission: RunSubmission, exc: Exception) -> RunOutcome:
+        request = submission.request
+        error = str(exc) or type(exc).__name__
+        _LOGGER.exception("Run request failed before completion run=%s group=%s", request.run_id, request.group)
+        run_id = request.run_id or ""
+        thread_id = request.thread_id or ""
+        if submission.response is not None and run_id:
+            submission.response.on_event(
+                RunEnd(
+                    run_id=run_id,
+                    thread_id=thread_id,
+                    status="failed",
+                    error=error,
+                    finished_at=utc_now(),
+                )
+            )
+        return RunOutcome(
+            run_id=run_id,
+            group=request.group,
+            origin=request.origin,
+            input_text=_request_input_text(request),
+            thunk_name=request.thunk_name,
+            thread_id=thread_id,
+            delay_sec=0.0,
+            status="failed",
+            error=error,
+        )
 
     def __len__(self) -> int:
         return len(self._pending) + len(self._waiting_requests)
@@ -368,3 +402,11 @@ def _request_id(request: RunRequest) -> str | None:
 def _request_executable_kind(request: RunRequest) -> str:
     value = request.metadata.get("executable_kind")
     return str(value) if value is not None else "thunk"
+
+
+def _request_input_text(request: RunRequest) -> str:
+    if request.thunk:
+        return request.thunk
+    if request.message is None:
+        return ""
+    return message_text(request.message.parts)
