@@ -22,7 +22,15 @@ from .context import RunContext
 from .events import PartEnd, PartStart, RunEnd, RunStart, StepEnd, StepStart, TraceEventHandler
 from .input import effective_origin_model_selectors
 from .model import resolve_model
-from .records import ChildCallStepPayload, FlowOpStepPayload, ModelCallStepPayload, RunInputRef, RunStatus, StepStatus
+from .records import (
+    ChildCallStepPayload,
+    FlowOpStepPayload,
+    ModelCallStepPayload,
+    RunCommandRef,
+    RunStatus,
+    StepKind,
+    StepStatus,
+)
 
 if TYPE_CHECKING:
     from ..up import UptimeContext
@@ -179,8 +187,8 @@ class Executor:
                 run_id=ctx.id,
                 thread_id=ctx.thread,
                 step_index=step_index,
-                kind="model_call",
-                input=(RunInputRef(),),
+                kind="model",
+                input=(RunCommandRef(),),
                 started_at=started_at,
             )
         )
@@ -221,7 +229,7 @@ class Executor:
                 run_id=ctx.id,
                 thread_id=ctx.thread,
                 step_index=step_index,
-                kind="model_call",
+                kind="model",
                 status="finished",
                 output=(part,),
                 payload=ModelCallStepPayload(
@@ -446,12 +454,12 @@ class Executor:
         if stage.targets:
             for target in stage.targets:
                 result = await self._execute_stage_target(
-                ctx,
-                stage,
-                index=index,
-                input_value=_DEFAULT_PARENT_CURRENT,
-                target=target,
-            )
+                    ctx,
+                    stage,
+                    index=index,
+                    input_value=_DEFAULT_PARENT_CURRENT,
+                    target=target,
+                )
                 ctx.frame.set_current(result.value)
         else:
             result = await self._execute_stage_target(
@@ -697,8 +705,8 @@ class Executor:
                 run_id=parent.id,
                 thread_id=parent.thread,
                 step_index=step_index,
-                kind="child_call",
-                input=(RunInputRef(),),
+                kind="run",
+                input=(RunCommandRef(),),
                 started_at=started_at,
                 metadata=dict(metadata),
             )
@@ -724,7 +732,7 @@ class Executor:
                 run_id=parent.id,
                 thread_id=parent.thread,
                 step_index=step_index,
-                kind="child_call",
+                kind="run",
                 status=status,
                 output=(TextPart(text=_value_to_text(output)),),
                 payload=ChildCallStepPayload(
@@ -760,13 +768,14 @@ class Executor:
         step_index = ctx.next_step()
         now = _utc_now()
         metadata = {"op": op, **_stage_meta(ctx, stage, index, total=total, input_value=input_value)}
+        kind = _flow_op_step_kind(op=op, stage=stage)
         self._on_event(
             StepStart(
                 run_id=ctx.id,
                 thread_id=ctx.thread,
                 step_index=step_index,
-                kind="flow_op",
-                input=(RunInputRef(),),
+                kind=kind,
+                input=(RunCommandRef(),),
                 started_at=now,
                 metadata=metadata,
             )
@@ -776,7 +785,7 @@ class Executor:
                 run_id=ctx.id,
                 thread_id=ctx.thread,
                 step_index=step_index,
-                kind="flow_op",
+                kind=kind,
                 status="finished",
                 output=(TextPart(text=_value_to_text(output)),) if output is not None else (),
                 payload=FlowOpStepPayload(
@@ -843,6 +852,14 @@ def _score_value(value: Value) -> float:
         return float(text.split()[0])
     except (ValueError, IndexError):
         return 0.0
+
+
+def _flow_op_step_kind(*, op: str, stage: FlowStage) -> StepKind:
+    if op == "set_current":
+        return "bind"
+    if stage.kind in {"each", "rank", "keep", "drop"}:
+        return "parallel"
+    return "step"
 
 
 def _truthy_value(value: Value) -> bool:

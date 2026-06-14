@@ -92,7 +92,7 @@ async def execute_run(
         executor = Executor(
             context,
             on_event=_event_handler(context, persist, response) or (lambda _event: None),
-            consume_inputs=lambda run_id: context.store.pending_inputs(run_id=run_id, action="steer"),
+            consume_inputs=lambda run_id: context.store.pending_commands(run_id=run_id, kind="steer"),
             load_loop_func=load_loop,
             stream=bool(response is not None and response.wants_stream),
         )

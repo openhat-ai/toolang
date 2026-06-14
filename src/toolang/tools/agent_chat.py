@@ -15,7 +15,7 @@ from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.tool import ToolContext
 from toolang.base.utils.function_tools import create_function_tool, tool
 from toolang.execution.db import ExecutionStore, utc_now
-from toolang.execution.records import ModelCallStepPayload, RunInputRef, ThreadPeer, ThreadRecord
+from toolang.execution.records import ModelCallStepPayload, RunCommandRef, ThreadPeer, ThreadRecord
 from toolang.common.ids import LOCAL_ID_FAMILY, RUN_ID_FAMILY, allocate_id
 
 DEFAULT_TIMEOUT_SEC = 60
@@ -313,9 +313,9 @@ def _record_local_a2a_exchange(
     store.append_step(
         run_id=run_id,
         step_index=1,
-        kind="model_call",
+        kind="model",
         status="finished",
-        input=(RunInputRef(),),
+        input=(RunCommandRef(),),
         output=(TextPart(text=assistant_text),),
         payload=ModelCallStepPayload(
             model_ref=f"agent_chat/{peer}",

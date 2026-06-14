@@ -16,7 +16,7 @@ from toolang.base.types.message import (
     parts_to_data,
 )
 from .records import (
-    InputRecord,
+    RunCommandRecord,
     RunRecord,
     RunStatus,
     StepInputItem,
@@ -183,20 +183,20 @@ TraceEvent = RunStart | StepStart | PartStart | PartDelta | PartEnd | StepEnd | 
 TraceEventHandler = Callable[[TraceEvent], None]
 
 
-def run_input_message_data(run: RunRecord, input: InputRecord) -> MessageData:
+def run_input_message_data(run: RunRecord, input: RunCommandRecord) -> MessageData:
     """Return one durable run input message."""
 
     if input.message is None:
         raise ValueError(f"run input has no message: {run.run_id}:{input.index}")
     message = input.message
     meta = dict(message.meta)
-    meta.update({"action": input.action, "input_index": input.index})
+    meta.update({"kind": input.kind, "command_index": input.index})
     if input.mode is not None:
         meta["mode"] = input.mode
     if input.request_id is not None:
         meta["request_id"] = input.request_id
     return MessageData(
-        id=f"{run.run_id}:input:{input.index}",
+        id=f"{run.run_id}:command:{input.index}",
         thread_id=run.thread_id,
         run_id=run.run_id,
         step_index=input.index,
@@ -207,7 +207,7 @@ def run_input_message_data(run: RunRecord, input: InputRecord) -> MessageData:
     )
 
 
-def run_input_record_message_data(run: RunRecord, input: InputRecord) -> MessageData | None:
+def run_input_record_message_data(run: RunRecord, input: RunCommandRecord) -> MessageData | None:
     """Return the caller-facing message for one run input."""
 
     if input.message is None:
@@ -233,7 +233,7 @@ def run_output_message_data(*, run: RunRecord, steps: Sequence[StepRecord]) -> M
     """Return the final assistant message for one run when present."""
 
     for step in reversed(steps):
-        if step.kind == "model_call":
+        if step.kind == "model":
             return step_message_data(run, step)
     return None
 
@@ -241,7 +241,7 @@ def run_output_message_data(*, run: RunRecord, steps: Sequence[StepRecord]) -> M
 def run_message_data(
     run: RunRecord,
     *,
-    inputs: Sequence[InputRecord],
+    inputs: Sequence[RunCommandRecord],
     steps: Sequence[StepRecord],
 ) -> list[MessageData]:
     """Return the derived run transcript view."""
@@ -312,9 +312,9 @@ def provider_metadata(name: str) -> dict[str, Any]:
 
 
 def _role_for_step(kind: StepKind) -> MessageRole | None:
-    if kind == "model_call":
+    if kind == "model":
         return "assistant"
-    if kind == "tool_call":
+    if kind == "tool":
         return "tool"
     return None
 

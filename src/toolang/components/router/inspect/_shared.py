@@ -25,8 +25,8 @@ from ....execution.detail import (
 from ....execution.events import MessageData, run_message_data
 from ....execution.input import allocate_run_id
 from ....execution.records import (
-    InputMode,
-    InputRecord,
+    RunCommandMode,
+    RunCommandRecord,
     ModelCallStepPayload,
     RunRecord,
     RunStatus,
@@ -212,11 +212,11 @@ def create_router() -> APIRouter:
         context = request.app.state.runtime
         runs = context.store.list_runs(limit=limit, thread_id=thread_id, status=status)
         steps_by_run = context.store.list_steps_for_runs(run_ids=tuple(item.run_id for item in runs))
-        inputs_by_run = {run.run_id: context.store.list_inputs(run_id=run.run_id) for run in runs}
+        commands_by_run = {run.run_id: context.store.list_commands(run_id=run.run_id) for run in runs}
         items = [
             _run_item(
                 item,
-                inputs=inputs_by_run.get(item.run_id, ()),
+                inputs=commands_by_run.get(item.run_id, ()),
                 steps=steps_by_run.get(item.run_id, ()),
             )
             for item in runs
@@ -259,15 +259,15 @@ def create_router() -> APIRouter:
         run = _run_or_404(context, run_id)
         if run.status != "running":
             raise HTTPException(status_code=409, detail=f"run is not running: {run_id}")
-        input_record = context.store.append_input(
+        command_record = context.store.append_command(
             run_id=run.run_id,
-            action="stop",
+            kind="stop",
             mode=_input_mode(payload.mode if payload else "immediate"),
             request_id=payload.request_id if payload else None,
         )
-        input_payload = _input_event_payload(run, input_record)
-        context.events.publish(domain="run", domain_id=run.run_id, type="run_input", payload=input_payload)
-        context.events.publish(domain="thread", domain_id=run.thread_id, type="run_input", payload=input_payload)
+        input_payload = _input_event_payload(run, command_record)
+        context.events.publish(domain="run", domain_id=run.run_id, type="run_command", payload=input_payload)
+        context.events.publish(domain="thread", domain_id=run.thread_id, type="run_command", payload=input_payload)
         run = context.store.cancel_run(run_id=run_id, error=payload.reason if payload else None)
         event_payload = _run_event_payload(run)
         context.events.publish(domain="run", domain_id=run.run_id, type="run_end", payload=event_payload)
@@ -276,7 +276,7 @@ def create_router() -> APIRouter:
         return {
             "run": _run_item(
                 run,
-                inputs=context.store.list_inputs(run_id=run.run_id),
+                inputs=context.store.list_commands(run_id=run.run_id),
                 steps=context.store.list_steps(run_id=run.run_id),
             ),
             "input": input_payload,
@@ -386,16 +386,16 @@ def create_router() -> APIRouter:
         if run.status != "running":
             raise HTTPException(status_code=409, detail=f"run is not running: {run_id}")
         message = _input_message(payload.message)
-        input_record = context.store.append_input(
+        command_record = context.store.append_command(
             run_id=run.run_id,
-            action="steer",
+            kind="steer",
             mode=_input_mode(payload.mode),
             request_id=payload.request_id,
             message=message,
         )
-        event_payload = _input_event_payload(run, input_record)
-        context.events.publish(domain="run", domain_id=run.run_id, type="run_input", payload=event_payload)
-        context.events.publish(domain="thread", domain_id=run.thread_id, type="run_input", payload=event_payload)
+        event_payload = _input_event_payload(run, command_record)
+        context.events.publish(domain="run", domain_id=run.run_id, type="run_command", payload=event_payload)
+        context.events.publish(domain="thread", domain_id=run.thread_id, type="run_command", payload=event_payload)
         return {"input": event_payload}
 
     @router.get("/instruct/{prompt_hash}", tags=["activity"], summary="Get Instruct Prompt")
@@ -699,7 +699,7 @@ def snapshot_context(
     }
     recent_runs = context.store.list_runs(limit=20)
     recent_steps = context.store.list_steps_for_runs(run_ids=tuple(item.run_id for item in recent_runs))
-    recent_inputs = {run.run_id: context.store.list_inputs(run_id=run.run_id) for run in recent_runs}
+    recent_commands = {run.run_id: context.store.list_commands(run_id=run.run_id) for run in recent_runs}
     return {
         "enabled_components": list(components),
         "router_components": _select_components(components, "router", ROUTER_COMPONENT_LEAVES),
@@ -731,7 +731,7 @@ def snapshot_context(
                 for run in sorted(recent_runs, key=lambda item: item.created_at)
                 for item in run_message_data(
                     run,
-                    inputs=recent_inputs.get(run.run_id, ()),
+                    inputs=recent_commands.get(run.run_id, ()),
                     steps=recent_steps.get(run.run_id, ()),
                 )
             ],
@@ -1129,7 +1129,7 @@ def _live_entry_by_name(context: UptimeContext, *, kind: CapKind, name: str) -> 
     raise HTTPException(status_code=404, detail=f"{kind} not found: {name}")
 
 
-def _run_item(run: RunRecord, *, inputs: Sequence[InputRecord], steps: Sequence) -> dict[str, object]:
+def _run_item(run: RunRecord, *, inputs: Sequence[RunCommandRecord], steps: Sequence) -> dict[str, object]:
     detail = run_detail_from_record(run, inputs=inputs, steps=steps)
     input_text = message_summary(detail.input.parts) if detail.input is not None else ""
     last_step_message = next(
@@ -1211,17 +1211,14 @@ def _virtual_runtime_failure_step(
     error = run_detail.output.error
     if run_detail.output.status != "failed" or error is None:
         return None
-    if any(
-        item.kind == "runtime" and item.status == "failed" and item.error == error
-        for item in steps
-    ):
+    if any(item.kind == "system" and item.status == "failed" and item.error == error for item in steps):
         return None
     step_index = max((item.step_index for item in steps), default=0) + 1
     timestamp = run_detail.info.finished_at or run_detail.info.updated_at
     return StepRecord(
         run_id=run_detail.info.id,
         step_index=step_index,
-        kind="runtime",
+        kind="system",
         status="failed",
         input=(),
         output=(TextPart(text=error),),
@@ -1276,9 +1273,9 @@ def _profile_metrics(context: UptimeContext) -> dict[str, object]:
     steps_by_run = context.store.list_steps_for_runs(run_ids=tuple(item.run_id for item in runs))
     thread_counts = {"chat": 0, "chore": 0, "task": 0}
     step_total = 0
-    model_call_total = 0
-    tool_call_total = 0
-    runtime_total = 0
+    model_total = 0
+    tool_total = 0
+    system_total = 0
     input_tokens = 0
     output_tokens = 0
 
@@ -1288,15 +1285,15 @@ def _profile_metrics(context: UptimeContext) -> dict[str, object]:
     for step_items in steps_by_run.values():
         for step in step_items:
             step_total += 1
-            if step.kind == "model_call":
-                model_call_total += 1
+            if step.kind == "model":
+                model_total += 1
                 if isinstance(step.payload, ModelCallStepPayload):
                     input_tokens += step.payload.input_tokens
                     output_tokens += step.payload.output_tokens
-            elif step.kind == "tool_call":
-                tool_call_total += 1
+            elif step.kind == "tool":
+                tool_total += 1
             else:
-                runtime_total += 1
+                system_total += 1
 
     return {
         "threads": {
@@ -1305,9 +1302,9 @@ def _profile_metrics(context: UptimeContext) -> dict[str, object]:
         },
         "steps": {
             "total": step_total,
-            "model_call": model_call_total,
-            "tool_call": tool_call_total,
-            "runtime": runtime_total,
+            "model": model_total,
+            "tool": tool_total,
+            "system": system_total,
         },
         "tokens": {
             "input": input_tokens,
@@ -1331,7 +1328,7 @@ def _profile_environment(
 
 def _run_detail(context: UptimeContext, run: RunRecord):
     raw_steps = context.store.list_steps(run_id=run.run_id)
-    inputs = context.store.list_inputs(run_id=run.run_id)
+    inputs = context.store.list_commands(run_id=run.run_id)
     return run_detail_from_record(run, steps=raw_steps, inputs=inputs)
 
 
@@ -1343,7 +1340,7 @@ def _run_messages(
 ) -> list[MessageData]:
     return run_message_data(
         run,
-        inputs=context.store.list_inputs(run_id=run.run_id),
+        inputs=context.store.list_commands(run_id=run.run_id),
         steps=raw_steps,
     )
 
@@ -1357,7 +1354,7 @@ def _thread_items(context: UptimeContext) -> list[ThreadInfo]:
         for run in context.store.list_thread_runs_chronological(thread_id=thread_id)
     ]
     steps_by_run = context.store.list_steps_for_runs(run_ids=tuple(item.run_id for item in runs))
-    inputs_by_run = {run.run_id: context.store.list_inputs(run_id=run.run_id) for run in runs}
+    commands_by_run = {run.run_id: context.store.list_commands(run_id=run.run_id) for run in runs}
     grouped_runs: dict[str, list[RunRecord]] = {}
     for run in runs:
         grouped_runs.setdefault(run.thread_id, []).append(run)
@@ -1368,7 +1365,7 @@ def _thread_items(context: UptimeContext) -> list[ThreadInfo]:
             thread_info_from_runs(
                 thread_id,
                 runs,
-                inputs_by_run=inputs_by_run,
+                commands_by_run=commands_by_run,
                 steps_by_run=steps_by_run,
                 thread=thread_records.get(thread_id),
             )
@@ -1405,18 +1402,18 @@ def _input_message(payload: RunInputMessagePayload) -> Message:
     return message
 
 
-def _input_mode(value: str) -> InputMode:
+def _input_mode(value: str) -> RunCommandMode:
     if value not in {"immediate", "next_step", "next_call"}:
         raise HTTPException(status_code=422, detail=f"unsupported run input mode: {value}")
-    return cast(InputMode, value)
+    return cast(RunCommandMode, value)
 
 
-def _input_event_payload(run: RunRecord, input: InputRecord) -> dict[str, object]:
+def _input_event_payload(run: RunRecord, input: RunCommandRecord) -> dict[str, object]:
     payload: dict[str, object] = {
         "run_id": run.run_id,
         "thread_id": run.thread_id,
-        "ref": {"kind": "input", "index": input.index},
-        "action": input.action,
+        "ref": {"kind": "command", "index": input.index},
+        "kind": input.kind,
         "created_at": input.created_at,
     }
     if input.mode is not None:

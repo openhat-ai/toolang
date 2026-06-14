@@ -101,7 +101,7 @@ def create_router() -> APIRouter:
         detail = run_detail_from_record(
             run,
             steps=context.store.list_steps(run_id=result.run_id),
-            inputs=context.store.list_inputs(run_id=result.run_id),
+            inputs=context.store.list_commands(run_id=result.run_id),
         )
         if detail.input is None:
             raise HTTPException(status_code=500, detail=f"missing chat input for run {result.run_id}")
@@ -369,11 +369,11 @@ def _thread_info(context: UptimeContext, thread_id: str):
             raise HTTPException(status_code=500, detail=f"thread not found after completion: {thread_id}")
         return thread_info_from_record(thread)
     steps_by_run = context.store.list_steps_for_runs(run_ids=tuple(run.run_id for run in runs))
-    inputs_by_run = {run.run_id: context.store.list_inputs(run_id=run.run_id) for run in runs}
+    commands_by_run = {run.run_id: context.store.list_commands(run_id=run.run_id) for run in runs}
     return thread_info_from_runs(
         thread_id,
         runs,
-        inputs_by_run=inputs_by_run,
+        commands_by_run=commands_by_run,
         steps_by_run=steps_by_run,
         thread=thread,
     )

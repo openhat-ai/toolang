@@ -167,10 +167,10 @@ def test_agent_chat_tool_creates_child_thread_and_sends_peer_request(monkeypatch
         )
         local = store.get_thread(thread_id=str(result["local_thread"]))
         local_runs = store.list_runs(thread_id=str(result["local_thread"]), limit=None)
-        local_inputs = [
+        local_commands = [
             input
             for run in local_runs
-            for input in store.list_inputs(run_id=run.run_id)
+            for input in store.list_commands(run_id=run.run_id)
             if input.message is not None
         ]
         local_steps = store.list_steps(run_id=str(result["local_run_id"]))
@@ -197,7 +197,7 @@ def test_agent_chat_tool_creates_child_thread_and_sends_peer_request(monkeypatch
     assert local is not None
     assert local.parent == "term_user"
     assert local.peer == ThreadPeer(type="agent", name="bob", thread="term_bob")
-    assert [message_text(input.message.parts) for input in local_inputs if input.message is not None] == ["please review"]
+    assert [message_text(input.message.parts) for input in local_commands if input.message is not None] == ["please review"]
     assert [part.text for part in local_steps[0].output if isinstance(part, TextPart)] == ["bob says yes"]
 
 
@@ -247,10 +247,10 @@ def test_agent_chat_tool_accepts_direct_peer_object_without_config(monkeypatch, 
         )
         local = store.get_thread(thread_id=str(result["local_thread"]))
         local_runs = store.list_runs(thread_id=str(result["local_thread"]), limit=None)
-        local_inputs = [
+        local_commands = [
             input
             for run in local_runs
-            for input in store.list_inputs(run_id=run.run_id)
+            for input in store.list_commands(run_id=run.run_id)
             if input.message is not None
         ]
     finally:
@@ -271,7 +271,7 @@ def test_agent_chat_tool_accepts_direct_peer_object_without_config(monkeypatch, 
     assert result["assistant_text"] == "pong"
     assert local is not None
     assert local.peer == ThreadPeer(type="agent", name="merkle", thread="term_merkle")
-    assert [message_text(input.message.parts) for input in local_inputs if input.message is not None] == ["ping"]
+    assert [message_text(input.message.parts) for input in local_commands if input.message is not None] == ["ping"]
 
 
 def test_agent_chat_tool_can_call_streaming_peer_chat(monkeypatch, tmp_path: Path) -> None:

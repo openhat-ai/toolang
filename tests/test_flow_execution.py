@@ -144,7 +144,7 @@ def test_flow_run_records_child_thunk_run(tmp_path: Path) -> None:
         assert child.root_run_id == parent.run_id
         assert child.call_kind == "stage"
         steps = context.store.list_steps(run_id=parent.run_id)
-        assert [step.kind for step in steps] == ["flow_op", "child_call", "flow_op"]
+        assert [step.kind for step in steps] == ["step", "run", "bind"]
         assert isinstance(steps[0].payload, FlowOpStepPayload)
         assert steps[0].payload.metadata is not None
         assert steps[0].payload.metadata["stage_label"] == "do summarize"
@@ -152,7 +152,7 @@ def test_flow_run_records_child_thunk_run(tmp_path: Path) -> None:
         assert steps[1].payload.metadata is not None
         assert steps[1].payload.metadata["stage_label"] == "do summarize"
         assert steps[1].payload.child_run_ids == (child.run_id,)
-        assert context.store.list_steps(run_id=child.run_id)[0].kind == "model_call"
+        assert context.store.list_steps(run_id=child.run_id)[0].kind == "model"
 
     asyncio.run(run_test())
 
@@ -200,7 +200,7 @@ def test_flow_run_records_inline_stage_child_thunk(tmp_path: Path) -> None:
         assert steps[1].payload.metadata is not None
         assert steps[1].payload.metadata["source_line"] == 4
         assert steps[1].payload.child_run_ids == (child.run_id,)
-        assert context.store.list_steps(run_id=child.run_id)[0].kind == "model_call"
+        assert context.store.list_steps(run_id=child.run_id)[0].kind == "model"
 
     asyncio.run(run_test())
 

@@ -7395,24 +7395,24 @@ def test_cli_chat_run_lines_render_events_without_status_or_truncating_assistant
     long_text = "first sentence. " + ("full assistant output " * 12).strip()
     run = cli._ChatRun(run_id="run_long", message="summarize", status="succeeded")
     run.completed_steps[1] = {
-        "kind": "tool_call",
+        "kind": "tool",
         "step_index": 1,
         "output": [{"type": "tool_result", "tool_name": "web_search", "output": {"ok": True}}],
     }
     run.completed_steps[2] = {
-        "kind": "model_call",
+        "kind": "model",
         "step_index": 2,
         "payload": {"model_ref": "openai/gpt-5"},
         "output": [{"type": "text", "text": long_text}],
     }
     run.completed_steps[3] = {
-        "kind": "tool_call",
+        "kind": "tool",
         "step_index": 3,
         "error": "rate limited",
         "output": [{"type": "tool_result", "tool_name": "weather", "output": {}}],
     }
     run.completed_steps[4] = {
-        "kind": "runtime",
+        "kind": "system",
         "step_index": 4,
         "payload": {"message": "runtime checkpoint saved"},
     }
@@ -7427,9 +7427,31 @@ def test_cli_chat_run_lines_render_events_without_status_or_truncating_assistant
     assert "..." not in rendered
     assert "› ran web_search" in rendered
     assert "› ran weather failed: rate limited" in rendered
-    assert "─ runtime checkpoint saved" in rendered
+    assert "◇ runtime checkpoint saved" in rendered
     assert "steps:" not in rendered
     assert "model call completed" not in rendered
+
+
+def test_cli_chat_active_run_panel_tails_activity_without_truncating_scrollback() -> None:
+    run = cli._ChatRun(run_id="run_busy", message="run a flow", status="running")
+    for index in range(1, 31):
+        run.completed_steps[index] = {
+            "kind": "system",
+            "step_index": index,
+            "payload": {"message": f"progress line {index:02d}"},
+        }
+
+    panel = cli._ChatLastRunPanel(lambda: run)
+    activity = panel.activity_lines()
+    visible_activity = cli._chat_visible_text("\n".join(activity))
+    scrollback = cli._chat_visible_text("\n".join(cli._chat_run_lines(run, include_steps=True)))
+
+    assert len(activity) == cli._CHAT_MAX_ACTIVE_RUN_ACTIVITY_ROWS + 2
+    assert "earlier lines" in visible_activity
+    assert "progress line 01" not in visible_activity
+    assert "progress line 30" in visible_activity
+    assert "progress line 01" in scrollback
+    assert "progress line 30" in scrollback
 
 
 def test_cli_chat_run_lines_render_tool_requests_and_inputs() -> None:
@@ -7443,13 +7465,13 @@ def test_cli_chat_run_lines_render_tool_requests_and_inputs() -> None:
     }
     run.record_part({"step_index": 1, "part_index": 0, "part": tool_part})
     run.completed_steps[1] = {
-        "kind": "model_call",
+        "kind": "model",
         "step_index": 1,
         "payload": {"model_ref": "deepseek/deepseek-v4-flash"},
         "output": [tool_part],
     }
     run.completed_steps[2] = {
-        "kind": "tool_call",
+        "kind": "tool",
         "step_index": 2,
         "input": [{"step_index": 1, "part_index": 0}],
         "output": [{"type": "tool_result", "tool_name": "shell__execute", "output": {"stdout": "2026-06-12 19:17:13 CST\n"}}],
@@ -7478,13 +7500,13 @@ def test_cli_chat_flow_run_lines_render_stage_summary() -> None:
     }
     child.record_part({"step_index": 1, "part_index": 0, "part": tool_part})
     child.completed_steps[1] = {
-        "kind": "model_call",
+        "kind": "model",
         "step_index": 1,
         "status": "finished",
         "output": [tool_part],
     }
     child.completed_steps[2] = {
-        "kind": "tool_call",
+        "kind": "tool",
         "step_index": 2,
         "status": "finished",
         "input": [{"step_index": 1, "part_index": 0}],
@@ -7492,7 +7514,7 @@ def test_cli_chat_flow_run_lines_render_stage_summary() -> None:
     }
     run.child_runs[child.run_id] = child
     run.completed_steps[1] = {
-        "kind": "flow_op",
+        "kind": "step",
         "step_index": 1,
         "status": "finished",
         "payload": {
@@ -7510,7 +7532,7 @@ def test_cli_chat_flow_run_lines_render_stage_summary() -> None:
         "output": [],
     }
     run.completed_steps[2] = {
-        "kind": "child_call",
+        "kind": "run",
         "step_index": 2,
         "status": "finished",
         "payload": {
@@ -7529,7 +7551,7 @@ def test_cli_chat_flow_run_lines_render_stage_summary() -> None:
         "output": [{"type": "text", "text": "query 1\nquery 2\nquery 3"}],
     }
     run.completed_steps[3] = {
-        "kind": "flow_op",
+        "kind": "step",
         "step_index": 3,
         "status": "finished",
         "payload": {
@@ -7547,7 +7569,7 @@ def test_cli_chat_flow_run_lines_render_stage_summary() -> None:
         "output": [{"type": "text", "text": "query 1\nquery 2\nquery 3"}],
     }
     run.completed_steps[4] = {
-        "kind": "flow_op",
+        "kind": "step",
         "step_index": 4,
         "status": "finished",
         "payload": {
@@ -7566,7 +7588,7 @@ def test_cli_chat_flow_run_lines_render_stage_summary() -> None:
         "output": [],
     }
     run.completed_steps[5] = {
-        "kind": "child_call",
+        "kind": "run",
         "step_index": 5,
         "status": "finished",
         "payload": {
@@ -7588,7 +7610,7 @@ def test_cli_chat_flow_run_lines_render_stage_summary() -> None:
         "output": [],
     }
     run.completed_steps[6] = {
-        "kind": "model_call",
+        "kind": "model",
         "step_index": 6,
         "status": "finished",
         "output": [{"type": "text", "text": "child internal answer"}],
@@ -7642,7 +7664,7 @@ def test_cli_chat_run_lines_render_queue_state() -> None:
 def test_cli_chat_flow_run_lines_keep_terminal_error_message() -> None:
     run = cli._ChatRun(run_id="run_flow_failed", message="agent framework impl", status="failed")
     run.completed_steps[1] = {
-        "kind": "flow_op",
+        "kind": "step",
         "step_index": 1,
         "status": "finished",
         "payload": {
@@ -7680,7 +7702,7 @@ def test_cli_chat_model_output_renders_markdown_without_dimming() -> None:
     text = "# Result\n\n**Done**\n\n- first\n- second\n\n```text\nhello\n```"
     run = cli._ChatRun(run_id="run_md", message="format this", status="succeeded")
     run.completed_steps[1] = {
-        "kind": "model_call",
+        "kind": "model",
         "step_index": 1,
         "output": [{"type": "text", "text": text}],
     }
@@ -7708,7 +7730,7 @@ def test_cli_chat_plain_model_output_wraps_to_content_width(monkeypatch) -> None
     text = "What can I do for you? Need a hand with files, tasks, services, or a shell command?"
     run = cli._ChatRun(run_id="run_plain", message="hello", status="succeeded")
     run.completed_steps[1] = {
-        "kind": "model_call",
+        "kind": "model",
         "step_index": 1,
         "output": [{"type": "text", "text": text}],
     }
@@ -7818,6 +7840,31 @@ def test_cli_chat_prompt_status_colors_model_thunk_and_flow() -> None:
     assert ("class:status.flow", "flow:review") in flow_segments
     assert ("class:status.model", "  openai/o3") in thunk_segments
     assert ("class:status.thunk", "thunk:summarize") in thunk_segments
+
+
+def test_cli_chat_startup_resolves_selected_model_label(monkeypatch) -> None:
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        assert request_path == "/api/v1/chat/models"
+        return {
+            "default": "openai/o3",
+            "items": [
+                {
+                    "selector": "[deepseek]",
+                    "ref": "deepseek/deepseek-v4-flash",
+                    "provider": "deepseek",
+                    "model": "deepseek-v4-flash",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={"models": ["[deepseek]"]})
+
+    assert app.status_label() == "deepseek/deepseek-v4-flash"
+    assert "model:     deepseek/deepseek-v4-flash" in cli._chat_visible_text(
+        "\n".join(cli._chat_header_lines(app.status_label()))
+    )
 
 
 def test_cli_chat_bottom_layout_can_shrink_to_compact_prompt() -> None:
@@ -8003,7 +8050,7 @@ def test_cli_chat_flow_submit_renders_flow_stream_steps(monkeypatch) -> None:
                     "run_id": "run_flow",
                     "thread_id": "term_new",
                     "step_index": 1,
-                    "kind": "flow_op",
+                    "kind": "step",
                 },
             }
         )
@@ -8014,7 +8061,7 @@ def test_cli_chat_flow_submit_renders_flow_stream_steps(monkeypatch) -> None:
                     "run_id": "run_flow",
                     "thread_id": "term_new",
                     "step_index": 1,
-                    "kind": "flow_op",
+                    "kind": "step",
                     "status": "finished",
                     "output": [],
                     "payload": {
@@ -8112,9 +8159,9 @@ def test_cli_chat_start_run_consumes_own_stream_events(monkeypatch) -> None:
         request_id = cast(str, payload["request_id"])
         event_handler(
             {
-                "type": "run_input",
+                "type": "run_command",
                 "payload": {
-                    "action": "start",
+                    "kind": "start",
                     "run_id": "run_local",
                     "request_id": request_id,
                     "message": payload["message"],
@@ -8127,7 +8174,7 @@ def test_cli_chat_start_run_consumes_own_stream_events(monkeypatch) -> None:
                 "payload": {
                     "run_id": "run_local",
                     "step_index": 1,
-                    "kind": "model_call",
+                    "kind": "model",
                     "output": [{"type": "text", "text": "done"}],
                 },
             }
@@ -8346,7 +8393,7 @@ def test_cli_chat_thread_listener_ignores_child_run_trace_events() -> None:
                 "run_id": "run_child",
                 "thread_id": "term_existing",
                 "step_index": 1,
-                "kind": "model_call",
+                "kind": "model",
                 "output": [{"type": "text", "text": "child output"}],
             },
         }
@@ -8368,7 +8415,7 @@ def test_cli_chat_own_stream_projects_child_run_trace_events() -> None:
         accept_child_trace=True,
     )
     app.active_run.completed_steps[1] = {
-        "kind": "flow_op",
+        "kind": "step",
         "step_index": 1,
         "status": "finished",
         "payload": {
@@ -8380,7 +8427,7 @@ def test_cli_chat_own_stream_projects_child_run_trace_events() -> None:
         "output": [],
     }
     app.active_run.completed_steps[2] = {
-        "kind": "child_call",
+        "kind": "run",
         "step_index": 2,
         "status": "finished",
         "payload": {
@@ -8415,7 +8462,7 @@ def test_cli_chat_own_stream_projects_child_run_trace_events() -> None:
                 "run_id": "run_child",
                 "thread_id": "term_existing",
                 "step_index": 1,
-                "kind": "model_call",
+                "kind": "model",
                 "status": "finished",
                 "output": [{"type": "text", "text": "child output"}],
             },
@@ -8459,8 +8506,8 @@ def test_cli_chat_active_step_lines_use_lightweight_event_text() -> None:
     run = cli._ChatRun(run_id="run_active", message="check weather", status="running")
     run.tool_calls_by_part[(1, 0)] = cli._ChatToolCall("weather", {"query": "杭州天气"})
 
-    run.start_step({"kind": "model_call", "step_index": 1})
-    run.start_step({"kind": "tool_call", "step_index": 2, "input": [{"step_index": 1, "part_index": 0}]})
+    run.start_step({"kind": "model", "step_index": 1})
+    run.start_step({"kind": "tool", "step_index": 2, "input": [{"step_index": 1, "part_index": 0}]})
 
     assert cli._chat_active_step_line(run.steps[1]) == "• thinking..."
     assert "› running weather" in cli._chat_active_step_line(run.steps[2])
@@ -8468,7 +8515,7 @@ def test_cli_chat_active_step_lines_use_lightweight_event_text() -> None:
 
 def test_cli_chat_error_replaces_active_step_with_friendly_system_line() -> None:
     run = cli._ChatRun(run_id="run_failed", message="再来一次", status="running")
-    run.start_step({"kind": "model_call", "step_index": 1})
+    run.start_step({"kind": "model", "step_index": 1})
     error = (
         "Error code: 400 - {'error': {'message': \"Messages with role 'tool' must be a response\", "
         "'type': 'invalid_request_error'}}"
@@ -8489,9 +8536,9 @@ def test_cli_thread_event_renderer_prints_thread_messages(capsys) -> None:
 
     renderer.render(
         {
-            "type": "run_input",
+            "type": "run_command",
             "payload": {
-                "action": "start",
+                "kind": "start",
                 "message": {"role": "user", "parts": [{"type": "text", "text": "hello from web"}]},
             },
         }
@@ -8529,11 +8576,11 @@ def test_cli_thread_event_renderer_skips_prompt_for_local_request(capsys) -> Non
 
     renderer.render(
         {
-            "type": "run_input",
+            "type": "run_command",
             "payload": {
                 "run_id": "run_tui",
                 "request_id": "term_req",
-                "action": "start",
+                "kind": "start",
                 "message": {"role": "user", "parts": [{"type": "text", "text": "local"}]},
             },
         }
@@ -8552,7 +8599,7 @@ def test_cli_thread_event_renderer_prints_step_end_without_streaming_delta(capsy
             "type": "step_end",
             "payload": {
                 "run_id": "run_non_streaming",
-                "kind": "model_call",
+                "kind": "model",
                 "output": [{"type": "text", "text": "complete answer"}],
             },
         }
@@ -8567,7 +8614,9 @@ def test_cli_chat_help_uses_thread_option() -> None:
 
     assert result.exit_code == 0
     assert "TARGET_OR_MESSAGE" not in result.stdout
-    assert "[TARGET]" in result.stdout
+    assert "[THREAD]" in result.stdout
+    assert "[THREAD_OR_RUN]" not in result.stdout
+    assert "[TARGET]" not in result.stdout
     assert "--thread" not in result.stdout
     assert "--tui" not in result.stdout
     assert "--ui" not in result.stdout
@@ -8577,8 +8626,10 @@ def test_cli_chat_help_uses_thread_option() -> None:
     assert "--thunk" in result.stdout
     assert "--flow" in result.stdout
     assert "--model         " not in result.stdout
-    assert "Thread id or run id to continue." in result.stdout
-    assert "new terminal thread" in result.stdout
+    assert "thread      [THREAD]" in result.stdout
+    assert "target      [THREAD]" not in result.stdout
+    assert "Thread id to continue. Run id also accepted. Omit" in result.stdout
+    assert "to start a new one." in result.stdout
 
 
 def test_cli_hidden_lists_hidden_commands_without_help_leak() -> None:
@@ -8621,7 +8672,7 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
                             {
                                 "record": {
                                     "step_index": 1,
-                                    "kind": "flow_op",
+                                    "kind": "step",
                                     "status": "finished",
                                     "payload": {
                                         "stage_index": 0,
@@ -8639,7 +8690,7 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
                             {
                                 "record": {
                                     "step_index": 2,
-                                    "kind": "child_call",
+                                    "kind": "run",
                                     "status": "finished",
                                     "payload": {
                                         "target_kind": "thunk",
@@ -8664,7 +8715,7 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
                             {
                                 "record": {
                                     "step_index": 3,
-                                    "kind": "flow_op",
+                                    "kind": "step",
                                     "status": "finished",
                                     "payload": {
                                         "stage_index": 0,
@@ -8682,7 +8733,7 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
                             {
                                 "record": {
                                     "step_index": 4,
-                                    "kind": "child_call",
+                                    "kind": "run",
                                     "status": "finished",
                                     "payload": {
                                         "target_kind": "thunk",
@@ -8711,7 +8762,7 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
                             {
                                 "record": {
                                     "step_index": 1,
-                                    "kind": "tool_call",
+                                    "kind": "tool",
                                     "status": "finished",
                                     "payload": {},
                                     "input": [],
@@ -8789,7 +8840,7 @@ def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> Non
             {
                 "record": {
                     "step_index": 1,
-                    "kind": "model_call",
+                    "kind": "model",
                     "status": "finished",
                     "payload": {"model_ref": "deepseek/deepseek-chat-v3"},
                     "output": [
@@ -8818,7 +8869,7 @@ def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> Non
             {
                 "record": {
                     "step_index": 2,
-                    "kind": "runtime",
+                    "kind": "system",
                     "status": "failed",
                     "payload": {},
                     "output": [{"type": "text", "text": "unknown tool call: service_use__service_list"}],
@@ -8835,7 +8886,7 @@ def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> Non
         "failure": {
             "reason": "unknown tool call: service_use__service_list",
             "step_index": 2,
-            "step_kind": "runtime",
+            "step_kind": "system",
         },
     }
 
@@ -8865,10 +8916,10 @@ def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> Non
     assert "status failed" in result.stdout
     assert "root run_parent" in result.stdout
     assert "parent run_parent step 2" in result.stdout
-    assert "failure unknown tool call: service_use__service_list (step 2 runtime)" in result.stdout
+    assert "failure unknown tool call: service_use__service_list (step 2 system)" in result.stdout
     assert "• I should inspect services." in result.stdout
     assert "• requested service_use__service_list: all" in result.stdout
-    assert "─ unknown tool call: service_use__service_list" in result.stdout
+    assert "◇ unknown tool call: service_use__service_list" in result.stdout
     assert "✓ step" not in result.stdout
     assert "- run_parent flow:research" not in result.stdout
 
@@ -8884,7 +8935,7 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
             {
                 "record": {
                     "step_index": 1,
-                    "kind": "model_call",
+                    "kind": "model",
                     "status": "finished",
                     "payload": {"model_ref": "deepseek/deepseek-chat-v3"},
                     "output": [
@@ -8901,7 +8952,7 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
             {
                 "record": {
                     "step_index": 2,
-                    "kind": "tool_call",
+                    "kind": "tool",
                     "status": "finished",
                     "payload": {},
                     "input": [],
@@ -8919,7 +8970,7 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
             {
                 "record": {
                     "step_index": 3,
-                    "kind": "model_call",
+                    "kind": "model",
                     "status": "finished",
                     "payload": {"model_ref": "deepseek/deepseek-chat-v3"},
                     "output": [{"type": "text", "text": "Summary complete."}],
@@ -8968,7 +9019,7 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
         "failure": {
             "reason": "unknown tool call: service_use__service_list",
             "step_index": 3,
-            "step_kind": "runtime",
+            "step_kind": "system",
         },
     }
     child = _inspect_run_detail(
@@ -9011,7 +9062,7 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
     assert "latest run_child failed" in result.stdout
     assert "1. run_parent flow:research failed" in result.stdout
     assert "input query" in result.stdout
-    assert "failure unknown tool call: service_use__service_list (step 3 runtime)" in result.stdout
+    assert "failure unknown tool call: service_use__service_list (step 3 system)" in result.stdout
     assert "run_child thunk:expand_queries" not in result.stdout
     assert "step 1" not in result.stdout
 
@@ -9062,7 +9113,7 @@ def test_script_progress_defaults_to_stage_summary() -> None:
             run_id="run_child",
             thread_id="script_1",
             step_index=1,
-            kind="model_call",
+            kind="model",
             input=(),
             started_at="2026-01-01T00:00:01Z",
         )
@@ -9072,7 +9123,7 @@ def test_script_progress_defaults_to_stage_summary() -> None:
             run_id="run_parent",
             thread_id="script_1",
             step_index=1,
-            kind="flow_op",
+            kind="step",
             status="finished",
             output=(),
             payload=FlowOpStepPayload(
@@ -9091,7 +9142,7 @@ def test_script_progress_defaults_to_stage_summary() -> None:
             run_id="run_parent",
             thread_id="script_1",
             step_index=2,
-            kind="child_call",
+            kind="run",
             status="finished",
             output=(TextPart(text="done"),),
             payload=ChildCallStepPayload(
@@ -9129,7 +9180,7 @@ def test_script_progress_defaults_to_stage_summary() -> None:
             run_id="run_parent",
             thread_id="script_1",
             step_index=3,
-            kind="flow_op",
+            kind="step",
             status="finished",
             output=(),
             payload=FlowOpStepPayload(
@@ -9264,7 +9315,7 @@ def test_cli_inspect_run_steps_lists_step_summaries(monkeypatch) -> None:
                 {
                     "record": {
                         "step_index": 1,
-                        "kind": "flow_op",
+                        "kind": "step",
                         "status": "finished",
                         "payload": {"stage_kind": "rank", "op": "prepare_rank"},
                         "output": [],
@@ -9274,7 +9325,7 @@ def test_cli_inspect_run_steps_lists_step_summaries(monkeypatch) -> None:
                 {
                     "record": {
                         "step_index": 2,
-                        "kind": "child_call",
+                        "kind": "run",
                         "status": "finished",
                         "payload": {
                             "target_kind": "thunk",
@@ -9294,7 +9345,7 @@ def test_cli_inspect_run_steps_lists_step_summaries(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert "STEP" in result.stdout
-    assert "flow_op" in result.stdout
+    assert "step" in result.stdout
     assert "stage rank prepare" in result.stdout
     assert "thunk:score run_child" in result.stdout
 
@@ -9338,7 +9389,7 @@ def test_cli_inspect_events_reads_run_events(monkeypatch) -> None:
                         "run_id": "run_parent",
                         "thread_id": "term_thread",
                         "step_index": 1,
-                        "kind": "model_call",
+                        "kind": "model",
                     },
                 },
                 {
@@ -9360,7 +9411,7 @@ def test_cli_inspect_events_reads_run_events(monkeypatch) -> None:
     assert "run_start" in result.stdout
     assert "target: flow:research" in result.stdout
     assert "target: thunk:<L34>" in result.stdout
-    assert "step: 1, kind: model_call" in result.stdout
+    assert "step: 1, kind: model" in result.stdout
     assert "status: succeeded" in result.stdout
 
 

@@ -45,7 +45,7 @@ class BufferedResponseSink:
             self._run_id = event.run_id
             self._thread_id = event.thread_id
             return
-        if isinstance(event, StepEnd) and event.kind == "model_call":
+        if isinstance(event, StepEnd) and event.kind == "model":
             self._last_step_index = event.step_index
             self._assistant = message_data_for_step(
                 run_id=event.run_id,
@@ -67,7 +67,7 @@ class BufferedResponseSink:
                 run_id=self._run_id or event.run_id,
                 thread_id=self._thread_id or event.thread_id,
                 step_index=max(self._last_step_index, 1),
-                kind="model_call",
+                kind="model",
                 output=(TextPart(text=event.error),),
                 created_at=event.finished_at,
                 error=event.error,
@@ -148,7 +148,7 @@ class SseResponseSink:
                     self._enqueue_payload(trace_event_data(event))
             return
         if isinstance(event, StepStart):
-            if event.kind != "model_call":
+            if event.kind != "model":
                 self._enqueue_payload(trace_event_data(event))
                 return
             self._enqueue_payload({"type": "start-step"})
@@ -219,7 +219,7 @@ class SseResponseSink:
                 )
                 return
         if isinstance(event, StepEnd):
-            if event.kind != "model_call":
+            if event.kind != "model":
                 self._enqueue_payload(trace_event_data(event))
                 return
             self._enqueue_payload({"type": "finish-step"})
@@ -315,7 +315,7 @@ class ChannelResponseSink:
                 self._text += event.delta.text
             self._wake.set()
             return
-        if isinstance(event, StepEnd) and event.kind == "model_call":
+        if isinstance(event, StepEnd) and event.kind == "model":
             message = message_data_for_step(
                 run_id=event.run_id,
                 thread_id=event.thread_id,

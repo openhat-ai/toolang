@@ -48,9 +48,9 @@ from .events import (
     TraceEventHandler,
 )
 from .records import (
-    InputRecord,
+    RunCommandRecord,
     ModelCallStepPayload,
-    RunInputRef,
+    RunCommandRef,
     StepInputItem,
     StepOutputRef,
     ToolCallStepPayload,
@@ -192,7 +192,7 @@ class RunContext:
         adapter: ModelAdapter,
         *,
         on_event: TraceEventHandler | None = None,
-        consume_inputs: Callable[[str], Sequence[InputRecord]] | None = None,
+        consume_inputs: Callable[[str], Sequence[RunCommandRecord]] | None = None,
         stream: bool = False,
     ) -> None:
         self._input = run_input
@@ -246,10 +246,10 @@ class RunContext:
         step_started = time.perf_counter()
         started_at = _utc_now()
         consumed_inputs = self._consume_pending_inputs()
-        step_input = (*self._model_step_input(), *(RunInputRef(index=item.index) for item in consumed_inputs))
+        step_input = (*self._model_step_input(), *(RunCommandRef(index=item.index) for item in consumed_inputs))
         self._start_model_step(step_index)
         _RUN_LOGGER.info(
-            "Step started thread=%s run=%s step=%s kind=model_call",
+            "Step started thread=%s run=%s step=%s kind=model",
             self._input.run.thread_id,
             self._input.run.run_id,
             step_index,
@@ -259,7 +259,7 @@ class RunContext:
                 run_id=self._input.run.run_id,
                 thread_id=self._input.run.thread_id,
                 step_index=step_index,
-                kind="model_call",
+                kind="model",
                 input=step_input,
                 started_at=started_at,
                 instruct=self._input.instructions(),
@@ -295,7 +295,7 @@ class RunContext:
                 current = self._adapter.invoke(self._model, request)
         except Exception as exc:
             _RUN_LOGGER.error(
-                "Step failed thread=%s run=%s step=%s kind=model_call error=%r duration_ms=%s",
+                "Step failed thread=%s run=%s step=%s kind=model error=%r duration_ms=%s",
                 self._input.run.thread_id,
                 self._input.run.run_id,
                 step_index,
@@ -329,9 +329,9 @@ class RunContext:
         elif self._last_step_index is not None:
             step_input = (StepOutputRef(step_index=self._last_step_index),)
         else:
-            step_input = (RunInputRef(),)
+            step_input = (RunCommandRef(),)
         _RUN_LOGGER.info(
-            "Step started thread=%s run=%s step=%s kind=tool_call tool=%s",
+            "Step started thread=%s run=%s step=%s kind=tool tool=%s",
             self._input.run.thread_id,
             self._input.run.run_id,
             step_index,
@@ -349,7 +349,7 @@ class RunContext:
                 run_id=self._input.run.run_id,
                 thread_id=self._input.run.thread_id,
                 step_index=step_index,
-                kind="tool_call",
+                kind="tool",
                 input=step_input,
                 started_at=started_at,
             )
@@ -398,7 +398,7 @@ class RunContext:
                 run_id=self._input.run.run_id,
                 thread_id=self._input.run.thread_id,
                 step_index=step_index,
-                kind="tool_call",
+                kind="tool",
                 status=status,
                 output=(part,),
                 payload=ToolCallStepPayload(),
@@ -410,7 +410,7 @@ class RunContext:
         self._messages.append(_tool_followup_message(record))
         self._last_step_index = step_index
         _RUN_LOGGER.info(
-            "Step finished thread=%s run=%s step=%s kind=tool_call tool=%s status=%s duration_ms=%s",
+            "Step finished thread=%s run=%s step=%s kind=tool tool=%s status=%s duration_ms=%s",
             self._input.run.thread_id,
             self._input.run.run_id,
             step_index,
@@ -477,7 +477,7 @@ class RunContext:
                 run_id=self._input.run.run_id,
                 thread_id=self._input.run.thread_id,
                 step_index=step_index,
-                kind="model_call",
+                kind="model",
                 status="finished",
                 output=output,
                 payload=ModelCallStepPayload(
@@ -498,7 +498,7 @@ class RunContext:
         self._active_model_step_index = None
         usage = current.usage
         _RUN_LOGGER.info(
-            "Step finished thread=%s run=%s step=%s kind=model_call status=finished input=%s output=%s tool_calls=%s duration_ms=%s",
+            "Step finished thread=%s run=%s step=%s kind=model status=finished input=%s output=%s tool_calls=%s duration_ms=%s",
             self._input.run.thread_id,
             self._input.run.run_id,
             step_index,
@@ -602,18 +602,18 @@ class RunContext:
 
     def _model_step_input(self) -> tuple[StepInputItem, ...]:
         if self._last_step_index is None:
-            return (RunInputRef(),)
+            return (RunCommandRef(),)
         return (StepOutputRef(step_index=self._last_step_index),)
 
-    def _consume_pending_inputs(self) -> tuple[InputRecord, ...]:
+    def _consume_pending_inputs(self) -> tuple[RunCommandRecord, ...]:
         inputs = self._pending_inputs()
         for input in inputs:
-            if input.action != "steer" or input.message is None:
+            if input.kind != "steer" or input.message is None:
                 continue
             self._messages.append(input.message)
         return inputs
 
-    def _pending_inputs(self) -> tuple[InputRecord, ...]:
+    def _pending_inputs(self) -> tuple[RunCommandRecord, ...]:
         if self._consume_inputs is None:
             return ()
         return tuple(self._consume_inputs(self._input.run.run_id))

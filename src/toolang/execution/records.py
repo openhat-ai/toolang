@@ -12,10 +12,10 @@ from toolang.base.types.message import Message, Part
 RunStatus = Literal["running", "finished", "failed", "canceled"]
 StepStatus = Literal["finished", "failed", "canceled"]
 RunLoop = str
-StepKind = Literal["model_call", "tool_call", "runtime", "child_call", "flow_op"]
+StepKind = Literal["model", "tool", "agent", "run", "step", "parallel", "bind", "system"]
 ThreadPeerType = Literal["user", "agent"]
-InputAction = Literal["start", "steer", "stop"]
-InputMode = Literal["immediate", "next_step", "next_call"]
+RunCommandKind = Literal["start", "steer", "stop"]
+RunCommandMode = Literal["immediate", "next_step", "next_call"]
 
 UpdateKind = Literal[
     "created",
@@ -103,14 +103,14 @@ class ThreadRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class RunInputRef:
-    """Reference one run input item or one input part."""
+class RunCommandRef:
+    """Reference one run command or one command message part."""
 
     index: int = 0
     part_index: int | None = None
 
     @classmethod
-    def from_data(cls, payload: Mapping[str, Any]) -> RunInputRef:
+    def from_data(cls, payload: Mapping[str, Any]) -> RunCommandRef:
         raw_index = payload.get("index", 0)
         part_index = payload.get("part")
         return cls(
@@ -119,7 +119,7 @@ class RunInputRef:
         )
 
     def to_data(self) -> dict[str, Any]:
-        data: dict[str, Any] = {"kind": "input", "index": self.index}
+        data: dict[str, Any] = {"kind": "command", "index": self.index}
         if self.part_index is not None:
             data["part"] = self.part_index
         return data
@@ -151,7 +151,7 @@ class StepOutputRef:
         return data
 
 
-StepInputItem = RunInputRef | StepOutputRef | Message
+StepInputItem = RunCommandRef | StepOutputRef | Message
 
 
 @dataclass(frozen=True, slots=True)
@@ -369,13 +369,13 @@ class EventRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class InputRecord:
-    """One durable client-side run input."""
+class RunCommandRecord:
+    """One durable client-side command sent to a run."""
 
     run_id: str
     index: int
-    action: InputAction
-    mode: InputMode | None
+    kind: RunCommandKind
+    mode: RunCommandMode | None
     request_id: str | None
     message: Message | None
     created_at: str
@@ -385,8 +385,8 @@ def step_input_item_from_data(payload: Mapping[str, Any]) -> StepInputItem:
     """Return one step input item from one serialized payload."""
 
     kind = str(payload.get("kind", "")).strip()
-    if kind == "input":
-        return RunInputRef.from_data(payload)
+    if kind == "command":
+        return RunCommandRef.from_data(payload)
     if kind == "step":
         return StepOutputRef.from_data(payload)
     if kind == "message":
@@ -403,7 +403,7 @@ def step_input_items_from_data(payloads: list[Mapping[str, Any]]) -> tuple[StepI
 def step_input_item_to_data(item: StepInputItem) -> dict[str, Any]:
     """Return one serialized step input item."""
 
-    if isinstance(item, RunInputRef):
+    if isinstance(item, RunCommandRef):
         return item.to_data()
     if isinstance(item, StepOutputRef):
         return item.to_data()
@@ -419,13 +419,13 @@ def step_input_items_to_data(items: tuple[StepInputItem, ...]) -> list[dict[str,
 def step_payload_from_data(kind: StepKind, payload: Mapping[str, Any]) -> StepPayload:
     """Return one step payload for one step kind."""
 
-    if kind == "model_call":
+    if kind == "model":
         return ModelCallStepPayload.from_data(payload)
-    if kind == "tool_call":
+    if kind == "tool":
         return ToolCallStepPayload.from_data(payload)
-    if kind == "child_call":
+    if kind == "run":
         return ChildCallStepPayload.from_data(payload)
-    if kind == "flow_op":
+    if kind in {"step", "parallel", "bind"}:
         return FlowOpStepPayload.from_data(payload)
     return RuntimeStepPayload.from_data(payload)
 

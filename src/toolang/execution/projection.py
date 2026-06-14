@@ -213,7 +213,7 @@ def _project_flow_steps(
         if not payload and isinstance(record.get("metadata"), Mapping):
             payload = _mapping(record.get("metadata"))
         kind = _text(record.get("kind"))
-        if kind == "flow_op":
+        if kind in {"step", "parallel", "bind"}:
             stage = _ensure_stage(payload, stages=stages, stage_order=stage_order)
             metadata = _mapping(payload.get("metadata"))
             op = _text(payload.get("op")) or _text(metadata.get("op")) or ""
@@ -232,7 +232,7 @@ def _project_flow_steps(
                     )
                     stage.status = "succeeded"
             continue
-        if kind != "child_call":
+        if kind != "run":
             continue
         stage = _ensure_stage(payload, stages=stages, stage_order=stage_order)
         for run_id in _child_run_ids(payload, record):
