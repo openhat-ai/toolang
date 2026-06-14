@@ -163,6 +163,9 @@ class _RequiredPrefixAgentCommand(_PrefixAgentCommand):
             agent = args.pop(0)
             state["agent"] = agent
             ctx.obj = state
+        if not state.get("agent") and "--help" not in args:
+            click.echo(ctx.get_help())
+            ctx.exit()
         return TyperCommand.parse_args(self, ctx, args)
 
 
