@@ -1443,12 +1443,11 @@ def _render_inspect_step_focus(node: _InspectStepNode) -> None:
         typer.echo("input")
         typer.echo(f"  {_inspect_compact_value(input_items)}")
     output = _list(record.get("output"))
-    output_text = (
-        _message_summary(message)
-        or _parts_summary(output)
-        or _chat_tool_message_text(record)
-        or _inspect_step_summary(record, message)
-    )
+    output_text = _message_summary(message)
+    if not output_text and kind == "tool":
+        output_text = _inspect_tool_output_text(record)
+    if not output_text:
+        output_text = _inspect_step_summary(record, message) or _parts_summary(output)
     if output_text or output:
         typer.echo("output")
         typer.echo(f"  {output_text or _inspect_compact_value(output)}")
@@ -1918,6 +1917,20 @@ def _inspect_tool_result_summary(record: Mapping[str, Any]) -> str:
         suffix = f": {tool_input}" if tool_input else ""
         return f"{name}{suffix}"
     return _parts_summary(record.get("output")) or _text(record.get("error")) or "-"
+
+
+def _inspect_tool_output_text(record: Mapping[str, Any]) -> str:
+    messages: list[str] = []
+    for part in _list(record.get("output")):
+        typed = _mapping(part)
+        if typed.get("type") != "tool_result":
+            continue
+        output = typed.get("output")
+        if isinstance(output, str):
+            messages.append(output.strip())
+        elif output is not None:
+            messages.append(_inspect_compact_value(output))
+    return _truncate_table_text(" ".join(item for item in messages if item), width=96)
 
 
 def _hide_inspect_event(event_type: str, payload: Mapping[str, Any], *, verbosity: int) -> bool:
