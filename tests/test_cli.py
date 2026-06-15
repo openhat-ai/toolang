@@ -7685,6 +7685,13 @@ def test_cli_chat_active_run_uses_steer_input_bar_colors() -> None:
     assert any(style == "class:steer-input" and "abc" in text for style, text in rendered)
     assert any(style == "class:steer-input.dim" and text.strip() == "pending for next step" for style, text in rendered)
     assert rendered_text.count("+ abc") == 1
+    style = cli.Style.from_dict(cli._chat_ui_palette())
+    steer_backgrounds = {
+        style.get_attrs_for_style_str(fragment_style).bgcolor
+        for fragment_style, _text in rendered
+        if fragment_style.startswith("class:steer-input")
+    }
+    assert steer_backgrounds == {cli._CHAT_STEER_INPUT_BG.removeprefix("#")}
 
 
 def test_cli_chat_active_run_uses_normal_input_bar_colors() -> None:
@@ -8210,8 +8217,8 @@ def test_cli_chat_palette_uses_fixed_neutral_panel_colors() -> None:
     assert palette["normal-input"] == "fg:#f5f5f5 bg:#444444"
     assert palette["normal-input.dim"] == "fg:#b8b8b8 bg:#444444"
     assert palette["input"] == "fg:#f5f5f5 bg:#444444"
-    assert palette["steer-input"] == "fg:#f5f5f5 bg:#3f4a4d"
-    assert palette["steer-input.dim"] == "fg:#b8b8b8 bg:#3f4a4d"
+    assert palette["steer-input"] == "fg:#f5f5f5 bg:#2f555d"
+    assert palette["steer-input.dim"] == "fg:#b8b8b8 bg:#2f555d"
     assert palette["status"] == "fg:#f2f2f2 bg:#5a5a5a"
     assert len({palette["status.model"], palette["status.thunk"], palette["status.flow"]}) == 3
     assert palette["cursor"] == "fg:#111111 bg:#eeeeee"

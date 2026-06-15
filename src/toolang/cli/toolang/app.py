@@ -204,7 +204,7 @@ _CHAT_INPUT_FG = "#f5f5f5"
 _CHAT_INPUT_BG = "#444444"
 _CHAT_INPUT_DIM_FG = "#b8b8b8"
 _CHAT_STEER_INPUT_FG = "#f5f5f5"
-_CHAT_STEER_INPUT_BG = "#3f4a4d"
+_CHAT_STEER_INPUT_BG = "#2f555d"
 _CHAT_STEER_INPUT_DIM_FG = "#b8b8b8"
 _CHAT_STATUS_FG = "#f2f2f2"
 _CHAT_STATUS_BG = "#5a5a5a"
@@ -3885,54 +3885,6 @@ def _chat_ui_palette() -> dict[str, str]:
 
 def _chat_prompt_style(fg: str, bg: str) -> str:
     return f"fg:{fg} bg:{bg}"
-
-
-def _chat_activity_formatted_text(lines: Sequence[str]) -> list[tuple[str, str]]:
-    steer_prefix = _chat_ansi_style(_CHAT_STEER_INPUT_FG, _CHAT_STEER_INPUT_BG)
-    fragments: list[tuple[str, str]] = []
-    for index, line in enumerate(lines):
-        if line.startswith(steer_prefix):
-            fragments.extend(_chat_steer_activity_fragments(line, steer_prefix=steer_prefix))
-        else:
-            fragments.extend(cast(list[tuple[str, str]], to_formatted_text(ANSI(line))))
-        if index < len(lines) - 1:
-            fragments.append(("", "\n"))
-    return fragments
-
-
-def _chat_steer_activity_fragments(line: str, *, steer_prefix: str) -> list[tuple[str, str]]:
-    content = line.removeprefix(steer_prefix).removesuffix(_CHAT_RESET)
-    fragments: list[tuple[str, str]] = []
-    chunk: list[str] = []
-    dim = False
-
-    def flush() -> None:
-        if not chunk:
-            return
-        fragments.append((_chat_input_bar_class("steer", dim=dim), "".join(chunk)))
-        chunk.clear()
-
-    index = 0
-    while index < len(content):
-        if content.startswith(_CHAT_DIM, index):
-            flush()
-            dim = True
-            index += len(_CHAT_DIM)
-            continue
-        if content.startswith(_CHAT_NORMAL_INTENSITY, index):
-            flush()
-            dim = False
-            index += len(_CHAT_NORMAL_INTENSITY)
-            continue
-        char = content[index]
-        if char == "\x1b":
-            escape_end = content.find("m", index)
-            index = len(content) if escape_end < 0 else escape_end + 1
-            continue
-        chunk.append(char)
-        index += 1
-    flush()
-    return fragments
 
 
 def _chat_ansi_style(fg: str, bg: str) -> str:
