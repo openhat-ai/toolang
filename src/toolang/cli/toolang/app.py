@@ -2203,10 +2203,12 @@ class _ChatRun:
     completed_steps: dict[int, dict[str, Any]] = field(default_factory=dict)
     tool_calls_by_part: dict[tuple[int, int], _ChatToolCall] = field(default_factory=dict)
     commands: dict[int, dict[str, Any]] = field(default_factory=dict)
+    timeline: list[tuple[Literal["step", "command"], int]] = field(default_factory=list)
     child_runs: dict[str, _ChatRun] = field(default_factory=dict)
 
     def start_step(self, payload: dict[str, Any]) -> None:
         index = _chat_step_index(payload)
+        self.remember_timeline("step", index)
         stored_payload = dict(payload)
         if stored_payload.get("kind") in {"step", "parallel", "bind", "run"} and "payload" not in stored_payload:
             stored_payload["payload"] = dict(_mapping(stored_payload.get("metadata")))
@@ -2219,6 +2221,7 @@ class _ChatRun:
 
     def complete_step(self, payload: dict[str, Any]) -> None:
         index = _chat_step_index(payload)
+        self.remember_timeline("step", index)
         completed_payload = dict(payload)
         active_step = self.steps.get(index)
         if active_step is not None and "input" not in completed_payload and "input" in active_step.payload:
@@ -2243,7 +2246,13 @@ class _ChatRun:
 
     def record_command(self, payload: Mapping[str, Any]) -> None:
         index = _chat_command_index(payload)
+        self.remember_timeline("command", index)
         self.commands[index] = dict(payload)
+
+    def remember_timeline(self, kind: Literal["step", "command"], index: int) -> None:
+        item = (kind, index)
+        if item not in self.timeline:
+            self.timeline.append(item)
 
     def update_queue(self, event_type: str, payload: Mapping[str, Any]) -> None:
         if run_id := _text(payload.get("run_id")):
@@ -3400,17 +3409,6 @@ def _chat_command_index(payload: Mapping[str, Any]) -> int:
     return 0
 
 
-def _chat_step_command_indexes(payload: Mapping[str, Any]) -> set[int]:
-    indexes: set[int] = set()
-    for item in _list(payload.get("input")):
-        if not isinstance(item, Mapping) or item.get("kind") != "command":
-            continue
-        index = _int_or_none(item.get("index"))
-        if index is not None:
-            indexes.add(index)
-    return indexes
-
-
 def _chat_part_index(payload: Mapping[str, Any]) -> int:
     value = payload.get("part_index")
     if isinstance(value, int):
@@ -3826,70 +3824,68 @@ def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, i
     flow_lines = _chat_flow_stage_lines(run)
     if flow_lines:
         lines = [state_line, *flow_lines] if state_line else list(flow_lines)
-        lines.extend(_chat_unrendered_steer_input_lines(run, rendered_commands=set(), waiting=bool(run.steps)))
+        lines.extend(_chat_timeline_command_lines(run))
         lines.extend(_chat_terminal_event_lines(run, step_renderer))
         return lines
     lines: list[str] = []
     if state_line:
         lines.append(state_line)
-    rendered_commands: set[int] = set()
-    for index in run.step_indexes():
-        step_payload = run.steps[index].payload if index in run.steps else run.completed_steps[index]
-        for command in _chat_consumed_steer_commands(run, step_payload, rendered_commands):
-            lines.extend(_chat_steer_input_block(command, waiting=False))
-            rendered_commands.add(_chat_command_index(command))
-        if index in run.steps:
-            lines.append(step_renderer(run, index))
-            lines.extend(_chat_unrendered_steer_input_lines(run, rendered_commands=rendered_commands, waiting=True))
+    timeline = run.timeline or [("step", index) for index in run.step_indexes()]
+    rendered_steps: set[int] = set()
+    for position, (kind, index) in enumerate(timeline):
+        if kind == "command":
+            command = run.commands.get(index)
+            if command is not None and command.get("kind") == "steer":
+                waiting = _chat_command_is_waiting(run, position)
+                lines.extend(_chat_steer_input_block(command, waiting=waiting))
             continue
-        payload = run.completed_steps[index]
-        if payload.get("kind") == "model":
-            text = _event_parts_text(payload.get("output"))
-            if text:
-                lines.extend(_chat_message_lines(_chat_marker_for("model"), text))
-                continue
-            if _chat_model_tool_requests_have_results(run, index):
-                continue
-        lines.append(step_renderer(run, index))
-    lines.extend(_chat_unrendered_steer_input_lines(run, rendered_commands=rendered_commands, waiting=bool(run.steps)))
+        if index in rendered_steps:
+            continue
+        step_lines = _chat_step_activity_lines(run, index, step_renderer)
+        if step_lines:
+            lines.extend(step_lines)
+            rendered_steps.add(index)
+    for index in run.step_indexes():
+        if index not in rendered_steps:
+            lines.extend(_chat_step_activity_lines(run, index, step_renderer))
     return lines
 
 
-def _chat_consumed_steer_commands(
+def _chat_step_activity_lines(
     run: _ChatRun,
-    step_payload: Mapping[str, Any],
-    rendered_commands: set[int],
-) -> list[Mapping[str, Any]]:
-    commands: list[Mapping[str, Any]] = []
-    for index in sorted(_chat_step_command_indexes(step_payload)):
-        if index in rendered_commands:
+    index: int,
+    step_renderer: Callable[[_ChatRun, int], str],
+) -> list[str]:
+    if index in run.steps:
+        return [step_renderer(run, index)]
+    payload = run.completed_steps.get(index)
+    if payload is None:
+        return []
+    if payload.get("kind") == "model":
+        text = _event_parts_text(payload.get("output"))
+        if text:
+            return _chat_message_lines(_chat_marker_for("model"), text)
+        if _chat_model_tool_requests_have_results(run, index):
+            return []
+    return [step_renderer(run, index)]
+
+
+def _chat_timeline_command_lines(run: _ChatRun) -> list[str]:
+    lines: list[str] = []
+    for position, (kind, index) in enumerate(run.timeline):
+        if kind != "command":
             continue
         command = run.commands.get(index)
         if command is None or command.get("kind") != "steer":
             continue
-        commands.append(command)
-    return commands
-
-
-def _chat_unrendered_steer_commands(run: _ChatRun, rendered_commands: set[int]) -> list[Mapping[str, Any]]:
-    return [
-        command
-        for index, command in sorted(run.commands.items())
-        if index not in rendered_commands and command.get("kind") == "steer"
-    ]
-
-
-def _chat_unrendered_steer_input_lines(
-    run: _ChatRun,
-    *,
-    rendered_commands: set[int],
-    waiting: bool,
-) -> list[str]:
-    lines: list[str] = []
-    for command in _chat_unrendered_steer_commands(run, rendered_commands):
-        lines.extend(_chat_steer_input_block(command, waiting=waiting))
-        rendered_commands.add(_chat_command_index(command))
+        lines.extend(_chat_steer_input_block(command, waiting=_chat_command_is_waiting(run, position)))
     return lines
+
+
+def _chat_command_is_waiting(run: _ChatRun, timeline_position: int) -> bool:
+    if not run.steps:
+        return False
+    return not any(kind == "step" for kind, _index in run.timeline[timeline_position + 1 :])
 
 
 def _chat_steer_input_block(command: Mapping[str, Any], *, waiting: bool) -> list[str]:

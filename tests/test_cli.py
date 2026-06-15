@@ -7592,11 +7592,13 @@ def test_cli_chat_empty_model_step_says_no_message() -> None:
 
 def test_cli_chat_run_lines_render_consumed_steer_input_before_response() -> None:
     run = cli._ChatRun(run_id="run_steer", message="sleep 120 secs", status="succeeded")
-    run.completed_steps[1] = {
-        "kind": "tool",
-        "step_index": 1,
-        "output": [{"type": "tool_result", "tool_name": "shell__execute", "output": {"stdout": ""}}],
-    }
+    run.complete_step(
+        {
+            "kind": "tool",
+            "step_index": 1,
+            "output": [{"type": "tool_result", "tool_name": "shell__execute", "output": {"stdout": ""}}],
+        }
+    )
     run.record_command(
         {
             "kind": "steer",
@@ -7604,12 +7606,14 @@ def test_cli_chat_run_lines_render_consumed_steer_input_before_response() -> Non
             "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
         }
     )
-    run.completed_steps[2] = {
-        "kind": "model",
-        "step_index": 2,
-        "input": [{"kind": "command", "index": 1}],
-        "output": [{"type": "text", "text": 'Now "abc" - still testing the queue?'}],
-    }
+    run.start_step({"kind": "model", "step_index": 2})
+    run.complete_step(
+        {
+            "kind": "model",
+            "step_index": 2,
+            "output": [{"type": "text", "text": 'Now "abc" - still testing the queue?'}],
+        }
+    )
 
     rendered = "\n".join(cli._chat_run_lines(run, include_steps=True))
     visible = cli._chat_visible_text(rendered)
@@ -7629,11 +7633,14 @@ def test_cli_chat_run_lines_render_consumed_steer_input_before_response() -> Non
 
 def test_cli_chat_run_lines_render_pending_steer_after_active_step() -> None:
     run = cli._ChatRun(run_id="run_steer", message="sleep 120 secs", status="running")
-    run.completed_steps[1] = {
-        "kind": "tool",
-        "step_index": 1,
-        "output": [{"type": "tool_result", "tool_name": "shell__execute", "output": {"stdout": ""}}],
-    }
+    run.complete_step(
+        {
+            "kind": "tool",
+            "step_index": 1,
+            "output": [{"type": "tool_result", "tool_name": "shell__execute", "output": {"stdout": ""}}],
+        }
+    )
+    run.start_step({"run_id": "run_steer", "step_index": 2, "kind": "model"})
     run.record_command(
         {
             "kind": "steer",
@@ -7641,7 +7648,6 @@ def test_cli_chat_run_lines_render_pending_steer_after_active_step() -> None:
             "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
         }
     )
-    run.start_step({"run_id": "run_steer", "step_index": 2, "kind": "model"})
 
     rendered = "\n".join(cli._chat_run_lines(run, include_steps=True))
     visible = cli._chat_visible_text(rendered)
@@ -7657,7 +7663,7 @@ def test_cli_chat_run_lines_render_pending_steer_after_active_step() -> None:
     )
 
 
-def test_cli_chat_completed_step_keeps_start_input_for_steer_ordering() -> None:
+def test_cli_chat_completed_step_keeps_timeline_for_steer_ordering() -> None:
     run = cli._ChatRun(run_id="run_steer", message="sleep 120 secs", status="running")
     run.record_command(
         {
@@ -7666,14 +7672,7 @@ def test_cli_chat_completed_step_keeps_start_input_for_steer_ordering() -> None:
             "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
         }
     )
-    run.start_step(
-        {
-            "run_id": "run_steer",
-            "step_index": 1,
-            "kind": "model",
-            "input": [{"kind": "command", "index": 1}],
-        }
-    )
+    run.start_step({"run_id": "run_steer", "step_index": 1, "kind": "model"})
     run.complete_step(
         {
             "run_id": "run_steer",
