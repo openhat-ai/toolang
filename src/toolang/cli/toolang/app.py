@@ -2178,6 +2178,12 @@ class _ChatToolCall:
 
 
 @dataclass(slots=True)
+class _ChatQueueItem:
+    kind: Literal["run", "steer"]
+    text: str
+
+
+@dataclass(slots=True)
 class _ChatRun:
     run_id: str
     message: str
@@ -2367,7 +2373,7 @@ class _ChatLastRunPanel:
 
 
 class _ChatSubmissionQueue:
-    def __init__(self, get_items: Callable[[], list[str]]) -> None:
+    def __init__(self, get_items: Callable[[], list[_ChatQueueItem]]) -> None:
         self.get_items = get_items
         self.view = FormattedTextControl(self.render)
 
@@ -2396,12 +2402,13 @@ class _ChatSubmissionQueue:
 
     def lines(self) -> list[str]:
         items = self.get_items()
-        shown = items[:_CHAT_MAX_QUEUE_ROWS]
+        indexed = list(enumerate(items, 1))
+        shown = indexed[:_CHAT_MAX_QUEUE_ROWS]
         hidden = len(items) - len(shown)
         summary = "  Queued for submission."
         if hidden:
             summary += f" ({hidden} more not shown)"
-        return [summary, *[f"  - {_chat_summarize(message)}" for message in shown]]
+        return [summary, *[f"  #{index} {item.kind}: {_chat_summarize(item.text)}" for index, item in shown]]
 
     def rows(self) -> int:
         return len(self.lines()) if self.get_items() else 0
@@ -2638,7 +2645,7 @@ class _ChatBottomApp:
         self.thread_id = thread_id
         self.selector_payload = selector_payload
         self.events: asyncio.Queue[_ChatUIEvent] = asyncio.Queue()
-        self.pending: list[str] = []
+        self.pending: list[_ChatQueueItem] = []
         self.active_run: _ChatRun | None = None
         self.local_streaming = threading.Event()
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -2770,7 +2777,7 @@ class _ChatBottomApp:
             self.app.invalidate()
             return
         if self.has_active_run():
-            self.pending.append(message)
+            self.pending.append(_ChatQueueItem(kind="run", text=message))
         else:
             self.start_run(message)
         self.app.invalidate()
@@ -3168,7 +3175,8 @@ class _ChatBottomApp:
 
     def start_next_run(self) -> None:
         if self.pending:
-            self.start_run(self.pending.pop(0))
+            item = self.pending.pop(0)
+            self.start_run(item.text)
 
     def handle_local_command(self, message: str) -> bool:
         parsed = _chat_local_command(message)
@@ -3181,6 +3189,8 @@ class _ChatBottomApp:
         if command in {"help", "?"}:
             _chat_write_lines(_chat_local_command_lines(message, _chat_help_lines()))
             return True
+        if command in {"queue", "q"}:
+            return self.handle_queue_command(argument, message)
         if command in {"thunk", "flow"}:
             return self.handle_executable_command(command, argument, message)
         if command not in {"model", "models"}:
@@ -3209,6 +3219,58 @@ class _ChatBottomApp:
             self.prompt.set_error(_chat_friendly_error(exc.message))
             return True
         _chat_write_lines(_chat_local_command_lines(message, ["available models", *_chat_model_list_lines(payload)]))
+        return True
+
+    def handle_queue_command(self, argument: str, message: str) -> bool:
+        tokens = argument.split()
+        if not tokens:
+            _chat_write_lines(_chat_local_command_lines(message, _chat_queue_help_lines(self.pending)))
+            return True
+        action = tokens[0].lower()
+        if action in {"clear", "c"}:
+            self.pending.clear()
+            _chat_write_lines(_chat_local_command_lines(message, ["queue cleared"]))
+            return True
+        if action not in {"steer", "s", "run", "r", "delete", "d", "edit", "e"}:
+            self.prompt.set_error(f"Unknown queue command: {tokens[0]}")
+            return True
+        if len(tokens) < 2:
+            self.prompt.set_error(f"/queue {tokens[0]} requires an item number.")
+            return True
+        index = _chat_queue_command_index(tokens[1], len(self.pending))
+        if index is None:
+            self.prompt.set_error(f"Queue item not found: {tokens[1]}")
+            return True
+        item = self.pending[index]
+        display_index = index + 1
+        if action in {"delete", "d"}:
+            self.pending.pop(index)
+            _chat_write_lines(_chat_local_command_lines(message, [f"deleted queue #{display_index}: {_chat_summarize(item.text)}"]))
+            return True
+        if action in {"edit", "e"}:
+            self.pending.pop(index)
+            self.prompt.replace_input(item.text)
+            _chat_write_lines(_chat_local_command_lines(message, [f"editing queue #{display_index}: {_chat_summarize(item.text)}"]))
+            return True
+        if action in {"run", "r"}:
+            item.kind = "run"
+            _chat_write_lines(_chat_local_command_lines(message, [f"queue #{display_index} set to run: {_chat_summarize(item.text)}"]))
+            return True
+        run = self.active_run
+        if run is None or not run.run_id:
+            self.prompt.set_error("No active run to steer.")
+            return True
+        try:
+            _runtime_post(
+                self.ctx,
+                f"/api/v1/runs/{run.run_id}/steer",
+                payload={"message": _message_payload(item.text)},
+            )
+        except click.ClickException as exc:
+            self.prompt.set_error(_chat_friendly_error(exc.message))
+            return True
+        self.pending.pop(index)
+        _chat_write_lines(_chat_local_command_lines(message, [f"steered queue #{display_index}: {_chat_summarize(item.text)}"]))
         return True
 
     def handle_executable_command(self, command: str, argument: str, message: str) -> bool:
@@ -4259,8 +4321,31 @@ def _chat_help_lines() -> list[str]:
         "/model <selector>  use a model for new runs",
         "/thunk [name]      list or use a thunk",
         "/flow [name]       list or use a flow",
+        "/queue, /q         show queue commands",
         "/exit, /quit       exit chat",
     ]
+
+
+def _chat_queue_help_lines(items: Sequence[_ChatQueueItem]) -> list[str]:
+    lines = [
+        "queue commands",
+        "/queue steer 2     steer active run with item #2",
+        "/queue run 2       keep item #2 as a run",
+        "/queue delete 2    remove item #2",
+        "/queue edit 2      move item #2 back to input",
+        "/queue clear       remove all queued items",
+        "/q s 2             short form",
+    ]
+    if not items:
+        return [*lines, "", "queue is empty"]
+    return [*lines, "", "queued", *[f"#{index} {item.kind}: {_chat_summarize(item.text)}" for index, item in enumerate(items, 1)]]
+
+
+def _chat_queue_command_index(value: str, item_count: int) -> int | None:
+    index = _int_or_none(value)
+    if index is None or index < 1 or index > item_count:
+        return None
+    return index - 1
 
 
 def _chat_local_command_lines(message: str, body: Sequence[str]) -> list[str]:

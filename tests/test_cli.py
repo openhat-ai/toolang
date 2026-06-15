@@ -8213,6 +8213,90 @@ def test_cli_chat_thunk_and_flow_commands_list_and_switch(monkeypatch) -> None:
     assert app.prompt.status_label == "runtime model  flow:review"
 
 
+def test_cli_chat_queue_panel_uses_current_numbering() -> None:
+    items = [
+        cli._ChatQueueItem(kind="run", text="first request"),
+        cli._ChatQueueItem(kind="run", text="second request"),
+    ]
+    panel = cli._ChatSubmissionQueue(lambda: items)
+
+    del items[0]
+
+    assert panel.lines() == ["  Queued for submission.", "  #1 run: second request"]
+
+
+def test_cli_chat_queue_commands_help_delete_edit_and_clear(monkeypatch) -> None:
+    writes: list[list[str]] = []
+
+    monkeypatch.setattr(cli, "_runtime_json", lambda _ctx, _path: {})
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: writes.append(lines))
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.pending = [
+        cli._ChatQueueItem(kind="run", text="first request"),
+        cli._ChatQueueItem(kind="run", text="second request"),
+    ]
+
+    app.handle_submit("/queue")
+    app.handle_submit("/q d 1")
+    app.handle_submit("/q e 1")
+    app.pending = [cli._ChatQueueItem(kind="run", text="third request")]
+    app.handle_submit("/q c")
+
+    visible = cli._chat_visible_text("\n".join(line for lines in writes for line in lines))
+    assert "/queue steer 2" in visible
+    assert "#2 run: second request" in visible
+    assert "deleted queue #1: first request" in visible
+    assert "editing queue #1: second request" in visible
+    assert "queue cleared" in visible
+    assert app.pending == []
+    assert app.prompt.buffer.text == "second request"
+
+
+def test_cli_chat_queue_steer_sends_pending_item_to_active_run(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+    writes: list[list[str]] = []
+
+    monkeypatch.setattr(cli, "_runtime_json", lambda _ctx, _path: {})
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: writes.append(lines))
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        calls.append((request_path, payload))
+        return {"input": {}}
+
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id="term_existing", selector_payload={})
+    app.active_run = cli._ChatRun(run_id="run_active", message="working", status="running", accept_child_trace=True)
+    app.pending = [cli._ChatQueueItem(kind="run", text="please adjust")]
+
+    app.handle_submit("/q s 1")
+
+    assert calls == [
+        (
+            "/api/v1/runs/run_active/steer",
+            {"message": {"role": "user", "parts": [{"type": "text", "text": "please adjust"}]}},
+        )
+    ]
+    assert app.pending == []
+    assert "steered queue #1: please adjust" in cli._chat_visible_text("\n".join(writes[0]))
+
+
+def test_cli_chat_queue_run_marks_item_as_run(monkeypatch) -> None:
+    writes: list[list[str]] = []
+
+    monkeypatch.setattr(cli, "_runtime_json", lambda _ctx, _path: {})
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: writes.append(lines))
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.pending = [cli._ChatQueueItem(kind="steer", text="continue as a run")]
+
+    app.handle_submit("/queue r 1")
+
+    assert app.pending == [cli._ChatQueueItem(kind="run", text="continue as a run")]
+    assert "queue #1 set to run: continue as a run" in cli._chat_visible_text("\n".join(writes[0]))
+
+
 def test_cli_chat_normal_submit_after_flow_selection_still_starts_run(monkeypatch) -> None:
     streams: list[tuple[str, dict[str, object]]] = []
     posts: list[tuple[str, object]] = []
