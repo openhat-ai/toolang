@@ -2351,11 +2351,10 @@ class _ChatLastRunPanel:
                         height=self.activity_rows,
                         wrap_lines=False,
                         always_hide_cursor=True,
-                        style="class:last-run",
                     ),
                 ],
                 height=self.height_dimension,
-                window_too_small=Window(style="class:last-run", always_hide_cursor=True),
+                window_too_small=Window(always_hide_cursor=True),
             ),
             filter=Condition(lambda: bool(self.lines())),
         )
@@ -3866,7 +3865,6 @@ def _chat_terminal_width(default: int = 100) -> int:
 def _chat_ui_palette() -> dict[str, str]:
     return {
         "": "",
-        "last-run": "",
         "queue": _chat_prompt_style(_CHAT_QUEUE_FG, _CHAT_QUEUE_BG),
         "queue.dim": _chat_prompt_style(_CHAT_QUEUE_DIM_FG, _CHAT_QUEUE_BG),
         "normal-input": _chat_prompt_style(_CHAT_INPUT_FG, _CHAT_INPUT_BG),
