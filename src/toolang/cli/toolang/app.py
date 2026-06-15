@@ -2373,7 +2373,12 @@ class _ChatLastRunPanel:
         )
 
     def render_activity(self) -> list[tuple[str, str]]:
-        return _chat_activity_formatted_text(self.activity_lines())
+        run = self.get_run()
+        if run is None:
+            return []
+        rows = _chat_active_activity_fragment_rows(run, self.step_line)
+        rows = [[], *_chat_tail_fragment_rows(rows, max_lines=_CHAT_MAX_ACTIVE_RUN_ACTIVITY_ROWS), []]
+        return _chat_join_fragment_rows(rows)
 
     def lines(self) -> list[str]:
         return [*self.user_lines(), *self.activity_lines()]
@@ -3784,6 +3789,27 @@ def _chat_input_bar_fragments(
     kind: Literal["normal", "steer"],
     outer_blank: bool = False,
 ) -> list[tuple[str, str]]:
+    return _chat_join_fragment_rows(
+        _chat_input_bar_fragment_rows(
+            marker=marker,
+            text=text,
+            footer=footer,
+            footer_dim=footer_dim,
+            kind=kind,
+            outer_blank=outer_blank,
+        )
+    )
+
+
+def _chat_input_bar_fragment_rows(
+    *,
+    marker: str,
+    text: str,
+    footer: str = "",
+    footer_dim: bool = False,
+    kind: Literal["normal", "steer"],
+    outer_blank: bool = False,
+) -> list[list[tuple[str, str]]]:
     lines: list[list[tuple[bool, str]]] = []
     if outer_blank:
         lines.append([])
@@ -3796,12 +3822,7 @@ def _chat_input_bar_fragments(
     lines.append([(footer_dim, footer)] if footer else [])
     if outer_blank:
         lines.append([])
-    fragments: list[tuple[str, str]] = []
-    for index, segments in enumerate(lines):
-        fragments.extend(_chat_input_bar_line_fragments(segments, kind=kind))
-        if index < len(lines) - 1:
-            fragments.append(("", "\n"))
-    return fragments
+    return [_chat_input_bar_line_fragments(segments, kind=kind) for segments in lines]
 
 
 def _chat_input_bar_line_fragments(
@@ -3823,6 +3844,15 @@ def _chat_input_bar_line_fragments(
 def _chat_input_bar_class(kind: Literal["normal", "steer"], *, dim: bool) -> str:
     prefix = "normal-input" if kind == "normal" else "steer-input"
     return f"class:{prefix}.dim" if dim else f"class:{prefix}"
+
+
+def _chat_join_fragment_rows(rows: Sequence[Sequence[tuple[str, str]]]) -> list[tuple[str, str]]:
+    fragments: list[tuple[str, str]] = []
+    for index, row in enumerate(rows):
+        fragments.extend(row)
+        if index < len(rows) - 1:
+            fragments.append(("", "\n"))
+    return fragments
 
 
 def _chat_pad_visible(content: str, width: int) -> str:
@@ -3981,10 +4011,62 @@ def _chat_tail_activity_lines(lines: Sequence[str], *, max_lines: int) -> list[s
     return [_chat_dim(f"... {hidden} earlier lines"), *lines[-tail_count:]]
 
 
+def _chat_tail_fragment_rows(
+    rows: Sequence[list[tuple[str, str]]], *, max_lines: int
+) -> list[list[tuple[str, str]]]:
+    if len(rows) <= max_lines:
+        return list(rows)
+    if max_lines <= 0:
+        return []
+    if max_lines == 1:
+        return [_chat_line_fragments(_chat_dim(f"... {len(rows)} earlier lines"))]
+    tail_count = max_lines - 1
+    hidden = len(rows) - tail_count
+    return [_chat_line_fragments(_chat_dim(f"... {hidden} earlier lines")), *rows[-tail_count:]]
+
+
 def _chat_completed_line_for(run: _ChatRun, index: int) -> str:
     if index in run.completed_steps:
         return _chat_completed_step_line(run.completed_steps[index], run=run)
     return _chat_active_step_line(run.steps[index])
+
+
+def _chat_active_activity_fragment_rows(
+    run: _ChatRun,
+    step_renderer: Callable[[_ChatRun, int], str],
+) -> list[list[tuple[str, str]]]:
+    state_line = _chat_run_state_line(run)
+    queue_line = _chat_queue_activity_line(run)
+    if queue_line or _chat_flow_stage_lines(run):
+        return [_chat_line_fragments(line) for line in _chat_run_activity_lines(run, step_renderer)]
+
+    rows: list[list[tuple[str, str]]] = []
+    if state_line and not _chat_state_line_after_activity(run):
+        rows.append(_chat_line_fragments(state_line))
+    timeline = run.timeline or [("step", index) for index in run.step_indexes()]
+    rendered_steps: set[int] = set()
+    for position, (kind, index) in enumerate(timeline):
+        if kind == "command":
+            command = run.commands.get(index)
+            if command is not None:
+                rows.extend(_chat_command_activity_fragment_rows(run, command, position))
+            continue
+        if index in rendered_steps:
+            continue
+        step_lines = _chat_step_activity_lines(run, index, step_renderer)
+        if step_lines:
+            rows.extend(_chat_line_fragments(line) for line in step_lines)
+            rendered_steps.add(index)
+    for index in run.step_indexes():
+        if index not in rendered_steps:
+            rows.extend(_chat_line_fragments(line) for line in _chat_step_activity_lines(run, index, step_renderer))
+    if state_line and _chat_state_line_after_activity(run):
+        rows.append(_chat_line_fragments(state_line))
+    return rows
+
+
+def _chat_line_fragments(line: str) -> list[tuple[str, str]]:
+    return cast(list[tuple[str, str]], to_formatted_text(ANSI(line)))
 
 
 def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, int], str]) -> list[str]:
@@ -4076,6 +4158,16 @@ def _chat_command_activity_lines(run: _ChatRun, command: Mapping[str, Any], time
     return []
 
 
+def _chat_command_activity_fragment_rows(
+    run: _ChatRun, command: Mapping[str, Any], timeline_position: int
+) -> list[list[tuple[str, str]]]:
+    if command.get("kind") == "steer":
+        return _chat_steer_input_fragment_rows(command, waiting=_chat_command_is_waiting(run, timeline_position))
+    if command.get("kind") == "stop":
+        return [_chat_line_fragments(_chat_dim("◇ cancel requested"))]
+    return []
+
+
 def _chat_command_is_waiting(run: _ChatRun, timeline_position: int) -> bool:
     if not run.steps:
         return False
@@ -4092,6 +4184,18 @@ def _chat_steer_input_block(command: Mapping[str, Any], *, waiting: bool) -> lis
         fg=_CHAT_STEER_INPUT_FG,
         bg=_CHAT_STEER_INPUT_BG,
         ansi=True,
+        outer_blank=True,
+    )
+
+
+def _chat_steer_input_fragment_rows(command: Mapping[str, Any], *, waiting: bool) -> list[list[tuple[str, str]]]:
+    message = _event_message_text(command.get("message"))
+    return _chat_input_bar_fragment_rows(
+        marker="+",
+        text=message,
+        footer="  pending for next step" if waiting else "",
+        footer_dim=waiting,
+        kind="steer",
         outer_blank=True,
     )
 
