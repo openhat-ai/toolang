@@ -3254,7 +3254,7 @@ class _ChatBottomApp:
     def handle_queue_command(self, argument: str, message: str) -> bool:
         tokens = argument.split()
         if not tokens:
-            _chat_write_lines(_chat_local_command_lines(message, _chat_queue_help_lines(self.pending)))
+            _chat_write_lines(_chat_local_command_lines(message, _chat_queue_help_lines()))
             return True
         action = tokens[0].lower()
         if action in {"clear", "c"}:
@@ -4489,19 +4489,17 @@ def _chat_help_lines() -> list[str]:
     ]
 
 
-def _chat_queue_help_lines(items: Sequence[_ChatQueueItem]) -> list[str]:
-    lines = [
-        "queue commands",
-        "/queue steer 2     steer active run with item #2",
-        "/queue run 2       keep item #2 as a run",
-        "/queue delete 2    remove item #2",
-        "/queue edit 2      move item #2 back to input",
-        "/queue clear       remove all queued items",
-        "/q s 2             short form",
+def _chat_queue_help_lines() -> list[str]:
+    return [
+        "Queue Commands",
+        "",
+        "/queue steer N   Steer the active run with item #N.",
+        "/queue run N     Submit item #N as a run.",
+        "/queue edit N    Edit item #N in the input box.",
+        "/queue delete N  Delete item #N.",
+        "/queue clear     Clear all items.",
+        "/q s N           First-letter abbreviations are accepted.",
     ]
-    if not items:
-        return [*lines, "", "queue is empty"]
-    return [*lines, "", "queued", *[f"#{index} {item.kind}: {_chat_summarize(item.text)}" for index, item in enumerate(items, 1)]]
 
 
 def _chat_queue_command_index(value: str, item_count: int) -> int | None:

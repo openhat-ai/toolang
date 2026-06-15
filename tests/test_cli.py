@@ -8511,8 +8511,10 @@ def test_cli_chat_queue_commands_help_delete_edit_and_clear(monkeypatch) -> None
     app.handle_submit("/q c")
 
     visible = cli._chat_visible_text("\n".join(line for lines in writes for line in lines))
-    assert "/queue steer 2" in visible
-    assert "#2 run: second request" in visible
+    assert "Queue Commands" in visible
+    assert "/queue steer N" in visible
+    assert "/q s N" in visible
+    assert "#2 run: second request" not in visible
     assert "deleted queue" not in visible
     assert "editing queue" not in visible
     assert "queue cleared" not in visible
