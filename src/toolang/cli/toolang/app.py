@@ -2219,7 +2219,11 @@ class _ChatRun:
 
     def complete_step(self, payload: dict[str, Any]) -> None:
         index = _chat_step_index(payload)
-        self.completed_steps[index] = payload
+        completed_payload = dict(payload)
+        active_step = self.steps.get(index)
+        if active_step is not None and "input" not in completed_payload and "input" in active_step.payload:
+            completed_payload["input"] = active_step.payload["input"]
+        self.completed_steps[index] = completed_payload
         self.steps.pop(index, None)
 
     def record_part(self, payload: dict[str, Any]) -> None:
@@ -3835,8 +3839,8 @@ def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, i
             lines.extend(_chat_steer_input_block(command, waiting=False))
             rendered_commands.add(_chat_command_index(command))
         if index in run.steps:
-            lines.extend(_chat_unrendered_steer_input_lines(run, rendered_commands=rendered_commands, waiting=True))
             lines.append(step_renderer(run, index))
+            lines.extend(_chat_unrendered_steer_input_lines(run, rendered_commands=rendered_commands, waiting=True))
             continue
         payload = run.completed_steps[index]
         if payload.get("kind") == "model":
@@ -3891,9 +3895,11 @@ def _chat_unrendered_steer_input_lines(
 def _chat_steer_input_block(command: Mapping[str, Any], *, waiting: bool) -> list[str]:
     message = _event_message_text(command.get("message"))
     content = message.splitlines() or [""]
-    lines = [_chat_steer_input_block_line(_chat_steer_message_line(index, line)) for index, line in enumerate(content)]
+    lines = [_chat_steer_input_block_line("")]
+    lines.extend(_chat_steer_input_block_line(_chat_steer_message_line(index, line)) for index, line in enumerate(content))
     if waiting:
         lines.append(_chat_steer_input_block_line(_chat_dim("  waiting for current step")))
+    lines.append(_chat_steer_input_block_line(""))
     return lines
 
 

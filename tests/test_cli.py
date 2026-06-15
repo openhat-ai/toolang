@@ -7624,9 +7624,10 @@ def test_cli_chat_run_lines_render_consumed_steer_input_before_response() -> Non
     )
     assert "waiting for current step" not in visible
     assert cli._chat_ansi_style(cli._CHAT_STEER_INPUT_FG, cli._CHAT_STEER_INPUT_BG) in rendered
+    assert any(line.strip() == "+ abc" for line in visible.splitlines())
 
 
-def test_cli_chat_run_lines_render_pending_steer_before_active_step() -> None:
+def test_cli_chat_run_lines_render_pending_steer_after_active_step() -> None:
     run = cli._ChatRun(run_id="run_steer", message="sleep 120 secs", status="running")
     run.completed_steps[1] = {
         "kind": "tool",
@@ -7649,11 +7650,43 @@ def test_cli_chat_run_lines_render_pending_steer_before_active_step() -> None:
         visible,
         (
             "› ran shell__execute",
+            "• thinking...",
             "+ abc",
             "waiting for current step",
-            "• thinking...",
         ),
     )
+
+
+def test_cli_chat_completed_step_keeps_start_input_for_steer_ordering() -> None:
+    run = cli._ChatRun(run_id="run_steer", message="sleep 120 secs", status="running")
+    run.record_command(
+        {
+            "kind": "steer",
+            "ref": {"kind": "command", "index": 1},
+            "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
+        }
+    )
+    run.start_step(
+        {
+            "run_id": "run_steer",
+            "step_index": 1,
+            "kind": "model",
+            "input": [{"kind": "command", "index": 1}],
+        }
+    )
+    run.complete_step(
+        {
+            "run_id": "run_steer",
+            "step_index": 1,
+            "kind": "model",
+            "output": [{"type": "text", "text": "after steer"}],
+        }
+    )
+
+    visible = cli._chat_visible_text("\n".join(cli._chat_run_lines(run, include_steps=True)))
+
+    assert _indexes_in_order(visible, ("+ abc", "• after steer"))
+    assert "waiting for current step" not in visible
 
 
 def test_cli_chat_run_command_steer_records_input_bar(monkeypatch) -> None:
