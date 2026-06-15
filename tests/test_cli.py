@@ -9876,6 +9876,13 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
     assert "✓ 2 tool  filesystem__read_text: path=task.md" in result.stdout
     assert "✓ 3 model  deepseek/deepseek-chat-v3 Summary complete." in result.stdout
 
+    focus_result = _invoke_app(["inspect", "dev", "run_thunk:1"])
+
+    assert focus_result.exit_code == 0
+    assert "step 1 model  succeeded" in focus_result.stdout
+    assert "output" in focus_result.stdout
+    assert "requested filesystem__read_text: path=task.md" in focus_result.stdout
+
 
 def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
     calls: list[str] = []
