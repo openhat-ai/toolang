@@ -3260,7 +3260,7 @@ class _ChatBottomApp:
         if action in {"clear", "c"}:
             self.pending.clear()
             return True
-        if action not in {"steer", "s", "run", "r", "delete", "d", "edit", "e"}:
+        if action not in {"steer", "s", "delete", "d", "edit", "e"}:
             self.prompt.set_error(f"Unknown queue command: {tokens[0]}")
             return True
         if len(tokens) < 2:
@@ -3277,9 +3277,6 @@ class _ChatBottomApp:
         if action in {"edit", "e"}:
             self.pending.pop(index)
             self.prompt.replace_input(item.text)
-            return True
-        if action in {"run", "r"}:
-            item.kind = "run"
             return True
         run = self.active_run
         if run is None or not run.run_id:
@@ -4494,7 +4491,6 @@ def _chat_queue_help_lines() -> list[str]:
         "Queue Commands",
         "",
         "/queue steer N   Steer the active run with item #N.",
-        "/queue run N     Submit item #N as a run.",
         "/queue edit N    Edit item #N in the input box.",
         "/queue delete N  Delete item #N.",
         "/queue clear     Clear all items.",

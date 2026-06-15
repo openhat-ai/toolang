@@ -8552,7 +8552,7 @@ def test_cli_chat_queue_steer_sends_pending_item_to_active_run(monkeypatch) -> N
     assert writes == []
 
 
-def test_cli_chat_queue_run_marks_item_as_run(monkeypatch) -> None:
+def test_cli_chat_queue_run_is_not_supported(monkeypatch) -> None:
     writes: list[list[str]] = []
 
     monkeypatch.setattr(cli, "_runtime_json", lambda _ctx, _path: {})
@@ -8563,7 +8563,8 @@ def test_cli_chat_queue_run_marks_item_as_run(monkeypatch) -> None:
 
     app.handle_submit("/queue r 1")
 
-    assert app.pending == [cli._ChatQueueItem(kind="run", text="continue as a run")]
+    assert app.pending == [cli._ChatQueueItem(kind="steer", text="continue as a run")]
+    assert app.prompt.error_message == "Unknown queue command: r"
     assert writes == []
 
 
