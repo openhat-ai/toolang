@@ -2425,10 +2425,10 @@ class _ChatSubmissionQueue:
         indexed = list(enumerate(items, 1))
         shown = indexed[:_CHAT_MAX_QUEUE_ROWS]
         hidden = len(items) - len(shown)
-        summary = "  Queued for submission."
+        summary = "  queued for submission:"
         if hidden:
             summary += f" ({hidden} more not shown)"
-        return [summary, *[f"  #{index} {item.kind}: {_chat_summarize(item.text)}" for index, item in shown]]
+        return [summary, *[f"  [{index}] {_chat_summarize(item.text)}" for index, item in shown]]
 
     def rows(self) -> int:
         return len(self.lines()) if self.get_items() else 0

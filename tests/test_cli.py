@@ -8490,7 +8490,7 @@ def test_cli_chat_queue_panel_uses_current_numbering() -> None:
 
     del items[0]
 
-    assert panel.lines() == ["  Queued for submission.", "  #1 run: second request"]
+    assert panel.lines() == ["  queued for submission:", "  [1] second request"]
 
 
 def test_cli_chat_queue_commands_help_delete_edit_and_clear(monkeypatch) -> None:
