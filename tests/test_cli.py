@@ -8205,6 +8205,7 @@ def test_cli_chat_palette_uses_fixed_neutral_panel_colors() -> None:
     palette = cli._chat_ui_palette()
 
     assert palette["queue"] == "fg:#f2f2f2 bg:#3a3a3a"
+    assert palette["queue.dim"] == "fg:#b8b8b8 bg:#3a3a3a"
     assert palette["normal-input"] == "fg:#f5f5f5 bg:#444444"
     assert palette["normal-input.dim"] == "fg:#b8b8b8 bg:#444444"
     assert palette["input"] == "fg:#f5f5f5 bg:#444444"
@@ -8509,6 +8510,12 @@ def test_cli_chat_queue_panel_uses_current_numbering() -> None:
     del items[0]
 
     assert panel.lines() == ["  queued for submission:", "  [1] second request"]
+    rendered = panel.render()
+    rendered_text = "".join(text for _style, text in rendered)
+    assert ("class:queue.dim", "  queued for submission:") in rendered
+    assert ("class:queue.dim", "[1]") in rendered
+    assert ("class:queue", " second request") in rendered
+    assert "[1] second request" in rendered_text
     height = panel.height_dimension()
     assert height.preferred == 2
     assert height.max == 2

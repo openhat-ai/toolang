@@ -199,6 +199,7 @@ _CHAT_RESET = "\x1b[0m"
 _CHAT_BOLD = "\x1b[1m"
 _CHAT_QUEUE_FG = "#f2f2f2"
 _CHAT_QUEUE_BG = "#3a3a3a"
+_CHAT_QUEUE_DIM_FG = "#b8b8b8"
 _CHAT_INPUT_FG = "#f5f5f5"
 _CHAT_INPUT_BG = "#444444"
 _CHAT_INPUT_DIM_FG = "#b8b8b8"
@@ -2426,8 +2427,8 @@ class _ChatSubmissionQueue:
             filter=Condition(lambda: bool(self.get_items())),
         )
 
-    def render(self) -> ANSI:
-        return ANSI("\n".join(self.lines()))
+    def render(self) -> list[tuple[str, str]]:
+        return _chat_queue_fragments(self.get_items())
 
     def lines(self) -> list[str]:
         items = self.get_items()
@@ -2444,6 +2445,36 @@ class _ChatSubmissionQueue:
 
     def height_dimension(self) -> Dimension:
         return _chat_fixed_height(self.rows(), minimum=0)
+
+
+def _chat_queue_fragments(items: Sequence[_ChatQueueItem]) -> list[tuple[str, str]]:
+    shown = list(enumerate(items, 1))[:_CHAT_MAX_QUEUE_ROWS]
+    hidden = len(items) - len(shown)
+    title = "  queued for submission:"
+    if hidden:
+        title += f" ({hidden} more not shown)"
+    rows: list[list[tuple[str, str]]] = [[("class:queue.dim", title)]]
+    rows.extend(
+        [
+            ("class:queue", "  "),
+            ("class:queue.dim", f"[{index}]"),
+            ("class:queue", f" {_chat_summarize(item.text)}"),
+        ]
+        for index, item in shown
+    )
+
+    fragments: list[tuple[str, str]] = []
+    for row_index, row in enumerate(rows):
+        visible_len = 0
+        for style, text in row:
+            fragments.append((style, text))
+            visible_len += _chat_display_len(text)
+        padding = " " * max(0, _chat_terminal_width() - visible_len)
+        if padding:
+            fragments.append(("class:queue", padding))
+        if row_index < len(rows) - 1:
+            fragments.append(("", "\n"))
+    return fragments
 
 
 class _ChatPromptBox:
@@ -3807,6 +3838,7 @@ def _chat_ui_palette() -> dict[str, str]:
         "": "",
         "last-run": "",
         "queue": _chat_prompt_style(_CHAT_QUEUE_FG, _CHAT_QUEUE_BG),
+        "queue.dim": _chat_prompt_style(_CHAT_QUEUE_DIM_FG, _CHAT_QUEUE_BG),
         "normal-input": _chat_prompt_style(_CHAT_INPUT_FG, _CHAT_INPUT_BG),
         "normal-input.dim": _chat_prompt_style(_CHAT_INPUT_DIM_FG, _CHAT_INPUT_BG),
         "input": _chat_prompt_style(_CHAT_INPUT_FG, _CHAT_INPUT_BG),
