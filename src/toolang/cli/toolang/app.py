@@ -215,6 +215,28 @@ _CHAT_FLOW_DETAIL_INDENT = "  "
 _CHAT_FLOW_STATEMENT_MARKER = "‣"
 
 
+@dataclass(frozen=True)
+class _ChatInputBarSegment:
+    text: str
+    dim: bool = False
+
+
+@dataclass(frozen=True)
+class _ChatInputBarRow:
+    segments: tuple[_ChatInputBarSegment, ...] = ()
+    bar: bool = True
+
+
+@dataclass(frozen=True)
+class _ChatInputBarSpec:
+    kind: Literal["normal", "steer"]
+    marker: str
+    text: str
+    footer: str = ""
+    footer_dim: bool = False
+    outer_blank: bool = False
+
+
 def _chat_fixed_height(rows: int, *, minimum: int) -> Dimension:
     height = max(minimum, rows)
     return Dimension(min=minimum, preferred=height, max=height, weight=0)
@@ -2363,13 +2385,7 @@ class _ChatLastRunPanel:
         run = self.get_run()
         if run is None:
             return []
-        return _chat_input_bar_fragments(
-            marker=">",
-            text=run.message,
-            footer=_chat_run_id_footer_text(run),
-            footer_dim=bool(run.run_id),
-            kind="normal",
-        )
+        return _chat_input_bar_fragments(_chat_run_input_bar_spec(run))
 
     def render_activity(self) -> list[tuple[str, str]]:
         run = self.get_run()
@@ -3706,138 +3722,108 @@ def _chat_dim(text: str) -> str:
 
 
 def _chat_panel_user_block(run: _ChatRun) -> list[str]:
-    return _chat_input_bar_lines(
-        marker=">",
-        text=run.message,
-        footer=_chat_run_id_footer(run),
-        fg=_CHAT_INPUT_FG,
-        bg=_CHAT_INPUT_BG,
-        ansi=False,
-    )
+    return _chat_input_bar_plain_lines(_chat_run_input_bar_spec(run))
 
 
 def _chat_scrollback_user_block(run: _ChatRun) -> list[str]:
-    return _chat_input_bar_lines(
+    return _chat_input_bar_ansi_lines(_chat_run_input_bar_spec(run))
+
+
+def _chat_run_input_bar_spec(run: _ChatRun) -> _ChatInputBarSpec:
+    return _ChatInputBarSpec(
+        kind="normal",
         marker=">",
         text=run.message,
-        footer=_chat_run_id_footer(run),
-        fg=_CHAT_INPUT_FG,
-        bg=_CHAT_INPUT_BG,
-        ansi=True,
+        footer=f"  {run.run_id}" if run.run_id else "",
+        footer_dim=bool(run.run_id),
     )
 
 
-def _chat_input_bar_lines(
-    *,
-    marker: str,
-    text: str,
-    footer: str = "",
-    fg: str,
-    bg: str,
-    ansi: bool,
-    outer_blank: bool = False,
-) -> list[str]:
-    lines: list[str] = []
-    if outer_blank:
-        lines.append("")
-    lines.append(_chat_input_bar_line("", fg=fg, bg=bg, ansi=ansi))
-    lines.extend(
-        _chat_input_bar_line(_chat_input_bar_message_line(marker, index, line), fg=fg, bg=bg, ansi=ansi)
-        for index, line in enumerate(text.splitlines() or [""])
-    )
-    lines.append(_chat_input_bar_line(footer, fg=fg, bg=bg, ansi=ansi))
-    if outer_blank:
-        lines.append("")
-    return lines
-
-
-def _chat_input_bar_message_line(marker: str, index: int, line: str) -> str:
-    if index == 0:
-        return f"{_CHAT_DIM}{marker}{_CHAT_NORMAL_INTENSITY} {line}"
-    return f"  {line}"
-
-
-def _chat_user_message_line(index: int, line: str) -> str:
-    return _chat_input_bar_message_line(">", index, line)
-
-
-def _chat_run_id_footer(run: _ChatRun) -> str:
-    return f"{_CHAT_DIM}  {run.run_id}{_CHAT_NORMAL_INTENSITY}" if run.run_id else ""
-
-
-def _chat_run_id_footer_text(run: _ChatRun) -> str:
-    return f"  {run.run_id}" if run.run_id else ""
+def _chat_local_input_bar_spec(message: str) -> _ChatInputBarSpec:
+    return _ChatInputBarSpec(kind="normal", marker=">", text=message)
 
 
 def _chat_input_block_line(content: str) -> str:
-    return _chat_input_bar_line(content, fg=_CHAT_INPUT_FG, bg=_CHAT_INPUT_BG, ansi=True)
-
-
-def _chat_input_bar_line(content: str, *, fg: str, bg: str, ansi: bool) -> str:
-    if not ansi:
-        return content
-    return f"{_chat_ansi_style(fg, bg)}{_chat_pad_visible(content, _chat_terminal_width())}{_CHAT_RESET}"
-
-
-def _chat_input_bar_fragments(
-    *,
-    marker: str,
-    text: str,
-    footer: str = "",
-    footer_dim: bool = False,
-    kind: Literal["normal", "steer"],
-    outer_blank: bool = False,
-) -> list[tuple[str, str]]:
-    return _chat_join_fragment_rows(
-        _chat_input_bar_fragment_rows(
-            marker=marker,
-            text=text,
-            footer=footer,
-            footer_dim=footer_dim,
-            kind=kind,
-            outer_blank=outer_blank,
-        )
+    return _chat_input_bar_ansi_line(
+        _ChatInputBarRow((_ChatInputBarSegment(content),)),
+        kind="normal",
     )
 
 
-def _chat_input_bar_fragment_rows(
-    *,
-    marker: str,
-    text: str,
-    footer: str = "",
-    footer_dim: bool = False,
-    kind: Literal["normal", "steer"],
-    outer_blank: bool = False,
-) -> list[list[tuple[str, str]]]:
-    lines: list[list[tuple[bool, str]]] = []
-    if outer_blank:
-        lines.append([])
-    lines.append([])
-    for index, line in enumerate(text.splitlines() or [""]):
+def _chat_input_bar_ansi_lines(spec: _ChatInputBarSpec) -> list[str]:
+    return [_chat_input_bar_ansi_line(row, kind=spec.kind) for row in _chat_input_bar_rows(spec)]
+
+
+def _chat_input_bar_plain_lines(spec: _ChatInputBarSpec) -> list[str]:
+    return [_chat_input_bar_plain_line(row) for row in _chat_input_bar_rows(spec)]
+
+
+def _chat_input_bar_plain_line(row: _ChatInputBarRow) -> str:
+    return "".join(segment.text for segment in row.segments) if row.bar else ""
+
+
+def _chat_input_bar_ansi_line(row: _ChatInputBarRow, *, kind: Literal["normal", "steer"]) -> str:
+    if not row.bar:
+        return ""
+    fg, bg = _chat_input_bar_colors(kind)
+    content = "".join(_chat_dim(segment.text) if segment.dim else segment.text for segment in row.segments)
+    return f"{_chat_ansi_style(fg, bg)}{_chat_pad_visible(content, _chat_terminal_width())}{_CHAT_RESET}"
+
+
+def _chat_input_bar_fragments(spec: _ChatInputBarSpec) -> list[tuple[str, str]]:
+    return _chat_join_fragment_rows(_chat_input_bar_fragment_rows(spec))
+
+
+def _chat_input_bar_fragment_rows(spec: _ChatInputBarSpec) -> list[list[tuple[str, str]]]:
+    return [_chat_input_bar_line_fragments(row, kind=spec.kind) for row in _chat_input_bar_rows(spec)]
+
+
+def _chat_input_bar_rows(spec: _ChatInputBarSpec) -> list[_ChatInputBarRow]:
+    rows: list[_ChatInputBarRow] = []
+    if spec.outer_blank:
+        rows.append(_ChatInputBarRow(bar=False))
+    rows.append(_ChatInputBarRow())
+    for index, line in enumerate(spec.text.splitlines() or [""]):
         if index == 0:
-            lines.append([(True, marker), (False, f" {line}")])
+            rows.append(
+                _ChatInputBarRow(
+                    (
+                        _ChatInputBarSegment(spec.marker, dim=True),
+                        _ChatInputBarSegment(f" {line}"),
+                    )
+                )
+            )
         else:
-            lines.append([(False, f"  {line}")])
-    lines.append([(footer_dim, footer)] if footer else [])
-    if outer_blank:
-        lines.append([])
-    return [_chat_input_bar_line_fragments(segments, kind=kind) for segments in lines]
+            rows.append(_ChatInputBarRow((_ChatInputBarSegment(f"  {line}"),)))
+    footer = (_ChatInputBarSegment(spec.footer, dim=spec.footer_dim),) if spec.footer else ()
+    rows.append(_ChatInputBarRow(footer))
+    if spec.outer_blank:
+        rows.append(_ChatInputBarRow(bar=False))
+    return rows
 
 
 def _chat_input_bar_line_fragments(
-    segments: Sequence[tuple[bool, str]], *, kind: Literal["normal", "steer"]
+    row: _ChatInputBarRow, *, kind: Literal["normal", "steer"]
 ) -> list[tuple[str, str]]:
+    if not row.bar:
+        return []
     fragments: list[tuple[str, str]] = []
     visible_len = 0
-    for dim, text in segments:
-        if not text:
+    for segment in row.segments:
+        if not segment.text:
             continue
-        fragments.append((_chat_input_bar_class(kind, dim=dim), text))
-        visible_len += _chat_display_len(text)
+        fragments.append((_chat_input_bar_class(kind, dim=segment.dim), segment.text))
+        visible_len += _chat_display_len(segment.text)
     padding = " " * max(0, _chat_terminal_width() - visible_len)
     if padding:
         fragments.append((_chat_input_bar_class(kind, dim=False), padding))
     return fragments
+
+
+def _chat_input_bar_colors(kind: Literal["normal", "steer"]) -> tuple[str, str]:
+    if kind == "steer":
+        return _CHAT_STEER_INPUT_FG, _CHAT_STEER_INPUT_BG
+    return _CHAT_INPUT_FG, _CHAT_INPUT_BG
 
 
 def _chat_input_bar_class(kind: Literal["normal", "steer"], *, dim: bool) -> str:
@@ -4125,27 +4111,21 @@ def _chat_command_is_waiting(run: _ChatRun, timeline_position: int) -> bool:
 
 
 def _chat_steer_input_block(command: Mapping[str, Any], *, waiting: bool) -> list[str]:
-    message = _event_message_text(command.get("message"))
-    footer = _chat_dim("  pending for next step") if waiting else ""
-    return _chat_input_bar_lines(
-        marker="+",
-        text=message,
-        footer=footer,
-        fg=_CHAT_STEER_INPUT_FG,
-        bg=_CHAT_STEER_INPUT_BG,
-        ansi=True,
-        outer_blank=True,
-    )
+    return _chat_input_bar_ansi_lines(_chat_steer_input_bar_spec(command, waiting=waiting))
 
 
 def _chat_steer_input_fragment_rows(command: Mapping[str, Any], *, waiting: bool) -> list[list[tuple[str, str]]]:
+    return _chat_input_bar_fragment_rows(_chat_steer_input_bar_spec(command, waiting=waiting))
+
+
+def _chat_steer_input_bar_spec(command: Mapping[str, Any], *, waiting: bool) -> _ChatInputBarSpec:
     message = _event_message_text(command.get("message"))
-    return _chat_input_bar_fragment_rows(
+    return _ChatInputBarSpec(
+        kind="steer",
         marker="+",
         text=message,
         footer="  pending for next step" if waiting else "",
         footer_dim=waiting,
-        kind="steer",
         outer_blank=True,
     )
 
@@ -4702,13 +4682,7 @@ def _chat_local_command_lines(message: str, body: Sequence[str]) -> list[str]:
 
 
 def _chat_scrollback_user_message_block(message: str) -> list[str]:
-    lines = [_chat_input_block_line("")]
-    lines.extend(
-        _chat_input_block_line(_chat_user_message_line(index, line))
-        for index, line in enumerate(message.splitlines() or [""])
-    )
-    lines.append(_chat_input_block_line(""))
-    return lines
+    return _chat_input_bar_ansi_lines(_chat_local_input_bar_spec(message))
 
 
 def _chat_system_block_lines(body: Sequence[str]) -> list[str]:
