@@ -4478,14 +4478,14 @@ def _chat_status_segments(label: str) -> list[tuple[str, str]]:
 
 def _chat_help_lines() -> list[str]:
     return [
-        "chat help",
-        "/help, /?           show this help",
-        "/model             list available models",
-        "/model <selector>  use a model for new runs",
-        "/thunk [name]      list or use a thunk",
-        "/flow [name]       list or use a flow",
-        "/queue, /q         show queue commands",
-        "/exit, /quit       exit chat",
+        "Slash Commands",
+        "",
+        "/help, /?          Show help.",
+        "/model [SELECTOR]  List or switch models.",
+        "/thunk [NAME]      List or use a thunk.",
+        "/flow [NAME]       List or use a flow.",
+        "/queue             Show queue commands.",
+        "/exit, /quit       Exit chat.",
     ]
 
 

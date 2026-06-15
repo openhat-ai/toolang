@@ -7288,8 +7288,9 @@ def test_cli_chat_scripted_help_command_does_not_create_thread(monkeypatch) -> N
 
     assert result.exit_code == 0
     assert posts == []
-    assert "chat help" in result.stdout
-    assert "/model <selector>  use a model for new runs" in result.stdout
+    assert "Slash Commands" in result.stdout
+    assert "/model [SELECTOR]  List or switch models." in result.stdout
+    assert "/flow [NAME]       List or use a flow." in result.stdout
 
 
 def test_cli_chat_without_thread_creates_thread_for_first_scripted_message(monkeypatch) -> None:
@@ -9322,12 +9323,13 @@ def test_cli_chat_help_command_shows_local_help_without_starting_run(monkeypatch
     rendered = "\n".join(writes[0])
     assert posts == []
     assert app.active_run is None
-    assert "◇ chat help" in visible
-    assert "\x1b[2m◇ chat help" not in rendered
-    assert "/model <selector>  use a model for new runs" in visible
-    assert "/thunk [name]      list or use a thunk" in visible
-    assert "/flow [name]       list or use a flow" in visible
-    assert "/exit, /quit       exit chat" in visible
+    assert "◇ Slash Commands" in visible
+    assert "\x1b[2m◇ Slash Commands" not in rendered
+    assert "/model [SELECTOR]  List or switch models." in visible
+    assert "/thunk [NAME]      List or use a thunk." in visible
+    assert "/flow [NAME]       List or use a flow." in visible
+    assert "/exit, /quit       Exit chat." in visible
+    assert "\n  \n  /model" not in visible
 
 
 def test_cli_chat_active_step_lines_use_lightweight_event_text() -> None:
