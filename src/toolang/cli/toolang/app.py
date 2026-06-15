@@ -3154,6 +3154,7 @@ class _ChatBottomApp:
             return
         if kind == "stop":
             if self.active_run is not None:
+                self.active_run.record_command(payload)
                 self.active_run.request_cancel()
             return
         if kind != "start":
@@ -3823,21 +3824,25 @@ def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, i
         return lines
     flow_lines = _chat_flow_stage_lines(run)
     if flow_lines:
-        lines = [state_line, *flow_lines] if state_line else list(flow_lines)
+        lines = []
+        if state_line and not _chat_state_line_after_activity(run):
+            lines.append(state_line)
+        lines.extend(flow_lines)
         lines.extend(_chat_timeline_command_lines(run))
         lines.extend(_chat_terminal_event_lines(run, step_renderer))
+        if state_line and _chat_state_line_after_activity(run):
+            lines.append(state_line)
         return lines
     lines: list[str] = []
-    if state_line:
+    if state_line and not _chat_state_line_after_activity(run):
         lines.append(state_line)
     timeline = run.timeline or [("step", index) for index in run.step_indexes()]
     rendered_steps: set[int] = set()
     for position, (kind, index) in enumerate(timeline):
         if kind == "command":
             command = run.commands.get(index)
-            if command is not None and command.get("kind") == "steer":
-                waiting = _chat_command_is_waiting(run, position)
-                lines.extend(_chat_steer_input_block(command, waiting=waiting))
+            if command is not None:
+                lines.extend(_chat_command_activity_lines(run, command, position))
             continue
         if index in rendered_steps:
             continue
@@ -3848,7 +3853,14 @@ def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, i
     for index in run.step_indexes():
         if index not in rendered_steps:
             lines.extend(_chat_step_activity_lines(run, index, step_renderer))
+    if state_line and _chat_state_line_after_activity(run):
+        lines.append(state_line)
     return lines
+
+
+def _chat_state_line_after_activity(run: _ChatRun) -> bool:
+    status = _chat_run_display_status(run.status)
+    return status in {"succeeded", "finished", "completed", "done", "failed", "error", "canceled", "cancelled"}
 
 
 def _chat_step_activity_lines(
@@ -3876,10 +3888,18 @@ def _chat_timeline_command_lines(run: _ChatRun) -> list[str]:
         if kind != "command":
             continue
         command = run.commands.get(index)
-        if command is None or command.get("kind") != "steer":
+        if command is None:
             continue
-        lines.extend(_chat_steer_input_block(command, waiting=_chat_command_is_waiting(run, position)))
+        lines.extend(_chat_command_activity_lines(run, command, position))
     return lines
+
+
+def _chat_command_activity_lines(run: _ChatRun, command: Mapping[str, Any], timeline_position: int) -> list[str]:
+    if command.get("kind") == "steer":
+        return _chat_steer_input_block(command, waiting=_chat_command_is_waiting(run, timeline_position))
+    if command.get("kind") == "stop":
+        return [_chat_dim("◇ cancel requested")]
+    return []
 
 
 def _chat_command_is_waiting(run: _ChatRun, timeline_position: int) -> bool:

@@ -7709,6 +7709,61 @@ def test_cli_chat_run_command_steer_records_input_bar(monkeypatch) -> None:
     assert "+ abc" in visible
 
 
+def test_cli_chat_run_lines_render_stop_command_by_event_order() -> None:
+    run = cli._ChatRun(run_id="run_cancel", message="sleep 120 secs", status="canceled")
+    run.start_step({"run_id": "run_cancel", "step_index": 1, "kind": "tool"})
+    run.record_command(
+        {
+            "kind": "stop",
+            "mode": "immediate",
+            "ref": {"kind": "command", "index": 1},
+        }
+    )
+    run.complete_step(
+        {
+            "run_id": "run_cancel",
+            "step_index": 1,
+            "kind": "tool",
+            "output": [{"type": "tool_result", "tool_name": "shell__execute", "output": {"stdout": ""}}],
+        }
+    )
+
+    visible = cli._chat_visible_text("\n".join(cli._chat_run_lines(run, include_steps=True)))
+
+    assert _indexes_in_order(
+        visible,
+        (
+            "› ran shell__execute",
+            "◇ cancel requested",
+            "◇ stopped run_cancel: canceled",
+        ),
+    )
+
+
+def test_cli_chat_run_command_stop_records_timeline_and_canceling(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_runtime_json", lambda _ctx, _path: {})
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.active_run = cli._ChatRun(run_id="run_cancel", message="working", status="running")
+    app.active_run.mark_running()
+
+    app.handle_runtime_event(
+        {
+            "type": "run_command",
+            "payload": {
+                "run_id": "run_cancel",
+                "kind": "stop",
+                "mode": "immediate",
+                "ref": {"kind": "command", "index": 1},
+            },
+        }
+    )
+
+    assert app.active_run is not None
+    assert app.active_run.status == "canceling"
+    visible = cli._chat_visible_text("\n".join(cli._chat_run_lines(app.active_run, include_steps=True)))
+    assert "◇ cancel requested" in visible
+
+
 def test_cli_chat_ai_sdk_tool_result_replaces_running_tool_line(monkeypatch) -> None:
     monkeypatch.setattr(
         cli,
