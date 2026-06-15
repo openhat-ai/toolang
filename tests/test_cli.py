@@ -8364,6 +8364,7 @@ def test_cli_chat_bottom_layout_can_shrink_to_compact_prompt() -> None:
 
     assert height.min == 1
     assert height.preferred == app.bottom_rows()
+    assert height.max == app.bottom_rows()
 
 
 def test_cli_chat_model_command_lists_models_without_starting_run(monkeypatch) -> None:
@@ -8491,6 +8492,9 @@ def test_cli_chat_queue_panel_uses_current_numbering() -> None:
     del items[0]
 
     assert panel.lines() == ["  queued for submission:", "  [1] second request"]
+    height = panel.height_dimension()
+    assert height.preferred == 2
+    assert height.max == 2
 
 
 def test_cli_chat_queue_commands_help_delete_edit_and_clear(monkeypatch) -> None:

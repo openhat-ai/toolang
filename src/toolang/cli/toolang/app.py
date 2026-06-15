@@ -212,6 +212,11 @@ _CHAT_FLOW_DETAIL_INDENT = "  "
 _CHAT_FLOW_STATEMENT_MARKER = "‣"
 
 
+def _chat_fixed_height(rows: int, *, minimum: int) -> Dimension:
+    height = max(minimum, rows)
+    return Dimension(min=minimum, preferred=height, max=height, weight=0)
+
+
 class _ToolangGroup(TyperGroup):
     def list_commands(self, ctx: click.Context) -> list[str]:
         names = TyperGroup.list_commands(self, ctx)
@@ -2383,7 +2388,7 @@ class _ChatLastRunPanel:
         return len(self.lines())
 
     def height_dimension(self) -> Dimension:
-        return Dimension(min=0, preferred=self.rows(), weight=1)
+        return _chat_fixed_height(self.rows(), minimum=0)
 
     def user_rows(self) -> int:
         return len(self.user_lines())
@@ -2434,7 +2439,7 @@ class _ChatSubmissionQueue:
         return len(self.lines()) if self.get_items() else 0
 
     def height_dimension(self) -> Dimension:
-        return Dimension(min=0, preferred=self.rows(), weight=1)
+        return _chat_fixed_height(self.rows(), minimum=0)
 
 
 class _ChatPromptBox:
@@ -2654,7 +2659,7 @@ class _ChatPromptBox:
         return self.input_rows() + 3
 
     def height_dimension(self) -> Dimension:
-        return Dimension(min=1, preferred=self.rows(), weight=8)
+        return _chat_fixed_height(self.rows(), minimum=1)
 
 
 class _ChatBottomApp:
@@ -2737,7 +2742,7 @@ class _ChatBottomApp:
         return self.last_run_panel.rows() + self.queue_panel.rows() + self.prompt.rows()
 
     def bottom_dimension(self) -> Dimension:
-        return Dimension(min=1, preferred=self.bottom_rows(), weight=1)
+        return _chat_fixed_height(self.bottom_rows(), minimum=1)
 
     async def run(self) -> None:
         self.loop = asyncio.get_running_loop()
