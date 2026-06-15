@@ -9682,28 +9682,27 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert calls == ["/api/v1/runs/run_parent", "/api/v1/threads/term_thread?limit=100"]
-    assert "thread term_thread" in result.stdout
-    assert "run_parent flow:research succeeded" in result.stdout
-    assert "[1] Rank candidates" in result.stdout
-    assert "Rank candidates" in result.stdout
-    assert "3 items -> 2 items · 2 lanes" in result.stdout
-    assert "[2] Inline summary" in result.stdout
-    assert "Inline summary" in result.stdout
-    assert "lane 1/2 · 1/1 calls" in result.stdout
-    assert "item 1/3 · thunk score · run_child succeeded" in result.stdout
-    assert "\x1b[2m" in result.stdout
-    assert "› ran filesystem__read_text: tasks/qf7y0d8k.md" in result.stdout
-    assert "\x1b[2m    tool output\x1b[22m" in result.stdout
-    assert "\x1b[2m    tool output\x1b[22m\n\n[2] Inline summary" in result.stdout
-    assert "thunk <L34> · run_inline succeeded" in result.stdout
-    assert "step 1 model_call" not in result.stdout
+    assert "run run_parent  succeeded  flow:research" in result.stdout
+    assert "steps" in result.stdout
+    assert "✓ 1 step  stage 1 rank prepare count=3" in result.stdout
+    assert "✓ 2 run" in result.stdout
+    assert "item 1/3 thunk:score run_child" in result.stdout
+    assert "✓ 3 step  stage 1 rank done count=2" in result.stdout
+    assert "✓ 4 run  stage 2 do -> thunk:<L34> run_inline" in result.stdout
+    assert "2.1 tool" not in result.stdout
 
-    verbose_result = _invoke_app(["inspect", "dev", "run_parent", "-vv"])
+    tree_result = _invoke_app(["inspect", "dev", "run_parent", "--tree", "--depth", "2"])
 
-    assert verbose_result.exit_code == 0
-    assert "lane 1/2" in verbose_result.stdout
-    assert "item 1/3 · thunk score · run_child succeeded" in verbose_result.stdout
-    assert "thunk <L34> · run_inline succeeded" in verbose_result.stdout
+    assert tree_result.exit_code == 0
+    assert "✓ 2.1 tool  filesystem__read_text: path=tasks/qf7y0d8k.md" in tree_result.stdout
+
+    path_result = _invoke_app(["inspect", "dev", "run_parent:2.1"])
+
+    assert path_result.exit_code == 0
+    assert "step 2.1 tool  succeeded" in path_result.stdout
+    assert "run  run_child" in path_result.stdout
+    assert "output" in path_result.stdout
+    assert "tool output" in path_result.stdout
 
 
 def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> None:
@@ -9792,17 +9791,12 @@ def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> Non
 
     assert result.exit_code == 0
     assert calls == ["/api/v1/runs/run_child", "/api/v1/threads/term_thread?limit=100"]
-    assert "thread term_thread" in result.stdout
-    assert "run run_child" in result.stdout
-    assert "type thunk:expand_queries" in result.stdout
-    assert "status failed" in result.stdout
-    assert "root run_parent" in result.stdout
-    assert "parent run_parent step 2" in result.stdout
-    assert "failure unknown tool call: service_use__service_list (step 2 system)" in result.stdout
-    assert "• I should inspect services." in result.stdout
-    assert "• requested service_use__service_list: all" in result.stdout
-    assert "◇ unknown tool call: service_use__service_list" in result.stdout
-    assert "✓ step" not in result.stdout
+    assert "run run_child  failed  thunk:expand_queries" in result.stdout
+    assert "failure" in result.stdout
+    assert "unknown tool call: service_use__service_list (step 2 system)" in result.stdout
+    assert "✓ 1 model  deepseek/deepseek-chat-v3 I should inspect services." in result.stdout
+    assert "requested service_use__service_list: visibility=all" in result.stdout
+    assert "✗ 2 system  unknown tool call: service_use__service_list" in result.stdout
     assert "- run_parent flow:research" not in result.stdout
 
 
@@ -9876,13 +9870,11 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert calls == ["/api/v1/runs/run_thunk", "/api/v1/threads/term_thread?limit=100"]
-    assert "type thunk:summarize" in result.stdout
-    assert "• Ready to read the task." in result.stdout
-    assert "• requested filesystem__read_text: task.md" in result.stdout
-    assert "\x1b[2m› ran filesystem__read_text: task.md\x1b[22m" in result.stdout
-    assert "\x1b[2m  task body\x1b[22m" in result.stdout
-    assert "• Summary complete." in result.stdout
-    assert "✓ step" not in result.stdout
+    assert "run run_thunk  succeeded  thunk:summarize" in result.stdout
+    assert "✓ 1 model  deepseek/deepseek-chat-v3 Ready to read the task." in result.stdout
+    assert "requested filesystem__read_text: path=task.md" in result.stdout
+    assert "✓ 2 tool  filesystem__read_text: path=task.md" in result.stdout
+    assert "✓ 3 model  deepseek/deepseek-chat-v3 Summary complete." in result.stdout
 
 
 def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
@@ -9937,14 +9929,10 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert calls == ["/api/v1/threads/term_thread?limit=100"]
-    assert "thread term_thread" in result.stdout
-    assert "title agent framework implementations" in result.stdout
-    assert "status idle" in result.stdout
-    assert "runs 2 total, 1 top-level" in result.stdout
-    assert "latest run_child failed" in result.stdout
-    assert "1. run_parent flow:research failed" in result.stdout
-    assert "input query" in result.stdout
-    assert "failure unknown tool call: service_use__service_list (step 3 system)" in result.stdout
+    assert "thread term_thread  idle" in result.stdout
+    assert "title   agent framework implementations" in result.stdout
+    assert "runs    2 total" in result.stdout
+    assert "✗  run_parent  flow:research" in result.stdout
     assert "run_child thunk:expand_queries" not in result.stdout
     assert "step 1" not in result.stdout
 
@@ -10187,114 +10175,28 @@ def test_script_progress_keeps_final_frame_visible(monkeypatch) -> None:
     assert live_kwargs["transient"] is False
 
 
-def test_cli_inspect_run_steps_lists_step_summaries(monkeypatch) -> None:
-    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
-        assert request_path == "/api/v1/runs/run_parent"
-        return _inspect_run_detail(
-            "run_parent",
-            thread_id="term_thread",
-            steps=[
-                {
-                    "record": {
-                        "step_index": 1,
-                        "kind": "step",
-                        "status": "finished",
-                        "payload": {"stage_kind": "rank", "op": "prepare_rank"},
-                        "output": [],
-                    },
-                    "message": None,
-                },
-                {
-                    "record": {
-                        "step_index": 2,
-                        "kind": "run",
-                        "status": "finished",
-                        "payload": {
-                            "target_kind": "thunk",
-                            "target": "score",
-                            "child_run_ids": ["run_child"],
-                        },
-                        "output": [],
-                    },
-                    "message": None,
-                },
-            ],
-        )
-
-    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
-
+def test_cli_inspect_no_longer_accepts_steps_view() -> None:
     result = _invoke_app(["inspect", "dev", "run_parent", "--view", "steps"])
 
-    assert result.exit_code == 0
-    assert "STEP" in result.stdout
-    assert "step" in result.stdout
-    assert "stage rank prepare" in result.stdout
-    assert "thunk:score run_child" in result.stdout
+    assert result.exit_code == 2
+    assert "No such option: --view" in result.stderr
 
 
-def test_cli_inspect_events_reads_run_events(monkeypatch) -> None:
-    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
-        assert request_path == "/api/v1/runs/run_parent/events?limit=25"
-        return {
-            "cursor": 2,
-            "items": [
-                {
-                    "cursor": 1,
-                    "type": "run_start",
-                    "at": "2026-01-01T00:00:00Z",
-                    "payload": {
-                        "run_id": "run_parent",
-                        "thread_id": "term_thread",
-                        "executable_kind": "flow",
-                        "executable_name": "research",
-                        "status": "running",
-                    },
-                },
-                {
-                    "cursor": 2,
-                    "type": "run_start",
-                    "at": "2026-01-01T00:00:01Z",
-                    "payload": {
-                        "run_id": "run_inline",
-                        "thread_id": "term_thread",
-                        "executable_kind": "thunk",
-                        "executable_name": None,
-                        "metadata": {"child": {"source_line": 34}},
-                        "status": "running",
-                    },
-                },
-                {
-                    "cursor": 3,
-                    "type": "step_start",
-                    "at": "2026-01-01T00:00:02Z",
-                    "payload": {
-                        "run_id": "run_parent",
-                        "thread_id": "term_thread",
-                        "step_index": 1,
-                        "kind": "model",
-                    },
-                },
-                {
-                    "cursor": 4,
-                    "type": "run_end",
-                    "at": "2026-01-01T00:00:03Z",
-                    "payload": {"run_id": "run_parent", "thread_id": "term_thread", "status": "finished"},
-                },
-            ],
-        }
-
-    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
-
+def test_cli_inspect_no_longer_accepts_events_view() -> None:
     result = _invoke_app(["inspect", "dev", "run_parent", "--view", "events", "--limit", "25"])
 
-    assert result.exit_code == 0
-    assert "EVENT" in result.stdout
-    assert "DETAIL" in result.stdout
-    assert "run_start" in result.stdout
-    assert "target: flow:research" in result.stdout
-    assert "target: thunk:<L34>" in result.stdout
-    assert "step: 1, kind: model" in result.stdout
-    assert "status: succeeded" in result.stdout
+    assert result.exit_code == 2
+    assert "No such option: --view" in result.stderr
+
+
+def test_cli_inspect_rejects_invalid_step_paths() -> None:
+    thread_result = _invoke_app(["inspect", "dev", "term_thread:1"])
+    malformed_result = _invoke_app(["inspect", "dev", "run_parent:1.bad"])
+
+    assert thread_result.exit_code == 1
+    assert "step paths are only supported for run targets" in thread_result.stderr
+    assert malformed_result.exit_code == 1
+    assert "invalid step path: 1.bad" in malformed_result.stderr
 
 
 def test_cli_thread_control_help_lists_agent_with_arguments() -> None:
