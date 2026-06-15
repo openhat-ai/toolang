@@ -3671,39 +3671,73 @@ def _chat_dim(text: str) -> str:
 
 
 def _chat_panel_user_block(run: _ChatRun) -> list[str]:
-    lines = [""]
-    lines.extend(_chat_user_message_line(index, line) for index, line in enumerate(run.message.splitlines() or [""]))
-    lines.append(_chat_run_id_line(run))
-    return lines
+    return _chat_input_bar_lines(
+        marker=">",
+        text=run.message,
+        footer=_chat_run_id_footer(run),
+        fg=_CHAT_INPUT_FG,
+        bg=_CHAT_INPUT_BG,
+        ansi=False,
+    )
 
 
 def _chat_scrollback_user_block(run: _ChatRun) -> list[str]:
-    lines = [_chat_input_block_line("")]
-    lines.extend(
-        _chat_input_block_line(_chat_user_message_line(index, line))
-        for index, line in enumerate(run.message.splitlines() or [""])
+    return _chat_input_bar_lines(
+        marker=">",
+        text=run.message,
+        footer=_chat_run_id_footer(run),
+        fg=_CHAT_INPUT_FG,
+        bg=_CHAT_INPUT_BG,
+        ansi=True,
     )
-    if run.run_id:
-        lines.append(_chat_input_block_line(_chat_run_id_line(run)))
+
+
+def _chat_input_bar_lines(
+    *,
+    marker: str,
+    text: str,
+    footer: str = "",
+    fg: str,
+    bg: str,
+    ansi: bool,
+    outer_blank: bool = False,
+) -> list[str]:
+    lines: list[str] = []
+    if outer_blank:
+        lines.append("")
+    lines.append(_chat_input_bar_line("", fg=fg, bg=bg, ansi=ansi))
+    lines.extend(
+        _chat_input_bar_line(_chat_input_bar_message_line(marker, index, line), fg=fg, bg=bg, ansi=ansi)
+        for index, line in enumerate(text.splitlines() or [""])
+    )
+    lines.append(_chat_input_bar_line(footer, fg=fg, bg=bg, ansi=ansi))
+    if outer_blank:
+        lines.append("")
     return lines
 
 
-def _chat_user_message_line(index: int, line: str) -> str:
+def _chat_input_bar_message_line(marker: str, index: int, line: str) -> str:
     if index == 0:
-        return f"{_CHAT_DIM}>{_CHAT_NORMAL_INTENSITY} {line}"
+        return f"{_CHAT_DIM}{marker}{_CHAT_NORMAL_INTENSITY} {line}"
     return f"  {line}"
 
 
-def _chat_run_id_line(run: _ChatRun) -> str:
+def _chat_user_message_line(index: int, line: str) -> str:
+    return _chat_input_bar_message_line(">", index, line)
+
+
+def _chat_run_id_footer(run: _ChatRun) -> str:
     return f"{_CHAT_DIM}  {run.run_id}{_CHAT_NORMAL_INTENSITY}" if run.run_id else ""
 
 
 def _chat_input_block_line(content: str) -> str:
-    return f"{_chat_ansi_style(_CHAT_INPUT_FG, _CHAT_INPUT_BG)}{_chat_pad_visible(content, _chat_terminal_width())}{_CHAT_RESET}"
+    return _chat_input_bar_line(content, fg=_CHAT_INPUT_FG, bg=_CHAT_INPUT_BG, ansi=True)
 
 
-def _chat_steer_input_block_line(content: str) -> str:
-    return f"{_chat_ansi_style(_CHAT_STEER_INPUT_FG, _CHAT_STEER_INPUT_BG)}{_chat_pad_visible(content, _chat_terminal_width())}{_CHAT_RESET}"
+def _chat_input_bar_line(content: str, *, fg: str, bg: str, ansi: bool) -> str:
+    if not ansi:
+        return content
+    return f"{_chat_ansi_style(fg, bg)}{_chat_pad_visible(content, _chat_terminal_width())}{_CHAT_RESET}"
 
 
 def _chat_pad_visible(content: str, width: int) -> str:
@@ -3912,19 +3946,16 @@ def _chat_command_is_waiting(run: _ChatRun, timeline_position: int) -> bool:
 
 def _chat_steer_input_block(command: Mapping[str, Any], *, waiting: bool) -> list[str]:
     message = _event_message_text(command.get("message"))
-    content = message.splitlines() or [""]
-    lines = ["", _chat_steer_input_block_line("")]
-    lines.extend(_chat_steer_input_block_line(_chat_steer_message_line(index, line)) for index, line in enumerate(content))
     footer = _chat_dim("  pending for next step") if waiting else ""
-    lines.append(_chat_steer_input_block_line(footer))
-    lines.append("")
-    return lines
-
-
-def _chat_steer_message_line(index: int, line: str) -> str:
-    if index == 0:
-        return f"{_CHAT_DIM}+{_CHAT_NORMAL_INTENSITY} {line}"
-    return f"  {line}"
+    return _chat_input_bar_lines(
+        marker="+",
+        text=message,
+        footer=footer,
+        fg=_CHAT_STEER_INPUT_FG,
+        bg=_CHAT_STEER_INPUT_BG,
+        ansi=True,
+        outer_blank=True,
+    )
 
 
 def _chat_terminal_event_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, int], str]) -> list[str]:

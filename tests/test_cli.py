@@ -7665,6 +7665,24 @@ def test_cli_chat_steer_waiting_uses_footer_padding_line() -> None:
     assert block[-1] == ""
 
 
+def test_cli_chat_active_run_uses_steer_input_bar_colors() -> None:
+    run = cli._ChatRun(run_id="run_steer", message="sleep 120 secs", status="running")
+    run.start_step({"run_id": "run_steer", "step_index": 1, "kind": "tool"})
+    run.record_command(
+        {
+            "kind": "steer",
+            "ref": {"kind": "command", "index": 1},
+            "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
+        }
+    )
+    panel = cli._ChatLastRunPanel(lambda: run)
+
+    rendered = "\n".join(panel.activity_lines())
+
+    assert cli._chat_ansi_style(cli._CHAT_STEER_INPUT_FG, cli._CHAT_STEER_INPUT_BG) in rendered
+    assert cli._chat_visible_text(rendered).count("+ abc") == 1
+
+
 def test_cli_chat_run_lines_render_pending_steer_after_active_step() -> None:
     run = cli._ChatRun(run_id="run_steer", message="sleep 120 secs", status="running")
     run.complete_step(
