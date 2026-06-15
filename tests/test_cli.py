@@ -7677,10 +7677,11 @@ def test_cli_chat_active_run_uses_steer_input_bar_colors() -> None:
     )
     panel = cli._ChatLastRunPanel(lambda: run)
 
-    rendered = "\n".join(panel.activity_lines())
+    rendered = panel.render_activity()
+    rendered_text = "".join(text for _style, text in rendered)
 
-    assert cli._chat_ansi_style(cli._CHAT_STEER_INPUT_FG, cli._CHAT_STEER_INPUT_BG) in rendered
-    assert cli._chat_visible_text(rendered).count("+ abc") == 1
+    assert ("class:steer-input", "+ abc" + " " * (cli._chat_terminal_width() - len("+ abc"))) in rendered
+    assert rendered_text.count("+ abc") == 1
 
 
 def test_cli_chat_run_lines_render_pending_steer_after_active_step() -> None:
@@ -8189,6 +8190,7 @@ def test_cli_chat_palette_uses_fixed_neutral_panel_colors() -> None:
 
     assert palette["queue"] == "fg:#f2f2f2 bg:#3a3a3a"
     assert palette["input"] == "fg:#f5f5f5 bg:#444444"
+    assert palette["steer-input"] == "fg:#f5f5f5 bg:#3f4a4d"
     assert palette["status"] == "fg:#f2f2f2 bg:#5a5a5a"
     assert len({palette["status.model"], palette["status.thunk"], palette["status.flow"]}) == 3
     assert palette["cursor"] == "fg:#111111 bg:#eeeeee"
@@ -8511,9 +8513,9 @@ def test_cli_chat_queue_commands_help_delete_edit_and_clear(monkeypatch) -> None
     visible = cli._chat_visible_text("\n".join(line for lines in writes for line in lines))
     assert "/queue steer 2" in visible
     assert "#2 run: second request" in visible
-    assert "deleted queue #1: first request" in visible
-    assert "editing queue #1: second request" in visible
-    assert "queue cleared" in visible
+    assert "deleted queue" not in visible
+    assert "editing queue" not in visible
+    assert "queue cleared" not in visible
     assert app.pending == []
     assert app.prompt.buffer.text == "second request"
 
@@ -8544,7 +8546,7 @@ def test_cli_chat_queue_steer_sends_pending_item_to_active_run(monkeypatch) -> N
         )
     ]
     assert app.pending == []
-    assert "steered queue #1: please adjust" in cli._chat_visible_text("\n".join(writes[0]))
+    assert writes == []
 
 
 def test_cli_chat_queue_run_marks_item_as_run(monkeypatch) -> None:
@@ -8559,7 +8561,7 @@ def test_cli_chat_queue_run_marks_item_as_run(monkeypatch) -> None:
     app.handle_submit("/queue r 1")
 
     assert app.pending == [cli._ChatQueueItem(kind="run", text="continue as a run")]
-    assert "queue #1 set to run: continue as a run" in cli._chat_visible_text("\n".join(writes[0]))
+    assert writes == []
 
 
 def test_cli_chat_normal_submit_after_flow_selection_still_starts_run(monkeypatch) -> None:

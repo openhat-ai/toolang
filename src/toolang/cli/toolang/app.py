@@ -29,7 +29,7 @@ import click
 from prompt_toolkit.application import Application
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.filters import Condition
-from prompt_toolkit.formatted_text import ANSI
+from prompt_toolkit.formatted_text import ANSI, to_formatted_text
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, Layout, VSplit, Window
@@ -2355,8 +2355,8 @@ class _ChatLastRunPanel:
     def render_user(self) -> ANSI:
         return ANSI("\n".join(self.user_lines()))
 
-    def render_activity(self) -> ANSI:
-        return ANSI("\n".join(self.activity_lines()))
+    def render_activity(self) -> list[tuple[str, str]]:
+        return _chat_activity_formatted_text(self.activity_lines())
 
     def lines(self) -> list[str]:
         return [*self.user_lines(), *self.activity_lines()]
@@ -3259,7 +3259,6 @@ class _ChatBottomApp:
         action = tokens[0].lower()
         if action in {"clear", "c"}:
             self.pending.clear()
-            _chat_write_lines(_chat_local_command_lines(message, ["queue cleared"]))
             return True
         if action not in {"steer", "s", "run", "r", "delete", "d", "edit", "e"}:
             self.prompt.set_error(f"Unknown queue command: {tokens[0]}")
@@ -3272,19 +3271,15 @@ class _ChatBottomApp:
             self.prompt.set_error(f"Queue item not found: {tokens[1]}")
             return True
         item = self.pending[index]
-        display_index = index + 1
         if action in {"delete", "d"}:
             self.pending.pop(index)
-            _chat_write_lines(_chat_local_command_lines(message, [f"deleted queue #{display_index}: {_chat_summarize(item.text)}"]))
             return True
         if action in {"edit", "e"}:
             self.pending.pop(index)
             self.prompt.replace_input(item.text)
-            _chat_write_lines(_chat_local_command_lines(message, [f"editing queue #{display_index}: {_chat_summarize(item.text)}"]))
             return True
         if action in {"run", "r"}:
             item.kind = "run"
-            _chat_write_lines(_chat_local_command_lines(message, [f"queue #{display_index} set to run: {_chat_summarize(item.text)}"]))
             return True
         run = self.active_run
         if run is None or not run.run_id:
@@ -3300,7 +3295,6 @@ class _ChatBottomApp:
             self.prompt.set_error(_chat_friendly_error(exc.message))
             return True
         self.pending.pop(index)
-        _chat_write_lines(_chat_local_command_lines(message, [f"steered queue #{display_index}: {_chat_summarize(item.text)}"]))
         return True
 
     def handle_executable_command(self, command: str, argument: str, message: str) -> bool:
@@ -3754,6 +3748,7 @@ def _chat_ui_palette() -> dict[str, str]:
         "last-run": "",
         "queue": _chat_prompt_style(_CHAT_QUEUE_FG, _CHAT_QUEUE_BG),
         "input": _chat_prompt_style(_CHAT_INPUT_FG, _CHAT_INPUT_BG),
+        "steer-input": _chat_prompt_style(_CHAT_STEER_INPUT_FG, _CHAT_STEER_INPUT_BG),
         "cursor": _chat_prompt_style(_CHAT_CURSOR_FG, _CHAT_CURSOR_BG),
         "input.cursor": _chat_prompt_style(_CHAT_CURSOR_FG, _CHAT_CURSOR_BG),
         "status": _chat_prompt_style(_CHAT_STATUS_FG, _CHAT_STATUS_BG),
@@ -3767,6 +3762,19 @@ def _chat_ui_palette() -> dict[str, str]:
 
 def _chat_prompt_style(fg: str, bg: str) -> str:
     return f"fg:{fg} bg:{bg}"
+
+
+def _chat_activity_formatted_text(lines: Sequence[str]) -> list[tuple[str, str]]:
+    steer_prefix = _chat_ansi_style(_CHAT_STEER_INPUT_FG, _CHAT_STEER_INPUT_BG)
+    fragments: list[tuple[str, str]] = []
+    for index, line in enumerate(lines):
+        if line.startswith(steer_prefix):
+            fragments.append(("class:steer-input", _chat_visible_text(line)))
+        else:
+            fragments.extend(cast(list[tuple[str, str]], to_formatted_text(ANSI(line))))
+        if index < len(lines) - 1:
+            fragments.append(("", "\n"))
+    return fragments
 
 
 def _chat_ansi_style(fg: str, bg: str) -> str:
