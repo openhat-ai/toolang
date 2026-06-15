@@ -3915,9 +3915,8 @@ def _chat_steer_input_block(command: Mapping[str, Any], *, waiting: bool) -> lis
     content = message.splitlines() or [""]
     lines = ["", _chat_steer_input_block_line("")]
     lines.extend(_chat_steer_input_block_line(_chat_steer_message_line(index, line)) for index, line in enumerate(content))
-    if waiting:
-        lines.append(_chat_steer_input_block_line(_chat_dim("  waiting for current step")))
-    lines.append(_chat_steer_input_block_line(""))
+    footer = _chat_dim("  pending for next step") if waiting else ""
+    lines.append(_chat_steer_input_block_line(footer))
     lines.append("")
     return lines
 

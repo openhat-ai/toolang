@@ -7626,7 +7626,7 @@ def test_cli_chat_run_lines_render_consumed_steer_input_before_response() -> Non
             '• Now "abc" - still testing the queue?',
         ),
     )
-    assert "waiting for current step" not in visible
+    assert "pending for next step" not in visible
     assert cli._chat_ansi_style(cli._CHAT_STEER_INPUT_FG, cli._CHAT_STEER_INPUT_BG) in rendered
     assert any(line.strip() == "+ abc" for line in visible.splitlines())
 
@@ -7647,6 +7647,22 @@ def test_cli_chat_steer_input_block_has_vertical_blank_lines() -> None:
     assert block[-1] == ""
     assert visible_lines[marker_index - 1].strip() == ""
     assert visible_lines[marker_index + 1].strip() == ""
+
+
+def test_cli_chat_steer_waiting_uses_footer_padding_line() -> None:
+    block = cli._chat_steer_input_block(
+        {
+            "kind": "steer",
+            "ref": {"kind": "command", "index": 1},
+            "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
+        },
+        waiting=True,
+    )
+    visible_lines = cli._chat_visible_text("\n".join(block)).splitlines()
+    marker_index = next(index for index, line in enumerate(visible_lines) if line.strip() == "+ abc")
+
+    assert visible_lines[marker_index + 1].strip() == "pending for next step"
+    assert block[-1] == ""
 
 
 def test_cli_chat_run_lines_render_pending_steer_after_active_step() -> None:
@@ -7676,7 +7692,7 @@ def test_cli_chat_run_lines_render_pending_steer_after_active_step() -> None:
             "› ran shell__execute",
             "• thinking...",
             "+ abc",
-            "waiting for current step",
+            "pending for next step",
         ),
     )
 
@@ -7703,7 +7719,7 @@ def test_cli_chat_completed_step_keeps_timeline_for_steer_ordering() -> None:
     visible = cli._chat_visible_text("\n".join(cli._chat_run_lines(run, include_steps=True)))
 
     assert _indexes_in_order(visible, ("+ abc", "• after steer"))
-    assert "waiting for current step" not in visible
+    assert "pending for next step" not in visible
 
 
 def test_cli_chat_run_command_steer_records_input_bar(monkeypatch) -> None:
