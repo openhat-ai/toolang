@@ -7960,7 +7960,7 @@ def test_cli_chat_prompt_status_uses_horizontal_padding() -> None:
     status_text = "".join(text for _style, text in prompt.render_status())
 
     assert status_text.startswith("  runtime model")
-    assert "^j newline  ↑↓ history" in status_text
+    assert "^c cancel  ^d exit  ^j newline  ↑↓ history" in status_text
     assert status_text.endswith("  ")
 
     prompt.set_error("failed")
@@ -7979,14 +7979,17 @@ def test_cli_chat_prompt_status_colors_model_thunk_and_flow() -> None:
     assert ("class:status.thunk", "thunk:summarize") in thunk_segments
 
 
-def test_cli_chat_prompt_esc_keys_cancel() -> None:
+def test_cli_chat_prompt_cancel_and_exit_key_bindings() -> None:
     prompt = cli._ChatPromptBox(lambda _event: None, lambda: None, "runtime model")
     keys = cli.KeyBindings()
 
     prompt.bind(keys)
 
     bindings = {tuple(str(key) for key in binding.keys) for binding in keys.bindings}
-    assert ("Keys.Escape",) in bindings
+    assert ("Keys.ControlC",) in bindings
+    assert ("Keys.ControlD",) in bindings
+    assert ("Keys.ControlQ",) in bindings
+    assert ("Keys.Escape",) not in bindings
     assert ("Keys.Escape", "Keys.Escape") in bindings
     assert ("Keys.Escape", "Keys.ControlM") in bindings
 
@@ -8510,6 +8513,93 @@ def test_cli_chat_cancel_active_run_posts_cancel(monkeypatch) -> None:
     assert app.active_run.cancel_requested is True
     assert sent == ["run_cancel"]
     assert app.prompt.error_message == ""
+
+
+def test_cli_chat_interrupt_clears_input_before_cancel(monkeypatch) -> None:
+    sent: list[str] = []
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.active_run = cli._ChatRun(run_id="run_cancel", message="hello", status="running", accept_child_trace=True)
+    app.active_run.mark_running()
+    app.prompt.buffer.text = "draft"
+    monkeypatch.setattr(app, "send_cancel_request", sent.append)
+
+    app.handle_interrupt()
+
+    assert app.prompt.buffer.text == ""
+    assert app.active_run is not None
+    assert app.active_run.status == "running"
+    assert sent == []
+
+
+def test_cli_chat_interrupt_cancels_active_run_when_input_empty(monkeypatch) -> None:
+    sent: list[str] = []
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.active_run = cli._ChatRun(run_id="run_cancel", message="hello", status="running", accept_child_trace=True)
+    app.active_run.mark_running()
+    monkeypatch.setattr(app, "send_cancel_request", sent.append)
+
+    app.handle_interrupt()
+
+    assert app.active_run is not None
+    assert app.active_run.status == "canceling"
+    assert sent == ["run_cancel"]
+
+
+def test_cli_chat_interrupt_does_not_exit_when_idle(monkeypatch) -> None:
+    exited = False
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+
+    def nonlocal_set_exited() -> None:
+        nonlocal exited
+        exited = True
+
+    monkeypatch.setattr(app, "handle_quit", nonlocal_set_exited)
+
+    app.handle_interrupt()
+
+    assert exited is False
+
+
+def test_cli_chat_eof_only_exits_when_idle_with_empty_input(monkeypatch) -> None:
+    exits = 0
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+
+    def fake_quit() -> None:
+        nonlocal exits
+        exits += 1
+
+    monkeypatch.setattr(app, "handle_quit", fake_quit)
+
+    app.prompt.buffer.text = "draft"
+    app.handle_eof()
+    app.prompt.buffer.text = ""
+    app.active_run = cli._ChatRun(run_id="run_cancel", message="hello", status="running", accept_child_trace=True)
+    app.active_run.mark_running()
+    app.handle_eof()
+    app.active_run = None
+    app.handle_eof()
+
+    assert exits == 1
+
+
+def test_cli_chat_exit_commands_force_quit(monkeypatch) -> None:
+    exits = 0
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.active_run = cli._ChatRun(run_id="run_cancel", message="hello", status="running", accept_child_trace=True)
+    app.active_run.mark_running()
+    app.prompt.buffer.text = "draft"
+
+    def fake_quit() -> None:
+        nonlocal exits
+        exits += 1
+
+    monkeypatch.setattr(app, "handle_quit", fake_quit)
+
+    assert app.handle_local_command("/quit") is True
+    assert app.handle_local_command("/exit") is True
+    assert exits == 2
 
 
 def test_cli_chat_send_cancel_request_uses_empty_payload(monkeypatch) -> None:

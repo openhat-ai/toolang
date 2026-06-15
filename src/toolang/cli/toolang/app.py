@@ -2483,7 +2483,7 @@ class _ChatPromptBox:
             segments[0] = (style, f"  {text}")
         return [
             *segments,
-            ("class:status.text", "  ^j newline  ↑↓ history"),
+            ("class:status.text", "  ^c cancel  ^d exit  ^j newline  ↑↓ history"),
             ("class:status.text", "  "),
         ]
 
@@ -2501,12 +2501,13 @@ class _ChatPromptBox:
             self.invalidate()
 
         @keys.add("c-c")
-        @keys.add("escape")
-        @keys.add("escape", "escape")
-        def cancel_or_exit(_event: Any) -> None:
-            self.emit(_ChatUIEvent("cancel"))
+        def interrupt(_event: Any) -> None:
+            self.emit(_ChatUIEvent("interrupt"))
 
         @keys.add("c-d")
+        def eof(_event: Any) -> None:
+            self.emit(_ChatUIEvent("eof"))
+
         @keys.add("c-q")
         def quit_app(_event: Any) -> None:
             self.emit(_ChatUIEvent("quit"))
@@ -2519,6 +2520,10 @@ class _ChatPromptBox:
         @keys.add("escape", "enter")
         def insert_newline(_event: Any) -> None:
             self.insert_newline()
+
+        @keys.add("escape", "escape")
+        def cancel_run(_event: Any) -> None:
+            self.emit(_ChatUIEvent("cancel"))
 
         @keys.add("up")
         @keys.add("c-p")
@@ -2537,6 +2542,17 @@ class _ChatPromptBox:
 
     def insert_newline(self) -> None:
         self.buffer.insert_text("\n")
+        self.invalidate()
+
+    def has_input(self) -> bool:
+        return bool(self.buffer.text)
+
+    def clear_input(self) -> None:
+        if not self.buffer.text:
+            return
+        self.buffer.text = ""
+        self.history_index = None
+        self.history_draft = ""
         self.invalidate()
 
     def record_history(self, message: str) -> None:
@@ -2734,6 +2750,10 @@ class _ChatBottomApp:
                     self.handle_cancel_error(str(event.value or "cancel request failed"))
                 elif event.type == "tick":
                     self.handle_tick()
+                elif event.type == "interrupt":
+                    self.handle_interrupt()
+                elif event.type == "eof":
+                    self.handle_eof()
                 elif event.type == "cancel":
                     self.handle_cancel()
                 elif event.type == "clear":
@@ -2763,9 +2783,24 @@ class _ChatBottomApp:
         self.app.renderer.clear()
         self.app.invalidate()
 
+    def handle_interrupt(self) -> None:
+        if self.prompt.has_input():
+            self.prompt.clear_input()
+            return
+        if self.has_active_run():
+            self.handle_cancel()
+            return
+        self.prompt.clear_error()
+        self.app.invalidate()
+
+    def handle_eof(self) -> None:
+        if not self.prompt.has_input() and not self.has_active_run():
+            self.handle_quit()
+            return
+        self.app.invalidate()
+
     def handle_cancel(self) -> None:
         if not self.has_active_run():
-            self.handle_quit()
             return
         if self.active_run is None or self.active_run.cancel_requested:
             return
@@ -3140,6 +3175,9 @@ class _ChatBottomApp:
         if parsed is None:
             return False
         command, argument = parsed
+        if command in {"exit", "quit"}:
+            self.handle_quit()
+            return True
         if command in {"help", "?"}:
             _chat_write_lines(_chat_local_command_lines(message, _chat_help_lines()))
             return True
