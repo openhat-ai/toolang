@@ -73,6 +73,18 @@ def _indexes_in_order(text: str, tokens: tuple[str, ...]) -> bool:
     return indexes == sorted(indexes)
 
 
+def _ansi_truecolor_background(text: str) -> str | None:
+    marker = "48;2;"
+    start = text.find(marker)
+    if start < 0:
+        return None
+    values = text[start + len(marker) :].split("m", 1)[0].split(";")[:3]
+    if len(values) != 3:
+        return None
+    red, green, blue = (int(value) for value in values)
+    return f"{red:02x}{green:02x}{blue:02x}"
+
+
 class _FakeModelProvider:
     def __init__(
         self,
@@ -7667,15 +7679,14 @@ def test_cli_chat_steer_waiting_uses_footer_padding_line() -> None:
 
 
 def test_cli_chat_active_run_uses_steer_input_bar_colors() -> None:
+    command = {
+        "kind": "steer",
+        "ref": {"kind": "command", "index": 1},
+        "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
+    }
     run = cli._ChatRun(run_id="run_steer", message="sleep 120 secs", status="running")
     run.start_step({"run_id": "run_steer", "step_index": 1, "kind": "tool"})
-    run.record_command(
-        {
-            "kind": "steer",
-            "ref": {"kind": "command", "index": 1},
-            "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
-        }
-    )
+    run.record_command(command)
     panel = cli._ChatLastRunPanel(lambda: run)
 
     rendered = panel.render_activity()
@@ -7692,6 +7703,10 @@ def test_cli_chat_active_run_uses_steer_input_bar_colors() -> None:
         if fragment_style.startswith("class:steer-input")
     }
     assert steer_backgrounds == {cli._CHAT_STEER_INPUT_BG.removeprefix("#")}
+    scrollback_background = _ansi_truecolor_background("\n".join(cli._chat_steer_input_block(command, waiting=True)))
+    input_background = _ansi_truecolor_background(cli._chat_input_block_line(""))
+    assert scrollback_background == next(iter(steer_backgrounds))
+    assert scrollback_background != input_background
 
 
 def test_cli_chat_active_run_uses_normal_input_bar_colors() -> None:
