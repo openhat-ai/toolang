@@ -201,8 +201,10 @@ _CHAT_QUEUE_FG = "#f2f2f2"
 _CHAT_QUEUE_BG = "#3a3a3a"
 _CHAT_INPUT_FG = "#f5f5f5"
 _CHAT_INPUT_BG = "#444444"
+_CHAT_INPUT_DIM_FG = "#b8b8b8"
 _CHAT_STEER_INPUT_FG = "#f5f5f5"
 _CHAT_STEER_INPUT_BG = "#3f4a4d"
+_CHAT_STEER_INPUT_DIM_FG = "#b8b8b8"
 _CHAT_STATUS_FG = "#f2f2f2"
 _CHAT_STATUS_BG = "#5a5a5a"
 _CHAT_CURSOR_FG = "#111111"
@@ -2340,7 +2342,7 @@ class _ChatLastRunPanel:
                         height=self.user_rows,
                         wrap_lines=False,
                         always_hide_cursor=True,
-                        style="class:input",
+                        style="class:normal-input",
                         char=" ",
                     ),
                     Window(
@@ -2357,8 +2359,17 @@ class _ChatLastRunPanel:
             filter=Condition(lambda: bool(self.lines())),
         )
 
-    def render_user(self) -> ANSI:
-        return ANSI("\n".join(self.user_lines()))
+    def render_user(self) -> list[tuple[str, str]]:
+        run = self.get_run()
+        if run is None:
+            return []
+        return _chat_input_bar_fragments(
+            marker=">",
+            text=run.message,
+            footer=_chat_run_id_footer_text(run),
+            footer_dim=bool(run.run_id),
+            kind="normal",
+        )
 
     def render_activity(self) -> list[tuple[str, str]]:
         return _chat_activity_formatted_text(self.activity_lines())
@@ -3719,6 +3730,10 @@ def _chat_run_id_footer(run: _ChatRun) -> str:
     return f"{_CHAT_DIM}  {run.run_id}{_CHAT_NORMAL_INTENSITY}" if run.run_id else ""
 
 
+def _chat_run_id_footer_text(run: _ChatRun) -> str:
+    return f"  {run.run_id}" if run.run_id else ""
+
+
 def _chat_input_block_line(content: str) -> str:
     return _chat_input_bar_line(content, fg=_CHAT_INPUT_FG, bg=_CHAT_INPUT_BG, ansi=True)
 
@@ -3727,6 +3742,56 @@ def _chat_input_bar_line(content: str, *, fg: str, bg: str, ansi: bool) -> str:
     if not ansi:
         return content
     return f"{_chat_ansi_style(fg, bg)}{_chat_pad_visible(content, _chat_terminal_width())}{_CHAT_RESET}"
+
+
+def _chat_input_bar_fragments(
+    *,
+    marker: str,
+    text: str,
+    footer: str = "",
+    footer_dim: bool = False,
+    kind: Literal["normal", "steer"],
+    outer_blank: bool = False,
+) -> list[tuple[str, str]]:
+    lines: list[list[tuple[bool, str]]] = []
+    if outer_blank:
+        lines.append([])
+    lines.append([])
+    for index, line in enumerate(text.splitlines() or [""]):
+        if index == 0:
+            lines.append([(True, marker), (False, f" {line}")])
+        else:
+            lines.append([(False, f"  {line}")])
+    lines.append([(footer_dim, footer)] if footer else [])
+    if outer_blank:
+        lines.append([])
+    fragments: list[tuple[str, str]] = []
+    for index, segments in enumerate(lines):
+        fragments.extend(_chat_input_bar_line_fragments(segments, kind=kind))
+        if index < len(lines) - 1:
+            fragments.append(("", "\n"))
+    return fragments
+
+
+def _chat_input_bar_line_fragments(
+    segments: Sequence[tuple[bool, str]], *, kind: Literal["normal", "steer"]
+) -> list[tuple[str, str]]:
+    fragments: list[tuple[str, str]] = []
+    visible_len = 0
+    for dim, text in segments:
+        if not text:
+            continue
+        fragments.append((_chat_input_bar_class(kind, dim=dim), text))
+        visible_len += _chat_display_len(text)
+    padding = " " * max(0, _chat_terminal_width() - visible_len)
+    if padding:
+        fragments.append((_chat_input_bar_class(kind, dim=False), padding))
+    return fragments
+
+
+def _chat_input_bar_class(kind: Literal["normal", "steer"], *, dim: bool) -> str:
+    prefix = "normal-input" if kind == "normal" else "steer-input"
+    return f"class:{prefix}.dim" if dim else f"class:{prefix}"
 
 
 def _chat_pad_visible(content: str, width: int) -> str:
@@ -3742,9 +3807,11 @@ def _chat_ui_palette() -> dict[str, str]:
         "": "",
         "last-run": "",
         "queue": _chat_prompt_style(_CHAT_QUEUE_FG, _CHAT_QUEUE_BG),
+        "normal-input": _chat_prompt_style(_CHAT_INPUT_FG, _CHAT_INPUT_BG),
+        "normal-input.dim": _chat_prompt_style(_CHAT_INPUT_DIM_FG, _CHAT_INPUT_BG),
         "input": _chat_prompt_style(_CHAT_INPUT_FG, _CHAT_INPUT_BG),
         "steer-input": _chat_prompt_style(_CHAT_STEER_INPUT_FG, _CHAT_STEER_INPUT_BG),
-        "steer-input.dim": _chat_prompt_style("#b8b8b8", _CHAT_STEER_INPUT_BG),
+        "steer-input.dim": _chat_prompt_style(_CHAT_STEER_INPUT_DIM_FG, _CHAT_STEER_INPUT_BG),
         "cursor": _chat_prompt_style(_CHAT_CURSOR_FG, _CHAT_CURSOR_BG),
         "input.cursor": _chat_prompt_style(_CHAT_CURSOR_FG, _CHAT_CURSOR_BG),
         "status": _chat_prompt_style(_CHAT_STATUS_FG, _CHAT_STATUS_BG),
@@ -3782,8 +3849,7 @@ def _chat_steer_activity_fragments(line: str, *, steer_prefix: str) -> list[tupl
     def flush() -> None:
         if not chunk:
             return
-        style = "class:steer-input.dim" if dim else "class:steer-input"
-        fragments.append((style, "".join(chunk)))
+        fragments.append((_chat_input_bar_class("steer", dim=dim), "".join(chunk)))
         chunk.clear()
 
     index = 0

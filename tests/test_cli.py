@@ -7687,6 +7687,19 @@ def test_cli_chat_active_run_uses_steer_input_bar_colors() -> None:
     assert rendered_text.count("+ abc") == 1
 
 
+def test_cli_chat_active_run_uses_normal_input_bar_colors() -> None:
+    run = cli._ChatRun(run_id="run_user", message="hello", status="running")
+    panel = cli._ChatLastRunPanel(lambda: run)
+
+    rendered = panel.render_user()
+    rendered_text = "".join(text for _style, text in rendered)
+
+    assert ("class:normal-input.dim", ">") in rendered
+    assert any(style == "class:normal-input" and "hello" in text for style, text in rendered)
+    assert any(style == "class:normal-input.dim" and text.strip() == "run_user" for style, text in rendered)
+    assert rendered_text.count("> hello") == 1
+
+
 def test_cli_chat_run_lines_render_pending_steer_after_active_step() -> None:
     run = cli._ChatRun(run_id="run_steer", message="sleep 120 secs", status="running")
     run.complete_step(
@@ -8192,6 +8205,8 @@ def test_cli_chat_palette_uses_fixed_neutral_panel_colors() -> None:
     palette = cli._chat_ui_palette()
 
     assert palette["queue"] == "fg:#f2f2f2 bg:#3a3a3a"
+    assert palette["normal-input"] == "fg:#f5f5f5 bg:#444444"
+    assert palette["normal-input.dim"] == "fg:#b8b8b8 bg:#444444"
     assert palette["input"] == "fg:#f5f5f5 bg:#444444"
     assert palette["steer-input"] == "fg:#f5f5f5 bg:#3f4a4d"
     assert palette["steer-input.dim"] == "fg:#b8b8b8 bg:#3f4a4d"
