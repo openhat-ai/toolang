@@ -8364,7 +8364,6 @@ def test_cli_chat_bottom_layout_can_shrink_to_compact_prompt() -> None:
 
     assert height.min == 1
     assert height.preferred == app.bottom_rows()
-    assert height.max == app.bottom_rows()
 
 
 def test_cli_chat_model_command_lists_models_without_starting_run(monkeypatch) -> None:

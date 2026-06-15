@@ -2388,7 +2388,7 @@ class _ChatLastRunPanel:
         return len(self.lines())
 
     def height_dimension(self) -> Dimension:
-        return _chat_fixed_height(self.rows(), minimum=0)
+        return Dimension(min=0, preferred=self.rows(), weight=1)
 
     def user_rows(self) -> int:
         return len(self.user_lines())
@@ -2404,20 +2404,13 @@ class _ChatSubmissionQueue:
 
     def container(self) -> ConditionalContainer:
         return ConditionalContainer(
-            VSplit(
-                [
-                    Window(width=2),
-                    Window(
-                        self.view,
-                        height=self.rows,
-                        wrap_lines=False,
-                        always_hide_cursor=True,
-                        style="class:queue",
-                        char=" ",
-                    ),
-                    Window(width=2),
-                ],
-                height=self.height_dimension,
+            Window(
+                self.view,
+                height=self.rows,
+                wrap_lines=False,
+                always_hide_cursor=True,
+                style="class:queue",
+                char=" ",
             ),
             filter=Condition(lambda: bool(self.get_items())),
         )
@@ -2659,7 +2652,7 @@ class _ChatPromptBox:
         return self.input_rows() + 3
 
     def height_dimension(self) -> Dimension:
-        return _chat_fixed_height(self.rows(), minimum=1)
+        return Dimension(min=1, preferred=self.rows(), weight=8)
 
 
 class _ChatBottomApp:
@@ -2742,7 +2735,7 @@ class _ChatBottomApp:
         return self.last_run_panel.rows() + self.queue_panel.rows() + self.prompt.rows()
 
     def bottom_dimension(self) -> Dimension:
-        return _chat_fixed_height(self.bottom_rows(), minimum=1)
+        return Dimension(min=1, preferred=self.bottom_rows(), weight=1)
 
     async def run(self) -> None:
         self.loop = asyncio.get_running_loop()
