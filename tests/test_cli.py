@@ -7821,7 +7821,20 @@ def test_cli_chat_run_lines_end_with_one_blank_without_leading_blank() -> None:
 
     assert first_lines[-1] == ""
     assert cli._chat_visible_text(first_lines[-2]).strip()
-    assert cli._chat_visible_text(second_lines[0]).strip()
+    assert second_lines[0].startswith(cli._chat_ansi_style(cli._CHAT_INPUT_FG, cli._CHAT_INPUT_BG))
+    assert not cli._chat_visible_text(second_lines[0]).strip()
+    assert cli._chat_visible_text(second_lines[1]).strip()
+
+
+def test_cli_chat_scrollback_input_bar_keeps_padding() -> None:
+    run = cli._ChatRun(run_id="run_input", message="hello", status="succeeded")
+
+    lines = cli._chat_scrollback_user_block(run)
+
+    assert lines[0].startswith(cli._chat_ansi_style(cli._CHAT_INPUT_FG, cli._CHAT_INPUT_BG))
+    assert not cli._chat_visible_text(lines[0]).strip()
+    assert cli._chat_visible_text(lines[1]).strip() == "> hello"
+    assert cli._chat_visible_text(lines[2]).strip() == "run_input"
 
 
 def test_cli_chat_ai_sdk_tool_result_replaces_running_tool_line(monkeypatch) -> None:

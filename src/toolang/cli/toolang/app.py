@@ -3678,7 +3678,7 @@ def _chat_panel_user_block(run: _ChatRun) -> list[str]:
 
 
 def _chat_scrollback_user_block(run: _ChatRun) -> list[str]:
-    lines: list[str] = []
+    lines = [_chat_input_block_line("")]
     lines.extend(
         _chat_input_block_line(_chat_user_message_line(index, line))
         for index, line in enumerate(run.message.splitlines() or [""])
