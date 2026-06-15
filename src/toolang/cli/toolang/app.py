@@ -201,6 +201,8 @@ _CHAT_QUEUE_FG = "#f2f2f2"
 _CHAT_QUEUE_BG = "#3a3a3a"
 _CHAT_INPUT_FG = "#f5f5f5"
 _CHAT_INPUT_BG = "#444444"
+_CHAT_STEER_INPUT_FG = "#f5f5f5"
+_CHAT_STEER_INPUT_BG = "#3f4a4d"
 _CHAT_STATUS_FG = "#f2f2f2"
 _CHAT_STATUS_BG = "#5a5a5a"
 _CHAT_CURSOR_FG = "#111111"
@@ -2200,6 +2202,7 @@ class _ChatRun:
     steps: dict[int, _ChatStep] = field(default_factory=dict)
     completed_steps: dict[int, dict[str, Any]] = field(default_factory=dict)
     tool_calls_by_part: dict[tuple[int, int], _ChatToolCall] = field(default_factory=dict)
+    commands: dict[int, dict[str, Any]] = field(default_factory=dict)
     child_runs: dict[str, _ChatRun] = field(default_factory=dict)
 
     def start_step(self, payload: dict[str, Any]) -> None:
@@ -2233,6 +2236,10 @@ class _ChatRun:
             name=tool_name,
             input=dict(tool_input) if isinstance(tool_input, Mapping) else {},
         )
+
+    def record_command(self, payload: Mapping[str, Any]) -> None:
+        index = _chat_command_index(payload)
+        self.commands[index] = dict(payload)
 
     def update_queue(self, event_type: str, payload: Mapping[str, Any]) -> None:
         if run_id := _text(payload.get("run_id")):
@@ -3127,7 +3134,16 @@ class _ChatBottomApp:
         return max(self.active_run.step_indexes(), default=0) + 1
 
     def handle_run_command(self, payload: dict[str, Any]) -> None:
-        if payload.get("kind") != "start":
+        kind = payload.get("kind")
+        if kind == "steer":
+            if self.active_run is not None:
+                self.active_run.record_command(payload)
+            return
+        if kind == "stop":
+            if self.active_run is not None:
+                self.active_run.request_cancel()
+            return
+        if kind != "start":
             return
         run_id = str(payload.get("run_id") or "")
         message = _event_message_text(payload.get("message"))
@@ -3369,6 +3385,26 @@ def _chat_step_index(payload: Mapping[str, Any]) -> int:
         except ValueError:
             pass
     return 0
+
+
+def _chat_command_index(payload: Mapping[str, Any]) -> int:
+    ref = _mapping(payload.get("ref"))
+    for value in (ref.get("index"), payload.get("index")):
+        index = _int_or_none(value)
+        if index is not None:
+            return index
+    return 0
+
+
+def _chat_step_command_indexes(payload: Mapping[str, Any]) -> set[int]:
+    indexes: set[int] = set()
+    for item in _list(payload.get("input")):
+        if not isinstance(item, Mapping) or item.get("kind") != "command":
+            continue
+        index = _int_or_none(item.get("index"))
+        if index is not None:
+            indexes.add(index)
+    return indexes
 
 
 def _chat_part_index(payload: Mapping[str, Any]) -> int:
@@ -3663,6 +3699,10 @@ def _chat_input_block_line(content: str) -> str:
     return f"{_chat_ansi_style(_CHAT_INPUT_FG, _CHAT_INPUT_BG)}{_chat_pad_visible(content, _chat_terminal_width())}{_CHAT_RESET}"
 
 
+def _chat_steer_input_block_line(content: str) -> str:
+    return f"{_chat_ansi_style(_CHAT_STEER_INPUT_FG, _CHAT_STEER_INPUT_BG)}{_chat_pad_visible(content, _chat_terminal_width())}{_CHAT_RESET}"
+
+
 def _chat_pad_visible(content: str, width: int) -> str:
     return content + " " * max(0, width - _chat_display_len(content))
 
@@ -3782,13 +3822,20 @@ def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, i
     flow_lines = _chat_flow_stage_lines(run)
     if flow_lines:
         lines = [state_line, *flow_lines] if state_line else list(flow_lines)
+        lines.extend(_chat_unrendered_steer_input_lines(run, rendered_commands=set(), waiting=bool(run.steps)))
         lines.extend(_chat_terminal_event_lines(run, step_renderer))
         return lines
     lines: list[str] = []
     if state_line:
         lines.append(state_line)
+    rendered_commands: set[int] = set()
     for index in run.step_indexes():
+        step_payload = run.steps[index].payload if index in run.steps else run.completed_steps[index]
+        for command in _chat_consumed_steer_commands(run, step_payload, rendered_commands):
+            lines.extend(_chat_steer_input_block(command, waiting=False))
+            rendered_commands.add(_chat_command_index(command))
         if index in run.steps:
+            lines.extend(_chat_unrendered_steer_input_lines(run, rendered_commands=rendered_commands, waiting=True))
             lines.append(step_renderer(run, index))
             continue
         payload = run.completed_steps[index]
@@ -3800,7 +3847,60 @@ def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, i
             if _chat_model_tool_requests_have_results(run, index):
                 continue
         lines.append(step_renderer(run, index))
+    lines.extend(_chat_unrendered_steer_input_lines(run, rendered_commands=rendered_commands, waiting=bool(run.steps)))
     return lines
+
+
+def _chat_consumed_steer_commands(
+    run: _ChatRun,
+    step_payload: Mapping[str, Any],
+    rendered_commands: set[int],
+) -> list[Mapping[str, Any]]:
+    commands: list[Mapping[str, Any]] = []
+    for index in sorted(_chat_step_command_indexes(step_payload)):
+        if index in rendered_commands:
+            continue
+        command = run.commands.get(index)
+        if command is None or command.get("kind") != "steer":
+            continue
+        commands.append(command)
+    return commands
+
+
+def _chat_unrendered_steer_commands(run: _ChatRun, rendered_commands: set[int]) -> list[Mapping[str, Any]]:
+    return [
+        command
+        for index, command in sorted(run.commands.items())
+        if index not in rendered_commands and command.get("kind") == "steer"
+    ]
+
+
+def _chat_unrendered_steer_input_lines(
+    run: _ChatRun,
+    *,
+    rendered_commands: set[int],
+    waiting: bool,
+) -> list[str]:
+    lines: list[str] = []
+    for command in _chat_unrendered_steer_commands(run, rendered_commands):
+        lines.extend(_chat_steer_input_block(command, waiting=waiting))
+        rendered_commands.add(_chat_command_index(command))
+    return lines
+
+
+def _chat_steer_input_block(command: Mapping[str, Any], *, waiting: bool) -> list[str]:
+    message = _event_message_text(command.get("message"))
+    content = message.splitlines() or [""]
+    lines = [_chat_steer_input_block_line(_chat_steer_message_line(index, line)) for index, line in enumerate(content)]
+    if waiting:
+        lines.append(_chat_steer_input_block_line(_chat_dim("  waiting for current step")))
+    return lines
+
+
+def _chat_steer_message_line(index: int, line: str) -> str:
+    if index == 0:
+        return f"{_CHAT_DIM}+{_CHAT_NORMAL_INTENSITY} {line}"
+    return f"  {line}"
 
 
 def _chat_terminal_event_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, int], str]) -> list[str]:

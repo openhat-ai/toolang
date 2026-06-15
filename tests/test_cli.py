@@ -7590,6 +7590,93 @@ def test_cli_chat_empty_model_step_says_no_message() -> None:
     assert "model call completed" not in rendered
 
 
+def test_cli_chat_run_lines_render_consumed_steer_input_before_response() -> None:
+    run = cli._ChatRun(run_id="run_steer", message="sleep 120 secs", status="succeeded")
+    run.completed_steps[1] = {
+        "kind": "tool",
+        "step_index": 1,
+        "output": [{"type": "tool_result", "tool_name": "shell__execute", "output": {"stdout": ""}}],
+    }
+    run.record_command(
+        {
+            "kind": "steer",
+            "ref": {"kind": "command", "index": 1},
+            "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
+        }
+    )
+    run.completed_steps[2] = {
+        "kind": "model",
+        "step_index": 2,
+        "input": [{"kind": "command", "index": 1}],
+        "output": [{"type": "text", "text": 'Now "abc" - still testing the queue?'}],
+    }
+
+    rendered = "\n".join(cli._chat_run_lines(run, include_steps=True))
+    visible = cli._chat_visible_text(rendered)
+
+    assert _indexes_in_order(
+        visible,
+        (
+            "› ran shell__execute",
+            "+ abc",
+            '• Now "abc" - still testing the queue?',
+        ),
+    )
+    assert "waiting for current step" not in visible
+    assert cli._chat_ansi_style(cli._CHAT_STEER_INPUT_FG, cli._CHAT_STEER_INPUT_BG) in rendered
+
+
+def test_cli_chat_run_lines_render_pending_steer_before_active_step() -> None:
+    run = cli._ChatRun(run_id="run_steer", message="sleep 120 secs", status="running")
+    run.completed_steps[1] = {
+        "kind": "tool",
+        "step_index": 1,
+        "output": [{"type": "tool_result", "tool_name": "shell__execute", "output": {"stdout": ""}}],
+    }
+    run.record_command(
+        {
+            "kind": "steer",
+            "ref": {"kind": "command", "index": 1},
+            "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
+        }
+    )
+    run.start_step({"run_id": "run_steer", "step_index": 2, "kind": "model"})
+
+    rendered = "\n".join(cli._chat_run_lines(run, include_steps=True))
+    visible = cli._chat_visible_text(rendered)
+
+    assert _indexes_in_order(
+        visible,
+        (
+            "› ran shell__execute",
+            "+ abc",
+            "waiting for current step",
+            "• thinking...",
+        ),
+    )
+
+
+def test_cli_chat_run_command_steer_records_input_bar(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_runtime_json", lambda _ctx, _path: {})
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.active_run = cli._ChatRun(run_id="run_steer", message="working", status="running")
+
+    app.handle_runtime_event(
+        {
+            "type": "run_command",
+            "payload": {
+                "run_id": "run_steer",
+                "kind": "steer",
+                "ref": {"kind": "command", "index": 1},
+                "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
+            },
+        }
+    )
+
+    visible = cli._chat_visible_text("\n".join(cli._chat_run_lines(app.active_run, include_steps=True)))
+    assert "+ abc" in visible
+
+
 def test_cli_chat_ai_sdk_tool_result_replaces_running_tool_line(monkeypatch) -> None:
     monkeypatch.setattr(
         cli,
