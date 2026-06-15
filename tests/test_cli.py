@@ -7681,7 +7681,9 @@ def test_cli_chat_active_run_uses_steer_input_bar_colors() -> None:
     rendered = panel.render_activity()
     rendered_text = "".join(text for _style, text in rendered)
 
-    assert ("class:steer-input", "+ abc" + " " * (cli._chat_terminal_width() - len("+ abc"))) in rendered
+    assert ("class:steer-input.dim", "+") in rendered
+    assert any(style == "class:steer-input" and "abc" in text for style, text in rendered)
+    assert any(style == "class:steer-input.dim" and text.strip() == "pending for next step" for style, text in rendered)
     assert rendered_text.count("+ abc") == 1
 
 
@@ -8192,6 +8194,7 @@ def test_cli_chat_palette_uses_fixed_neutral_panel_colors() -> None:
     assert palette["queue"] == "fg:#f2f2f2 bg:#3a3a3a"
     assert palette["input"] == "fg:#f5f5f5 bg:#444444"
     assert palette["steer-input"] == "fg:#f5f5f5 bg:#3f4a4d"
+    assert palette["steer-input.dim"] == "fg:#b8b8b8 bg:#3f4a4d"
     assert palette["status"] == "fg:#f2f2f2 bg:#5a5a5a"
     assert len({palette["status.model"], palette["status.thunk"], palette["status.flow"]}) == 3
     assert palette["cursor"] == "fg:#111111 bg:#eeeeee"

@@ -3744,6 +3744,7 @@ def _chat_ui_palette() -> dict[str, str]:
         "queue": _chat_prompt_style(_CHAT_QUEUE_FG, _CHAT_QUEUE_BG),
         "input": _chat_prompt_style(_CHAT_INPUT_FG, _CHAT_INPUT_BG),
         "steer-input": _chat_prompt_style(_CHAT_STEER_INPUT_FG, _CHAT_STEER_INPUT_BG),
+        "steer-input.dim": _chat_prompt_style("#b8b8b8", _CHAT_STEER_INPUT_BG),
         "cursor": _chat_prompt_style(_CHAT_CURSOR_FG, _CHAT_CURSOR_BG),
         "input.cursor": _chat_prompt_style(_CHAT_CURSOR_FG, _CHAT_CURSOR_BG),
         "status": _chat_prompt_style(_CHAT_STATUS_FG, _CHAT_STATUS_BG),
@@ -3764,11 +3765,47 @@ def _chat_activity_formatted_text(lines: Sequence[str]) -> list[tuple[str, str]]
     fragments: list[tuple[str, str]] = []
     for index, line in enumerate(lines):
         if line.startswith(steer_prefix):
-            fragments.append(("class:steer-input", _chat_visible_text(line)))
+            fragments.extend(_chat_steer_activity_fragments(line, steer_prefix=steer_prefix))
         else:
             fragments.extend(cast(list[tuple[str, str]], to_formatted_text(ANSI(line))))
         if index < len(lines) - 1:
             fragments.append(("", "\n"))
+    return fragments
+
+
+def _chat_steer_activity_fragments(line: str, *, steer_prefix: str) -> list[tuple[str, str]]:
+    content = line.removeprefix(steer_prefix).removesuffix(_CHAT_RESET)
+    fragments: list[tuple[str, str]] = []
+    chunk: list[str] = []
+    dim = False
+
+    def flush() -> None:
+        if not chunk:
+            return
+        style = "class:steer-input.dim" if dim else "class:steer-input"
+        fragments.append((style, "".join(chunk)))
+        chunk.clear()
+
+    index = 0
+    while index < len(content):
+        if content.startswith(_CHAT_DIM, index):
+            flush()
+            dim = True
+            index += len(_CHAT_DIM)
+            continue
+        if content.startswith(_CHAT_NORMAL_INTENSITY, index):
+            flush()
+            dim = False
+            index += len(_CHAT_NORMAL_INTENSITY)
+            continue
+        char = content[index]
+        if char == "\x1b":
+            escape_end = content.find("m", index)
+            index = len(content) if escape_end < 0 else escape_end + 1
+            continue
+        chunk.append(char)
+        index += 1
+    flush()
     return fragments
 
 
