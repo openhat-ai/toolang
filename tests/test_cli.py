@@ -73,6 +73,18 @@ def _indexes_in_order(text: str, tokens: tuple[str, ...]) -> bool:
     return indexes == sorted(indexes)
 
 
+def _ansi_truecolor_background(text: str) -> str | None:
+    marker = "48;2;"
+    start = text.find(marker)
+    if start < 0:
+        return None
+    values = text[start + len(marker) :].split("m", 1)[0].split(";")[:3]
+    if len(values) != 3:
+        return None
+    red, green, blue = (int(value) for value in values)
+    return f"{red:02x}{green:02x}{blue:02x}"
+
+
 class _FakeModelProvider:
     def __init__(
         self,
@@ -7288,8 +7300,9 @@ def test_cli_chat_scripted_help_command_does_not_create_thread(monkeypatch) -> N
 
     assert result.exit_code == 0
     assert posts == []
-    assert "chat help" in result.stdout
-    assert "/model <selector>  use a model for new runs" in result.stdout
+    assert "Slash Commands" in result.stdout
+    assert "/model [SELECTOR]  List or switch models." in result.stdout
+    assert "/flow [NAME]       List or use a flow." in result.stdout
 
 
 def test_cli_chat_without_thread_creates_thread_for_first_scripted_message(monkeypatch) -> None:
@@ -7588,6 +7601,297 @@ def test_cli_chat_empty_model_step_says_no_message() -> None:
 
     assert "• model returned no message (deepseek/deepseek-v4-flash)" in rendered
     assert "model call completed" not in rendered
+
+
+def test_cli_chat_run_lines_render_consumed_steer_input_before_response() -> None:
+    run = cli._ChatRun(run_id="run_steer", message="sleep 120 secs", status="succeeded")
+    run.complete_step(
+        {
+            "kind": "tool",
+            "step_index": 1,
+            "output": [{"type": "tool_result", "tool_name": "shell__execute", "output": {"stdout": ""}}],
+        }
+    )
+    run.record_command(
+        {
+            "kind": "steer",
+            "ref": {"kind": "command", "index": 1},
+            "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
+        }
+    )
+    run.start_step({"kind": "model", "step_index": 2})
+    run.complete_step(
+        {
+            "kind": "model",
+            "step_index": 2,
+            "output": [{"type": "text", "text": 'Now "abc" - still testing the queue?'}],
+        }
+    )
+
+    rendered = "\n".join(cli._chat_run_lines(run, include_steps=True))
+    visible = cli._chat_visible_text(rendered)
+
+    assert _indexes_in_order(
+        visible,
+        (
+            "› ran shell__execute",
+            "+ abc",
+            '• Now "abc" - still testing the queue?',
+        ),
+    )
+    assert "pending for next step" not in visible
+    assert cli._chat_ansi_style(cli._CHAT_STEER_INPUT_FG, cli._CHAT_STEER_INPUT_BG) in rendered
+    assert any(line.strip() == "+ abc" for line in visible.splitlines())
+
+
+def test_cli_chat_steer_input_block_has_vertical_blank_lines() -> None:
+    block = cli._chat_steer_input_block(
+        {
+            "kind": "steer",
+            "ref": {"kind": "command", "index": 1},
+            "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
+        },
+        waiting=False,
+    )
+    visible_lines = cli._chat_visible_text("\n".join(block)).splitlines()
+    marker_index = next(index for index, line in enumerate(visible_lines) if line.strip() == "+ abc")
+
+    assert block[0] == ""
+    assert block[-1] == ""
+    assert visible_lines[marker_index - 1].strip() == ""
+    assert visible_lines[marker_index + 1].strip() == ""
+
+
+def test_cli_chat_steer_waiting_uses_footer_padding_line() -> None:
+    block = cli._chat_steer_input_block(
+        {
+            "kind": "steer",
+            "ref": {"kind": "command", "index": 1},
+            "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
+        },
+        waiting=True,
+    )
+    visible_lines = cli._chat_visible_text("\n".join(block)).splitlines()
+    marker_index = next(index for index, line in enumerate(visible_lines) if line.strip() == "+ abc")
+
+    assert visible_lines[marker_index + 1].strip() == "pending for next step"
+    assert block[-1] == ""
+
+
+def test_cli_chat_active_run_uses_steer_input_bar_colors() -> None:
+    command = {
+        "kind": "steer",
+        "ref": {"kind": "command", "index": 1},
+        "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
+    }
+    run = cli._ChatRun(run_id="run_steer", message="sleep 120 secs", status="running")
+    run.start_step({"run_id": "run_steer", "step_index": 1, "kind": "tool"})
+    run.record_command(command)
+    panel = cli._ChatLastRunPanel(lambda: run)
+
+    rendered = panel.render_activity()
+    rendered_text = "".join(text for _style, text in rendered)
+
+    assert ("class:steer-input.dim", "+") in rendered
+    assert any(style == "class:steer-input" and "abc" in text for style, text in rendered)
+    assert any(style == "class:steer-input.dim" and text.strip() == "pending for next step" for style, text in rendered)
+    assert rendered_text.count("+ abc") == 1
+    style = cli.Style.from_dict(cli._chat_ui_palette())
+    steer_backgrounds = {
+        style.get_attrs_for_style_str(fragment_style).bgcolor
+        for fragment_style, _text in rendered
+        if fragment_style.startswith("class:steer-input")
+    }
+    assert steer_backgrounds == {cli._CHAT_STEER_INPUT_BG.removeprefix("#")}
+    scrollback_background = _ansi_truecolor_background("\n".join(cli._chat_steer_input_block(command, waiting=True)))
+    input_background = _ansi_truecolor_background(cli._chat_input_block_line(""))
+    assert scrollback_background == next(iter(steer_backgrounds))
+    assert scrollback_background != input_background
+
+
+def test_cli_chat_active_run_uses_normal_input_bar_colors() -> None:
+    run = cli._ChatRun(run_id="run_user", message="hello", status="running")
+    panel = cli._ChatLastRunPanel(lambda: run)
+
+    rendered = panel.render_user()
+    rendered_text = "".join(text for _style, text in rendered)
+
+    assert ("class:normal-input.dim", ">") in rendered
+    assert any(style == "class:normal-input" and "hello" in text for style, text in rendered)
+    assert any(style == "class:normal-input.dim" and text.strip() == "run_user" for style, text in rendered)
+    assert rendered_text.count("> hello") == 1
+
+
+def test_cli_chat_run_lines_render_pending_steer_after_active_step() -> None:
+    run = cli._ChatRun(run_id="run_steer", message="sleep 120 secs", status="running")
+    run.complete_step(
+        {
+            "kind": "tool",
+            "step_index": 1,
+            "output": [{"type": "tool_result", "tool_name": "shell__execute", "output": {"stdout": ""}}],
+        }
+    )
+    run.start_step({"run_id": "run_steer", "step_index": 2, "kind": "model"})
+    run.record_command(
+        {
+            "kind": "steer",
+            "ref": {"kind": "command", "index": 1},
+            "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
+        }
+    )
+
+    rendered = "\n".join(cli._chat_run_lines(run, include_steps=True))
+    visible = cli._chat_visible_text(rendered)
+
+    assert _indexes_in_order(
+        visible,
+        (
+            "› ran shell__execute",
+            "• thinking...",
+            "+ abc",
+            "pending for next step",
+        ),
+    )
+
+
+def test_cli_chat_completed_step_keeps_timeline_for_steer_ordering() -> None:
+    run = cli._ChatRun(run_id="run_steer", message="sleep 120 secs", status="running")
+    run.record_command(
+        {
+            "kind": "steer",
+            "ref": {"kind": "command", "index": 1},
+            "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
+        }
+    )
+    run.start_step({"run_id": "run_steer", "step_index": 1, "kind": "model"})
+    run.complete_step(
+        {
+            "run_id": "run_steer",
+            "step_index": 1,
+            "kind": "model",
+            "output": [{"type": "text", "text": "after steer"}],
+        }
+    )
+
+    visible = cli._chat_visible_text("\n".join(cli._chat_run_lines(run, include_steps=True)))
+
+    assert _indexes_in_order(visible, ("+ abc", "• after steer"))
+    assert "pending for next step" not in visible
+
+
+def test_cli_chat_run_command_steer_records_input_bar(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_runtime_json", lambda _ctx, _path: {})
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.active_run = cli._ChatRun(run_id="run_steer", message="working", status="running")
+
+    app.handle_runtime_event(
+        {
+            "type": "run_command",
+            "payload": {
+                "run_id": "run_steer",
+                "kind": "steer",
+                "ref": {"kind": "command", "index": 1},
+                "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
+            },
+        }
+    )
+
+    visible = cli._chat_visible_text("\n".join(cli._chat_run_lines(app.active_run, include_steps=True)))
+    assert "+ abc" in visible
+
+
+def test_cli_chat_run_lines_render_stop_command_by_event_order() -> None:
+    run = cli._ChatRun(run_id="run_cancel", message="sleep 120 secs", status="canceled")
+    run.start_step({"run_id": "run_cancel", "step_index": 1, "kind": "tool"})
+    run.record_command(
+        {
+            "kind": "stop",
+            "mode": "immediate",
+            "ref": {"kind": "command", "index": 1},
+        }
+    )
+    run.complete_step(
+        {
+            "run_id": "run_cancel",
+            "step_index": 1,
+            "kind": "tool",
+            "output": [{"type": "tool_result", "tool_name": "shell__execute", "output": {"stdout": ""}}],
+        }
+    )
+
+    visible = cli._chat_visible_text("\n".join(cli._chat_run_lines(run, include_steps=True)))
+
+    assert _indexes_in_order(
+        visible,
+        (
+            "› ran shell__execute",
+            "◇ cancel requested",
+            "◇ stopped run_cancel: canceled",
+        ),
+    )
+
+
+def test_cli_chat_run_command_stop_records_timeline_and_canceling(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_runtime_json", lambda _ctx, _path: {})
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.active_run = cli._ChatRun(run_id="run_cancel", message="working", status="running")
+    app.active_run.mark_running()
+
+    app.handle_runtime_event(
+        {
+            "type": "run_command",
+            "payload": {
+                "run_id": "run_cancel",
+                "kind": "stop",
+                "mode": "immediate",
+                "ref": {"kind": "command", "index": 1},
+            },
+        }
+    )
+
+    assert app.active_run is not None
+    assert app.active_run.status == "canceling"
+    visible = cli._chat_visible_text("\n".join(cli._chat_run_lines(app.active_run, include_steps=True)))
+    assert "◇ cancel requested" in visible
+
+
+def test_cli_chat_run_lines_end_with_one_blank_without_leading_blank() -> None:
+    first = cli._ChatRun(run_id="run_one", message="first", status="succeeded")
+    first.complete_step(
+        {
+            "kind": "model",
+            "step_index": 1,
+            "output": [{"type": "text", "text": "first response"}],
+        }
+    )
+    second = cli._ChatRun(run_id="run_two", message="second", status="succeeded")
+    second.complete_step(
+        {
+            "kind": "model",
+            "step_index": 1,
+            "output": [{"type": "text", "text": "second response"}],
+        }
+    )
+
+    first_lines = cli._chat_run_lines(first, include_steps=True)
+    second_lines = cli._chat_run_lines(second, include_steps=True)
+
+    assert first_lines[-1] == ""
+    assert cli._chat_visible_text(first_lines[-2]).strip()
+    assert second_lines[0].startswith(cli._chat_ansi_style(cli._CHAT_INPUT_FG, cli._CHAT_INPUT_BG))
+    assert not cli._chat_visible_text(second_lines[0]).strip()
+    assert cli._chat_visible_text(second_lines[1]).strip()
+
+
+def test_cli_chat_scrollback_input_bar_keeps_padding() -> None:
+    run = cli._ChatRun(run_id="run_input", message="hello", status="succeeded")
+
+    lines = cli._chat_scrollback_user_block(run)
+
+    assert lines[0].startswith(cli._chat_ansi_style(cli._CHAT_INPUT_FG, cli._CHAT_INPUT_BG))
+    assert not cli._chat_visible_text(lines[0]).strip()
+    assert cli._chat_visible_text(lines[1]).strip() == "> hello"
+    assert cli._chat_visible_text(lines[2]).strip() == "run_input"
 
 
 def test_cli_chat_ai_sdk_tool_result_replaces_running_tool_line(monkeypatch) -> None:
@@ -7922,8 +8226,14 @@ def test_cli_chat_tool_message_stays_on_one_recommended_width_line(monkeypatch) 
 def test_cli_chat_palette_uses_fixed_neutral_panel_colors() -> None:
     palette = cli._chat_ui_palette()
 
+    assert "last-run" not in palette
     assert palette["queue"] == "fg:#f2f2f2 bg:#3a3a3a"
+    assert palette["queue.dim"] == "fg:#b8b8b8 bg:#3a3a3a"
+    assert palette["normal-input"] == "fg:#f5f5f5 bg:#444444"
+    assert palette["normal-input.dim"] == "fg:#b8b8b8 bg:#444444"
     assert palette["input"] == "fg:#f5f5f5 bg:#444444"
+    assert palette["steer-input"] == "fg:#f5f5f5 bg:#2f555d"
+    assert palette["steer-input.dim"] == "fg:#b8b8b8 bg:#2f555d"
     assert palette["status"] == "fg:#f2f2f2 bg:#5a5a5a"
     assert len({palette["status.model"], palette["status.thunk"], palette["status.flow"]}) == 3
     assert palette["cursor"] == "fg:#111111 bg:#eeeeee"
@@ -8211,6 +8521,102 @@ def test_cli_chat_thunk_and_flow_commands_list_and_switch(monkeypatch) -> None:
     assert "review  current" in visible
     assert selector_payload == {"flow": "review"}
     assert app.prompt.status_label == "runtime model  flow:review"
+
+
+def test_cli_chat_queue_panel_uses_current_numbering() -> None:
+    items = [
+        cli._ChatQueueItem(kind="run", text="first request"),
+        cli._ChatQueueItem(kind="run", text="second request"),
+    ]
+    panel = cli._ChatSubmissionQueue(lambda: items)
+
+    del items[0]
+
+    assert panel.lines() == ["  queued for submission:", "  [1] second request"]
+    rendered = panel.render()
+    rendered_text = "".join(text for _style, text in rendered)
+    assert ("class:queue.dim", "  queued for submission:") in rendered
+    assert ("class:queue.dim", "[1]") in rendered
+    assert ("class:queue", " second request") in rendered
+    assert "[1] second request" in rendered_text
+    height = panel.height_dimension()
+    assert height.preferred == 2
+    assert height.max == 2
+
+
+def test_cli_chat_queue_commands_help_delete_edit_and_clear(monkeypatch) -> None:
+    writes: list[list[str]] = []
+
+    monkeypatch.setattr(cli, "_runtime_json", lambda _ctx, _path: {})
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: writes.append(lines))
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.pending = [
+        cli._ChatQueueItem(kind="run", text="first request"),
+        cli._ChatQueueItem(kind="run", text="second request"),
+    ]
+
+    app.handle_submit("/queue")
+    app.handle_submit("/q d 1")
+    app.handle_submit("/q e 1")
+    app.pending = [cli._ChatQueueItem(kind="run", text="third request")]
+    app.handle_submit("/q c")
+
+    visible = cli._chat_visible_text("\n".join(line for lines in writes for line in lines))
+    assert "Queue Commands" in visible
+    assert "/queue steer N" in visible
+    assert "/q s N" in visible
+    assert "#2 run: second request" not in visible
+    assert "deleted queue" not in visible
+    assert "editing queue" not in visible
+    assert "queue cleared" not in visible
+    assert app.pending == []
+    assert app.prompt.buffer.text == "second request"
+
+
+def test_cli_chat_queue_steer_sends_pending_item_to_active_run(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+    writes: list[list[str]] = []
+
+    monkeypatch.setattr(cli, "_runtime_json", lambda _ctx, _path: {})
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: writes.append(lines))
+
+    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+        calls.append((request_path, payload))
+        return {"input": {}}
+
+    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id="term_existing", selector_payload={})
+    app.active_run = cli._ChatRun(run_id="run_active", message="working", status="running", accept_child_trace=True)
+    app.pending = [cli._ChatQueueItem(kind="run", text="please adjust")]
+
+    app.handle_submit("/q s 1")
+
+    assert calls == [
+        (
+            "/api/v1/runs/run_active/steer",
+            {"message": {"role": "user", "parts": [{"type": "text", "text": "please adjust"}]}},
+        )
+    ]
+    assert app.pending == []
+    assert writes == []
+
+
+def test_cli_chat_queue_run_is_not_supported(monkeypatch) -> None:
+    writes: list[list[str]] = []
+
+    monkeypatch.setattr(cli, "_runtime_json", lambda _ctx, _path: {})
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: writes.append(lines))
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.pending = [cli._ChatQueueItem(kind="steer", text="continue as a run")]
+
+    app.handle_submit("/queue r 1")
+
+    assert app.pending == [cli._ChatQueueItem(kind="steer", text="continue as a run")]
+    assert app.prompt.error_message == "Unknown queue command: r"
+    assert writes == []
 
 
 def test_cli_chat_normal_submit_after_flow_selection_still_starts_run(monkeypatch) -> None:
@@ -8969,12 +9375,13 @@ def test_cli_chat_help_command_shows_local_help_without_starting_run(monkeypatch
     rendered = "\n".join(writes[0])
     assert posts == []
     assert app.active_run is None
-    assert "◇ chat help" in visible
-    assert "\x1b[2m◇ chat help" not in rendered
-    assert "/model <selector>  use a model for new runs" in visible
-    assert "/thunk [name]      list or use a thunk" in visible
-    assert "/flow [name]       list or use a flow" in visible
-    assert "/exit, /quit       exit chat" in visible
+    assert "◇ Slash Commands" in visible
+    assert "\x1b[2m◇ Slash Commands" not in rendered
+    assert "/model [SELECTOR]  List or switch models." in visible
+    assert "/thunk [NAME]      List or use a thunk." in visible
+    assert "/flow [NAME]       List or use a flow." in visible
+    assert "/exit, /quit       Exit chat." in visible
+    assert "\n  \n  /model" not in visible
 
 
 def test_cli_chat_active_step_lines_use_lightweight_event_text() -> None:

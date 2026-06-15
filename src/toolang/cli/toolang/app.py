@@ -29,7 +29,7 @@ import click
 from prompt_toolkit.application import Application
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.filters import Condition
-from prompt_toolkit.formatted_text import ANSI
+from prompt_toolkit.formatted_text import ANSI, to_formatted_text
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, Layout, VSplit, Window
@@ -199,8 +199,13 @@ _CHAT_RESET = "\x1b[0m"
 _CHAT_BOLD = "\x1b[1m"
 _CHAT_QUEUE_FG = "#f2f2f2"
 _CHAT_QUEUE_BG = "#3a3a3a"
+_CHAT_QUEUE_DIM_FG = "#b8b8b8"
 _CHAT_INPUT_FG = "#f5f5f5"
 _CHAT_INPUT_BG = "#444444"
+_CHAT_INPUT_DIM_FG = "#b8b8b8"
+_CHAT_STEER_INPUT_FG = "#f5f5f5"
+_CHAT_STEER_INPUT_BG = "#2f555d"
+_CHAT_STEER_INPUT_DIM_FG = "#b8b8b8"
 _CHAT_STATUS_FG = "#f2f2f2"
 _CHAT_STATUS_BG = "#5a5a5a"
 _CHAT_CURSOR_FG = "#111111"
@@ -208,6 +213,33 @@ _CHAT_CURSOR_BG = "#eeeeee"
 _CHAT_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 _CHAT_FLOW_DETAIL_INDENT = "  "
 _CHAT_FLOW_STATEMENT_MARKER = "‣"
+
+
+@dataclass(frozen=True)
+class _ChatInputBarSegment:
+    text: str
+    dim: bool = False
+
+
+@dataclass(frozen=True)
+class _ChatInputBarRow:
+    segments: tuple[_ChatInputBarSegment, ...] = ()
+    bar: bool = True
+
+
+@dataclass(frozen=True)
+class _ChatInputBarSpec:
+    kind: Literal["normal", "steer"]
+    marker: str
+    text: str
+    footer: str = ""
+    footer_dim: bool = False
+    outer_blank: bool = False
+
+
+def _chat_fixed_height(rows: int, *, minimum: int) -> Dimension:
+    height = max(minimum, rows)
+    return Dimension(min=minimum, preferred=height, max=height, weight=0)
 
 
 class _ToolangGroup(TyperGroup):
@@ -2178,6 +2210,12 @@ class _ChatToolCall:
 
 
 @dataclass(slots=True)
+class _ChatQueueItem:
+    kind: Literal["run", "steer"]
+    text: str
+
+
+@dataclass(slots=True)
 class _ChatRun:
     run_id: str
     message: str
@@ -2194,10 +2232,13 @@ class _ChatRun:
     steps: dict[int, _ChatStep] = field(default_factory=dict)
     completed_steps: dict[int, dict[str, Any]] = field(default_factory=dict)
     tool_calls_by_part: dict[tuple[int, int], _ChatToolCall] = field(default_factory=dict)
+    commands: dict[int, dict[str, Any]] = field(default_factory=dict)
+    timeline: list[tuple[Literal["step", "command"], int]] = field(default_factory=list)
     child_runs: dict[str, _ChatRun] = field(default_factory=dict)
 
     def start_step(self, payload: dict[str, Any]) -> None:
         index = _chat_step_index(payload)
+        self.remember_timeline("step", index)
         stored_payload = dict(payload)
         if stored_payload.get("kind") in {"step", "parallel", "bind", "run"} and "payload" not in stored_payload:
             stored_payload["payload"] = dict(_mapping(stored_payload.get("metadata")))
@@ -2210,7 +2251,12 @@ class _ChatRun:
 
     def complete_step(self, payload: dict[str, Any]) -> None:
         index = _chat_step_index(payload)
-        self.completed_steps[index] = payload
+        self.remember_timeline("step", index)
+        completed_payload = dict(payload)
+        active_step = self.steps.get(index)
+        if active_step is not None and "input" not in completed_payload and "input" in active_step.payload:
+            completed_payload["input"] = active_step.payload["input"]
+        self.completed_steps[index] = completed_payload
         self.steps.pop(index, None)
 
     def record_part(self, payload: dict[str, Any]) -> None:
@@ -2227,6 +2273,16 @@ class _ChatRun:
             name=tool_name,
             input=dict(tool_input) if isinstance(tool_input, Mapping) else {},
         )
+
+    def record_command(self, payload: Mapping[str, Any]) -> None:
+        index = _chat_command_index(payload)
+        self.remember_timeline("command", index)
+        self.commands[index] = dict(payload)
+
+    def remember_timeline(self, kind: Literal["step", "command"], index: int) -> None:
+        item = (kind, index)
+        if item not in self.timeline:
+            self.timeline.append(item)
 
     def update_queue(self, event_type: str, payload: Mapping[str, Any]) -> None:
         if run_id := _text(payload.get("run_id")):
@@ -2309,7 +2365,7 @@ class _ChatLastRunPanel:
                         height=self.user_rows,
                         wrap_lines=False,
                         always_hide_cursor=True,
-                        style="class:input",
+                        style="class:normal-input",
                         char=" ",
                     ),
                     Window(
@@ -2317,20 +2373,27 @@ class _ChatLastRunPanel:
                         height=self.activity_rows,
                         wrap_lines=False,
                         always_hide_cursor=True,
-                        style="class:last-run",
                     ),
                 ],
                 height=self.height_dimension,
-                window_too_small=Window(style="class:last-run", always_hide_cursor=True),
+                window_too_small=Window(always_hide_cursor=True),
             ),
             filter=Condition(lambda: bool(self.lines())),
         )
 
-    def render_user(self) -> ANSI:
-        return ANSI("\n".join(self.user_lines()))
+    def render_user(self) -> list[tuple[str, str]]:
+        run = self.get_run()
+        if run is None:
+            return []
+        return _chat_input_bar_fragments(_chat_run_input_bar_spec(run))
 
-    def render_activity(self) -> ANSI:
-        return ANSI("\n".join(self.activity_lines()))
+    def render_activity(self) -> list[tuple[str, str]]:
+        run = self.get_run()
+        if run is None:
+            return []
+        rows = _chat_active_activity_fragment_rows(run, self.step_line)
+        rows = [[], *_chat_tail_fragment_rows(rows, max_lines=_CHAT_MAX_ACTIVE_RUN_ACTIVITY_ROWS), []]
+        return _chat_join_fragment_rows(rows)
 
     def lines(self) -> list[str]:
         return [*self.user_lines(), *self.activity_lines()]
@@ -2367,47 +2430,71 @@ class _ChatLastRunPanel:
 
 
 class _ChatSubmissionQueue:
-    def __init__(self, get_items: Callable[[], list[str]]) -> None:
+    def __init__(self, get_items: Callable[[], list[_ChatQueueItem]]) -> None:
         self.get_items = get_items
         self.view = FormattedTextControl(self.render)
 
     def container(self) -> ConditionalContainer:
         return ConditionalContainer(
-            VSplit(
-                [
-                    Window(width=2),
-                    Window(
-                        self.view,
-                        height=self.rows,
-                        wrap_lines=False,
-                        always_hide_cursor=True,
-                        style="class:queue",
-                        char=" ",
-                    ),
-                    Window(width=2),
-                ],
-                height=self.height_dimension,
+            Window(
+                self.view,
+                height=self.rows,
+                wrap_lines=False,
+                always_hide_cursor=True,
+                style="class:queue",
+                char=" ",
             ),
             filter=Condition(lambda: bool(self.get_items())),
         )
 
-    def render(self) -> ANSI:
-        return ANSI("\n".join(self.lines()))
+    def render(self) -> list[tuple[str, str]]:
+        return _chat_queue_fragments(self.get_items())
 
     def lines(self) -> list[str]:
         items = self.get_items()
-        shown = items[:_CHAT_MAX_QUEUE_ROWS]
+        indexed = list(enumerate(items, 1))
+        shown = indexed[:_CHAT_MAX_QUEUE_ROWS]
         hidden = len(items) - len(shown)
-        summary = "  Queued for submission."
+        summary = "  queued for submission:"
         if hidden:
             summary += f" ({hidden} more not shown)"
-        return [summary, *[f"  - {_chat_summarize(message)}" for message in shown]]
+        return [summary, *[f"  [{index}] {_chat_summarize(item.text)}" for index, item in shown]]
 
     def rows(self) -> int:
         return len(self.lines()) if self.get_items() else 0
 
     def height_dimension(self) -> Dimension:
-        return Dimension(min=0, preferred=self.rows(), weight=1)
+        return _chat_fixed_height(self.rows(), minimum=0)
+
+
+def _chat_queue_fragments(items: Sequence[_ChatQueueItem]) -> list[tuple[str, str]]:
+    shown = list(enumerate(items, 1))[:_CHAT_MAX_QUEUE_ROWS]
+    hidden = len(items) - len(shown)
+    title = "  queued for submission:"
+    if hidden:
+        title += f" ({hidden} more not shown)"
+    rows: list[list[tuple[str, str]]] = [[("class:queue.dim", title)]]
+    rows.extend(
+        [
+            ("class:queue", "  "),
+            ("class:queue.dim", f"[{index}]"),
+            ("class:queue", f" {_chat_summarize(item.text)}"),
+        ]
+        for index, item in shown
+    )
+
+    fragments: list[tuple[str, str]] = []
+    for row_index, row in enumerate(rows):
+        visible_len = 0
+        for style, text in row:
+            fragments.append((style, text))
+            visible_len += _chat_display_len(text)
+        padding = " " * max(0, _chat_terminal_width() - visible_len)
+        if padding:
+            fragments.append(("class:queue", padding))
+        if row_index < len(rows) - 1:
+            fragments.append(("", "\n"))
+    return fragments
 
 
 class _ChatPromptBox:
@@ -2638,7 +2725,7 @@ class _ChatBottomApp:
         self.thread_id = thread_id
         self.selector_payload = selector_payload
         self.events: asyncio.Queue[_ChatUIEvent] = asyncio.Queue()
-        self.pending: list[str] = []
+        self.pending: list[_ChatQueueItem] = []
         self.active_run: _ChatRun | None = None
         self.local_streaming = threading.Event()
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -2770,7 +2857,7 @@ class _ChatBottomApp:
             self.app.invalidate()
             return
         if self.has_active_run():
-            self.pending.append(message)
+            self.pending.append(_ChatQueueItem(kind="run", text=message))
         else:
             self.start_run(message)
         self.app.invalidate()
@@ -3120,7 +3207,17 @@ class _ChatBottomApp:
         return max(self.active_run.step_indexes(), default=0) + 1
 
     def handle_run_command(self, payload: dict[str, Any]) -> None:
-        if payload.get("kind") != "start":
+        kind = payload.get("kind")
+        if kind == "steer":
+            if self.active_run is not None:
+                self.active_run.record_command(payload)
+            return
+        if kind == "stop":
+            if self.active_run is not None:
+                self.active_run.record_command(payload)
+                self.active_run.request_cancel()
+            return
+        if kind != "start":
             return
         run_id = str(payload.get("run_id") or "")
         message = _event_message_text(payload.get("message"))
@@ -3168,7 +3265,8 @@ class _ChatBottomApp:
 
     def start_next_run(self) -> None:
         if self.pending:
-            self.start_run(self.pending.pop(0))
+            item = self.pending.pop(0)
+            self.start_run(item.text)
 
     def handle_local_command(self, message: str) -> bool:
         parsed = _chat_local_command(message)
@@ -3181,6 +3279,8 @@ class _ChatBottomApp:
         if command in {"help", "?"}:
             _chat_write_lines(_chat_local_command_lines(message, _chat_help_lines()))
             return True
+        if command in {"queue", "q"}:
+            return self.handle_queue_command(argument, message)
         if command in {"thunk", "flow"}:
             return self.handle_executable_command(command, argument, message)
         if command not in {"model", "models"}:
@@ -3209,6 +3309,49 @@ class _ChatBottomApp:
             self.prompt.set_error(_chat_friendly_error(exc.message))
             return True
         _chat_write_lines(_chat_local_command_lines(message, ["available models", *_chat_model_list_lines(payload)]))
+        return True
+
+    def handle_queue_command(self, argument: str, message: str) -> bool:
+        tokens = argument.split()
+        if not tokens:
+            _chat_write_lines(_chat_local_command_lines(message, _chat_queue_help_lines()))
+            return True
+        action = tokens[0].lower()
+        if action in {"clear", "c"}:
+            self.pending.clear()
+            return True
+        if action not in {"steer", "s", "delete", "d", "edit", "e"}:
+            self.prompt.set_error(f"Unknown queue command: {tokens[0]}")
+            return True
+        if len(tokens) < 2:
+            self.prompt.set_error(f"/queue {tokens[0]} requires an item number.")
+            return True
+        index = _chat_queue_command_index(tokens[1], len(self.pending))
+        if index is None:
+            self.prompt.set_error(f"Queue item not found: {tokens[1]}")
+            return True
+        item = self.pending[index]
+        if action in {"delete", "d"}:
+            self.pending.pop(index)
+            return True
+        if action in {"edit", "e"}:
+            self.pending.pop(index)
+            self.prompt.replace_input(item.text)
+            return True
+        run = self.active_run
+        if run is None or not run.run_id:
+            self.prompt.set_error("No active run to steer.")
+            return True
+        try:
+            _runtime_post(
+                self.ctx,
+                f"/api/v1/runs/{run.run_id}/steer",
+                payload={"message": _message_payload(item.text)},
+            )
+        except click.ClickException as exc:
+            self.prompt.set_error(_chat_friendly_error(exc.message))
+            return True
+        self.pending.pop(index)
         return True
 
     def handle_executable_command(self, command: str, argument: str, message: str) -> bool:
@@ -3306,6 +3449,15 @@ def _chat_step_index(payload: Mapping[str, Any]) -> int:
             return int(value)
         except ValueError:
             pass
+    return 0
+
+
+def _chat_command_index(payload: Mapping[str, Any]) -> int:
+    ref = _mapping(payload.get("ref"))
+    for value in (ref.get("index"), payload.get("index")):
+        index = _int_or_none(value)
+        if index is not None:
+            return index
     return 0
 
 
@@ -3570,35 +3722,122 @@ def _chat_dim(text: str) -> str:
 
 
 def _chat_panel_user_block(run: _ChatRun) -> list[str]:
-    lines = [""]
-    lines.extend(_chat_user_message_line(index, line) for index, line in enumerate(run.message.splitlines() or [""]))
-    lines.append(_chat_run_id_line(run))
-    return lines
+    return _chat_input_bar_plain_lines(_chat_run_input_bar_spec(run))
 
 
 def _chat_scrollback_user_block(run: _ChatRun) -> list[str]:
-    lines = [_chat_input_block_line("")]
-    lines.extend(
-        _chat_input_block_line(_chat_user_message_line(index, line))
-        for index, line in enumerate(run.message.splitlines() or [""])
+    return _chat_input_bar_ansi_lines(_chat_run_input_bar_spec(run))
+
+
+def _chat_run_input_bar_spec(run: _ChatRun) -> _ChatInputBarSpec:
+    return _ChatInputBarSpec(
+        kind="normal",
+        marker=">",
+        text=run.message,
+        footer=f"  {run.run_id}" if run.run_id else "",
+        footer_dim=bool(run.run_id),
     )
-    if run.run_id:
-        lines.append(_chat_input_block_line(_chat_run_id_line(run)))
-    return lines
 
 
-def _chat_user_message_line(index: int, line: str) -> str:
-    if index == 0:
-        return f"{_CHAT_DIM}>{_CHAT_NORMAL_INTENSITY} {line}"
-    return f"  {line}"
-
-
-def _chat_run_id_line(run: _ChatRun) -> str:
-    return f"{_CHAT_DIM}  {run.run_id}{_CHAT_NORMAL_INTENSITY}" if run.run_id else ""
+def _chat_local_input_bar_spec(message: str) -> _ChatInputBarSpec:
+    return _ChatInputBarSpec(kind="normal", marker=">", text=message)
 
 
 def _chat_input_block_line(content: str) -> str:
-    return f"{_chat_ansi_style(_CHAT_INPUT_FG, _CHAT_INPUT_BG)}{_chat_pad_visible(content, _chat_terminal_width())}{_CHAT_RESET}"
+    return _chat_input_bar_ansi_line(
+        _ChatInputBarRow((_ChatInputBarSegment(content),)),
+        kind="normal",
+    )
+
+
+def _chat_input_bar_ansi_lines(spec: _ChatInputBarSpec) -> list[str]:
+    return [_chat_input_bar_ansi_line(row, kind=spec.kind) for row in _chat_input_bar_rows(spec)]
+
+
+def _chat_input_bar_plain_lines(spec: _ChatInputBarSpec) -> list[str]:
+    return [_chat_input_bar_plain_line(row) for row in _chat_input_bar_rows(spec)]
+
+
+def _chat_input_bar_plain_line(row: _ChatInputBarRow) -> str:
+    return "".join(segment.text for segment in row.segments) if row.bar else ""
+
+
+def _chat_input_bar_ansi_line(row: _ChatInputBarRow, *, kind: Literal["normal", "steer"]) -> str:
+    if not row.bar:
+        return ""
+    fg, bg = _chat_input_bar_colors(kind)
+    content = "".join(_chat_dim(segment.text) if segment.dim else segment.text for segment in row.segments)
+    return f"{_chat_ansi_style(fg, bg)}{_chat_pad_visible(content, _chat_terminal_width())}{_CHAT_RESET}"
+
+
+def _chat_input_bar_fragments(spec: _ChatInputBarSpec) -> list[tuple[str, str]]:
+    return _chat_join_fragment_rows(_chat_input_bar_fragment_rows(spec))
+
+
+def _chat_input_bar_fragment_rows(spec: _ChatInputBarSpec) -> list[list[tuple[str, str]]]:
+    return [_chat_input_bar_line_fragments(row, kind=spec.kind) for row in _chat_input_bar_rows(spec)]
+
+
+def _chat_input_bar_rows(spec: _ChatInputBarSpec) -> list[_ChatInputBarRow]:
+    rows: list[_ChatInputBarRow] = []
+    if spec.outer_blank:
+        rows.append(_ChatInputBarRow(bar=False))
+    rows.append(_ChatInputBarRow())
+    for index, line in enumerate(spec.text.splitlines() or [""]):
+        if index == 0:
+            rows.append(
+                _ChatInputBarRow(
+                    (
+                        _ChatInputBarSegment(spec.marker, dim=True),
+                        _ChatInputBarSegment(f" {line}"),
+                    )
+                )
+            )
+        else:
+            rows.append(_ChatInputBarRow((_ChatInputBarSegment(f"  {line}"),)))
+    footer = (_ChatInputBarSegment(spec.footer, dim=spec.footer_dim),) if spec.footer else ()
+    rows.append(_ChatInputBarRow(footer))
+    if spec.outer_blank:
+        rows.append(_ChatInputBarRow(bar=False))
+    return rows
+
+
+def _chat_input_bar_line_fragments(
+    row: _ChatInputBarRow, *, kind: Literal["normal", "steer"]
+) -> list[tuple[str, str]]:
+    if not row.bar:
+        return []
+    fragments: list[tuple[str, str]] = []
+    visible_len = 0
+    for segment in row.segments:
+        if not segment.text:
+            continue
+        fragments.append((_chat_input_bar_class(kind, dim=segment.dim), segment.text))
+        visible_len += _chat_display_len(segment.text)
+    padding = " " * max(0, _chat_terminal_width() - visible_len)
+    if padding:
+        fragments.append((_chat_input_bar_class(kind, dim=False), padding))
+    return fragments
+
+
+def _chat_input_bar_colors(kind: Literal["normal", "steer"]) -> tuple[str, str]:
+    if kind == "steer":
+        return _CHAT_STEER_INPUT_FG, _CHAT_STEER_INPUT_BG
+    return _CHAT_INPUT_FG, _CHAT_INPUT_BG
+
+
+def _chat_input_bar_class(kind: Literal["normal", "steer"], *, dim: bool) -> str:
+    prefix = "normal-input" if kind == "normal" else "steer-input"
+    return f"class:{prefix}.dim" if dim else f"class:{prefix}"
+
+
+def _chat_join_fragment_rows(rows: Sequence[Sequence[tuple[str, str]]]) -> list[tuple[str, str]]:
+    fragments: list[tuple[str, str]] = []
+    for index, row in enumerate(rows):
+        fragments.extend(row)
+        if index < len(rows) - 1:
+            fragments.append(("", "\n"))
+    return fragments
 
 
 def _chat_pad_visible(content: str, width: int) -> str:
@@ -3612,9 +3851,13 @@ def _chat_terminal_width(default: int = 100) -> int:
 def _chat_ui_palette() -> dict[str, str]:
     return {
         "": "",
-        "last-run": "",
         "queue": _chat_prompt_style(_CHAT_QUEUE_FG, _CHAT_QUEUE_BG),
+        "queue.dim": _chat_prompt_style(_CHAT_QUEUE_DIM_FG, _CHAT_QUEUE_BG),
+        "normal-input": _chat_prompt_style(_CHAT_INPUT_FG, _CHAT_INPUT_BG),
+        "normal-input.dim": _chat_prompt_style(_CHAT_INPUT_DIM_FG, _CHAT_INPUT_BG),
         "input": _chat_prompt_style(_CHAT_INPUT_FG, _CHAT_INPUT_BG),
+        "steer-input": _chat_prompt_style(_CHAT_STEER_INPUT_FG, _CHAT_STEER_INPUT_BG),
+        "steer-input.dim": _chat_prompt_style(_CHAT_STEER_INPUT_DIM_FG, _CHAT_STEER_INPUT_BG),
         "cursor": _chat_prompt_style(_CHAT_CURSOR_FG, _CHAT_CURSOR_BG),
         "input.cursor": _chat_prompt_style(_CHAT_CURSOR_FG, _CHAT_CURSOR_BG),
         "status": _chat_prompt_style(_CHAT_STATUS_FG, _CHAT_STATUS_BG),
@@ -3686,7 +3929,9 @@ def _chat_run_lines(run: _ChatRun, *, include_steps: bool) -> list[str]:
     lines = [*_chat_scrollback_user_block(run), ""]
     if include_steps:
         lines.extend(_chat_run_activity_lines(run, _chat_completed_line_for))
-    lines.append(" ")
+    while lines and lines[-1] == "":
+        lines.pop()
+    lines.append("")
     return lines
 
 
@@ -3702,10 +3947,62 @@ def _chat_tail_activity_lines(lines: Sequence[str], *, max_lines: int) -> list[s
     return [_chat_dim(f"... {hidden} earlier lines"), *lines[-tail_count:]]
 
 
+def _chat_tail_fragment_rows(
+    rows: Sequence[list[tuple[str, str]]], *, max_lines: int
+) -> list[list[tuple[str, str]]]:
+    if len(rows) <= max_lines:
+        return list(rows)
+    if max_lines <= 0:
+        return []
+    if max_lines == 1:
+        return [_chat_line_fragments(_chat_dim(f"... {len(rows)} earlier lines"))]
+    tail_count = max_lines - 1
+    hidden = len(rows) - tail_count
+    return [_chat_line_fragments(_chat_dim(f"... {hidden} earlier lines")), *rows[-tail_count:]]
+
+
 def _chat_completed_line_for(run: _ChatRun, index: int) -> str:
     if index in run.completed_steps:
         return _chat_completed_step_line(run.completed_steps[index], run=run)
     return _chat_active_step_line(run.steps[index])
+
+
+def _chat_active_activity_fragment_rows(
+    run: _ChatRun,
+    step_renderer: Callable[[_ChatRun, int], str],
+) -> list[list[tuple[str, str]]]:
+    state_line = _chat_run_state_line(run)
+    queue_line = _chat_queue_activity_line(run)
+    if queue_line or _chat_flow_stage_lines(run):
+        return [_chat_line_fragments(line) for line in _chat_run_activity_lines(run, step_renderer)]
+
+    rows: list[list[tuple[str, str]]] = []
+    if state_line and not _chat_state_line_after_activity(run):
+        rows.append(_chat_line_fragments(state_line))
+    timeline = run.timeline or [("step", index) for index in run.step_indexes()]
+    rendered_steps: set[int] = set()
+    for position, (kind, index) in enumerate(timeline):
+        if kind == "command":
+            command = run.commands.get(index)
+            if command is not None:
+                rows.extend(_chat_command_activity_fragment_rows(run, command, position))
+            continue
+        if index in rendered_steps:
+            continue
+        step_lines = _chat_step_activity_lines(run, index, step_renderer)
+        if step_lines:
+            rows.extend(_chat_line_fragments(line) for line in step_lines)
+            rendered_steps.add(index)
+    for index in run.step_indexes():
+        if index not in rendered_steps:
+            rows.extend(_chat_line_fragments(line) for line in _chat_step_activity_lines(run, index, step_renderer))
+    if state_line and _chat_state_line_after_activity(run):
+        rows.append(_chat_line_fragments(state_line))
+    return rows
+
+
+def _chat_line_fragments(line: str) -> list[tuple[str, str]]:
+    return cast(list[tuple[str, str]], to_formatted_text(ANSI(line)))
 
 
 def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, int], str]) -> list[str]:
@@ -3719,26 +4016,118 @@ def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, i
         return lines
     flow_lines = _chat_flow_stage_lines(run)
     if flow_lines:
-        lines = [state_line, *flow_lines] if state_line else list(flow_lines)
+        lines = []
+        if state_line and not _chat_state_line_after_activity(run):
+            lines.append(state_line)
+        lines.extend(flow_lines)
+        lines.extend(_chat_timeline_command_lines(run))
         lines.extend(_chat_terminal_event_lines(run, step_renderer))
+        if state_line and _chat_state_line_after_activity(run):
+            lines.append(state_line)
         return lines
     lines: list[str] = []
-    if state_line:
+    if state_line and not _chat_state_line_after_activity(run):
         lines.append(state_line)
-    for index in run.step_indexes():
-        if index in run.steps:
-            lines.append(step_renderer(run, index))
+    timeline = run.timeline or [("step", index) for index in run.step_indexes()]
+    rendered_steps: set[int] = set()
+    for position, (kind, index) in enumerate(timeline):
+        if kind == "command":
+            command = run.commands.get(index)
+            if command is not None:
+                lines.extend(_chat_command_activity_lines(run, command, position))
             continue
-        payload = run.completed_steps[index]
-        if payload.get("kind") == "model":
-            text = _event_parts_text(payload.get("output"))
-            if text:
-                lines.extend(_chat_message_lines(_chat_marker_for("model"), text))
-                continue
-            if _chat_model_tool_requests_have_results(run, index):
-                continue
-        lines.append(step_renderer(run, index))
+        if index in rendered_steps:
+            continue
+        step_lines = _chat_step_activity_lines(run, index, step_renderer)
+        if step_lines:
+            lines.extend(step_lines)
+            rendered_steps.add(index)
+    for index in run.step_indexes():
+        if index not in rendered_steps:
+            lines.extend(_chat_step_activity_lines(run, index, step_renderer))
+    if state_line and _chat_state_line_after_activity(run):
+        lines.append(state_line)
     return lines
+
+
+def _chat_state_line_after_activity(run: _ChatRun) -> bool:
+    status = _chat_run_display_status(run.status)
+    return status in {"succeeded", "finished", "completed", "done", "failed", "error", "canceled", "cancelled"}
+
+
+def _chat_step_activity_lines(
+    run: _ChatRun,
+    index: int,
+    step_renderer: Callable[[_ChatRun, int], str],
+) -> list[str]:
+    if index in run.steps:
+        return [step_renderer(run, index)]
+    payload = run.completed_steps.get(index)
+    if payload is None:
+        return []
+    if payload.get("kind") == "model":
+        text = _event_parts_text(payload.get("output"))
+        if text:
+            return _chat_message_lines(_chat_marker_for("model"), text)
+        if _chat_model_tool_requests_have_results(run, index):
+            return []
+    return [step_renderer(run, index)]
+
+
+def _chat_timeline_command_lines(run: _ChatRun) -> list[str]:
+    lines: list[str] = []
+    for position, (kind, index) in enumerate(run.timeline):
+        if kind != "command":
+            continue
+        command = run.commands.get(index)
+        if command is None:
+            continue
+        lines.extend(_chat_command_activity_lines(run, command, position))
+    return lines
+
+
+def _chat_command_activity_lines(run: _ChatRun, command: Mapping[str, Any], timeline_position: int) -> list[str]:
+    if command.get("kind") == "steer":
+        return _chat_steer_input_block(command, waiting=_chat_command_is_waiting(run, timeline_position))
+    if command.get("kind") == "stop":
+        return [_chat_dim("◇ cancel requested")]
+    return []
+
+
+def _chat_command_activity_fragment_rows(
+    run: _ChatRun, command: Mapping[str, Any], timeline_position: int
+) -> list[list[tuple[str, str]]]:
+    if command.get("kind") == "steer":
+        return _chat_steer_input_fragment_rows(command, waiting=_chat_command_is_waiting(run, timeline_position))
+    if command.get("kind") == "stop":
+        return [_chat_line_fragments(_chat_dim("◇ cancel requested"))]
+    return []
+
+
+def _chat_command_is_waiting(run: _ChatRun, timeline_position: int) -> bool:
+    if not run.steps:
+        return False
+    return not any(kind == "step" for kind, _index in run.timeline[timeline_position + 1 :])
+
+
+def _chat_steer_input_block(command: Mapping[str, Any], *, waiting: bool) -> list[str]:
+    return _chat_input_bar_ansi_lines(_chat_steer_input_bar_spec(command, waiting=waiting))
+
+
+def _chat_steer_input_fragment_rows(command: Mapping[str, Any], *, waiting: bool) -> list[list[tuple[str, str]]]:
+    return _chat_input_bar_fragment_rows(_chat_steer_input_bar_spec(command, waiting=waiting))
+
+
+def _chat_steer_input_bar_spec(command: Mapping[str, Any], *, waiting: bool) -> _ChatInputBarSpec:
+    message = _event_message_text(command.get("message"))
+    return _ChatInputBarSpec(
+        kind="steer",
+        marker="+",
+        text=message,
+        footer="  pending for next step" if waiting else "",
+        footer_dim=waiting,
+        outer_blank=True,
+    )
 
 
 def _chat_terminal_event_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, int], str]) -> list[str]:
@@ -4253,14 +4642,34 @@ def _chat_status_segments(label: str) -> list[tuple[str, str]]:
 
 def _chat_help_lines() -> list[str]:
     return [
-        "chat help",
-        "/help, /?           show this help",
-        "/model             list available models",
-        "/model <selector>  use a model for new runs",
-        "/thunk [name]      list or use a thunk",
-        "/flow [name]       list or use a flow",
-        "/exit, /quit       exit chat",
+        "Slash Commands",
+        "",
+        "/help, /?          Show help.",
+        "/model [SELECTOR]  List or switch models.",
+        "/thunk [NAME]      List or use a thunk.",
+        "/flow [NAME]       List or use a flow.",
+        "/queue             Show queue commands.",
+        "/exit, /quit       Exit chat.",
     ]
+
+
+def _chat_queue_help_lines() -> list[str]:
+    return [
+        "Queue Commands",
+        "",
+        "/queue steer N   Steer the active run with item #N.",
+        "/queue edit N    Edit item #N in the input box.",
+        "/queue delete N  Delete item #N.",
+        "/queue clear     Clear all items.",
+        "/q s N           First-letter abbreviations are accepted.",
+    ]
+
+
+def _chat_queue_command_index(value: str, item_count: int) -> int | None:
+    index = _int_or_none(value)
+    if index is None or index < 1 or index > item_count:
+        return None
+    return index - 1
 
 
 def _chat_local_command_lines(message: str, body: Sequence[str]) -> list[str]:
@@ -4273,13 +4682,7 @@ def _chat_local_command_lines(message: str, body: Sequence[str]) -> list[str]:
 
 
 def _chat_scrollback_user_message_block(message: str) -> list[str]:
-    lines = [_chat_input_block_line("")]
-    lines.extend(
-        _chat_input_block_line(_chat_user_message_line(index, line))
-        for index, line in enumerate(message.splitlines() or [""])
-    )
-    lines.append(_chat_input_block_line(""))
-    return lines
+    return _chat_input_bar_ansi_lines(_chat_local_input_bar_spec(message))
 
 
 def _chat_system_block_lines(body: Sequence[str]) -> list[str]:
