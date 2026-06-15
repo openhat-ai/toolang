@@ -786,27 +786,18 @@ def runs_command(
 @app.command("inspect", help="Inspect a thread or run.", no_args_is_help=True, cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
 def inspect_command(
     ctx: typer.Context,
-    target: Annotated[str, typer.Argument(help="Run id or thread id to inspect.")],
-    view: Annotated[
-        Literal["tree", "steps", "events", "json"],
-        typer.Option("--view", help="Inspection view."),
-    ] = "tree",
-    verbosity: Annotated[int, typer.Option("-v", "--verbose", count=True, help="Expand inspect tree depth.")] = 0,
-    limit: Annotated[int, typer.Option("--limit", help="Maximum events or thread runs to read.")] = 100,
+    target: Annotated[str, typer.Argument(help="Thread id, run id, or run step path to inspect.")],
+    tree: Annotated[bool, typer.Option("--tree", help="Show the step tree.")] = False,
+    depth: Annotated[int, typer.Option("--depth", help="Step tree depth.")] = 1,
+    limit: Annotated[int, typer.Option("--limit", help="Maximum thread runs to read.")] = 100,
 ) -> None:
     if limit < 1:
         raise click.ClickException("--limit must be at least 1")
-    if view == "json":
-        typer.echo(json.dumps(_inspect_detail(ctx, target, limit=limit), ensure_ascii=False, indent=2))
-        return
-    if view == "events":
-        _render_inspect_events(ctx, target, limit=limit, verbosity=verbosity)
-        return
-    detail = _inspect_detail(ctx, target, limit=limit, include_thread=view == "tree")
-    if view == "steps":
-        _render_inspect_steps(detail)
-        return
-    _render_inspect_tree(detail, verbosity=verbosity)
+    if depth < 1:
+        raise click.ClickException("--depth must be at least 1")
+    parsed = _parse_inspect_target(target)
+    detail = _inspect_detail(ctx, parsed.identifier, limit=limit, include_thread=parsed.kind == "run")
+    _render_inspect(detail, path=parsed.path, tree=tree, depth=depth)
 
 
 @app.command(
@@ -1178,6 +1169,48 @@ def _offline_run_item(run, *, inputs: Sequence, steps: Sequence) -> dict[str, An
     }
 
 
+@dataclass(frozen=True, slots=True)
+class _InspectTarget:
+    kind: Literal["thread", "run"]
+    identifier: str
+    path: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class _InspectStepNode:
+    run: Mapping[str, Any]
+    step: Mapping[str, Any]
+    path: tuple[int, ...]
+    children: tuple["_InspectStepNode", ...] = ()
+
+
+def _parse_inspect_target(target: str) -> _InspectTarget:
+    identifier, separator, raw_path = target.partition(":")
+    identifier = identifier.strip()
+    if not identifier:
+        raise click.ClickException("inspect target is required")
+    if separator and not identifier.startswith("run_"):
+        raise click.ClickException("step paths are only supported for run targets")
+    path = _parse_inspect_step_path(raw_path) if separator else ()
+    kind: Literal["thread", "run"] = "run" if identifier.startswith("run_") else "thread"
+    return _InspectTarget(kind=kind, identifier=identifier, path=path)
+
+
+def _parse_inspect_step_path(raw_path: str) -> tuple[int, ...]:
+    if not raw_path:
+        raise click.ClickException("step path is required after ':'")
+    pieces = raw_path.split(".")
+    path: list[int] = []
+    for piece in pieces:
+        if not piece.isdecimal():
+            raise click.ClickException(f"invalid step path: {raw_path}")
+        value = int(piece)
+        if value < 1:
+            raise click.ClickException(f"invalid step path: {raw_path}")
+        path.append(value)
+    return tuple(path)
+
+
 def _inspect_detail(ctx: typer.Context, target: str, *, limit: int, include_thread: bool = True) -> dict[str, Any]:
     if target.startswith("run_"):
         run = _inspect_run_detail(ctx, target)
@@ -1319,6 +1352,252 @@ def _step_record_json(step: Any) -> dict[str, Any]:
         "started_at": step.started_at,
         "finished_at": step.finished_at,
     }
+
+
+def _render_inspect(
+    detail: Mapping[str, Any],
+    *,
+    path: tuple[int, ...],
+    tree: bool,
+    depth: int,
+) -> None:
+    if detail.get("kind") == "thread":
+        if path:
+            raise click.ClickException("step paths are only supported for run targets")
+        _render_inspect_thread_timeline(_mapping(detail.get("thread")))
+        return
+
+    run = _mapping(detail.get("run"))
+    thread = _mapping(detail.get("thread"))
+    run_by_id = _inspect_thread_run_map(thread, fallback=run)
+    run_id = _text(_mapping(run.get("info")).get("id"))
+    display_run = run_by_id.get(run_id, run) if run_id is not None else run
+    nodes = _inspect_step_tree(display_run, run_by_id=run_by_id)
+    if path:
+        node = _inspect_find_step_node(nodes, path)
+        if node is None:
+            raise click.ClickException(f"step path not found: {'.'.join(str(item) for item in path)}")
+        _render_inspect_step_focus(node)
+        return
+
+    _render_inspect_run_summary(display_run)
+    _render_inspect_step_nodes(nodes, depth=depth if tree else 1)
+
+
+def _render_inspect_thread_timeline(thread: Mapping[str, Any]) -> None:
+    thread_info = _mapping(thread.get("info"))
+    runs = [_mapping(item) for item in _list(thread.get("runs"))]
+    typer.echo(f"thread {_text(thread_info.get('id')) or '-'}  {_text(thread_info.get('status')) or '-'}")
+    if title := _text(thread_info.get("title")):
+        typer.echo(f"title   {title}")
+    run_count = thread_info.get("run_count")
+    if run_count is not None:
+        typer.echo(f"runs    {run_count} total")
+    typer.echo("runs")
+    for run in _inspect_top_level_runs(runs):
+        info = _mapping(run.get("info"))
+        output = _mapping(run.get("output"))
+        run_id = _text(info.get("id")) or "-"
+        target = executable_label(
+            _text(info.get("executable_kind")) or "run",
+            _text(info.get("executable_name")),
+            metadata=_mapping(info.get("metadata")),
+        )
+        status = _display_run_status(output.get("status"))
+        elapsed = _inspect_elapsed(_text(info.get("started_at")), _text(info.get("finished_at")))
+        pieces = [_inspect_status_mark(status), run_id, target]
+        if elapsed:
+            pieces.append(elapsed)
+        typer.echo(f"  {'  '.join(pieces)}")
+
+
+def _render_inspect_run_summary(run: Mapping[str, Any]) -> None:
+    info = _mapping(run.get("info"))
+    output = _mapping(run.get("output"))
+    run_id = _text(info.get("id")) or "-"
+    status = _display_run_status(output.get("status"))
+    target = executable_label(
+        _text(info.get("executable_kind")) or "run",
+        _text(info.get("executable_name")),
+        metadata=_mapping(info.get("metadata")),
+    )
+    typer.echo(f"run {run_id}  {status or '-'}  {target}")
+    if failure := _inspect_failure_summary(run):
+        typer.echo("failure")
+        typer.echo(f"  {failure}")
+    if input_summary := _inspect_run_input_summary(run):
+        typer.echo(f"input  {input_summary}")
+
+
+def _render_inspect_step_nodes(nodes: Sequence[_InspectStepNode], *, depth: int) -> None:
+    if not nodes:
+        return
+    typer.echo("steps")
+    for node in nodes:
+        _render_inspect_step_node(node, depth=depth, level=0)
+
+
+def _render_inspect_step_node(node: _InspectStepNode, *, depth: int, level: int) -> None:
+    record = _mapping(node.step.get("record"))
+    message = _mapping(node.step.get("message"))
+    status = _display_run_status(record.get("status"))
+    path = _inspect_step_path_label(node.path)
+    kind = _text(record.get("kind")) or "step"
+    summary = _inspect_step_summary(record, message)
+    indent = "  " * (level + 1)
+    line = f"{indent}{_inspect_status_mark(status)} {path} {kind}"
+    if summary and summary != "-":
+        line = f"{line}  {summary}"
+    typer.echo(line)
+    if level + 1 >= depth:
+        return
+    for child in node.children:
+        _render_inspect_step_node(child, depth=depth, level=level + 1)
+
+
+def _render_inspect_step_focus(node: _InspectStepNode) -> None:
+    record = _mapping(node.step.get("record"))
+    message = _mapping(node.step.get("message"))
+    run_info = _mapping(node.run.get("info"))
+    status = _display_run_status(record.get("status"))
+    kind = _text(record.get("kind")) or "step"
+    typer.echo(f"step {_inspect_step_path_label(node.path)} {kind}  {status or '-'}")
+    if run_id := _text(run_info.get("id")):
+        typer.echo(f"run  {run_id}")
+    if error := _text(record.get("error")):
+        typer.echo("error")
+        typer.echo(f"  {error}")
+    input_items = _list(record.get("input"))
+    if input_items:
+        typer.echo("input")
+        typer.echo(f"  {_inspect_compact_value(input_items)}")
+    output = _list(record.get("output"))
+    output_text = (
+        _message_summary(message)
+        or _parts_summary(output)
+        or _chat_tool_message_text(record)
+        or _inspect_step_summary(record, message)
+    )
+    if output_text or output:
+        typer.echo("output")
+        typer.echo(f"  {output_text or _inspect_compact_value(output)}")
+    if node.children:
+        typer.echo("children")
+        for child in node.children:
+            child_record = _mapping(child.step.get("record"))
+            child_status = _display_run_status(child_record.get("status"))
+            child_kind = _text(child_record.get("kind")) or "step"
+            typer.echo(f"  {_inspect_status_mark(child_status)} {_inspect_step_path_label(child.path)} {child_kind}")
+
+
+def _inspect_step_tree(
+    run: Mapping[str, Any],
+    *,
+    run_by_id: Mapping[str, Mapping[str, Any]],
+    path_prefix: tuple[int, ...] = (),
+) -> tuple[_InspectStepNode, ...]:
+    nodes: list[_InspectStepNode] = []
+    run_id = _text(_mapping(run.get("info")).get("id"))
+    for step in _run_steps(run):
+        record = _mapping(step.get("record"))
+        step_index = _int_or_none(record.get("step_index"))
+        if step_index is None:
+            continue
+        path = (*path_prefix, step_index)
+        children: list[_InspectStepNode] = []
+        if run_id is not None:
+            for child_run in _inspect_child_runs_for_step(
+                run_id,
+                step_index,
+                step=step,
+                run_by_id=run_by_id,
+            ):
+                children.extend(_inspect_step_tree(child_run, run_by_id=run_by_id, path_prefix=path))
+        nodes.append(_InspectStepNode(run=run, step=step, path=path, children=tuple(children)))
+    return tuple(nodes)
+
+
+def _inspect_child_runs_for_step(
+    run_id: str,
+    step_index: int,
+    *,
+    step: Mapping[str, Any],
+    run_by_id: Mapping[str, Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    child_runs: list[Mapping[str, Any]] = []
+    seen: set[str] = set()
+    record = _mapping(step.get("record"))
+    payload = _mapping(record.get("payload"))
+    for child_id in child_run_ids(payload, record):
+        child = run_by_id.get(child_id)
+        if child is not None and child_id not in seen:
+            child_runs.append(child)
+            seen.add(child_id)
+    for child in run_by_id.values():
+        info = _mapping(child.get("info"))
+        child_id = _text(info.get("id"))
+        if child_id is None or child_id in seen:
+            continue
+        if _text(info.get("parent_run_id")) != run_id:
+            continue
+        if _int_or_none(info.get("parent_step_index")) != step_index:
+            continue
+        child_runs.append(child)
+        seen.add(child_id)
+    return child_runs
+
+
+def _inspect_find_step_node(
+    nodes: Sequence[_InspectStepNode],
+    path: tuple[int, ...],
+) -> _InspectStepNode | None:
+    for node in nodes:
+        if node.path == path:
+            return node
+        if path[: len(node.path)] == node.path:
+            found = _inspect_find_step_node(node.children, path)
+            if found is not None:
+                return found
+    return None
+
+
+def _inspect_step_path_label(path: Sequence[int]) -> str:
+    return ".".join(str(item) for item in path)
+
+
+def _inspect_status_mark(status: str) -> str:
+    if status == "succeeded":
+        return "✓"
+    if status == "failed":
+        return "✗"
+    if status == "canceled":
+        return "-"
+    if status == "running":
+        return "…"
+    return "·"
+
+
+def _inspect_elapsed(started_at: str | None, finished_at: str | None) -> str:
+    if not started_at or not finished_at:
+        return ""
+    start = _parse_utc_timestamp(started_at)
+    finish = _parse_utc_timestamp(finished_at)
+    if start is None or finish is None:
+        return ""
+    seconds = max((finish - start).total_seconds(), 0)
+    if seconds < 1:
+        return f"{max(round(seconds * 1000), 1)}ms"
+    if seconds < 10:
+        return f"{seconds:.1f}s"
+    return f"{seconds:.0f}s"
+
+
+def _inspect_compact_value(value: object) -> str:
+    try:
+        text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    except TypeError:
+        text = str(value)
+    return _truncate_table_text(text, width=96)
 
 
 def _render_inspect_tree(detail: Mapping[str, Any], *, verbosity: int = 0) -> None:
@@ -1644,16 +1923,30 @@ def _inspect_step_summary(record: Mapping[str, Any], message: Mapping[str, Any])
     kind = _text(record.get("kind"))
     if kind == "model":
         model = _text(payload.get("model_ref")) or _text(payload.get("model"))
-        text = _message_summary(message)
+        text = _message_summary(message) or _parts_summary(record.get("output"))
         requests = "; ".join(line.removeprefix("requested ") for line in _inspect_tool_request_lines(record))
         request_summary = f"requested {requests}" if requests else ""
         return " ".join(item for item in (model, text, request_summary) if item)
+    if kind == "tool":
+        return _inspect_tool_result_summary(record)
     if kind == "run":
         return child_call_summary(payload)
     if kind in {"step", "parallel", "bind"}:
         return flow_op_summary(payload)
     text = _parts_summary(record.get("output"))
     return text or _text(record.get("error")) or "-"
+
+
+def _inspect_tool_result_summary(record: Mapping[str, Any]) -> str:
+    for part in _list(record.get("output")):
+        typed = _mapping(part)
+        if typed.get("type") != "tool_result":
+            continue
+        name = _text(typed.get("tool_name")) or _text(typed.get("tool_family")) or "tool"
+        tool_input = _inspect_tool_input_summary(typed.get("input"))
+        suffix = f": {tool_input}" if tool_input else ""
+        return f"{name}{suffix}"
+    return _parts_summary(record.get("output")) or _text(record.get("error")) or "-"
 
 
 def _hide_inspect_event(event_type: str, payload: Mapping[str, Any], *, verbosity: int) -> bool:
