@@ -3678,7 +3678,7 @@ def _chat_panel_user_block(run: _ChatRun) -> list[str]:
 
 
 def _chat_scrollback_user_block(run: _ChatRun) -> list[str]:
-    lines = [_chat_input_block_line("")]
+    lines: list[str] = []
     lines.extend(
         _chat_input_block_line(_chat_user_message_line(index, line))
         for index, line in enumerate(run.message.splitlines() or [""])
@@ -3791,7 +3791,9 @@ def _chat_run_lines(run: _ChatRun, *, include_steps: bool) -> list[str]:
     lines = [*_chat_scrollback_user_block(run), ""]
     if include_steps:
         lines.extend(_chat_run_activity_lines(run, _chat_completed_line_for))
-    lines.append(" ")
+    while lines and lines[-1] == "":
+        lines.pop()
+    lines.append("")
     return lines
 
 
@@ -3911,11 +3913,12 @@ def _chat_command_is_waiting(run: _ChatRun, timeline_position: int) -> bool:
 def _chat_steer_input_block(command: Mapping[str, Any], *, waiting: bool) -> list[str]:
     message = _event_message_text(command.get("message"))
     content = message.splitlines() or [""]
-    lines = [_chat_steer_input_block_line("")]
+    lines = ["", _chat_steer_input_block_line("")]
     lines.extend(_chat_steer_input_block_line(_chat_steer_message_line(index, line)) for index, line in enumerate(content))
     if waiting:
         lines.append(_chat_steer_input_block_line(_chat_dim("  waiting for current step")))
     lines.append(_chat_steer_input_block_line(""))
+    lines.append("")
     return lines
 
 

@@ -7631,6 +7631,24 @@ def test_cli_chat_run_lines_render_consumed_steer_input_before_response() -> Non
     assert any(line.strip() == "+ abc" for line in visible.splitlines())
 
 
+def test_cli_chat_steer_input_block_has_vertical_blank_lines() -> None:
+    block = cli._chat_steer_input_block(
+        {
+            "kind": "steer",
+            "ref": {"kind": "command", "index": 1},
+            "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
+        },
+        waiting=False,
+    )
+    visible_lines = cli._chat_visible_text("\n".join(block)).splitlines()
+    marker_index = next(index for index, line in enumerate(visible_lines) if line.strip() == "+ abc")
+
+    assert block[0] == ""
+    assert block[-1] == ""
+    assert visible_lines[marker_index - 1].strip() == ""
+    assert visible_lines[marker_index + 1].strip() == ""
+
+
 def test_cli_chat_run_lines_render_pending_steer_after_active_step() -> None:
     run = cli._ChatRun(run_id="run_steer", message="sleep 120 secs", status="running")
     run.complete_step(
@@ -7762,6 +7780,32 @@ def test_cli_chat_run_command_stop_records_timeline_and_canceling(monkeypatch) -
     assert app.active_run.status == "canceling"
     visible = cli._chat_visible_text("\n".join(cli._chat_run_lines(app.active_run, include_steps=True)))
     assert "◇ cancel requested" in visible
+
+
+def test_cli_chat_run_lines_end_with_one_blank_without_leading_blank() -> None:
+    first = cli._ChatRun(run_id="run_one", message="first", status="succeeded")
+    first.complete_step(
+        {
+            "kind": "model",
+            "step_index": 1,
+            "output": [{"type": "text", "text": "first response"}],
+        }
+    )
+    second = cli._ChatRun(run_id="run_two", message="second", status="succeeded")
+    second.complete_step(
+        {
+            "kind": "model",
+            "step_index": 1,
+            "output": [{"type": "text", "text": "second response"}],
+        }
+    )
+
+    first_lines = cli._chat_run_lines(first, include_steps=True)
+    second_lines = cli._chat_run_lines(second, include_steps=True)
+
+    assert first_lines[-1] == ""
+    assert cli._chat_visible_text(first_lines[-2]).strip()
+    assert cli._chat_visible_text(second_lines[0]).strip()
 
 
 def test_cli_chat_ai_sdk_tool_result_replaces_running_tool_line(monkeypatch) -> None:
