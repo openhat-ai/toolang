@@ -9880,8 +9880,20 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
 
     assert focus_result.exit_code == 0
     assert "step 1 model  succeeded" in focus_result.stdout
+    assert "adapter_request" in focus_result.stdout
     assert "output" in focus_result.stdout
-    assert "requested filesystem__read_text: path=task.md" in focus_result.stdout
+    assert '"tool_name": "filesystem__read_text"' in focus_result.stdout
+    assert '"path": "task.md"' in focus_result.stdout
+
+    tool_focus_result = _invoke_app(["inspect", "dev", "run_thunk:2"])
+
+    assert tool_focus_result.exit_code == 0
+    assert "step 2 tool  succeeded" in tool_focus_result.stdout
+    assert "tool_result 1" in tool_focus_result.stdout
+    assert "input" in tool_focus_result.stdout
+    assert '"path": "task.md"' in tool_focus_result.stdout
+    assert "result" in tool_focus_result.stdout
+    assert "task body" in tool_focus_result.stdout
 
 
 def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:

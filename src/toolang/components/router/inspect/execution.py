@@ -45,8 +45,9 @@ def create_router() -> APIRouter:
         run = context.store.get_run(run_id=run_id)
         if run is None:
             raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
+        detail = _shared._run_detail_data(_shared._run_detail(context, run))
         return {
-            **_shared._run_detail_data(_shared._run_detail(context, run)),
+            **_shared._with_run_prompt_bodies(context.store, detail),
             "event_cursor": context.store.latest_event_cursor(domain="run", domain_id=run_id),
         }
 
@@ -258,7 +259,10 @@ def create_router() -> APIRouter:
         ]
         return {
             "info": asdict(info),
-            "runs": [_shared._run_detail_data(item) for item in runs],
+            "runs": [
+                _shared._with_run_prompt_bodies(context.store, _shared._run_detail_data(item))
+                for item in runs
+            ],
             "event_cursor": context.store.latest_event_cursor(domain="thread", domain_id=thread_id),
         }
 

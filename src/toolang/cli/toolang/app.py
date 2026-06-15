@@ -1286,7 +1286,7 @@ def _run_detail_json(store: ExecutionStore, run: Any) -> dict[str, Any]:
         inputs=store.list_commands(run_id=run.run_id),
         steps=store.list_steps(run_id=run.run_id),
     )
-    return {
+    data = {
         "info": asdict(detail.info),
         "input": detail.input.to_data() if detail.input is not None else None,
         "inputs": [
@@ -1308,6 +1308,31 @@ def _run_detail_json(store: ExecutionStore, run: Any) -> dict[str, Any]:
             ],
         },
     }
+    prompts = _inspect_run_prompt_bodies(store, data)
+    if prompts:
+        data["prompts"] = prompts
+    return data
+
+
+def _inspect_run_prompt_bodies(store: ExecutionStore, run: Mapping[str, Any]) -> dict[str, str]:
+    prompts: dict[str, str] = {}
+    for prompt_hash in _inspect_run_prompt_hashes(run):
+        body = store.get_prompt(prompt_hash=prompt_hash)
+        if body is not None:
+            prompts[prompt_hash] = body
+    return prompts
+
+
+def _inspect_run_prompt_hashes(run: Mapping[str, Any]) -> tuple[str, ...]:
+    hashes: list[str] = []
+    for step in _run_steps(run):
+        record = _mapping(step.get("record"))
+        payload = _mapping(record.get("payload"))
+        for key in ("instruct", "context"):
+            value = _text(payload.get(key))
+            if value is not None and value not in hashes:
+                hashes.append(value)
+    return tuple(hashes)
 
 
 def _step_record_json(step: Any) -> dict[str, Any]:
@@ -1438,6 +1463,15 @@ def _render_inspect_step_focus(node: _InspectStepNode) -> None:
     if error := _text(record.get("error")):
         typer.echo("error")
         typer.echo(f"  {error}")
+    if not node.children:
+        if kind == "model":
+            _render_inspect_model_leaf(node)
+            return
+        if kind == "tool":
+            _render_inspect_tool_leaf(node)
+            return
+        _render_inspect_generic_leaf(node)
+        return
     input_items = _list(record.get("input"))
     if input_items:
         typer.echo("input")
@@ -1458,6 +1492,198 @@ def _render_inspect_step_focus(node: _InspectStepNode) -> None:
             child_status = _display_run_status(child_record.get("status"))
             child_kind = _text(child_record.get("kind")) or "step"
             typer.echo(f"  {_inspect_status_mark(child_status)} {_inspect_step_path_label(child.path)} {child_kind}")
+
+
+def _render_inspect_model_leaf(node: _InspectStepNode) -> None:
+    record = _mapping(node.step.get("record"))
+    payload = _mapping(record.get("payload"))
+    prompts = _mapping(node.run.get("prompts"))
+    typer.echo("model")
+    _render_inspect_kv("ref", payload.get("model_ref"))
+    _render_inspect_kv("provider", payload.get("provider"))
+    _render_inspect_kv("model", payload.get("model"))
+    _render_inspect_kv("adapter", payload.get("adapter"))
+    _render_inspect_kv("base_url", payload.get("base_url"))
+    _render_inspect_kv("input_tokens", payload.get("input_tokens"))
+    _render_inspect_kv("output_tokens", payload.get("output_tokens"))
+
+    request = _mapping(payload.get("adapter_request"))
+    if request:
+        _render_inspect_section("adapter_request", request)
+    else:
+        request = _inspect_reconstructed_model_request(node, prompts=prompts)
+        _render_inspect_section("adapter_request", request)
+
+    output = _list(record.get("output"))
+    if output:
+        _render_inspect_section("output", output)
+    if reasoning := _text(payload.get("reasoning_content")):
+        _render_inspect_text_section("reasoning_content", reasoning)
+
+
+def _render_inspect_tool_leaf(node: _InspectStepNode) -> None:
+    record = _mapping(node.step.get("record"))
+    input_items = _list(record.get("input"))
+    if input_items:
+        _render_inspect_section("input_refs", input_items)
+    outputs = _list(record.get("output"))
+    if not outputs:
+        return
+    for index, part in enumerate(outputs, start=1):
+        typed = _mapping(part)
+        if typed.get("type") != "tool_result":
+            _render_inspect_section(f"output_part_{index}", typed)
+            continue
+        typer.echo(f"tool_result {index}")
+        _render_inspect_kv("tool", typed.get("tool_name") or typed.get("tool_family"))
+        if "input" in typed:
+            _render_inspect_section("input", typed.get("input"))
+        if "output" in typed:
+            _render_inspect_section("result", typed.get("output"))
+        if "error" in typed:
+            _render_inspect_section("error", typed.get("error"))
+
+
+def _render_inspect_generic_leaf(node: _InspectStepNode) -> None:
+    record = _mapping(node.step.get("record"))
+    input_items = _list(record.get("input"))
+    output = _list(record.get("output"))
+    if input_items:
+        _render_inspect_section("input", input_items)
+    if output:
+        _render_inspect_section("output", output)
+
+
+def _render_inspect_kv(label: str, value: object) -> None:
+    if value is None or value == "":
+        return
+    typer.echo(f"  {label}: {value}")
+
+
+def _render_inspect_text_section(label: str, text: str) -> None:
+    typer.echo(label)
+    for line in text.splitlines() or [""]:
+        typer.echo(f"  {line}")
+
+
+def _render_inspect_section(label: str, value: object) -> None:
+    if isinstance(value, str):
+        _render_inspect_text_section(label, value)
+        return
+    typer.echo(label)
+    for line in _inspect_full_value(value).splitlines():
+        typer.echo(f"  {line}")
+
+
+def _inspect_reconstructed_model_request(
+    node: _InspectStepNode,
+    *,
+    prompts: Mapping[str, Any],
+) -> dict[str, Any]:
+    record = _mapping(node.step.get("record"))
+    payload = _mapping(record.get("payload"))
+    return {
+        "instructions": _inspect_prompt_body(payload.get("instruct"), prompts=prompts),
+        "context": _inspect_prompt_body(payload.get("context"), prompts=prompts),
+        "messages": _inspect_messages_from_input_refs(node, _list(record.get("input"))),
+        "tools": None,
+        "state": None,
+    }
+
+
+def _inspect_prompt_body(value: object, *, prompts: Mapping[str, Any]) -> str | None:
+    prompt_hash = _text(value)
+    if prompt_hash is None:
+        return None
+    body = prompts.get(prompt_hash)
+    return str(body) if body is not None else prompt_hash
+
+
+def _inspect_messages_from_input_refs(
+    node: _InspectStepNode,
+    input_items: Sequence[Any],
+    *,
+    seen_steps: set[int] | None = None,
+) -> list[Mapping[str, Any]]:
+    seen = seen_steps or set()
+    messages: list[Mapping[str, Any]] = []
+    for item in input_items:
+        typed = _mapping(item)
+        kind = _text(typed.get("kind"))
+        if kind == "message":
+            message = _mapping(typed.get("message"))
+            if message:
+                messages.append(message)
+            continue
+        if kind == "command":
+            command_message = _inspect_command_message(node.run, _int_or_none(typed.get("index")) or 0)
+            if command_message:
+                messages.append(command_message)
+            continue
+        if kind == "step":
+            step_index = _int_or_none(typed.get("index"))
+            if step_index is None or step_index in seen:
+                continue
+            seen.add(step_index)
+            step = _inspect_run_step_by_index(node.run, step_index)
+            if step is None:
+                continue
+            step_record = _mapping(step.get("record"))
+            messages.extend(_inspect_messages_from_input_refs(node, _list(step_record.get("input")), seen_steps=seen))
+            message = _inspect_step_output_message(step, part_index=_int_or_none(typed.get("part")))
+            if message:
+                messages.append(message)
+    return messages
+
+
+def _inspect_command_message(run: Mapping[str, Any], index: int) -> Mapping[str, Any] | None:
+    for item in _list(run.get("inputs")):
+        typed = _mapping(item)
+        record = _mapping(typed.get("record"))
+        if _int_or_none(record.get("index")) == index:
+            message = _mapping(typed.get("message"))
+            return message or None
+    if index == 0:
+        message = _mapping(run.get("input"))
+        return message or None
+    return None
+
+
+def _inspect_run_step_by_index(run: Mapping[str, Any], step_index: int) -> Mapping[str, Any] | None:
+    for step in _run_steps(run):
+        record = _mapping(step.get("record"))
+        if _int_or_none(record.get("step_index")) == step_index:
+            return step
+    return None
+
+
+def _inspect_step_output_message(step: Mapping[str, Any], *, part_index: int | None) -> Mapping[str, Any] | None:
+    message = _mapping(step.get("message"))
+    if message:
+        if part_index is None:
+            return message
+        parts = _list(message.get("parts"))
+        if 0 <= part_index < len(parts):
+            return {**message, "parts": [parts[part_index]]}
+        return message
+    record = _mapping(step.get("record"))
+    role = _inspect_step_output_role(_text(record.get("kind")))
+    if role is None:
+        return None
+    parts = _list(record.get("output"))
+    if part_index is not None and 0 <= part_index < len(parts):
+        parts = [parts[part_index]]
+    if not parts:
+        return None
+    return {"role": role, "parts": parts}
+
+
+def _inspect_step_output_role(kind: str | None) -> str | None:
+    if kind == "model":
+        return "assistant"
+    if kind == "tool":
+        return "tool"
+    return None
 
 
 def _inspect_step_tree(
@@ -1568,6 +1794,13 @@ def _inspect_compact_value(value: object) -> str:
     except TypeError:
         text = str(value)
     return _truncate_table_text(text, width=96)
+
+
+def _inspect_full_value(value: object) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    except TypeError:
+        return str(value)
 
 
 def _render_inspect_tree(detail: Mapping[str, Any], *, verbosity: int = 0) -> None:

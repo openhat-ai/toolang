@@ -11,7 +11,7 @@ from toolang.components.trigger import watch
 from toolang.execution.db import ExecutionStore, execution_db_path
 from toolang.execution.executor import _stage_thunk_with_default_recall
 from toolang.execution.model_call import recall_values, recalls_history
-from toolang.execution.records import ChildCallStepPayload, FlowOpStepPayload
+from toolang.execution.records import ChildCallStepPayload, FlowOpStepPayload, ModelCallStepPayload
 from toolang.execution.runner import QueueRunner, RunRequest
 from toolang.execution.stream import RuntimeEventBus
 from toolang.lang.ast import Directive, SourceSpan, Thunk
@@ -181,7 +181,15 @@ def test_flow_run_records_child_thunk_run(tmp_path: Path) -> None:
         assert steps[1].payload.metadata is not None
         assert steps[1].payload.metadata["stage_label"] == "do summarize"
         assert steps[1].payload.child_run_ids == (child.run_id,)
-        assert context.store.list_steps(run_id=child.run_id)[0].kind == "model"
+        child_model_step = context.store.list_steps(run_id=child.run_id)[0]
+        assert child_model_step.kind == "model"
+        assert isinstance(child_model_step.payload, ModelCallStepPayload)
+        assert child_model_step.payload.adapter_request is not None
+        message_text = child_model_step.payload.adapter_request["messages"][-1]["parts"][0]["text"]
+        assert "Summarize the input." in message_text
+        assert "hello" in message_text
+        assert child_model_step.payload.adapter_request["tools"] == []
+        assert child_model_step.payload.adapter_request["state"] is None
 
     asyncio.run(run_test())
 

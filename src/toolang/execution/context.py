@@ -305,6 +305,7 @@ class RunContext:
             raise
         return self._apply_model_response(
             current,
+            request=request,
             step_index=step_index,
             started_at=started_at,
             duration_ms=_elapsed_ms(step_started),
@@ -440,6 +441,7 @@ class RunContext:
         self,
         current: ModelCallResult,
         *,
+        request: ModelCall,
         step_index: int,
         started_at: str,
         duration_ms: int,
@@ -489,6 +491,7 @@ class RunContext:
                     adapter=self._model.adapter,
                     base_url=self._model.base_url,
                     reasoning_content=_message_reasoning_content(current.message),
+                    adapter_request=_model_call_request_data(request),
                 ),
                 started_at=started_at,
                 finished_at=_utc_now(),
@@ -829,6 +832,22 @@ def _log_model_request(request: ModelCall, *, thread_id: str, run_id: str, step_
         _preview_data([tool.name for tool in request.tools]),
         _preview_data(request.state),
     )
+
+
+def _model_call_request_data(request: ModelCall) -> dict[str, Any]:
+    return {
+        "instructions": request.instructions,
+        "messages": [message.to_data() for message in request.messages],
+        "tools": [
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": dict(tool.parameters),
+            }
+            for tool in request.tools
+        ],
+        "state": request.state,
+    }
 
 
 def _log_model_result(result: ModelCallResult, *, thread_id: str, run_id: str, step_index: int) -> None:

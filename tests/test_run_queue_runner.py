@@ -1054,6 +1054,8 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
         message=Message.user("focus on events"),
         created_at="2026-01-01T00:00:01Z",
     )
+    instruct_hash = context.store.put_prompt(body="model instructions")
+    context_hash = context.store.put_prompt(body="model context")
     context.store.append_step(
         run_id="run-1",
         step_index=2,
@@ -1061,7 +1063,13 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
         status="finished",
         input=(StepOutputRef(step_index=1), RunCommandRef(index=1)),
         output=(TextPart(text="ok"),),
-        payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
+        payload=ModelCallStepPayload(
+            model_ref="gpt-5",
+            input_tokens=0,
+            output_tokens=0,
+            instruct=instruct_hash,
+            context=context_hash,
+        ),
         started_at="2026-01-01T00:00:02Z",
         finished_at="2026-01-01T00:00:03Z",
     )
@@ -1074,6 +1082,10 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
         {"kind": "step", "index": 1},
         {"kind": "command", "index": 1},
     ]
+    assert detail["prompts"] == {
+        instruct_hash: "model instructions",
+        context_hash: "model context",
+    }
 
 
 def test_basic_loop_continues_when_steer_arrives_before_finish() -> None:
@@ -7766,6 +7778,12 @@ def test_model_call_step_payload_round_trips_target_metadata() -> None:
         base_url="https://openrouter.ai/api/v1",
         instruct="abc123",
         context="def456",
+        adapter_request={
+            "instructions": "system",
+            "messages": [{"role": "user", "parts": [{"type": "text", "text": "hi"}]}],
+            "tools": [{"name": "search", "description": "Search.", "parameters": {}}],
+            "state": {"thread": "state"},
+        },
     )
 
     restored = ModelCallStepPayload.from_data(payload.to_data())
