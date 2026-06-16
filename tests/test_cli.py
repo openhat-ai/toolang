@@ -10185,7 +10185,7 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
     assert result.exit_code == 0
     assert calls == ["/api/v1/threads/term_thread?limit=100"]
     assert "# thread" in result.stdout
-    assert "thread term_thread  idle runs=3" in result.stdout
+    assert "thread term_thread  idle  runs=3" in result.stdout
     assert "# title" not in result.stdout
     assert "agent framework implementations" not in result.stdout
     assert "# runs" in result.stdout

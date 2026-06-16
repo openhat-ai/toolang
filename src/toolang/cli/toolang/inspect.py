@@ -728,8 +728,8 @@ def _render_human_thread(thread: Mapping[str, Any]) -> None:
     pieces = [f"thread {_text(thread.get('id')) or '-'}", _text(thread.get("status")) or "-"]
     run_count = thread.get("run_count")
     if run_count is not None:
-        pieces[-1] = f"{pieces[-1]} runs={run_count}"
-    typer.echo("  ".join(pieces))
+        pieces.append(f"runs={run_count}")
+    typer.echo(_header_line(pieces))
     runs = [_mapping(item) for item in _list(thread.get("runs"))]
     if not runs:
         return
@@ -777,7 +777,7 @@ def _render_human_run(run: Mapping[str, Any], steps: Sequence[Mapping[str, Any]]
     pieces = [f"run {_text(run.get('id')) or '-'}", _text(run.get("status")) or "-", _target_field(_text(run.get("target")))]
     if thread_id := _text(run.get("thread_id")):
         pieces.append(f"thread={thread_id}")
-    typer.echo("  ".join(pieces))
+    typer.echo(_header_line(pieces))
     if input_summary := _text(run.get("input_summary")):
         _render_human_section_title("input")
         typer.echo(input_summary)
@@ -813,7 +813,11 @@ def _step_header_line(step: Mapping[str, Any]) -> str:
     output_tokens = model.get("output_tokens")
     if input_tokens is not None or output_tokens is not None:
         pieces.append(f"tokens={input_tokens or 0}/{output_tokens or 0}")
-    return "  ".join(pieces)
+    return _header_line(pieces)
+
+
+def _header_line(pieces: Sequence[str]) -> str:
+    return "  ".join(piece for piece in pieces if piece)
 
 
 def _step_focus_id(step: Mapping[str, Any]) -> str:
