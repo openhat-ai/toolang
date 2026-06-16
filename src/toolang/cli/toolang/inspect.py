@@ -937,12 +937,7 @@ def _render_human_model_context(step: Mapping[str, Any]) -> None:
     if not context:
         return
     _render_human_section_title("context")
-    parsed_context = _context_lines(context)
-    if parsed_context:
-        for line in parsed_context:
-            typer.echo(line)
-        return
-    typer.echo(_truncate_display(context, width=_thread_run_line_width()))
+    typer.echo(_truncate_display(_collapse_text(context), width=_thread_run_line_width()))
 
 
 def _render_human_model_instruct(step: Mapping[str, Any]) -> None:
@@ -1109,27 +1104,6 @@ def _tool_input_summary(tool_input: object) -> str:
     if not isinstance(tool_input, Mapping) or not tool_input:
         return ""
     return ", ".join(f"{key}={_plain_value(value)}" for key, value in tool_input.items())
-
-
-def _context_lines(context: str) -> list[str]:
-    lines: list[str] = []
-    for raw_line in context.splitlines():
-        line = raw_line.strip()
-        if not line or (line.startswith("<") and line.endswith(">")):
-            continue
-        key: str
-        value: str
-        if "=" in line:
-            key, value = line.split("=", 1)
-        elif ":" in line:
-            key, value = line.split(":", 1)
-        else:
-            continue
-        key = key.strip()
-        value = value.strip()
-        if key and value:
-            lines.append(f"{key}={value}")
-    return lines
 
 
 def _collapse_text(value: str) -> str:

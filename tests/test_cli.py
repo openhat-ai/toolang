@@ -9892,7 +9892,7 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
     )
     run["prompts"] = {
         "prompt_instruct": "Answer concisely.",
-        "prompt_context": "agent_name: alice\nthread_id: term_thread\nsandbox: none",
+        "prompt_context": "<context>\nagent_name: alice\nthread_id: term_thread\nsandbox: none\n</context>",
     }
 
     def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
@@ -9932,7 +9932,7 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
     assert "✓ assistant:  Ready to read the task. [1 tool call] filesystem__read_text  path=task.md" in focus_result.stdout
     assert "\n[1 tool call]" not in focus_result.stdout
     assert "# context" in focus_result.stdout
-    assert "thread_id=term_thread" in focus_result.stdout
+    assert "<context> agent_name: alice thread_id: term_thread sandbox: none </context>" in focus_result.stdout
     assert "# instruct" in focus_result.stdout
     assert "Answer concisely." in focus_result.stdout
     assert (
