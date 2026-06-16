@@ -9721,7 +9721,7 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
 
     assert parent_path_result.exit_code == 0
     assert "step run_parent:2  succeeded  kind=run" in parent_path_result.stdout
-    assert "children" in parent_path_result.stdout
+    assert "# children" in parent_path_result.stdout
     assert "\n  ✓ 2.1 tool    filesystem__read_text: path=tasks/qf7y0d8k.md" in parent_path_result.stdout
     assert "input_refs" not in parent_path_result.stdout
 
@@ -9914,8 +9914,10 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
 
     assert focus_result.exit_code == 0
     assert "step run_thunk:1  succeeded  kind=model" in focus_result.stdout
-    assert "adapter_request" in focus_result.stdout
-    assert "output" in focus_result.stdout
+    assert "# model" in focus_result.stdout
+    assert "model  deepseek/deepseek-chat-v3" in focus_result.stdout
+    assert "# adapter_request" in focus_result.stdout
+    assert "# output" in focus_result.stdout
     assert '"tool_name": "filesystem__read_text"' in focus_result.stdout
     assert '"path": "task.md"' in focus_result.stdout
 
@@ -9923,10 +9925,11 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
 
     assert tool_focus_result.exit_code == 0
     assert "step run_thunk:2  succeeded  kind=tool" in tool_focus_result.stdout
-    assert "tool_call 1" in tool_focus_result.stdout
-    assert "input" in tool_focus_result.stdout
+    assert "# tool_calls" in tool_focus_result.stdout
+    assert "tool_call 1  name=filesystem__read_text" in tool_focus_result.stdout
+    assert "# input" in tool_focus_result.stdout
     assert '"path": "task.md"' in tool_focus_result.stdout
-    assert "result" in tool_focus_result.stdout
+    assert "# result" in tool_focus_result.stdout
     assert "task body" in tool_focus_result.stdout
 
 

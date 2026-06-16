@@ -851,7 +851,7 @@ def _render_human_step(step: Mapping[str, Any]) -> None:
     if variant == "compound":
         children = [_mapping(item) for item in _list(step.get("children"))]
         if children:
-            typer.echo("children")
+            _render_human_section_title("children")
             for child in children:
                 _render_human_step_line(child, depth=2, level=0, base_indent=1)
         return
@@ -860,9 +860,8 @@ def _render_human_step(step: Mapping[str, Any]) -> None:
 
 
 def _render_human_model_step(step: Mapping[str, Any]) -> None:
-    typer.echo("model")
-    for key, value in _mapping(step.get("model")).items():
-        _render_kv(str(key), value)
+    _render_human_section_title("model")
+    typer.echo(_model_step_line(_mapping(step.get("model"))))
     _render_section("adapter_request", step.get("adapter_request"))
     _render_section("output", step.get("output"))
     if reasoning := _text(step.get("reasoning_content")):
@@ -871,26 +870,38 @@ def _render_human_model_step(step: Mapping[str, Any]) -> None:
 
 def _render_human_tool_step(step: Mapping[str, Any]) -> None:
     _render_section("input_refs", step.get("input_refs"))
-    for index, call in enumerate(_list(step.get("tool_calls")), start=1):
-        typed = _mapping(call)
-        typer.echo(f"tool_call {index}")
-        _render_kv("name", typed.get("name"))
-        _render_kv("family", typed.get("family"))
-        _render_kv("call_id", typed.get("call_id"))
+    calls = [_mapping(call) for call in _list(step.get("tool_calls"))]
+    if calls:
+        _render_human_section_title("tool_calls")
+    for index, typed in enumerate(calls, start=1):
+        typer.echo(_tool_call_line(index, typed))
         _render_section("input", typed.get("input"))
         _render_section("result", typed.get("result"))
         _render_section("error", typed.get("error"))
     _render_section("other_output", step.get("other_output"))
 
 
-def _render_kv(label: str, value: object) -> None:
-    if value is None or value == "":
-        return
-    typer.echo(f"  {label}: {value}")
+def _model_step_line(model: Mapping[str, Any]) -> str:
+    ref = _text(model.get("ref"))
+    pieces = ["model"]
+    if ref:
+        pieces.append(ref)
+    for key in ("provider", "model", "adapter", "base_url", "input_tokens", "output_tokens"):
+        if value := _text(model.get(key)):
+            pieces.append(f"{key}={value}")
+    return "  ".join(pieces)
+
+
+def _tool_call_line(index: int, call: Mapping[str, Any]) -> str:
+    pieces = [f"tool_call {index}"]
+    for key in ("name", "family", "call_id"):
+        if value := _text(call.get(key)):
+            pieces.append(f"{key}={value}")
+    return "  ".join(pieces)
 
 
 def _render_text_section(label: str, text: str) -> None:
-    typer.echo(label)
+    _render_human_section_title(label)
     for line in text.splitlines() or [""]:
         typer.echo(f"  {line}")
 
@@ -901,7 +912,7 @@ def _render_section(label: str, value: object) -> None:
     if isinstance(value, str):
         _render_text_section(label, value)
         return
-    typer.echo(label)
+    _render_human_section_title(label)
     for line in _full_value(value).splitlines():
         typer.echo(f"  {line}")
 
