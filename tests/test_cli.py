@@ -9843,7 +9843,12 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
                     "step_index": 1,
                     "kind": "model",
                     "status": "finished",
-                    "payload": {"model_ref": "deepseek/deepseek-chat-v3"},
+                    "payload": {
+                        "model_ref": "deepseek/deepseek-chat-v3",
+                        "instruct": "prompt_instruct",
+                        "context": "prompt_context",
+                    },
+                    "input": [{"kind": "command", "index": 0}],
                     "output": [
                         {"type": "text", "text": "Ready to read the task."},
                         {
@@ -9885,6 +9890,10 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
             },
         ],
     )
+    run["prompts"] = {
+        "prompt_instruct": "Answer concisely.",
+        "prompt_context": "agent_name: alice\nthread_id: term_thread\nsandbox: none",
+    }
 
     def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
         calls.append(request_path)
@@ -9915,12 +9924,19 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
     assert focus_result.exit_code == 0
     assert "# step" in focus_result.stdout
     assert "step run_thunk:1  succeeded  kind=model" in focus_result.stdout
-    assert "# request" in focus_result.stdout
+    assert "# api" in focus_result.stdout
     assert "model     deepseek/deepseek-chat-v3" in focus_result.stdout
+    assert "# messages" in focus_result.stdout
     assert "# response" in focus_result.stdout
     assert "assistant: Ready to read the task." in focus_result.stdout
     assert "[1 tool call]" in focus_result.stdout
     assert "filesystem__read_text  path=task.md" in focus_result.stdout
+    assert "# context" in focus_result.stdout
+    assert "thread_id=term_thread" in focus_result.stdout
+    assert "# instruct" in focus_result.stdout
+    assert "Answer concisely." in focus_result.stdout
+    assert focus_result.stdout.index("# response") < focus_result.stdout.index("# context") < focus_result.stdout.index("# instruct")
+    assert "# request" not in focus_result.stdout
 
     tool_focus_result = _invoke_app(["inspect", "dev", "run_thunk:2"])
 

@@ -808,10 +808,6 @@ def _render_human_section_title(label: str) -> None:
     click.secho(f"# {label}", dim=True)
 
 
-def _render_human_subsection_title(label: str) -> None:
-    click.secho(f"## {label}", dim=True)
-
-
 def _target_field(target: str | None) -> str:
     if not target:
         return "target=-"
@@ -875,16 +871,18 @@ def _render_human_step(step: Mapping[str, Any]) -> None:
 
 
 def _render_human_model_step(step: Mapping[str, Any]) -> None:
-    _render_human_model_request(step)
+    _render_human_model_api(step)
+    _render_human_model_messages(step)
     _render_human_model_response(step)
     if reasoning := _text(step.get("reasoning_content")):
-        _render_text_section("reasoning_content", reasoning)
+        _render_text_section("reasoning", reasoning)
+    _render_human_model_context(step)
+    _render_human_model_instruct(step)
 
 
-def _render_human_model_request(step: Mapping[str, Any]) -> None:
+def _render_human_model_api(step: Mapping[str, Any]) -> None:
     model = _mapping(step.get("model"))
-    request = _mapping(step.get("adapter_request"))
-    _render_human_section_title("request")
+    _render_human_section_title("api")
     for label, value in (
         ("model", model.get("ref") or model.get("model")),
         ("provider", model.get("provider")),
@@ -893,24 +891,18 @@ def _render_human_model_request(step: Mapping[str, Any]) -> None:
     ):
         if text := _text(value):
             typer.echo(f"{label:<9} {text}")
-    if instructions := _text(request.get("instructions")):
-        _render_human_subsection_title("instructions")
-        typer.echo(_truncate_display(_collapse_text(instructions), width=_thread_run_line_width()))
-    if context := _text(request.get("context")):
-        _render_human_subsection_title("context")
-        parsed_context = _context_lines(context)
-        if parsed_context:
-            for line in parsed_context:
-                typer.echo(line)
-        else:
-            typer.echo(_truncate_display(context, width=_thread_run_line_width()))
+
+
+def _render_human_model_messages(step: Mapping[str, Any]) -> None:
+    request = _mapping(step.get("adapter_request"))
     messages = [_mapping(message) for message in _list(request.get("messages"))]
-    if messages:
-        _render_human_subsection_title("messages")
-        role_width = max(_display_width(_text(message.get("role")) or "-") for message in messages)
-        for message in messages:
-            role = _text(message.get("role")) or "-"
-            typer.echo(f"{_display_pad_right(role, role_width)}  {_message_summary(message)}")
+    if not messages:
+        return
+    _render_human_section_title("messages")
+    role_width = max(_display_width(_text(message.get("role")) or "-") for message in messages)
+    for message in messages:
+        role = _text(message.get("role")) or "-"
+        typer.echo(f"{_display_pad_right(role, role_width)}  {_message_summary(message)}")
 
 
 def _render_human_model_response(step: Mapping[str, Any]) -> None:
@@ -929,6 +921,29 @@ def _render_human_model_response(step: Mapping[str, Any]) -> None:
             tool_input = _tool_input_summary(call.get("input"))
             suffix = f"  {tool_input}" if tool_input else ""
             typer.echo(f"{name}{suffix}")
+
+
+def _render_human_model_context(step: Mapping[str, Any]) -> None:
+    request = _mapping(step.get("adapter_request"))
+    context = _text(request.get("context"))
+    if not context:
+        return
+    _render_human_section_title("context")
+    parsed_context = _context_lines(context)
+    if parsed_context:
+        for line in parsed_context:
+            typer.echo(line)
+        return
+    typer.echo(_truncate_display(context, width=_thread_run_line_width()))
+
+
+def _render_human_model_instruct(step: Mapping[str, Any]) -> None:
+    request = _mapping(step.get("adapter_request"))
+    instructions = _text(request.get("instructions"))
+    if not instructions:
+        return
+    _render_human_section_title("instruct")
+    typer.echo(_truncate_display(_collapse_text(instructions), width=_thread_run_line_width()))
 
 
 def _render_human_tool_step(step: Mapping[str, Any]) -> None:
