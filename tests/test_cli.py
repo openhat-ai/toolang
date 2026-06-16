@@ -7599,7 +7599,7 @@ def test_cli_chat_empty_model_step_says_no_message() -> None:
 
     rendered = "\n".join(cli._chat_run_lines(run, include_steps=True))
 
-    assert "• model returned no message (deepseek/deepseek-v4-flash)" in rendered
+    assert "• [no text message] (deepseek/deepseek-v4-flash)" in rendered
     assert "model call completed" not in rendered
 
 

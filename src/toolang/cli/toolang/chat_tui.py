@@ -1458,7 +1458,7 @@ def _chat_completed_step_line(payload: Mapping[str, Any], *, run: _ChatRun | Non
         if requests:
             return f"{marker} requested {requests}"
         model = _text(step_payload.get("model_ref")) or _text(step_payload.get("model"))
-        return f"{marker} model returned no message{f' ({model})' if model else ''}"
+        return f"{marker} [no text message]{f' ({model})' if model else ''}"
     if kind == "tool":
         tool = _chat_tool_call(payload, run=run)
         detail = _chat_tool_call_display(tool)
