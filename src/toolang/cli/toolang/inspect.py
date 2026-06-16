@@ -98,15 +98,16 @@ def preprocess_inspect(raw: Mapping[str, Any], *, target: InspectTarget) -> Insp
     run_id = _text(_mapping(run_payload.get("info")).get("id"))
     display_payload = run_by_id.get(run_id, run_payload) if run_id is not None else run_payload
     run = _preprocess_run(display_payload)
-    steps = _step_tree(display_payload, run_by_id=run_by_id)
     if not target.path:
+        steps = _step_tree(display_payload, run_by_id=run_by_id, full=False)
         return {
             "kind": "run",
             "target": target.identifier,
             "run": run,
             "steps": steps,
         }
-    step = _find_step(steps, target.path_label or "")
+    full_steps = _step_tree(display_payload, run_by_id=run_by_id, full=True)
+    step = _find_step(full_steps, target.path_label or "")
     if step is None:
         raise click.ClickException(f"step path not found: {target.path_label}")
     return {
@@ -356,6 +357,7 @@ def _preprocess_thread_run(run: Mapping[str, Any]) -> InspectData:
         "status": _display_run_status(output.get("status")),
         "target": target,
         "elapsed": _elapsed(_text(info.get("started_at")), _text(info.get("finished_at"))) or None,
+        "failure": _failure_summary(run) or None,
         "info": info,
     }
 
@@ -386,6 +388,7 @@ def _preprocess_step(
     *,
     path: tuple[int, ...],
     run_by_id: Mapping[str, Mapping[str, Any]],
+    full: bool,
 ) -> StepData:
     record = _mapping(step.get("record"))
     message = _mapping(step.get("message"))
@@ -396,7 +399,7 @@ def _preprocess_step(
     step_index = _int_or_none(record.get("step_index"))
     if step_index is not None:
         for child_run in _child_runs_for_step(run_id, step_index, step=step, run_by_id=run_by_id):
-            children.extend(_step_tree(child_run, run_by_id=run_by_id, path_prefix=path))
+            children.extend(_step_tree(child_run, run_by_id=run_by_id, path_prefix=path, full=full))
     data: StepData = {
         "path": _path_label(path),
         "run_id": run_id,
@@ -404,43 +407,62 @@ def _preprocess_step(
         "status": status,
         "summary": _step_summary(record, message),
         "error": _text(record.get("error")),
-        "input": [dict(_mapping(item)) for item in _list(record.get("input"))],
-        "output": [dict(_mapping(item)) for item in _list(record.get("output"))],
-        "payload": dict(_mapping(record.get("payload"))),
-        "message": dict(message) if message else None,
         "children": children,
     }
-    data["detail"] = _step_detail(data, run=run)
+    if not full:
+        return data
+    input_items = [dict(_mapping(item)) for item in _list(record.get("input"))]
+    output = [dict(_mapping(item)) for item in _list(record.get("output"))]
+    payload = dict(_mapping(record.get("payload")))
+    data["record"] = dict(record)
+    if message:
+        data["message"] = dict(message)
+    data.update(_step_detail_fields(kind, input_items=input_items, output=output, payload=payload, children=children, run=run))
     return data
 
 
-def _step_detail(step: Mapping[str, Any], *, run: Mapping[str, Any]) -> dict[str, Any]:
-    children = [_mapping(child) for child in _list(step.get("children"))]
+def _step_detail_fields(
+    kind: str,
+    *,
+    input_items: Sequence[Mapping[str, Any]],
+    output: Sequence[Mapping[str, Any]],
+    payload: Mapping[str, Any],
+    children: Sequence[Mapping[str, Any]],
+    run: Mapping[str, Any],
+) -> dict[str, Any]:
     if children:
         return {
             "variant": "compound",
-            "input": _list(step.get("input")),
-            "output": _list(step.get("output")),
-            "children": [
+            "input_refs": [dict(item) for item in input_items],
+            "output": [dict(item) for item in output],
+            "child_steps": [
                 {"path": child.get("path"), "kind": child.get("kind"), "status": child.get("status")}
                 for child in children
             ],
         }
-    if step.get("kind") == "model":
-        return _model_step_detail(step, run=run)
-    if step.get("kind") == "tool":
-        return _tool_step_detail(step)
-    return {"variant": "generic", "input": _list(step.get("input")), "output": _list(step.get("output"))}
+    if kind == "model":
+        return _model_step_fields(input_items=input_items, output=output, payload=payload, run=run)
+    if kind == "tool":
+        return _tool_step_fields(input_items=input_items, output=output, run=run)
+    return {
+        "variant": "generic",
+        "input_refs": [dict(item) for item in input_items],
+        "output": [dict(item) for item in output],
+    }
 
 
-def _model_step_detail(step: Mapping[str, Any], *, run: Mapping[str, Any]) -> dict[str, Any]:
+def _model_step_fields(
+    *,
+    input_items: Sequence[Mapping[str, Any]],
+    output: Sequence[Mapping[str, Any]],
+    payload: Mapping[str, Any],
+    run: Mapping[str, Any],
+) -> dict[str, Any]:
     prompts = _mapping(run.get("prompts"))
-    payload = _mapping(step.get("payload"))
-    output = _list(step.get("output"))
     request = _mapping(payload.get("adapter_request"))
     if not request:
-        request = _reconstructed_model_request(step, run=run, prompts=prompts)
-    detail: dict[str, Any] = {
+        request = _reconstructed_model_request(input_items=input_items, payload=payload, run=run, prompts=prompts)
+    fields: dict[str, Any] = {
         "variant": "model",
         "model": {
             "ref": payload.get("model_ref"),
@@ -452,35 +474,72 @@ def _model_step_detail(step: Mapping[str, Any], *, run: Mapping[str, Any]) -> di
             "output_tokens": payload.get("output_tokens"),
         },
         "adapter_request": request,
-        "output": output,
+        "output": [dict(item) for item in output],
     }
     if reasoning := _text(payload.get("reasoning_content")):
-        detail["reasoning_content"] = reasoning
-    return detail
+        fields["reasoning_content"] = reasoning
+    return fields
 
 
-def _tool_step_detail(step: Mapping[str, Any]) -> dict[str, Any]:
-    results: list[dict[str, Any]] = []
+def _tool_step_fields(
+    *,
+    input_items: Sequence[Mapping[str, Any]],
+    output: Sequence[Mapping[str, Any]],
+    run: Mapping[str, Any],
+) -> dict[str, Any]:
+    calls: list[dict[str, Any]] = []
     other_parts: list[dict[str, Any]] = []
-    for part in [_mapping(item) for item in _list(step.get("output"))]:
+    request_parts = _tool_call_parts_from_input_refs(run, input_items)
+    for part in output:
         if part.get("type") != "tool_result":
             other_parts.append(dict(part))
             continue
-        results.append(
+        call_id = _text(part.get("tool_call_id")) or _text(part.get("call_id"))
+        request = request_parts.get(call_id or "")
+        calls.append(
             {
-                "tool": part.get("tool_name") or part.get("tool_family"),
-                "input": part.get("input"),
+                "name": part.get("tool_name") or part.get("tool_family") or (request or {}).get("tool_name"),
+                "family": part.get("tool_family") or (request or {}).get("tool_family"),
+                "call_id": call_id,
+                "input": part.get("input") if part.get("input") is not None else (request or {}).get("input"),
                 "result": part.get("output"),
                 "error": part.get("error"),
-                "raw": part,
             }
         )
     return {
         "variant": "tool",
-        "input_refs": _list(step.get("input")),
-        "results": results,
+        "input_refs": [dict(item) for item in input_items],
+        "tool_calls": calls,
         "other_output": other_parts,
     }
+
+
+def _tool_call_parts_from_input_refs(
+    run: Mapping[str, Any],
+    input_items: Sequence[Mapping[str, Any]],
+) -> dict[str, Mapping[str, Any]]:
+    parts_by_call_id: dict[str, Mapping[str, Any]] = {}
+    for typed in input_items:
+        if _text(typed.get("kind")) != "step":
+            continue
+        step_index = _int_or_none(typed.get("index"))
+        if step_index is None:
+            continue
+        step = _run_step_by_index(run, step_index)
+        if step is None:
+            continue
+        record = _mapping(step.get("record"))
+        parts = [_mapping(item) for item in _list(record.get("output"))]
+        part_index = _int_or_none(typed.get("part"))
+        if part_index is not None:
+            parts = parts[part_index : part_index + 1] if 0 <= part_index < len(parts) else []
+        for part in parts:
+            if part.get("type") != "tool_call":
+                continue
+            call_id = _text(part.get("tool_call_id")) or _text(part.get("call_id"))
+            if call_id is not None:
+                parts_by_call_id[call_id] = part
+    return parts_by_call_id
 
 
 def _step_tree(
@@ -488,6 +547,7 @@ def _step_tree(
     *,
     run_by_id: Mapping[str, Mapping[str, Any]],
     path_prefix: tuple[int, ...] = (),
+    full: bool,
 ) -> list[StepData]:
     nodes: list[StepData] = []
     for step in _run_steps(run):
@@ -496,7 +556,7 @@ def _step_tree(
         if step_index is None:
             continue
         path = (*path_prefix, step_index)
-        nodes.append(_preprocess_step(run, step, path=path, run_by_id=run_by_id))
+        nodes.append(_preprocess_step(run, step, path=path, run_by_id=run_by_id, full=full))
     return nodes
 
 
@@ -542,16 +602,16 @@ def _find_step(nodes: Sequence[Mapping[str, Any]], path: str) -> StepData | None
 
 
 def _reconstructed_model_request(
-    step: Mapping[str, Any],
     *,
+    input_items: Sequence[Mapping[str, Any]],
+    payload: Mapping[str, Any],
     run: Mapping[str, Any],
     prompts: Mapping[str, Any],
 ) -> dict[str, Any]:
-    payload = _mapping(step.get("payload"))
     return {
         "instructions": _prompt_body(payload.get("instruct"), prompts=prompts),
         "context": _prompt_body(payload.get("context"), prompts=prompts),
-        "messages": _messages_from_input_refs(run, [_mapping(item) for item in _list(step.get("input"))]),
+        "messages": _messages_from_input_refs(run, input_items),
         "tools": None,
         "state": None,
     }
@@ -717,8 +777,7 @@ def _render_human_step(step: Mapping[str, Any]) -> None:
     typer.echo(f"run  {_text(step.get('run_id')) or '-'}")
     if error := _text(step.get("error")):
         _render_text_section("error", error)
-    detail = _mapping(step.get("detail"))
-    variant = _text(detail.get("variant"))
+    variant = _text(step.get("variant"))
     if variant == "model":
         _render_human_model_step(step)
         return
@@ -726,36 +785,36 @@ def _render_human_step(step: Mapping[str, Any]) -> None:
         _render_human_tool_step(step)
         return
     if variant == "compound":
-        _render_section("input", detail.get("input"))
-        _render_section("output", detail.get("output"))
-        _render_section("children", detail.get("children"))
+        _render_section("input_refs", step.get("input_refs"))
+        _render_section("output", step.get("output"))
+        _render_section("child_steps", step.get("child_steps"))
         return
-    _render_section("input", detail.get("input"))
-    _render_section("output", detail.get("output"))
+    _render_section("input_refs", step.get("input_refs"))
+    _render_section("output", step.get("output"))
 
 
 def _render_human_model_step(step: Mapping[str, Any]) -> None:
-    detail = _mapping(step.get("detail"))
     typer.echo("model")
-    for key, value in _mapping(detail.get("model")).items():
+    for key, value in _mapping(step.get("model")).items():
         _render_kv(str(key), value)
-    _render_section("adapter_request", detail.get("adapter_request"))
-    _render_section("output", detail.get("output"))
-    if reasoning := _text(detail.get("reasoning_content")):
+    _render_section("adapter_request", step.get("adapter_request"))
+    _render_section("output", step.get("output"))
+    if reasoning := _text(step.get("reasoning_content")):
         _render_text_section("reasoning_content", reasoning)
 
 
 def _render_human_tool_step(step: Mapping[str, Any]) -> None:
-    detail = _mapping(step.get("detail"))
-    _render_section("input_refs", detail.get("input_refs"))
-    for index, result in enumerate(_list(detail.get("results")), start=1):
-        typed = _mapping(result)
-        typer.echo(f"tool_result {index}")
-        _render_kv("tool", typed.get("tool"))
+    _render_section("input_refs", step.get("input_refs"))
+    for index, call in enumerate(_list(step.get("tool_calls")), start=1):
+        typed = _mapping(call)
+        typer.echo(f"tool_call {index}")
+        _render_kv("name", typed.get("name"))
+        _render_kv("family", typed.get("family"))
+        _render_kv("call_id", typed.get("call_id"))
         _render_section("input", typed.get("input"))
         _render_section("result", typed.get("result"))
         _render_section("error", typed.get("error"))
-    _render_section("other_output", detail.get("other_output"))
+    _render_section("other_output", step.get("other_output"))
 
 
 def _render_kv(label: str, value: object) -> None:

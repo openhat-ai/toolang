@@ -9891,7 +9891,7 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
 
     assert tool_focus_result.exit_code == 0
     assert "step 2 tool  succeeded" in tool_focus_result.stdout
-    assert "tool_result 1" in tool_focus_result.stdout
+    assert "tool_call 1" in tool_focus_result.stdout
     assert "input" in tool_focus_result.stdout
     assert '"path": "task.md"' in tool_focus_result.stdout
     assert "result" in tool_focus_result.stdout
@@ -9917,7 +9917,15 @@ def test_cli_inspect_structured_views_render_preprocessed_document(monkeypatch) 
                         "instruct": "prompt_instruct",
                         "context": "prompt_context",
                     },
-                    "output": [{"type": "text", "text": "Ready."}],
+                    "output": [
+                        {"type": "text", "text": "Ready."},
+                        {
+                            "type": "tool_call",
+                            "tool_call_id": "call_read",
+                            "tool_name": "filesystem__read_text",
+                            "input": {"path": "task.md"},
+                        },
+                    ],
                 },
                 "message": None,
             },
@@ -9931,8 +9939,8 @@ def test_cli_inspect_structured_views_render_preprocessed_document(monkeypatch) 
                     "output": [
                         {
                             "type": "tool_result",
+                            "tool_call_id": "call_read",
                             "tool_name": "filesystem__read_text",
-                            "input": {"path": "task.md"},
                             "output": "task body",
                         }
                     ],
@@ -9962,8 +9970,9 @@ def test_cli_inspect_structured_views_render_preprocessed_document(monkeypatch) 
     json_data = json.loads(json_result.stdout)
     assert json_data["kind"] == "step"
     assert "steps" not in json_data["run"]
-    assert json_data["step"]["detail"]["variant"] == "model"
-    assert json_data["step"]["detail"]["adapter_request"] == {
+    assert json_data["step"]["variant"] == "model"
+    assert json_data["step"]["record"]["payload"]["model_ref"] == "openai/gpt-5"
+    assert json_data["step"]["adapter_request"] == {
         "instructions": "Answer concisely.",
         "context": "Use project context.",
         "messages": [{"role": "user", "parts": [{"type": "text", "text": "query"}]}],
@@ -9977,9 +9986,23 @@ def test_cli_inspect_structured_views_render_preprocessed_document(monkeypatch) 
     toml_data = tomllib.loads(toml_result.stdout)
     assert toml_data["kind"] == "run"
     assert "steps" not in toml_data["run"]
-    assert toml_data["steps"][1]["detail"]["variant"] == "tool"
-    assert toml_data["steps"][1]["detail"]["results"][0]["result"] == "task body"
+    assert toml_data["steps"][0]["kind"] == "model"
+    assert "record" not in toml_data["steps"][0]
+    assert "adapter_request" not in toml_data["steps"][0]
+    assert toml_data["steps"][1]["kind"] == "tool"
+    assert "tool_calls" not in toml_data["steps"][1]
+
+    tool_json_result = _invoke_app(["inspect", "dev", "run_struct:2", "--json"])
+
+    assert tool_json_result.exit_code == 0
+    tool_json_data = json.loads(tool_json_result.stdout)
+    assert tool_json_data["step"]["variant"] == "tool"
+    assert tool_json_data["step"]["tool_calls"][0]["name"] == "filesystem__read_text"
+    assert tool_json_data["step"]["tool_calls"][0]["input"] == {"path": "task.md"}
+    assert tool_json_data["step"]["tool_calls"][0]["result"] == "task body"
     assert calls == [
+        "/api/v1/runs/run_struct",
+        "/api/v1/threads/term_thread?limit=100",
         "/api/v1/runs/run_struct",
         "/api/v1/threads/term_thread?limit=100",
         "/api/v1/runs/run_struct",
