@@ -108,6 +108,14 @@ class _ChatInputBarSpec:
     outer_blank: bool = False
 
 
+@dataclass(frozen=True)
+class _ChatRenderedInputBarSegment:
+    text: str
+    style: str
+    fg: str
+    bg: str
+
+
 def _chat_fixed_height(rows: int, *, minimum: int) -> Dimension:
     height = max(minimum, rows)
     return Dimension(min=minimum, preferred=height, max=height, weight=0)
@@ -243,6 +251,7 @@ class _ChatRun:
     def start_step(self, payload: dict[str, Any]) -> None:
         step = _ChatStep.create(payload, run=self)
         index = step.index
+        self.finalize_pending_commands()
         self.remember_timeline("step", index)
         self.steps[index] = step
         self.mutable_block = step
@@ -288,23 +297,33 @@ class _ChatRun:
         if request_id := _text(payload.get("request_id")):
             existing_index = self.command_index_for_request(request_id)
             if existing_index is not None and existing_index != index:
-                self.commands.pop(existing_index, None)
+                existing = self.commands.pop(existing_index, None)
+                if self.mutable_block is existing:
+                    self.mutable_block = None
                 self.timeline = [
                     item
                     for item in self.timeline
                     if item != ("command", existing_index)
                 ]
         self.remember_timeline("command", index)
-        block.finalize(payload)
         self.commands[index] = block
-        if self.mutable_block is block:
-            self.mutable_block = None
+        if block.kind == "steer":
+            self.mutable_block = block
+            return
+        block.finalize(payload)
 
     def command_index_for_request(self, request_id: str) -> int | None:
         for index, block in self.commands.items():
             if _text(block.payload.get("request_id")) == request_id:
                 return index
         return None
+
+    def finalize_pending_commands(self) -> None:
+        for block in self.commands.values():
+            if block.kind == "steer" and not block.finalized:
+                block.finalize({})
+                if self.mutable_block is block:
+                    self.mutable_block = None
 
     def next_command_index(self) -> int:
         return max(self.commands, default=0) + 1
@@ -1871,7 +1890,7 @@ def _chat_input_block_line(content: str) -> str:
 
 
 def _chat_input_bar_ansi_lines(spec: _ChatInputBarSpec) -> list[str]:
-    return [_chat_input_bar_ansi_line(row, kind=spec.kind) for row in _chat_input_bar_rows(spec)]
+    return [_chat_rendered_input_bar_ansi_line(row) for row in _chat_render_input_bar_rows(spec)]
 
 
 def _chat_input_bar_plain_lines(spec: _ChatInputBarSpec) -> list[str]:
@@ -1883,11 +1902,7 @@ def _chat_input_bar_plain_line(row: _ChatInputBarRow) -> str:
 
 
 def _chat_input_bar_ansi_line(row: _ChatInputBarRow, *, kind: Literal["normal", "steer"]) -> str:
-    if not row.bar:
-        return ""
-    fg, bg = _chat_input_bar_colors(kind)
-    content = "".join(_chat_dim(segment.text) if segment.dim else segment.text for segment in row.segments)
-    return f"{_chat_ansi_style(fg, bg)}{_chat_pad_visible(content, _chat_terminal_width())}{_CHAT_RESET}"
+    return _chat_rendered_input_bar_ansi_line(_chat_render_input_bar_row(row, kind=kind))
 
 
 def _chat_input_bar_fragments(spec: _ChatInputBarSpec) -> list[tuple[str, str]]:
@@ -1895,7 +1910,7 @@ def _chat_input_bar_fragments(spec: _ChatInputBarSpec) -> list[tuple[str, str]]:
 
 
 def _chat_input_bar_fragment_rows(spec: _ChatInputBarSpec) -> list[list[tuple[str, str]]]:
-    return [_chat_input_bar_line_fragments(row, kind=spec.kind) for row in _chat_input_bar_rows(spec)]
+    return [_chat_rendered_input_bar_fragments(row) for row in _chat_render_input_bar_rows(spec)]
 
 
 def _chat_input_bar_rows(spec: _ChatInputBarSpec) -> list[_ChatInputBarRow]:
@@ -1922,28 +1937,61 @@ def _chat_input_bar_rows(spec: _ChatInputBarSpec) -> list[_ChatInputBarRow]:
     return rows
 
 
-def _chat_input_bar_line_fragments(
+def _chat_render_input_bar_rows(spec: _ChatInputBarSpec) -> list[list[_ChatRenderedInputBarSegment]]:
+    return [_chat_render_input_bar_row(row, kind=spec.kind) for row in _chat_input_bar_rows(spec)]
+
+
+def _chat_render_input_bar_row(
     row: _ChatInputBarRow, *, kind: Literal["normal", "steer"]
-) -> list[tuple[str, str]]:
+) -> list[_ChatRenderedInputBarSegment]:
     if not row.bar:
         return []
-    fragments: list[tuple[str, str]] = []
+    rendered: list[_ChatRenderedInputBarSegment] = []
     visible_len = 0
     for segment in row.segments:
         if not segment.text:
             continue
-        fragments.append((_chat_input_bar_class(kind, dim=segment.dim), segment.text))
+        rendered.append(_chat_render_input_bar_segment(segment.text, kind=kind, dim=segment.dim))
         visible_len += _chat_display_len(segment.text)
     padding = " " * max(0, _chat_terminal_width() - visible_len)
     if padding:
-        fragments.append((_chat_input_bar_class(kind, dim=False), padding))
-    return fragments
+        rendered.append(_chat_render_input_bar_segment(padding, kind=kind, dim=False))
+    return rendered
 
 
-def _chat_input_bar_colors(kind: Literal["normal", "steer"]) -> tuple[str, str]:
+def _chat_render_input_bar_segment(
+    text: str, *, kind: Literal["normal", "steer"], dim: bool
+) -> _ChatRenderedInputBarSegment:
+    return _ChatRenderedInputBarSegment(
+        text=text,
+        style=_chat_input_bar_class(kind, dim=dim),
+        fg=_chat_input_bar_foreground(kind, dim=dim),
+        bg=_chat_input_bar_background(kind),
+    )
+
+
+def _chat_rendered_input_bar_ansi_line(row: Sequence[_ChatRenderedInputBarSegment]) -> str:
+    if not row:
+        return ""
+    return "".join(f"{_chat_ansi_style(segment.fg, segment.bg)}{segment.text}" for segment in row) + _CHAT_RESET
+
+
+def _chat_rendered_input_bar_fragments(
+    row: Sequence[_ChatRenderedInputBarSegment],
+) -> list[tuple[str, str]]:
+    return [(segment.style, segment.text) for segment in row]
+
+
+def _chat_input_bar_foreground(kind: Literal["normal", "steer"], *, dim: bool) -> str:
     if kind == "steer":
-        return _CHAT_STEER_INPUT_FG, _CHAT_STEER_INPUT_BG
-    return _CHAT_INPUT_FG, _CHAT_INPUT_BG
+        return _CHAT_STEER_INPUT_DIM_FG if dim else _CHAT_STEER_INPUT_FG
+    return _CHAT_INPUT_DIM_FG if dim else _CHAT_INPUT_FG
+
+
+def _chat_input_bar_background(kind: Literal["normal", "steer"]) -> str:
+    if kind == "steer":
+        return _CHAT_STEER_INPUT_BG
+    return _CHAT_INPUT_BG
 
 
 def _chat_input_bar_class(kind: Literal["normal", "steer"], *, dim: bool) -> str:
@@ -1958,10 +2006,6 @@ def _chat_join_fragment_rows(rows: Sequence[Sequence[tuple[str, str]]]) -> list[
         if index < len(rows) - 1:
             fragments.append(("", "\n"))
     return fragments
-
-
-def _chat_pad_visible(content: str, width: int) -> str:
-    return content + " " * max(0, width - _chat_display_len(content))
 
 
 def _chat_terminal_width(default: int = 100) -> int:
@@ -2079,7 +2123,7 @@ def _chat_active_activity_fragment_rows(
         if kind == "command":
             command = run.commands.get(index)
             if command is not None:
-                rows.extend(_chat_command_activity_fragment_rows(run, command.payload, position))
+                rows.extend(_chat_command_activity_fragment_rows(run, command, position))
             continue
         if index in rendered_steps:
             continue
@@ -2125,7 +2169,7 @@ def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, i
         if kind == "command":
             command = run.commands.get(index)
             if command is not None:
-                lines.extend(_chat_command_activity_lines(run, command.payload, position))
+                lines.extend(_chat_command_activity_lines(run, command, position))
             continue
         if index in rendered_steps:
             continue
@@ -2176,32 +2220,33 @@ def _chat_timeline_command_lines(run: _ChatRun) -> list[str]:
         command = run.commands.get(index)
         if command is None:
             continue
-        lines.extend(_chat_command_activity_lines(run, command.payload, position))
+        lines.extend(_chat_command_activity_lines(run, command, position))
     return lines
 
 
-def _chat_command_activity_lines(run: _ChatRun, command: Mapping[str, Any], timeline_position: int) -> list[str]:
-    if command.get("kind") == "steer":
-        return _chat_steer_input_block(command, waiting=_chat_command_is_waiting(run, timeline_position))
-    if command.get("kind") == "stop":
+def _chat_command_activity_lines(run: _ChatRun, command: _ChatCommandBlock, timeline_position: int) -> list[str]:
+    payload = command.payload
+    if payload.get("kind") == "steer":
+        return _chat_steer_input_block(payload, waiting=_chat_command_is_waiting(run, command, timeline_position))
+    if payload.get("kind") == "stop":
         return [] if _chat_run_is_stopped(run) else [_chat_dim("canceling...")]
     return []
 
 
 def _chat_command_activity_fragment_rows(
-    run: _ChatRun, command: Mapping[str, Any], timeline_position: int
+    run: _ChatRun, command: _ChatCommandBlock, timeline_position: int
 ) -> list[list[tuple[str, str]]]:
-    if command.get("kind") == "steer":
-        return _chat_steer_input_fragment_rows(command, waiting=_chat_command_is_waiting(run, timeline_position))
-    if command.get("kind") == "stop":
+    payload = command.payload
+    if payload.get("kind") == "steer":
+        return _chat_steer_input_fragment_rows(payload, waiting=_chat_command_is_waiting(run, command, timeline_position))
+    if payload.get("kind") == "stop":
         return [] if _chat_run_is_stopped(run) else [_chat_line_fragments(_chat_dim("canceling..."))]
     return []
 
 
-def _chat_command_is_waiting(run: _ChatRun, timeline_position: int) -> bool:
-    if not run.steps:
-        return False
-    return not any(kind == "step" for kind, _index in run.timeline[timeline_position + 1 :])
+def _chat_command_is_waiting(run: _ChatRun, command: _ChatCommandBlock, timeline_position: int) -> bool:
+    del run, timeline_position
+    return command.kind == "steer" and not command.finalized
 
 
 def _chat_steer_input_block(command: Mapping[str, Any], *, waiting: bool) -> list[str]:

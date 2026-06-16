@@ -87,6 +87,22 @@ def _ansi_truecolor_background(text: str) -> str | None:
     return f"{red:02x}{green:02x}{blue:02x}"
 
 
+def _ansi_truecolor_foregrounds(text: str) -> list[str]:
+    values: list[str] = []
+    marker = "38;2;"
+    offset = 0
+    while True:
+        start = text.find(marker, offset)
+        if start < 0:
+            return values
+        parts = text[start + len(marker) :].split("m", 1)[0].split(";")[:3]
+        offset = start + len(marker)
+        if len(parts) != 3:
+            continue
+        red, green, blue = (int(value) for value in parts)
+        values.append(f"{red:02x}{green:02x}{blue:02x}")
+
+
 class _FakeModelProvider:
     def __init__(
         self,
@@ -7705,10 +7721,18 @@ def test_cli_chat_active_run_uses_steer_input_bar_colors() -> None:
         for fragment_style, _text in rendered
         if fragment_style.startswith("class:steer-input")
     }
+    steer_foregrounds = {
+        style.get_attrs_for_style_str(fragment_style).color
+        for fragment_style, _text in rendered
+        if fragment_style.startswith("class:steer-input")
+    }
     assert steer_backgrounds == {cli._CHAT_STEER_INPUT_BG.removeprefix("#")}
-    scrollback_background = _ansi_truecolor_background("\n".join(cli._chat_steer_input_block(command, waiting=True)))
+    scrollback = "\n".join(cli._chat_steer_input_block(command, waiting=True))
+    scrollback_background = _ansi_truecolor_background(scrollback)
+    scrollback_foregrounds = set(_ansi_truecolor_foregrounds(scrollback))
     input_background = _ansi_truecolor_background(cli._chat_input_block_line(""))
     assert scrollback_background == next(iter(steer_backgrounds))
+    assert scrollback_foregrounds == steer_foregrounds
     assert scrollback_background != input_background
 
 
@@ -7800,6 +7824,21 @@ def test_cli_chat_run_steering_records_input_bar(monkeypatch) -> None:
 
     visible = cli._chat_visible_text("\n".join(cli._chat_run_lines(app.active_run, include_steps=True)))
     assert "+ abc" in visible
+    assert app.active_run.commands[1].kind == "steer"
+    assert not app.active_run.commands[1].finalized
+
+    app.handle_runtime_event(
+        {
+            "type": "step_begin",
+            "payload": {
+                "run_id": "run_steer",
+                "step_index": 1,
+                "kind": "model",
+            },
+        }
+    )
+
+    assert app.active_run.commands[1].finalized
 
 
 def test_cli_chat_run_steering_merges_optimistic_command_by_request_id(monkeypatch) -> None:
