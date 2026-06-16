@@ -99,14 +99,14 @@ def preprocess_inspect(raw: Mapping[str, Any], *, target: InspectTarget) -> Insp
     display_payload = run_by_id.get(run_id, run_payload) if run_id is not None else run_payload
     run = _preprocess_run(display_payload)
     if not target.path:
-        steps = _step_tree(display_payload, run_by_id=run_by_id, full=False)
+        steps = _step_tree(display_payload, run_by_id=run_by_id, focus_path=None)
         return {
             "kind": "run",
             "target": target.identifier,
             "run": run,
             "steps": steps,
         }
-    full_steps = _step_tree(display_payload, run_by_id=run_by_id, full=True)
+    full_steps = _step_tree(display_payload, run_by_id=run_by_id, focus_path=target.path)
     step = _find_step(full_steps, target.path_label or "")
     if step is None:
         raise click.ClickException(f"step path not found: {target.path_label}")
@@ -388,7 +388,7 @@ def _preprocess_step(
     *,
     path: tuple[int, ...],
     run_by_id: Mapping[str, Mapping[str, Any]],
-    full: bool,
+    focus_path: tuple[int, ...] | None,
 ) -> StepData:
     record = _mapping(step.get("record"))
     message = _mapping(step.get("message"))
@@ -399,7 +399,7 @@ def _preprocess_step(
     step_index = _int_or_none(record.get("step_index"))
     if step_index is not None:
         for child_run in _child_runs_for_step(run_id, step_index, step=step, run_by_id=run_by_id):
-            children.extend(_step_tree(child_run, run_by_id=run_by_id, path_prefix=path, full=full))
+            children.extend(_step_tree(child_run, run_by_id=run_by_id, path_prefix=path, focus_path=focus_path))
     data: StepData = {
         "path": _path_label(path),
         "run_id": run_id,
@@ -409,7 +409,7 @@ def _preprocess_step(
         "error": _text(record.get("error")),
         "children": children,
     }
-    if not full:
+    if path != focus_path:
         return data
     input_items = [dict(_mapping(item)) for item in _list(record.get("input"))]
     output = [dict(_mapping(item)) for item in _list(record.get("output"))]
@@ -435,10 +435,6 @@ def _step_detail_fields(
             "variant": "compound",
             "input_refs": [dict(item) for item in input_items],
             "output": [dict(item) for item in output],
-            "child_steps": [
-                {"path": child.get("path"), "kind": child.get("kind"), "status": child.get("status")}
-                for child in children
-            ],
         }
     if kind == "model":
         return _model_step_fields(input_items=input_items, output=output, payload=payload, run=run)
@@ -547,7 +543,7 @@ def _step_tree(
     *,
     run_by_id: Mapping[str, Mapping[str, Any]],
     path_prefix: tuple[int, ...] = (),
-    full: bool,
+    focus_path: tuple[int, ...] | None,
 ) -> list[StepData]:
     nodes: list[StepData] = []
     for step in _run_steps(run):
@@ -556,7 +552,7 @@ def _step_tree(
         if step_index is None:
             continue
         path = (*path_prefix, step_index)
-        nodes.append(_preprocess_step(run, step, path=path, run_by_id=run_by_id, full=full))
+        nodes.append(_preprocess_step(run, step, path=path, run_by_id=run_by_id, focus_path=focus_path))
     return nodes
 
 
@@ -743,6 +739,8 @@ def _render_human_thread(thread: Mapping[str, Any]) -> None:
         if elapsed := _text(run.get("elapsed")):
             pieces.append(elapsed)
         typer.echo(f"  {'  '.join(pieces)}")
+        if failure := _text(run.get("failure")):
+            typer.echo(f"    failure: {failure}")
 
 
 def _render_human_run(run: Mapping[str, Any], steps: Sequence[Mapping[str, Any]], *, depth: int) -> None:
@@ -785,9 +783,11 @@ def _render_human_step(step: Mapping[str, Any]) -> None:
         _render_human_tool_step(step)
         return
     if variant == "compound":
-        _render_section("input_refs", step.get("input_refs"))
-        _render_section("output", step.get("output"))
-        _render_section("child_steps", step.get("child_steps"))
+        children = [_mapping(item) for item in _list(step.get("children"))]
+        if children:
+            typer.echo("children")
+            for child in children:
+                _render_human_step_line(child, depth=2, level=0)
         return
     _render_section("input_refs", step.get("input_refs"))
     _render_section("output", step.get("output"))

@@ -9698,6 +9698,30 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
     assert tree_result.exit_code == 0
     assert "✓ 2.1 tool  filesystem__read_text: path=tasks/qf7y0d8k.md" in tree_result.stdout
 
+    parent_path_json = _invoke_app(["inspect", "dev", "run_parent:2", "--json"])
+
+    assert parent_path_json.exit_code == 0
+    parent_path_data = json.loads(parent_path_json.stdout)
+    assert parent_path_data["step"]["variant"] == "compound"
+    assert parent_path_data["step"]["children"][0]["path"] == "2.1"
+    assert parent_path_data["step"]["children"][0]["summary"] == "filesystem__read_text: path=tasks/qf7y0d8k.md"
+    assert "record" not in parent_path_data["step"]["children"][0]
+
+    child_path_json = _invoke_app(["inspect", "dev", "run_parent:2.1", "--json"])
+
+    assert child_path_json.exit_code == 0
+    child_path_data = json.loads(child_path_json.stdout)
+    assert child_path_data["step"]["variant"] == "tool"
+    assert child_path_data["step"]["tool_calls"][0]["result"] == "tool output"
+
+    parent_path_result = _invoke_app(["inspect", "dev", "run_parent:2"])
+
+    assert parent_path_result.exit_code == 0
+    assert "step 2 run  succeeded" in parent_path_result.stdout
+    assert "children" in parent_path_result.stdout
+    assert "✓ 2.1 tool  filesystem__read_text: path=tasks/qf7y0d8k.md" in parent_path_result.stdout
+    assert "input_refs" not in parent_path_result.stdout
+
     path_result = _invoke_app(["inspect", "dev", "run_parent:2.1"])
 
     assert path_result.exit_code == 0
@@ -10074,6 +10098,7 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
     assert "title   agent framework implementations" in result.stdout
     assert "runs    2 total" in result.stdout
     assert "✗  run_parent  flow:research" in result.stdout
+    assert "failure: unknown tool call: service_use__service_list (step 3 system)" in result.stdout
     assert "run_child thunk:expand_queries" not in result.stdout
     assert "step 1" not in result.stdout
 
