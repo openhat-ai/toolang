@@ -741,9 +741,6 @@ def _render_human_thread(thread: Mapping[str, Any]) -> None:
     if run_count is not None:
         pieces.append(f"runs={run_count}")
     typer.echo("  ".join(pieces))
-    if title := _text(thread.get("title")):
-        _render_human_section_title("title")
-        typer.echo(title)
     runs = [_mapping(item) for item in _list(thread.get("runs"))]
     if not runs:
         return
