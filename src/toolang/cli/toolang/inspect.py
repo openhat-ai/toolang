@@ -871,13 +871,13 @@ def _render_human_step(step: Mapping[str, Any]) -> None:
 
 
 def _render_human_model_step(step: Mapping[str, Any]) -> None:
-    _render_human_model_api(step)
     _render_human_model_messages(step)
     _render_human_model_response(step)
     if reasoning := _text(step.get("reasoning_content")):
         _render_text_section("reasoning", reasoning)
     _render_human_model_context(step)
     _render_human_model_instruct(step)
+    _render_human_model_api(step)
 
 
 def _render_human_model_api(step: Mapping[str, Any]) -> None:

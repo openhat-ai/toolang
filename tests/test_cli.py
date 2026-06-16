@@ -9935,7 +9935,12 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
     assert "thread_id=term_thread" in focus_result.stdout
     assert "# instruct" in focus_result.stdout
     assert "Answer concisely." in focus_result.stdout
-    assert focus_result.stdout.index("# output") < focus_result.stdout.index("# context") < focus_result.stdout.index("# instruct")
+    assert (
+        focus_result.stdout.index("# output")
+        < focus_result.stdout.index("# context")
+        < focus_result.stdout.index("# instruct")
+        < focus_result.stdout.index("# api")
+    )
     assert "# request" not in focus_result.stdout
 
     tool_focus_result = _invoke_app(["inspect", "dev", "run_thunk:2"])
