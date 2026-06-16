@@ -736,10 +736,10 @@ def _render_human(document: Mapping[str, Any], *, tree: bool, depth: int) -> Non
 
 def _render_human_thread(thread: Mapping[str, Any]) -> None:
     _render_human_section_title("thread")
-    pieces = [_text(thread.get("id")) or "-"]
+    pieces = [f"thread {_text(thread.get('id')) or '-'}", _text(thread.get("status")) or "-"]
     run_count = thread.get("run_count")
     if run_count is not None:
-        pieces.append(f"runs={run_count}")
+        pieces[-1] = f"{pieces[-1]} runs={run_count}"
     typer.echo("  ".join(pieces))
     runs = [_mapping(item) for item in _list(thread.get("runs"))]
     if not runs:
@@ -785,9 +785,7 @@ def _render_human_thread_run(
 
 def _render_human_run(run: Mapping[str, Any], steps: Sequence[Mapping[str, Any]], *, depth: int) -> None:
     _render_human_section_title("run")
-    pieces = [_text(run.get("id")) or "-", _text(run.get("status")) or "-", _text(run.get("target")) or "-"]
-    if thread_id := _text(run.get("thread_id")):
-        pieces.append(f"thread={thread_id}")
+    pieces = [f"run {_text(run.get('id')) or '-'}", _text(run.get("status")) or "-", _target_field(_text(run.get("target")))]
     typer.echo("  ".join(pieces))
     if input_summary := _text(run.get("input_summary")):
         _render_human_section_title("input")
@@ -808,6 +806,21 @@ def _render_human_section_title(label: str) -> None:
     click.secho(f"# {label}", dim=True)
 
 
+def _target_field(target: str | None) -> str:
+    if not target:
+        return "target=-"
+    kind, sep, name = target.partition(":")
+    if sep:
+        return f"{kind}={name or '-'}"
+    return f"target={target}"
+
+
+def _step_focus_id(step: Mapping[str, Any]) -> str:
+    run_id = _text(step.get("run_id")) or "-"
+    path = _text(step.get("path")) or "-"
+    return f"{run_id}:{path}"
+
+
 def _render_human_step_line(step: Mapping[str, Any], *, depth: int, level: int, base_indent: int) -> None:
     indent = "  " * (base_indent + level)
     status = _text(step.get("status")) or ""
@@ -823,8 +836,7 @@ def _render_human_step_line(step: Mapping[str, Any], *, depth: int, level: int, 
 
 
 def _render_human_step(step: Mapping[str, Any]) -> None:
-    typer.echo(f"step {_text(step.get('path')) or '-'} {_text(step.get('kind')) or 'step'}  {_text(step.get('status')) or '-'}")
-    typer.echo(f"run  {_text(step.get('run_id')) or '-'}")
+    typer.echo(f"step {_step_focus_id(step)}  {_text(step.get('status')) or '-'}  kind={_text(step.get('kind')) or 'step'}")
     if error := _text(step.get("error")):
         _render_text_section("error", error)
     variant = _text(step.get("variant"))

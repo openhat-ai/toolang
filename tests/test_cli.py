@@ -9686,8 +9686,7 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
     assert result.exit_code == 0
     assert calls == ["/api/v1/runs/run_parent", "/api/v1/threads/term_thread?limit=100"]
     assert "# run" in result.stdout
-    assert "run_parent  succeeded  flow:research  thread=term_thread" in result.stdout
-    assert "run run_parent" not in result.stdout
+    assert "run run_parent  succeeded  flow=research" in result.stdout
     assert "# input\nquery" in result.stdout
     assert "# steps" in result.stdout
     assert "\n✓ 1   step    stage 1 rank prepare count=3" in result.stdout
@@ -9721,7 +9720,7 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
     parent_path_result = _invoke_app(["inspect", "dev", "run_parent:2"])
 
     assert parent_path_result.exit_code == 0
-    assert "step 2 run  succeeded" in parent_path_result.stdout
+    assert "step run_parent:2  succeeded  kind=run" in parent_path_result.stdout
     assert "children" in parent_path_result.stdout
     assert "\n  ✓ 2.1 tool    filesystem__read_text: path=tasks/qf7y0d8k.md" in parent_path_result.stdout
     assert "input_refs" not in parent_path_result.stdout
@@ -9729,8 +9728,7 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
     path_result = _invoke_app(["inspect", "dev", "run_parent:2.1"])
 
     assert path_result.exit_code == 0
-    assert "step 2.1 tool  succeeded" in path_result.stdout
-    assert "run  run_child" in path_result.stdout
+    assert "step run_child:2.1  succeeded  kind=tool" in path_result.stdout
     assert "output" in path_result.stdout
     assert "tool output" in path_result.stdout
 
@@ -9822,8 +9820,7 @@ def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> Non
     assert result.exit_code == 0
     assert calls == ["/api/v1/runs/run_child", "/api/v1/threads/term_thread?limit=100"]
     assert "# run" in result.stdout
-    assert "run_child  failed  thunk:expand_queries  thread=term_thread" in result.stdout
-    assert "run run_child" not in result.stdout
+    assert "run run_child  failed  thunk=expand_queries" in result.stdout
     assert "# output" in result.stdout
     assert "error: unknown tool call: service_use__service_list (step 2 system)" in result.stdout
     assert "unknown tool call: service_use__service_list (step 2 system)" in result.stdout
@@ -9904,8 +9901,7 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
     assert result.exit_code == 0
     assert calls == ["/api/v1/runs/run_thunk", "/api/v1/threads/term_thread?limit=100"]
     assert "# run" in result.stdout
-    assert "run_thunk  succeeded  thunk:summarize  thread=term_thread" in result.stdout
-    assert "run run_thunk" not in result.stdout
+    assert "run run_thunk  succeeded  thunk=summarize" in result.stdout
     assert "# input\nquery" in result.stdout
     assert "# output\nSummary complete." in result.stdout
     assert "# steps" in result.stdout
@@ -9917,7 +9913,7 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
     focus_result = _invoke_app(["inspect", "dev", "run_thunk:1"])
 
     assert focus_result.exit_code == 0
-    assert "step 1 model  succeeded" in focus_result.stdout
+    assert "step run_thunk:1  succeeded  kind=model" in focus_result.stdout
     assert "adapter_request" in focus_result.stdout
     assert "output" in focus_result.stdout
     assert '"tool_name": "filesystem__read_text"' in focus_result.stdout
@@ -9926,7 +9922,7 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
     tool_focus_result = _invoke_app(["inspect", "dev", "run_thunk:2"])
 
     assert tool_focus_result.exit_code == 0
-    assert "step 2 tool  succeeded" in tool_focus_result.stdout
+    assert "step run_thunk:2  succeeded  kind=tool" in tool_focus_result.stdout
     assert "tool_call 1" in tool_focus_result.stdout
     assert "input" in tool_focus_result.stdout
     assert '"path": "task.md"' in tool_focus_result.stdout
@@ -10170,8 +10166,7 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
     assert result.exit_code == 0
     assert calls == ["/api/v1/threads/term_thread?limit=100"]
     assert "# thread" in result.stdout
-    assert "term_thread  runs=3" in result.stdout
-    assert "term_thread  idle" not in result.stdout
+    assert "thread term_thread  idle runs=3" in result.stdout
     assert "# title" not in result.stdout
     assert "agent framework implementations" not in result.stdout
     assert "# runs" in result.stdout
