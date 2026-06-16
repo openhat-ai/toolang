@@ -1068,11 +1068,9 @@ def _step_summary(record: Mapping[str, Any], message: Mapping[str, Any], *, run:
     payload = _mapping(record.get("payload"))
     kind = _text(record.get("kind"))
     if kind == "model":
-        model = _text(payload.get("model_ref")) or _text(payload.get("model"))
         text = _message_summary(message) or _parts_summary(record.get("output"))
-        requests = "; ".join(line.removeprefix("requested ") for line in _tool_request_lines(record))
-        request_summary = f"requested {requests}" if requests else ""
-        return " ".join(item for item in (model, text, request_summary) if item)
+        request_summary = "; ".join(_tool_request_lines(record))
+        return " ".join(item for item in (text, request_summary) if item)
     if kind == "tool":
         return _tool_result_summary(record, run=run)
     if kind == "run":
@@ -1090,24 +1088,23 @@ def _tool_request_lines(record: Mapping[str, Any]) -> list[str]:
         if typed.get("type") != "tool_call":
             continue
         name = _text(typed.get("tool_name")) or _text(typed.get("tool_family")) or "tool"
-        tool_input = _tool_input_summary(typed.get("input"))
-        suffix = f": {tool_input}" if tool_input else ""
-        lines.append(f"requested {name}{suffix}")
+        lines.append(_tool_history_summary(name, "call", typed.get("input")))
     return lines
 
 
 def _tool_result_summary(record: Mapping[str, Any], *, run: Mapping[str, Any]) -> str:
-    request_parts = _tool_call_parts_from_input_refs(run, [_mapping(item) for item in _list(record.get("input"))])
+    del run
     for part in _list(record.get("output")):
         typed = _mapping(part)
         if typed.get("type") != "tool_result":
             continue
         name = _text(typed.get("tool_name")) or _text(typed.get("tool_family")) or "tool"
-        call_id = _text(typed.get("tool_call_id")) or _text(typed.get("call_id"))
-        request = request_parts.get(call_id or "")
-        tool_input = _tool_input_summary(typed.get("input") if typed.get("input") is not None else _mapping(request).get("input"))
-        suffix = f": {tool_input}" if tool_input else ""
-        return f"{name}{suffix}"
+        if error := _text(typed.get("error")):
+            return _tool_history_summary(name, "error", {"error": error})
+        result = typed.get("output")
+        if result is None:
+            result = typed.get("result")
+        return _tool_history_summary(name, "result", result)
     return _parts_summary(record.get("output")) or _text(record.get("error")) or "-"
 
 
@@ -1157,7 +1154,7 @@ def _tool_history_summary(name: str, kind: str, payload: object) -> str:
     if payload is None or payload == {}:
         return prefix.rstrip()
     separator = "  " if kind == "call" else " "
-    return f"{prefix}{separator}{_json5_inline(payload)}"
+    return f"{prefix}{separator}{_json5_inline_summary(payload)}"
 
 
 def _tool_calls_display_summary(tool_calls: Sequence[Mapping[str, Any]]) -> str:
@@ -1309,6 +1306,10 @@ def _json5_inline(value: object) -> str:
         return _collapse_text(json5.dumps(value, ensure_ascii=False, quote_keys=False, trailing_commas=False))
     except TypeError:
         return str(value)
+
+
+def _json5_inline_summary(value: object) -> str:
+    return _truncate(_json5_inline(value), width=160)
 
 
 def _public_document(value: object) -> object:
