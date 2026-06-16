@@ -573,7 +573,8 @@ class _ChatLastRunPanel:
         run = self.get_run()
         if run is None:
             return []
-        return _chat_input_bar_fragments(_chat_run_start_bar_spec(run))
+        spec = _chat_panel_user_bar_spec(run)
+        return [] if spec is None else _chat_input_bar_fragments(spec)
 
     def render_activity(self) -> list[tuple[str, str]]:
         run = self.get_run()
@@ -1304,13 +1305,11 @@ class _ChatBottomApp:
         if self.active_run is None:
             self.active_run = _ChatRun(run_id=run_id, message="", status="running", accept_child_trace=True)
             self.active_run.mark_running()
-            self.flush_user_block(self.active_run)
             self.maybe_send_cancel_request()
             return
         if run_id:
             self.active_run.run_id = run_id
         self.active_run.mark_running()
-        self.flush_user_block(self.active_run)
         self.maybe_send_cancel_request()
 
     def handle_chat_stream_metadata(self, event: Mapping[str, Any]) -> None:
@@ -1667,12 +1666,6 @@ class _ChatBottomApp:
     def print_header(self) -> None:
         self.deps.write_lines(_chat_header_lines(self.status_label(), home_label=self.home_label), hide_cursor=False)
 
-    def flush_user_block(self, run: _ChatRun) -> None:
-        if 0 in run.flushed_commands:
-            return
-        self.deps.write_lines([*_chat_scrollback_user_block(run), ""])
-        run.flushed_commands.add(0)
-
     def flush_queue_state(self, run: _ChatRun) -> None:
         line = _chat_queue_activity_line(run)
         if line:
@@ -2017,15 +2010,23 @@ def _chat_dim(text: str) -> str:
 
 
 def _chat_panel_user_block(run: _ChatRun) -> list[str]:
-    return _chat_input_bar_plain_lines(_chat_run_start_bar_spec(run))
+    spec = _chat_panel_user_bar_spec(run)
+    return [] if spec is None else _chat_input_bar_plain_lines(spec)
 
 
 def _chat_scrollback_user_block(run: _ChatRun) -> list[str]:
-    return _chat_input_bar_ansi_lines(_chat_run_start_bar_spec(run))
+    spec = _chat_panel_user_bar_spec(run)
+    return [] if spec is None else _chat_input_bar_ansi_lines(spec)
 
 
-def _chat_run_start_bar_spec(run: _ChatRun) -> _ChatInputBarSpec:
-    block = _chat_run_start_block(run)
+def _chat_panel_user_bar_spec(run: _ChatRun) -> _ChatInputBarSpec | None:
+    block = _chat_existing_run_start_block(run)
+    if block is None:
+        return None
+    return _chat_run_start_bar_spec(run, block=block)
+
+
+def _chat_run_start_bar_spec(run: _ChatRun, *, block: _ChatRunStartBlock) -> _ChatInputBarSpec:
     text = _event_message_text(block.payload.get("message")) or _event_message_text(block.payload.get("input")) or run.message
     footer = _chat_run_input_footer(run)
     return _ChatInputBarSpec(
@@ -2037,22 +2038,9 @@ def _chat_run_start_bar_spec(run: _ChatRun) -> _ChatInputBarSpec:
     )
 
 
-def _chat_run_start_block(run: _ChatRun) -> _ChatRunStartBlock:
+def _chat_existing_run_start_block(run: _ChatRun) -> _ChatRunStartBlock | None:
     block = run.commands.get(0)
-    if isinstance(block, _ChatRunStartBlock):
-        return block
-    payload = {
-        "kind": "start",
-        "ref": {"kind": "command", "index": 0},
-        "message": {"role": "user", "parts": [{"type": "text", "text": run.message}]},
-    }
-    fallback = _ChatRunStartBlock(
-        index=0,
-        kind="start",
-        payload=payload,
-    )
-    fallback.finalize({})
-    return fallback
+    return block if isinstance(block, _ChatRunStartBlock) else None
 
 
 def _chat_local_input_bar_spec(message: str) -> _ChatInputBarSpec:
@@ -2276,7 +2264,9 @@ def _chat_sgr_color(color: str, *, foreground: bool) -> str:
 
 
 def _chat_run_lines(run: _ChatRun, *, include_steps: bool) -> list[str]:
-    lines = [*_chat_scrollback_user_block(run), ""]
+    lines = _chat_scrollback_user_block(run)
+    if lines:
+        lines.append("")
     if include_steps:
         lines.extend(_chat_run_activity_lines(run, _chat_completed_line_for))
     while lines and lines[-1] == "":
@@ -2320,7 +2310,11 @@ def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, i
     state_line = _chat_run_state_line(run)
     queue_line = _chat_queue_activity_line(run)
     if queue_line:
-        return [*_chat_terminal_event_lines(run, _chat_completed_line_for), *_chat_run_result_lines(run)]
+        return [
+            queue_line,
+            *_chat_terminal_event_lines(run, _chat_completed_line_for),
+            *_chat_run_result_lines(run),
+        ]
     flow_lines = _chat_flow_stage_lines(run)
     if flow_lines:
         lines = []

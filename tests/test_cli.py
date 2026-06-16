@@ -7738,6 +7738,13 @@ def test_cli_chat_active_run_uses_steer_input_bar_colors() -> None:
 
 def test_cli_chat_active_run_uses_normal_input_bar_colors() -> None:
     run = cli._ChatRun(run_id="run_user", message="hello", status="running")
+    run.start_command(
+        {
+            "type": "run_starting",
+            "run_id": "run_user",
+            "input": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
+        }
+    )
     panel = cli._ChatLastRunPanel(lambda: run)
 
     rendered = panel.render_user()
@@ -7747,6 +7754,14 @@ def test_cli_chat_active_run_uses_normal_input_bar_colors() -> None:
     assert any(style == "class:normal-input" and "hello" in text for style, text in rendered)
     assert any(style == "class:normal-input.dim" and text.strip() == "run_user" for style, text in rendered)
     assert rendered_text.count("> hello") == 1
+
+
+def test_cli_chat_active_run_does_not_render_start_bar_before_run_starting() -> None:
+    run = cli._ChatRun(run_id="", message="hello", status="submitting")
+    panel = cli._ChatLastRunPanel(lambda: run)
+
+    assert panel.render_user() == []
+    assert panel.user_lines() == []
 
 
 def test_cli_chat_run_lines_render_pending_steer_after_active_step() -> None:
@@ -7933,6 +7948,13 @@ def test_cli_chat_run_stopping_records_timeline_and_canceling(monkeypatch) -> No
 
 def test_cli_chat_run_lines_end_with_one_blank_without_leading_blank() -> None:
     first = cli._ChatRun(run_id="run_one", message="first", status="succeeded")
+    first.start_command(
+        {
+            "type": "run_starting",
+            "run_id": "run_one",
+            "input": {"role": "user", "parts": [{"type": "text", "text": "first"}]},
+        }
+    )
     first.complete_step(
         {
             "kind": "model",
@@ -7941,6 +7963,13 @@ def test_cli_chat_run_lines_end_with_one_blank_without_leading_blank() -> None:
         }
     )
     second = cli._ChatRun(run_id="run_two", message="second", status="succeeded")
+    second.start_command(
+        {
+            "type": "run_starting",
+            "run_id": "run_two",
+            "input": {"role": "user", "parts": [{"type": "text", "text": "second"}]},
+        }
+    )
     second.complete_step(
         {
             "kind": "model",
@@ -7961,6 +7990,13 @@ def test_cli_chat_run_lines_end_with_one_blank_without_leading_blank() -> None:
 
 def test_cli_chat_scrollback_input_bar_keeps_padding() -> None:
     run = cli._ChatRun(run_id="run_input", message="hello", status="succeeded")
+    run.start_command(
+        {
+            "type": "run_starting",
+            "run_id": "run_input",
+            "input": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
+        }
+    )
 
     lines = cli._chat_scrollback_user_block(run)
 
@@ -9000,7 +9036,7 @@ def test_cli_chat_start_run_handles_ai_sdk_stream_events(monkeypatch) -> None:
     assert printed
     visible = cli._chat_visible_text("\n".join(line for lines in printed for line in lines))
     assert "hello world" in visible
-    assert "run_ai" in visible
+    assert "run_ai" not in visible
 
 
 def test_cli_chat_cancel_active_run_posts_cancel(monkeypatch) -> None:
