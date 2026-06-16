@@ -2242,7 +2242,7 @@ def _chat_finalized_block_scrollback_lines(run: _ChatRun, block: _ChatMutableBlo
     lines = _chat_block_activity_lines(run, block)
     while lines and lines[-1] == "":
         lines.pop()
-    if lines:
+    if lines and isinstance(block, _ChatRunSteerBlock):
         lines.append("")
     return lines
 

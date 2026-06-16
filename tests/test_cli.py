@@ -8069,6 +8069,103 @@ def test_cli_chat_scrollback_input_bar_keeps_padding() -> None:
     assert cli._chat_visible_text(lines[2]).strip() == "run_input"
 
 
+def test_cli_chat_finalized_step_blocks_do_not_append_blank_lines(monkeypatch) -> None:
+    printed: list[list[str]] = []
+    monkeypatch.setattr(cli, "_runtime_json", lambda _ctx, _path: {})
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: printed.append(lines))
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.active_run = cli._ChatRun(run_id="run_compact", message="sleep", status="running")
+
+    app.handle_runtime_event(
+        {
+            "type": "step_begin",
+            "payload": {"run_id": "run_compact", "thread_id": "term_new", "step_index": 1, "kind": "model"},
+        }
+    )
+    app.handle_runtime_event(
+        {
+            "type": "part_end",
+            "payload": {
+                "run_id": "run_compact",
+                "thread_id": "term_new",
+                "step_index": 1,
+                "part_index": 0,
+                "part": {
+                    "type": "tool_call",
+                    "tool_call_id": "call_1",
+                    "tool_name": "shell__execute",
+                    "input": {"command": "sleep 10"},
+                },
+            },
+        }
+    )
+    app.handle_runtime_event(
+        {
+            "type": "step_end",
+            "payload": {
+                "run_id": "run_compact",
+                "thread_id": "term_new",
+                "step_index": 1,
+                "kind": "model",
+                "output": [
+                    {
+                        "type": "tool_call",
+                        "tool_call_id": "call_1",
+                        "tool_name": "shell__execute",
+                        "input": {"command": "sleep 10"},
+                    }
+                ],
+            },
+        }
+    )
+    app.handle_runtime_event(
+        {
+            "type": "step_begin",
+            "payload": {
+                "run_id": "run_compact",
+                "thread_id": "term_new",
+                "step_index": 2,
+                "kind": "tool",
+                "input": [
+                    {
+                        "type": "tool_call",
+                        "tool_call_id": "call_1",
+                        "tool_name": "shell__execute",
+                        "input": {"command": "sleep 10"},
+                    }
+                ],
+            },
+        }
+    )
+    app.handle_runtime_event(
+        {
+            "type": "step_end",
+            "payload": {
+                "run_id": "run_compact",
+                "thread_id": "term_new",
+                "step_index": 2,
+                "kind": "tool",
+                "input": [
+                    {
+                        "type": "tool_call",
+                        "tool_call_id": "call_1",
+                        "tool_name": "shell__execute",
+                        "input": {"command": "sleep 10"},
+                    }
+                ],
+                "output": [{"type": "tool_result", "tool_call_id": "call_1", "tool_name": "shell__execute", "output": {}}],
+            },
+        }
+    )
+
+    visible_lines = cli._chat_visible_text("\n".join(line for lines in printed for line in lines)).splitlines()
+    requested_index = next(index for index, line in enumerate(visible_lines) if "requested shell__execute" in line)
+    ran_index = next(index for index, line in enumerate(visible_lines) if "ran shell__execute" in line)
+
+    assert ran_index == requested_index + 1
+
+
 def test_cli_chat_trace_tool_result_replaces_running_tool_line(monkeypatch) -> None:
     printed: list[list[str]] = []
 
