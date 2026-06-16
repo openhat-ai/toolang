@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 from urllib.request import urlopen
 
 import click
+import json5
 import tomli_w
 import typer
 from wcwidth import wcswidth
@@ -960,22 +961,11 @@ def _render_human_model_instruct(step: Mapping[str, Any]) -> None:
 
 def _render_human_tool_step(step: Mapping[str, Any]) -> None:
     calls = [_mapping(call) for call in _list(step.get("tool_calls"))]
-    if calls:
-        _render_human_section_title("tool_calls")
-    for index, typed in enumerate(calls, start=1):
-        typer.echo(_tool_call_line(index, typed))
+    for typed in calls:
         _render_json_section("input", typed.get("input"))
         _render_json_section("output", typed.get("result"))
         _render_section("error", typed.get("error"))
     _render_section("other_output", step.get("other_output"))
-
-
-def _tool_call_line(index: int, call: Mapping[str, Any]) -> str:
-    pieces = [f"tool_call {index}"]
-    for key in ("name", "family", "call_id"):
-        if value := _text(call.get(key)):
-            pieces.append(f"{key}={value}")
-    return "  ".join(pieces)
 
 
 def _render_text_section(label: str, text: str) -> None:
@@ -999,7 +989,7 @@ def _render_json_section(label: str, value: object) -> None:
     if value is None or value == [] or value == {}:
         return
     _render_human_section_title(label)
-    for line in _full_value(value).splitlines():
+    for line in _json5_value(value).splitlines():
         typer.echo(line)
 
 
@@ -1291,6 +1281,13 @@ def _display_width(value: str) -> int:
 def _full_value(value: object) -> str:
     try:
         return json.dumps(value, ensure_ascii=False, indent=2)
+    except TypeError:
+        return str(value)
+
+
+def _json5_value(value: object) -> str:
+    try:
+        return json5.dumps(value, ensure_ascii=False, indent=2, quote_keys=False, trailing_commas=False)
     except TypeError:
         return str(value)
 

@@ -9949,11 +9949,11 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
 
     assert tool_focus_result.exit_code == 0
     assert "step run_thunk:2  succeeded  kind=tool" in tool_focus_result.stdout
-    assert "# tool_calls" in tool_focus_result.stdout
-    assert "tool_call 1  name=filesystem__read_text" in tool_focus_result.stdout
+    assert "# tool_calls" not in tool_focus_result.stdout
+    assert "tool_call 1" not in tool_focus_result.stdout
     assert "# input_refs" not in tool_focus_result.stdout
     assert "# input" in tool_focus_result.stdout
-    assert '"path": "task.md"' in tool_focus_result.stdout
+    assert 'path: "task.md"' in tool_focus_result.stdout
     assert "# output" in tool_focus_result.stdout
     assert "# result" not in tool_focus_result.stdout
     assert "task body" in tool_focus_result.stdout
