@@ -37,6 +37,7 @@ from toolang.execution.records import ChildCallStepPayload, FlowOpStepPayload
 from toolang.common.progress import ProgressEvent
 from toolang import work
 from toolang.execution.db import ExecutionStore, execution_db_path
+from wcwidth import wcswidth
 runner = CliRunner()
 DEFAULT_AGENT_SOURCE = "# Customize this agent here.\n# Docs: https://toolang.ai/docs\n"
 
@@ -10139,7 +10140,7 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
                     "kind": "model",
                     "status": "finished",
                     "payload": {"model_ref": "deepseek/deepseek-chat-v3"},
-                    "output": [{"type": "text", "text": f"Research summary complete. {'details ' * 30}"}],
+                    "output": [{"type": "text", "text": f"李白同学是谁，{'中文内容' * 30}"}],
                 },
                 "message": None,
             },
@@ -10175,9 +10176,10 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
     assert "\n✗ run_parent   flow:research    1.0s  3 steps" in result.stdout
     assert "  input:   query" in result.stdout
     assert "  output:  error: unknown tool call: service_use__service_list (step 3 system)" in result.stdout
+    assert "\n\n✓ run_success" in result.stdout
     assert "\n✓ run_success  thunk:summarize  1.0s  2 steps" in result.stdout
-    success_output_line = next(line for line in result.stdout.splitlines() if line.startswith("  output:  Research summary complete."))
-    assert len(success_output_line) == 120
+    success_output_line = next(line for line in result.stdout.splitlines() if line.startswith("  output:  李白同学是谁"))
+    assert wcswidth(success_output_line) == 120
     assert success_output_line.endswith("...")
     assert "\n# run\n" not in result.stdout
     assert "run_child thunk:expand_queries" not in result.stdout

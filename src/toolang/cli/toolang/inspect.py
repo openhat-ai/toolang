@@ -15,6 +15,7 @@ from urllib.request import urlopen
 import click
 import tomli_w
 import typer
+from wcwidth import wcswidth
 
 from ... import agents
 from ...base.types.message import parts_to_data
@@ -747,12 +748,14 @@ def _render_human_thread(thread: Mapping[str, Any]) -> None:
     if not runs:
         return
     _render_human_section_title("runs")
-    run_id_width = max(len(_text(run.get("id")) or "-") for run in runs)
-    target_width = max(len(_text(run.get("target")) or "-") for run in runs)
-    elapsed_width = max(len(_text(run.get("elapsed")) or "-") for run in runs)
-    step_count_width = max(len(str(_int_or_none(run.get("step_count")) or 0)) for run in runs)
+    run_id_width = max(_display_width(_text(run.get("id")) or "-") for run in runs)
+    target_width = max(_display_width(_text(run.get("target")) or "-") for run in runs)
+    elapsed_width = max(_display_width(_text(run.get("elapsed")) or "-") for run in runs)
+    step_count_width = max(_display_width(str(_int_or_none(run.get("step_count")) or 0)) for run in runs)
     line_width = _thread_run_line_width()
-    for run in runs:
+    for index, run in enumerate(runs):
+        if index > 0:
+            typer.echo("")
         _render_human_thread_run(
             run,
             run_id_width=run_id_width,
@@ -777,9 +780,9 @@ def _render_human_thread_run(
     target = _text(run.get("target")) or "-"
     elapsed = _text(run.get("elapsed")) or "-"
     step_count = _int_or_none(run.get("step_count"))
-    step_count_label = f"{step_count or 0:{step_count_width}} steps"
-    run_meta = f"{target:<{target_width}}  {elapsed:<{elapsed_width}}  {step_count_label}"
-    typer.echo(f"{_status_mark(status)} {run_id:<{run_id_width}}  {click.style(run_meta, dim=True)}")
+    step_count_label = f"{step_count or 0:>{step_count_width}} steps"
+    run_meta = f"{_display_pad_right(target, target_width)}  {_display_pad_right(elapsed, elapsed_width)}  {step_count_label}"
+    typer.echo(f"{_status_mark(status)} {_display_pad_right(run_id, run_id_width)}  {click.style(run_meta, dim=True)}")
     if input_summary := _text(run.get("input_summary")):
         _render_human_thread_run_preview("input:", input_summary, line_width=line_width)
     if output_summary := _text(run.get("output_summary")):
@@ -788,8 +791,8 @@ def _render_human_thread_run(
 
 def _render_human_thread_run_preview(label: str, value: str, *, line_width: int) -> None:
     prefix = f"  {label:<7}  "
-    width = max(line_width - len(prefix), 1)
-    typer.echo(f"  {click.style(f'{label:<7}', dim=True)}  {_truncate(value, width=width)}")
+    width = max(line_width - _display_width(prefix), 1)
+    typer.echo(f"  {click.style(f'{label:<7}', dim=True)}  {_truncate_display(value, width=width)}")
 
 
 def _render_human_run(run: Mapping[str, Any], steps: Sequence[Mapping[str, Any]], *, depth: int) -> None:
@@ -1106,6 +1109,35 @@ def _truncate(value: object, *, width: int) -> str:
     if width <= 3:
         return text[:width]
     return f"{text[: width - 3].rstrip()}..."
+
+
+def _truncate_display(value: object, *, width: int) -> str:
+    text = " ".join(str(value or "").split())
+    if _display_width(text) <= width:
+        return text
+    if width <= 3:
+        return _display_slice(text, width)
+    return f"{_display_slice(text, width - 3).rstrip()}..."
+
+
+def _display_pad_right(value: str, width: int) -> str:
+    return value + (" " * max(width - _display_width(value), 0))
+
+
+def _display_slice(value: str, width: int) -> str:
+    used = 0
+    chars: list[str] = []
+    for char in value:
+        char_width = max(wcswidth(char), 0)
+        if used + char_width > width:
+            break
+        chars.append(char)
+        used += char_width
+    return "".join(chars)
+
+
+def _display_width(value: str) -> int:
+    return max(wcswidth(value), 0)
 
 
 def _full_value(value: object) -> str:
