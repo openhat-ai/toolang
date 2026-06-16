@@ -548,13 +548,16 @@ class _ChatLastRunPanel:
         return ConditionalContainer(
             HSplit(
                 [
-                    Window(
-                        self.user_view,
-                        height=self.user_rows,
-                        wrap_lines=False,
-                        always_hide_cursor=True,
-                        style="class:normal-input",
-                        char=" ",
+                    ConditionalContainer(
+                        Window(
+                            self.user_view,
+                            height=self.user_rows,
+                            wrap_lines=False,
+                            always_hide_cursor=True,
+                            style="class:normal-input",
+                            char=" ",
+                        ),
+                        filter=Condition(lambda: bool(self.user_lines())),
                     ),
                     Window(
                         self.activity_view,

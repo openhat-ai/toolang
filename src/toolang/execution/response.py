@@ -289,6 +289,8 @@ class TraceResponseSink:
     def __init__(self) -> None:
         self._loop = asyncio.get_running_loop()
         self._queue: asyncio.Queue[str | None] = asyncio.Queue()
+        self._run_id: str | None = None
+        self._child_run_ids: set[str] = set()
         self._closed = False
 
     async def stream(self) -> AsyncIterator[str]:
@@ -301,6 +303,10 @@ class TraceResponseSink:
     def on_queue_event(self, event_type: str, payload: dict[str, Any]) -> None:
         if self._closed:
             return
+        if self._run_id is None:
+            run_id = payload.get("run_id")
+            if isinstance(run_id, str) and run_id:
+                self._run_id = run_id
         self._enqueue_payload(
             {
                 "type": event_type,
@@ -312,9 +318,28 @@ class TraceResponseSink:
     def on_event(self, event: TraceEvent) -> None:
         if self._closed:
             return
+        if not self._should_emit(event):
+            return
         self._enqueue_payload(trace_event_data(event))
-        if isinstance(event, RunEnd):
+        if isinstance(event, RunEnd) and event.run_id == self._run_id:
             self._enqueue_done()
+
+    def _should_emit(self, event: TraceEvent) -> bool:
+        event_run_id = getattr(event, "run_id", None)
+        if self._run_id is None:
+            if isinstance(event_run_id, str) and event_run_id:
+                self._run_id = event_run_id
+            return True
+        if event_run_id == self._run_id or event_run_id in self._child_run_ids:
+            return True
+        if isinstance(event, RunBegin) and (
+            event.root_run_id == self._run_id
+            or event.parent_run_id == self._run_id
+            or event.parent_run_id in self._child_run_ids
+        ):
+            self._child_run_ids.add(event.run_id)
+            return True
+        return False
 
     def _enqueue_payload(self, payload: dict[str, object]) -> None:
         self._loop.call_soon_threadsafe(

@@ -7763,6 +7763,18 @@ def test_cli_chat_active_run_does_not_render_start_bar_before_run_starting() -> 
     assert panel.render_user() == []
     assert panel.user_lines() == []
 
+    run.run_id = "run_late"
+    run.start_command(
+        {
+            "type": "run_starting",
+            "run_id": "run_late",
+            "input": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
+        }
+    )
+
+    assert "hello" in "".join(text for _style, text in panel.render_user())
+    assert "> hello" in cli._chat_visible_text("\n".join(panel.user_lines()))
+
 
 def test_cli_chat_run_lines_render_pending_steer_after_active_step() -> None:
     run = cli._ChatRun(run_id="run_steer", message="sleep 120 secs", status="running")
