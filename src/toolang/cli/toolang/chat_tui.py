@@ -202,6 +202,19 @@ class _ChatRunStopBlock(_ChatCommandBlock):
         return [] if self.finalized or _chat_run_is_stopped(run) else [_chat_line_fragments(_chat_dim("canceling..."))]
 
 
+@dataclass(slots=True)
+class _ChatRunEndBlock(_ChatMutableBlock):
+    """Run-end block: create and finalize on run_end."""
+
+    @classmethod
+    def create(cls, payload: Mapping[str, Any], *, run: "_ChatRun | None" = None) -> "_ChatRunEndBlock":
+        del run
+        return cls(index=0, kind="run_end", payload=dict(payload))
+
+    def render_activity_lines(self, run: "_ChatRun") -> list[str]:
+        return [*_chat_run_result_lines(run), ""]
+
+
 def _chat_command_block(payload: Mapping[str, Any]) -> _ChatCommandBlock:
     kind = str(payload.get("kind") or "command")
     block_cls: type[_ChatCommandBlock]
@@ -304,6 +317,12 @@ def _chat_step_block(payload: Mapping[str, Any], *, run: "_ChatRun | None") -> _
     else:
         block_cls = _ChatStepBlock
     return block_cls.create(payload, run=run)
+
+
+def _chat_run_end_block(payload: Mapping[str, Any], *, run: "_ChatRun") -> _ChatRunEndBlock:
+    block = _ChatRunEndBlock.create(payload, run=run)
+    block.finalize(payload)
+    return block
 
 
 @dataclass(frozen=True, slots=True)
@@ -1111,7 +1130,17 @@ class _ChatBottomApp:
             self.flush_pending_steer_blocks(self.active_run)
             _chat_record_system_event(self.active_run, f"error: {friendly}", clear_active=True)
             self.flush_terminal_event(self.active_run)
-            self.flush_run_result(self.active_run)
+            self.flush_finalized_block(
+                self.active_run,
+                _chat_run_end_block(
+                    {
+                        "run_id": self.active_run.run_id,
+                        "status": "failed",
+                        "error": friendly,
+                    },
+                    run=self.active_run,
+                ),
+            )
         else:
             self.prompt.set_error(friendly)
         self.active_run = None
@@ -1321,11 +1350,10 @@ class _ChatBottomApp:
                     message = f"error: {message}"
                 _chat_record_system_event(completed_run, message, clear_active=True)
                 self.flush_terminal_event(completed_run)
+            self.flush_finalized_block(completed_run, _chat_run_end_block(payload, run=completed_run))
         self.active_run = None
         self.local_streaming.clear()
         self.prompt.clear_error()
-        if completed_run is not None:
-            self.flush_run_result(completed_run)
         self.start_next_run()
         self.app.invalidate()
 
@@ -1524,11 +1552,6 @@ class _ChatBottomApp:
 
     def flush_terminal_event(self, run: _ChatRun) -> None:
         lines = _chat_terminal_event_lines(run, _chat_completed_line_for)
-        if lines:
-            self.deps.write_lines(lines)
-
-    def flush_run_result(self, run: _ChatRun) -> None:
-        lines = _chat_run_result_lines(run)
         if lines:
             self.deps.write_lines(lines)
 
@@ -2237,6 +2260,8 @@ def _chat_block_activity_lines(run: _ChatRun, block: _ChatMutableBlock) -> list[
 def _chat_finalized_block_scrollback_lines(run: _ChatRun, block: _ChatMutableBlock) -> list[str]:
     if isinstance(block, _ChatRunStartBlock):
         return [*_chat_scrollback_user_block(run), ""]
+    if isinstance(block, _ChatRunEndBlock):
+        return block.render_activity_lines(run)
     if isinstance(block, _ChatStepBlock) and block.kind in {"step", "parallel", "bind", "run"}:
         lines = _chat_flow_step_lines(run, block.payload)
         if lines:

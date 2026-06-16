@@ -8204,6 +8204,62 @@ def test_cli_chat_finalized_step_blocks_do_not_append_blank_lines(monkeypatch) -
     assert ran_index == requested_index + 1
 
 
+def test_cli_chat_run_end_block_adds_run_separator_blank(monkeypatch) -> None:
+    printed: list[list[str]] = []
+    monkeypatch.setattr(cli, "_runtime_json", lambda _ctx, _path: {})
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: printed.append(lines))
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.active_run = cli._ChatRun(run_id="run_done", message="hello", status="running")
+
+    app.handle_runtime_event(
+        {
+            "type": "step_end",
+            "payload": {
+                "run_id": "run_done",
+                "thread_id": "term_new",
+                "step_index": 1,
+                "kind": "model",
+                "output": [{"type": "text", "text": "done"}],
+            },
+        }
+    )
+    app.handle_runtime_event(
+        {
+            "type": "run_end",
+            "payload": {"run_id": "run_done", "thread_id": "term_new", "status": "finished"},
+        }
+    )
+
+    assert printed[-1] == [""]
+
+
+def test_cli_chat_failed_run_end_block_adds_blank_after_result(monkeypatch) -> None:
+    printed: list[list[str]] = []
+    monkeypatch.setattr(cli, "_runtime_json", lambda _ctx, _path: {})
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: printed.append(lines))
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.active_run = cli._ChatRun(run_id="run_failed", message="hello", status="running")
+
+    app.handle_runtime_event(
+        {
+            "type": "run_end",
+            "payload": {
+                "run_id": "run_failed",
+                "thread_id": "term_new",
+                "status": "failed",
+                "error": "backend rejected the request",
+            },
+        }
+    )
+
+    assert printed[-1][-1] == ""
+    visible = cli._chat_visible_text("\n".join(printed[-1]))
+    assert "  ──────── run_failed failed ────────" in visible
+    assert "  backend rejected the request" in visible
+
+
 def test_cli_chat_trace_tool_result_replaces_running_tool_line(monkeypatch) -> None:
     printed: list[list[str]] = []
 
