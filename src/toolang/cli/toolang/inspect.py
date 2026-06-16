@@ -760,25 +760,25 @@ def _render_human_run(run: Mapping[str, Any], steps: Sequence[Mapping[str, Any]]
     if steps:
         _render_human_section_title("steps")
     for step in steps:
-        _render_human_step_line(step, depth=depth, level=0)
+        _render_human_step_line(step, depth=depth, level=0, base_indent=0)
 
 
 def _render_human_section_title(label: str) -> None:
     click.secho(f"# {label}", dim=True)
 
 
-def _render_human_step_line(step: Mapping[str, Any], *, depth: int, level: int) -> None:
-    indent = "  " * (level + 1)
+def _render_human_step_line(step: Mapping[str, Any], *, depth: int, level: int, base_indent: int) -> None:
+    indent = "  " * (base_indent + level)
     status = _text(step.get("status")) or ""
-    line = f"{indent}{_status_mark(status)} {_text(step.get('path')) or '-'} {_text(step.get('kind')) or 'step'}"
+    line = f"{indent}{_status_mark(status)} {(_text(step.get('path')) or '-'):<3} {(_text(step.get('kind')) or 'step'):<6}"
     summary = _text(step.get("summary"))
     if summary and summary != "-":
-        line = f"{line}  {summary}"
+        line = f"{line.rstrip()}  {summary}"
     typer.echo(line)
     if level + 1 >= depth:
         return
     for child in [_mapping(item) for item in _list(step.get("children"))]:
-        _render_human_step_line(child, depth=depth, level=level + 1)
+        _render_human_step_line(child, depth=depth, level=level + 1, base_indent=base_indent)
 
 
 def _render_human_step(step: Mapping[str, Any]) -> None:
@@ -798,7 +798,7 @@ def _render_human_step(step: Mapping[str, Any]) -> None:
         if children:
             typer.echo("children")
             for child in children:
-                _render_human_step_line(child, depth=2, level=0)
+                _render_human_step_line(child, depth=2, level=0, base_indent=1)
         return
     _render_section("input_refs", step.get("input_refs"))
     _render_section("output", step.get("output"))
