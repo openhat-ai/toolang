@@ -899,7 +899,7 @@ def _render_human_model_messages(step: Mapping[str, Any]) -> None:
     if not messages:
         return
     _render_human_section_title("input")
-    role_width = max(_display_width(_text(message.get("role")) or "-") for message in messages)
+    role_width = max(_display_width(_message_role_label(_text(message.get("role")) or "-")) for message in messages)
     for message in messages:
         role = _text(message.get("role")) or "-"
         typer.echo(_message_line("·", role, _message_summary(message), role_width=role_width))
@@ -911,7 +911,7 @@ def _render_human_model_response(step: Mapping[str, Any]) -> None:
         return
     _render_human_section_title("output")
     text = _parts_text(output)
-    role_width = _display_width("assistant")
+    role_width = _display_width(_message_role_label("assistant"))
     if text:
         typer.echo(_message_line(_status_mark(_text(step.get("status")) or ""), "assistant", text, role_width=role_width))
     tool_calls = [part for part in output if part.get("type") == "tool_call"]
@@ -925,9 +925,13 @@ def _render_human_model_response(step: Mapping[str, Any]) -> None:
 
 
 def _message_line(marker: str, role: str, content: str, *, role_width: int) -> str:
-    prefix = f"{marker} {_display_pad_right(role, role_width)}  "
+    prefix = f"{marker} {_display_pad_right(_message_role_label(role), role_width)}  "
     width = max(_thread_run_line_width() - _display_width(prefix), 1)
     return f"{prefix}{_truncate_display(content, width=width)}"
+
+
+def _message_role_label(role: str) -> str:
+    return f"{role}:"
 
 
 def _render_human_model_context(step: Mapping[str, Any]) -> None:
