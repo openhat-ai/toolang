@@ -34,8 +34,6 @@ from ..utils import (
 InspectData = dict[str, Any]
 StepData = dict[str, Any]
 THREAD_RUN_PREVIEW_MIN_WIDTH = 120
-TOOL_HISTORY_NAME_WIDTH = 24
-TOOL_HISTORY_KIND_WIDTH = 7
 
 
 @dataclass(frozen=True, slots=True)
@@ -1155,10 +1153,11 @@ def _part_display_summary(part: Mapping[str, Any]) -> str:
 
 
 def _tool_history_summary(name: str, kind: str, payload: object) -> str:
-    prefix = f"{_display_pad_right(name, TOOL_HISTORY_NAME_WIDTH)} {_display_pad_right(kind, TOOL_HISTORY_KIND_WIDTH)}"
+    prefix = f"{name} {kind}"
     if payload is None or payload == {}:
         return prefix.rstrip()
-    return f"{prefix} {_json5_inline(payload)}"
+    separator = "  " if kind == "call" else " "
+    return f"{prefix}{separator}{_json5_inline(payload)}"
 
 
 def _tool_calls_display_summary(tool_calls: Sequence[Mapping[str, Any]]) -> str:

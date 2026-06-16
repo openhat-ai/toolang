@@ -9948,8 +9948,8 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
 
     assert history_focus_result.exit_code == 0
     assert "· user:       query" in history_focus_result.stdout
-    assert "· assistant:  Ready to read the task. filesystem__read_text    call    {path: \"task.md\"}" in history_focus_result.stdout
-    assert "· tool:       filesystem__read_text    result  \"task body\"" in history_focus_result.stdout
+    assert "· assistant:  Ready to read the task. filesystem__read_text call  {path: \"task.md\"}" in history_focus_result.stdout
+    assert "· tool:       filesystem__read_text result \"task body\"" in history_focus_result.stdout
 
     tool_focus_result = _invoke_app(["inspect", "dev", "run_thunk:2"])
 
