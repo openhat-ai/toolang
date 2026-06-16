@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 import json
+import shutil
 from typing import Any, Literal, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -32,7 +33,7 @@ from ..utils import (
 InspectView = Literal["human", "json", "toml"]
 InspectData = dict[str, Any]
 StepData = dict[str, Any]
-THREAD_RUN_PREVIEW_WIDTH = 96
+THREAD_RUN_PREVIEW_MIN_WIDTH = 120
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,7 +362,7 @@ def _preprocess_thread_run(run: Mapping[str, Any]) -> InspectData:
         "target": target,
         "elapsed": _elapsed(_text(info.get("started_at")), _text(info.get("finished_at"))) or None,
         "step_count": len(_run_steps(run)),
-        "input_summary": _preview_text(_message_summary(_mapping(run.get("input")))),
+        "input_summary": _message_text(_mapping(run.get("input"))),
         "output_summary": _thread_run_output_summary(run, failure=failure),
         "failure": failure,
         "info": info,
@@ -750,6 +751,7 @@ def _render_human_thread(thread: Mapping[str, Any]) -> None:
     target_width = max(len(_text(run.get("target")) or "-") for run in runs)
     elapsed_width = max(len(_text(run.get("elapsed")) or "-") for run in runs)
     step_count_width = max(len(str(_int_or_none(run.get("step_count")) or 0)) for run in runs)
+    line_width = _thread_run_line_width()
     for run in runs:
         _render_human_thread_run(
             run,
@@ -757,6 +759,7 @@ def _render_human_thread(thread: Mapping[str, Any]) -> None:
             target_width=target_width,
             elapsed_width=elapsed_width,
             step_count_width=step_count_width,
+            line_width=line_width,
         )
 
 
@@ -767,6 +770,7 @@ def _render_human_thread_run(
     target_width: int,
     elapsed_width: int,
     step_count_width: int,
+    line_width: int,
 ) -> None:
     status = _text(run.get("status")) or ""
     run_id = _text(run.get("id")) or "-"
@@ -774,11 +778,18 @@ def _render_human_thread_run(
     elapsed = _text(run.get("elapsed")) or "-"
     step_count = _int_or_none(run.get("step_count"))
     step_count_label = f"{step_count or 0:{step_count_width}} steps"
-    typer.echo(f"{_status_mark(status)} {run_id:<{run_id_width}}  {target:<{target_width}}  {elapsed:<{elapsed_width}}  {step_count_label}")
+    run_meta = f"{target:<{target_width}}  {elapsed:<{elapsed_width}}  {step_count_label}"
+    typer.echo(f"{_status_mark(status)} {run_id:<{run_id_width}}  {click.style(run_meta, dim=True)}")
     if input_summary := _text(run.get("input_summary")):
-        typer.echo(f"    {'input:':<7}  {input_summary}")
+        _render_human_thread_run_preview("input:", input_summary, line_width=line_width)
     if output_summary := _text(run.get("output_summary")):
-        typer.echo(f"    {'output:':<7}  {output_summary}")
+        _render_human_thread_run_preview("output:", output_summary, line_width=line_width)
+
+
+def _render_human_thread_run_preview(label: str, value: str, *, line_width: int) -> None:
+    prefix = f"  {label:<7}  "
+    width = max(line_width - len(prefix), 1)
+    typer.echo(f"  {click.style(f'{label:<7}', dim=True)}  {_truncate(value, width=width)}")
 
 
 def _render_human_run(run: Mapping[str, Any], steps: Sequence[Mapping[str, Any]], *, depth: int) -> None:
@@ -940,9 +951,9 @@ def _run_output_text(run: Mapping[str, Any]) -> str:
 
 def _thread_run_output_summary(run: Mapping[str, Any], *, failure: str | None) -> str | None:
     if failure:
-        return f"error: {_preview_text(failure)}"
+        return f"error: {failure}"
     if output_text := _run_output_text(run):
-        return _preview_text(output_text)
+        return output_text
     return None
 
 
@@ -1013,7 +1024,15 @@ def _message_summary(message: Mapping[str, Any]) -> str:
     return _parts_summary(message.get("parts"))
 
 
+def _message_text(message: Mapping[str, Any]) -> str:
+    return _parts_text(message.get("parts"))
+
+
 def _parts_summary(parts: object) -> str:
+    return _truncate(_parts_text(parts), width=72)
+
+
+def _parts_text(parts: object) -> str:
     if not isinstance(parts, list):
         return ""
     texts: list[str] = []
@@ -1021,11 +1040,11 @@ def _parts_summary(parts: object) -> str:
         typed = _mapping(part)
         if typed.get("type") == "text":
             texts.append(str(typed.get("text") or ""))
-    return _truncate("".join(texts).strip(), width=72)
+    return " ".join("".join(texts).strip().split())
 
 
-def _preview_text(value: object) -> str:
-    return _truncate(value, width=THREAD_RUN_PREVIEW_WIDTH)
+def _thread_run_line_width() -> int:
+    return max(THREAD_RUN_PREVIEW_MIN_WIDTH, shutil.get_terminal_size(fallback=(THREAD_RUN_PREVIEW_MIN_WIDTH, 24)).columns)
 
 
 def _plain_value(value: object) -> str:

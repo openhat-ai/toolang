@@ -10055,6 +10055,7 @@ def test_cli_inspect_rejects_multiple_structured_views() -> None:
 
 def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
     calls: list[str] = []
+    monkeypatch.setattr(inspect_cli.shutil, "get_terminal_size", lambda fallback: os.terminal_size((80, 24)))
     parent = _inspect_run_detail(
         "run_parent",
         thread_id="term_thread",
@@ -10138,7 +10139,7 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
                     "kind": "model",
                     "status": "finished",
                     "payload": {"model_ref": "deepseek/deepseek-chat-v3"},
-                    "output": [{"type": "text", "text": "Research summary complete."}],
+                    "output": [{"type": "text", "text": f"Research summary complete. {'details ' * 30}"}],
                 },
                 "message": None,
             },
@@ -10172,10 +10173,12 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
     assert "# title\nagent framework implementations" in result.stdout
     assert "# runs" in result.stdout
     assert "\n✗ run_parent   flow:research    1.0s  3 steps" in result.stdout
-    assert "    input:   query" in result.stdout
-    assert "    output:  error: unknown tool call: service_use__service_list (step 3 system)" in result.stdout
+    assert "  input:   query" in result.stdout
+    assert "  output:  error: unknown tool call: service_use__service_list (step 3 system)" in result.stdout
     assert "\n✓ run_success  thunk:summarize  1.0s  2 steps" in result.stdout
-    assert "    output:  Research summary complete." in result.stdout
+    success_output_line = next(line for line in result.stdout.splitlines() if line.startswith("  output:  Research summary complete."))
+    assert len(success_output_line) == 120
+    assert success_output_line.endswith("...")
     assert "\n# run\n" not in result.stdout
     assert "run_child thunk:expand_queries" not in result.stdout
     assert "\n✓ 1" not in result.stdout
