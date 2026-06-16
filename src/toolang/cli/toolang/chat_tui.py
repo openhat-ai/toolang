@@ -167,13 +167,42 @@ class _ChatCommandBlock(_ChatMutableBlock):
 
 
 @dataclass(slots=True)
-class _ChatStep(_ChatMutableBlock):
+class _ChatRunStartBlock(_ChatCommandBlock):
+    """Start-command block: create on run_starting, finalize on run_begin."""
+
+
+@dataclass(slots=True)
+class _ChatRunSteerBlock(_ChatCommandBlock):
+    """Steer-command block: create on run_steering, finalize on next step_begin."""
+
+
+@dataclass(slots=True)
+class _ChatRunStopBlock(_ChatCommandBlock):
+    """Stop-command block: create on run_stopping, finalize on run_end."""
+
+
+def _chat_command_block(payload: Mapping[str, Any]) -> _ChatCommandBlock:
+    kind = str(payload.get("kind") or "command")
+    block_cls: type[_ChatCommandBlock]
+    if kind == "start":
+        block_cls = _ChatRunStartBlock
+    elif kind == "steer":
+        block_cls = _ChatRunSteerBlock
+    elif kind == "stop":
+        block_cls = _ChatRunStopBlock
+    else:
+        block_cls = _ChatCommandBlock
+    return block_cls.create(payload)
+
+
+@dataclass(slots=True)
+class _ChatStepBlock(_ChatMutableBlock):
     label: str = ""
     frame: int = 0
     part_deltas: dict[int, list[str]] = field(default_factory=dict)
 
     @classmethod
-    def create(cls, payload: Mapping[str, Any], *, run: "_ChatRun | None" = None) -> "_ChatStep":
+    def create(cls, payload: Mapping[str, Any], *, run: "_ChatRun | None" = None) -> "_ChatStepBlock":
         index = _chat_step_index(payload)
         stored_payload = dict(payload)
         if stored_payload.get("kind") in {"step", "parallel", "bind", "run"} and "payload" not in stored_payload:
@@ -213,6 +242,28 @@ class _ChatStep(_ChatMutableBlock):
         )
 
 
+@dataclass(slots=True)
+class _ChatModelStepBlock(_ChatStepBlock):
+    """Model step block: create on step_begin, update on part_delta, finalize on step_end."""
+
+
+@dataclass(slots=True)
+class _ChatToolStepBlock(_ChatStepBlock):
+    """Tool step block: create on step_begin, update on part_delta, finalize on step_end."""
+
+
+def _chat_step_block(payload: Mapping[str, Any], *, run: "_ChatRun | None") -> _ChatStepBlock:
+    kind = str(payload.get("kind") or "")
+    block_cls: type[_ChatStepBlock]
+    if kind == "model":
+        block_cls = _ChatModelStepBlock
+    elif kind == "tool":
+        block_cls = _ChatToolStepBlock
+    else:
+        block_cls = _ChatStepBlock
+    return block_cls.create(payload, run=run)
+
+
 @dataclass(frozen=True, slots=True)
 class _ChatToolCall:
     name: str
@@ -240,7 +291,7 @@ class _ChatRun:
     cancel_sent_run_id: str | None = None
     terminal_error: str | None = None
     started: bool = False
-    steps: dict[int, _ChatStep] = field(default_factory=dict)
+    steps: dict[int, _ChatStepBlock] = field(default_factory=dict)
     completed_steps: dict[int, dict[str, Any]] = field(default_factory=dict)
     tool_calls_by_part: dict[tuple[int, int], _ChatToolCall] = field(default_factory=dict)
     commands: dict[int, _ChatCommandBlock] = field(default_factory=dict)
@@ -249,9 +300,9 @@ class _ChatRun:
     child_runs: dict[str, _ChatRun] = field(default_factory=dict)
 
     def start_step(self, payload: dict[str, Any]) -> None:
-        step = _ChatStep.create(payload, run=self)
+        step = _chat_step_block(payload, run=self)
         index = step.index
-        self.finalize_pending_commands()
+        self.finalize_pending_steer_blocks()
         self.remember_timeline("step", index)
         self.steps[index] = step
         self.mutable_block = step
@@ -292,7 +343,7 @@ class _ChatRun:
         )
 
     def record_command(self, payload: Mapping[str, Any]) -> None:
-        block = _ChatCommandBlock.create(payload)
+        block = _chat_command_block(payload)
         index = block.index
         if request_id := _text(payload.get("request_id")):
             existing_index = self.command_index_for_request(request_id)
@@ -307,7 +358,7 @@ class _ChatRun:
                 ]
         self.remember_timeline("command", index)
         self.commands[index] = block
-        if block.kind == "steer":
+        if isinstance(block, (_ChatRunSteerBlock, _ChatRunStopBlock)):
             self.mutable_block = block
             return
         block.finalize(payload)
@@ -318,10 +369,17 @@ class _ChatRun:
                 return index
         return None
 
-    def finalize_pending_commands(self) -> None:
+    def finalize_pending_steer_blocks(self) -> None:
         for block in self.commands.values():
-            if block.kind == "steer" and not block.finalized:
+            if isinstance(block, _ChatRunSteerBlock) and not block.finalized:
                 block.finalize({})
+                if self.mutable_block is block:
+                    self.mutable_block = None
+
+    def finalize_stop_blocks(self, payload: Mapping[str, Any]) -> None:
+        for block in self.commands.values():
+            if isinstance(block, _ChatRunStopBlock) and not block.finalized:
+                block.finalize(payload)
                 if self.mutable_block is block:
                     self.mutable_block = None
 
@@ -334,7 +392,7 @@ class _ChatRun:
         command_payload.setdefault("ref", {"kind": "command", "index": 0})
         if "message" not in command_payload and "input" in command_payload:
             command_payload["message"] = command_payload["input"]
-        block = _ChatCommandBlock.create(command_payload)
+        block = _chat_command_block(command_payload)
         self.remember_timeline("command", block.index)
         self.commands[block.index] = block
         self.mutable_block = block
@@ -453,7 +511,7 @@ class _ChatLastRunPanel:
         run = self.get_run()
         if run is None:
             return []
-        return _chat_input_bar_fragments(_chat_run_input_bar_spec(run))
+        return _chat_input_bar_fragments(_chat_run_start_bar_spec(run))
 
     def render_activity(self) -> list[tuple[str, str]]:
         run = self.get_run()
@@ -1342,6 +1400,7 @@ class _ChatBottomApp:
     def finish_run(self, payload: dict[str, Any]) -> None:
         completed_run = self.active_run
         if completed_run is not None:
+            completed_run.finalize_stop_blocks(payload)
             completed_run.status = _display_run_status(payload.get("status")) or "completed"
             error = _text(payload.get("error"))
             if error:
@@ -1620,7 +1679,7 @@ def _chat_step_label(payload: Mapping[str, Any], run: _ChatRun | None = None) ->
     return "running"
 
 
-def _chat_active_step_line(step: _ChatStep) -> str:
+def _chat_active_step_line(step: _ChatStepBlock) -> str:
     text_delta = step.text_delta()
     if step.kind == "model" and text_delta:
         preview = _chat_summarize(" ".join(_chat_visible_text(text_delta).split()), width=120)
@@ -1851,22 +1910,42 @@ def _chat_dim(text: str) -> str:
 
 
 def _chat_panel_user_block(run: _ChatRun) -> list[str]:
-    return _chat_input_bar_plain_lines(_chat_run_input_bar_spec(run))
+    return _chat_input_bar_plain_lines(_chat_run_start_bar_spec(run))
 
 
 def _chat_scrollback_user_block(run: _ChatRun) -> list[str]:
-    return _chat_input_bar_ansi_lines(_chat_run_input_bar_spec(run))
+    return _chat_input_bar_ansi_lines(_chat_run_start_bar_spec(run))
 
 
-def _chat_run_input_bar_spec(run: _ChatRun) -> _ChatInputBarSpec:
+def _chat_run_start_bar_spec(run: _ChatRun) -> _ChatInputBarSpec:
+    block = _chat_run_start_block(run)
+    text = _event_message_text(block.payload.get("message")) or _event_message_text(block.payload.get("input")) or run.message
     footer = _chat_run_input_footer(run)
     return _ChatInputBarSpec(
         kind="normal",
         marker=">",
-        text=run.message,
+        text=text,
         footer=footer,
         footer_dim=bool(footer),
     )
+
+
+def _chat_run_start_block(run: _ChatRun) -> _ChatRunStartBlock:
+    block = run.commands.get(0)
+    if isinstance(block, _ChatRunStartBlock):
+        return block
+    payload = {
+        "kind": "start",
+        "ref": {"kind": "command", "index": 0},
+        "message": {"role": "user", "parts": [{"type": "text", "text": run.message}]},
+    }
+    fallback = _ChatRunStartBlock(
+        index=0,
+        kind="start",
+        payload=payload,
+    )
+    fallback.finalize({})
+    return fallback
 
 
 def _chat_local_input_bar_spec(message: str) -> _ChatInputBarSpec:
@@ -2109,31 +2188,17 @@ def _chat_active_activity_fragment_rows(
     run: _ChatRun,
     step_renderer: Callable[[_ChatRun, int], str],
 ) -> list[list[tuple[str, str]]]:
+    del step_renderer
     state_line = _chat_run_state_line(run)
     queue_line = _chat_queue_activity_line(run)
     if queue_line or _chat_flow_stage_lines(run):
-        return [_chat_line_fragments(line) for line in _chat_run_activity_lines(run, step_renderer)]
+        return [_chat_line_fragments(line) for line in _chat_run_activity_lines(run, _chat_completed_line_for)]
 
     rows: list[list[tuple[str, str]]] = []
     if state_line and not _chat_state_line_after_activity(run):
         rows.append(_chat_line_fragments(state_line))
-    timeline = run.timeline or [("step", index) for index in run.step_indexes()]
-    rendered_steps: set[int] = set()
-    for position, (kind, index) in enumerate(timeline):
-        if kind == "command":
-            command = run.commands.get(index)
-            if command is not None:
-                rows.extend(_chat_command_activity_fragment_rows(run, command, position))
-            continue
-        if index in rendered_steps:
-            continue
-        step_lines = _chat_step_activity_lines(run, index, step_renderer)
-        if step_lines:
-            rows.extend(_chat_line_fragments(line) for line in step_lines)
-            rendered_steps.add(index)
-    for index in run.step_indexes():
-        if index not in rendered_steps:
-            rows.extend(_chat_line_fragments(line) for line in _chat_step_activity_lines(run, index, step_renderer))
+    for block in _chat_run_activity_blocks(run):
+        rows.extend(_chat_block_activity_fragment_rows(run, block))
     if state_line and _chat_state_line_after_activity(run):
         rows.append(_chat_line_fragments(state_line))
     return rows
@@ -2144,10 +2209,11 @@ def _chat_line_fragments(line: str) -> list[tuple[str, str]]:
 
 
 def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, int], str]) -> list[str]:
+    del step_renderer
     state_line = _chat_run_state_line(run)
     queue_line = _chat_queue_activity_line(run)
     if queue_line:
-        return [*_chat_terminal_event_lines(run, step_renderer), *_chat_run_result_lines(run)]
+        return [*_chat_terminal_event_lines(run, _chat_completed_line_for), *_chat_run_result_lines(run)]
     flow_lines = _chat_flow_stage_lines(run)
     if flow_lines:
         lines = []
@@ -2155,7 +2221,7 @@ def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, i
             lines.append(state_line)
         lines.extend(flow_lines)
         lines.extend(_chat_timeline_command_lines(run))
-        lines.extend(_chat_terminal_event_lines(run, step_renderer))
+        lines.extend(_chat_terminal_event_lines(run, _chat_completed_line_for))
         if state_line and _chat_state_line_after_activity(run):
             lines.append(state_line)
         lines.extend(_chat_run_result_lines(run))
@@ -2163,23 +2229,8 @@ def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, i
     lines: list[str] = []
     if state_line and not _chat_state_line_after_activity(run):
         lines.append(state_line)
-    timeline = run.timeline or [("step", index) for index in run.step_indexes()]
-    rendered_steps: set[int] = set()
-    for position, (kind, index) in enumerate(timeline):
-        if kind == "command":
-            command = run.commands.get(index)
-            if command is not None:
-                lines.extend(_chat_command_activity_lines(run, command, position))
-            continue
-        if index in rendered_steps:
-            continue
-        step_lines = _chat_step_activity_lines(run, index, step_renderer)
-        if step_lines:
-            lines.extend(step_lines)
-            rendered_steps.add(index)
-    for index in run.step_indexes():
-        if index not in rendered_steps:
-            lines.extend(_chat_step_activity_lines(run, index, step_renderer))
+    for block in _chat_run_activity_blocks(run):
+        lines.extend(_chat_block_activity_lines(run, block))
     if state_line and _chat_state_line_after_activity(run):
         lines.append(state_line)
     lines.extend(_chat_run_result_lines(run))
@@ -2191,25 +2242,73 @@ def _chat_state_line_after_activity(run: _ChatRun) -> bool:
     return status in {"succeeded", "finished", "completed", "done", "failed", "error", "canceled", "cancelled"}
 
 
-def _chat_step_activity_lines(
-    run: _ChatRun,
-    index: int,
-    step_renderer: Callable[[_ChatRun, int], str],
-) -> list[str]:
-    if index in run.steps:
-        return [step_renderer(run, index)]
+def _chat_run_activity_blocks(run: _ChatRun) -> list[_ChatMutableBlock]:
+    blocks: list[_ChatMutableBlock] = []
+    rendered_steps: set[int] = set()
+    timeline = run.timeline or [("step", index) for index in run.step_indexes()]
+    for kind, index in timeline:
+        if kind == "command":
+            command = run.commands.get(index)
+            if command is not None and not isinstance(command, _ChatRunStartBlock):
+                blocks.append(command)
+            continue
+        if index in rendered_steps:
+            continue
+        step = _chat_step_block_for_index(run, index)
+        if step is not None:
+            blocks.append(step)
+            rendered_steps.add(index)
+    for index in run.step_indexes():
+        if index in rendered_steps:
+            continue
+        step = _chat_step_block_for_index(run, index)
+        if step is not None:
+            blocks.append(step)
+    return blocks
+
+
+def _chat_step_block_for_index(run: _ChatRun, index: int) -> _ChatStepBlock | None:
+    active = run.steps.get(index)
+    if active is not None:
+        return active
     payload = run.completed_steps.get(index)
     if payload is None:
-        return []
-    if _chat_is_terminal_event_payload(run, index, payload):
+        return None
+    block = _chat_step_block(payload, run=run)
+    block.finalize(payload)
+    return block
+
+
+def _chat_block_activity_lines(run: _ChatRun, block: _ChatMutableBlock) -> list[str]:
+    if isinstance(block, _ChatCommandBlock):
+        return _chat_command_block_activity_lines(run, block)
+    if isinstance(block, _ChatStepBlock):
+        return _chat_step_block_activity_lines(run, block)
+    return []
+
+
+def _chat_block_activity_fragment_rows(
+    run: _ChatRun,
+    block: _ChatMutableBlock,
+) -> list[list[tuple[str, str]]]:
+    if isinstance(block, _ChatCommandBlock):
+        return _chat_command_block_activity_fragment_rows(run, block)
+    return [_chat_line_fragments(line) for line in _chat_block_activity_lines(run, block)]
+
+
+def _chat_step_block_activity_lines(run: _ChatRun, block: _ChatStepBlock) -> list[str]:
+    if not block.finalized:
+        return [_chat_active_step_line(block)]
+    payload = block.payload
+    if _chat_is_terminal_event_payload(run, block.index, payload):
         return []
     if payload.get("kind") == "model":
         text = _event_parts_text(payload.get("output"))
         if text:
             return _chat_message_lines(_chat_marker_for("model"), text)
-        if _chat_model_tool_requests_have_results(run, index):
+        if _chat_model_tool_requests_have_results(run, block.index):
             return []
-    return [step_renderer(run, index)]
+    return [_chat_completed_step_line(payload, run=run)]
 
 
 def _chat_timeline_command_lines(run: _ChatRun) -> list[str]:
@@ -2224,29 +2323,29 @@ def _chat_timeline_command_lines(run: _ChatRun) -> list[str]:
     return lines
 
 
-def _chat_command_activity_lines(run: _ChatRun, command: _ChatCommandBlock, timeline_position: int) -> list[str]:
+def _chat_command_block_activity_lines(run: _ChatRun, command: _ChatCommandBlock) -> list[str]:
     payload = command.payload
-    if payload.get("kind") == "steer":
-        return _chat_steer_input_block(payload, waiting=_chat_command_is_waiting(run, command, timeline_position))
-    if payload.get("kind") == "stop":
-        return [] if _chat_run_is_stopped(run) else [_chat_dim("canceling...")]
+    if isinstance(command, _ChatRunSteerBlock):
+        return _chat_steer_input_block(payload, waiting=not command.finalized)
+    if isinstance(command, _ChatRunStopBlock):
+        return [] if command.finalized or _chat_run_is_stopped(run) else [_chat_dim("canceling...")]
     return []
 
 
-def _chat_command_activity_fragment_rows(
-    run: _ChatRun, command: _ChatCommandBlock, timeline_position: int
+def _chat_command_block_activity_fragment_rows(
+    run: _ChatRun, command: _ChatCommandBlock
 ) -> list[list[tuple[str, str]]]:
     payload = command.payload
-    if payload.get("kind") == "steer":
-        return _chat_steer_input_fragment_rows(payload, waiting=_chat_command_is_waiting(run, command, timeline_position))
-    if payload.get("kind") == "stop":
-        return [] if _chat_run_is_stopped(run) else [_chat_line_fragments(_chat_dim("canceling..."))]
+    if isinstance(command, _ChatRunSteerBlock):
+        return _chat_steer_input_fragment_rows(payload, waiting=not command.finalized)
+    if isinstance(command, _ChatRunStopBlock):
+        return [] if command.finalized or _chat_run_is_stopped(run) else [_chat_line_fragments(_chat_dim("canceling..."))]
     return []
 
 
-def _chat_command_is_waiting(run: _ChatRun, command: _ChatCommandBlock, timeline_position: int) -> bool:
-    del run, timeline_position
-    return command.kind == "steer" and not command.finalized
+def _chat_command_activity_lines(run: _ChatRun, command: _ChatCommandBlock, timeline_position: int) -> list[str]:
+    del timeline_position
+    return _chat_command_block_activity_lines(run, command)
 
 
 def _chat_steer_input_block(command: Mapping[str, Any], *, waiting: bool) -> list[str]:
