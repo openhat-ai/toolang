@@ -1851,6 +1851,8 @@ def _chat_scrollback_user_block(run: _ChatRun) -> list[str]:
 
 
 def _chat_panel_user_bar_spec(run: _ChatRun) -> _ChatInputBarSpec | None:
+    if 0 in run.flushed_commands:
+        return None
     block = _chat_existing_run_start_block(run)
     if block is None:
         return None

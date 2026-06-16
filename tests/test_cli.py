@@ -7776,6 +7776,44 @@ def test_cli_chat_active_run_does_not_render_start_bar_before_run_starting() -> 
     assert "> hello" in cli._chat_visible_text("\n".join(panel.user_lines()))
 
 
+def test_cli_chat_start_bar_leaves_active_panel_after_run_begin(monkeypatch) -> None:
+    printed: list[list[str]] = []
+    monkeypatch.setattr(cli, "_runtime_json", lambda _ctx, _path: {})
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: printed.append(lines))
+
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.handle_runtime_event(
+        {
+            "type": "run_starting",
+            "payload": {
+                "run_id": "run_active",
+                "thread_id": "term_new",
+                "input": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
+            },
+        }
+    )
+
+    assert app.active_run is not None
+    panel = cli._ChatLastRunPanel(lambda: app.active_run)
+    assert "> hello" in cli._chat_visible_text("\n".join(panel.user_lines()))
+
+    app.handle_runtime_event(
+        {
+            "type": "run_begin",
+            "payload": {
+                "run_id": "run_active",
+                "thread_id": "term_new",
+                "input": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
+                "call_kind": "top",
+            },
+        }
+    )
+
+    assert panel.user_lines() == []
+    scrollback = cli._chat_visible_text("\n".join(line for lines in printed for line in lines))
+    assert scrollback.count("> hello") == 1
+
+
 def test_cli_chat_run_lines_render_pending_steer_after_active_step() -> None:
     run = cli._ChatRun(run_id="run_steer", message="sleep 120 secs", status="running")
     run.complete_step(
