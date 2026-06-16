@@ -2145,7 +2145,7 @@ def _chat_run_result_lines(run: _ChatRun) -> list[str]:
 
 
 def _chat_result_divider_line(run_id: str, status: str) -> str:
-    return f"  ──── {run_id} {status} ────"
+    return f"  ──────── {run_id} {status} ────────"
 
 
 def _chat_run_is_stopped(run: _ChatRun) -> bool:
