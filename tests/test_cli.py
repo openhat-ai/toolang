@@ -7776,6 +7776,24 @@ def test_cli_chat_active_run_does_not_render_start_bar_before_run_starting() -> 
     assert "> hello" in cli._chat_visible_text("\n".join(panel.user_lines()))
 
 
+def test_cli_chat_active_run_avoids_extra_blank_before_thinking() -> None:
+    run = cli._ChatRun(run_id="", message="hello", status="running")
+    run.start_command(
+        {
+            "type": "run_starting",
+            "input": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
+        }
+    )
+    run.start_step({"step_index": 1, "kind": "model"})
+    panel = cli._ChatLastRunPanel(lambda: run)
+
+    visible_lines = cli._chat_visible_text("\n".join(panel.lines())).splitlines()
+    prompt_index = next(index for index, line in enumerate(visible_lines) if line.strip() == "> hello")
+    thinking_index = next(index for index, line in enumerate(visible_lines) if line.strip() == "• thinking...")
+
+    assert [line.strip() for line in visible_lines[prompt_index + 1 : thinking_index]] == [""]
+
+
 def test_cli_chat_start_bar_leaves_active_panel_after_run_begin(monkeypatch) -> None:
     printed: list[list[str]] = []
     monkeypatch.setattr(cli, "_runtime_json", lambda _ctx, _path: {})

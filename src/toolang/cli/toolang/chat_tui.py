@@ -603,7 +603,10 @@ class _ChatLastRunPanel:
         if run is None:
             return []
         rows = _chat_active_activity_fragment_rows(run, self.step_line)
-        rows = [[], *rows, []]
+        if self.user_lines():
+            rows = [*rows, []]
+        else:
+            rows = [[], *rows, []]
         return _chat_join_fragment_rows(rows)
 
     def lines(self) -> list[str]:
@@ -620,6 +623,8 @@ class _ChatLastRunPanel:
         if run is None:
             return []
         lines = _chat_run_activity_lines(run, self.step_line)
+        if self.user_lines():
+            return [*lines, ""]
         return ["", *lines, ""]
 
     def step_line(self, run: _ChatRun, index: int) -> str:
