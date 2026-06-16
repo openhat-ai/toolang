@@ -9928,7 +9928,7 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
     assert "# input" in focus_result.stdout
     assert "· user:  query" in focus_result.stdout
     assert "# output" in focus_result.stdout
-    assert "✓ assistant:  Ready to read the task. [1 tool call] filesystem__read_text  path=task.md" in focus_result.stdout
+    assert "✓ assistant:  Ready to read the task. [1 tool call] filesystem__read_text  {path: \"task.md\"}" in focus_result.stdout
     assert "\n[1 tool call]" not in focus_result.stdout
     assert "# context" in focus_result.stdout
     assert "<context>\nagent_name: alice\nthread_id: term_thread\nsandbox: none\n</context>" in focus_result.stdout
@@ -9948,8 +9948,8 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
 
     assert history_focus_result.exit_code == 0
     assert "· user:       query" in history_focus_result.stdout
-    assert "· assistant:  Ready to read the task. [call] filesystem__read_text  path=task.md" in history_focus_result.stdout
-    assert "· tool:       [result] filesystem__read_text: task body" in history_focus_result.stdout
+    assert "· assistant:  Ready to read the task. filesystem__read_text    call    {path: \"task.md\"}" in history_focus_result.stdout
+    assert "· tool:       filesystem__read_text    result  \"task body\"" in history_focus_result.stdout
 
     tool_focus_result = _invoke_app(["inspect", "dev", "run_thunk:2"])
 

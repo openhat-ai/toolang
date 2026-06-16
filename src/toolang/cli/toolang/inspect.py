@@ -34,6 +34,8 @@ from ..utils import (
 InspectData = dict[str, Any]
 StepData = dict[str, Any]
 THREAD_RUN_PREVIEW_MIN_WIDTH = 120
+TOOL_HISTORY_NAME_WIDTH = 24
+TOOL_HISTORY_KIND_WIDTH = 7
 
 
 @dataclass(frozen=True, slots=True)
@@ -1138,20 +1140,25 @@ def _part_display_summary(part: Mapping[str, Any]) -> str:
     part_type = _text(part.get("type"))
     if part_type == "tool_call":
         name = _text(part.get("tool_name")) or _text(part.get("tool_family")) or "tool"
-        tool_input = _tool_input_summary(part.get("input"))
-        suffix = f"  {tool_input}" if tool_input else ""
-        return f"[call] {name}{suffix}"
+        return _tool_history_summary(name, "call", part.get("input"))
     if part_type == "tool_result":
         name = _text(part.get("tool_name")) or _text(part.get("tool_family")) or "tool"
         result = part.get("output")
         if result is None:
             result = part.get("result")
         if error := _text(part.get("error")):
-            return f"[error] {name}  error={_plain_value(error)}"
+            return _tool_history_summary(name, "error", {"error": error})
         if result is not None:
-            return f"[result] {name}: {_plain_value(result)}"
-        return f"[result] {name}"
+            return _tool_history_summary(name, "result", result)
+        return _tool_history_summary(name, "result", None)
     return part_type or ""
+
+
+def _tool_history_summary(name: str, kind: str, payload: object) -> str:
+    prefix = f"{_display_pad_right(name, TOOL_HISTORY_NAME_WIDTH)} {_display_pad_right(kind, TOOL_HISTORY_KIND_WIDTH)}"
+    if payload is None or payload == {}:
+        return prefix.rstrip()
+    return f"{prefix} {_json5_inline(payload)}"
 
 
 def _tool_calls_display_summary(tool_calls: Sequence[Mapping[str, Any]]) -> str:
@@ -1161,8 +1168,8 @@ def _tool_calls_display_summary(tool_calls: Sequence[Mapping[str, Any]]) -> str:
     calls: list[str] = []
     for call in tool_calls:
         name = _text(call.get("tool_name")) or _text(call.get("tool_family")) or "tool"
-        tool_input = _tool_input_summary(call.get("input"))
-        suffix = f"  {tool_input}" if tool_input else ""
+        tool_input = call.get("input")
+        suffix = f"  {_json5_inline(tool_input)}" if tool_input else ""
         calls.append(f"{name}{suffix}")
     return " ".join((count, "; ".join(calls)))
 
@@ -1294,6 +1301,13 @@ def _full_value(value: object) -> str:
 def _json5_value(value: object) -> str:
     try:
         return json5.dumps(value, ensure_ascii=False, indent=2, quote_keys=False, trailing_commas=False)
+    except TypeError:
+        return str(value)
+
+
+def _json5_inline(value: object) -> str:
+    try:
+        return _collapse_text(json5.dumps(value, ensure_ascii=False, quote_keys=False, trailing_commas=False))
     except TypeError:
         return str(value)
 
