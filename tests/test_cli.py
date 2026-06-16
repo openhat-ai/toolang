@@ -10173,12 +10173,13 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
     assert "term_thread  idle  runs=3" in result.stdout
     assert "# title\nagent framework implementations" in result.stdout
     assert "# runs" in result.stdout
-    assert "\n✗ run_parent   1.0s  3 steps  query" in result.stdout
+    assert "\n✗ run_parent   1.0s   [3]   query" in result.stdout
     assert "\n\n✓ run_success" not in result.stdout
-    assert "\n✓ run_success  1.0s  2 steps  query" in result.stdout
+    assert "\n✓ run_success  1.0s   [2]   query" in result.stdout
     parent_line = next(line for line in result.stdout.splitlines() if line.startswith("✗ run_parent"))
     success_line = next(line for line in result.stdout.splitlines() if line.startswith("✓ run_success"))
     assert parent_line.index("1.0s") == success_line.index("1.0s")
+    assert parent_line.index("[3]") == success_line.index("[2]")
     assert parent_line.index("query") == success_line.index("query")
     assert "  input:" not in result.stdout
     assert "  output:" not in result.stdout

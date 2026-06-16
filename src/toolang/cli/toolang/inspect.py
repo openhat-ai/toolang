@@ -750,7 +750,7 @@ def _render_human_thread(thread: Mapping[str, Any]) -> None:
     _render_human_section_title("runs")
     run_id_width = max(_display_width(_text(run.get("id")) or "-") for run in runs)
     elapsed_width = max(_display_width(_text(run.get("elapsed")) or "-") for run in runs)
-    step_count_width = max(_display_width(str(_int_or_none(run.get("step_count")) or 0)) for run in runs)
+    step_count_width = max(_display_width(f"[{_int_or_none(run.get('step_count')) or 0}]") for run in runs)
     line_width = _thread_run_line_width()
     for run in runs:
         _render_human_thread_run(
@@ -774,16 +774,16 @@ def _render_human_thread_run(
     run_id = _text(run.get("id")) or "-"
     elapsed = _text(run.get("elapsed")) or "-"
     step_count = _int_or_none(run.get("step_count"))
-    step_count_label = f"{step_count or 0:>{step_count_width}} steps"
+    step_count_label = f"[{step_count or 0}]"
     prefix = f"{_status_mark(status)} {_display_pad_right(run_id, run_id_width)}  "
-    run_meta = f"{_display_pad_right(elapsed, elapsed_width)}  {step_count_label}"
+    run_meta = f"{_display_pad_left(elapsed, elapsed_width)}   {_display_pad_left(step_count_label, step_count_width)}"
     input_summary = _text(run.get("input_summary"))
     if not input_summary:
         typer.echo(f"{prefix}{click.style(run_meta, dim=True)}")
         return
-    input_prefix = f"{prefix}{run_meta}  "
+    input_prefix = f"{prefix}{run_meta}   "
     width = max(line_width - _display_width(input_prefix), 1)
-    typer.echo(f"{prefix}{click.style(run_meta, dim=True)}  {_truncate_display(input_summary, width=width)}")
+    typer.echo(f"{prefix}{click.style(run_meta, dim=True)}   {_truncate_display(input_summary, width=width)}")
 
 
 def _render_human_run(run: Mapping[str, Any], steps: Sequence[Mapping[str, Any]], *, depth: int) -> None:
@@ -1113,6 +1113,10 @@ def _truncate_display(value: object, *, width: int) -> str:
 
 def _display_pad_right(value: str, width: int) -> str:
     return value + (" " * max(width - _display_width(value), 0))
+
+
+def _display_pad_left(value: str, width: int) -> str:
+    return (" " * max(width - _display_width(value), 0)) + value
 
 
 def _display_slice(value: str, width: int) -> str:
