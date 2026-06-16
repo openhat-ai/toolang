@@ -10105,11 +10105,12 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert calls == ["/api/v1/threads/term_thread?limit=100"]
-    assert "thread term_thread  idle" in result.stdout
-    assert "title   agent framework implementations" in result.stdout
-    assert "runs    2 total" in result.stdout
-    assert "✗  run_parent  flow:research" in result.stdout
-    assert "failure: unknown tool call: service_use__service_list (step 3 system)" in result.stdout
+    assert "# thread" in result.stdout
+    assert "term_thread  idle  runs=2" in result.stdout
+    assert "# title\nagent framework implementations" in result.stdout
+    assert "# runs" in result.stdout
+    assert "\n✗  run_parent  flow:research" in result.stdout
+    assert "\n  error: unknown tool call: service_use__service_list (step 3 system)" in result.stdout
     assert "run_child thunk:expand_queries" not in result.stdout
     assert "step 1" not in result.stdout
 

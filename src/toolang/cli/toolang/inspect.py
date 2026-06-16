@@ -728,21 +728,29 @@ def _render_human(document: Mapping[str, Any], *, tree: bool, depth: int) -> Non
 
 
 def _render_human_thread(thread: Mapping[str, Any]) -> None:
-    typer.echo(f"thread {_text(thread.get('id')) or '-'}  {_text(thread.get('status')) or '-'}")
-    if title := _text(thread.get("title")):
-        typer.echo(f"title   {title}")
+    _render_human_section_title("thread")
+    pieces = [_text(thread.get("id")) or "-", _text(thread.get("status")) or "-"]
     run_count = thread.get("run_count")
     if run_count is not None:
-        typer.echo(f"runs    {run_count} total")
-    typer.echo("runs")
-    for run in [_mapping(item) for item in _list(thread.get("runs"))]:
+        pieces.append(f"runs={run_count}")
+    typer.echo("  ".join(pieces))
+    if title := _text(thread.get("title")):
+        _render_human_section_title("title")
+        typer.echo(title)
+    runs = [_mapping(item) for item in _list(thread.get("runs"))]
+    if not runs:
+        return
+    _render_human_section_title("runs")
+    run_id_width = max(len(_text(run.get("id")) or "-") for run in runs)
+    target_width = max(len(_text(run.get("target")) or "-") for run in runs)
+    for run in runs:
         status = _text(run.get("status")) or ""
-        pieces = [_status_mark(status), _text(run.get("id")) or "-", _text(run.get("target")) or "-"]
+        pieces = [_status_mark(status), f"{_text(run.get('id')) or '-':<{run_id_width}}", f"{_text(run.get('target')) or '-':<{target_width}}"]
         if elapsed := _text(run.get("elapsed")):
             pieces.append(elapsed)
-        typer.echo(f"  {'  '.join(pieces)}")
+        typer.echo("  ".join(pieces))
         if failure := _text(run.get("failure")):
-            typer.echo(f"    failure: {failure}")
+            typer.echo(f"  error: {failure}")
 
 
 def _render_human_run(run: Mapping[str, Any], steps: Sequence[Mapping[str, Any]], *, depth: int) -> None:
