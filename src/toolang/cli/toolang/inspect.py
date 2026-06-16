@@ -399,15 +399,19 @@ def _preprocess_step(
     if step_index is not None:
         for child_run in _child_runs_for_step(run_id, step_index, step=step, run_by_id=run_by_id):
             children.extend(_step_tree(child_run, run_by_id=run_by_id, path_prefix=path, focus_path=focus_path))
+    summary, summary_head, summary_payload = _step_summary(record, message, run=run)
     data: StepData = {
         "path": _path_label(path),
         "run_id": run_id,
         "kind": kind,
         "status": status,
-        "summary": _step_summary(record, message, run=run),
+        "summary": summary,
         "error": _text(record.get("error")),
         "children": children,
     }
+    if summary_head is not None and summary_payload is not None:
+        data["_summary_head"] = summary_head
+        data["_summary_payload"] = summary_payload
     if path != focus_path:
         return data
     input_items = [dict(_mapping(item)) for item in _list(record.get("input"))]
@@ -789,8 +793,9 @@ def _render_human_run(run: Mapping[str, Any], steps: Sequence[Mapping[str, Any]]
         typer.echo(output_text)
     if steps:
         _render_human_section_title("steps")
-    for step in steps:
-        _render_human_step_line(step, depth=1, level=0, base_indent=0)
+    summary_widths = _paired_summary_head_widths(steps)
+    for index, step in enumerate(steps):
+        _render_human_step_line(step, depth=1, level=0, base_indent=0, summary_head_width=summary_widths[index])
 
 
 def _render_human_section_title(label: str) -> None:
@@ -826,18 +831,68 @@ def _step_focus_id(step: Mapping[str, Any]) -> str:
     return f"{run_id}:{path}"
 
 
-def _render_human_step_line(step: Mapping[str, Any], *, depth: int, level: int, base_indent: int) -> None:
+def _render_human_step_line(
+    step: Mapping[str, Any],
+    *,
+    depth: int,
+    level: int,
+    base_indent: int,
+    summary_head_width: int | None = None,
+) -> None:
     indent = "  " * (base_indent + level)
     status = _text(step.get("status")) or ""
     line = f"{indent}{_status_mark(status)} {(_text(step.get('path')) or '-'):<3} {(_text(step.get('kind')) or 'step'):<6}"
     summary = _text(step.get("summary"))
     if summary and summary != "-":
-        line = f"{line}  {summary}"
+        line = _step_line_with_summary(line, step, summary, summary_head_width=summary_head_width)
     typer.echo(line)
     if level + 1 >= depth:
         return
-    for child in [_mapping(item) for item in _list(step.get("children"))]:
-        _render_human_step_line(child, depth=depth, level=level + 1, base_indent=base_indent)
+    children = [_mapping(item) for item in _list(step.get("children"))]
+    summary_widths = _paired_summary_head_widths(children)
+    for index, child in enumerate(children):
+        _render_human_step_line(
+            child,
+            depth=depth,
+            level=level + 1,
+            base_indent=base_indent,
+            summary_head_width=summary_widths[index],
+        )
+
+
+def _step_line_with_summary(
+    line_prefix: str,
+    step: Mapping[str, Any],
+    summary: str,
+    *,
+    summary_head_width: int | None,
+) -> str:
+    prefix = f"{line_prefix}  "
+    head = _text(step.get("_summary_head"))
+    payload = _text(step.get("_summary_payload"))
+    if head is not None and payload is not None and summary_head_width is not None:
+        head_width = summary_head_width if summary_head_width is not None else _display_width(head)
+        rendered_head = _display_pad_right(head, head_width)
+        payload_width = max(_thread_run_line_width() - _display_width(prefix) - _display_width(rendered_head) - 1, 1)
+        return f"{prefix}{rendered_head} {_truncate_display(payload, width=payload_width)}"
+    summary_width = max(_thread_run_line_width() - _display_width(prefix), 1)
+    return f"{prefix}{_truncate_display(summary, width=summary_width)}"
+
+
+def _paired_summary_head_widths(steps: Sequence[Mapping[str, Any]]) -> list[int | None]:
+    widths: list[int | None] = [None] * len(steps)
+    index = 0
+    while index + 1 < len(steps):
+        first = _text(steps[index].get("_summary_head"))
+        second = _text(steps[index + 1].get("_summary_head"))
+        if first is not None and second is not None:
+            width = max(_display_width(first), _display_width(second))
+            widths[index] = width
+            widths[index + 1] = width
+            index += 2
+            continue
+        index += 1
+    return widths
 
 
 def _render_human_step(step: Mapping[str, Any]) -> None:
@@ -856,8 +911,9 @@ def _render_human_step(step: Mapping[str, Any]) -> None:
         children = [_mapping(item) for item in _list(step.get("children"))]
         if children:
             _render_human_section_title("children")
-            for child in children:
-                _render_human_step_line(child, depth=2, level=0, base_indent=1)
+            summary_widths = _paired_summary_head_widths(children)
+            for index, child in enumerate(children):
+                _render_human_step_line(child, depth=2, level=0, base_indent=1, summary_head_width=summary_widths[index])
         return
     _render_section("input_refs", step.get("input_refs"))
     _render_section("output", step.get("output"))
@@ -1064,35 +1120,40 @@ def _last_text_part(parts: object) -> str:
     return ""
 
 
-def _step_summary(record: Mapping[str, Any], message: Mapping[str, Any], *, run: Mapping[str, Any]) -> str:
+def _step_summary(record: Mapping[str, Any], message: Mapping[str, Any], *, run: Mapping[str, Any]) -> tuple[str, str | None, str | None]:
     payload = _mapping(record.get("payload"))
     kind = _text(record.get("kind"))
     if kind == "model":
         text = _message_summary(message) or _parts_summary(record.get("output"))
-        request_summary = "; ".join(_tool_request_lines(record))
-        return " ".join(item for item in (text, request_summary) if item)
+        requests = _tool_request_summaries(record)
+        request_summary = "; ".join(item[0] for item in requests)
+        summary = " ".join(item for item in (text, request_summary) if item)
+        if len(requests) == 1 and not text:
+            _, head, payload_text = requests[0]
+            return summary, head, payload_text
+        return summary, None, None
     if kind == "tool":
         return _tool_result_summary(record, run=run)
     if kind == "run":
-        return child_call_summary(payload)
+        return child_call_summary(payload), None, None
     if kind in {"step", "parallel", "bind"}:
-        return flow_op_summary(payload)
+        return flow_op_summary(payload), None, None
     text = _parts_summary(record.get("output"))
-    return text or _text(record.get("error")) or "-"
+    return text or _text(record.get("error")) or "-", None, None
 
 
-def _tool_request_lines(record: Mapping[str, Any]) -> list[str]:
-    lines: list[str] = []
+def _tool_request_summaries(record: Mapping[str, Any]) -> list[tuple[str, str, str]]:
+    summaries: list[tuple[str, str, str]] = []
     for part in _list(record.get("output")):
         typed = _mapping(part)
         if typed.get("type") != "tool_call":
             continue
         name = _text(typed.get("tool_name")) or _text(typed.get("tool_family")) or "tool"
-        lines.append(_tool_history_summary(name, "call", typed.get("input")))
-    return lines
+        summaries.append(_tool_history_summary_parts(name, "call", typed.get("input")))
+    return summaries
 
 
-def _tool_result_summary(record: Mapping[str, Any], *, run: Mapping[str, Any]) -> str:
+def _tool_result_summary(record: Mapping[str, Any], *, run: Mapping[str, Any]) -> tuple[str, str | None, str | None]:
     del run
     for part in _list(record.get("output")):
         typed = _mapping(part)
@@ -1100,18 +1161,14 @@ def _tool_result_summary(record: Mapping[str, Any], *, run: Mapping[str, Any]) -
             continue
         name = _text(typed.get("tool_name")) or _text(typed.get("tool_family")) or "tool"
         if error := _text(typed.get("error")):
-            return _tool_history_summary(name, "error", {"error": error})
+            summary, head, payload_text = _tool_history_summary_parts(name, "error", {"error": error})
+            return summary, head, payload_text
         result = typed.get("output")
         if result is None:
             result = typed.get("result")
-        return _tool_history_summary(name, "result", result)
-    return _parts_summary(record.get("output")) or _text(record.get("error")) or "-"
-
-
-def _tool_input_summary(tool_input: object) -> str:
-    if not isinstance(tool_input, Mapping) or not tool_input:
-        return ""
-    return ", ".join(f"{key}={_plain_value(value)}" for key, value in tool_input.items())
+        summary, head, payload_text = _tool_history_summary_parts(name, "result", result)
+        return summary, head, payload_text
+    return _parts_summary(record.get("output")) or _text(record.get("error")) or "-", None, None
 
 
 def _collapse_text(value: str) -> str:
@@ -1150,11 +1207,17 @@ def _part_display_summary(part: Mapping[str, Any]) -> str:
 
 
 def _tool_history_summary(name: str, kind: str, payload: object) -> str:
+    summary, _, _ = _tool_history_summary_parts(name, kind, payload)
+    return summary
+
+
+def _tool_history_summary_parts(name: str, kind: str, payload: object) -> tuple[str, str, str]:
     prefix = f"{name} {kind}"
     if payload is None or payload == {}:
-        return prefix.rstrip()
+        return prefix.rstrip(), prefix.rstrip(), ""
     separator = "  " if kind == "call" else " "
-    return f"{prefix}{separator}{_json5_inline_summary(payload)}"
+    payload_text = _json5_inline(payload)
+    return f"{prefix}{separator}{_truncate(payload_text, width=160)}", prefix, payload_text
 
 
 def _tool_calls_display_summary(tool_calls: Sequence[Mapping[str, Any]]) -> str:
@@ -1306,10 +1369,6 @@ def _json5_inline(value: object) -> str:
         return _collapse_text(json5.dumps(value, ensure_ascii=False, quote_keys=False, trailing_commas=False))
     except TypeError:
         return str(value)
-
-
-def _json5_inline_summary(value: object) -> str:
-    return _truncate(_json5_inline(value), width=160)
 
 
 def _public_document(value: object) -> object:
