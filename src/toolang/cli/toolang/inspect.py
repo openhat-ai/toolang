@@ -931,13 +931,22 @@ def _message_role_label(role: str) -> str:
     return f"{role}:"
 
 
+def _render_limited_lines(text: str, *, limit: int = 10) -> None:
+    lines = text.splitlines() or [""]
+    width = _thread_run_line_width()
+    for line in lines[:limit]:
+        typer.echo(_truncate_display(line, width=width))
+    if len(lines) > limit:
+        typer.echo(f"... ({len(lines) - limit} more lines)")
+
+
 def _render_human_model_context(step: Mapping[str, Any]) -> None:
     request = _mapping(step.get("adapter_request"))
     context = _text(request.get("context"))
     if not context:
         return
     _render_human_section_title("context")
-    typer.echo(_truncate_display(_collapse_text(context), width=_thread_run_line_width()))
+    _render_limited_lines(context)
 
 
 def _render_human_model_instruct(step: Mapping[str, Any]) -> None:
@@ -946,7 +955,7 @@ def _render_human_model_instruct(step: Mapping[str, Any]) -> None:
     if not instructions:
         return
     _render_human_section_title("instruct")
-    typer.echo(_truncate_display(_collapse_text(instructions), width=_thread_run_line_width()))
+    _render_limited_lines(instructions)
 
 
 def _render_human_tool_step(step: Mapping[str, Any]) -> None:

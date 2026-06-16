@@ -9891,7 +9891,7 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
         ],
     )
     run["prompts"] = {
-        "prompt_instruct": "Answer concisely.",
+        "prompt_instruct": "\n".join(f"instruct line {index}" for index in range(1, 13)),
         "prompt_context": "<context>\nagent_name: alice\nthread_id: term_thread\nsandbox: none\n</context>",
     }
 
@@ -9932,9 +9932,11 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
     assert "✓ assistant:  Ready to read the task. [1 tool call] filesystem__read_text  path=task.md" in focus_result.stdout
     assert "\n[1 tool call]" not in focus_result.stdout
     assert "# context" in focus_result.stdout
-    assert "<context> agent_name: alice thread_id: term_thread sandbox: none </context>" in focus_result.stdout
+    assert "<context>\nagent_name: alice\nthread_id: term_thread\nsandbox: none\n</context>" in focus_result.stdout
     assert "# instruct" in focus_result.stdout
-    assert "Answer concisely." in focus_result.stdout
+    assert "instruct line 10" in focus_result.stdout
+    assert "instruct line 11" not in focus_result.stdout
+    assert "... (2 more lines)" in focus_result.stdout
     assert (
         focus_result.stdout.index("# output")
         < focus_result.stdout.index("# context")
