@@ -808,6 +808,10 @@ def _render_human_section_title(label: str) -> None:
     click.secho(f"# {label}", dim=True)
 
 
+def _render_human_subsection_title(label: str) -> None:
+    click.secho(f"## {label}", dim=True)
+
+
 def _target_field(target: str | None) -> str:
     if not target:
         return "target=-"
@@ -815,6 +819,16 @@ def _target_field(target: str | None) -> str:
     if sep:
         return f"{kind}={name or '-'}"
     return f"target={target}"
+
+
+def _step_header_line(step: Mapping[str, Any]) -> str:
+    pieces = [f"step {_step_focus_id(step)}", _text(step.get("status")) or "-", f"kind={_text(step.get('kind')) or 'step'}"]
+    model = _mapping(step.get("model"))
+    input_tokens = model.get("input_tokens")
+    output_tokens = model.get("output_tokens")
+    if input_tokens is not None or output_tokens is not None:
+        pieces.append(f"tokens={input_tokens or 0}/{output_tokens or 0}")
+    return "  ".join(pieces)
 
 
 def _step_focus_id(step: Mapping[str, Any]) -> str:
@@ -838,7 +852,8 @@ def _render_human_step_line(step: Mapping[str, Any], *, depth: int, level: int, 
 
 
 def _render_human_step(step: Mapping[str, Any]) -> None:
-    typer.echo(f"step {_step_focus_id(step)}  {_text(step.get('status')) or '-'}  kind={_text(step.get('kind')) or 'step'}")
+    _render_human_section_title("step")
+    typer.echo(_step_header_line(step))
     if error := _text(step.get("error")):
         _render_text_section("error", error)
     variant = _text(step.get("variant"))
@@ -860,12 +875,60 @@ def _render_human_step(step: Mapping[str, Any]) -> None:
 
 
 def _render_human_model_step(step: Mapping[str, Any]) -> None:
-    _render_human_section_title("model")
-    typer.echo(_model_step_line(_mapping(step.get("model"))))
-    _render_section("adapter_request", step.get("adapter_request"))
-    _render_section("output", step.get("output"))
+    _render_human_model_request(step)
+    _render_human_model_response(step)
     if reasoning := _text(step.get("reasoning_content")):
         _render_text_section("reasoning_content", reasoning)
+
+
+def _render_human_model_request(step: Mapping[str, Any]) -> None:
+    model = _mapping(step.get("model"))
+    request = _mapping(step.get("adapter_request"))
+    _render_human_section_title("request")
+    for label, value in (
+        ("model", model.get("ref") or model.get("model")),
+        ("provider", model.get("provider")),
+        ("adapter", model.get("adapter")),
+        ("base_url", model.get("base_url")),
+    ):
+        if text := _text(value):
+            typer.echo(f"{label:<9} {text}")
+    if instructions := _text(request.get("instructions")):
+        _render_human_subsection_title("instructions")
+        typer.echo(_truncate_display(_collapse_text(instructions), width=_thread_run_line_width()))
+    if context := _text(request.get("context")):
+        _render_human_subsection_title("context")
+        parsed_context = _context_lines(context)
+        if parsed_context:
+            for line in parsed_context:
+                typer.echo(line)
+        else:
+            typer.echo(_truncate_display(context, width=_thread_run_line_width()))
+    messages = [_mapping(message) for message in _list(request.get("messages"))]
+    if messages:
+        _render_human_subsection_title("messages")
+        role_width = max(_display_width(_text(message.get("role")) or "-") for message in messages)
+        for message in messages:
+            role = _text(message.get("role")) or "-"
+            typer.echo(f"{_display_pad_right(role, role_width)}  {_message_summary(message)}")
+
+
+def _render_human_model_response(step: Mapping[str, Any]) -> None:
+    output = [_mapping(part) for part in _list(step.get("output"))]
+    if not output:
+        return
+    _render_human_section_title("response")
+    text = _parts_text(output)
+    if text:
+        typer.echo(f"assistant: {_truncate_display(text, width=_thread_run_line_width())}")
+    tool_calls = [part for part in output if part.get("type") == "tool_call"]
+    if tool_calls:
+        typer.echo(f"[{len(tool_calls)} tool call{'s' if len(tool_calls) != 1 else ''}]")
+        for call in tool_calls:
+            name = _text(call.get("tool_name")) or _text(call.get("tool_family")) or "tool"
+            tool_input = _tool_input_summary(call.get("input"))
+            suffix = f"  {tool_input}" if tool_input else ""
+            typer.echo(f"{name}{suffix}")
 
 
 def _render_human_tool_step(step: Mapping[str, Any]) -> None:
@@ -879,17 +942,6 @@ def _render_human_tool_step(step: Mapping[str, Any]) -> None:
         _render_section("result", typed.get("result"))
         _render_section("error", typed.get("error"))
     _render_section("other_output", step.get("other_output"))
-
-
-def _model_step_line(model: Mapping[str, Any]) -> str:
-    ref = _text(model.get("ref"))
-    pieces = ["model"]
-    if ref:
-        pieces.append(ref)
-    for key in ("provider", "model", "adapter", "base_url", "input_tokens", "output_tokens"):
-        if value := _text(model.get(key)):
-            pieces.append(f"{key}={value}")
-    return "  ".join(pieces)
 
 
 def _tool_call_line(index: int, call: Mapping[str, Any]) -> str:
@@ -1034,6 +1086,31 @@ def _tool_input_summary(tool_input: object) -> str:
     if not isinstance(tool_input, Mapping) or not tool_input:
         return ""
     return ", ".join(f"{key}={_plain_value(value)}" for key, value in tool_input.items())
+
+
+def _context_lines(context: str) -> list[str]:
+    lines: list[str] = []
+    for raw_line in context.splitlines():
+        line = raw_line.strip()
+        if not line or (line.startswith("<") and line.endswith(">")):
+            continue
+        key: str
+        value: str
+        if "=" in line:
+            key, value = line.split("=", 1)
+        elif ":" in line:
+            key, value = line.split(":", 1)
+        else:
+            continue
+        key = key.strip()
+        value = value.strip()
+        if key and value:
+            lines.append(f"{key}={value}")
+    return lines
+
+
+def _collapse_text(value: str) -> str:
+    return " ".join(value.split())
 
 
 def _message_summary(message: Mapping[str, Any]) -> str:
