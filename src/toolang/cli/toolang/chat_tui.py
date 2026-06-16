@@ -339,16 +339,18 @@ class _ChatRun:
     commands: dict[int, _ChatCommandBlock] = field(default_factory=dict)
     timeline: list[tuple[Literal["step", "command"], int]] = field(default_factory=list)
     mutable_block: _ChatMutableBlock | None = None
-    finalized_blocks: list[_ChatMutableBlock] = field(default_factory=list)
+    flushed_steps: set[int] = field(default_factory=set)
+    flushed_commands: set[int] = field(default_factory=set)
     child_runs: dict[str, _ChatRun] = field(default_factory=dict)
 
-    def start_step(self, payload: dict[str, Any]) -> None:
+    def start_step(self, payload: dict[str, Any]) -> list[_ChatRunSteerBlock]:
         step = _chat_step_block(payload, run=self)
         index = step.index
-        self.finalize_pending_steer_blocks()
+        finalized = self.finalize_pending_steer_blocks()
         self.remember_timeline("step", index)
         self.steps[index] = step
         self.mutable_block = step
+        return finalized
 
     def update_step(self, payload: Mapping[str, Any]) -> None:
         step = self.steps.get(_chat_step_index(payload))
@@ -360,7 +362,7 @@ class _ChatRun:
         if step is not None:
             step.delta(payload)
 
-    def complete_step(self, payload: dict[str, Any]) -> None:
+    def complete_step(self, payload: dict[str, Any]) -> _ChatStepBlock:
         index = _chat_step_index(payload)
         self.remember_timeline("step", index)
         active_step = self.steps.get(index)
@@ -371,7 +373,7 @@ class _ChatRun:
         self.steps.pop(index, None)
         if self.mutable_block is active_step:
             self.mutable_block = None
-        self.remember_finalized_block(active_step)
+        return active_step
 
     def record_part(self, payload: dict[str, Any]) -> None:
         part = _mapping(payload.get("part"))
@@ -397,8 +399,7 @@ class _ChatRun:
                 existing = self.commands.pop(existing_index, None)
                 if self.mutable_block is existing:
                     self.mutable_block = None
-                if existing is not None and existing in self.finalized_blocks:
-                    self.finalized_blocks.remove(existing)
+                self.flushed_commands.discard(existing_index)
                 self.timeline = [
                     item
                     for item in self.timeline
@@ -410,8 +411,6 @@ class _ChatRun:
             self.mutable_block = block
             return
         block.finalize(payload)
-        if not isinstance(block, _ChatRunStartBlock):
-            self.remember_finalized_block(block)
 
     def command_index_for_request(self, request_id: str) -> int | None:
         for index, block in self.commands.items():
@@ -419,21 +418,25 @@ class _ChatRun:
                 return index
         return None
 
-    def finalize_pending_steer_blocks(self) -> None:
+    def finalize_pending_steer_blocks(self) -> list[_ChatRunSteerBlock]:
+        finalized: list[_ChatRunSteerBlock] = []
         for block in self.commands.values():
             if isinstance(block, _ChatRunSteerBlock) and not block.finalized:
                 block.finalize({})
                 if self.mutable_block is block:
                     self.mutable_block = None
-                self.remember_finalized_block(block)
+                finalized.append(block)
+        return finalized
 
-    def finalize_stop_blocks(self, payload: Mapping[str, Any]) -> None:
+    def finalize_stop_blocks(self, payload: Mapping[str, Any]) -> list[_ChatRunStopBlock]:
+        finalized: list[_ChatRunStopBlock] = []
         for block in self.commands.values():
             if isinstance(block, _ChatRunStopBlock) and not block.finalized:
                 block.finalize(payload)
                 if self.mutable_block is block:
                     self.mutable_block = None
-                self.remember_finalized_block(block)
+                finalized.append(block)
+        return finalized
 
     def next_command_index(self) -> int:
         return max(self.commands, default=0) + 1
@@ -449,19 +452,20 @@ class _ChatRun:
         self.commands[block.index] = block
         self.mutable_block = block
 
-    def finalize_command(self, index: int, payload: Mapping[str, Any]) -> None:
+    def finalize_command(self, index: int, payload: Mapping[str, Any]) -> _ChatCommandBlock | None:
         block = self.commands.get(index)
         if block is None:
-            return
+            return None
         block.finalize(payload)
         if self.mutable_block is block:
             self.mutable_block = None
-        if not isinstance(block, _ChatRunStartBlock):
-            self.remember_finalized_block(block)
+        return block
 
-    def remember_finalized_block(self, block: _ChatMutableBlock) -> None:
-        if block not in self.finalized_blocks:
-            self.finalized_blocks.append(block)
+    def mark_block_flushed(self, block: _ChatMutableBlock) -> None:
+        if isinstance(block, _ChatStepBlock):
+            self.flushed_steps.add(block.index)
+        elif isinstance(block, _ChatCommandBlock):
+            self.flushed_commands.add(block.index)
 
     def remember_timeline(self, kind: Literal["step", "command"], index: int) -> None:
         item = (kind, index)
@@ -1100,10 +1104,13 @@ class _ChatBottomApp:
     def handle_error(self, message: str) -> None:
         friendly = _chat_friendly_error(message)
         if self.active_run:
+            self.flush_queue_state(self.active_run)
             self.active_run.status = "error"
             self.active_run.terminal_error = friendly
+            self.flush_pending_steer_blocks(self.active_run)
             _chat_record_system_event(self.active_run, f"error: {friendly}", clear_active=True)
-            self.print_run(self.active_run)
+            self.flush_terminal_event(self.active_run)
+            self.flush_run_result(self.active_run)
         else:
             self.prompt.set_error(friendly)
         self.active_run = None
@@ -1168,7 +1175,7 @@ class _ChatBottomApp:
         elif event_type == "run_begin":
             self.handle_run_begin(payload)
         elif event_type == "step_begin" and self.active_run:
-            self.active_run.start_step(payload)
+            self.start_run_step(self.active_run, payload)
         elif event_type == "part_begin" and self.active_run:
             self.active_run.update_step(payload)
         elif event_type == "part_delta" and self.active_run:
@@ -1176,7 +1183,8 @@ class _ChatBottomApp:
         elif event_type == "part_end" and self.active_run:
             self.active_run.record_part(payload)
         elif event_type == "step_end" and self.active_run:
-            self.active_run.complete_step(payload)
+            block = self.active_run.complete_step(payload)
+            self.flush_finalized_block(self.active_run, block)
         elif event_type == "run_end":
             self.finish_run(payload)
         self.app.invalidate()
@@ -1296,11 +1304,13 @@ class _ChatBottomApp:
         if self.active_run is None:
             self.active_run = _ChatRun(run_id=run_id, message="", status="running", accept_child_trace=True)
             self.active_run.mark_running()
+            self.flush_user_block(self.active_run)
             self.maybe_send_cancel_request()
             return
         if run_id:
             self.active_run.run_id = run_id
         self.active_run.mark_running()
+        self.flush_user_block(self.active_run)
         self.maybe_send_cancel_request()
 
     def handle_chat_stream_metadata(self, event: Mapping[str, Any]) -> None:
@@ -1321,7 +1331,7 @@ class _ChatBottomApp:
         index = self.next_chat_stream_step_index()
         self.stream_step_index = index
         self.stream_text_parts = []
-        self.active_run.start_step({"step_index": index, "kind": "model"})
+        self.start_run_step(self.active_run, {"step_index": index, "kind": "model"})
 
     def append_chat_stream_text(self, event: Mapping[str, Any]) -> None:
         if self.active_run is None:
@@ -1339,7 +1349,7 @@ class _ChatBottomApp:
         output: list[dict[str, object]] = []
         if text:
             output.append({"type": "text", "text": text})
-        self.active_run.complete_step(
+        block = self.active_run.complete_step(
             {
                 "run_id": self.active_run.run_id,
                 "step_index": index,
@@ -1347,6 +1357,7 @@ class _ChatBottomApp:
                 "output": output,
             }
         )
+        self.flush_finalized_block(self.active_run, block)
         self.stream_step_index = None
         self.stream_text_parts = []
 
@@ -1366,13 +1377,14 @@ class _ChatBottomApp:
         }
         self.active_run.record_part({"step_index": index, "part_index": 0, "part": part})
         self.stream_tool_steps[tool_call_id] = index
-        self.active_run.start_step(
+        self.start_run_step(
+            self.active_run,
             {
                 "run_id": self.active_run.run_id,
                 "step_index": index,
                 "kind": "tool",
                 "input": [part],
-            }
+            },
         )
 
     def record_chat_stream_tool_result(self, event: Mapping[str, Any]) -> None:
@@ -1393,7 +1405,7 @@ class _ChatBottomApp:
                     break
         if input_part is None:
             input_part = {"tool_name": tool_name, "input": {}}
-        self.active_run.complete_step(
+        block = self.active_run.complete_step(
             {
                 "run_id": self.active_run.run_id,
                 "step_index": index,
@@ -1409,6 +1421,7 @@ class _ChatBottomApp:
                 ],
             }
         )
+        self.flush_finalized_block(self.active_run, block)
 
     def next_chat_stream_step_index(self) -> int:
         if self.active_run is None:
@@ -1445,20 +1458,26 @@ class _ChatBottomApp:
         run_id = str(payload.get("run_id") or "")
         if self.active_run and (not self.active_run.run_id or self.active_run.run_id == run_id):
             self.active_run.run_id = run_id
-            self.active_run.finalize_command(0, payload)
+            block = self.active_run.finalize_command(0, payload)
+            if block is not None:
+                self.flush_finalized_block(self.active_run, block)
             self.active_run.mark_running()
             self.maybe_send_cancel_request()
             return
         message = _event_message_text(payload.get("input"))
         self.active_run = _ChatRun(run_id=run_id, message=message, status="running")
-        self.active_run.finalize_command(0, payload)
         self.active_run.mark_running()
         self.maybe_send_cancel_request()
 
     def finish_run(self, payload: dict[str, Any]) -> None:
         completed_run = self.active_run
         if completed_run is not None:
-            completed_run.finalize_stop_blocks(payload)
+            start_block = completed_run.finalize_command(0, payload)
+            if start_block is not None and start_block.index not in completed_run.flushed_commands:
+                self.flush_finalized_block(completed_run, start_block)
+            self.flush_pending_steer_blocks(completed_run)
+            for block in completed_run.finalize_stop_blocks(payload):
+                self.flush_finalized_block(completed_run, block)
             completed_run.status = _display_run_status(payload.get("status")) or "completed"
             error = _text(payload.get("error"))
             if error:
@@ -1471,11 +1490,12 @@ class _ChatBottomApp:
                 if error:
                     message = f"error: {message}"
                 _chat_record_system_event(completed_run, message, clear_active=True)
+                self.flush_terminal_event(completed_run)
         self.active_run = None
         self.local_streaming.clear()
         self.prompt.clear_error()
         if completed_run is not None:
-            self.print_run(completed_run)
+            self.flush_run_result(completed_run)
         self.start_next_run()
         self.app.invalidate()
 
@@ -1560,7 +1580,7 @@ class _ChatBottomApp:
             return True
         try:
             request_id = f"req_{uuid4().hex}"
-            response = self.deps.runtime_post(
+            self.deps.runtime_post(
                 self.ctx,
                 f"/api/v1/runs/{run.run_id}/steer",
                 payload={
@@ -1571,20 +1591,6 @@ class _ChatBottomApp:
         except click.ClickException as exc:
             self.prompt.set_error(_chat_friendly_error(exc.message))
             return True
-        input_payload = response.get("input")
-        if isinstance(input_payload, Mapping):
-            run.record_command(input_payload)
-        else:
-            run.record_command(
-                {
-                    "type": "run_steering",
-                    "run_id": run.run_id,
-                    "ref": {"kind": "command", "index": run.next_command_index()},
-                    "kind": "steer",
-                    "request_id": request_id,
-                    "message": self.deps.message_payload(item.text),
-                }
-            )
         self.pending.pop(index)
         self.app.invalidate()
         return True
@@ -1660,6 +1666,47 @@ class _ChatBottomApp:
 
     def print_header(self) -> None:
         self.deps.write_lines(_chat_header_lines(self.status_label(), home_label=self.home_label), hide_cursor=False)
+
+    def flush_user_block(self, run: _ChatRun) -> None:
+        if 0 in run.flushed_commands:
+            return
+        self.deps.write_lines([*_chat_scrollback_user_block(run), ""])
+        run.flushed_commands.add(0)
+
+    def flush_queue_state(self, run: _ChatRun) -> None:
+        line = _chat_queue_activity_line(run)
+        if line:
+            self.deps.write_lines([line])
+
+    def start_run_step(self, run: _ChatRun, payload: dict[str, Any]) -> None:
+        for block in run.start_step(payload):
+            self.flush_finalized_block(run, block)
+
+    def flush_pending_steer_blocks(self, run: _ChatRun) -> None:
+        for block in run.finalize_pending_steer_blocks():
+            self.flush_finalized_block(run, block)
+
+    def flush_finalized_block(self, run: _ChatRun, block: _ChatMutableBlock) -> None:
+        if isinstance(block, _ChatRunStartBlock) and block.index in run.flushed_commands:
+            return
+        if isinstance(block, _ChatCommandBlock) and block.index in run.flushed_commands:
+            return
+        if isinstance(block, _ChatStepBlock) and block.index in run.flushed_steps:
+            return
+        lines = _chat_finalized_block_scrollback_lines(run, block)
+        if lines:
+            self.deps.write_lines(lines)
+        run.mark_block_flushed(block)
+
+    def flush_terminal_event(self, run: _ChatRun) -> None:
+        lines = _chat_terminal_event_lines(run, _chat_completed_line_for)
+        if lines:
+            self.deps.write_lines(lines)
+
+    def flush_run_result(self, run: _ChatRun) -> None:
+        lines = _chat_run_result_lines(run)
+        if lines:
+            self.deps.write_lines(lines)
 
     def print_run(self, run: _ChatRun) -> None:
         lines = _chat_run_lines(run, include_steps=True)
@@ -2309,26 +2356,36 @@ def _chat_run_activity_blocks(run: _ChatRun) -> list[_ChatMutableBlock]:
     for kind, index in timeline:
         if kind == "command":
             command = run.commands.get(index)
-            if command is not None and not isinstance(command, _ChatRunStartBlock):
+            if (
+                command is not None
+                and not isinstance(command, _ChatRunStartBlock)
+                and index not in run.flushed_commands
+            ):
                 blocks.append(command)
             continue
         if index in rendered_steps:
+            continue
+        if index in run.flushed_steps:
+            rendered_steps.add(index)
             continue
         step = _chat_step_block_for_index(run, index)
         if step is not None:
             blocks.append(step)
             rendered_steps.add(index)
     for index in run.step_indexes():
-        if index in rendered_steps:
+        if index in rendered_steps or index in run.flushed_steps:
             continue
         step = _chat_step_block_for_index(run, index)
         if step is not None:
             blocks.append(step)
-    for block in run.finalized_blocks:
-        if block not in blocks and not isinstance(block, _ChatRunStartBlock):
-            blocks.append(block)
     active = run.mutable_block
-    if active is not None and active not in blocks and not isinstance(active, _ChatRunStartBlock):
+    if (
+        active is not None
+        and active not in blocks
+        and not isinstance(active, _ChatRunStartBlock)
+        and not (isinstance(active, _ChatStepBlock) and active.index in run.flushed_steps)
+        and not (isinstance(active, _ChatCommandBlock) and active.index in run.flushed_commands)
+    ):
         blocks.append(active)
     return blocks
 
@@ -2337,9 +2394,6 @@ def _chat_step_block_for_index(run: _ChatRun, index: int) -> _ChatStepBlock | No
     active = run.steps.get(index)
     if active is not None:
         return active
-    for block in run.finalized_blocks:
-        if isinstance(block, _ChatStepBlock) and block.index == index:
-            return block
     payload = run.completed_steps.get(index)
     if payload is None:
         return None
@@ -2350,6 +2404,21 @@ def _chat_step_block_for_index(run: _ChatRun, index: int) -> _ChatStepBlock | No
 
 def _chat_block_activity_lines(run: _ChatRun, block: _ChatMutableBlock) -> list[str]:
     return block.render_activity_lines(run)
+
+
+def _chat_finalized_block_scrollback_lines(run: _ChatRun, block: _ChatMutableBlock) -> list[str]:
+    if isinstance(block, _ChatRunStartBlock):
+        return [*_chat_scrollback_user_block(run), ""]
+    if isinstance(block, _ChatStepBlock) and block.kind in {"step", "parallel", "bind", "run"}:
+        lines = _chat_flow_step_lines(run, block.payload)
+        if lines:
+            return lines
+    lines = _chat_block_activity_lines(run, block)
+    while lines and lines[-1] == "":
+        lines.pop()
+    if lines:
+        lines.append("")
+    return lines
 
 
 def _chat_block_activity_fragment_rows(
@@ -2551,6 +2620,19 @@ def _chat_queue_activity_line(run: _ChatRun) -> str:
 
 def _chat_flow_stage_lines(run: _ChatRun) -> list[str]:
     stages, calls = _chat_flow_projection(run)
+    return _chat_flow_stage_lines_for(run, stages, calls)
+
+
+def _chat_flow_step_lines(run: _ChatRun, payload: Mapping[str, Any]) -> list[str]:
+    stages, calls = project_flow_from_step_payloads([payload])
+    return _chat_flow_stage_lines_for(run, stages, calls)
+
+
+def _chat_flow_stage_lines_for(
+    run: _ChatRun,
+    stages: Sequence[FlowStageView],
+    calls: Mapping[str, FlowCallView],
+) -> list[str]:
     if not stages:
         return []
     lines: list[str] = []

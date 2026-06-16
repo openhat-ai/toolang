@@ -7841,18 +7841,20 @@ def test_cli_chat_run_steering_records_input_bar(monkeypatch) -> None:
     assert app.active_run.commands[1].finalized
 
 
-def test_cli_chat_run_steering_merges_optimistic_command_by_request_id(monkeypatch) -> None:
+def test_cli_chat_run_steering_deduplicates_command_by_request_id(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_runtime_json", lambda _ctx, _path: {})
     app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
     app.active_run = cli._ChatRun(run_id="run_steer", message="working", status="running")
-    app.active_run.record_command(
+
+    app.handle_runtime_event(
         {
             "type": "run_steering",
-            "run_id": "run_steer",
-            "ref": {"kind": "command", "index": 1},
-            "kind": "steer",
-            "request_id": "req_abc",
-            "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
+            "payload": {
+                "run_id": "run_steer",
+                "index": 1,
+                "request_id": "req_abc",
+                "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
+            },
         }
     )
 
@@ -7969,11 +7971,14 @@ def test_cli_chat_scrollback_input_bar_keeps_padding() -> None:
 
 
 def test_cli_chat_ai_sdk_tool_result_replaces_running_tool_line(monkeypatch) -> None:
+    printed: list[list[str]] = []
+
     monkeypatch.setattr(
         cli,
         "_runtime_json",
         lambda _ctx, _path: {"default": None, "items": []},
     )
+    monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: printed.append(lines))
     app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
     app.active_run = cli._ChatRun(run_id="run_tool", message="search", status="running")
 
@@ -7997,9 +8002,11 @@ def test_cli_chat_ai_sdk_tool_result_replaces_running_tool_line(monkeypatch) -> 
     )
 
     rendered = "\n".join(cli._chat_run_lines(app.active_run, include_steps=True))
+    scrollback = "\n".join(line for lines in printed for line in lines)
     assert "requested web_search__search" not in rendered
-    assert rendered.count("web_search__search") == 1
-    assert "› ran web_search__search: 李荣浩 热门歌曲 代表作" in rendered
+    assert "› running web_search__search" not in rendered
+    assert scrollback.count("web_search__search") == 1
+    assert "› ran web_search__search: 李荣浩 热门歌曲 代表作" in scrollback
 
 
 def test_cli_chat_flow_run_lines_render_stage_summary() -> None:
@@ -8691,7 +8698,8 @@ def test_cli_chat_queue_steer_sends_pending_item_to_active_run(monkeypatch) -> N
     assert app.pending == []
     assert app.active_run is not None
     visible = cli._chat_visible_text("\n".join(cli._chat_run_lines(app.active_run, include_steps=True)))
-    assert "+ please adjust" in visible
+    assert "+ please adjust" not in visible
+    assert app.active_run.commands == {}
     assert writes == []
 
 
@@ -9505,7 +9513,7 @@ def test_cli_chat_step_mutable_block_delta_and_finalize() -> None:
     assert not block.finalized
     assert cli._chat_visible_text(cli._chat_active_step_line(block)) == "• hello..."
 
-    run.complete_step(
+    finalized = run.complete_step(
         {
             "kind": "model",
             "step_index": 1,
@@ -9514,9 +9522,10 @@ def test_cli_chat_step_mutable_block_delta_and_finalize() -> None:
     )
 
     assert block.finalized
+    assert finalized is block
     assert run.mutable_block is None
     assert run.steps == {}
-    assert run.finalized_blocks == [block]
+    assert run.flushed_steps == set()
     assert run.completed_steps[1]["output"] == [{"type": "text", "text": "hello"}]
 
 
@@ -9536,11 +9545,12 @@ def test_cli_chat_start_command_mutable_block_finalizes_on_run_begin() -> None:
     assert not block.finalized
     assert block.payload["kind"] == "start"
 
-    run.finalize_command(0, {"type": "run_begin", "run_id": "run_active"})
+    finalized = run.finalize_command(0, {"type": "run_begin", "run_id": "run_active"})
 
     assert block.finalized
+    assert finalized is block
     assert run.mutable_block is None
-    assert run.finalized_blocks == []
+    assert run.flushed_commands == set()
 
 
 def test_cli_chat_error_replaces_active_step_with_friendly_system_line() -> None:
