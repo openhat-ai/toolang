@@ -1495,6 +1495,7 @@ class PersistSink:
                     instruct=instruct,
                     context=context,
                     reasoning_content=payload.reasoning_content,
+                    adapter_request=payload.adapter_request,
                 )
             self._store.append_step(
                 run_id=event.run_id,

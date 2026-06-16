@@ -168,10 +168,12 @@ class ModelCallStepPayload:
     instruct: str | None = None
     context: str | None = None
     reasoning_content: str | None = None
+    adapter_request: dict[str, Any] | None = None
 
     @classmethod
     def from_data(cls, payload: Mapping[str, Any]) -> ModelCallStepPayload:
         instruct = payload.get("instruct", payload.get("instructions_hash"))
+        adapter_request = payload.get("adapter_request")
         return cls(
             model_ref=str(payload.get("model_ref", "")),
             input_tokens=int(payload.get("input_tokens", 0)),
@@ -197,6 +199,11 @@ class ModelCallStepPayload:
             reasoning_content=(
                 str(payload.get("reasoning_content"))
                 if payload.get("reasoning_content") is not None
+                else None
+            ),
+            adapter_request=(
+                dict(adapter_request)
+                if isinstance(adapter_request, Mapping)
                 else None
             ),
         )

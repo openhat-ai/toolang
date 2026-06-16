@@ -21,6 +21,7 @@ from toolang.base.types.model import ModelInfo
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.cli.chat_history import ChatInputHistoryStore
 import toolang.cli.toolang.app as cli
+import toolang.cli.toolang.inspect as inspect_cli
 import toolang.cli.invoke as cli_invoke
 import toolang.cli.caps.app as caps_cli
 import toolang.cli.caps.commands as caps_commands
@@ -35,6 +36,7 @@ from toolang.execution.records import ChildCallStepPayload, FlowOpStepPayload
 from toolang.common.progress import ProgressEvent
 from toolang import work
 from toolang.execution.db import ExecutionStore, execution_db_path
+from wcwidth import wcswidth
 runner = CliRunner()
 DEFAULT_AGENT_SOURCE = "# Customize this agent here.\n# Docs: https://toolang.ai/docs\n"
 
@@ -9676,31 +9678,51 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
             }
         raise AssertionError(request_path)
 
-    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(inspect_cli, "_runtime_json", fake_runtime_json)
 
     result = _invoke_app(["inspect", "dev", "run_parent"])
 
     assert result.exit_code == 0
     assert calls == ["/api/v1/runs/run_parent", "/api/v1/threads/term_thread?limit=100"]
-    assert "run run_parent  succeeded  flow:research" in result.stdout
-    assert "steps" in result.stdout
-    assert "✓ 1 step  stage 1 rank prepare count=3" in result.stdout
-    assert "✓ 2 run" in result.stdout
+    assert "# run" in result.stdout
+    assert "run run_parent  succeeded  flow=research  thread=term_thread" in result.stdout
+    assert "# input\nquery" in result.stdout
+    assert "# steps" in result.stdout
+    assert "\n✓ 1   step    stage 1 rank prepare count=3" in result.stdout
+    assert "\n✓ 2   run" in result.stdout
     assert "item 1/3 thunk:score run_child" in result.stdout
-    assert "✓ 3 step  stage 1 rank done count=2" in result.stdout
-    assert "✓ 4 run  stage 2 do -> thunk:<L34> run_inline" in result.stdout
+    assert "\n✓ 3   step    stage 1 rank done count=2" in result.stdout
+    assert "\n✓ 4   run     stage 2 do -> thunk:<L34> run_inline" in result.stdout
     assert "2.1 tool" not in result.stdout
 
-    tree_result = _invoke_app(["inspect", "dev", "run_parent", "--tree", "--depth", "2"])
+    parent_path_json = _invoke_app(["inspect", "dev", "run_parent:2", "--json"])
 
-    assert tree_result.exit_code == 0
-    assert "✓ 2.1 tool  filesystem__read_text: path=tasks/qf7y0d8k.md" in tree_result.stdout
+    assert parent_path_json.exit_code == 0
+    parent_path_data = json.loads(parent_path_json.stdout)
+    assert parent_path_data["step"]["variant"] == "compound"
+    assert parent_path_data["step"]["children"][0]["path"] == "2.1"
+    assert parent_path_data["step"]["children"][0]["summary"] == 'filesystem__read_text result "tool output"'
+    assert "record" not in parent_path_data["step"]["children"][0]
+
+    child_path_json = _invoke_app(["inspect", "dev", "run_parent:2.1", "--json"])
+
+    assert child_path_json.exit_code == 0
+    child_path_data = json.loads(child_path_json.stdout)
+    assert child_path_data["step"]["variant"] == "tool"
+    assert child_path_data["step"]["tool_calls"][0]["result"] == "tool output"
+
+    parent_path_result = _invoke_app(["inspect", "dev", "run_parent:2"])
+
+    assert parent_path_result.exit_code == 0
+    assert "step run_parent:2  succeeded  kind=run" in parent_path_result.stdout
+    assert "# children" in parent_path_result.stdout
+    assert '\n  ✓ 2.1 tool    filesystem__read_text result "tool output"' in parent_path_result.stdout
+    assert "input_refs" not in parent_path_result.stdout
 
     path_result = _invoke_app(["inspect", "dev", "run_parent:2.1"])
 
     assert path_result.exit_code == 0
-    assert "step 2.1 tool  succeeded" in path_result.stdout
-    assert "run  run_child" in path_result.stdout
+    assert "step run_child:2.1  succeeded  kind=tool" in path_result.stdout
     assert "output" in path_result.stdout
     assert "tool output" in path_result.stdout
 
@@ -9785,18 +9807,20 @@ def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> Non
             }
         raise AssertionError(request_path)
 
-    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(inspect_cli, "_runtime_json", fake_runtime_json)
 
     result = _invoke_app(["inspect", "dev", "run_child"])
 
     assert result.exit_code == 0
     assert calls == ["/api/v1/runs/run_child", "/api/v1/threads/term_thread?limit=100"]
-    assert "run run_child  failed  thunk:expand_queries" in result.stdout
-    assert "failure" in result.stdout
+    assert "# run" in result.stdout
+    assert "run run_child  failed  thunk=expand_queries  thread=term_thread" in result.stdout
+    assert "# output" in result.stdout
+    assert "error: unknown tool call: service_use__service_list (step 2 system)" in result.stdout
     assert "unknown tool call: service_use__service_list (step 2 system)" in result.stdout
-    assert "✓ 1 model  deepseek/deepseek-chat-v3 I should inspect services." in result.stdout
-    assert "requested service_use__service_list: visibility=all" in result.stdout
-    assert "✗ 2 system  unknown tool call: service_use__service_list" in result.stdout
+    assert "\n✓ 1   model   I should inspect services." in result.stdout
+    assert 'service_use__service_list call  {visibility: "all"}' in result.stdout
+    assert "\n✗ 2   system  unknown tool call: service_use__service_list" in result.stdout
     assert "- run_parent flow:research" not in result.stdout
 
 
@@ -9813,7 +9837,12 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
                     "step_index": 1,
                     "kind": "model",
                     "status": "finished",
-                    "payload": {"model_ref": "deepseek/deepseek-chat-v3"},
+                    "payload": {
+                        "model_ref": "deepseek/deepseek-chat-v3",
+                        "instruct": "prompt_instruct",
+                        "context": "prompt_context",
+                    },
+                    "input": [{"kind": "command", "index": 0}],
                     "output": [
                         {"type": "text", "text": "Ready to read the task."},
                         {
@@ -9849,12 +9878,21 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
                     "kind": "model",
                     "status": "finished",
                     "payload": {"model_ref": "deepseek/deepseek-chat-v3"},
+                    "input": [
+                        {"kind": "command", "index": 0},
+                        {"kind": "step", "index": 1},
+                        {"kind": "step", "index": 2},
+                    ],
                     "output": [{"type": "text", "text": "Summary complete."}],
                 },
                 "message": None,
             },
         ],
     )
+    run["prompts"] = {
+        "prompt_instruct": "\n".join(f"instruct line {index}" for index in range(1, 13)),
+        "prompt_context": "<context>\nagent_name: alice\nthread_id: term_thread\nsandbox: none\n</context>",
+    }
 
     def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
         calls.append(request_path)
@@ -9864,34 +9902,227 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
             return {"info": {"id": "term_thread"}, "runs": [run]}
         raise AssertionError(request_path)
 
-    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(inspect_cli, "_runtime_json", fake_runtime_json)
 
     result = _invoke_app(["inspect", "dev", "run_thunk"])
 
     assert result.exit_code == 0
     assert calls == ["/api/v1/runs/run_thunk", "/api/v1/threads/term_thread?limit=100"]
-    assert "run run_thunk  succeeded  thunk:summarize" in result.stdout
-    assert "✓ 1 model  deepseek/deepseek-chat-v3 Ready to read the task." in result.stdout
-    assert "requested filesystem__read_text: path=task.md" in result.stdout
-    assert "✓ 2 tool  filesystem__read_text: path=task.md" in result.stdout
-    assert "✓ 3 model  deepseek/deepseek-chat-v3 Summary complete." in result.stdout
+    assert "# run" in result.stdout
+    assert "run run_thunk  succeeded  thunk=summarize  thread=term_thread" in result.stdout
+    assert "# input\nquery" in result.stdout
+    assert "# output\nSummary complete." in result.stdout
+    assert "# steps" in result.stdout
+    assert "\n✓ 1   model   Ready to read the task." in result.stdout
+    assert 'filesystem__read_text call  {path: "task.md"}' in result.stdout
+    assert '\n✓ 2   tool    filesystem__read_text result "task body"' in result.stdout
+    assert "\n✓ 3   model   Summary complete." in result.stdout
 
     focus_result = _invoke_app(["inspect", "dev", "run_thunk:1"])
 
     assert focus_result.exit_code == 0
-    assert "step 1 model  succeeded" in focus_result.stdout
-    assert "output" in focus_result.stdout
-    assert "requested filesystem__read_text: path=task.md" in focus_result.stdout
+    assert "# step" in focus_result.stdout
+    assert "step run_thunk:1  succeeded  kind=model" in focus_result.stdout
+    assert "# api" in focus_result.stdout
+    assert "model     deepseek/deepseek-chat-v3" in focus_result.stdout
+    assert "# input" in focus_result.stdout
+    assert "· user:  query" in focus_result.stdout
+    assert "# output" in focus_result.stdout
+    assert "✓ assistant:  Ready to read the task. [1 tool call] filesystem__read_text  {path: \"task.md\"}" in focus_result.stdout
+    assert "\n[1 tool call]" not in focus_result.stdout
+    assert "# context" in focus_result.stdout
+    assert "<context>\nagent_name: alice\nthread_id: term_thread\nsandbox: none\n</context>" in focus_result.stdout
+    assert "# instruct" in focus_result.stdout
+    assert "instruct line 10" in focus_result.stdout
+    assert "instruct line 11" not in focus_result.stdout
+    assert "... (2 more lines)" in focus_result.stdout
+    assert (
+        focus_result.stdout.index("# output")
+        < focus_result.stdout.index("# context")
+        < focus_result.stdout.index("# instruct")
+        < focus_result.stdout.index("# api")
+    )
+    assert "# request" not in focus_result.stdout
+
+    history_focus_result = _invoke_app(["inspect", "dev", "run_thunk:3"])
+
+    assert history_focus_result.exit_code == 0
+    assert "· user:       query" in history_focus_result.stdout
+    assert "· assistant:  Ready to read the task. filesystem__read_text call  {path: \"task.md\"}" in history_focus_result.stdout
+    assert "· tool:       filesystem__read_text result \"task body\"" in history_focus_result.stdout
+
+    tool_focus_result = _invoke_app(["inspect", "dev", "run_thunk:2"])
+
+    assert tool_focus_result.exit_code == 0
+    assert "step run_thunk:2  succeeded  kind=tool" in tool_focus_result.stdout
+    assert "# tool_calls" not in tool_focus_result.stdout
+    assert "tool_call 1" not in tool_focus_result.stdout
+    assert "# input_refs" not in tool_focus_result.stdout
+    assert "# input" in tool_focus_result.stdout
+    assert 'tool: "filesystem__read_text"' in tool_focus_result.stdout
+    assert 'input: {' in tool_focus_result.stdout
+    assert 'path: "task.md"' in tool_focus_result.stdout
+    assert "# output" in tool_focus_result.stdout
+    assert "# result" not in tool_focus_result.stdout
+    assert "task body" in tool_focus_result.stdout
+
+
+def test_cli_inspect_structured_views_render_preprocessed_document(monkeypatch) -> None:
+    calls: list[str] = []
+    run = _inspect_run_detail(
+        "run_struct",
+        thread_id="term_thread",
+        executable_kind="thunk",
+        executable_name="summarize",
+        steps=[
+            {
+                "record": {
+                    "step_index": 1,
+                    "kind": "model",
+                    "status": "finished",
+                    "input": [{"kind": "command", "index": 0}],
+                    "payload": {
+                        "model_ref": "openai/gpt-5",
+                        "instruct": "prompt_instruct",
+                        "context": "prompt_context",
+                    },
+                    "output": [
+                        {"type": "text", "text": "Ready."},
+                        {
+                            "type": "tool_call",
+                            "tool_call_id": "call_read",
+                            "tool_name": "filesystem__read_text",
+                            "input": {"path": "task.md"},
+                        },
+                    ],
+                },
+                "message": None,
+            },
+            {
+                "record": {
+                    "step_index": 2,
+                    "kind": "tool",
+                    "status": "finished",
+                    "payload": {},
+                    "input": [{"kind": "step", "index": 1}],
+                    "output": [
+                        {
+                            "type": "tool_result",
+                            "tool_call_id": "call_read",
+                            "tool_name": "filesystem__read_text",
+                            "output": "task body",
+                        }
+                    ],
+                },
+                "message": None,
+            },
+        ],
+    )
+    run["prompts"] = {
+        "prompt_instruct": "Answer concisely.",
+        "prompt_context": "Use project context.",
+    }
+
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        calls.append(request_path)
+        if request_path == "/api/v1/runs/run_struct":
+            return run
+        if request_path == "/api/v1/threads/term_thread?limit=100":
+            return {"info": {"id": "term_thread"}, "runs": [run]}
+        raise AssertionError(request_path)
+
+    monkeypatch.setattr(inspect_cli, "_runtime_json", fake_runtime_json)
+
+    json_result = _invoke_app(["inspect", "dev", "run_struct:1", "--json"])
+
+    assert json_result.exit_code == 0
+    json_data = json.loads(json_result.stdout)
+    assert json_data["kind"] == "step"
+    assert "steps" not in json_data["run"]
+    assert json_data["step"]["variant"] == "model"
+    assert json_data["step"]["record"]["payload"]["model_ref"] == "openai/gpt-5"
+    assert json_data["step"]["adapter_request"] == {
+        "instructions": "Answer concisely.",
+        "context": "Use project context.",
+        "messages": [{"role": "user", "parts": [{"type": "text", "text": "query"}]}],
+        "tools": None,
+        "state": None,
+    }
+
+    tool_json_result = _invoke_app(["inspect", "dev", "run_struct:2", "--json"])
+
+    assert tool_json_result.exit_code == 0
+    tool_json_data = json.loads(tool_json_result.stdout)
+    assert tool_json_data["step"]["variant"] == "tool"
+    assert tool_json_data["step"]["tool_calls"][0]["name"] == "filesystem__read_text"
+    assert tool_json_data["step"]["tool_calls"][0]["input"] == {"path": "task.md"}
+    assert tool_json_data["step"]["tool_calls"][0]["result"] == "task body"
+    assert calls == [
+        "/api/v1/runs/run_struct",
+        "/api/v1/threads/term_thread?limit=100",
+        "/api/v1/runs/run_struct",
+        "/api/v1/threads/term_thread?limit=100",
+    ]
+
+
+@pytest.mark.parametrize(
+    "option_args",
+    [
+        ["--human"],
+        ["--toml"],
+        ["--tree"],
+        ["--depth", "2"],
+    ],
+)
+def test_cli_inspect_rejects_removed_view_options(option_args: list[str]) -> None:
+    result = _invoke_app(["inspect", "dev", "run_struct", *option_args])
+
+    assert result.exit_code != 0
+    assert "No such option" in result.stderr
 
 
 def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
     calls: list[str] = []
+    monkeypatch.setattr(inspect_cli.shutil, "get_terminal_size", lambda fallback: os.terminal_size((80, 24)))
     parent = _inspect_run_detail(
         "run_parent",
         thread_id="term_thread",
         root_run_id="run_parent",
         executable_kind="flow",
         executable_name="research",
+        steps=[
+            {
+                "record": {
+                    "step_index": 1,
+                    "kind": "model",
+                    "status": "finished",
+                    "payload": {"model_ref": "deepseek/deepseek-chat-v3"},
+                    "output": [{"type": "text", "text": "Inspecting the request."}],
+                },
+                "message": None,
+            },
+            {
+                "record": {
+                    "step_index": 2,
+                    "kind": "tool",
+                    "status": "finished",
+                    "payload": {},
+                    "output": [],
+                },
+                "message": None,
+            },
+            {
+                "record": {
+                    "step_index": 3,
+                    "kind": "system",
+                    "status": "failed",
+                    "payload": {},
+                    "error": "unknown tool call: service_use__service_list",
+                    "output": [],
+                },
+                "message": None,
+            },
+        ],
     )
     parent["output"] = {
         **cast(dict[str, object], parent["output"]),
@@ -9913,6 +10144,35 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
         executable_name="expand_queries",
         call_kind="stage",
     )
+    successful = _inspect_run_detail(
+        "run_success",
+        thread_id="term_thread",
+        root_run_id="run_success",
+        executable_kind="thunk",
+        executable_name="summarize",
+        steps=[
+            {
+                "record": {
+                    "step_index": 1,
+                    "kind": "model",
+                    "status": "finished",
+                    "payload": {"model_ref": "deepseek/deepseek-chat-v3"},
+                    "output": [{"type": "text", "text": "Reading context."}],
+                },
+                "message": None,
+            },
+            {
+                "record": {
+                    "step_index": 2,
+                    "kind": "model",
+                    "status": "finished",
+                    "payload": {"model_ref": "deepseek/deepseek-chat-v3"},
+                    "output": [{"type": "text", "text": f"李白同学是谁，{'中文内容' * 30}"}],
+                },
+                "message": None,
+            },
+        ],
+    )
 
     def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
         calls.append(request_path)
@@ -9923,25 +10183,46 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
                     "title": "agent framework implementations",
                     "status": "idle",
                     "origin": "chat",
-                    "run_count": 2,
+                    "run_count": 3,
                     "latest_run": {"id": "run_child", "status": "failed"},
                 },
-                "runs": [parent, child],
+                "runs": [parent, child, successful],
             }
         raise AssertionError(request_path)
 
-    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(inspect_cli, "_runtime_json", fake_runtime_json)
 
     result = _invoke_app(["inspect", "dev", "term_thread"])
 
     assert result.exit_code == 0
     assert calls == ["/api/v1/threads/term_thread?limit=100"]
-    assert "thread term_thread  idle" in result.stdout
-    assert "title   agent framework implementations" in result.stdout
-    assert "runs    2 total" in result.stdout
-    assert "✗  run_parent  flow:research" in result.stdout
+    assert "# thread" in result.stdout
+    assert "thread term_thread  idle  runs=3" in result.stdout
+    assert "# title" not in result.stdout
+    assert "agent framework implementations" not in result.stdout
+    assert "# runs" in result.stdout
+    assert "\n✗ run_parent   1.0s   [3]   query" in result.stdout
+    assert "\n\n✓ run_success" not in result.stdout
+    assert "\n✓ run_success  1.0s   [2]   query" in result.stdout
+    parent_line = next(line for line in result.stdout.splitlines() if line.startswith("✗ run_parent"))
+    success_line = next(line for line in result.stdout.splitlines() if line.startswith("✓ run_success"))
+    assert parent_line.index("1.0s") == success_line.index("1.0s")
+    assert parent_line.index("[3]") == success_line.index("[2]")
+    assert parent_line.index("query") == success_line.index("query")
+    assert "  input:" not in result.stdout
+    assert "  output:" not in result.stdout
+    assert "{query}" not in result.stdout
+    assert "thunk:summarize" not in result.stdout
+    long_input = cast(dict[str, object], successful["input"])
+    long_input["parts"] = [{"type": "text", "text": f"李白同学是谁，{'中文内容' * 30}"}]
+    long_result = _invoke_app(["inspect", "dev", "term_thread"])
+    success_output_line = next(line for line in long_result.stdout.splitlines() if line.startswith("✓ run_success"))
+    assert 110 <= wcswidth(success_output_line) <= 120
+    assert success_output_line.endswith("...")
+    assert "\n# run\n" not in result.stdout
     assert "run_child thunk:expand_queries" not in result.stdout
-    assert "step 1" not in result.stdout
+    assert "\n✓ 1" not in result.stdout
+    assert "\nsteps:" not in result.stdout
 
 
 def test_script_progress_defaults_to_stage_summary() -> None:

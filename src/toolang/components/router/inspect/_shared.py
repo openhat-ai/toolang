@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import asdict
-from collections.abc import AsyncIterator, Container, Sequence
+from collections.abc import AsyncIterator, Container, Mapping, Sequence
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -229,8 +229,9 @@ def create_router() -> APIRouter:
         run = context.store.get_run(run_id=run_id)
         if run is None:
             raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
+        detail = _run_detail_data(_run_detail(context, run))
         return {
-            **_run_detail_data(_run_detail(context, run)),
+            **_with_run_prompt_bodies(context.store, detail),
             "event_cursor": context.store.latest_event_cursor(domain="run", domain_id=run_id),
         }
 
@@ -442,7 +443,10 @@ def create_router() -> APIRouter:
         ]
         return {
             "info": asdict(info),
-            "runs": [_run_detail_data(item) for item in runs],
+            "runs": [
+                _with_run_prompt_bodies(context.store, _run_detail_data(item))
+                for item in runs
+            ],
             "event_cursor": context.store.latest_event_cursor(domain="thread", domain_id=thread_id),
         }
 
@@ -1195,6 +1199,48 @@ def _run_detail_data(run_detail: RunDetail) -> dict[str, object]:
             "steps": output_steps,
         },
     }
+
+
+def _with_run_prompt_bodies(store: Any, run: dict[str, object]) -> dict[str, object]:
+    prompt_hashes = _run_prompt_hashes(run)
+    if not prompt_hashes:
+        return run
+    prompts: dict[str, str] = {}
+    for prompt_hash in prompt_hashes:
+        body = store.get_prompt(prompt_hash=prompt_hash)
+        if body is not None:
+            prompts[prompt_hash] = body
+    if prompts:
+        run = {**run, "prompts": prompts}
+    return run
+
+
+def _run_prompt_hashes(run: Mapping[str, object]) -> tuple[str, ...]:
+    output = run.get("output")
+    if not isinstance(output, Mapping):
+        return ()
+    output = cast(Mapping[str, object], output)
+    hashes: list[str] = []
+    step_items = output.get("steps")
+    if not isinstance(step_items, Sequence) or isinstance(step_items, (str, bytes, bytearray)):
+        return ()
+    for item in step_items:
+        if not isinstance(item, Mapping):
+            continue
+        item = cast(Mapping[str, object], item)
+        record = item.get("record")
+        if not isinstance(record, Mapping):
+            continue
+        record = cast(Mapping[str, object], record)
+        payload = record.get("payload")
+        if not isinstance(payload, Mapping):
+            continue
+        payload = cast(Mapping[str, object], payload)
+        for key in ("instruct", "context"):
+            value = payload.get(key)
+            if isinstance(value, str) and value and value not in hashes:
+                hashes.append(value)
+    return tuple(hashes)
 
 
 def _virtual_runtime_failure_step(
