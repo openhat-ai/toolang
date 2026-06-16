@@ -10061,6 +10061,39 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
         root_run_id="run_parent",
         executable_kind="flow",
         executable_name="research",
+        steps=[
+            {
+                "record": {
+                    "step_index": 1,
+                    "kind": "model",
+                    "status": "finished",
+                    "payload": {"model_ref": "deepseek/deepseek-chat-v3"},
+                    "output": [{"type": "text", "text": "Inspecting the request."}],
+                },
+                "message": None,
+            },
+            {
+                "record": {
+                    "step_index": 2,
+                    "kind": "tool",
+                    "status": "finished",
+                    "payload": {},
+                    "output": [],
+                },
+                "message": None,
+            },
+            {
+                "record": {
+                    "step_index": 3,
+                    "kind": "system",
+                    "status": "failed",
+                    "payload": {},
+                    "error": "unknown tool call: service_use__service_list",
+                    "output": [],
+                },
+                "message": None,
+            },
+        ],
     )
     parent["output"] = {
         **cast(dict[str, object], parent["output"]),
@@ -10082,6 +10115,35 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
         executable_name="expand_queries",
         call_kind="stage",
     )
+    successful = _inspect_run_detail(
+        "run_success",
+        thread_id="term_thread",
+        root_run_id="run_success",
+        executable_kind="thunk",
+        executable_name="summarize",
+        steps=[
+            {
+                "record": {
+                    "step_index": 1,
+                    "kind": "model",
+                    "status": "finished",
+                    "payload": {"model_ref": "deepseek/deepseek-chat-v3"},
+                    "output": [{"type": "text", "text": "Reading context."}],
+                },
+                "message": None,
+            },
+            {
+                "record": {
+                    "step_index": 2,
+                    "kind": "model",
+                    "status": "finished",
+                    "payload": {"model_ref": "deepseek/deepseek-chat-v3"},
+                    "output": [{"type": "text", "text": "Research summary complete."}],
+                },
+                "message": None,
+            },
+        ],
+    )
 
     def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
         calls.append(request_path)
@@ -10092,10 +10154,10 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
                     "title": "agent framework implementations",
                     "status": "idle",
                     "origin": "chat",
-                    "run_count": 2,
+                    "run_count": 3,
                     "latest_run": {"id": "run_child", "status": "failed"},
                 },
-                "runs": [parent, child],
+                "runs": [parent, child, successful],
             }
         raise AssertionError(request_path)
 
@@ -10106,13 +10168,17 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
     assert result.exit_code == 0
     assert calls == ["/api/v1/threads/term_thread?limit=100"]
     assert "# thread" in result.stdout
-    assert "term_thread  idle  runs=2" in result.stdout
+    assert "term_thread  idle  runs=3" in result.stdout
     assert "# title\nagent framework implementations" in result.stdout
     assert "# runs" in result.stdout
-    assert "\n✗  run_parent  flow:research" in result.stdout
-    assert "\n  error: unknown tool call: service_use__service_list (step 3 system)" in result.stdout
+    assert "\n# run\nrun_parent  failed  flow:research  1.0s  steps=3" in result.stdout
+    assert "input: query" in result.stdout
+    assert "output: error: unknown tool call: service_use__service_list (step 3 system)" in result.stdout
+    assert "\n# run\nrun_success  succeeded  thunk:summarize  1.0s  steps=2" in result.stdout
+    assert "output: Research summary complete." in result.stdout
     assert "run_child thunk:expand_queries" not in result.stdout
-    assert "step 1" not in result.stdout
+    assert "\n✓ 1" not in result.stdout
+    assert "\nsteps:" not in result.stdout
 
 
 def test_script_progress_defaults_to_stage_summary() -> None:

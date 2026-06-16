@@ -32,6 +32,7 @@ from ..utils import (
 InspectView = Literal["human", "json", "toml"]
 InspectData = dict[str, Any]
 StepData = dict[str, Any]
+THREAD_RUN_PREVIEW_WIDTH = 96
 
 
 @dataclass(frozen=True, slots=True)
@@ -348,6 +349,7 @@ def _preprocess_thread(thread: Mapping[str, Any]) -> InspectData:
 def _preprocess_thread_run(run: Mapping[str, Any]) -> InspectData:
     info = dict(_mapping(run.get("info")))
     output = _mapping(run.get("output"))
+    failure = _failure_summary(run) or None
     target = executable_label(
         _text(info.get("executable_kind")) or "run",
         _text(info.get("executable_name")),
@@ -358,7 +360,10 @@ def _preprocess_thread_run(run: Mapping[str, Any]) -> InspectData:
         "status": _display_run_status(output.get("status")),
         "target": target,
         "elapsed": _elapsed(_text(info.get("started_at")), _text(info.get("finished_at"))) or None,
-        "failure": _failure_summary(run) or None,
+        "step_count": len(_run_steps(run)),
+        "input_summary": _preview_text(_message_summary(_mapping(run.get("input")))),
+        "output_summary": _thread_run_output_summary(run, failure=failure),
+        "failure": failure,
         "info": info,
     }
 
@@ -741,16 +746,24 @@ def _render_human_thread(thread: Mapping[str, Any]) -> None:
     if not runs:
         return
     _render_human_section_title("runs")
-    run_id_width = max(len(_text(run.get("id")) or "-") for run in runs)
-    target_width = max(len(_text(run.get("target")) or "-") for run in runs)
     for run in runs:
-        status = _text(run.get("status")) or ""
-        pieces = [_status_mark(status), f"{_text(run.get('id')) or '-':<{run_id_width}}", f"{_text(run.get('target')) or '-':<{target_width}}"]
-        if elapsed := _text(run.get("elapsed")):
-            pieces.append(elapsed)
-        typer.echo("  ".join(pieces))
-        if failure := _text(run.get("failure")):
-            typer.echo(f"  error: {failure}")
+        _render_human_thread_run(run)
+
+
+def _render_human_thread_run(run: Mapping[str, Any]) -> None:
+    typer.echo("")
+    _render_human_section_title("run")
+    pieces = [_text(run.get("id")) or "-", _text(run.get("status")) or "-", _text(run.get("target")) or "-"]
+    if elapsed := _text(run.get("elapsed")):
+        pieces.append(elapsed)
+    step_count = _int_or_none(run.get("step_count"))
+    if step_count is not None:
+        pieces.append(f"steps={step_count}")
+    typer.echo("  ".join(pieces))
+    if input_summary := _text(run.get("input_summary")):
+        typer.echo(f"input: {input_summary}")
+    if output_summary := _text(run.get("output_summary")):
+        typer.echo(f"output: {output_summary}")
 
 
 def _render_human_run(run: Mapping[str, Any], steps: Sequence[Mapping[str, Any]], *, depth: int) -> None:
@@ -910,6 +923,14 @@ def _run_output_text(run: Mapping[str, Any]) -> str:
     return ""
 
 
+def _thread_run_output_summary(run: Mapping[str, Any], *, failure: str | None) -> str | None:
+    if failure:
+        return f"error: {_preview_text(failure)}"
+    if output_text := _run_output_text(run):
+        return _preview_text(output_text)
+    return None
+
+
 def _last_text_part(parts: object) -> str:
     for part in reversed(_list(parts)):
         typed = _mapping(part)
@@ -986,6 +1007,10 @@ def _parts_summary(parts: object) -> str:
         if typed.get("type") == "text":
             texts.append(str(typed.get("text") or ""))
     return _truncate("".join(texts).strip(), width=72)
+
+
+def _preview_text(value: object) -> str:
+    return _truncate(value, width=THREAD_RUN_PREVIEW_WIDTH)
 
 
 def _plain_value(value: object) -> str:
