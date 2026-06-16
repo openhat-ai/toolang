@@ -14,7 +14,6 @@ from urllib.request import urlopen
 
 import click
 import json5
-import tomli_w
 import typer
 from wcwidth import wcswidth
 
@@ -32,7 +31,6 @@ from ..utils import (
 )
 
 
-InspectView = Literal["human", "json", "toml"]
 InspectData = dict[str, Any]
 StepData = dict[str, Any]
 THREAD_RUN_PREVIEW_MIN_WIDTH = 120
@@ -55,21 +53,17 @@ def inspect_command(
     ctx: typer.Context,
     target: str,
     *,
-    tree: bool,
-    depth: int,
     limit: int,
-    view: InspectView,
+    json_view: bool,
 ) -> None:
     """Inspect one thread, run, or run step path."""
 
     if limit < 1:
         raise click.ClickException("--limit must be at least 1")
-    if depth < 1:
-        raise click.ClickException("--depth must be at least 1")
     parsed = parse_inspect_target(target)
     raw = _inspect_detail(ctx, parsed.identifier, limit=limit, include_thread=parsed.kind == "run")
     document = preprocess_inspect(raw, target=parsed)
-    render_inspect(document, view=view, tree=tree, depth=depth)
+    render_inspect(document, json_view=json_view)
 
 
 def parse_inspect_target(target: str) -> InspectTarget:
@@ -125,18 +119,13 @@ def preprocess_inspect(raw: Mapping[str, Any], *, target: InspectTarget) -> Insp
 def render_inspect(
     document: InspectData,
     *,
-    view: InspectView,
-    tree: bool,
-    depth: int,
+    json_view: bool,
 ) -> None:
     public_document = cast(Mapping[str, Any], _public_document(document))
-    if view == "json":
+    if json_view:
         typer.echo(json.dumps(public_document, ensure_ascii=False, indent=2))
         return
-    if view == "toml":
-        typer.echo(tomli_w.dumps(_toml_document(public_document)))
-        return
-    _render_human(document, tree=tree, depth=depth)
+    _render_human(document)
 
 
 def _parse_inspect_step_path(raw_path: str) -> tuple[int, ...]:
@@ -721,7 +710,7 @@ def _path_label(path: Sequence[int]) -> str:
     return ".".join(str(item) for item in path)
 
 
-def _render_human(document: Mapping[str, Any], *, tree: bool, depth: int) -> None:
+def _render_human(document: Mapping[str, Any]) -> None:
     if document.get("kind") == "thread":
         _render_human_thread(_mapping(document.get("thread")))
         return
@@ -731,7 +720,6 @@ def _render_human(document: Mapping[str, Any], *, tree: bool, depth: int) -> Non
     _render_human_run(
         _mapping(document.get("run")),
         [_mapping(step) for step in _list(document.get("steps"))],
-        depth=depth if tree else 1,
     )
 
 
@@ -784,7 +772,7 @@ def _render_human_thread_run(
     typer.echo(f"{prefix}{click.style(run_meta, dim=True)}   {_truncate_display(input_summary, width=width)}")
 
 
-def _render_human_run(run: Mapping[str, Any], steps: Sequence[Mapping[str, Any]], *, depth: int) -> None:
+def _render_human_run(run: Mapping[str, Any], steps: Sequence[Mapping[str, Any]]) -> None:
     _render_human_section_title("run")
     pieces = [f"run {_text(run.get('id')) or '-'}", _text(run.get("status")) or "-", _target_field(_text(run.get("target")))]
     if thread_id := _text(run.get("thread_id")):
@@ -802,7 +790,7 @@ def _render_human_run(run: Mapping[str, Any], steps: Sequence[Mapping[str, Any]]
     if steps:
         _render_human_section_title("steps")
     for step in steps:
-        _render_human_step_line(step, depth=depth, level=0, base_indent=0)
+        _render_human_step_line(step, depth=1, level=0, base_indent=0)
 
 
 def _render_human_section_title(label: str) -> None:
@@ -1303,32 +1291,6 @@ def _json5_value(value: object) -> str:
         return json5.dumps(value, ensure_ascii=False, indent=2, quote_keys=False, trailing_commas=False)
     except TypeError:
         return str(value)
-
-
-_TOML_NONE = object()
-
-
-def _toml_safe(value: object) -> object:
-    if value is None:
-        return _TOML_NONE
-    if isinstance(value, dict):
-        result: dict[str, object] = {}
-        for key, item in value.items():
-            converted = _toml_safe(item)
-            if converted is not _TOML_NONE:
-                result[str(key)] = converted
-        return result
-    if isinstance(value, list):
-        return [converted for item in value if (converted := _toml_safe(item)) is not _TOML_NONE]
-    if isinstance(value, tuple):
-        return [converted for item in value if (converted := _toml_safe(item)) is not _TOML_NONE]
-    if isinstance(value, (str, int, float, bool)):
-        return value
-    return str(value)
-
-
-def _toml_document(value: Mapping[str, Any]) -> Mapping[str, Any]:
-    return cast(Mapping[str, Any], _toml_safe(value))
 
 
 def _public_document(value: object) -> object:

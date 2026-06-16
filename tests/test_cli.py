@@ -8,7 +8,6 @@ import json
 from pathlib import Path
 import os
 import time
-import tomllib
 from datetime import datetime, timezone
 from typing import Any, cast
 from uuid import uuid4
@@ -9696,11 +9695,6 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
     assert "\n✓ 4   run     stage 2 do -> thunk:<L34> run_inline" in result.stdout
     assert "2.1 tool" not in result.stdout
 
-    tree_result = _invoke_app(["inspect", "dev", "run_parent", "--tree", "--depth", "2"])
-
-    assert tree_result.exit_code == 0
-    assert "\n  ✓ 2.1 tool    filesystem__read_text: path=tasks/qf7y0d8k.md" in tree_result.stdout
-
     parent_path_json = _invoke_app(["inspect", "dev", "run_parent:2", "--json"])
 
     assert parent_path_json.exit_code == 0
@@ -10043,19 +10037,6 @@ def test_cli_inspect_structured_views_render_preprocessed_document(monkeypatch) 
         "state": None,
     }
 
-    toml_result = _invoke_app(["inspect", "dev", "run_struct", "--toml"])
-
-    assert toml_result.exit_code == 0
-    toml_data = tomllib.loads(toml_result.stdout)
-    assert toml_data["kind"] == "run"
-    assert "steps" not in toml_data["run"]
-    assert toml_data["steps"][0]["kind"] == "model"
-    assert "record" not in toml_data["steps"][0]
-    assert "adapter_request" not in toml_data["steps"][0]
-    assert toml_data["steps"][1]["kind"] == "tool"
-    assert toml_data["steps"][1]["summary"] == "filesystem__read_text: path=task.md"
-    assert "tool_calls" not in toml_data["steps"][1]
-
     tool_json_result = _invoke_app(["inspect", "dev", "run_struct:2", "--json"])
 
     assert tool_json_result.exit_code == 0
@@ -10069,16 +10050,23 @@ def test_cli_inspect_structured_views_render_preprocessed_document(monkeypatch) 
         "/api/v1/threads/term_thread?limit=100",
         "/api/v1/runs/run_struct",
         "/api/v1/threads/term_thread?limit=100",
-        "/api/v1/runs/run_struct",
-        "/api/v1/threads/term_thread?limit=100",
     ]
 
 
-def test_cli_inspect_rejects_multiple_structured_views() -> None:
-    result = _invoke_app(["inspect", "dev", "run_struct", "--json", "--toml"])
+@pytest.mark.parametrize(
+    "option_args",
+    [
+        ["--human"],
+        ["--toml"],
+        ["--tree"],
+        ["--depth", "2"],
+    ],
+)
+def test_cli_inspect_rejects_removed_view_options(option_args: list[str]) -> None:
+    result = _invoke_app(["inspect", "dev", "run_struct", *option_args])
 
-    assert result.exit_code == 1
-    assert "--human, --json, and --toml are mutually exclusive" in result.stderr
+    assert result.exit_code != 0
+    assert "No such option" in result.stderr
 
 
 def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:

@@ -749,18 +749,10 @@ def runs_command(
 def inspect_command(
     ctx: typer.Context,
     target: Annotated[str, typer.Argument(help="Thread id, run id, or run step path to inspect.")],
-    tree: Annotated[bool, typer.Option("--tree", help="Show the step tree.")] = False,
-    depth: Annotated[int, typer.Option("--depth", help="Step tree depth.")] = 1,
     limit: Annotated[int, typer.Option("--limit", help="Maximum thread runs to read.")] = 100,
-    human: Annotated[bool, typer.Option("--human", help="Render human-readable output.")] = False,
     json_view: Annotated[bool, typer.Option("--json", help="Render preprocessed inspect data as JSON.")] = False,
-    toml: Annotated[bool, typer.Option("--toml", help="Render preprocessed inspect data as TOML.")] = False,
 ) -> None:
-    selected_views = sum(1 for item in (human, json_view, toml) if item)
-    if selected_views > 1:
-        raise click.ClickException("--human, --json, and --toml are mutually exclusive")
-    view: _inspect_cli.InspectView = "json" if json_view else "toml" if toml else "human"
-    _inspect_cli.inspect_command(ctx, target, tree=tree, depth=depth, limit=limit, view=view)
+    _inspect_cli.inspect_command(ctx, target, limit=limit, json_view=json_view)
 
 
 @app.command(
