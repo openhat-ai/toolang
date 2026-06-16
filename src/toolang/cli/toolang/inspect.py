@@ -1140,17 +1140,17 @@ def _part_display_summary(part: Mapping[str, Any]) -> str:
         name = _text(part.get("tool_name")) or _text(part.get("tool_family")) or "tool"
         tool_input = _tool_input_summary(part.get("input"))
         suffix = f"  {tool_input}" if tool_input else ""
-        return f"[tool call] {name}{suffix}"
+        return f"[call] {name}{suffix}"
     if part_type == "tool_result":
         name = _text(part.get("tool_name")) or _text(part.get("tool_family")) or "tool"
         result = part.get("output")
         if result is None:
             result = part.get("result")
         if error := _text(part.get("error")):
-            return f"[tool error] {name}  error={_plain_value(error)}"
+            return f"[error] {name}  error={_plain_value(error)}"
         if result is not None:
-            return f"[tool result] {name}: {_plain_value(result)}"
-        return f"[tool result] {name}"
+            return f"[result] {name}: {_plain_value(result)}"
+        return f"[result] {name}"
     return part_type or ""
 
 
