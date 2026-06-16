@@ -2113,14 +2113,13 @@ def _chat_model_tool_requests_have_results(run: _ChatRun, model_step_index: int)
 
 
 def _chat_run_state_line(run: _ChatRun) -> str:
-    run_id = run.run_id or "run"
     status = _chat_run_display_status(run.status)
     if not status:
         return ""
     if status in {"queued", "waiting", "submitting"}:
         return ""
     if status == "running":
-        return _chat_dim(f"running {run_id}...")
+        return ""
     if status == "canceling":
         return _chat_dim("canceling...")
     return ""

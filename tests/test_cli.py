@@ -7631,6 +7631,7 @@ def test_cli_chat_run_lines_render_consumed_steer_input_before_response() -> Non
     rendered = "\n".join(cli._chat_run_lines(run, include_steps=True))
     visible = cli._chat_visible_text(rendered)
 
+    assert "running run_steer" not in visible
     assert _indexes_in_order(
         visible,
         (
