@@ -9926,16 +9926,17 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
     assert "step run_thunk:1  succeeded  kind=model" in focus_result.stdout
     assert "# api" in focus_result.stdout
     assert "model     deepseek/deepseek-chat-v3" in focus_result.stdout
-    assert "# messages" in focus_result.stdout
-    assert "# response" in focus_result.stdout
-    assert "assistant: Ready to read the task." in focus_result.stdout
+    assert "# input" in focus_result.stdout
+    assert "· user  query" in focus_result.stdout
+    assert "# output" in focus_result.stdout
+    assert "✓ assistant  Ready to read the task." in focus_result.stdout
     assert "[1 tool call]" in focus_result.stdout
     assert "filesystem__read_text  path=task.md" in focus_result.stdout
     assert "# context" in focus_result.stdout
     assert "thread_id=term_thread" in focus_result.stdout
     assert "# instruct" in focus_result.stdout
     assert "Answer concisely." in focus_result.stdout
-    assert focus_result.stdout.index("# response") < focus_result.stdout.index("# context") < focus_result.stdout.index("# instruct")
+    assert focus_result.stdout.index("# output") < focus_result.stdout.index("# context") < focus_result.stdout.index("# instruct")
     assert "# request" not in focus_result.stdout
 
     tool_focus_result = _invoke_app(["inspect", "dev", "run_thunk:2"])

@@ -898,21 +898,22 @@ def _render_human_model_messages(step: Mapping[str, Any]) -> None:
     messages = [_mapping(message) for message in _list(request.get("messages"))]
     if not messages:
         return
-    _render_human_section_title("messages")
+    _render_human_section_title("input")
     role_width = max(_display_width(_text(message.get("role")) or "-") for message in messages)
     for message in messages:
         role = _text(message.get("role")) or "-"
-        typer.echo(f"{_display_pad_right(role, role_width)}  {_message_summary(message)}")
+        typer.echo(_message_line("·", role, _message_summary(message), role_width=role_width))
 
 
 def _render_human_model_response(step: Mapping[str, Any]) -> None:
     output = [_mapping(part) for part in _list(step.get("output"))]
     if not output:
         return
-    _render_human_section_title("response")
+    _render_human_section_title("output")
     text = _parts_text(output)
+    role_width = _display_width("assistant")
     if text:
-        typer.echo(f"assistant: {_truncate_display(text, width=_thread_run_line_width())}")
+        typer.echo(_message_line(_status_mark(_text(step.get("status")) or ""), "assistant", text, role_width=role_width))
     tool_calls = [part for part in output if part.get("type") == "tool_call"]
     if tool_calls:
         typer.echo(f"[{len(tool_calls)} tool call{'s' if len(tool_calls) != 1 else ''}]")
@@ -921,6 +922,12 @@ def _render_human_model_response(step: Mapping[str, Any]) -> None:
             tool_input = _tool_input_summary(call.get("input"))
             suffix = f"  {tool_input}" if tool_input else ""
             typer.echo(f"{name}{suffix}")
+
+
+def _message_line(marker: str, role: str, content: str, *, role_width: int) -> str:
+    prefix = f"{marker} {_display_pad_right(role, role_width)}  "
+    width = max(_thread_run_line_width() - _display_width(prefix), 1)
+    return f"{prefix}{_truncate_display(content, width=width)}"
 
 
 def _render_human_model_context(step: Mapping[str, Any]) -> None:
