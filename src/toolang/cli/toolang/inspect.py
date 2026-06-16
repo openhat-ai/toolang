@@ -959,14 +959,13 @@ def _render_human_model_instruct(step: Mapping[str, Any]) -> None:
 
 
 def _render_human_tool_step(step: Mapping[str, Any]) -> None:
-    _render_section("input_refs", step.get("input_refs"))
     calls = [_mapping(call) for call in _list(step.get("tool_calls"))]
     if calls:
         _render_human_section_title("tool_calls")
     for index, typed in enumerate(calls, start=1):
         typer.echo(_tool_call_line(index, typed))
-        _render_section("input", typed.get("input"))
-        _render_section("result", typed.get("result"))
+        _render_json_section("input", typed.get("input"))
+        _render_json_section("output", typed.get("result"))
         _render_section("error", typed.get("error"))
     _render_section("other_output", step.get("other_output"))
 
@@ -994,6 +993,14 @@ def _render_section(label: str, value: object) -> None:
     _render_human_section_title(label)
     for line in _full_value(value).splitlines():
         typer.echo(f"  {line}")
+
+
+def _render_json_section(label: str, value: object) -> None:
+    if value is None or value == [] or value == {}:
+        return
+    _render_human_section_title(label)
+    for line in _full_value(value).splitlines():
+        typer.echo(line)
 
 
 def _inspect_thread_run_map(thread: Mapping[str, Any], *, fallback: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
