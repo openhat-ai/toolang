@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import os
 import time
+import tomllib
 from datetime import datetime, timezone
 from typing import Any, cast
 from uuid import uuid4
@@ -21,6 +22,7 @@ from toolang.base.types.model import ModelInfo
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.cli.chat_history import ChatInputHistoryStore
 import toolang.cli.toolang.app as cli
+import toolang.cli.toolang.inspect as inspect_cli
 import toolang.cli.invoke as cli_invoke
 import toolang.cli.caps.app as caps_cli
 import toolang.cli.caps.commands as caps_commands
@@ -9676,7 +9678,7 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
             }
         raise AssertionError(request_path)
 
-    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(inspect_cli, "_runtime_json", fake_runtime_json)
 
     result = _invoke_app(["inspect", "dev", "run_parent"])
 
@@ -9785,7 +9787,7 @@ def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> Non
             }
         raise AssertionError(request_path)
 
-    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(inspect_cli, "_runtime_json", fake_runtime_json)
 
     result = _invoke_app(["inspect", "dev", "run_child"])
 
@@ -9864,7 +9866,7 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
             return {"info": {"id": "term_thread"}, "runs": [run]}
         raise AssertionError(request_path)
 
-    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(inspect_cli, "_runtime_json", fake_runtime_json)
 
     result = _invoke_app(["inspect", "dev", "run_thunk"])
 
@@ -9894,6 +9896,100 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
     assert '"path": "task.md"' in tool_focus_result.stdout
     assert "result" in tool_focus_result.stdout
     assert "task body" in tool_focus_result.stdout
+
+
+def test_cli_inspect_structured_views_render_preprocessed_document(monkeypatch) -> None:
+    calls: list[str] = []
+    run = _inspect_run_detail(
+        "run_struct",
+        thread_id="term_thread",
+        executable_kind="thunk",
+        executable_name="summarize",
+        steps=[
+            {
+                "record": {
+                    "step_index": 1,
+                    "kind": "model",
+                    "status": "finished",
+                    "input": [{"kind": "command", "index": 0}],
+                    "payload": {
+                        "model_ref": "openai/gpt-5",
+                        "instruct": "prompt_instruct",
+                        "context": "prompt_context",
+                    },
+                    "output": [{"type": "text", "text": "Ready."}],
+                },
+                "message": None,
+            },
+            {
+                "record": {
+                    "step_index": 2,
+                    "kind": "tool",
+                    "status": "finished",
+                    "payload": {},
+                    "input": [{"kind": "step", "index": 1}],
+                    "output": [
+                        {
+                            "type": "tool_result",
+                            "tool_name": "filesystem__read_text",
+                            "input": {"path": "task.md"},
+                            "output": "task body",
+                        }
+                    ],
+                },
+                "message": None,
+            },
+        ],
+    )
+    run["prompts"] = {
+        "prompt_instruct": "Answer concisely.",
+        "prompt_context": "Use project context.",
+    }
+
+    def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
+        calls.append(request_path)
+        if request_path == "/api/v1/runs/run_struct":
+            return run
+        if request_path == "/api/v1/threads/term_thread?limit=100":
+            return {"info": {"id": "term_thread"}, "runs": [run]}
+        raise AssertionError(request_path)
+
+    monkeypatch.setattr(inspect_cli, "_runtime_json", fake_runtime_json)
+
+    json_result = _invoke_app(["inspect", "dev", "run_struct:1", "--json"])
+
+    assert json_result.exit_code == 0
+    json_data = json.loads(json_result.stdout)
+    assert json_data["kind"] == "step"
+    assert json_data["step"]["detail"]["variant"] == "model"
+    assert json_data["step"]["detail"]["adapter_request"] == {
+        "instructions": "Answer concisely.",
+        "context": "Use project context.",
+        "messages": [{"role": "user", "parts": [{"type": "text", "text": "query"}]}],
+        "tools": None,
+        "state": None,
+    }
+
+    toml_result = _invoke_app(["inspect", "dev", "run_struct", "--toml"])
+
+    assert toml_result.exit_code == 0
+    toml_data = tomllib.loads(toml_result.stdout)
+    assert toml_data["kind"] == "run"
+    assert toml_data["run"]["steps"][1]["detail"]["variant"] == "tool"
+    assert toml_data["run"]["steps"][1]["detail"]["results"][0]["result"] == "task body"
+    assert calls == [
+        "/api/v1/runs/run_struct",
+        "/api/v1/threads/term_thread?limit=100",
+        "/api/v1/runs/run_struct",
+        "/api/v1/threads/term_thread?limit=100",
+    ]
+
+
+def test_cli_inspect_rejects_multiple_structured_views() -> None:
+    result = _invoke_app(["inspect", "dev", "run_struct", "--json", "--toml"])
+
+    assert result.exit_code == 1
+    assert "--human, --json, and --toml are mutually exclusive" in result.stderr
 
 
 def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
@@ -9942,7 +10038,7 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
             }
         raise AssertionError(request_path)
 
-    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(inspect_cli, "_runtime_json", fake_runtime_json)
 
     result = _invoke_app(["inspect", "dev", "term_thread"])
 
