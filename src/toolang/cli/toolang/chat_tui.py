@@ -154,6 +154,7 @@ class _ChatRun:
     queue_position: int | None = None
     cancel_requested: bool = False
     cancel_sent_run_id: str | None = None
+    terminal_error: str | None = None
     started: bool = False
     steps: dict[int, _ChatStep] = field(default_factory=dict)
     completed_steps: dict[int, dict[str, Any]] = field(default_factory=dict)
@@ -843,6 +844,7 @@ class _ChatBottomApp:
         friendly = _chat_friendly_error(message)
         if self.active_run:
             self.active_run.status = "error"
+            self.active_run.terminal_error = friendly
             _chat_record_system_event(self.active_run, f"error: {friendly}", clear_active=True)
             self.print_run(self.active_run)
         else:
@@ -965,8 +967,10 @@ class _ChatBottomApp:
         if event_type == "run_end":
             child.status = _display_run_status(payload.get("status")) or "completed"
             error = _text(payload.get("error"))
+            if error:
+                child.terminal_error = _chat_friendly_error(error)
             if child.status in {"failed", "error", "canceled", "cancelled"}:
-                message = _chat_stopped_run_message(child.status, error)
+                message = _chat_stopped_run_message(child.status, child.terminal_error if error else None)
                 if error:
                     message = f"error: {message}"
                 _chat_record_system_event(child, message, clear_active=True)
@@ -1184,8 +1188,13 @@ class _ChatBottomApp:
         if completed_run is not None:
             completed_run.status = _display_run_status(payload.get("status")) or "completed"
             error = _text(payload.get("error"))
+            if error:
+                completed_run.terminal_error = _chat_friendly_error(error)
             if completed_run.status in {"failed", "error", "canceled", "cancelled"}:
-                message = _chat_stopped_run_message(completed_run.status, error)
+                message = _chat_stopped_run_message(
+                    completed_run.status,
+                    completed_run.terminal_error if error else None,
+                )
                 if error:
                     message = f"error: {message}"
                 _chat_record_system_event(completed_run, message, clear_active=True)
@@ -1431,10 +1440,7 @@ def _chat_step_label(payload: Mapping[str, Any], run: _ChatRun | None = None) ->
 
 
 def _chat_active_step_line(step: _ChatStep) -> str:
-    line = f"{_chat_marker_for(step.kind)} {step.label}"
-    if step.kind in {"tool", "step", "parallel", "bind", "system"}:
-        return _chat_dim(line)
-    return line
+    return _chat_dim(_chat_progress_tail(f"{_chat_marker_for(step.kind)} {step.label}"))
 
 
 def _chat_completed_step_line(payload: Mapping[str, Any], *, run: _ChatRun | None = None) -> str:
@@ -1665,17 +1671,27 @@ def _chat_scrollback_user_block(run: _ChatRun) -> list[str]:
 
 
 def _chat_run_input_bar_spec(run: _ChatRun) -> _ChatInputBarSpec:
+    footer = _chat_run_input_footer(run)
     return _ChatInputBarSpec(
         kind="normal",
         marker=">",
         text=run.message,
-        footer=f"  {run.run_id}" if run.run_id else "",
-        footer_dim=bool(run.run_id),
+        footer=footer,
+        footer_dim=bool(footer),
     )
 
 
 def _chat_local_input_bar_spec(message: str) -> _ChatInputBarSpec:
     return _ChatInputBarSpec(kind="normal", marker=">", text=message)
+
+
+def _chat_run_input_footer(run: _ChatRun) -> str:
+    queue_footer = _chat_queue_activity_line(run)
+    if queue_footer:
+        return f"  {queue_footer}"
+    if run.run_id:
+        return f"  {run.run_id}"
+    return ""
 
 
 def _chat_input_block_line(content: str) -> str:
@@ -1944,11 +1960,7 @@ def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, i
     state_line = _chat_run_state_line(run)
     queue_line = _chat_queue_activity_line(run)
     if queue_line:
-        lines = [queue_line]
-        if state_line:
-            lines.append(state_line)
-        lines.extend(_chat_terminal_event_lines(run, step_renderer))
-        return lines
+        return [*_chat_terminal_event_lines(run, step_renderer), *_chat_run_result_lines(run)]
     flow_lines = _chat_flow_stage_lines(run)
     if flow_lines:
         lines = []
@@ -1959,6 +1971,7 @@ def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, i
         lines.extend(_chat_terminal_event_lines(run, step_renderer))
         if state_line and _chat_state_line_after_activity(run):
             lines.append(state_line)
+        lines.extend(_chat_run_result_lines(run))
         return lines
     lines: list[str] = []
     if state_line and not _chat_state_line_after_activity(run):
@@ -1982,6 +1995,7 @@ def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, i
             lines.extend(_chat_step_activity_lines(run, index, step_renderer))
     if state_line and _chat_state_line_after_activity(run):
         lines.append(state_line)
+    lines.extend(_chat_run_result_lines(run))
     return lines
 
 
@@ -1999,6 +2013,8 @@ def _chat_step_activity_lines(
         return [step_renderer(run, index)]
     payload = run.completed_steps.get(index)
     if payload is None:
+        return []
+    if _chat_is_terminal_event_payload(run, index, payload):
         return []
     if payload.get("kind") == "model":
         text = _event_parts_text(payload.get("output"))
@@ -2071,6 +2087,8 @@ def _chat_terminal_event_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun,
         payload = run.completed_steps.get(index)
         if payload is None:
             continue
+        if _chat_is_terminal_event_payload(run, index, payload):
+            continue
         if payload.get("kind") not in {"error", "system"}:
             continue
         lines.append(step_renderer(run, index))
@@ -2102,16 +2120,88 @@ def _chat_run_state_line(run: _ChatRun) -> str:
     if status in {"queued", "waiting", "submitting"}:
         return ""
     if status == "running":
-        return f"◇ running {run_id}"
+        return _chat_dim(f"running {run_id}...")
     if status == "canceling":
-        return _chat_dim(f"◇ canceling {run_id}")
-    if status in {"succeeded", "finished", "completed", "done"}:
-        return f"◇ stopped {run_id}: succeeded"
-    if status in {"failed", "error"}:
-        return f"◇ stopped {run_id}: failed"
+        return _chat_dim(f"canceling {run_id}...")
+    return ""
+
+
+def _chat_run_result_lines(run: _ChatRun) -> list[str]:
+    run_id = run.run_id or "run"
+    status = _chat_run_display_status(run.status)
+    if status in {"", "queued", "waiting", "submitting", "running", "canceling", "succeeded", "finished", "completed", "done"}:
+        return []
     if status in {"canceled", "cancelled"}:
-        return _chat_dim(f"◇ stopped {run_id}: canceled")
-    return f"◇ stopped {run_id}: {status}"
+        return [_chat_dim(f"{_chat_result_divider()} canceled {run_id}")]
+    if status in {"failed", "error"}:
+        lines = [_chat_dim(f"{_chat_result_divider()} failed {run_id}")]
+        error = _chat_terminal_error(run)
+        if error:
+            lines.extend(_chat_dim(line) for line in _chat_wrap_plain_lines(error))
+        return lines
+    return [_chat_dim(f"{_chat_result_divider()} {status} {run_id}")]
+
+
+def _chat_result_divider() -> str:
+    return "─" * 8
+
+
+def _chat_terminal_error(run: _ChatRun) -> str:
+    if run.terminal_error:
+        return run.terminal_error
+    for index in sorted(run.completed_steps, reverse=True):
+        payload = run.completed_steps[index]
+        kind = str(payload.get("kind") or "")
+        if kind not in {"error", "system"}:
+            continue
+        message = _chat_terminal_event_message(payload)
+        if message and message not in {"failed", "canceled", "cancelled"}:
+            return message
+    return ""
+
+
+def _chat_wrap_plain_lines(text: str) -> list[str]:
+    width = max(shutil.get_terminal_size((100, 24)).columns - 2, 20)
+    lines: list[str] = []
+    for raw_line in text.splitlines() or [""]:
+        line = raw_line.strip()
+        if len(line) <= width:
+            lines.append(line)
+            continue
+        while len(line) > width:
+            split_at = line.rfind(" ", 0, width + 1)
+            if split_at <= 0:
+                split_at = width
+            lines.append(line[:split_at].rstrip())
+            line = line[split_at:].lstrip()
+        lines.append(line)
+    return [line for line in lines if line]
+
+
+def _chat_terminal_event_message(payload: Mapping[str, Any]) -> str:
+    step_payload = _mapping(payload.get("payload"))
+    return (
+        _text(payload.get("error"))
+        or _text(step_payload.get("message"))
+        or _text(step_payload.get("op"))
+        or _text(step_payload.get("status"))
+        or ""
+    )
+
+
+def _chat_is_terminal_event_payload(run: _ChatRun, index: int, payload: Mapping[str, Any]) -> bool:
+    if _chat_run_display_status(run.status) not in {"failed", "error", "canceled", "cancelled"}:
+        return False
+    if index != max(run.step_indexes(), default=index):
+        return False
+    return payload.get("kind") in {"error", "system"}
+
+
+def _chat_progress_tail(line: str) -> str:
+    visible = _chat_visible_text(line).rstrip()
+    if visible.endswith("..."):
+        return line
+    return f"{line}..."
 
 
 def _chat_run_display_status(status: str) -> str:
@@ -2124,13 +2214,13 @@ def _chat_queue_activity_line(run: _ChatRun) -> str:
     if run.queue_state == "waiting":
         reason = run.waiting_for or "queue"
         run_id = f" {run.run_id}" if run.run_id else ""
-        return f"◇ waiting{run_id} for {reason}"
+        return f"waiting{run_id} for {reason}"
     if run.queue_state == "queued":
         suffix = f" · position {run.queue_position}" if run.queue_position else ""
         run_id = f" {run.run_id}" if run.run_id else ""
-        return f"◇ queued{run_id}{suffix}"
+        return f"queued{run_id}{suffix}"
     if run.status == "submitting":
-        return "◇ submitting"
+        return "submitting"
     return ""
 
 
