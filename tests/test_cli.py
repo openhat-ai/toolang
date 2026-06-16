@@ -7802,6 +7802,39 @@ def test_cli_chat_run_steering_records_input_bar(monkeypatch) -> None:
     assert "+ abc" in visible
 
 
+def test_cli_chat_run_steering_merges_optimistic_command_by_request_id(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_runtime_json", lambda _ctx, _path: {})
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    app.active_run = cli._ChatRun(run_id="run_steer", message="working", status="running")
+    app.active_run.record_command(
+        {
+            "type": "run_steering",
+            "run_id": "run_steer",
+            "ref": {"kind": "command", "index": 1},
+            "kind": "steer",
+            "request_id": "req_abc",
+            "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
+        }
+    )
+
+    app.handle_runtime_event(
+        {
+            "type": "run_steering",
+            "payload": {
+                "run_id": "run_steer",
+                "index": 2,
+                "request_id": "req_abc",
+                "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
+            },
+        }
+    )
+
+    visible = cli._chat_visible_text("\n".join(cli._chat_run_lines(app.active_run, include_steps=True)))
+    assert visible.count("+ abc") == 1
+    assert ("command", 1) not in app.active_run.timeline
+    assert ("command", 2) in app.active_run.timeline
+
+
 def test_cli_chat_run_lines_render_stop_command_by_event_order() -> None:
     run = cli._ChatRun(run_id="run_cancel", message="sleep 120 secs", status="canceled")
     run.start_step({"run_id": "run_cancel", "step_index": 1, "kind": "tool"})
@@ -8588,7 +8621,16 @@ def test_cli_chat_queue_steer_sends_pending_item_to_active_run(monkeypatch) -> N
 
     def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
         calls.append((request_path, payload))
-        return {"input": {}}
+        return {
+            "input": {
+                "type": "run_steering",
+                "run_id": "run_active",
+                "ref": {"kind": "command", "index": 1},
+                "kind": "steer",
+                "request_id": payload["request_id"],
+                "message": payload["message"],
+            }
+        }
 
     monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
 
@@ -8601,10 +8643,16 @@ def test_cli_chat_queue_steer_sends_pending_item_to_active_run(monkeypatch) -> N
     assert calls == [
         (
             "/api/v1/runs/run_active/steer",
-            {"message": {"role": "user", "parts": [{"type": "text", "text": "please adjust"}]}},
+            {
+                "request_id": calls[0][1]["request_id"],
+                "message": {"role": "user", "parts": [{"type": "text", "text": "please adjust"}]},
+            },
         )
     ]
     assert app.pending == []
+    assert app.active_run is not None
+    visible = cli._chat_visible_text("\n".join(cli._chat_run_lines(app.active_run, include_steps=True)))
+    assert "+ please adjust" in visible
     assert writes == []
 
 

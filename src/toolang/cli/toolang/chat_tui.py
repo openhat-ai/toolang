@@ -285,11 +285,29 @@ class _ChatRun:
     def record_command(self, payload: Mapping[str, Any]) -> None:
         block = _ChatCommandBlock.create(payload)
         index = block.index
+        if request_id := _text(payload.get("request_id")):
+            existing_index = self.command_index_for_request(request_id)
+            if existing_index is not None and existing_index != index:
+                self.commands.pop(existing_index, None)
+                self.timeline = [
+                    item
+                    for item in self.timeline
+                    if item != ("command", existing_index)
+                ]
         self.remember_timeline("command", index)
         block.finalize(payload)
         self.commands[index] = block
         if self.mutable_block is block:
             self.mutable_block = None
+
+    def command_index_for_request(self, request_id: str) -> int | None:
+        for index, block in self.commands.items():
+            if _text(block.payload.get("request_id")) == request_id:
+                return index
+        return None
+
+    def next_command_index(self) -> int:
+        return max(self.commands, default=0) + 1
 
     def start_command(self, payload: Mapping[str, Any]) -> None:
         command_payload = dict(payload)
@@ -1405,15 +1423,34 @@ class _ChatBottomApp:
             self.prompt.set_error("No active run to steer.")
             return True
         try:
-            self.deps.runtime_post(
+            request_id = f"req_{uuid4().hex}"
+            response = self.deps.runtime_post(
                 self.ctx,
                 f"/api/v1/runs/{run.run_id}/steer",
-                payload={"message": self.deps.message_payload(item.text)},
+                payload={
+                    "request_id": request_id,
+                    "message": self.deps.message_payload(item.text),
+                },
             )
         except click.ClickException as exc:
             self.prompt.set_error(_chat_friendly_error(exc.message))
             return True
+        input_payload = response.get("input")
+        if isinstance(input_payload, Mapping):
+            run.record_command(input_payload)
+        else:
+            run.record_command(
+                {
+                    "type": "run_steering",
+                    "run_id": run.run_id,
+                    "ref": {"kind": "command", "index": run.next_command_index()},
+                    "kind": "steer",
+                    "request_id": request_id,
+                    "message": self.deps.message_payload(item.text),
+                }
+            )
         self.pending.pop(index)
+        self.app.invalidate()
         return True
 
     def handle_executable_command(self, command: str, argument: str, message: str) -> bool:
