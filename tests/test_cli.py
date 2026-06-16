@@ -9684,8 +9684,11 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert calls == ["/api/v1/runs/run_parent", "/api/v1/threads/term_thread?limit=100"]
-    assert "run run_parent  succeeded  flow:research" in result.stdout
-    assert "steps" in result.stdout
+    assert "# run" in result.stdout
+    assert "run_parent  succeeded  flow:research" in result.stdout
+    assert "run run_parent" not in result.stdout
+    assert "# input\nquery" in result.stdout
+    assert "# steps" in result.stdout
     assert "✓ 1 step  stage 1 rank prepare count=3" in result.stdout
     assert "✓ 2 run" in result.stdout
     assert "item 1/3 thunk:score run_child" in result.stdout
@@ -9817,8 +9820,11 @@ def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> Non
 
     assert result.exit_code == 0
     assert calls == ["/api/v1/runs/run_child", "/api/v1/threads/term_thread?limit=100"]
-    assert "run run_child  failed  thunk:expand_queries" in result.stdout
-    assert "failure" in result.stdout
+    assert "# run" in result.stdout
+    assert "run_child  failed  thunk:expand_queries" in result.stdout
+    assert "run run_child" not in result.stdout
+    assert "# output" in result.stdout
+    assert "error: unknown tool call: service_use__service_list (step 2 system)" in result.stdout
     assert "unknown tool call: service_use__service_list (step 2 system)" in result.stdout
     assert "✓ 1 model  deepseek/deepseek-chat-v3 I should inspect services." in result.stdout
     assert "requested service_use__service_list: visibility=all" in result.stdout
@@ -9896,7 +9902,12 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert calls == ["/api/v1/runs/run_thunk", "/api/v1/threads/term_thread?limit=100"]
-    assert "run run_thunk  succeeded  thunk:summarize" in result.stdout
+    assert "# run" in result.stdout
+    assert "run_thunk  succeeded  thunk:summarize" in result.stdout
+    assert "run run_thunk" not in result.stdout
+    assert "# input\nquery" in result.stdout
+    assert "# output\nSummary complete." in result.stdout
+    assert "# steps" in result.stdout
     assert "✓ 1 model  deepseek/deepseek-chat-v3 Ready to read the task." in result.stdout
     assert "requested filesystem__read_text: path=task.md" in result.stdout
     assert "✓ 2 tool  filesystem__read_text: path=task.md" in result.stdout

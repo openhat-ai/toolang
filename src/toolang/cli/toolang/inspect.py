@@ -125,11 +125,12 @@ def render_inspect(
     tree: bool,
     depth: int,
 ) -> None:
+    public_document = cast(Mapping[str, Any], _public_document(document))
     if view == "json":
-        typer.echo(json.dumps(document, ensure_ascii=False, indent=2))
+        typer.echo(json.dumps(public_document, ensure_ascii=False, indent=2))
         return
     if view == "toml":
-        typer.echo(tomli_w.dumps(_toml_document(document)))
+        typer.echo(tomli_w.dumps(_toml_document(public_document)))
         return
     _render_human(document, tree=tree, depth=depth)
 
@@ -377,6 +378,7 @@ def _preprocess_run(run: Mapping[str, Any]) -> InspectData:
         "target": target,
         "input": dict(_mapping(run.get("input"))) or None,
         "input_summary": _message_summary(_mapping(run.get("input"))),
+        "_human_output": _run_output_text(run) or None,
         "failure": _failure_summary(run) or None,
         "info": info,
     }
@@ -744,16 +746,25 @@ def _render_human_thread(thread: Mapping[str, Any]) -> None:
 
 
 def _render_human_run(run: Mapping[str, Any], steps: Sequence[Mapping[str, Any]], *, depth: int) -> None:
-    typer.echo(f"run {_text(run.get('id')) or '-'}  {_text(run.get('status')) or '-'}  {_text(run.get('target')) or '-'}")
-    if failure := _text(run.get("failure")):
-        typer.echo("failure")
-        typer.echo(f"  {failure}")
+    _render_human_section_title("run")
+    typer.echo(f"{_text(run.get('id')) or '-'}  {_text(run.get('status')) or '-'}  {_text(run.get('target')) or '-'}")
     if input_summary := _text(run.get("input_summary")):
-        typer.echo(f"input  {input_summary}")
+        _render_human_section_title("input")
+        typer.echo(input_summary)
+    if failure := _text(run.get("failure")):
+        _render_human_section_title("output")
+        typer.echo(f"error: {failure}")
+    elif output_text := _text(run.get("_human_output")):
+        _render_human_section_title("output")
+        typer.echo(output_text)
     if steps:
-        typer.echo("steps")
+        _render_human_section_title("steps")
     for step in steps:
         _render_human_step_line(step, depth=depth, level=0)
+
+
+def _render_human_section_title(label: str) -> None:
+    click.secho(f"# {label}", dim=True)
 
 
 def _render_human_step_line(step: Mapping[str, Any], *, depth: int, level: int) -> None:
@@ -875,6 +886,27 @@ def _failure_summary(run: Mapping[str, Any]) -> str:
     if step_index is not None:
         return f"{reason} (step {step_index})"
     return reason
+
+
+def _run_output_text(run: Mapping[str, Any]) -> str:
+    for step in reversed(_run_steps(run)):
+        message = _mapping(step.get("message"))
+        if text := _last_text_part(message.get("parts")):
+            return text
+        record = _mapping(step.get("record"))
+        if text := _last_text_part(record.get("output")):
+            return text
+    return ""
+
+
+def _last_text_part(parts: object) -> str:
+    for part in reversed(_list(parts)):
+        typed = _mapping(part)
+        if typed.get("type") != "text":
+            continue
+        if text := _text(typed.get("text")):
+            return text
+    return ""
 
 
 def _step_summary(record: Mapping[str, Any], message: Mapping[str, Any], *, run: Mapping[str, Any]) -> str:
@@ -1037,6 +1069,16 @@ def _toml_safe(value: object) -> object:
 
 def _toml_document(value: Mapping[str, Any]) -> Mapping[str, Any]:
     return cast(Mapping[str, Any], _toml_safe(value))
+
+
+def _public_document(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(key): _public_document(item) for key, item in value.items() if not str(key).startswith("_")}
+    if isinstance(value, list):
+        return [_public_document(item) for item in value]
+    if isinstance(value, tuple):
+        return [_public_document(item) for item in value]
+    return value
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
