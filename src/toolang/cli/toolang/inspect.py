@@ -786,6 +786,8 @@ def _render_human_thread_run(
 def _render_human_run(run: Mapping[str, Any], steps: Sequence[Mapping[str, Any]], *, depth: int) -> None:
     _render_human_section_title("run")
     pieces = [f"run {_text(run.get('id')) or '-'}", _text(run.get("status")) or "-", _target_field(_text(run.get("target")))]
+    if thread_id := _text(run.get("thread_id")):
+        pieces.append(f"thread={thread_id}")
     typer.echo("  ".join(pieces))
     if input_summary := _text(run.get("input_summary")):
         _render_human_section_title("input")

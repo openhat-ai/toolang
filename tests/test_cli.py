@@ -9686,7 +9686,7 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
     assert result.exit_code == 0
     assert calls == ["/api/v1/runs/run_parent", "/api/v1/threads/term_thread?limit=100"]
     assert "# run" in result.stdout
-    assert "run run_parent  succeeded  flow=research" in result.stdout
+    assert "run run_parent  succeeded  flow=research  thread=term_thread" in result.stdout
     assert "# input\nquery" in result.stdout
     assert "# steps" in result.stdout
     assert "\n✓ 1   step    stage 1 rank prepare count=3" in result.stdout
@@ -9820,7 +9820,7 @@ def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> Non
     assert result.exit_code == 0
     assert calls == ["/api/v1/runs/run_child", "/api/v1/threads/term_thread?limit=100"]
     assert "# run" in result.stdout
-    assert "run run_child  failed  thunk=expand_queries" in result.stdout
+    assert "run run_child  failed  thunk=expand_queries  thread=term_thread" in result.stdout
     assert "# output" in result.stdout
     assert "error: unknown tool call: service_use__service_list (step 2 system)" in result.stdout
     assert "unknown tool call: service_use__service_list (step 2 system)" in result.stdout
@@ -9901,7 +9901,7 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
     assert result.exit_code == 0
     assert calls == ["/api/v1/runs/run_thunk", "/api/v1/threads/term_thread?limit=100"]
     assert "# run" in result.stdout
-    assert "run run_thunk  succeeded  thunk=summarize" in result.stdout
+    assert "run run_thunk  succeeded  thunk=summarize  thread=term_thread" in result.stdout
     assert "# input\nquery" in result.stdout
     assert "# output\nSummary complete." in result.stdout
     assert "# steps" in result.stdout
