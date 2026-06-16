@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 import json
 from typing import Any, Literal, cast
@@ -30,6 +30,8 @@ from ..utils import (
 
 
 InspectView = Literal["human", "json", "toml"]
+InspectData = dict[str, Any]
+StepData = dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,136 +45,6 @@ class InspectTarget:
         if not self.path:
             return None
         return ".".join(str(item) for item in self.path)
-
-
-@dataclass(frozen=True, slots=True)
-class InspectStep:
-    """Preprocessed inspect step node."""
-
-    path: tuple[int, ...]
-    run_id: str
-    kind: str
-    status: str
-    summary: str
-    error: str | None
-    input: list[dict[str, Any]]
-    output: list[dict[str, Any]]
-    payload: dict[str, Any]
-    message: dict[str, Any] | None
-    detail: dict[str, Any]
-    children: list["InspectStep"] = field(default_factory=list)
-
-    @property
-    def path_label(self) -> str:
-        return ".".join(str(item) for item in self.path)
-
-    def to_data(self) -> dict[str, Any]:
-        return {
-            "path": self.path_label,
-            "run_id": self.run_id,
-            "kind": self.kind,
-            "status": self.status,
-            "summary": self.summary,
-            "error": self.error,
-            "input": self.input,
-            "output": self.output,
-            "payload": self.payload,
-            "message": self.message,
-            "detail": self.detail,
-            "children": [child.to_data() for child in self.children],
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class InspectRun:
-    """Preprocessed inspect run."""
-
-    id: str
-    thread_id: str
-    status: str
-    target: str
-    input: dict[str, Any] | None
-    input_summary: str
-    failure: str | None
-    info: dict[str, Any]
-    prompts: dict[str, str]
-    steps: list[InspectStep]
-
-    def to_data(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "thread_id": self.thread_id,
-            "status": self.status,
-            "target": self.target,
-            "input": self.input,
-            "input_summary": self.input_summary,
-            "failure": self.failure,
-            "info": self.info,
-            "prompts": self.prompts,
-            "steps": [step.to_data() for step in self.steps],
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class InspectThreadRun:
-    """Preprocessed thread run timeline item."""
-
-    id: str
-    status: str
-    target: str
-    elapsed: str | None
-    info: dict[str, Any]
-
-    def to_data(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "status": self.status,
-            "target": self.target,
-            "elapsed": self.elapsed,
-            "info": self.info,
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class InspectThread:
-    """Preprocessed inspect thread."""
-
-    id: str
-    status: str
-    title: str | None
-    run_count: int | None
-    info: dict[str, Any]
-    runs: list[InspectThreadRun]
-
-    def to_data(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "status": self.status,
-            "title": self.title,
-            "run_count": self.run_count,
-            "info": self.info,
-            "runs": [run.to_data() for run in self.runs],
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class InspectDocument:
-    """Preprocessed inspect result rendered by human/json/toml views."""
-
-    kind: Literal["thread", "run", "step"]
-    target: str
-    thread: InspectThread | None = None
-    run: InspectRun | None = None
-    step: InspectStep | None = None
-
-    def to_data(self) -> dict[str, Any]:
-        return {
-            "kind": self.kind,
-            "target": self.target,
-            "thread": self.thread.to_data() if self.thread is not None else None,
-            "run": self.run.to_data() if self.run is not None else None,
-            "step": self.step.to_data() if self.step is not None else None,
-        }
 
 
 def inspect_command(
@@ -208,40 +80,55 @@ def parse_inspect_target(target: str) -> InspectTarget:
     return InspectTarget(kind=kind, identifier=identifier, path=path)
 
 
-def preprocess_inspect(raw: Mapping[str, Any], *, target: InspectTarget) -> InspectDocument:
+def preprocess_inspect(raw: Mapping[str, Any], *, target: InspectTarget) -> InspectData:
     """Convert API detail payloads into one normalized inspect document."""
 
     if raw.get("kind") == "thread":
         if target.path:
             raise click.ClickException("step paths are only supported for run targets")
-        return InspectDocument(kind="thread", target=target.identifier, thread=_preprocess_thread(_mapping(raw.get("thread"))))
+        return {
+            "kind": "thread",
+            "target": target.identifier,
+            "thread": _preprocess_thread(_mapping(raw.get("thread"))),
+        }
 
     run_payload = _mapping(raw.get("run"))
     thread_payload = _mapping(raw.get("thread"))
     run_by_id = _inspect_thread_run_map(thread_payload, fallback=run_payload)
     run_id = _text(_mapping(run_payload.get("info")).get("id"))
     display_payload = run_by_id.get(run_id, run_payload) if run_id is not None else run_payload
-    run = _preprocess_run(display_payload, run_by_id=run_by_id)
+    run = _preprocess_run(display_payload)
+    steps = _step_tree(display_payload, run_by_id=run_by_id)
     if not target.path:
-        return InspectDocument(kind="run", target=target.identifier, run=run)
-    step = _find_step(run.steps, target.path)
+        return {
+            "kind": "run",
+            "target": target.identifier,
+            "run": run,
+            "steps": steps,
+        }
+    step = _find_step(steps, target.path_label or "")
     if step is None:
         raise click.ClickException(f"step path not found: {target.path_label}")
-    return InspectDocument(kind="step", target=target.identifier, run=run, step=step)
+    return {
+        "kind": "step",
+        "target": f"{target.identifier}:{target.path_label}",
+        "run": run,
+        "step": step,
+    }
 
 
 def render_inspect(
-    document: InspectDocument,
+    document: InspectData,
     *,
     view: InspectView,
     tree: bool,
     depth: int,
 ) -> None:
     if view == "json":
-        typer.echo(json.dumps(document.to_data(), ensure_ascii=False, indent=2))
+        typer.echo(json.dumps(document, ensure_ascii=False, indent=2))
         return
     if view == "toml":
-        typer.echo(tomli_w.dumps(_toml_document(document.to_data())))
+        typer.echo(tomli_w.dumps(_toml_document(document)))
         return
     _render_human(document, tree=tree, depth=depth)
 
@@ -442,21 +329,21 @@ def _run_prompt_hashes(run: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(hashes)
 
 
-def _preprocess_thread(thread: Mapping[str, Any]) -> InspectThread:
+def _preprocess_thread(thread: Mapping[str, Any]) -> InspectData:
     info = dict(_mapping(thread.get("info")))
     runs = [_mapping(item) for item in _list(thread.get("runs"))]
     thread_id = _text(info.get("id")) or "-"
-    return InspectThread(
-        id=thread_id,
-        status=_text(info.get("status")) or "-",
-        title=_text(info.get("title")),
-        run_count=_int_or_none(info.get("run_count")),
-        info=info,
-        runs=[_preprocess_thread_run(run) for run in _top_level_runs(runs)],
-    )
+    return {
+        "id": thread_id,
+        "status": _text(info.get("status")) or "-",
+        "title": _text(info.get("title")),
+        "run_count": _int_or_none(info.get("run_count")),
+        "info": info,
+        "runs": [_preprocess_thread_run(run) for run in _top_level_runs(runs)],
+    }
 
 
-def _preprocess_thread_run(run: Mapping[str, Any]) -> InspectThreadRun:
+def _preprocess_thread_run(run: Mapping[str, Any]) -> InspectData:
     info = dict(_mapping(run.get("info")))
     output = _mapping(run.get("output"))
     target = executable_label(
@@ -464,20 +351,16 @@ def _preprocess_thread_run(run: Mapping[str, Any]) -> InspectThreadRun:
         _text(info.get("executable_name")),
         metadata=_mapping(info.get("metadata")),
     )
-    return InspectThreadRun(
-        id=_text(info.get("id")) or "-",
-        status=_display_run_status(output.get("status")),
-        target=target,
-        elapsed=_elapsed(_text(info.get("started_at")), _text(info.get("finished_at"))) or None,
-        info=info,
-    )
+    return {
+        "id": _text(info.get("id")) or "-",
+        "status": _display_run_status(output.get("status")),
+        "target": target,
+        "elapsed": _elapsed(_text(info.get("started_at")), _text(info.get("finished_at"))) or None,
+        "info": info,
+    }
 
 
-def _preprocess_run(
-    run: Mapping[str, Any],
-    *,
-    run_by_id: Mapping[str, Mapping[str, Any]],
-) -> InspectRun:
+def _preprocess_run(run: Mapping[str, Any]) -> InspectData:
     info = dict(_mapping(run.get("info")))
     output = _mapping(run.get("output"))
     target = executable_label(
@@ -485,18 +368,16 @@ def _preprocess_run(
         _text(info.get("executable_name")),
         metadata=_mapping(info.get("metadata")),
     )
-    return InspectRun(
-        id=_text(info.get("id")) or "-",
-        thread_id=_text(info.get("thread_id")) or "-",
-        status=_display_run_status(output.get("status")),
-        target=target,
-        input=dict(_mapping(run.get("input"))) or None,
-        input_summary=_message_summary(_mapping(run.get("input"))),
-        failure=_failure_summary(run) or None,
-        info=info,
-        prompts={str(key): str(value) for key, value in _mapping(run.get("prompts")).items()},
-        steps=_step_tree(run, run_by_id=run_by_id),
-    )
+    return {
+        "id": _text(info.get("id")) or "-",
+        "thread_id": _text(info.get("thread_id")) or "-",
+        "status": _display_run_status(output.get("status")),
+        "target": target,
+        "input": dict(_mapping(run.get("input"))) or None,
+        "input_summary": _message_summary(_mapping(run.get("input"))),
+        "failure": _failure_summary(run) or None,
+        "info": info,
+    }
 
 
 def _preprocess_step(
@@ -505,95 +386,85 @@ def _preprocess_step(
     *,
     path: tuple[int, ...],
     run_by_id: Mapping[str, Mapping[str, Any]],
-) -> InspectStep:
+) -> StepData:
     record = _mapping(step.get("record"))
     message = _mapping(step.get("message"))
     kind = _text(record.get("kind")) or "step"
     status = _display_run_status(record.get("status"))
     run_id = _text(_mapping(run.get("info")).get("id")) or "-"
-    children: list[InspectStep] = []
+    children: list[StepData] = []
     step_index = _int_or_none(record.get("step_index"))
     if step_index is not None:
         for child_run in _child_runs_for_step(run_id, step_index, step=step, run_by_id=run_by_id):
             children.extend(_step_tree(child_run, run_by_id=run_by_id, path_prefix=path))
-    partial = InspectStep(
-        path=path,
-        run_id=run_id,
-        kind=kind,
-        status=status,
-        summary=_step_summary(record, message),
-        error=_text(record.get("error")),
-        input=[dict(_mapping(item)) for item in _list(record.get("input"))],
-        output=[dict(_mapping(item)) for item in _list(record.get("output"))],
-        payload=dict(_mapping(record.get("payload"))),
-        message=dict(message) if message else None,
-        detail={},
-        children=children,
-    )
-    return InspectStep(
-        path=partial.path,
-        run_id=partial.run_id,
-        kind=partial.kind,
-        status=partial.status,
-        summary=partial.summary,
-        error=partial.error,
-        input=partial.input,
-        output=partial.output,
-        payload=partial.payload,
-        message=partial.message,
-        detail=_step_detail(partial, run=run),
-        children=partial.children,
-    )
+    data: StepData = {
+        "path": _path_label(path),
+        "run_id": run_id,
+        "kind": kind,
+        "status": status,
+        "summary": _step_summary(record, message),
+        "error": _text(record.get("error")),
+        "input": [dict(_mapping(item)) for item in _list(record.get("input"))],
+        "output": [dict(_mapping(item)) for item in _list(record.get("output"))],
+        "payload": dict(_mapping(record.get("payload"))),
+        "message": dict(message) if message else None,
+        "children": children,
+    }
+    data["detail"] = _step_detail(data, run=run)
+    return data
 
 
-def _step_detail(step: InspectStep, *, run: Mapping[str, Any]) -> dict[str, Any]:
-    if step.children:
+def _step_detail(step: Mapping[str, Any], *, run: Mapping[str, Any]) -> dict[str, Any]:
+    children = [_mapping(child) for child in _list(step.get("children"))]
+    if children:
         return {
             "variant": "compound",
-            "input": step.input,
-            "output": step.output,
+            "input": _list(step.get("input")),
+            "output": _list(step.get("output")),
             "children": [
-                {"path": child.path_label, "kind": child.kind, "status": child.status}
-                for child in step.children
+                {"path": child.get("path"), "kind": child.get("kind"), "status": child.get("status")}
+                for child in children
             ],
         }
-    if step.kind == "model":
+    if step.get("kind") == "model":
         return _model_step_detail(step, run=run)
-    if step.kind == "tool":
+    if step.get("kind") == "tool":
         return _tool_step_detail(step)
-    return {"variant": "generic", "input": step.input, "output": step.output}
+    return {"variant": "generic", "input": _list(step.get("input")), "output": _list(step.get("output"))}
 
 
-def _model_step_detail(step: InspectStep, *, run: Mapping[str, Any]) -> dict[str, Any]:
+def _model_step_detail(step: Mapping[str, Any], *, run: Mapping[str, Any]) -> dict[str, Any]:
     prompts = _mapping(run.get("prompts"))
-    request = _mapping(step.payload.get("adapter_request"))
+    payload = _mapping(step.get("payload"))
+    output = _list(step.get("output"))
+    request = _mapping(payload.get("adapter_request"))
     if not request:
         request = _reconstructed_model_request(step, run=run, prompts=prompts)
     detail: dict[str, Any] = {
         "variant": "model",
         "model": {
-            "ref": step.payload.get("model_ref"),
-            "provider": step.payload.get("provider"),
-            "model": step.payload.get("model"),
-            "adapter": step.payload.get("adapter"),
-            "base_url": step.payload.get("base_url"),
-            "input_tokens": step.payload.get("input_tokens"),
-            "output_tokens": step.payload.get("output_tokens"),
+            "ref": payload.get("model_ref"),
+            "provider": payload.get("provider"),
+            "model": payload.get("model"),
+            "adapter": payload.get("adapter"),
+            "base_url": payload.get("base_url"),
+            "input_tokens": payload.get("input_tokens"),
+            "output_tokens": payload.get("output_tokens"),
         },
         "adapter_request": request,
-        "output": step.output,
+        "output": output,
     }
-    if reasoning := _text(step.payload.get("reasoning_content")):
+    if reasoning := _text(payload.get("reasoning_content")):
         detail["reasoning_content"] = reasoning
     return detail
 
 
-def _tool_step_detail(step: InspectStep) -> dict[str, Any]:
+def _tool_step_detail(step: Mapping[str, Any]) -> dict[str, Any]:
     results: list[dict[str, Any]] = []
     other_parts: list[dict[str, Any]] = []
-    for part in step.output:
+    for part in [_mapping(item) for item in _list(step.get("output"))]:
         if part.get("type") != "tool_result":
-            other_parts.append(part)
+            other_parts.append(dict(part))
             continue
         results.append(
             {
@@ -606,7 +477,7 @@ def _tool_step_detail(step: InspectStep) -> dict[str, Any]:
         )
     return {
         "variant": "tool",
-        "input_refs": step.input,
+        "input_refs": _list(step.get("input")),
         "results": results,
         "other_output": other_parts,
     }
@@ -617,8 +488,8 @@ def _step_tree(
     *,
     run_by_id: Mapping[str, Mapping[str, Any]],
     path_prefix: tuple[int, ...] = (),
-) -> list[InspectStep]:
-    nodes: list[InspectStep] = []
+) -> list[StepData]:
+    nodes: list[StepData] = []
     for step in _run_steps(run):
         record = _mapping(step.get("record"))
         step_index = _int_or_none(record.get("step_index"))
@@ -659,27 +530,28 @@ def _child_runs_for_step(
     return child_runs
 
 
-def _find_step(nodes: Sequence[InspectStep], path: tuple[int, ...]) -> InspectStep | None:
+def _find_step(nodes: Sequence[Mapping[str, Any]], path: str) -> StepData | None:
     for node in nodes:
-        if node.path == path:
-            return node
-        if path[: len(node.path)] == node.path:
-            found = _find_step(node.children, path)
+        if node.get("path") == path:
+            return dict(node)
+        if path.startswith(f"{node.get('path')}."):
+            found = _find_step([_mapping(child) for child in _list(node.get("children"))], path)
             if found is not None:
                 return found
     return None
 
 
 def _reconstructed_model_request(
-    step: InspectStep,
+    step: Mapping[str, Any],
     *,
     run: Mapping[str, Any],
     prompts: Mapping[str, Any],
 ) -> dict[str, Any]:
+    payload = _mapping(step.get("payload"))
     return {
-        "instructions": _prompt_body(step.payload.get("instruct"), prompts=prompts),
-        "context": _prompt_body(step.payload.get("context"), prompts=prompts),
-        "messages": _messages_from_input_refs(run, step.input),
+        "instructions": _prompt_body(payload.get("instruct"), prompts=prompts),
+        "context": _prompt_body(payload.get("context"), prompts=prompts),
+        "messages": _messages_from_input_refs(run, [_mapping(item) for item in _list(step.get("input"))]),
         "tools": None,
         "state": None,
     }
@@ -779,62 +651,74 @@ def _step_output_role(kind: str | None) -> str | None:
     return None
 
 
-def _render_human(document: InspectDocument, *, tree: bool, depth: int) -> None:
-    if document.kind == "thread" and document.thread is not None:
-        _render_human_thread(document.thread)
-        return
-    if document.kind == "step" and document.step is not None:
-        _render_human_step(document.step)
-        return
-    if document.run is not None:
-        _render_human_run(document.run, depth=depth if tree else 1)
+def _path_label(path: Sequence[int]) -> str:
+    return ".".join(str(item) for item in path)
 
 
-def _render_human_thread(thread: InspectThread) -> None:
-    typer.echo(f"thread {thread.id}  {thread.status}")
-    if thread.title:
-        typer.echo(f"title   {thread.title}")
-    if thread.run_count is not None:
-        typer.echo(f"runs    {thread.run_count} total")
+def _render_human(document: Mapping[str, Any], *, tree: bool, depth: int) -> None:
+    if document.get("kind") == "thread":
+        _render_human_thread(_mapping(document.get("thread")))
+        return
+    if document.get("kind") == "step":
+        _render_human_step(_mapping(document.get("step")))
+        return
+    _render_human_run(
+        _mapping(document.get("run")),
+        [_mapping(step) for step in _list(document.get("steps"))],
+        depth=depth if tree else 1,
+    )
+
+
+def _render_human_thread(thread: Mapping[str, Any]) -> None:
+    typer.echo(f"thread {_text(thread.get('id')) or '-'}  {_text(thread.get('status')) or '-'}")
+    if title := _text(thread.get("title")):
+        typer.echo(f"title   {title}")
+    run_count = thread.get("run_count")
+    if run_count is not None:
+        typer.echo(f"runs    {run_count} total")
     typer.echo("runs")
-    for run in thread.runs:
-        pieces = [_status_mark(run.status), run.id, run.target]
-        if run.elapsed:
-            pieces.append(run.elapsed)
+    for run in [_mapping(item) for item in _list(thread.get("runs"))]:
+        status = _text(run.get("status")) or ""
+        pieces = [_status_mark(status), _text(run.get("id")) or "-", _text(run.get("target")) or "-"]
+        if elapsed := _text(run.get("elapsed")):
+            pieces.append(elapsed)
         typer.echo(f"  {'  '.join(pieces)}")
 
 
-def _render_human_run(run: InspectRun, *, depth: int) -> None:
-    typer.echo(f"run {run.id}  {run.status or '-'}  {run.target}")
-    if run.failure:
+def _render_human_run(run: Mapping[str, Any], steps: Sequence[Mapping[str, Any]], *, depth: int) -> None:
+    typer.echo(f"run {_text(run.get('id')) or '-'}  {_text(run.get('status')) or '-'}  {_text(run.get('target')) or '-'}")
+    if failure := _text(run.get("failure")):
         typer.echo("failure")
-        typer.echo(f"  {run.failure}")
-    if run.input_summary:
-        typer.echo(f"input  {run.input_summary}")
-    if run.steps:
+        typer.echo(f"  {failure}")
+    if input_summary := _text(run.get("input_summary")):
+        typer.echo(f"input  {input_summary}")
+    if steps:
         typer.echo("steps")
-    for step in run.steps:
+    for step in steps:
         _render_human_step_line(step, depth=depth, level=0)
 
 
-def _render_human_step_line(step: InspectStep, *, depth: int, level: int) -> None:
+def _render_human_step_line(step: Mapping[str, Any], *, depth: int, level: int) -> None:
     indent = "  " * (level + 1)
-    line = f"{indent}{_status_mark(step.status)} {step.path_label} {step.kind}"
-    if step.summary and step.summary != "-":
-        line = f"{line}  {step.summary}"
+    status = _text(step.get("status")) or ""
+    line = f"{indent}{_status_mark(status)} {_text(step.get('path')) or '-'} {_text(step.get('kind')) or 'step'}"
+    summary = _text(step.get("summary"))
+    if summary and summary != "-":
+        line = f"{line}  {summary}"
     typer.echo(line)
     if level + 1 >= depth:
         return
-    for child in step.children:
+    for child in [_mapping(item) for item in _list(step.get("children"))]:
         _render_human_step_line(child, depth=depth, level=level + 1)
 
 
-def _render_human_step(step: InspectStep) -> None:
-    typer.echo(f"step {step.path_label} {step.kind}  {step.status or '-'}")
-    typer.echo(f"run  {step.run_id}")
-    if step.error:
-        _render_text_section("error", step.error)
-    variant = _text(step.detail.get("variant"))
+def _render_human_step(step: Mapping[str, Any]) -> None:
+    typer.echo(f"step {_text(step.get('path')) or '-'} {_text(step.get('kind')) or 'step'}  {_text(step.get('status')) or '-'}")
+    typer.echo(f"run  {_text(step.get('run_id')) or '-'}")
+    if error := _text(step.get("error")):
+        _render_text_section("error", error)
+    detail = _mapping(step.get("detail"))
+    variant = _text(detail.get("variant"))
     if variant == "model":
         _render_human_model_step(step)
         return
@@ -842,16 +726,16 @@ def _render_human_step(step: InspectStep) -> None:
         _render_human_tool_step(step)
         return
     if variant == "compound":
-        _render_section("input", step.detail.get("input"))
-        _render_section("output", step.detail.get("output"))
-        _render_section("children", step.detail.get("children"))
+        _render_section("input", detail.get("input"))
+        _render_section("output", detail.get("output"))
+        _render_section("children", detail.get("children"))
         return
-    _render_section("input", step.detail.get("input"))
-    _render_section("output", step.detail.get("output"))
+    _render_section("input", detail.get("input"))
+    _render_section("output", detail.get("output"))
 
 
-def _render_human_model_step(step: InspectStep) -> None:
-    detail = step.detail
+def _render_human_model_step(step: Mapping[str, Any]) -> None:
+    detail = _mapping(step.get("detail"))
     typer.echo("model")
     for key, value in _mapping(detail.get("model")).items():
         _render_kv(str(key), value)
@@ -861,8 +745,8 @@ def _render_human_model_step(step: InspectStep) -> None:
         _render_text_section("reasoning_content", reasoning)
 
 
-def _render_human_tool_step(step: InspectStep) -> None:
-    detail = step.detail
+def _render_human_tool_step(step: Mapping[str, Any]) -> None:
+    detail = _mapping(step.get("detail"))
     _render_section("input_refs", detail.get("input_refs"))
     for index, result in enumerate(_list(detail.get("results")), start=1):
         typed = _mapping(result)

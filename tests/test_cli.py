@@ -9961,6 +9961,7 @@ def test_cli_inspect_structured_views_render_preprocessed_document(monkeypatch) 
     assert json_result.exit_code == 0
     json_data = json.loads(json_result.stdout)
     assert json_data["kind"] == "step"
+    assert "steps" not in json_data["run"]
     assert json_data["step"]["detail"]["variant"] == "model"
     assert json_data["step"]["detail"]["adapter_request"] == {
         "instructions": "Answer concisely.",
@@ -9975,8 +9976,9 @@ def test_cli_inspect_structured_views_render_preprocessed_document(monkeypatch) 
     assert toml_result.exit_code == 0
     toml_data = tomllib.loads(toml_result.stdout)
     assert toml_data["kind"] == "run"
-    assert toml_data["run"]["steps"][1]["detail"]["variant"] == "tool"
-    assert toml_data["run"]["steps"][1]["detail"]["results"][0]["result"] == "task body"
+    assert "steps" not in toml_data["run"]
+    assert toml_data["steps"][1]["detail"]["variant"] == "tool"
+    assert toml_data["steps"][1]["detail"]["results"][0]["result"] == "task body"
     assert calls == [
         "/api/v1/runs/run_struct",
         "/api/v1/threads/term_thread?limit=100",
