@@ -962,10 +962,23 @@ def _render_human_model_instruct(step: Mapping[str, Any]) -> None:
 def _render_human_tool_step(step: Mapping[str, Any]) -> None:
     calls = [_mapping(call) for call in _list(step.get("tool_calls"))]
     for typed in calls:
-        _render_json_section("input", typed.get("input"))
+        _render_json_section("input", _tool_call_input_view(typed))
         _render_json_section("output", typed.get("result"))
         _render_section("error", typed.get("error"))
     _render_section("other_output", step.get("other_output"))
+
+
+def _tool_call_input_view(call: Mapping[str, Any]) -> dict[str, Any]:
+    data: dict[str, Any] = {}
+    if name := _text(call.get("name")):
+        data["tool"] = name
+    if family := _text(call.get("family")):
+        data["family"] = family
+    if call_id := _text(call.get("call_id")):
+        data["call_id"] = call_id
+    if call.get("input") is not None:
+        data["input"] = call.get("input")
+    return data
 
 
 def _render_text_section(label: str, text: str) -> None:
