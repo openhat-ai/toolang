@@ -7825,10 +7825,10 @@ def test_cli_chat_run_lines_render_stop_command_by_event_order() -> None:
         visible,
         (
             "› ran shell__execute",
-            "◇ cancel requested",
-            "──────── canceled run_cancel",
+            "──── run_cancel canceled ────",
         ),
     )
+    assert "cancel requested" not in visible
 
 
 def test_cli_chat_run_command_stop_records_timeline_and_canceling(monkeypatch) -> None:
@@ -7852,7 +7852,8 @@ def test_cli_chat_run_command_stop_records_timeline_and_canceling(monkeypatch) -
     assert app.active_run is not None
     assert app.active_run.status == "canceling"
     visible = cli._chat_visible_text("\n".join(cli._chat_run_lines(app.active_run, include_steps=True)))
-    assert "◇ cancel requested" in visible
+    assert "canceling..." in visible
+    assert "cancel requested" not in visible
 
 
 def test_cli_chat_run_lines_end_with_one_blank_without_leading_blank() -> None:
@@ -8125,7 +8126,7 @@ def test_cli_chat_flow_run_lines_keep_terminal_error_message() -> None:
 
     rendered = "\n".join(cli._chat_run_lines(run, include_steps=True))
 
-    assert "──────── failed run_flow_failed" in rendered
+    assert "──── run_flow_failed failed ────" in rendered
     assert "[1] Expand the research question" in rendered
     assert "backend rejected the request" in rendered
     assert "! backend rejected the request" not in rendered
@@ -9065,9 +9066,9 @@ def test_cli_chat_cancel_failure_stays_in_active_run_progress() -> None:
 
 def test_cli_chat_canceled_run_result_line_is_dim() -> None:
     lines = cli._chat_run_lines(cli._ChatRun(run_id="run_cancel", message="hello", status="canceled"), include_steps=True)
-    result_line = next(line for line in lines if "canceled run_cancel" in line)
+    result_line = next(line for line in lines if "run_cancel canceled" in line)
 
-    assert cli._chat_visible_text(result_line) == "──────── canceled run_cancel"
+    assert cli._chat_visible_text(result_line) == "──── run_cancel canceled ────"
     assert result_line.startswith(cli._CHAT_DIM)
 
 
@@ -9096,7 +9097,7 @@ def test_cli_chat_canceled_run_end_finishes_active_progress(monkeypatch) -> None
     assert app.active_run is None
     assert not app.has_active_run()
     visible = cli._chat_visible_text("\n".join(line for lines in printed for line in lines))
-    assert "──────── canceled run_cancel" in visible
+    assert "──── run_cancel canceled ────" in visible
 
 
 def test_cli_chat_stream_thread_exceptions_surface_as_ui_errors(monkeypatch) -> None:
@@ -9184,7 +9185,7 @@ def test_cli_chat_stream_error_after_queue_clears_active_run(monkeypatch) -> Non
     assert app.active_run is None
     visible = cli._chat_visible_text("\n".join(line for lines in printed for line in lines))
     assert "queued run_missing" in visible
-    assert "──────── failed run_missing" in visible
+    assert "──── run_missing failed ────" in visible
     assert "No matched models." in visible
     assert "! No matched models." not in visible
 
@@ -9236,7 +9237,7 @@ def test_cli_chat_ai_sdk_stream_error_survives_finish_event(monkeypatch) -> None
     assert app.prompt.error_message == ""
     assert printed
     visible = cli._chat_visible_text("\n".join(line for lines in printed for line in lines))
-    assert "──────── failed run_failed" in visible
+    assert "──── run_failed failed ────" in visible
     assert "backend rejected the request" in visible
     assert "! backend rejected the request" not in visible
 

@@ -2041,7 +2041,7 @@ def _chat_command_activity_lines(run: _ChatRun, command: Mapping[str, Any], time
     if command.get("kind") == "steer":
         return _chat_steer_input_block(command, waiting=_chat_command_is_waiting(run, timeline_position))
     if command.get("kind") == "stop":
-        return [_chat_dim("◇ cancel requested")]
+        return [] if _chat_run_is_stopped(run) else [_chat_dim("canceling...")]
     return []
 
 
@@ -2051,7 +2051,7 @@ def _chat_command_activity_fragment_rows(
     if command.get("kind") == "steer":
         return _chat_steer_input_fragment_rows(command, waiting=_chat_command_is_waiting(run, timeline_position))
     if command.get("kind") == "stop":
-        return [_chat_line_fragments(_chat_dim("◇ cancel requested"))]
+        return [] if _chat_run_is_stopped(run) else [_chat_line_fragments(_chat_dim("canceling..."))]
     return []
 
 
@@ -2122,7 +2122,7 @@ def _chat_run_state_line(run: _ChatRun) -> str:
     if status == "running":
         return _chat_dim(f"running {run_id}...")
     if status == "canceling":
-        return _chat_dim(f"canceling {run_id}...")
+        return _chat_dim("canceling...")
     return ""
 
 
@@ -2132,18 +2132,22 @@ def _chat_run_result_lines(run: _ChatRun) -> list[str]:
     if status in {"", "queued", "waiting", "submitting", "running", "canceling", "succeeded", "finished", "completed", "done"}:
         return []
     if status in {"canceled", "cancelled"}:
-        return [_chat_dim(f"{_chat_result_divider()} canceled {run_id}")]
+        return [_chat_dim(_chat_result_divider_line(run_id, "canceled"))]
     if status in {"failed", "error"}:
-        lines = [_chat_dim(f"{_chat_result_divider()} failed {run_id}")]
+        lines = [_chat_dim(_chat_result_divider_line(run_id, "failed"))]
         error = _chat_terminal_error(run)
         if error:
             lines.extend(_chat_dim(line) for line in _chat_wrap_plain_lines(error))
         return lines
-    return [_chat_dim(f"{_chat_result_divider()} {status} {run_id}")]
+    return [_chat_dim(_chat_result_divider_line(run_id, status))]
 
 
-def _chat_result_divider() -> str:
-    return "─" * 8
+def _chat_result_divider_line(run_id: str, status: str) -> str:
+    return f"──── {run_id} {status} ────"
+
+
+def _chat_run_is_stopped(run: _ChatRun) -> bool:
+    return _chat_run_display_status(run.status) in {"succeeded", "finished", "completed", "done", "failed", "error", "canceled", "cancelled"}
 
 
 def _chat_terminal_error(run: _ChatRun) -> str:
