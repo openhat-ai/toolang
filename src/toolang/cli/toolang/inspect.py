@@ -902,7 +902,7 @@ def _render_human_model_messages(step: Mapping[str, Any]) -> None:
     role_width = max(_display_width(_message_role_label(_text(message.get("role")) or "-")) for message in messages)
     for message in messages:
         role = _text(message.get("role")) or "-"
-        typer.echo(_message_line("·", role, _message_summary(message), role_width=role_width))
+        typer.echo(_message_line("·", role, _message_display_summary(message), role_width=role_width))
 
 
 def _render_human_model_response(step: Mapping[str, Any]) -> None:
@@ -912,11 +912,13 @@ def _render_human_model_response(step: Mapping[str, Any]) -> None:
     _render_human_section_title("output")
     text = _parts_text(output)
     role_width = _display_width(_message_role_label("assistant"))
-    if text:
-        typer.echo(_message_line(_status_mark(_text(step.get("status")) or ""), "assistant", text, role_width=role_width))
     tool_calls = [part for part in output if part.get("type") == "tool_call"]
+    if not text and tool_calls:
+        text = f"[{len(tool_calls)} tool call{'s' if len(tool_calls) != 1 else ''}]"
+    typer.echo(_message_line(_status_mark(_text(step.get("status")) or ""), "assistant", text, role_width=role_width))
     if tool_calls:
-        typer.echo(f"[{len(tool_calls)} tool call{'s' if len(tool_calls) != 1 else ''}]")
+        if _parts_text(output):
+            typer.echo(f"[{len(tool_calls)} tool call{'s' if len(tool_calls) != 1 else ''}]")
         for call in tool_calls:
             name = _text(call.get("tool_name")) or _text(call.get("tool_family")) or "tool"
             tool_input = _tool_input_summary(call.get("input"))
@@ -1141,6 +1143,34 @@ def _collapse_text(value: str) -> str:
 
 def _message_summary(message: Mapping[str, Any]) -> str:
     return _parts_summary(message.get("parts"))
+
+
+def _message_display_summary(message: Mapping[str, Any]) -> str:
+    if text := _parts_text(message.get("parts")):
+        return text
+    parts = [_mapping(part) for part in _list(message.get("parts"))]
+    summaries = [_part_display_summary(part) for part in parts]
+    return "; ".join(summary for summary in summaries if summary)
+
+
+def _part_display_summary(part: Mapping[str, Any]) -> str:
+    part_type = _text(part.get("type"))
+    if part_type == "tool_call":
+        name = _text(part.get("tool_name")) or _text(part.get("tool_family")) or "tool"
+        tool_input = _tool_input_summary(part.get("input"))
+        suffix = f"  {tool_input}" if tool_input else ""
+        return f"{name}{suffix}"
+    if part_type == "tool_result":
+        name = _text(part.get("tool_name")) or _text(part.get("tool_family")) or "tool"
+        result = part.get("output")
+        if result is None:
+            result = part.get("result")
+        if error := _text(part.get("error")):
+            return f"{name} error={_plain_value(error)}"
+        if result is not None:
+            return f"{name}: {_plain_value(result)}"
+        return name
+    return part_type or ""
 
 
 def _message_text(message: Mapping[str, Any]) -> str:
