@@ -913,17 +913,12 @@ def _render_human_model_response(step: Mapping[str, Any]) -> None:
     text = _parts_text(output)
     role_width = _display_width(_message_role_label("assistant"))
     tool_calls = [part for part in output if part.get("type") == "tool_call"]
-    if not text and tool_calls:
-        text = f"[{len(tool_calls)} tool call{'s' if len(tool_calls) != 1 else ''}]"
+    tool_call_summary = _tool_calls_display_summary(tool_calls)
+    if text and tool_call_summary:
+        text = f"{text} {tool_call_summary}"
+    elif tool_call_summary:
+        text = tool_call_summary
     typer.echo(_message_line(_status_mark(_text(step.get("status")) or ""), "assistant", text, role_width=role_width))
-    if tool_calls:
-        if _parts_text(output):
-            typer.echo(f"[{len(tool_calls)} tool call{'s' if len(tool_calls) != 1 else ''}]")
-        for call in tool_calls:
-            name = _text(call.get("tool_name")) or _text(call.get("tool_family")) or "tool"
-            tool_input = _tool_input_summary(call.get("input"))
-            suffix = f"  {tool_input}" if tool_input else ""
-            typer.echo(f"{name}{suffix}")
 
 
 def _message_line(marker: str, role: str, content: str, *, role_width: int) -> str:
@@ -1171,6 +1166,19 @@ def _part_display_summary(part: Mapping[str, Any]) -> str:
             return f"{name}: {_plain_value(result)}"
         return name
     return part_type or ""
+
+
+def _tool_calls_display_summary(tool_calls: Sequence[Mapping[str, Any]]) -> str:
+    if not tool_calls:
+        return ""
+    count = f"[{len(tool_calls)} tool call{'s' if len(tool_calls) != 1 else ''}]"
+    calls: list[str] = []
+    for call in tool_calls:
+        name = _text(call.get("tool_name")) or _text(call.get("tool_family")) or "tool"
+        tool_input = _tool_input_summary(call.get("input"))
+        suffix = f"  {tool_input}" if tool_input else ""
+        calls.append(f"{name}{suffix}")
+    return " ".join((count, "; ".join(calls)))
 
 
 def _message_text(message: Mapping[str, Any]) -> str:

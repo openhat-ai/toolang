@@ -9929,9 +9929,8 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
     assert "# input" in focus_result.stdout
     assert "· user:  query" in focus_result.stdout
     assert "# output" in focus_result.stdout
-    assert "✓ assistant:  Ready to read the task." in focus_result.stdout
-    assert "[1 tool call]" in focus_result.stdout
-    assert "filesystem__read_text  path=task.md" in focus_result.stdout
+    assert "✓ assistant:  Ready to read the task. [1 tool call] filesystem__read_text  path=task.md" in focus_result.stdout
+    assert "\n[1 tool call]" not in focus_result.stdout
     assert "# context" in focus_result.stdout
     assert "thread_id=term_thread" in focus_result.stdout
     assert "# instruct" in focus_result.stdout
