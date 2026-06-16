@@ -10173,13 +10173,22 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
     assert "term_thread  idle  runs=3" in result.stdout
     assert "# title\nagent framework implementations" in result.stdout
     assert "# runs" in result.stdout
-    assert "\n✗ run_parent   flow:research    1.0s  3 steps" in result.stdout
-    assert "  input:   query" in result.stdout
-    assert "  output:  error: unknown tool call: service_use__service_list (step 3 system)" in result.stdout
-    assert "\n\n✓ run_success" in result.stdout
-    assert "\n✓ run_success  thunk:summarize  1.0s  2 steps" in result.stdout
-    success_output_line = next(line for line in result.stdout.splitlines() if line.startswith("  output:  李白同学是谁"))
-    assert wcswidth(success_output_line) == 120
+    assert "\n✗ run_parent   1.0s  3 steps  query" in result.stdout
+    assert "\n\n✓ run_success" not in result.stdout
+    assert "\n✓ run_success  1.0s  2 steps  query" in result.stdout
+    parent_line = next(line for line in result.stdout.splitlines() if line.startswith("✗ run_parent"))
+    success_line = next(line for line in result.stdout.splitlines() if line.startswith("✓ run_success"))
+    assert parent_line.index("1.0s") == success_line.index("1.0s")
+    assert parent_line.index("query") == success_line.index("query")
+    assert "  input:" not in result.stdout
+    assert "  output:" not in result.stdout
+    assert "{query}" not in result.stdout
+    assert "thunk:summarize" not in result.stdout
+    long_input = cast(dict[str, object], successful["input"])
+    long_input["parts"] = [{"type": "text", "text": f"李白同学是谁，{'中文内容' * 30}"}]
+    long_result = _invoke_app(["inspect", "dev", "term_thread"])
+    success_output_line = next(line for line in long_result.stdout.splitlines() if line.startswith("✓ run_success"))
+    assert 110 <= wcswidth(success_output_line) <= 120
     assert success_output_line.endswith("...")
     assert "\n# run\n" not in result.stdout
     assert "run_child thunk:expand_queries" not in result.stdout

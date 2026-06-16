@@ -749,17 +749,13 @@ def _render_human_thread(thread: Mapping[str, Any]) -> None:
         return
     _render_human_section_title("runs")
     run_id_width = max(_display_width(_text(run.get("id")) or "-") for run in runs)
-    target_width = max(_display_width(_text(run.get("target")) or "-") for run in runs)
     elapsed_width = max(_display_width(_text(run.get("elapsed")) or "-") for run in runs)
     step_count_width = max(_display_width(str(_int_or_none(run.get("step_count")) or 0)) for run in runs)
     line_width = _thread_run_line_width()
-    for index, run in enumerate(runs):
-        if index > 0:
-            typer.echo("")
+    for run in runs:
         _render_human_thread_run(
             run,
             run_id_width=run_id_width,
-            target_width=target_width,
             elapsed_width=elapsed_width,
             step_count_width=step_count_width,
             line_width=line_width,
@@ -770,29 +766,24 @@ def _render_human_thread_run(
     run: Mapping[str, Any],
     *,
     run_id_width: int,
-    target_width: int,
     elapsed_width: int,
     step_count_width: int,
     line_width: int,
 ) -> None:
     status = _text(run.get("status")) or ""
     run_id = _text(run.get("id")) or "-"
-    target = _text(run.get("target")) or "-"
     elapsed = _text(run.get("elapsed")) or "-"
     step_count = _int_or_none(run.get("step_count"))
     step_count_label = f"{step_count or 0:>{step_count_width}} steps"
-    run_meta = f"{_display_pad_right(target, target_width)}  {_display_pad_right(elapsed, elapsed_width)}  {step_count_label}"
-    typer.echo(f"{_status_mark(status)} {_display_pad_right(run_id, run_id_width)}  {click.style(run_meta, dim=True)}")
-    if input_summary := _text(run.get("input_summary")):
-        _render_human_thread_run_preview("input:", input_summary, line_width=line_width)
-    if output_summary := _text(run.get("output_summary")):
-        _render_human_thread_run_preview("output:", output_summary, line_width=line_width)
-
-
-def _render_human_thread_run_preview(label: str, value: str, *, line_width: int) -> None:
-    prefix = f"  {label:<7}  "
-    width = max(line_width - _display_width(prefix), 1)
-    typer.echo(f"  {click.style(f'{label:<7}', dim=True)}  {_truncate_display(value, width=width)}")
+    prefix = f"{_status_mark(status)} {_display_pad_right(run_id, run_id_width)}  "
+    run_meta = f"{_display_pad_right(elapsed, elapsed_width)}  {step_count_label}"
+    input_summary = _text(run.get("input_summary"))
+    if not input_summary:
+        typer.echo(f"{prefix}{click.style(run_meta, dim=True)}")
+        return
+    input_prefix = f"{prefix}{run_meta}  "
+    width = max(line_width - _display_width(input_prefix), 1)
+    typer.echo(f"{prefix}{click.style(run_meta, dim=True)}  {_truncate_display(input_summary, width=width)}")
 
 
 def _render_human_run(run: Mapping[str, Any], steps: Sequence[Mapping[str, Any]], *, depth: int) -> None:
@@ -1112,7 +1103,7 @@ def _truncate(value: object, *, width: int) -> str:
 
 
 def _truncate_display(value: object, *, width: int) -> str:
-    text = " ".join(str(value or "").split())
+    text = str(value or "")
     if _display_width(text) <= width:
         return text
     if width <= 3:
