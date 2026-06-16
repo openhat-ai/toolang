@@ -21,7 +21,7 @@ from ...models.resolution import selectable_model_targets, split_model_selectors
 from ...tools.registry import split_tool_selectors
 from ...caps import split_cap_selectors
 from ...execution.records import ThreadPeer
-from ...execution.response import BufferedResponseSink, SseResponseSink
+from ...execution.response import BufferedResponseSink, SseResponseSink, TraceResponseSink
 from ...execution.runner import RunRequest
 from ...execution.runner import RunOutcome
 from ._streaming import ShutdownAwareStreamingResponse
@@ -235,7 +235,7 @@ async def _stream_chat_run(
     thread_id: str | None,
 ):
     _require_chat_runner(context)
-    response = SseResponseSink(thread_id=thread_id)
+    response = TraceResponseSink() if payload.client == "tui" else SseResponseSink(thread_id=thread_id)
     user_message = _chat_user_message(payload)
     run_id = allocate_run_id(context)
     context.runner.enqueue(

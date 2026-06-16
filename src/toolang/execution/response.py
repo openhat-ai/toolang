@@ -281,6 +281,55 @@ class SseResponseSink:
         self._loop.call_soon_threadsafe(self._queue.put_nowait, None)
 
 
+class TraceResponseSink:
+    """Emit normalized trace events for a streaming caller."""
+
+    wants_stream = True
+
+    def __init__(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        self._queue: asyncio.Queue[str | None] = asyncio.Queue()
+        self._closed = False
+
+    async def stream(self) -> AsyncIterator[str]:
+        while True:
+            item = await self._queue.get()
+            if item is None:
+                return
+            yield item
+
+    def on_queue_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        if self._closed:
+            return
+        self._enqueue_payload(
+            {
+                "type": event_type,
+                "event_type": event_type,
+                "payload": dict(payload),
+            }
+        )
+
+    def on_event(self, event: TraceEvent) -> None:
+        if self._closed:
+            return
+        self._enqueue_payload(trace_event_data(event))
+        if isinstance(event, RunEnd):
+            self._enqueue_done()
+
+    def _enqueue_payload(self, payload: dict[str, object]) -> None:
+        self._loop.call_soon_threadsafe(
+            self._queue.put_nowait,
+            _sse(payload),
+        )
+
+    def _enqueue_done(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._loop.call_soon_threadsafe(self._queue.put_nowait, "data: [DONE]\n\n")
+        self._loop.call_soon_threadsafe(self._queue.put_nowait, None)
+
+
 class ChannelResponseSink:
     """Progressively deliver one response through one channel binding."""
 

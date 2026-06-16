@@ -8006,7 +8006,7 @@ def test_cli_chat_scrollback_input_bar_keeps_padding() -> None:
     assert cli._chat_visible_text(lines[2]).strip() == "run_input"
 
 
-def test_cli_chat_ai_sdk_tool_result_replaces_running_tool_line(monkeypatch) -> None:
+def test_cli_chat_trace_tool_result_replaces_running_tool_line(monkeypatch) -> None:
     printed: list[list[str]] = []
 
     monkeypatch.setattr(
@@ -8018,22 +8018,54 @@ def test_cli_chat_ai_sdk_tool_result_replaces_running_tool_line(monkeypatch) -> 
     app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
     app.active_run = cli._ChatRun(run_id="run_tool", message="search", status="running")
 
-    app.record_chat_stream_tool_request(
+    app.handle_runtime_event(
         {
-            "toolCallId": "call_1",
-            "toolName": "web_search__search",
-            "input": {"query": "李荣浩 热门歌曲 代表作"},
+            "type": "step_begin",
+            "payload": {
+                "run_id": "run_tool",
+                "thread_id": "term_new",
+                "step_index": 1,
+                "kind": "tool",
+                "input": [
+                    {
+                        "type": "tool_call",
+                        "tool_call_id": "call_1",
+                        "tool_name": "web_search__search",
+                        "input": {"query": "李荣浩 热门歌曲 代表作"},
+                    }
+                ],
+            },
         }
     )
 
     active = "\n".join(cli._chat_run_lines(app.active_run, include_steps=True))
     assert "› running web_search__search: 李荣浩 热门歌曲 代表作" in active
 
-    app.record_chat_stream_tool_result(
+    app.handle_runtime_event(
         {
-            "toolCallId": "call_1",
-            "toolName": "web_search__search",
-            "output": {"results": []},
+            "type": "step_end",
+            "payload": {
+                "run_id": "run_tool",
+                "thread_id": "term_new",
+                "step_index": 1,
+                "kind": "tool",
+                "input": [
+                    {
+                        "type": "tool_call",
+                        "tool_call_id": "call_1",
+                        "tool_name": "web_search__search",
+                        "input": {"query": "李荣浩 热门歌曲 代表作"},
+                    }
+                ],
+                "output": [
+                    {
+                        "type": "tool_result",
+                        "tool_call_id": "call_1",
+                        "tool_name": "web_search__search",
+                        "output": {"results": []},
+                    }
+                ],
+            },
         }
     )
 
@@ -8817,9 +8849,23 @@ def test_cli_chat_flow_submit_renders_flow_stream_steps(monkeypatch) -> None:
         assert event_handler is not None
         event_handler(
             {
-                "type": "start",
-                "messageId": "run_flow",
-                "messageMetadata": {"run_id": "run_flow", "thread_id": "term_new"},
+                "type": "run_starting",
+                "payload": {
+                    "run_id": "run_flow",
+                    "thread_id": "term_new",
+                    "input": payload["message"],
+                },
+            }
+        )
+        event_handler(
+            {
+                "type": "run_begin",
+                "payload": {
+                    "run_id": "run_flow",
+                    "thread_id": "term_new",
+                    "input": payload["message"],
+                    "call_kind": "top",
+                },
             }
         )
         event_handler(
@@ -8853,7 +8899,12 @@ def test_cli_chat_flow_submit_renders_flow_stream_steps(monkeypatch) -> None:
                 },
             }
         )
-        event_handler({"type": "finish"})
+        event_handler(
+            {
+                "type": "run_end",
+                "payload": {"run_id": "run_flow", "thread_id": "term_new", "status": "finished"},
+            }
+        )
 
     monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
     monkeypatch.setattr(cli, "_runtime_consume_stream", fake_runtime_consume_stream)
@@ -8978,7 +9029,7 @@ def test_cli_chat_start_run_consumes_own_stream_events(monkeypatch) -> None:
         loop.close()
 
 
-def test_cli_chat_start_run_handles_ai_sdk_stream_events(monkeypatch) -> None:
+def test_cli_chat_start_run_handles_trace_stream_events(monkeypatch) -> None:
     printed: list[list[str]] = []
 
     class FakeListener:
@@ -9002,22 +9053,77 @@ def test_cli_chat_start_run_handles_ai_sdk_stream_events(monkeypatch) -> None:
         assert event_handler is not None
         event_handler(
             {
-                "type": "start",
-                "messageId": "run_ai",
-                "messageMetadata": {"run_id": "run_ai", "thread_id": "term_new"},
+                "type": "run_starting",
+                "payload": {
+                    "run_id": "run_trace",
+                    "thread_id": "term_new",
+                    "input": payload["message"],
+                },
             }
         )
-        event_handler({"type": "start-step"})
-        event_handler({"type": "text-start", "id": "msg_run_ai"})
-        event_handler({"type": "text-delta", "id": "msg_run_ai", "delta": "hello"})
-        event_handler({"type": "text-delta", "id": "msg_run_ai", "delta": " world"})
-        event_handler({"type": "text-end", "id": "msg_run_ai"})
-        event_handler({"type": "finish-step"})
         event_handler(
             {
-                "type": "finish",
-                "finishReason": "stop",
-                "messageMetadata": {"run_id": "run_ai", "thread_id": "term_new"},
+                "type": "run_begin",
+                "payload": {
+                    "run_id": "run_trace",
+                    "thread_id": "term_new",
+                    "input": payload["message"],
+                    "call_kind": "top",
+                },
+            }
+        )
+        event_handler(
+            {
+                "type": "step_begin",
+                "payload": {
+                    "run_id": "run_trace",
+                    "thread_id": "term_new",
+                    "step_index": 1,
+                    "kind": "model",
+                },
+            }
+        )
+        event_handler(
+            {
+                "type": "part_delta",
+                "payload": {
+                    "run_id": "run_trace",
+                    "thread_id": "term_new",
+                    "step_index": 1,
+                    "part_index": 0,
+                    "delta": {"type": "text", "text": "hello"},
+                },
+            }
+        )
+        event_handler(
+            {
+                "type": "part_delta",
+                "payload": {
+                    "run_id": "run_trace",
+                    "thread_id": "term_new",
+                    "step_index": 1,
+                    "part_index": 0,
+                    "delta": {"type": "text", "text": " world"},
+                },
+            }
+        )
+        event_handler(
+            {
+                "type": "step_end",
+                "payload": {
+                    "run_id": "run_trace",
+                    "thread_id": "term_new",
+                    "step_index": 1,
+                    "kind": "model",
+                    "status": "finished",
+                    "output": [{"type": "text", "text": "hello world"}],
+                },
+            }
+        )
+        event_handler(
+            {
+                "type": "run_end",
+                "payload": {"run_id": "run_trace", "thread_id": "term_new", "status": "finished"},
             }
         )
 
@@ -9036,7 +9142,7 @@ def test_cli_chat_start_run_handles_ai_sdk_stream_events(monkeypatch) -> None:
     assert printed
     visible = cli._chat_visible_text("\n".join(line for lines in printed for line in lines))
     assert "hello world" in visible
-    assert "run_ai" not in visible
+    assert "run_trace" in visible
 
 
 def test_cli_chat_cancel_active_run_posts_cancel(monkeypatch) -> None:
@@ -9170,7 +9276,17 @@ def test_cli_chat_cancel_waits_until_run_begins(monkeypatch) -> None:
     monkeypatch.setattr(app, "send_cancel_request", sent.append)
 
     app.handle_cancel()
-    app.handle_chat_stream_start({"messageMetadata": {"run_id": "run_late", "thread_id": "term_new"}})
+    app.handle_runtime_event(
+        {
+            "type": "run_begin",
+            "payload": {
+                "run_id": "run_late",
+                "thread_id": "term_new",
+                "input": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
+                "call_kind": "top",
+            },
+        }
+    )
 
     assert app.active_run is not None
     assert app.active_run.status == "canceling"
@@ -9300,8 +9416,17 @@ def test_cli_chat_stream_error_after_queue_clears_active_run(monkeypatch) -> Non
                 },
             }
         )
-        event_handler({"type": "error", "errorText": "No matched models."})
-        event_handler({"type": "finish"})
+        event_handler(
+            {
+                "type": "run_end",
+                "payload": {
+                    "run_id": "run_missing",
+                    "thread_id": "term_new",
+                    "status": "failed",
+                    "error": "No matched models.",
+                },
+            }
+        )
 
     monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
     monkeypatch.setattr(cli, "_runtime_consume_stream", fake_runtime_consume_stream)
@@ -9321,7 +9446,7 @@ def test_cli_chat_stream_error_after_queue_clears_active_run(monkeypatch) -> Non
     assert "! No matched models." not in visible
 
 
-def test_cli_chat_ai_sdk_stream_error_survives_finish_event(monkeypatch) -> None:
+def test_cli_chat_trace_stream_error_finishes_active_run(monkeypatch) -> None:
     printed: list[list[str]] = []
 
     class FakeListener:
@@ -9345,13 +9470,36 @@ def test_cli_chat_ai_sdk_stream_error_survives_finish_event(monkeypatch) -> None
         assert event_handler is not None
         event_handler(
             {
-                "type": "start",
-                "messageId": "run_failed",
-                "messageMetadata": {"run_id": "run_failed", "thread_id": "term_new"},
+                "type": "run_starting",
+                "payload": {
+                    "run_id": "run_failed",
+                    "thread_id": "term_new",
+                    "input": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
+                },
             }
         )
-        event_handler({"type": "error", "errorText": "backend rejected the request"})
-        event_handler({"type": "finish"})
+        event_handler(
+            {
+                "type": "run_begin",
+                "payload": {
+                    "run_id": "run_failed",
+                    "thread_id": "term_new",
+                    "input": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
+                    "call_kind": "top",
+                },
+            }
+        )
+        event_handler(
+            {
+                "type": "run_end",
+                "payload": {
+                    "run_id": "run_failed",
+                    "thread_id": "term_new",
+                    "status": "failed",
+                    "error": "backend rejected the request",
+                },
+            }
+        )
 
     monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
     monkeypatch.setattr(cli, "_runtime_consume_stream", fake_runtime_consume_stream)

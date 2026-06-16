@@ -928,9 +928,6 @@ class _ChatBottomApp:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.dispatcher: asyncio.Task[None] | None = None
         self.ticker: asyncio.Task[None] | None = None
-        self.stream_step_index: int | None = None
-        self.stream_text_parts: list[str] = []
-        self.stream_tool_steps: dict[str, int] = {}
         self.model_label = _chat_resolved_model_label(ctx, self.selector_payload, deps=self.deps)
         self.home_label = self.deps.home_label(ctx)
 
@@ -1154,9 +1151,6 @@ class _ChatBottomApp:
 
     def handle_runtime_event(self, event: dict[str, Any]) -> None:
         event_type = str(event.get("type") or event.get("event_type") or "")
-        if self.handle_chat_stream_event(event_type, event):
-            self.app.invalidate()
-            return
         payload = event.get("payload")
         if not isinstance(payload, dict):
             return
@@ -1257,176 +1251,6 @@ class _ChatBottomApp:
             return True
         return False
 
-    def handle_chat_stream_event(self, event_type: str, event: Mapping[str, Any]) -> bool:
-        if event_type == "start":
-            self.handle_chat_stream_start(event)
-            return True
-        if event_type == "message-metadata":
-            self.handle_chat_stream_metadata(event)
-            return True
-        if event_type in {"start-step", "text-start"}:
-            self.start_chat_stream_step()
-            return True
-        if event_type == "text-delta":
-            self.append_chat_stream_text(event)
-            return True
-        if event_type == "finish-step":
-            self.complete_chat_stream_step()
-            return True
-        if event_type == "tool-input-available":
-            self.record_chat_stream_tool_request(event)
-            return True
-        if event_type == "tool-output-available":
-            self.record_chat_stream_tool_result(event)
-            return True
-        if event_type == "error":
-            self.handle_error(_text(event.get("errorText")) or _text(event.get("error")) or "runtime request failed")
-            return True
-        if event_type == "finish":
-            if self.active_run is None:
-                return True
-            self.complete_chat_stream_step()
-            status = "canceled" if self.active_run.cancel_requested else "finished"
-            self.finish_run(
-                {
-                    "run_id": self.active_run.run_id if self.active_run is not None else "",
-                    "status": status,
-                }
-            )
-            return True
-        return event_type == "text-end"
-
-    def handle_chat_stream_start(self, event: Mapping[str, Any]) -> None:
-        metadata = _mapping(event.get("messageMetadata"))
-        run_id = _text(metadata.get("run_id")) or _text(event.get("messageId")) or ""
-        thread_id = _text(metadata.get("thread_id"))
-        if thread_id:
-            self.thread_id = thread_id
-        if self.active_run is None:
-            self.active_run = _ChatRun(run_id=run_id, message="", status="running", accept_child_trace=True)
-            self.active_run.mark_running()
-            self.maybe_send_cancel_request()
-            return
-        if run_id:
-            self.active_run.run_id = run_id
-        self.active_run.mark_running()
-        self.maybe_send_cancel_request()
-
-    def handle_chat_stream_metadata(self, event: Mapping[str, Any]) -> None:
-        metadata = _mapping(event.get("messageMetadata"))
-        thread_id = _text(metadata.get("thread_id"))
-        if thread_id:
-            self.thread_id = thread_id
-        run_id = _text(metadata.get("run_id"))
-        if run_id and self.active_run is not None:
-            self.active_run.run_id = run_id
-            self.maybe_send_cancel_request()
-
-    def start_chat_stream_step(self) -> None:
-        if self.active_run is None:
-            return
-        if self.stream_step_index is not None:
-            return
-        index = self.next_chat_stream_step_index()
-        self.stream_step_index = index
-        self.stream_text_parts = []
-        self.start_run_step(self.active_run, {"step_index": index, "kind": "model"})
-
-    def append_chat_stream_text(self, event: Mapping[str, Any]) -> None:
-        if self.active_run is None:
-            return
-        self.start_chat_stream_step()
-        delta = _text(event.get("delta"))
-        if delta:
-            self.stream_text_parts.append(delta)
-
-    def complete_chat_stream_step(self) -> None:
-        if self.active_run is None or self.stream_step_index is None:
-            return
-        index = self.stream_step_index
-        text = "".join(self.stream_text_parts)
-        output: list[dict[str, object]] = []
-        if text:
-            output.append({"type": "text", "text": text})
-        block = self.active_run.complete_step(
-            {
-                "run_id": self.active_run.run_id,
-                "step_index": index,
-                "kind": "model",
-                "output": output,
-            }
-        )
-        self.flush_finalized_block(self.active_run, block)
-        self.stream_step_index = None
-        self.stream_text_parts = []
-
-    def record_chat_stream_tool_request(self, event: Mapping[str, Any]) -> None:
-        if self.active_run is None:
-            return
-        self.complete_chat_stream_step()
-        index = self.next_chat_stream_step_index()
-        tool_call_id = _text(event.get("toolCallId")) or f"tool_{index}"
-        tool_name = _text(event.get("toolName")) or "tool"
-        tool_input = event.get("input")
-        part = {
-            "type": "tool_call",
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-            "input": dict(tool_input) if isinstance(tool_input, Mapping) else {},
-        }
-        self.active_run.record_part({"step_index": index, "part_index": 0, "part": part})
-        self.stream_tool_steps[tool_call_id] = index
-        self.start_run_step(
-            self.active_run,
-            {
-                "run_id": self.active_run.run_id,
-                "step_index": index,
-                "kind": "tool",
-                "input": [part],
-            },
-        )
-
-    def record_chat_stream_tool_result(self, event: Mapping[str, Any]) -> None:
-        if self.active_run is None:
-            return
-        self.complete_chat_stream_step()
-        tool_call_id = _text(event.get("toolCallId"))
-        index = self.stream_tool_steps.pop(tool_call_id, None) if tool_call_id is not None else None
-        if index is None:
-            index = self.next_chat_stream_step_index()
-        tool_name = _text(event.get("toolName")) or "tool"
-        input_part = None
-        active_step = self.active_run.steps.get(index)
-        if active_step is not None:
-            for item in _list(active_step.payload.get("input")):
-                if isinstance(item, Mapping):
-                    input_part = dict(item)
-                    break
-        if input_part is None:
-            input_part = {"tool_name": tool_name, "input": {}}
-        block = self.active_run.complete_step(
-            {
-                "run_id": self.active_run.run_id,
-                "step_index": index,
-                "kind": "tool",
-                "input": [input_part],
-                "output": [
-                    {
-                        "type": "tool_result",
-                        "tool_call_id": tool_call_id or "",
-                        "tool_name": tool_name,
-                        "output": event.get("output"),
-                    }
-                ],
-            }
-        )
-        self.flush_finalized_block(self.active_run, block)
-
-    def next_chat_stream_step_index(self) -> int:
-        if self.active_run is None:
-            return 1
-        return max(self.active_run.step_indexes(), default=0) + 1
-
     def handle_run_starting(self, payload: dict[str, Any]) -> None:
         run_id = str(payload.get("run_id") or "")
         message = _event_message_text(payload.get("input"))
@@ -1457,10 +1281,10 @@ class _ChatBottomApp:
         run_id = str(payload.get("run_id") or "")
         if self.active_run and (not self.active_run.run_id or self.active_run.run_id == run_id):
             self.active_run.run_id = run_id
+            self.active_run.mark_running()
             block = self.active_run.finalize_command(0, payload)
             if block is not None:
                 self.flush_finalized_block(self.active_run, block)
-            self.active_run.mark_running()
             self.maybe_send_cancel_request()
             return
         message = _event_message_text(payload.get("input"))
@@ -1471,6 +1295,7 @@ class _ChatBottomApp:
     def finish_run(self, payload: dict[str, Any]) -> None:
         completed_run = self.active_run
         if completed_run is not None:
+            self.flush_queue_state(completed_run)
             start_block = completed_run.finalize_command(0, payload)
             if start_block is not None and start_block.index not in completed_run.flushed_commands:
                 self.flush_finalized_block(completed_run, start_block)

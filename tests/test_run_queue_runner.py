@@ -2110,6 +2110,38 @@ def test_chat_stream_emits_tool_and_text_chunks(tmp_path: Path) -> None:
     assert "data: [DONE]" in stream_text
 
 
+def test_chat_stream_tui_client_emits_trace_events(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat", "inspect"),
+    )
+    app = _create_test_app(context)
+
+    with _patched_runner_execution_with_tools(output_text="assistant:tool me"):
+        with TestClient(app) as client:
+            with client.stream(
+                "POST",
+                "/api/v1/chat/stream",
+                json={"client": "tui", "message": _chat_message("tool me")},
+            ) as response:
+                assert response.status_code == 200
+                stream_text = "".join(chunk.decode("utf-8") for chunk in response.iter_raw())
+
+    assert '"type":"run_starting"' in stream_text
+    assert '"type":"run_begin"' in stream_text
+    assert '"type":"step_begin"' in stream_text
+    assert '"type":"part_delta"' in stream_text
+    assert '"type":"part_end"' in stream_text
+    assert '"type":"step_end"' in stream_text
+    assert '"type":"run_end"' in stream_text
+    assert '"type":"text-delta"' not in stream_text
+    assert '"type":"finish"' not in stream_text
+    assert "data: [DONE]" in stream_text
+
+
 def test_chat_stream_emits_before_run_completion(tmp_path: Path) -> None:
     async def run_test() -> None:
         toolang_root = tmp_path / "toolang"
