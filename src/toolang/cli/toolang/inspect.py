@@ -736,7 +736,7 @@ def _render_human(document: Mapping[str, Any], *, tree: bool, depth: int) -> Non
 
 def _render_human_thread(thread: Mapping[str, Any]) -> None:
     _render_human_section_title("thread")
-    pieces = [_text(thread.get("id")) or "-", _text(thread.get("status")) or "-"]
+    pieces = [_text(thread.get("id")) or "-"]
     run_count = thread.get("run_count")
     if run_count is not None:
         pieces.append(f"runs={run_count}")
