@@ -9402,7 +9402,7 @@ def test_cli_chat_active_step_lines_use_lightweight_event_text() -> None:
     model_line = cli._chat_active_step_line(run.steps[1])
     tool_line = cli._chat_active_step_line(run.steps[2])
     assert cli._chat_visible_text(model_line) == "• thinking..."
-    assert model_line.startswith(cli._CHAT_DIM)
+    assert not model_line.startswith(cli._CHAT_DIM)
     assert "› running weather" in cli._chat_visible_text(tool_line)
     assert cli._chat_visible_text(tool_line).endswith("...")
     assert tool_line.startswith(cli._CHAT_DIM)

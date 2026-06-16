@@ -1440,7 +1440,10 @@ def _chat_step_label(payload: Mapping[str, Any], run: _ChatRun | None = None) ->
 
 
 def _chat_active_step_line(step: _ChatStep) -> str:
-    return _chat_dim(_chat_progress_tail(f"{_chat_marker_for(step.kind)} {step.label}"))
+    line = _chat_progress_tail(f"{_chat_marker_for(step.kind)} {step.label}")
+    if step.kind == "model":
+        return line
+    return _chat_dim(line)
 
 
 def _chat_completed_step_line(payload: Mapping[str, Any], *, run: _ChatRun | None = None) -> str:
