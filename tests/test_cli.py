@@ -9878,6 +9878,11 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
                     "kind": "model",
                     "status": "finished",
                     "payload": {"model_ref": "deepseek/deepseek-chat-v3"},
+                    "input": [
+                        {"kind": "command", "index": 0},
+                        {"kind": "step", "index": 1},
+                        {"kind": "step", "index": 2},
+                    ],
                     "output": [{"type": "text", "text": "Summary complete."}],
                 },
                 "message": None,
@@ -9938,6 +9943,13 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
         < focus_result.stdout.index("# api")
     )
     assert "# request" not in focus_result.stdout
+
+    history_focus_result = _invoke_app(["inspect", "dev", "run_thunk:3"])
+
+    assert history_focus_result.exit_code == 0
+    assert "· user:       query" in history_focus_result.stdout
+    assert "· assistant:  Ready to read the task. [tool call] filesystem__read_text  path=task.md" in history_focus_result.stdout
+    assert "· tool:       [tool result] filesystem__read_text: task body" in history_focus_result.stdout
 
     tool_focus_result = _invoke_app(["inspect", "dev", "run_thunk:2"])
 

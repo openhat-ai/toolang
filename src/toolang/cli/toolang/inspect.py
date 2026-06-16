@@ -1126,11 +1126,12 @@ def _message_summary(message: Mapping[str, Any]) -> str:
 
 
 def _message_display_summary(message: Mapping[str, Any]) -> str:
-    if text := _parts_text(message.get("parts")):
-        return text
     parts = [_mapping(part) for part in _list(message.get("parts"))]
-    summaries = [_part_display_summary(part) for part in parts]
-    return "; ".join(summary for summary in summaries if summary)
+    summaries = [_part_display_summary(part) for part in parts if part.get("type") != "text"]
+    suffix = "; ".join(summary for summary in summaries if summary)
+    if text := _parts_text(parts):
+        return f"{text} {suffix}".strip()
+    return suffix
 
 
 def _part_display_summary(part: Mapping[str, Any]) -> str:
@@ -1139,17 +1140,17 @@ def _part_display_summary(part: Mapping[str, Any]) -> str:
         name = _text(part.get("tool_name")) or _text(part.get("tool_family")) or "tool"
         tool_input = _tool_input_summary(part.get("input"))
         suffix = f"  {tool_input}" if tool_input else ""
-        return f"{name}{suffix}"
+        return f"[tool call] {name}{suffix}"
     if part_type == "tool_result":
         name = _text(part.get("tool_name")) or _text(part.get("tool_family")) or "tool"
         result = part.get("output")
         if result is None:
             result = part.get("result")
         if error := _text(part.get("error")):
-            return f"{name} error={_plain_value(error)}"
+            return f"[tool error] {name}  error={_plain_value(error)}"
         if result is not None:
-            return f"{name}: {_plain_value(result)}"
-        return name
+            return f"[tool result] {name}: {_plain_value(result)}"
+        return f"[tool result] {name}"
     return part_type or ""
 
 
