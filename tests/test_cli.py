@@ -10171,11 +10171,12 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
     assert "term_thread  idle  runs=3" in result.stdout
     assert "# title\nagent framework implementations" in result.stdout
     assert "# runs" in result.stdout
-    assert "\n# run\nrun_parent  failed  flow:research  1.0s  steps=3" in result.stdout
-    assert "input: query" in result.stdout
-    assert "output: error: unknown tool call: service_use__service_list (step 3 system)" in result.stdout
-    assert "\n# run\nrun_success  succeeded  thunk:summarize  1.0s  steps=2" in result.stdout
-    assert "output: Research summary complete." in result.stdout
+    assert "\n✗ run_parent   flow:research    1.0s  3 steps" in result.stdout
+    assert "    input:   query" in result.stdout
+    assert "    output:  error: unknown tool call: service_use__service_list (step 3 system)" in result.stdout
+    assert "\n✓ run_success  thunk:summarize  1.0s  2 steps" in result.stdout
+    assert "    output:  Research summary complete." in result.stdout
+    assert "\n# run\n" not in result.stdout
     assert "run_child thunk:expand_queries" not in result.stdout
     assert "\n✓ 1" not in result.stdout
     assert "\nsteps:" not in result.stdout

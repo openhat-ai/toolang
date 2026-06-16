@@ -746,24 +746,39 @@ def _render_human_thread(thread: Mapping[str, Any]) -> None:
     if not runs:
         return
     _render_human_section_title("runs")
+    run_id_width = max(len(_text(run.get("id")) or "-") for run in runs)
+    target_width = max(len(_text(run.get("target")) or "-") for run in runs)
+    elapsed_width = max(len(_text(run.get("elapsed")) or "-") for run in runs)
+    step_count_width = max(len(str(_int_or_none(run.get("step_count")) or 0)) for run in runs)
     for run in runs:
-        _render_human_thread_run(run)
+        _render_human_thread_run(
+            run,
+            run_id_width=run_id_width,
+            target_width=target_width,
+            elapsed_width=elapsed_width,
+            step_count_width=step_count_width,
+        )
 
 
-def _render_human_thread_run(run: Mapping[str, Any]) -> None:
-    typer.echo("")
-    _render_human_section_title("run")
-    pieces = [_text(run.get("id")) or "-", _text(run.get("status")) or "-", _text(run.get("target")) or "-"]
-    if elapsed := _text(run.get("elapsed")):
-        pieces.append(elapsed)
+def _render_human_thread_run(
+    run: Mapping[str, Any],
+    *,
+    run_id_width: int,
+    target_width: int,
+    elapsed_width: int,
+    step_count_width: int,
+) -> None:
+    status = _text(run.get("status")) or ""
+    run_id = _text(run.get("id")) or "-"
+    target = _text(run.get("target")) or "-"
+    elapsed = _text(run.get("elapsed")) or "-"
     step_count = _int_or_none(run.get("step_count"))
-    if step_count is not None:
-        pieces.append(f"steps={step_count}")
-    typer.echo("  ".join(pieces))
+    step_count_label = f"{step_count or 0:{step_count_width}} steps"
+    typer.echo(f"{_status_mark(status)} {run_id:<{run_id_width}}  {target:<{target_width}}  {elapsed:<{elapsed_width}}  {step_count_label}")
     if input_summary := _text(run.get("input_summary")):
-        typer.echo(f"input: {input_summary}")
+        typer.echo(f"    {'input:':<7}  {input_summary}")
     if output_summary := _text(run.get("output_summary")):
-        typer.echo(f"output: {output_summary}")
+        typer.echo(f"    {'output:':<7}  {output_summary}")
 
 
 def _render_human_run(run: Mapping[str, Any], steps: Sequence[Mapping[str, Any]], *, depth: int) -> None:
