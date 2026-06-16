@@ -9516,6 +9516,7 @@ def test_cli_chat_step_mutable_block_delta_and_finalize() -> None:
     assert block.finalized
     assert run.mutable_block is None
     assert run.steps == {}
+    assert run.finalized_blocks == [block]
     assert run.completed_steps[1]["output"] == [{"type": "text", "text": "hello"}]
 
 
@@ -9539,6 +9540,7 @@ def test_cli_chat_start_command_mutable_block_finalizes_on_run_begin() -> None:
 
     assert block.finalized
     assert run.mutable_block is None
+    assert run.finalized_blocks == []
 
 
 def test_cli_chat_error_replaces_active_step_with_friendly_system_line() -> None:
