@@ -7868,6 +7868,57 @@ def test_cli_chat_run_steering_records_input_bar(monkeypatch) -> None:
     assert app.active_run.commands[1].finalized
 
 
+def test_cli_chat_top_run_begin_with_root_id_updates_waiting_run(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_runtime_json", lambda _ctx, _path: {})
+    app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+
+    app.handle_runtime_event(
+        {
+            "type": "run_starting",
+            "payload": {
+                "run_id": "run_active",
+                "thread_id": "term_new",
+                "input": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
+            },
+        }
+    )
+    app.handle_runtime_event(
+        {
+            "type": "run_waiting",
+            "payload": {
+                "run_id": "run_active",
+                "thread_id": "term_new",
+                "reason": "queue",
+                "position": 1,
+            },
+        }
+    )
+
+    assert app.active_run is not None
+    assert app.active_run.status == "waiting"
+    waiting_panel = cli._ChatLastRunPanel(lambda: app.active_run)
+    visible_before = cli._chat_visible_text("\n".join(waiting_panel.lines()))
+    assert visible_before.count("waiting run_active for queue") == 1
+
+    app.handle_runtime_event(
+        {
+            "type": "run_begin",
+            "payload": {
+                "run_id": "run_active",
+                "root_run_id": "run_active",
+                "thread_id": "term_new",
+                "input": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
+                "call_kind": "top",
+            },
+        }
+    )
+
+    assert app.active_run.status == "running"
+    assert app.active_run.started is True
+    assert app.active_run.queue_state is None
+    assert app.active_run.commands[0].finalized
+
+
 def test_cli_chat_run_steering_deduplicates_command_by_request_id(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_runtime_json", lambda _ctx, _path: {})
     app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})

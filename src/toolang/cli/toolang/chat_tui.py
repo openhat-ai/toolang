@@ -1218,6 +1218,9 @@ class _ChatBottomApp:
         run_id = _text(payload.get("run_id"))
         if event_type == "run_begin":
             parent_run_id = _text(payload.get("parent_run_id"))
+            call_kind = _text(payload.get("call_kind")) or "top"
+            if parent_run_id is None and call_kind == "top":
+                return False
             root_run_id = _text(payload.get("root_run_id"))
             if parent_run_id == self.active_run.run_id or root_run_id == self.active_run.run_id or parent_run_id in self.active_run.child_runs:
                 self.active_run.start_child_run(payload)
@@ -2138,8 +2141,9 @@ def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, i
     state_line = _chat_run_state_line(run)
     queue_line = _chat_queue_activity_line(run)
     if queue_line:
+        visible_queue_line = [] if _chat_existing_run_start_block(run) is not None else [queue_line]
         return [
-            queue_line,
+            *visible_queue_line,
             *_chat_terminal_event_lines(run, _chat_completed_line_for),
             *_chat_run_result_lines(run),
         ]
