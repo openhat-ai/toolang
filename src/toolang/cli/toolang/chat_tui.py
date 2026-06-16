@@ -2137,13 +2137,13 @@ def _chat_run_result_lines(run: _ChatRun) -> list[str]:
         lines = [_chat_dim(_chat_result_divider_line(run_id, "failed"))]
         error = _chat_terminal_error(run)
         if error:
-            lines.extend(_chat_dim(line) for line in _chat_wrap_plain_lines(error))
+            lines.extend(_chat_dim(f"  {line}") for line in _chat_wrap_plain_lines(error))
         return lines
     return [_chat_dim(_chat_result_divider_line(run_id, status))]
 
 
 def _chat_result_divider_line(run_id: str, status: str) -> str:
-    return f"──── {run_id} {status} ────"
+    return f"  ──── {run_id} {status} ────"
 
 
 def _chat_run_is_stopped(run: _ChatRun) -> bool:
