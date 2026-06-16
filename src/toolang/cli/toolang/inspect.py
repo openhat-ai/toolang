@@ -773,7 +773,7 @@ def _render_human_step_line(step: Mapping[str, Any], *, depth: int, level: int, 
     line = f"{indent}{_status_mark(status)} {(_text(step.get('path')) or '-'):<3} {(_text(step.get('kind')) or 'step'):<6}"
     summary = _text(step.get("summary"))
     if summary and summary != "-":
-        line = f"{line.rstrip()}  {summary}"
+        line = f"{line}  {summary}"
     typer.echo(line)
     if level + 1 >= depth:
         return

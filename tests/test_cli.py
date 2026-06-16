@@ -9689,17 +9689,17 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
     assert "run run_parent" not in result.stdout
     assert "# input\nquery" in result.stdout
     assert "# steps" in result.stdout
-    assert "\n✓ 1   step  stage 1 rank prepare count=3" in result.stdout
+    assert "\n✓ 1   step    stage 1 rank prepare count=3" in result.stdout
     assert "\n✓ 2   run" in result.stdout
     assert "item 1/3 thunk:score run_child" in result.stdout
-    assert "\n✓ 3   step  stage 1 rank done count=2" in result.stdout
-    assert "\n✓ 4   run  stage 2 do -> thunk:<L34> run_inline" in result.stdout
+    assert "\n✓ 3   step    stage 1 rank done count=2" in result.stdout
+    assert "\n✓ 4   run     stage 2 do -> thunk:<L34> run_inline" in result.stdout
     assert "2.1 tool" not in result.stdout
 
     tree_result = _invoke_app(["inspect", "dev", "run_parent", "--tree", "--depth", "2"])
 
     assert tree_result.exit_code == 0
-    assert "\n  ✓ 2.1 tool  filesystem__read_text: path=tasks/qf7y0d8k.md" in tree_result.stdout
+    assert "\n  ✓ 2.1 tool    filesystem__read_text: path=tasks/qf7y0d8k.md" in tree_result.stdout
 
     parent_path_json = _invoke_app(["inspect", "dev", "run_parent:2", "--json"])
 
@@ -9722,7 +9722,7 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
     assert parent_path_result.exit_code == 0
     assert "step 2 run  succeeded" in parent_path_result.stdout
     assert "children" in parent_path_result.stdout
-    assert "\n  ✓ 2.1 tool  filesystem__read_text: path=tasks/qf7y0d8k.md" in parent_path_result.stdout
+    assert "\n  ✓ 2.1 tool    filesystem__read_text: path=tasks/qf7y0d8k.md" in parent_path_result.stdout
     assert "input_refs" not in parent_path_result.stdout
 
     path_result = _invoke_app(["inspect", "dev", "run_parent:2.1"])
@@ -9826,7 +9826,7 @@ def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> Non
     assert "# output" in result.stdout
     assert "error: unknown tool call: service_use__service_list (step 2 system)" in result.stdout
     assert "unknown tool call: service_use__service_list (step 2 system)" in result.stdout
-    assert "\n✓ 1   model  deepseek/deepseek-chat-v3 I should inspect services." in result.stdout
+    assert "\n✓ 1   model   deepseek/deepseek-chat-v3 I should inspect services." in result.stdout
     assert "requested service_use__service_list: visibility=all" in result.stdout
     assert "\n✗ 2   system  unknown tool call: service_use__service_list" in result.stdout
     assert "- run_parent flow:research" not in result.stdout
@@ -9908,10 +9908,10 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
     assert "# input\nquery" in result.stdout
     assert "# output\nSummary complete." in result.stdout
     assert "# steps" in result.stdout
-    assert "\n✓ 1   model  deepseek/deepseek-chat-v3 Ready to read the task." in result.stdout
+    assert "\n✓ 1   model   deepseek/deepseek-chat-v3 Ready to read the task." in result.stdout
     assert "requested filesystem__read_text: path=task.md" in result.stdout
-    assert "\n✓ 2   tool  filesystem__read_text: path=task.md" in result.stdout
-    assert "\n✓ 3   model  deepseek/deepseek-chat-v3 Summary complete." in result.stdout
+    assert "\n✓ 2   tool    filesystem__read_text: path=task.md" in result.stdout
+    assert "\n✓ 3   model   deepseek/deepseek-chat-v3 Summary complete." in result.stdout
 
     focus_result = _invoke_app(["inspect", "dev", "run_thunk:1"])
 
