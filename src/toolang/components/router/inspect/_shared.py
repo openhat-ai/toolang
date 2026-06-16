@@ -25,8 +25,8 @@ from ....execution.detail import (
 from ....execution.events import MessageData, run_message_data
 from ....execution.input import allocate_run_id
 from ....execution.records import (
-    RunCommandMode,
-    RunCommandRecord,
+    CommandMode,
+    CommandRecord,
     ModelCallStepPayload,
     RunRecord,
     RunStatus,
@@ -267,7 +267,9 @@ def create_router() -> APIRouter:
             request_id=payload.request_id if payload else None,
         )
         input_payload = _input_event_payload(run, command_record)
-        context.runner.notify_run_command(run_id=run.run_id, payload=input_payload)
+        if payload is not None and payload.reason is not None:
+            input_payload["reason"] = payload.reason
+        context.runner.notify_run_control(run_id=run.run_id, payload=input_payload)
         run = context.runner.cancel_run(run_id=run_id, error=payload.reason if payload else None)
         return {
             "run": _run_item(
@@ -390,7 +392,7 @@ def create_router() -> APIRouter:
             message=message,
         )
         event_payload = _input_event_payload(run, command_record)
-        context.runner.notify_run_command(run_id=run.run_id, payload=event_payload)
+        context.runner.notify_run_control(run_id=run.run_id, payload=event_payload)
         return {"input": event_payload}
 
     @router.get("/instruct/{prompt_hash}", tags=["activity"], summary="Get Instruct Prompt")
@@ -1127,7 +1129,7 @@ def _live_entry_by_name(context: UptimeContext, *, kind: CapKind, name: str) -> 
     raise HTTPException(status_code=404, detail=f"{kind} not found: {name}")
 
 
-def _run_item(run: RunRecord, *, inputs: Sequence[RunCommandRecord], steps: Sequence) -> dict[str, object]:
+def _run_item(run: RunRecord, *, inputs: Sequence[CommandRecord], steps: Sequence) -> dict[str, object]:
     detail = run_detail_from_record(run, inputs=inputs, steps=steps)
     input_text = message_summary(detail.input.parts) if detail.input is not None else ""
     last_step_message = next(
@@ -1442,16 +1444,22 @@ def _input_message(payload: RunInputMessagePayload) -> Message:
     return message
 
 
-def _input_mode(value: str) -> RunCommandMode:
+def _input_mode(value: str) -> CommandMode:
     if value not in {"immediate", "next_step", "next_call"}:
         raise HTTPException(status_code=422, detail=f"unsupported run input mode: {value}")
-    return cast(RunCommandMode, value)
+    return cast(CommandMode, value)
 
 
-def _input_event_payload(run: RunRecord, input: RunCommandRecord) -> dict[str, object]:
+def _input_event_payload(run: RunRecord, input: CommandRecord) -> dict[str, object]:
+    event_type = {
+        "start": "run_starting",
+        "steer": "run_steering",
+        "stop": "run_stopping",
+    }[input.kind]
     payload: dict[str, object] = {
         "run_id": run.run_id,
         "thread_id": run.thread_id,
+        "type": event_type,
         "ref": {"kind": "command", "index": input.index},
         "kind": input.kind,
         "created_at": input.created_at,

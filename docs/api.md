@@ -448,7 +448,8 @@ For multipart payload details:
 `POST /api/v1/chat` returns one completed user/assistant pair.
 
 `POST /api/v1/chat/stream` returns one SSE stream that follows an AI SDK UI
-message stream subset.
+message stream subset. This endpoint is an adapter for chat UI clients. The
+canonical progress protocol is exposed through the activity event streams.
 
 The CLI command for chat-style input is `toolang <agent> chat [message]`.
 Without `--thread`, the CLI creates a terminal chat thread. With `--thread`, it
@@ -590,6 +591,8 @@ Delete is destructive and is available only through archived routes.
 
 - `GET /api/v1/runs`
 - `GET /api/v1/runs/{run_id}`
+- `GET /api/v1/runs/{run_id}/events`
+- `GET /api/v1/runs/{run_id}/stream`
 - `POST /api/v1/runs/{run_id}/steer`
 - `POST /api/v1/runs/{run_id}/cancel`
 - `POST /api/v1/runs/{run_id}/rewind`
@@ -598,14 +601,42 @@ Delete is destructive and is available only through archived routes.
 - `GET /api/v1/context/{hash}`
 - `GET /api/v1/threads`
 - `GET /api/v1/threads/{thread_id}`
+- `GET /api/v1/threads/{thread_id}/events`
+- `GET /api/v1/threads/{thread_id}/stream`
 - `GET /api/v1/events`
 - `GET /api/v1/events/stream`
+- `GET /api/v1/agent/events`
+- `GET /api/v1/agent/stream`
 
 `/api/v1/runs/{run_id}` is the main trace-detail endpoint.
 
 `steer` and `cancel` operate on running runs. `rewind` and `fork` operate on
 branchable chat threads by taking a run id as the anchor; task and chore threads
 cannot be rewound or forked because their thread ids are derived from job ids.
+
+Run, thread, and agent event streams return SSE records with this envelope:
+
+- `type`
+- `event_type`
+- `payload`
+
+Canonical run progress event names are:
+
+- `run_starting`
+- `run_waiting`
+- `run_steering`
+- `run_stopping`
+- `run_begin`
+- `step_begin`
+- `part_begin`
+- `part_delta`
+- `part_end`
+- `step_end`
+- `run_end`
+
+`run_starting`, `run_steering`, and `run_stopping` mean the runtime accepted the
+corresponding command. `run_begin` means execution has begun. `run_waiting`
+reports a queued or blocked run with a `reason` and optional `position`.
 
 
 ## Hook Endpoints

@@ -48,23 +48,36 @@ transcript or run-history store.
 - `run_id`
 - `thread_id`
 - `origin`
-- `input`
 - `status`
 - `error`
 - `created_at`
 - `started_at`
 - `finished_at`
 
-`input` is the canonical initial `Message` for the run.
-
 Toolang-owned run ids use `run_<id>`, where `<id>` is encoded with the `run`
 id family. Thread ids use `<kind>_<id>`, such as `tsk_3nprht9x`,
 `chr_xy1234ab`, `file_def456gh`, or `web_def456gh`.
 
 File request runs use origin `file` and explicitly invoke the thunk named
-`file`. The run input stores the rendered file message, and run metadata stores
-the `invoke_parts` file attachment data plus the file request id and
+`file`. The start command stores the rendered file message, and run metadata
+stores the `invoke_parts` file attachment data plus the file request id and
 fingerprint.
+
+### CommandRecord
+
+`CommandRecord` stores one accepted client command for a run:
+
+- `run_id`
+- `index`
+- `kind`: `start`, `steer`, or `stop`
+- optional `mode`: `immediate`, `next_step`, or `next_call`
+- optional `request_id`
+- optional `message`
+- `created_at`
+
+`index = 0` is the `start` command that created the run. Later `steer`
+commands belong to the same running run and can be referenced by later steps.
+Cancel operations append a `stop` command and then finish the run as canceled.
 
 ### StepRecord
 
@@ -93,26 +106,14 @@ Current step statuses are:
 - `failed`
 - `canceled`
 
-Run input is stored as an ordered `inputs` stream. Each input has:
-
-- `index`
-- `action`: `start`, `steer`, or `stop`
-- optional `mode`: `immediate`, `next_step`, or `next_call`
-- optional `request_id`
-- optional `message`
-
-`index = 0` is the `start` input that created the run. Later `steer`
-inputs belong to the same running run and can be referenced by later steps.
-Cancel operations append a `stop` input and then finish the run as canceled.
-
 Step input is an ordered mix of:
 
-- input refs: `{ "kind": "input", "index": 0 }`
+- command refs: `{ "kind": "command", "index": 0 }`
 - step refs: `{ "kind": "step", "index": 1, "part": 0 }`
 - inline `Message`
 
-This allows one step to depend on run input, prior step output, and newly added
-input in one ordered list.
+This allows one step to depend on accepted run commands, prior step output, and
+new inline messages in one ordered list.
 
 ### UpdateRecord
 
@@ -145,9 +146,12 @@ Trace events are the internal execution fact stream.
 
 Current trace-event types are:
 
-- `RunStart`
-- `StepStart`
-- `PartStart`
+- `RunStarting`
+- `RunSteering`
+- `RunStopping`
+- `RunBegin`
+- `StepBegin`
+- `PartBegin`
 - `PartDelta`
 - `PartEnd`
 - `StepEnd`
@@ -158,10 +162,29 @@ Trace events drive both:
 - durable persistence
 - caller-facing response projection
 
-Trace events do not duplicate the initial user input as a synthetic step.
-Resource-scoped event streams also publish `run_input` events for client-side
-run inputs. A `run_input` event is emitted before any `step_start` that
-references the same input.
+Trace events do not duplicate run commands as synthetic steps. A run emits
+`RunStarting` when the runtime accepts the start command. It emits `RunBegin`
+when execution actually begins. If a started run waits behind another run, the
+resource-scoped event stream may publish `run_waiting` between those events.
+
+The command trace events map to public event names as:
+
+- `RunStarting` -> `run_starting`
+- `RunSteering` -> `run_steering`
+- `RunStopping` -> `run_stopping`
+
+The execution trace events map to public event names as:
+
+- `RunBegin` -> `run_begin`
+- `StepBegin` -> `step_begin`
+- `PartBegin` -> `part_begin`
+- `PartDelta` -> `part_delta`
+- `PartEnd` -> `part_end`
+- `StepEnd` -> `step_end`
+- `RunEnd` -> `run_end`
+
+The runtime must publish trace events in causal order. A command event must be
+published before any step that can reference that command.
 
 
 ## Canonical Content Model
@@ -206,6 +229,32 @@ Caller-facing streaming responses are derived from trace events.
 - `[DONE]`
 
 This layer is transport output. It is not the durable execution truth.
+
+
+## Live UI Projection
+
+Real-time UIs consume the public event stream as mutable blocks. A mutable block
+has four operations:
+
+- `create`
+- `update`
+- `delta`
+- `finalize`
+
+Each active run owns a sequence of step blocks driven by SSE events:
+
+- `run_starting` creates the start-command block
+- `run_begin` updates that block with the runtime run id and finalizes it
+- `step_begin` creates a step block
+- `part_delta` updates the current step block
+- `step_end` finalizes the current step block with the durable result
+- `run_stopping` marks the active run as canceling
+- `run_end` finalizes the run status
+
+A UI keeps at most one top-level mutable block at a time. Finalized blocks leave
+mutable state and may move to scrollback immediately. Parallel work is rendered
+inside the current mutable block rather than by opening additional top-level
+mutable blocks.
 
 
 ## Inspection Views

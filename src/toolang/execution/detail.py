@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from toolang.base.types.message import message_summary
 from .events import MessageData, run_input_record_message_data, run_input_message_data, step_message_data
-from .records import RunCommandRecord, RunRecord, RunStatus, StepRecord, ThreadPeer, ThreadRecord
+from .records import CommandRecord, RunRecord, RunStatus, StepRecord, ThreadPeer, ThreadRecord
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +74,7 @@ class StepDetail:
 class InputDetail:
     """One run input detail payload."""
 
-    record: RunCommandRecord
+    record: CommandRecord
     message: MessageData | None
 
 
@@ -109,7 +109,7 @@ def thread_info_from_runs(
     thread_id: str,
     runs: Sequence[RunRecord],
     *,
-    commands_by_run: Mapping[str, Sequence[RunCommandRecord]],
+    commands_by_run: Mapping[str, Sequence[CommandRecord]],
     steps_by_run: Mapping[str, Sequence[StepRecord]],
     thread: ThreadRecord | None = None,
 ) -> ThreadInfo:
@@ -209,14 +209,14 @@ def _thread_status(active: RunRecord | None) -> str:
     return "running" if active is not None else "idle"
 
 
-def run_input_from_records(run: RunRecord, *, inputs: Sequence[RunCommandRecord]) -> MessageData | None:
+def run_input_from_records(run: RunRecord, *, inputs: Sequence[CommandRecord]) -> MessageData | None:
     """Build the start input payload from durable input records."""
 
     start = _start_input(inputs)
     return run_input_message_data(run, start)
 
 
-def run_inputs_from_records(run: RunRecord, *, inputs: Sequence[RunCommandRecord]) -> list[InputDetail]:
+def run_inputs_from_records(run: RunRecord, *, inputs: Sequence[CommandRecord]) -> list[InputDetail]:
     """Build run input details from durable input records."""
 
     return [
@@ -247,7 +247,7 @@ def run_detail_from_record(
     run: RunRecord,
     *,
     steps: Sequence[StepRecord],
-    inputs: Sequence[RunCommandRecord] = (),
+    inputs: Sequence[CommandRecord] = (),
 ) -> RunDetail:
     """Build one run detail payload from one durable run record."""
 
@@ -259,7 +259,7 @@ def run_detail_from_record(
     )
 
 
-def _start_input(inputs: Sequence[RunCommandRecord]) -> RunCommandRecord:
+def _start_input(inputs: Sequence[CommandRecord]) -> CommandRecord:
     for input in inputs:
         if input.index == 0 and input.kind == "start":
             return input

@@ -19,14 +19,14 @@ from ..plugin import load_loop as _default_load_loop
 from .assembly import RunInput
 from .binding import RunBinding
 from .context import RunContext
-from .events import PartEnd, PartStart, RunEnd, RunStart, StepEnd, StepStart, TraceEventHandler
+from .events import PartEnd, PartBegin, RunEnd, RunBegin, StepEnd, StepBegin, TraceEventHandler
 from .input import effective_origin_model_selectors
 from .model import resolve_model
 from .records import (
     ChildCallStepPayload,
     FlowOpStepPayload,
     ModelCallStepPayload,
-    RunCommandRef,
+    CommandRef,
     RunStatus,
     StepKind,
     StepStatus,
@@ -183,12 +183,12 @@ class Executor:
         started_at = _utc_now()
         prompt = _render_inline_thunk(thunk, ctx)
         self._on_event(
-            StepStart(
+            StepBegin(
                 run_id=ctx.id,
                 thread_id=ctx.thread,
                 step_index=step_index,
                 kind="model",
-                input=(RunCommandRef(),),
+                input=(CommandRef(),),
                 started_at=started_at,
             )
         )
@@ -205,7 +205,7 @@ class Executor:
         output_text = message_text(result.message.parts) if result.message is not None else ""
         part = TextPart(text=output_text)
         self._on_event(
-            PartStart(
+            PartBegin(
                 run_id=ctx.id,
                 thread_id=ctx.thread,
                 step_index=step_index,
@@ -289,7 +289,7 @@ class Executor:
             parent_step_index=step_index,
             meta=child_meta,
         )
-        self._emit_child_step_start(
+        self._emit_child_step_begin(
             parent,
             step_index=step_index,
             started_at=started_at,
@@ -301,7 +301,7 @@ class Executor:
                 "child_run_ids": (child.id,),
             },
         )
-        self._emit_run_start(child, executable_name=thunk.name, executable_kind="thunk")
+        self._emit_run_begin(child, executable_name=thunk.name, executable_kind="thunk")
         try:
             value = await self.execute_thunk(child, thunk)
         except Exception as exc:
@@ -359,7 +359,7 @@ class Executor:
             parent_step_index=step_index,
             meta=child_meta,
         )
-        self._emit_child_step_start(
+        self._emit_child_step_begin(
             parent,
             step_index=step_index,
             started_at=started_at,
@@ -371,7 +371,7 @@ class Executor:
                 "child_run_ids": (child.id,),
             },
         )
-        self._emit_run_start(child, executable_name=flow.name, executable_kind="flow")
+        self._emit_run_begin(child, executable_name=flow.name, executable_kind="flow")
         try:
             value = await self.execute_flow(child, flow)
         except Exception as exc:
@@ -663,9 +663,9 @@ class Executor:
             frame=frame,
         )
 
-    def _emit_run_start(self, ctx: RunCtx, *, executable_name: str | None, executable_kind: str) -> None:
+    def _emit_run_begin(self, ctx: RunCtx, *, executable_name: str | None, executable_kind: str) -> None:
         self._on_event(
-            RunStart(
+            RunBegin(
                 run_id=ctx.id,
                 origin=ctx.binding.origin,
                 thread_id=ctx.thread,
@@ -693,7 +693,7 @@ class Executor:
             )
         )
 
-    def _emit_child_step_start(
+    def _emit_child_step_begin(
         self,
         parent: RunCtx,
         *,
@@ -702,12 +702,12 @@ class Executor:
         metadata: Mapping[str, object],
     ) -> None:
         self._on_event(
-            StepStart(
+            StepBegin(
                 run_id=parent.id,
                 thread_id=parent.thread,
                 step_index=step_index,
                 kind="run",
-                input=(RunCommandRef(),),
+                input=(CommandRef(),),
                 started_at=started_at,
                 metadata=dict(metadata),
             )
@@ -771,12 +771,12 @@ class Executor:
         metadata = {"op": op, **_stage_meta(ctx, stage, index, total=total, input_value=input_value)}
         kind = _flow_op_step_kind(op=op, stage=stage)
         self._on_event(
-            StepStart(
+            StepBegin(
                 run_id=ctx.id,
                 thread_id=ctx.thread,
                 step_index=step_index,
                 kind=kind,
-                input=(RunCommandRef(),),
+                input=(CommandRef(),),
                 started_at=now,
                 metadata=metadata,
             )

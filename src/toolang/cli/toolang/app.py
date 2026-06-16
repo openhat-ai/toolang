@@ -165,7 +165,6 @@ Style = _chat_tui.Style
 _CHAT_DIM = _chat_tui._CHAT_DIM
 _CHAT_INPUT_BG = _chat_tui._CHAT_INPUT_BG
 _CHAT_INPUT_FG = _chat_tui._CHAT_INPUT_FG
-_CHAT_MAX_ACTIVE_RUN_ACTIVITY_ROWS = _chat_tui._CHAT_MAX_ACTIVE_RUN_ACTIVITY_ROWS
 _CHAT_STEER_INPUT_BG = _chat_tui._CHAT_STEER_INPUT_BG
 _CHAT_STEER_INPUT_FG = _chat_tui._CHAT_STEER_INPUT_FG
 _ChatLastRunPanel = _chat_tui._ChatLastRunPanel
@@ -1652,8 +1651,8 @@ class _ThreadEventRenderer:
         payload = event.get("payload")
         if not isinstance(payload, dict):
             return
-        if event_type == "run_command":
-            self._render_run_command(payload)
+        if event_type == "run_starting":
+            self._render_run_starting(payload)
         elif event_type == "part_delta":
             self._render_part_delta(payload)
         elif event_type == "step_end":
@@ -1664,11 +1663,9 @@ class _ThreadEventRenderer:
                 run_id=str(payload.get("run_id") or "") or None,
             )
 
-    def _render_run_command(self, payload: dict[str, Any]) -> None:
-        if payload.get("kind") != "start":
-            return
+    def _render_run_starting(self, payload: dict[str, Any]) -> None:
         self._remember_local_run(payload)
-        text = _event_message_text(payload.get("message"))
+        text = _event_message_text(payload.get("input"))
         if not text:
             return
         self._close_assistant(redraw_prompt=False, run_id=str(payload.get("run_id") or "") or None)

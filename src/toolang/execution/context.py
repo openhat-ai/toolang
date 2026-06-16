@@ -41,16 +41,16 @@ from toolang.base.types.tool import ToolContext
 from .events import (
     PartDelta,
     PartEnd,
-    PartStart,
+    PartBegin,
     StepEnd,
-    StepStart,
+    StepBegin,
     TraceEvent,
     TraceEventHandler,
 )
 from .records import (
-    RunCommandRecord,
+    CommandRecord,
     ModelCallStepPayload,
-    RunCommandRef,
+    CommandRef,
     StepInputItem,
     StepOutputRef,
     ToolCallStepPayload,
@@ -192,7 +192,7 @@ class RunContext:
         adapter: ModelAdapter,
         *,
         on_event: TraceEventHandler | None = None,
-        consume_inputs: Callable[[str], Sequence[RunCommandRecord]] | None = None,
+        consume_inputs: Callable[[str], Sequence[CommandRecord]] | None = None,
         stream: bool = False,
     ) -> None:
         self._input = run_input
@@ -246,7 +246,7 @@ class RunContext:
         step_started = time.perf_counter()
         started_at = _utc_now()
         consumed_inputs = self._consume_pending_inputs()
-        step_input = (*self._model_step_input(), *(RunCommandRef(index=item.index) for item in consumed_inputs))
+        step_input = (*self._model_step_input(), *(CommandRef(index=item.index) for item in consumed_inputs))
         self._start_model_step(step_index)
         _RUN_LOGGER.info(
             "Step started thread=%s run=%s step=%s kind=model",
@@ -255,7 +255,7 @@ class RunContext:
             step_index,
         )
         self._emit(
-            StepStart(
+            StepBegin(
                 run_id=self._input.run.run_id,
                 thread_id=self._input.run.thread_id,
                 step_index=step_index,
@@ -330,7 +330,7 @@ class RunContext:
         elif self._last_step_index is not None:
             step_input = (StepOutputRef(step_index=self._last_step_index),)
         else:
-            step_input = (RunCommandRef(),)
+            step_input = (CommandRef(),)
         _RUN_LOGGER.info(
             "Step started thread=%s run=%s step=%s kind=tool tool=%s",
             self._input.run.thread_id,
@@ -346,7 +346,7 @@ class RunContext:
             plugin_name=plugin_name,
         )
         self._emit(
-            StepStart(
+            StepBegin(
                 run_id=self._input.run.run_id,
                 thread_id=self._input.run.thread_id,
                 step_index=step_index,
@@ -369,7 +369,7 @@ class RunContext:
             output=dict(record.output),
         )
         self._emit(
-            PartStart(
+            PartBegin(
                 run_id=self._input.run.run_id,
                 thread_id=self._input.run.thread_id,
                 step_index=step_index,
@@ -457,7 +457,7 @@ class RunContext:
         )
         output_parts = self._model_output_parts(current=current, tool_calls=parsed_calls)
         for part_index, part in output_parts:
-            self._emit_part_start(step_index=step_index, part_index=part_index, kind=part.type)
+            self._emit_part_begin(step_index=step_index, part_index=part_index, kind=part.type)
             self._emit(
                 PartEnd(
                     run_id=self._input.run.run_id,
@@ -518,7 +518,7 @@ class RunContext:
             return
         if isinstance(event, ModelPartStartEvent):
             if event.kind == "text":
-                self._emit_part_start(
+                self._emit_part_begin(
                     step_index=step_index,
                     part_index=self._ensure_text_part_index(),
                     kind="text",
@@ -527,7 +527,7 @@ class RunContext:
         if isinstance(event, ModelPartDeltaEvent):
             if isinstance(event.delta, TextDelta):
                 part_index = self._ensure_text_part_index()
-                self._emit_part_start(step_index=step_index, part_index=part_index, kind="text")
+                self._emit_part_begin(step_index=step_index, part_index=part_index, kind="text")
                 if event.delta.text:
                     self._emit(
                         PartDelta(
@@ -541,7 +541,7 @@ class RunContext:
                 return
             if isinstance(event.delta, ToolCallDelta):
                 part_index = self._ensure_tool_part_index(event.delta.tool_call_id)
-                self._emit_part_start(
+                self._emit_part_begin(
                     step_index=step_index,
                     part_index=part_index,
                     kind="tool_call",
@@ -605,10 +605,10 @@ class RunContext:
 
     def _model_step_input(self) -> tuple[StepInputItem, ...]:
         if self._last_step_index is None:
-            return (RunCommandRef(),)
+            return (CommandRef(),)
         return (StepOutputRef(step_index=self._last_step_index),)
 
-    def _consume_pending_inputs(self) -> tuple[RunCommandRecord, ...]:
+    def _consume_pending_inputs(self) -> tuple[CommandRecord, ...]:
         inputs = self._pending_inputs()
         for input in inputs:
             if input.kind != "steer" or input.message is None:
@@ -616,7 +616,7 @@ class RunContext:
             self._messages.append(input.message)
         return inputs
 
-    def _pending_inputs(self) -> tuple[RunCommandRecord, ...]:
+    def _pending_inputs(self) -> tuple[CommandRecord, ...]:
         if self._consume_inputs is None:
             return ()
         return tuple(self._consume_inputs(self._input.run.run_id))
@@ -642,12 +642,12 @@ class RunContext:
             self._tool_part_indexes[tool_call_id] = part_index
         return part_index
 
-    def _emit_part_start(self, *, step_index: int, part_index: int, kind: PartType) -> None:
+    def _emit_part_begin(self, *, step_index: int, part_index: int, kind: PartType) -> None:
         if part_index in self._started_part_indexes:
             return
         self._started_part_indexes.add(part_index)
         self._emit(
-            PartStart(
+            PartBegin(
                 run_id=self._input.run.run_id,
                 thread_id=self._input.run.thread_id,
                 step_index=step_index,

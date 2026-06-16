@@ -47,11 +47,13 @@ from toolang.base.types.message import (
 from toolang.execution.events import (
     PartDelta,
     PartEnd,
-    PartStart,
+    PartBegin,
     RunEnd,
-    RunStart,
+    RunBegin,
+    RunStarting,
+    RunStopping,
     StepEnd,
-    StepStart,
+    StepBegin,
 )
 from toolang.execution.context import (
     RunSnapshot,
@@ -63,7 +65,7 @@ from toolang.execution.context import (
 )
 from toolang.execution.records import (
     ModelCallStepPayload,
-    RunCommandRef,
+    CommandRef,
     RuntimeStepPayload,
     StepOutputRef,
     ToolCallStepPayload,
@@ -160,10 +162,10 @@ def test_runner_enqueue_emits_queue_event_to_response() -> None:
     assert runner.enqueue(request, response=response) == 1
     assert len(response.queue_events) == 1
     event_type, payload = response.queue_events[0]
-    assert event_type == "run_queued"
+    assert event_type == "run_waiting"
     assert isinstance(payload.pop("created_at"), str)
     assert payload == {
-        "type": "run_queued",
+        "type": "run_waiting",
         "run_id": "run_queuedtest",
         "thread_id": "term_queue",
         "origin": "chat",
@@ -171,7 +173,7 @@ def test_runner_enqueue_emits_queue_event_to_response() -> None:
         "request_id": "req_queue",
         "executable_kind": "flow",
         "executable_name": "research",
-        "waiting_for": "queue",
+        "reason": "queue",
         "position": 1,
     }
 
@@ -220,23 +222,26 @@ def test_runner_control_command_notifies_response_and_events(tmp_path: Path) -> 
         response=response,
     )
 
-    context.runner.notify_run_command(run_id=run.run_id, payload=payload)
+    context.runner.notify_run_control(run_id=run.run_id, payload=payload)
     canceled = context.runner.cancel_run(run_id=run.run_id)
 
     assert canceled.status == "canceled"
-    assert [event_type for event_type, _payload in response.queue_events] == ["run_queued", "run_command"]
-    assert response.queue_events[1] == ("run_command", payload)
-    assert len(response.events) == 1
-    assert isinstance(response.events[0], RunEnd)
-    assert response.events[0].status == "canceled"
+    assert [event_type for event_type, _payload in response.queue_events] == ["run_waiting"]
+    assert len(response.events) == 3
+    assert isinstance(response.events[0], RunStarting)
+    assert isinstance(response.events[1], RunStopping)
+    assert isinstance(response.events[2], RunEnd)
+    assert response.events[2].status == "canceled"
     assert [item.type for item in context.store.list_events(domain="run", domain_id=run.run_id)] == [
-        "run_queued",
-        "run_command",
+        "run_starting",
+        "run_waiting",
+        "run_stopping",
         "run_end",
     ]
     assert [item.type for item in context.store.list_events(domain="thread", domain_id=run.thread_id)] == [
-        "run_queued",
-        "run_command",
+        "run_starting",
+        "run_waiting",
+        "run_stopping",
         "run_end",
     ]
 
@@ -309,7 +314,7 @@ def test_sse_response_sink_streams_canceled_run_end() -> None:
     async def run_test() -> None:
         response = SseResponseSink(thread_id="thread-1")
         response.on_event(
-            RunStart(
+            RunBegin(
                 run_id="run-1",
                 origin="chat",
                 thread_id="thread-1",
@@ -377,10 +382,12 @@ def test_runner_submission_exception_fails_response_without_stopping_drain() -> 
 
         assert [outcome.status for outcome in outcomes] == ["failed", "failed"]
         assert [outcome.run_id for outcome in outcomes] == ["run_fail_1", "run_fail_2"]
-        assert len(first_response.events) == 1
-        assert len(second_response.events) == 1
-        assert getattr(first_response.events[0], "status") == "failed"
-        assert getattr(second_response.events[0], "status") == "failed"
+        assert len(first_response.events) == 2
+        assert len(second_response.events) == 2
+        assert isinstance(first_response.events[0], RunStarting)
+        assert isinstance(second_response.events[0], RunStarting)
+        assert getattr(first_response.events[1], "status") == "failed"
+        assert getattr(second_response.events[1], "status") == "failed"
 
     asyncio.run(run_test())
 
@@ -826,7 +833,7 @@ def test_run_events_api_returns_resource_scoped_events(tmp_path: Path) -> None:
     context.events.publish(
         domain="run",
         domain_id="run-1",
-        type="run_start",
+        type="run_begin",
         payload={"run_id": "run-1", "thread_id": "thread-1"},
     )
     context.events.publish(
@@ -863,7 +870,7 @@ def test_agent_events_include_thread_updates_for_run_lifecycle(tmp_path: Path) -
     )
 
     context.events.publish_trace(
-        RunStart(
+        RunBegin(
             run_id="run-1",
             origin="chat",
             thread_id="thread-1",
@@ -892,7 +899,7 @@ def test_agent_events_include_thread_updates_for_run_lifecycle(tmp_path: Path) -
     assert response["items"][1]["payload"]["status"] == "finished"
 
 
-def test_run_start_trace_emits_run_input_after_run_start(tmp_path: Path) -> None:
+def test_run_starting_trace_precedes_run_begin(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
@@ -902,7 +909,17 @@ def test_run_start_trace_emits_run_input_after_run_start(tmp_path: Path) -> None
     )
 
     context.events.publish_trace(
-        RunStart(
+        RunStarting(
+            run_id="run-1",
+            origin="chat",
+            thread_id="thread-1",
+            input=Message.user("hello"),
+            request_id="req-start",
+            accepted_at="2026-01-01T00:00:00Z",
+        )
+    )
+    context.events.publish_trace(
+        RunBegin(
             run_id="run-1",
             origin="chat",
             thread_id="thread-1",
@@ -915,21 +932,20 @@ def test_run_start_trace_emits_run_input_after_run_start(tmp_path: Path) -> None
 
     events = context.store.list_events(domain="run", domain_id="run-1")
 
-    assert [item.type for item in events] == ["run_start", "run_command"]
+    assert [item.type for item in events] == ["run_starting", "run_begin"]
     assert [item.seq for item in events] == [1, 2]
-    assert events[1].payload == {
+    assert events[0].payload == {
         "run_id": "run-1",
+        "origin": "chat",
         "thread_id": "thread-1",
-        "ref": {"kind": "command", "index": 0},
-        "kind": "start",
-        "message": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
-        "created_at": "2026-01-01T00:00:00Z",
-        "type": "run_command",
+        "input": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
+        "accepted_at": "2026-01-01T00:00:00Z",
         "request_id": "req-start",
+        "type": "run_starting",
     }
 
 
-def test_steer_run_appends_run_input_event(tmp_path: Path) -> None:
+def test_steer_run_appends_run_steering_event(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
@@ -964,8 +980,10 @@ def test_steer_run_appends_run_input_event(tmp_path: Path) -> None:
     assert response["input"]["ref"] == {"kind": "command", "index": 1}
     assert response["input"]["kind"] == "steer"
     assert response["input"]["request_id"] == "req-steer"
-    assert [item["type"] for item in events] == ["run_command"]
-    assert events[0]["payload"]["ref"] == {"kind": "command", "index": 1}
+    assert [item["type"] for item in events] == ["run_steering"]
+    assert events[0]["payload"]["index"] == 1
+    assert events[0]["payload"]["mode"] == "next_step"
+    assert events[0]["payload"]["request_id"] == "req-steer"
     assert events[0]["payload"]["message"]["parts"] == [
         {"type": "text", "text": "focus on events"}
     ]
@@ -1002,12 +1020,12 @@ def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
             },
         )
         context.events.publish_trace(
-            StepStart(
+            StepBegin(
                 run_id="run-1",
                 thread_id="thread-1",
                 step_index=2,
                 kind="model",
-                input=(StepOutputRef(step_index=1), RunCommandRef(index=1)),
+                input=(StepOutputRef(step_index=1), CommandRef(index=1)),
                 started_at="2026-01-01T00:00:01Z",
                 instruct="call prompt",
                 context="call context",
@@ -1015,9 +1033,9 @@ def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
         )
         events = client.get("/api/v1/threads/thread-1/events").json()["items"]
 
-    assert [item["type"] for item in events] == ["run_command", "step_start"]
+    assert [item["type"] for item in events] == ["run_steering", "step_begin"]
     assert [item["cursor"] for item in events] == [1, 2]
-    assert events[0]["payload"]["ref"] == {"kind": "command", "index": 1}
+    assert events[0]["payload"]["index"] == 1
     assert events[1]["payload"]["input"] == [
         {"kind": "step", "index": 1},
         {"kind": "command", "index": 1},
@@ -1061,7 +1079,7 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
         step_index=2,
         kind="model",
         status="finished",
-        input=(StepOutputRef(step_index=1), RunCommandRef(index=1)),
+        input=(StepOutputRef(step_index=1), CommandRef(index=1)),
         output=(TextPart(text="ok"),),
         payload=ModelCallStepPayload(
             model_ref="gpt-5",
@@ -1138,7 +1156,7 @@ def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
         context,
         persist,
         None,
-        RunStart(
+        RunBegin(
             run_id="run-1",
             origin="chat",
             thread_id="thread-1",
@@ -1180,10 +1198,7 @@ def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
     )
 
     assert context.store.list_steps(run_id="run-1") == []
-    assert [item.type for item in context.store.list_events(domain="thread", domain_id="thread-1")] == [
-        "run_start",
-        "run_command",
-    ]
+    assert [item.type for item in context.store.list_events(domain="thread", domain_id="thread-1")] == ["run_begin"]
 
 
 def test_runtime_start_restores_ignored_termination_signals(monkeypatch) -> None:
@@ -1801,7 +1816,7 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
         step_index=1,
         kind="model",
         status="finished",
-        input=(RunCommandRef(),),
+        input=(CommandRef(),),
         output=(
             ToolCallPart(
                 tool_call_id="call-1",
@@ -1841,7 +1856,7 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
         step_index=3,
         kind="model",
         status="finished",
-        input=(RunCommandRef(), StepOutputRef(step_index=2)),
+        input=(CommandRef(), StepOutputRef(step_index=2)),
         output=(TextPart(text="done"),),
         payload=ModelCallStepPayload(
             model_ref="gpt-5",
@@ -1973,7 +1988,7 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
         step_index=1,
         kind="tool",
         status="finished",
-        input=(RunCommandRef(),),
+        input=(CommandRef(),),
         output=(
             ToolResultPart(
                 tool_call_id="call-1",
@@ -2210,7 +2225,7 @@ flow research(in: Text):
 
     assert stream_text.count('"type":"start"') == 1
     assert stream_text.count('"type":"message-metadata"') == 1
-    assert '"type":"step_start"' in stream_text
+    assert '"type":"step_begin"' in stream_text
     assert '"type":"step_end"' in stream_text
     assert '"kind":"step"' in stream_text
     assert '"kind":"run"' in stream_text
@@ -2509,7 +2524,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
             )
         )
         on_event(
-            PartStart(
+            PartBegin(
                 run_id="run-1",
                 thread_id="script_tg_123",
                 step_index=1,
@@ -2518,7 +2533,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
             )
         )
         on_event(
-            PartStart(
+            PartBegin(
                 run_id="run-1",
                 thread_id="script_tg_123",
                 step_index=1,
@@ -2688,7 +2703,7 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
             )
         )
         on_event(
-            PartStart(
+            PartBegin(
                 run_id="run-1",
                 thread_id="script_tg_123",
                 step_index=1,
@@ -6405,7 +6420,7 @@ def test_script_run_can_simulate_history_with_explicit_message_blocks(
         step_index=1,
         kind="model",
         status="finished",
-        input=(RunCommandRef(),),
+        input=(CommandRef(),),
         output=(TextPart(text="stored answer should not appear"),),
         payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
         started_at="2026-01-01T00:00:01Z",
@@ -6998,7 +7013,7 @@ def test_execution_store_records_runs_steps_and_messages(tmp_path: Path) -> None
             step_index=1,
             kind="model",
             status="finished",
-            input=(RunCommandRef(),),
+            input=(CommandRef(),),
             output=(TextPart(text="assistant:hello"),),
             payload=ModelCallStepPayload(
                 model_ref="gpt-5",
@@ -7075,7 +7090,7 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
             step_index=1,
             kind="model",
             status="finished",
-            input=(RunCommandRef(),),
+            input=(CommandRef(),),
             output=(
                 ToolCallPart(
                     tool_call_id="tool-1",
@@ -7176,7 +7191,7 @@ def test_execution_store_does_not_return_orphan_tool_history_when_limited(tmp_pa
             step_index=1,
             kind="model",
             status="finished",
-            input=(RunCommandRef(),),
+            input=(CommandRef(),),
             output=(
                 ToolCallPart(
                     tool_call_id="tool-1",
@@ -7243,7 +7258,7 @@ def test_execution_store_replays_model_reasoning_content(tmp_path: Path) -> None
             step_index=1,
             kind="model",
             status="finished",
-            input=(RunCommandRef(),),
+            input=(CommandRef(),),
             output=(TextPart(text="Listing files now."),),
             payload=ModelCallStepPayload(
                 model_ref="deepseek/deepseek-v4-flash",
@@ -7286,7 +7301,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         step_index=1,
         kind="model",
         status="finished",
-        input=(RunCommandRef(),),
+        input=(CommandRef(),),
         output=(
             ToolCallPart(
                 tool_call_id="tool-list-call",
@@ -7464,7 +7479,7 @@ def test_run_input_recall_none_disables_thread_history_and_tool_context(tmp_path
         step_index=1,
         kind="model",
         status="finished",
-        input=(RunCommandRef(),),
+        input=(CommandRef(),),
         output=(TextPart(text="old answer"),),
         payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
         started_at="2026-01-01T00:00:01Z",
@@ -7722,8 +7737,8 @@ def _started(
     input=(),
     instructions: str | None = None,
     context: str | None = None,
-) -> StepStart:
-    return StepStart(
+) -> StepBegin:
+    return StepBegin(
         run_id=run_id,
         thread_id=thread_id,
         step_index=step_index,
@@ -7818,7 +7833,7 @@ def _default_step_input(
         return ()
     if kind == "model":
         if step_index == 1:
-            return (RunCommandRef(),)
+            return (CommandRef(),)
         return (StepOutputRef(step_index=step_index - 1),)
     return (StepOutputRef(step_index=max(step_index - 1, 1), part_index=0),)
 
@@ -7959,7 +7974,7 @@ def _patched_runner_execution_with_tools(*, output_text: str):
                 )
             )
             on_event(
-                PartStart(
+                PartBegin(
                     run_id=current["run_id"],
                     thread_id=current["thread_id"],
                     step_index=1,
@@ -8060,7 +8075,7 @@ def _patched_runner_execution_with_tools(*, output_text: str):
                 )
             )
             on_event(
-                PartStart(
+                PartBegin(
                     run_id=current["run_id"],
                     thread_id=current["thread_id"],
                     step_index=3,
@@ -8148,7 +8163,7 @@ def _patched_runner_streaming_text(release: threading.Event):
                 )
             )
             on_event(
-                PartStart(
+                PartBegin(
                     run_id=current["run_id"],
                     thread_id=current["thread_id"],
                     step_index=1,

@@ -16,7 +16,8 @@ from toolang.base.types.message import (
     parts_to_data,
 )
 from .records import (
-    RunCommandRecord,
+    CommandMode,
+    CommandRecord,
     RunRecord,
     RunStatus,
     StepInputItem,
@@ -78,8 +79,49 @@ class MessageData:
 
 
 @dataclass(frozen=True, slots=True)
-class RunStart:
-    """One run-start trace event."""
+class RunStarting:
+    """One accepted start-command trace event."""
+
+    run_id: str
+    origin: str
+    thread_id: str | None
+    input: Message
+    accepted_at: str
+    request_id: str | None = None
+    type: str = "run-starting"
+
+
+@dataclass(frozen=True, slots=True)
+class RunSteering:
+    """One accepted steer-command trace event."""
+
+    run_id: str
+    thread_id: str
+    index: int
+    message: Message
+    accepted_at: str
+    mode: CommandMode | None = None
+    request_id: str | None = None
+    type: str = "run-steering"
+
+
+@dataclass(frozen=True, slots=True)
+class RunStopping:
+    """One accepted stop-command trace event."""
+
+    run_id: str
+    thread_id: str
+    index: int
+    accepted_at: str
+    mode: CommandMode | None = None
+    request_id: str | None = None
+    reason: str | None = None
+    type: str = "run-stopping"
+
+
+@dataclass(frozen=True, slots=True)
+class RunBegin:
+    """One run-begin trace event."""
 
     run_id: str
     origin: str
@@ -95,12 +137,12 @@ class RunStart:
     executable_name: str | None = None
     call_kind: str = "top"
     metadata: dict[str, Any] = field(default_factory=dict)
-    type: str = "run-start"
+    type: str = "run-begin"
 
 
 @dataclass(frozen=True, slots=True)
-class StepStart:
-    """One step-start trace event."""
+class StepBegin:
+    """One step-begin trace event."""
 
     run_id: str
     thread_id: str
@@ -111,19 +153,19 @@ class StepStart:
     instruct: str | None = None
     context: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    type: str = "step-start"
+    type: str = "step-begin"
 
 
 @dataclass(frozen=True, slots=True)
-class PartStart:
-    """One part-start trace event."""
+class PartBegin:
+    """One part-begin trace event."""
 
     run_id: str
     thread_id: str
     step_index: int
     part_index: int
     kind: PartType
-    type: str = "part-start"
+    type: str = "part-begin"
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,11 +221,11 @@ class RunEnd:
     type: str = "run-end"
 
 
-TraceEvent = RunStart | StepStart | PartStart | PartDelta | PartEnd | StepEnd | RunEnd
+TraceEvent = RunStarting | RunSteering | RunStopping | RunBegin | StepBegin | PartBegin | PartDelta | PartEnd | StepEnd | RunEnd
 TraceEventHandler = Callable[[TraceEvent], None]
 
 
-def run_input_message_data(run: RunRecord, input: RunCommandRecord) -> MessageData:
+def run_input_message_data(run: RunRecord, input: CommandRecord) -> MessageData:
     """Return one durable run input message."""
 
     if input.message is None:
@@ -207,7 +249,7 @@ def run_input_message_data(run: RunRecord, input: RunCommandRecord) -> MessageDa
     )
 
 
-def run_input_record_message_data(run: RunRecord, input: RunCommandRecord) -> MessageData | None:
+def run_input_record_message_data(run: RunRecord, input: CommandRecord) -> MessageData | None:
     """Return the caller-facing message for one run input."""
 
     if input.message is None:
@@ -241,7 +283,7 @@ def run_output_message_data(*, run: RunRecord, steps: Sequence[StepRecord]) -> M
 def run_message_data(
     run: RunRecord,
     *,
-    inputs: Sequence[RunCommandRecord],
+    inputs: Sequence[CommandRecord],
     steps: Sequence[StepRecord],
 ) -> list[MessageData]:
     """Return the derived run transcript view."""

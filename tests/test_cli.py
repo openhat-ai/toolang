@@ -31,7 +31,7 @@ from toolang.cli.progress import CliProgress
 from toolang.components.trigger import watch
 from toolang.config.log import DEFAULT_AGENT_LOG_SPEC
 from toolang.config.log_spec import PY_LOG_ENV_VAR
-from toolang.execution.events import RunEnd, RunStart, StepEnd, StepStart
+from toolang.execution.events import RunEnd, RunBegin, StepEnd, StepBegin
 from toolang.execution.records import ChildCallStepPayload, FlowOpStepPayload
 from toolang.common.progress import ProgressEvent
 from toolang import work
@@ -2251,7 +2251,7 @@ thunk:
     ):
         del toolang_root, agent_name, thunk_name, input_text, models, metadata, environ, log_spec, prepared_state
         response.on_event(
-            RunStart(
+            RunBegin(
                 run_id="run_test",
                 origin="script",
                 thread_id="script_test",
@@ -7491,7 +7491,7 @@ def test_cli_chat_run_lines_render_events_without_status_or_truncating_assistant
     assert "model call completed" not in rendered
 
 
-def test_cli_chat_active_run_panel_tails_activity_without_truncating_scrollback() -> None:
+def test_cli_chat_active_run_panel_shows_all_activity_lines() -> None:
     run = cli._ChatRun(run_id="run_busy", message="run a flow", status="running")
     for index in range(1, 31):
         run.completed_steps[index] = {
@@ -7505,9 +7505,9 @@ def test_cli_chat_active_run_panel_tails_activity_without_truncating_scrollback(
     visible_activity = cli._chat_visible_text("\n".join(activity))
     scrollback = cli._chat_visible_text("\n".join(cli._chat_run_lines(run, include_steps=True)))
 
-    assert len(activity) == cli._CHAT_MAX_ACTIVE_RUN_ACTIVITY_ROWS + 2
-    assert "earlier lines" in visible_activity
-    assert "progress line 01" not in visible_activity
+    assert len(activity) == 32
+    assert "earlier lines" not in visible_activity
+    assert "progress line 01" in visible_activity
     assert "progress line 30" in visible_activity
     assert "progress line 01" in scrollback
     assert "progress line 30" in scrollback
@@ -7782,18 +7782,17 @@ def test_cli_chat_completed_step_keeps_timeline_for_steer_ordering() -> None:
     assert "pending for next step" not in visible
 
 
-def test_cli_chat_run_command_steer_records_input_bar(monkeypatch) -> None:
+def test_cli_chat_run_steering_records_input_bar(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_runtime_json", lambda _ctx, _path: {})
     app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
     app.active_run = cli._ChatRun(run_id="run_steer", message="working", status="running")
 
     app.handle_runtime_event(
         {
-            "type": "run_command",
+            "type": "run_steering",
             "payload": {
                 "run_id": "run_steer",
-                "kind": "steer",
-                "ref": {"kind": "command", "index": 1},
+                "index": 1,
                 "message": {"role": "user", "parts": [{"type": "text", "text": "abc"}]},
             },
         }
@@ -7834,7 +7833,7 @@ def test_cli_chat_run_lines_render_stop_command_by_event_order() -> None:
     assert "cancel requested" not in visible
 
 
-def test_cli_chat_run_command_stop_records_timeline_and_canceling(monkeypatch) -> None:
+def test_cli_chat_run_stopping_records_timeline_and_canceling(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_runtime_json", lambda _ctx, _path: {})
     app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
     app.active_run = cli._ChatRun(run_id="run_cancel", message="working", status="running")
@@ -7842,12 +7841,11 @@ def test_cli_chat_run_command_stop_records_timeline_and_canceling(monkeypatch) -
 
     app.handle_runtime_event(
         {
-            "type": "run_command",
+            "type": "run_stopping",
             "payload": {
                 "run_id": "run_cancel",
-                "kind": "stop",
                 "mode": "immediate",
-                "ref": {"kind": "command", "index": 1},
+                "index": 1,
             },
         }
     )
@@ -8078,12 +8076,12 @@ def test_cli_chat_flow_run_lines_render_stage_summary() -> None:
 
 
 def test_cli_chat_run_lines_render_queue_state() -> None:
-    run = cli._ChatRun(run_id="run_queue", message="agent framework impl", status="queued")
+    run = cli._ChatRun(run_id="run_queue", message="agent framework impl", status="waiting")
     run.update_queue(
-        "run_queued",
+        "run_waiting",
         {
             "run_id": "run_queue",
-            "waiting_for": "queue",
+            "reason": "queue",
             "position": 2,
         },
     )
@@ -8091,13 +8089,13 @@ def test_cli_chat_run_lines_render_queue_state() -> None:
     rendered = "\n".join(cli._chat_run_lines(run, include_steps=True))
 
     visible = cli._chat_visible_text(rendered)
-    assert "queued run_queue · position 2" in visible
+    assert "waiting run_queue for queue · position 2" in visible
 
     run.update_queue(
         "run_waiting",
         {
             "run_id": "run_queue",
-            "waiting_for": "thread",
+            "reason": "thread",
         },
     )
 
@@ -8695,7 +8693,7 @@ def test_cli_chat_flow_submit_renders_flow_stream_steps(monkeypatch) -> None:
         )
         event_handler(
             {
-                "type": "step_start",
+                "type": "step_begin",
                 "payload": {
                     "run_id": "run_flow",
                     "thread_id": "term_new",
@@ -8809,12 +8807,11 @@ def test_cli_chat_start_run_consumes_own_stream_events(monkeypatch) -> None:
         request_id = cast(str, payload["request_id"])
         event_handler(
             {
-                "type": "run_command",
+                "type": "run_starting",
                 "payload": {
-                    "kind": "start",
                     "run_id": "run_local",
                     "request_id": request_id,
-                    "message": payload["message"],
+                    "input": payload["message"],
                 },
             }
         )
@@ -9034,7 +9031,7 @@ def test_cli_chat_send_cancel_request_uses_empty_payload(monkeypatch) -> None:
     assert calls == [("/api/v1/runs/run_cancel/cancel", {})]
 
 
-def test_cli_chat_cancel_waits_until_run_starts(monkeypatch) -> None:
+def test_cli_chat_cancel_waits_until_run_begins(monkeypatch) -> None:
     sent: list[str] = []
 
     app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
@@ -9162,13 +9159,13 @@ def test_cli_chat_stream_error_after_queue_clears_active_run(monkeypatch) -> Non
         assert event_handler is not None
         event_handler(
             {
-                "type": "run_queued",
-                "event_type": "run_queued",
+                "type": "run_waiting",
+                "event_type": "run_waiting",
                 "payload": {
                     "run_id": "run_missing",
                     "thread_id": "term_new",
                     "position": 1,
-                    "waiting_for": "queue",
+                    "reason": "queue",
                 },
             }
         )
@@ -9187,7 +9184,7 @@ def test_cli_chat_stream_error_after_queue_clears_active_run(monkeypatch) -> Non
 
     assert app.active_run is None
     visible = cli._chat_visible_text("\n".join(line for lines in printed for line in lines))
-    assert "queued run_missing" in visible
+    assert "waiting run_missing for queue · position 1" in visible
     assert "  ──────── run_missing failed ────────" in visible
     assert "  No matched models." in visible
     assert "! No matched models." not in visible
@@ -9267,7 +9264,7 @@ def test_cli_chat_thread_listener_ignores_child_run_trace_events() -> None:
 
     app.handle_runtime_event(
         {
-            "type": "run_start",
+            "type": "run_begin",
             "payload": {
                 "run_id": "run_child",
                 "thread_id": "term_existing",
@@ -9334,7 +9331,7 @@ def test_cli_chat_own_stream_projects_child_run_trace_events() -> None:
 
     app.handle_runtime_event(
         {
-            "type": "run_start",
+            "type": "run_begin",
             "payload": {
                 "run_id": "run_child",
                 "root_run_id": "run_top",
@@ -9433,10 +9430,9 @@ def test_cli_thread_event_renderer_prints_thread_messages(capsys) -> None:
 
     renderer.render(
         {
-            "type": "run_command",
+            "type": "run_starting",
             "payload": {
-                "kind": "start",
-                "message": {"role": "user", "parts": [{"type": "text", "text": "hello from web"}]},
+                "input": {"role": "user", "parts": [{"type": "text", "text": "hello from web"}]},
             },
         }
     )
@@ -9473,12 +9469,11 @@ def test_cli_thread_event_renderer_skips_prompt_for_local_request(capsys) -> Non
 
     renderer.render(
         {
-            "type": "run_command",
+            "type": "run_starting",
             "payload": {
                 "run_id": "run_tui",
                 "request_id": "term_req",
-                "kind": "start",
-                "message": {"role": "user", "parts": [{"type": "text", "text": "local"}]},
+                "input": {"role": "user", "parts": [{"type": "text", "text": "local"}]},
             },
         }
     )
@@ -10242,7 +10237,7 @@ def test_script_progress_defaults_to_stage_summary() -> None:
     sink = cli_invoke._ScriptProgressSink(thunk_name="research", render=False)
 
     sink.on_event(
-        RunStart(
+        RunBegin(
             run_id="run_parent",
             origin="script",
             thread_id="script_1",
@@ -10254,7 +10249,7 @@ def test_script_progress_defaults_to_stage_summary() -> None:
         )
     )
     sink.on_event(
-        RunStart(
+        RunBegin(
             run_id="run_child",
             origin="script",
             thread_id="script_1",
@@ -10280,7 +10275,7 @@ def test_script_progress_defaults_to_stage_summary() -> None:
         )
     )
     sink.on_event(
-        StepStart(
+        StepBegin(
             run_id="run_child",
             thread_id="script_1",
             step_index=1,
@@ -10394,7 +10389,7 @@ def test_script_progress_defaults_to_stage_summary() -> None:
 def test_script_progress_expands_lanes_with_verbosity() -> None:
     sink = cli_invoke._ScriptProgressSink(thunk_name="research", render=False, verbosity=2)
     sink.on_event(
-        RunStart(
+        RunBegin(
             run_id="run_parent",
             origin="script",
             thread_id="script_1",
@@ -10407,7 +10402,7 @@ def test_script_progress_expands_lanes_with_verbosity() -> None:
     )
     for run_id, item_index in (("run_second", 1), ("run_first", 0)):
         sink.on_event(
-            RunStart(
+            RunBegin(
                 run_id=run_id,
                 origin="script",
                 thread_id="script_1",
@@ -10461,7 +10456,7 @@ def test_script_progress_keeps_final_frame_visible(monkeypatch) -> None:
     sink = cli_invoke._ScriptProgressSink(thunk_name="research", render=True)
 
     sink.on_event(
-        RunStart(
+        RunBegin(
             run_id="run_parent",
             origin="script",
             thread_id="script_1",

@@ -25,7 +25,7 @@ from .. import up as agent_up
 from ..base.error import ToolangError
 from ..config.env import load_runtime_environ
 from ..config.log_spec import PY_LOG_ENV_VAR
-from ..execution.events import RunEnd, RunStart, StepEnd, StepStart, TraceEvent
+from ..execution.events import RunBegin, RunEnd, StepBegin, StepEnd, TraceEvent
 from ..execution.labels import executable_label
 from ..execution.runner import RunOutcome
 from ..models.errors import NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSAGE
@@ -676,7 +676,7 @@ class _ScriptProgressSink:
         return self._run_id
 
     def on_event(self, event: TraceEvent) -> None:
-        if isinstance(event, RunStart):
+        if isinstance(event, RunBegin):
             label = executable_label(event.executable_kind, event.executable_name, metadata=event.metadata)
             self._run_labels[event.run_id] = label
             if event.parent_run_id is None:
@@ -695,7 +695,7 @@ class _ScriptProgressSink:
                 call.status = "running"
                 self._render()
             return
-        if isinstance(event, StepStart):
+        if isinstance(event, StepBegin):
             if event.kind not in {"step", "parallel", "bind", "run"}:
                 self._update_call_step(event.run_id, event.step_index, f"{event.kind} running")
             return

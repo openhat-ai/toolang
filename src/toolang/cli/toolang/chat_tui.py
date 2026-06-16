@@ -64,7 +64,6 @@ class ChatTuiDependencies:
 
 _CHAT_MAX_INPUT_ROWS = 6
 _CHAT_MAX_QUEUE_ROWS = 4
-_CHAT_MAX_ACTIVE_RUN_ACTIVITY_ROWS = 12
 _CHAT_DIM = "\x1b[2m"
 _CHAT_NORMAL_INTENSITY = "\x1b[22m"
 _CHAT_RESET = "\x1b[0m"
@@ -150,7 +149,7 @@ class _ChatRun:
     executable_name: str | None = None
     accept_child_trace: bool = False
     queue_state: str | None = None
-    waiting_for: str | None = None
+    waiting_reason: str | None = None
     queue_position: int | None = None
     cancel_requested: bool = False
     cancel_sent_run_id: str | None = None
@@ -217,26 +216,26 @@ class _ChatRun:
         if self.cancel_requested:
             self.status = "canceling"
             self.queue_state = None
-            self.waiting_for = None
+            self.waiting_reason = None
             self.queue_position = None
             return
-        self.status = "waiting" if event_type == "run_waiting" else "queued"
+        self.status = "waiting"
         self.queue_state = self.status
-        self.waiting_for = _text(payload.get("waiting_for"))
+        self.waiting_reason = _text(payload.get("reason"))
         self.queue_position = _int_or_none(payload.get("position"))
 
     def mark_running(self) -> None:
         self.started = True
         self.status = "canceling" if self.cancel_requested else "running"
         self.queue_state = None
-        self.waiting_for = None
+        self.waiting_reason = None
         self.queue_position = None
 
     def request_cancel(self) -> None:
         self.cancel_requested = True
         self.status = "canceling"
         self.queue_state = None
-        self.waiting_for = None
+        self.waiting_reason = None
         self.queue_position = None
 
     def clear_cancel_request(self) -> None:
@@ -319,7 +318,7 @@ class _ChatLastRunPanel:
         if run is None:
             return []
         rows = _chat_active_activity_fragment_rows(run, self.step_line)
-        rows = [[], *_chat_tail_fragment_rows(rows, max_lines=_CHAT_MAX_ACTIVE_RUN_ACTIVITY_ROWS), []]
+        rows = [[], *rows, []]
         return _chat_join_fragment_rows(rows)
 
     def lines(self) -> list[str]:
@@ -336,7 +335,7 @@ class _ChatLastRunPanel:
         if run is None:
             return []
         lines = _chat_run_activity_lines(run, self.step_line)
-        return ["", *_chat_tail_activity_lines(lines, max_lines=_CHAT_MAX_ACTIVE_RUN_ACTIVITY_ROWS), ""]
+        return ["", *lines, ""]
 
     def step_line(self, run: _ChatRun, index: int) -> str:
         if index in run.completed_steps:
@@ -900,13 +899,17 @@ class _ChatBottomApp:
             return
         if self.should_ignore_trace_event(event_type, payload):
             return
-        if event_type in {"run_queued", "run_waiting"}:
+        if event_type == "run_waiting":
             self.handle_queue_event(event_type, payload)
-        elif event_type == "run_command":
-            self.handle_run_command(payload)
-        elif event_type == "run_start":
-            self.handle_run_start(payload)
-        elif event_type == "step_start" and self.active_run:
+        elif event_type == "run_starting":
+            self.handle_run_starting(payload)
+        elif event_type == "run_steering":
+            self.handle_run_steering(payload)
+        elif event_type == "run_stopping":
+            self.handle_run_stopping(payload)
+        elif event_type == "run_begin":
+            self.handle_run_begin(payload)
+        elif event_type == "step_begin" and self.active_run:
             self.active_run.start_step(payload)
         elif event_type == "part_end" and self.active_run:
             self.active_run.record_part(payload)
@@ -918,16 +921,16 @@ class _ChatBottomApp:
 
     def should_ignore_trace_event(self, event_type: str, payload: Mapping[str, Any]) -> bool:
         run_id = _text(payload.get("run_id"))
-        if event_type in {"run_queued", "run_waiting"}:
+        if event_type in {"run_starting", "run_waiting"}:
             return self.active_run is not None and bool(self.active_run.run_id) and run_id is not None and run_id != self.active_run.run_id
-        if event_type == "run_command":
+        if event_type in {"run_steering", "run_stopping"}:
             return self.active_run is not None and bool(self.active_run.run_id) and run_id != self.active_run.run_id
-        if event_type == "run_start":
+        if event_type == "run_begin":
             parent_run_id = _text(payload.get("parent_run_id"))
             call_kind = _text(payload.get("call_kind")) or "top"
             if parent_run_id or call_kind != "top":
                 return True
-        if event_type in {"run_start", "step_start", "part_end", "step_end", "run_end"}:
+        if event_type in {"run_begin", "step_begin", "part_end", "step_end", "run_end"}:
             return self.active_run is not None and bool(self.active_run.run_id) and run_id != self.active_run.run_id
         return False
 
@@ -945,7 +948,7 @@ class _ChatBottomApp:
         if self.active_run is None or not self.active_run.accept_child_trace:
             return False
         run_id = _text(payload.get("run_id"))
-        if event_type == "run_start":
+        if event_type == "run_begin":
             parent_run_id = _text(payload.get("parent_run_id"))
             root_run_id = _text(payload.get("root_run_id"))
             if parent_run_id == self.active_run.run_id or root_run_id == self.active_run.run_id or parent_run_id in self.active_run.child_runs:
@@ -955,7 +958,7 @@ class _ChatBottomApp:
         child = self.active_run.child_run(run_id)
         if child is None:
             return False
-        if event_type == "step_start":
+        if event_type == "step_begin":
             child.start_step(dict(payload))
             return True
         if event_type == "part_end":
@@ -1144,34 +1147,31 @@ class _ChatBottomApp:
             return 1
         return max(self.active_run.step_indexes(), default=0) + 1
 
-    def handle_run_command(self, payload: dict[str, Any]) -> None:
-        kind = payload.get("kind")
-        if kind == "steer":
-            if self.active_run is not None:
-                self.active_run.record_command(payload)
-            return
-        if kind == "stop":
-            if self.active_run is not None:
-                self.active_run.record_command(payload)
-                self.active_run.request_cancel()
-            return
-        if kind != "start":
-            return
+    def handle_run_starting(self, payload: dict[str, Any]) -> None:
         run_id = str(payload.get("run_id") or "")
-        message = _event_message_text(payload.get("message"))
+        message = _event_message_text(payload.get("input"))
         if not message:
             message = self.active_run.message if self.active_run is not None else ""
         if self.active_run and (not self.active_run.run_id or self.active_run.run_id == run_id):
             self.active_run.run_id = run_id
             self.active_run.message = message
-            self.active_run.mark_running()
-            self.maybe_send_cancel_request()
             return
-        self.active_run = _ChatRun(run_id=run_id, message=message, status="running")
-        self.active_run.mark_running()
-        self.maybe_send_cancel_request()
+        self.active_run = _ChatRun(run_id=run_id, message=message, status="submitting", accept_child_trace=True)
 
-    def handle_run_start(self, payload: dict[str, Any]) -> None:
+    def handle_run_steering(self, payload: dict[str, Any]) -> None:
+        if self.active_run is not None:
+            command = dict(payload)
+            command["kind"] = "steer"
+            self.active_run.record_command(command)
+
+    def handle_run_stopping(self, payload: dict[str, Any]) -> None:
+        if self.active_run is not None:
+            command = dict(payload)
+            command["kind"] = "stop"
+            self.active_run.record_command(command)
+            self.active_run.request_cancel()
+
+    def handle_run_begin(self, payload: dict[str, Any]) -> None:
         run_id = str(payload.get("run_id") or "")
         if self.active_run and (not self.active_run.run_id or self.active_run.run_id == run_id):
             self.active_run.run_id = run_id
@@ -1889,32 +1889,6 @@ def _chat_run_lines(run: _ChatRun, *, include_steps: bool) -> list[str]:
     return lines
 
 
-def _chat_tail_activity_lines(lines: Sequence[str], *, max_lines: int) -> list[str]:
-    if len(lines) <= max_lines:
-        return list(lines)
-    if max_lines <= 0:
-        return []
-    if max_lines == 1:
-        return [_chat_dim(f"... {len(lines)} earlier lines")]
-    tail_count = max_lines - 1
-    hidden = len(lines) - tail_count
-    return [_chat_dim(f"... {hidden} earlier lines"), *lines[-tail_count:]]
-
-
-def _chat_tail_fragment_rows(
-    rows: Sequence[list[tuple[str, str]]], *, max_lines: int
-) -> list[list[tuple[str, str]]]:
-    if len(rows) <= max_lines:
-        return list(rows)
-    if max_lines <= 0:
-        return []
-    if max_lines == 1:
-        return [_chat_line_fragments(_chat_dim(f"... {len(rows)} earlier lines"))]
-    tail_count = max_lines - 1
-    hidden = len(rows) - tail_count
-    return [_chat_line_fragments(_chat_dim(f"... {hidden} earlier lines")), *rows[-tail_count:]]
-
-
 def _chat_completed_line_for(run: _ChatRun, index: int) -> str:
     if index in run.completed_steps:
         return _chat_completed_step_line(run.completed_steps[index], run=run)
@@ -2218,13 +2192,10 @@ def _chat_run_display_status(status: str) -> str:
 
 def _chat_queue_activity_line(run: _ChatRun) -> str:
     if run.queue_state == "waiting":
-        reason = run.waiting_for or "queue"
-        run_id = f" {run.run_id}" if run.run_id else ""
-        return f"waiting{run_id} for {reason}"
-    if run.queue_state == "queued":
+        reason = run.waiting_reason or "queue"
         suffix = f" · position {run.queue_position}" if run.queue_position else ""
         run_id = f" {run.run_id}" if run.run_id else ""
-        return f"queued{run_id}{suffix}"
+        return f"waiting{run_id} for {reason}{suffix}"
     if run.status == "submitting":
         return "submitting"
     return ""
