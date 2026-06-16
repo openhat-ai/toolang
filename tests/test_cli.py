@@ -9407,6 +9407,53 @@ def test_cli_chat_active_step_lines_use_lightweight_event_text() -> None:
     assert tool_line.startswith(cli._CHAT_DIM)
 
 
+def test_cli_chat_step_mutable_block_delta_and_finalize() -> None:
+    run = cli._ChatRun(run_id="run_active", message="check weather", status="running")
+
+    run.start_step({"kind": "model", "step_index": 1})
+    block = run.steps[1]
+    run.delta_step({"kind": "model", "step_index": 1, "part_index": 0, "delta": {"type": "text", "text": "hello"}})
+
+    assert run.mutable_block is block
+    assert not block.finalized
+    assert cli._chat_visible_text(cli._chat_active_step_line(block)) == "• hello..."
+
+    run.complete_step(
+        {
+            "kind": "model",
+            "step_index": 1,
+            "output": [{"type": "text", "text": "hello"}],
+        }
+    )
+
+    assert block.finalized
+    assert run.mutable_block is None
+    assert run.steps == {}
+    assert run.completed_steps[1]["output"] == [{"type": "text", "text": "hello"}]
+
+
+def test_cli_chat_start_command_mutable_block_finalizes_on_run_begin() -> None:
+    run = cli._ChatRun(run_id="run_active", message="check weather", status="submitting")
+
+    run.start_command(
+        {
+            "type": "run_starting",
+            "run_id": "run_active",
+            "input": {"role": "user", "parts": [{"type": "text", "text": "check weather"}]},
+        }
+    )
+    block = run.commands[0]
+
+    assert run.mutable_block is block
+    assert not block.finalized
+    assert block.payload["kind"] == "start"
+
+    run.finalize_command(0, {"type": "run_begin", "run_id": "run_active"})
+
+    assert block.finalized
+    assert run.mutable_block is None
+
+
 def test_cli_chat_error_replaces_active_step_with_friendly_system_line() -> None:
     run = cli._ChatRun(run_id="run_failed", message="再来一次", status="running")
     run.start_step({"kind": "model", "step_index": 1})
