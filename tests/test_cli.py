@@ -9990,6 +9990,7 @@ def test_cli_inspect_structured_views_render_preprocessed_document(monkeypatch) 
     assert "record" not in toml_data["steps"][0]
     assert "adapter_request" not in toml_data["steps"][0]
     assert toml_data["steps"][1]["kind"] == "tool"
+    assert toml_data["steps"][1]["summary"] == "filesystem__read_text: path=task.md"
     assert "tool_calls" not in toml_data["steps"][1]
 
     tool_json_result = _invoke_app(["inspect", "dev", "run_struct:2", "--json"])

@@ -405,7 +405,7 @@ def _preprocess_step(
         "run_id": run_id,
         "kind": kind,
         "status": status,
-        "summary": _step_summary(record, message),
+        "summary": _step_summary(record, message, run=run),
         "error": _text(record.get("error")),
         "children": children,
     }
@@ -877,7 +877,7 @@ def _failure_summary(run: Mapping[str, Any]) -> str:
     return reason
 
 
-def _step_summary(record: Mapping[str, Any], message: Mapping[str, Any]) -> str:
+def _step_summary(record: Mapping[str, Any], message: Mapping[str, Any], *, run: Mapping[str, Any]) -> str:
     payload = _mapping(record.get("payload"))
     kind = _text(record.get("kind"))
     if kind == "model":
@@ -887,7 +887,7 @@ def _step_summary(record: Mapping[str, Any], message: Mapping[str, Any]) -> str:
         request_summary = f"requested {requests}" if requests else ""
         return " ".join(item for item in (model, text, request_summary) if item)
     if kind == "tool":
-        return _tool_result_summary(record)
+        return _tool_result_summary(record, run=run)
     if kind == "run":
         return child_call_summary(payload)
     if kind in {"step", "parallel", "bind"}:
@@ -909,13 +909,16 @@ def _tool_request_lines(record: Mapping[str, Any]) -> list[str]:
     return lines
 
 
-def _tool_result_summary(record: Mapping[str, Any]) -> str:
+def _tool_result_summary(record: Mapping[str, Any], *, run: Mapping[str, Any]) -> str:
+    request_parts = _tool_call_parts_from_input_refs(run, [_mapping(item) for item in _list(record.get("input"))])
     for part in _list(record.get("output")):
         typed = _mapping(part)
         if typed.get("type") != "tool_result":
             continue
         name = _text(typed.get("tool_name")) or _text(typed.get("tool_family")) or "tool"
-        tool_input = _tool_input_summary(typed.get("input"))
+        call_id = _text(typed.get("tool_call_id")) or _text(typed.get("call_id"))
+        request = request_parts.get(call_id or "")
+        tool_input = _tool_input_summary(typed.get("input") if typed.get("input") is not None else _mapping(request).get("input"))
         suffix = f": {tool_input}" if tool_input else ""
         return f"{name}{suffix}"
     return _parts_summary(record.get("output")) or _text(record.get("error")) or "-"
