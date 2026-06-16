@@ -8228,6 +8228,14 @@ def test_cli_chat_run_end_block_adds_run_separator_blank(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_chat_write_lines", lambda lines, **_kwargs: printed.append(lines))
 
     app = cli._ChatBottomApp(cast(Any, object()), thread_id=None, selector_payload={})
+    flushed_blocks: list[Any] = []
+    flush_finalized_block = app.flush_finalized_block
+
+    def capture_finalized_block(run: cli._ChatRun, block: Any) -> None:
+        flushed_blocks.append(block)
+        flush_finalized_block(run, block)
+
+    monkeypatch.setattr(app, "flush_finalized_block", capture_finalized_block)
     app.active_run = cli._ChatRun(run_id="run_done", message="hello", status="running")
 
     app.handle_runtime_event(
@@ -8249,6 +8257,9 @@ def test_cli_chat_run_end_block_adds_run_separator_blank(monkeypatch) -> None:
         }
     )
 
+    run_end_blocks = [block for block in flushed_blocks if getattr(block, "kind", None) == "run_end"]
+    assert run_end_blocks
+    assert run_end_blocks[-1].finalized
     assert printed[-1] == [""]
 
 

@@ -320,9 +320,7 @@ def _chat_step_block(payload: Mapping[str, Any], *, run: "_ChatRun | None") -> _
 
 
 def _chat_run_end_block(payload: Mapping[str, Any], *, run: "_ChatRun") -> _ChatRunEndBlock:
-    block = _ChatRunEndBlock.create(payload, run=run)
-    block.finalize(payload)
-    return block
+    return run.complete_run(payload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -393,6 +391,14 @@ class _ChatRun:
         if self.mutable_block is active_step:
             self.mutable_block = None
         return active_step
+
+    def complete_run(self, payload: Mapping[str, Any]) -> _ChatRunEndBlock:
+        block = _ChatRunEndBlock.create(payload, run=self)
+        self.mutable_block = block
+        block.finalize(payload)
+        if self.mutable_block is block:
+            self.mutable_block = None
+        return block
 
     def record_part(self, payload: dict[str, Any]) -> None:
         part = _mapping(payload.get("part"))
