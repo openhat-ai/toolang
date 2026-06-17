@@ -215,6 +215,14 @@ class _ChatRunEndBlock(_ChatMutableBlock):
         return [*_chat_run_result_lines(run), ""]
 
 
+@dataclass(slots=True)
+class _ChatFlowProjectionBlock(_ChatMutableBlock):
+    """Flow projection block: renders flow stage state from the run's step blocks."""
+
+    def render_activity_lines(self, run: "_ChatRun") -> list[str]:
+        return _chat_flow_stage_lines(run)
+
+
 def _chat_command_block(payload: Mapping[str, Any]) -> _ChatCommandBlock:
     kind = str(payload.get("kind") or "command")
     block_cls: type[_ChatCommandBlock]
@@ -335,6 +343,33 @@ class _ChatQueueItem:
     text: str
 
 
+@dataclass(frozen=True, slots=True)
+class _ChatScrollbackAction:
+    kind: Literal["queue_state", "block", "terminal_event"]
+    block: _ChatMutableBlock | None = None
+
+
+@dataclass(slots=True)
+class _ChatTraceEventResult:
+    scrollback: list[_ChatScrollbackAction] = field(default_factory=list)
+    send_cancel_request: bool = False
+    run_finished: bool = False
+
+    def flush_block(self, block: _ChatMutableBlock | None) -> None:
+        if block is not None:
+            self.scrollback.append(_ChatScrollbackAction("block", block))
+
+    def flush_blocks(self, blocks: Sequence[_ChatMutableBlock]) -> None:
+        for block in blocks:
+            self.flush_block(block)
+
+    def flush_queue_state(self) -> None:
+        self.scrollback.append(_ChatScrollbackAction("queue_state"))
+
+    def flush_terminal_event(self) -> None:
+        self.scrollback.append(_ChatScrollbackAction("terminal_event"))
+
+
 @dataclass(slots=True)
 class _ChatRun:
     run_id: str
@@ -359,6 +394,63 @@ class _ChatRun:
     flushed_steps: set[int] = field(default_factory=set)
     flushed_commands: set[int] = field(default_factory=set)
     child_runs: dict[str, _ChatRun] = field(default_factory=dict)
+
+    def apply_trace_event(self, event_type: str, payload: Mapping[str, Any]) -> _ChatTraceEventResult:
+        result = _ChatTraceEventResult()
+        if event_type == "run_waiting":
+            self.update_queue(event_type, payload)
+        elif event_type == "run_starting":
+            self.start_command(payload)
+        elif event_type == "run_steering":
+            command = dict(payload)
+            command["kind"] = "steer"
+            self.record_command(command)
+        elif event_type == "run_stopping":
+            command = dict(payload)
+            command["kind"] = "stop"
+            self.record_command(command)
+            self.request_cancel()
+        elif event_type == "run_begin":
+            self.mark_running()
+            result.flush_block(self.finalize_command(0, payload))
+            result.send_cancel_request = True
+        elif event_type == "step_begin":
+            result.flush_blocks(self.start_step(dict(payload)))
+        elif event_type == "part_begin":
+            self.update_step(payload)
+        elif event_type == "part_delta":
+            self.delta_step(payload)
+        elif event_type == "part_end":
+            self.record_part(dict(payload))
+        elif event_type == "step_end":
+            result.flush_block(self.complete_step(dict(payload)))
+        elif event_type == "run_end":
+            return self.finish_trace(payload)
+        return result
+
+    def finish_trace(self, payload: Mapping[str, Any]) -> _ChatTraceEventResult:
+        result = _ChatTraceEventResult(run_finished=True)
+        result.flush_queue_state()
+        start_block = self.finalize_command(0, payload)
+        if start_block is not None and start_block.index not in self.flushed_commands:
+            result.flush_block(start_block)
+        result.flush_blocks(self.finalize_pending_steer_blocks())
+        result.flush_blocks(self.finalize_stop_blocks(payload))
+        self.status = _display_run_status(payload.get("status")) or "completed"
+        error = _text(payload.get("error"))
+        if error:
+            self.terminal_error = _chat_friendly_error(error)
+        if self.status in {"failed", "error", "canceled", "cancelled"}:
+            message = _chat_stopped_run_message(
+                self.status,
+                self.terminal_error if error else None,
+            )
+            if error:
+                message = f"error: {message}"
+            _chat_record_system_event(self, message, clear_active=True)
+            result.flush_terminal_event()
+        result.flush_block(self.complete_run(payload))
+        return result
 
     def start_step(self, payload: dict[str, Any]) -> list[_ChatRunSteerBlock]:
         step = _chat_step_block(payload, run=self)
@@ -1202,29 +1294,11 @@ class _ChatBottomApp:
             return
         if self.should_ignore_trace_event(event_type, payload):
             return
-        if event_type == "run_waiting":
-            self.handle_queue_event(event_type, payload)
-        elif event_type == "run_starting":
-            self.handle_run_starting(payload)
-        elif event_type == "run_steering":
-            self.handle_run_steering(payload)
-        elif event_type == "run_stopping":
-            self.handle_run_stopping(payload)
-        elif event_type == "run_begin":
-            self.handle_run_begin(payload)
-        elif event_type == "step_begin" and self.active_run:
-            self.start_run_step(self.active_run, payload)
-        elif event_type == "part_begin" and self.active_run:
-            self.active_run.update_step(payload)
-        elif event_type == "part_delta" and self.active_run:
-            self.active_run.delta_step(payload)
-        elif event_type == "part_end" and self.active_run:
-            self.active_run.record_part(payload)
-        elif event_type == "step_end" and self.active_run:
-            block = self.active_run.complete_step(payload)
-            self.flush_finalized_block(self.active_run, block)
-        elif event_type == "run_end":
-            self.finish_run(payload)
+        run = self.run_for_trace_event(event_type, payload)
+        if run is None:
+            return
+        result = run.apply_trace_event(event_type, payload)
+        self.apply_trace_event_result(run, result)
         self.app.invalidate()
 
     def should_ignore_trace_event(self, event_type: str, payload: Mapping[str, Any]) -> bool:
@@ -1242,15 +1316,59 @@ class _ChatBottomApp:
             return self.active_run is not None and bool(self.active_run.run_id) and run_id != self.active_run.run_id
         return False
 
-    def handle_queue_event(self, event_type: str, payload: Mapping[str, Any]) -> None:
-        if self.active_run is None:
-            self.active_run = _ChatRun(
-                run_id=_text(payload.get("run_id")) or "",
-                message="",
-                status="queued",
-                accept_child_trace=True,
-            )
-        self.active_run.update_queue(event_type, payload)
+    def run_for_trace_event(self, event_type: str, payload: Mapping[str, Any]) -> _ChatRun | None:
+        if event_type == "run_starting":
+            return self.ensure_starting_run(payload)
+        if event_type == "run_waiting":
+            if self.active_run is None:
+                self.active_run = _ChatRun(
+                    run_id=_text(payload.get("run_id")) or "",
+                    message="",
+                    status="queued",
+                    accept_child_trace=True,
+                )
+            return self.active_run
+        if event_type == "run_begin":
+            return self.ensure_running_run(payload)
+        return self.active_run
+
+    def ensure_starting_run(self, payload: Mapping[str, Any]) -> _ChatRun:
+        run_id = str(payload.get("run_id") or "")
+        message = _event_message_text(payload.get("input"))
+        if not message:
+            message = self.active_run.message if self.active_run is not None else ""
+        if self.active_run and (not self.active_run.run_id or self.active_run.run_id == run_id):
+            self.active_run.run_id = run_id
+            self.active_run.message = message
+            return self.active_run
+        self.active_run = _ChatRun(run_id=run_id, message=message, status="submitting", accept_child_trace=True)
+        return self.active_run
+
+    def ensure_running_run(self, payload: Mapping[str, Any]) -> _ChatRun:
+        run_id = str(payload.get("run_id") or "")
+        if self.active_run and (not self.active_run.run_id or self.active_run.run_id == run_id):
+            self.active_run.run_id = run_id
+            return self.active_run
+        message = _event_message_text(payload.get("input"))
+        self.active_run = _ChatRun(run_id=run_id, message=message, status="running", accept_child_trace=True)
+        return self.active_run
+
+    def apply_trace_event_result(self, run: _ChatRun, result: _ChatTraceEventResult) -> None:
+        for action in result.scrollback:
+            if action.kind == "queue_state":
+                self.flush_queue_state(run)
+            elif action.kind == "terminal_event":
+                self.flush_terminal_event(run)
+            elif action.kind == "block" and action.block is not None:
+                self.flush_finalized_block(run, action.block)
+        if result.send_cancel_request:
+            self.maybe_send_cancel_request()
+        if result.run_finished:
+            self.active_run = None
+            self.local_streaming.clear()
+            self.prompt.clear_error()
+            self.start_next_run()
+            self.app.invalidate()
 
     def handle_child_trace_event(self, event_type: str, payload: Mapping[str, Any]) -> bool:
         if self.active_run is None or not self.active_run.accept_child_trace:
@@ -1264,109 +1382,18 @@ class _ChatBottomApp:
             root_run_id = _text(payload.get("root_run_id"))
             if parent_run_id == self.active_run.run_id or root_run_id == self.active_run.run_id or parent_run_id in self.active_run.child_runs:
                 self.active_run.start_child_run(payload)
+                child = self.active_run.child_run(run_id)
+                if child is not None:
+                    child.apply_trace_event(event_type, payload)
                 return True
             return False
         child = self.active_run.child_run(run_id)
         if child is None:
             return False
-        if event_type == "step_begin":
-            child.start_step(dict(payload))
-            return True
-        if event_type == "part_end":
-            child.record_part(dict(payload))
-            return True
-        if event_type == "part_begin":
-            child.update_step(payload)
-            return True
-        if event_type == "part_delta":
-            child.delta_step(payload)
-            return True
-        if event_type == "step_end":
-            child.complete_step(dict(payload))
-            return True
-        if event_type == "run_end":
-            child.status = _display_run_status(payload.get("status")) or "completed"
-            error = _text(payload.get("error"))
-            if error:
-                child.terminal_error = _chat_friendly_error(error)
-            if child.status in {"failed", "error", "canceled", "cancelled"}:
-                message = _chat_stopped_run_message(child.status, child.terminal_error if error else None)
-                if error:
-                    message = f"error: {message}"
-                _chat_record_system_event(child, message, clear_active=True)
+        if event_type in {"run_waiting", "run_starting", "run_steering", "run_stopping", "run_begin", "step_begin", "part_begin", "part_delta", "part_end", "step_end", "run_end"}:
+            child.apply_trace_event(event_type, payload)
             return True
         return False
-
-    def handle_run_starting(self, payload: dict[str, Any]) -> None:
-        run_id = str(payload.get("run_id") or "")
-        message = _event_message_text(payload.get("input"))
-        if not message:
-            message = self.active_run.message if self.active_run is not None else ""
-        if self.active_run and (not self.active_run.run_id or self.active_run.run_id == run_id):
-            self.active_run.run_id = run_id
-            self.active_run.message = message
-            self.active_run.start_command(payload)
-            return
-        self.active_run = _ChatRun(run_id=run_id, message=message, status="submitting", accept_child_trace=True)
-        self.active_run.start_command(payload)
-
-    def handle_run_steering(self, payload: dict[str, Any]) -> None:
-        if self.active_run is not None:
-            command = dict(payload)
-            command["kind"] = "steer"
-            self.active_run.record_command(command)
-
-    def handle_run_stopping(self, payload: dict[str, Any]) -> None:
-        if self.active_run is not None:
-            command = dict(payload)
-            command["kind"] = "stop"
-            self.active_run.record_command(command)
-            self.active_run.request_cancel()
-
-    def handle_run_begin(self, payload: dict[str, Any]) -> None:
-        run_id = str(payload.get("run_id") or "")
-        if self.active_run and (not self.active_run.run_id or self.active_run.run_id == run_id):
-            self.active_run.run_id = run_id
-            self.active_run.mark_running()
-            block = self.active_run.finalize_command(0, payload)
-            if block is not None:
-                self.flush_finalized_block(self.active_run, block)
-            self.maybe_send_cancel_request()
-            return
-        message = _event_message_text(payload.get("input"))
-        self.active_run = _ChatRun(run_id=run_id, message=message, status="running")
-        self.active_run.mark_running()
-        self.maybe_send_cancel_request()
-
-    def finish_run(self, payload: dict[str, Any]) -> None:
-        completed_run = self.active_run
-        if completed_run is not None:
-            self.flush_queue_state(completed_run)
-            start_block = completed_run.finalize_command(0, payload)
-            if start_block is not None and start_block.index not in completed_run.flushed_commands:
-                self.flush_finalized_block(completed_run, start_block)
-            self.flush_pending_steer_blocks(completed_run)
-            for block in completed_run.finalize_stop_blocks(payload):
-                self.flush_finalized_block(completed_run, block)
-            completed_run.status = _display_run_status(payload.get("status")) or "completed"
-            error = _text(payload.get("error"))
-            if error:
-                completed_run.terminal_error = _chat_friendly_error(error)
-            if completed_run.status in {"failed", "error", "canceled", "cancelled"}:
-                message = _chat_stopped_run_message(
-                    completed_run.status,
-                    completed_run.terminal_error if error else None,
-                )
-                if error:
-                    message = f"error: {message}"
-                _chat_record_system_event(completed_run, message, clear_active=True)
-                self.flush_terminal_event(completed_run)
-            self.flush_finalized_block(completed_run, _chat_run_end_block(payload, run=completed_run))
-        self.active_run = None
-        self.local_streaming.clear()
-        self.prompt.clear_error()
-        self.start_next_run()
-        self.app.invalidate()
 
     def start_next_run(self) -> None:
         if self.pending:
@@ -1540,10 +1567,6 @@ class _ChatBottomApp:
         line = _chat_queue_activity_line(run)
         if line:
             self.deps.write_lines([line])
-
-    def start_run_step(self, run: _ChatRun, payload: dict[str, Any]) -> None:
-        for block in run.start_step(payload):
-            self.flush_finalized_block(run, block)
 
     def flush_pending_steer_blocks(self, run: _ChatRun) -> None:
         for block in run.finalize_pending_steer_blocks():
@@ -2183,18 +2206,6 @@ def _chat_run_activity_lines(run: _ChatRun, step_renderer: Callable[[_ChatRun, i
             *_chat_terminal_event_lines(run, _chat_completed_line_for),
             *_chat_run_result_lines(run),
         ]
-    flow_lines = _chat_flow_stage_lines(run)
-    if flow_lines:
-        lines = []
-        if state_line and not _chat_state_line_after_activity(run):
-            lines.append(state_line)
-        lines.extend(flow_lines)
-        lines.extend(_chat_timeline_command_lines(run))
-        lines.extend(_chat_terminal_event_lines(run, _chat_completed_line_for))
-        if state_line and _chat_state_line_after_activity(run):
-            lines.append(state_line)
-        lines.extend(_chat_run_result_lines(run))
-        return lines
     lines: list[str] = []
     if state_line and not _chat_state_line_after_activity(run):
         lines.append(state_line)
@@ -2212,17 +2223,18 @@ def _chat_state_line_after_activity(run: _ChatRun) -> bool:
 
 
 def _chat_run_activity_blocks(run: _ChatRun) -> list[_ChatMutableBlock]:
+    if _chat_flow_stage_lines(run):
+        return [
+            _ChatFlowProjectionBlock(index=0, kind="flow_projection"),
+            *_chat_unflushed_command_blocks(run),
+        ]
     blocks: list[_ChatMutableBlock] = []
     rendered_steps: set[int] = set()
     timeline = run.timeline or [("step", index) for index in run.step_indexes()]
     for kind, index in timeline:
         if kind == "command":
-            command = run.commands.get(index)
-            if (
-                command is not None
-                and not isinstance(command, _ChatRunStartBlock)
-                and index not in run.flushed_commands
-            ):
+            command = _chat_unflushed_command_block(run, index)
+            if command is not None:
                 blocks.append(command)
             continue
         if index in rendered_steps:
@@ -2250,6 +2262,24 @@ def _chat_run_activity_blocks(run: _ChatRun) -> list[_ChatMutableBlock]:
     ):
         blocks.append(active)
     return blocks
+
+
+def _chat_unflushed_command_blocks(run: _ChatRun) -> list[_ChatCommandBlock]:
+    blocks: list[_ChatCommandBlock] = []
+    for kind, index in run.timeline:
+        if kind != "command":
+            continue
+        command = _chat_unflushed_command_block(run, index)
+        if command is not None:
+            blocks.append(command)
+    return blocks
+
+
+def _chat_unflushed_command_block(run: _ChatRun, index: int) -> _ChatCommandBlock | None:
+    command = run.commands.get(index)
+    if command is None or isinstance(command, _ChatRunStartBlock) or index in run.flushed_commands:
+        return None
+    return command
 
 
 def _chat_step_block_for_index(run: _ChatRun, index: int) -> _ChatStepBlock | None:
@@ -2290,33 +2320,6 @@ def _chat_block_activity_fragment_rows(
     block: _ChatMutableBlock,
 ) -> list[list[tuple[str, str]]]:
     return block.render_activity_fragment_rows(run)
-
-
-def _chat_timeline_command_lines(run: _ChatRun) -> list[str]:
-    lines: list[str] = []
-    for position, (kind, index) in enumerate(run.timeline):
-        if kind != "command":
-            continue
-        command = run.commands.get(index)
-        if command is None:
-            continue
-        lines.extend(_chat_command_activity_lines(run, command, position))
-    return lines
-
-
-def _chat_command_block_activity_lines(run: _ChatRun, command: _ChatCommandBlock) -> list[str]:
-    return command.render_activity_lines(run)
-
-
-def _chat_command_block_activity_fragment_rows(
-    run: _ChatRun, command: _ChatCommandBlock
-) -> list[list[tuple[str, str]]]:
-    return command.render_activity_fragment_rows(run)
-
-
-def _chat_command_activity_lines(run: _ChatRun, command: _ChatCommandBlock, timeline_position: int) -> list[str]:
-    del timeline_position
-    return _chat_command_block_activity_lines(run, command)
 
 
 def _chat_steer_input_block(command: Mapping[str, Any], *, waiting: bool) -> list[str]:
