@@ -6,16 +6,10 @@ import ast
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-import io
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version as package_version
 import json
-from pathlib import Path
 import shutil
-import subprocess
 import sys
 import threading
-import tomllib
 from typing import Any, Literal, cast
 from uuid import uuid4
 
@@ -33,8 +27,6 @@ from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
 from prompt_toolkit.utils import get_cwidth
-from rich.console import Console
-from rich.markdown import Markdown
 import typer
 
 from ...execution.labels import executable_label
@@ -47,8 +39,64 @@ from ...execution.projection import (
     stage_lanes,
     stage_title_label,
 )
-from ...models.resolution import split_model_selectors
 from ..chat_history import ChatInputHistoryStore
+from .chat_tui_commands import (
+    _chat_executable_list_lines,
+    _chat_executable_status_label,
+    _chat_help_lines,
+    _chat_local_command,
+    _chat_model_command_selectors,
+    _chat_model_list_lines,
+    _chat_queue_command_index,
+    _chat_queue_help_lines,
+    _chat_resolve_model_command_labels,
+    _chat_resolved_model_label,
+    _chat_set_executable_selector,
+    _chat_status_segments,
+)
+from .chat_tui_input import (
+    _ChatInputBarRow,
+    _ChatInputBarSegment,
+    _ChatInputBarSpec,
+    _chat_input_bar_ansi_line,
+    _chat_input_bar_ansi_lines,
+    _chat_input_bar_fragment_rows,
+    _chat_input_bar_fragments,
+    _chat_input_bar_plain_lines,
+    _chat_join_fragment_rows,
+)
+from .chat_tui_env import _toolang_version
+from .chat_tui_markdown import (
+    _chat_markdown_width,
+    _chat_render_markdown_lines,
+)
+from .chat_tui_theme import (
+    _CHAT_BOLD,
+    _CHAT_DIM,
+    _CHAT_INPUT_BG as _CHAT_INPUT_BG,
+    _CHAT_INPUT_FG as _CHAT_INPUT_FG,
+    _CHAT_NORMAL_INTENSITY,
+    _CHAT_RESET as _CHAT_RESET,
+    _CHAT_STEER_INPUT_BG as _CHAT_STEER_INPUT_BG,
+    _CHAT_STEER_INPUT_FG as _CHAT_STEER_INPUT_FG,
+    _chat_ansi_style as _chat_ansi_style,
+    _chat_dim,
+    _chat_display_len,
+    _chat_prompt_style as _chat_prompt_style,
+    _chat_terminal_width,
+    _chat_ui_palette,
+    _chat_visible_text,
+)
+from .chat_tui_values import (
+    _display_run_status,
+    _event_message_text,
+    _event_parts_text,
+    _int_or_none,
+    _list,
+    _mapping,
+    _run_steps,
+    _text,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,56 +112,9 @@ class ChatTuiDependencies:
 
 _CHAT_MAX_INPUT_ROWS = 6
 _CHAT_MAX_QUEUE_ROWS = 4
-_CHAT_DIM = "\x1b[2m"
-_CHAT_NORMAL_INTENSITY = "\x1b[22m"
-_CHAT_RESET = "\x1b[0m"
-_CHAT_BOLD = "\x1b[1m"
-_CHAT_QUEUE_FG = "#f2f2f2"
-_CHAT_QUEUE_BG = "#3a3a3a"
-_CHAT_QUEUE_DIM_FG = "#b8b8b8"
-_CHAT_INPUT_FG = "#f5f5f5"
-_CHAT_INPUT_BG = "#444444"
-_CHAT_INPUT_DIM_FG = "#b8b8b8"
-_CHAT_STEER_INPUT_FG = "#f5f5f5"
-_CHAT_STEER_INPUT_BG = "#2f555d"
-_CHAT_STEER_INPUT_DIM_FG = "#b8b8b8"
-_CHAT_STATUS_FG = "#f2f2f2"
-_CHAT_STATUS_BG = "#5a5a5a"
-_CHAT_CURSOR_FG = "#111111"
-_CHAT_CURSOR_BG = "#eeeeee"
 _CHAT_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 _CHAT_FLOW_DETAIL_INDENT = "  "
 _CHAT_FLOW_STATEMENT_MARKER = "‣"
-
-
-@dataclass(frozen=True)
-class _ChatInputBarSegment:
-    text: str
-    dim: bool = False
-
-
-@dataclass(frozen=True)
-class _ChatInputBarRow:
-    segments: tuple[_ChatInputBarSegment, ...] = ()
-    bar: bool = True
-
-
-@dataclass(frozen=True)
-class _ChatInputBarSpec:
-    kind: Literal["normal", "steer"]
-    marker: str
-    text: str
-    footer: str = ""
-    footer_dim: bool = False
-    outer_blank: bool = False
-
-
-@dataclass(frozen=True)
-class _ChatRenderedInputBarSegment:
-    text: str
-    style: str
-    fg: str
-    bg: str
 
 
 def _chat_fixed_height(rows: int, *, minimum: int) -> Dimension:
@@ -1893,10 +1894,6 @@ def _chat_system_line(payload: Mapping[str, Any]) -> str:
     return _chat_dim(line)
 
 
-def _chat_dim(text: str) -> str:
-    return f"{_CHAT_DIM}{text}{_CHAT_NORMAL_INTENSITY}"
-
-
 def _chat_panel_user_block(run: _ChatRun) -> list[str]:
     spec = _chat_panel_user_bar_spec(run)
     return [] if spec is None else _chat_input_bar_plain_lines(spec)
@@ -1951,206 +1948,6 @@ def _chat_input_block_line(content: str) -> str:
         _ChatInputBarRow((_ChatInputBarSegment(content),)),
         kind="normal",
     )
-
-
-def _chat_input_bar_ansi_lines(spec: _ChatInputBarSpec) -> list[str]:
-    return [_chat_rendered_input_bar_ansi_line(row) for row in _chat_render_input_bar_rows(spec)]
-
-
-def _chat_input_bar_plain_lines(spec: _ChatInputBarSpec) -> list[str]:
-    return [_chat_input_bar_plain_line(row) for row in _chat_input_bar_rows(spec)]
-
-
-def _chat_input_bar_plain_line(row: _ChatInputBarRow) -> str:
-    return "".join(segment.text for segment in row.segments) if row.bar else ""
-
-
-def _chat_input_bar_ansi_line(row: _ChatInputBarRow, *, kind: Literal["normal", "steer"]) -> str:
-    return _chat_rendered_input_bar_ansi_line(_chat_render_input_bar_row(row, kind=kind))
-
-
-def _chat_input_bar_fragments(spec: _ChatInputBarSpec) -> list[tuple[str, str]]:
-    return _chat_join_fragment_rows(_chat_input_bar_fragment_rows(spec))
-
-
-def _chat_input_bar_fragment_rows(spec: _ChatInputBarSpec) -> list[list[tuple[str, str]]]:
-    return [_chat_rendered_input_bar_fragments(row) for row in _chat_render_input_bar_rows(spec)]
-
-
-def _chat_input_bar_rows(spec: _ChatInputBarSpec) -> list[_ChatInputBarRow]:
-    rows: list[_ChatInputBarRow] = []
-    if spec.outer_blank:
-        rows.append(_ChatInputBarRow(bar=False))
-    rows.append(_ChatInputBarRow())
-    for index, line in enumerate(spec.text.splitlines() or [""]):
-        if index == 0:
-            rows.append(
-                _ChatInputBarRow(
-                    (
-                        _ChatInputBarSegment(spec.marker, dim=True),
-                        _ChatInputBarSegment(f" {line}"),
-                    )
-                )
-            )
-        else:
-            rows.append(_ChatInputBarRow((_ChatInputBarSegment(f"  {line}"),)))
-    footer = (_ChatInputBarSegment(spec.footer, dim=spec.footer_dim),) if spec.footer else ()
-    rows.append(_ChatInputBarRow(footer))
-    if spec.outer_blank:
-        rows.append(_ChatInputBarRow(bar=False))
-    return rows
-
-
-def _chat_render_input_bar_rows(spec: _ChatInputBarSpec) -> list[list[_ChatRenderedInputBarSegment]]:
-    return [_chat_render_input_bar_row(row, kind=spec.kind) for row in _chat_input_bar_rows(spec)]
-
-
-def _chat_render_input_bar_row(
-    row: _ChatInputBarRow, *, kind: Literal["normal", "steer"]
-) -> list[_ChatRenderedInputBarSegment]:
-    if not row.bar:
-        return []
-    rendered: list[_ChatRenderedInputBarSegment] = []
-    visible_len = 0
-    for segment in row.segments:
-        if not segment.text:
-            continue
-        rendered.append(_chat_render_input_bar_segment(segment.text, kind=kind, dim=segment.dim))
-        visible_len += _chat_display_len(segment.text)
-    padding = " " * max(0, _chat_terminal_width() - visible_len)
-    if padding:
-        rendered.append(_chat_render_input_bar_segment(padding, kind=kind, dim=False))
-    return rendered
-
-
-def _chat_render_input_bar_segment(
-    text: str, *, kind: Literal["normal", "steer"], dim: bool
-) -> _ChatRenderedInputBarSegment:
-    return _ChatRenderedInputBarSegment(
-        text=text,
-        style=_chat_input_bar_class(kind, dim=dim),
-        fg=_chat_input_bar_foreground(kind, dim=dim),
-        bg=_chat_input_bar_background(kind),
-    )
-
-
-def _chat_rendered_input_bar_ansi_line(row: Sequence[_ChatRenderedInputBarSegment]) -> str:
-    if not row:
-        return ""
-    return "".join(f"{_chat_ansi_style(segment.fg, segment.bg)}{segment.text}" for segment in row) + _CHAT_RESET
-
-
-def _chat_rendered_input_bar_fragments(
-    row: Sequence[_ChatRenderedInputBarSegment],
-) -> list[tuple[str, str]]:
-    return [(segment.style, segment.text) for segment in row]
-
-
-def _chat_input_bar_foreground(kind: Literal["normal", "steer"], *, dim: bool) -> str:
-    if kind == "steer":
-        return _CHAT_STEER_INPUT_DIM_FG if dim else _CHAT_STEER_INPUT_FG
-    return _CHAT_INPUT_DIM_FG if dim else _CHAT_INPUT_FG
-
-
-def _chat_input_bar_background(kind: Literal["normal", "steer"]) -> str:
-    if kind == "steer":
-        return _CHAT_STEER_INPUT_BG
-    return _CHAT_INPUT_BG
-
-
-def _chat_input_bar_class(kind: Literal["normal", "steer"], *, dim: bool) -> str:
-    prefix = "normal-input" if kind == "normal" else "steer-input"
-    return f"class:{prefix}.dim" if dim else f"class:{prefix}"
-
-
-def _chat_join_fragment_rows(rows: Sequence[Sequence[tuple[str, str]]]) -> list[tuple[str, str]]:
-    fragments: list[tuple[str, str]] = []
-    for index, row in enumerate(rows):
-        fragments.extend(row)
-        if index < len(rows) - 1:
-            fragments.append(("", "\n"))
-    return fragments
-
-
-def _chat_terminal_width(default: int = 100) -> int:
-    return shutil.get_terminal_size((default, 24)).columns
-
-
-def _chat_ui_palette() -> dict[str, str]:
-    return {
-        "": "",
-        "queue": _chat_prompt_style(_CHAT_QUEUE_FG, _CHAT_QUEUE_BG),
-        "queue.dim": _chat_prompt_style(_CHAT_QUEUE_DIM_FG, _CHAT_QUEUE_BG),
-        "normal-input": _chat_prompt_style(_CHAT_INPUT_FG, _CHAT_INPUT_BG),
-        "normal-input.dim": _chat_prompt_style(_CHAT_INPUT_DIM_FG, _CHAT_INPUT_BG),
-        "input": _chat_prompt_style(_CHAT_INPUT_FG, _CHAT_INPUT_BG),
-        "steer-input": _chat_prompt_style(_CHAT_STEER_INPUT_FG, _CHAT_STEER_INPUT_BG),
-        "steer-input.dim": _chat_prompt_style(_CHAT_STEER_INPUT_DIM_FG, _CHAT_STEER_INPUT_BG),
-        "cursor": _chat_prompt_style(_CHAT_CURSOR_FG, _CHAT_CURSOR_BG),
-        "input.cursor": _chat_prompt_style(_CHAT_CURSOR_FG, _CHAT_CURSOR_BG),
-        "status": _chat_prompt_style(_CHAT_STATUS_FG, _CHAT_STATUS_BG),
-        "status.model": "fg:#ffd866",
-        "status.thunk": "fg:#8fd7ff",
-        "status.flow": "fg:#d7b3ff",
-        "status.text": "fg:ansigray",
-        "status.error": "fg:ansired",
-    }
-
-
-def _chat_prompt_style(fg: str, bg: str) -> str:
-    return f"fg:{fg} bg:{bg}"
-
-
-def _chat_ansi_style(fg: str, bg: str) -> str:
-    if fg.startswith("#") or bg.startswith("#"):
-        return f"\x1b[{_chat_sgr_color(fg, foreground=True)};{_chat_sgr_color(bg, foreground=False)}m"
-    foreground = {
-        "ansiblack": "30",
-        "ansired": "31",
-        "ansigreen": "32",
-        "ansiyellow": "33",
-        "ansiblue": "34",
-        "ansimagenta": "35",
-        "ansicyan": "36",
-        "ansiwhite": "37",
-        "ansibrightblack": "90",
-        "ansibrightred": "91",
-        "ansibrightgreen": "92",
-        "ansibrightyellow": "93",
-        "ansibrightblue": "94",
-        "ansibrightmagenta": "95",
-        "ansibrightcyan": "96",
-        "ansibrightwhite": "97",
-    }
-    background = {
-        "ansiblack": "40",
-        "ansired": "41",
-        "ansigreen": "42",
-        "ansiyellow": "43",
-        "ansiblue": "44",
-        "ansimagenta": "45",
-        "ansicyan": "46",
-        "ansiwhite": "47",
-        "ansibrightblack": "100",
-        "ansibrightred": "101",
-        "ansibrightgreen": "102",
-        "ansibrightyellow": "103",
-        "ansibrightblue": "104",
-        "ansibrightmagenta": "105",
-        "ansibrightcyan": "106",
-        "ansibrightwhite": "107",
-    }
-    return f"\x1b[{foreground[fg]};{background[bg]}m"
-
-
-def _chat_sgr_color(color: str, *, foreground: bool) -> str:
-    if not color.startswith("#") or len(color) != 7:
-        raise ValueError(f"unsupported color: {color}")
-    red = int(color[1:3], 16)
-    green = int(color[3:5], 16)
-    blue = int(color[5:7], 16)
-    prefix = "38" if foreground else "48"
-    return f"{prefix};2;{red};{green};{blue}"
 
 
 def _chat_run_lines(run: _ChatRun, *, include_steps: bool) -> list[str]:
@@ -2738,180 +2535,6 @@ def _chat_message_lines(marker: str, text: str) -> list[str]:
     return lines
 
 
-def _chat_local_command(message: str) -> tuple[str, str] | None:
-    stripped = message.strip()
-    if not stripped.startswith("/"):
-        return None
-    command, _, argument = stripped[1:].partition(" ")
-    if not command:
-        return None
-    return command, argument.strip()
-
-
-def _chat_model_command_selectors(argument: str) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(split_model_selectors((argument,))))
-
-
-def _chat_initial_model_label(selector_payload: Mapping[str, object]) -> str:
-    requested = _chat_requested_model_selectors(selector_payload)
-    return ", ".join(requested) if requested else "runtime model"
-
-
-def _chat_resolved_model_label(
-    ctx: typer.Context,
-    selector_payload: Mapping[str, object],
-    *,
-    deps: ChatTuiDependencies,
-) -> str:
-    requested = _chat_requested_model_selectors(selector_payload)
-    fallback = _chat_initial_model_label(selector_payload)
-    try:
-        payload = deps.runtime_json(ctx, "/api/v1/chat/models")
-    except Exception:
-        return fallback
-    items = [_mapping(item) for item in _list(payload.get("items"))]
-    if requested:
-        labels = [
-            _chat_model_item_label(item) if item is not None else selector
-            for selector in requested
-            for item in (_chat_find_model_item(items, selector),)
-        ]
-        return ", ".join(label for label in labels if label) or fallback
-    default_selector = _text(payload.get("default"))
-    if default_selector is not None:
-        item = _chat_find_model_item(items, default_selector)
-        if item is not None:
-            return _chat_model_item_label(item)
-        return default_selector
-    if items:
-        return _chat_model_item_label(items[0])
-    return fallback
-
-
-def _chat_resolve_model_command_labels(
-    ctx: typer.Context,
-    selectors: Sequence[str],
-    *,
-    deps: ChatTuiDependencies,
-) -> tuple[str, ...] | None:
-    try:
-        payload = deps.runtime_json(ctx, "/api/v1/chat/models")
-    except click.ClickException:
-        return None
-    items = [_mapping(item) for item in _list(payload.get("items"))]
-    labels: list[str] = []
-    for selector in selectors:
-        item = _chat_find_model_item(items, selector)
-        if item is None:
-            return None
-        labels.append(_chat_model_item_label(item))
-    return tuple(labels)
-
-
-def _chat_requested_model_selectors(selector_payload: Mapping[str, object]) -> tuple[str, ...]:
-    models = selector_payload.get("models")
-    if not isinstance(models, Sequence) or isinstance(models, (str, bytes, bytearray)):
-        return ()
-    return tuple(str(item) for item in models if str(item))
-
-
-def _chat_find_model_item(items: Sequence[Mapping[str, Any]], selector: str) -> Mapping[str, Any] | None:
-    normalized = _chat_model_selector_key(selector)
-    for item in items:
-        values = (
-            _text(item.get("selector")),
-            _text(item.get("ref")),
-            _text(item.get("name")),
-            _text(item.get("model")),
-            _text(item.get("provider")),
-        )
-        if any(_chat_model_selector_key(value) == normalized for value in values if value is not None):
-            return item
-    return None
-
-
-def _chat_model_selector_key(selector: str) -> str:
-    return selector.strip().removeprefix("[").removesuffix("]")
-
-
-def _chat_model_item_label(item: Mapping[str, Any]) -> str:
-    ref = _text(item.get("ref"))
-    if ref is not None:
-        return ref
-    provider = _text(item.get("provider"))
-    model = _text(item.get("model"))
-    if provider is not None and model is not None:
-        return f"{provider}/{model}"
-    return _text(item.get("selector")) or _text(item.get("name")) or "runtime model"
-
-
-def _chat_set_executable_selector(selector_payload: dict[str, object], *, kind: str, name: str) -> None:
-    selector_payload[kind] = name.strip()
-    if kind == "thunk":
-        selector_payload.pop("flow", None)
-    elif kind == "flow":
-        selector_payload.pop("thunk", None)
-
-
-def _chat_executable_status_label(selector_payload: Mapping[str, object]) -> str:
-    flow = _text(selector_payload.get("flow"))
-    if flow:
-        return f"flow:{flow}"
-    thunk = _text(selector_payload.get("thunk"))
-    if thunk:
-        return f"thunk:{thunk}"
-    return ""
-
-
-def _chat_status_segments(label: str) -> list[tuple[str, str]]:
-    pieces = [piece for piece in label.split("  ") if piece]
-    if not pieces:
-        return []
-    segments: list[tuple[str, str]] = [("class:status.model", pieces[0])]
-    for piece in pieces[1:]:
-        if piece.startswith("thunk:"):
-            segments.append(("class:status.text", "  "))
-            segments.append(("class:status.thunk", piece))
-        elif piece.startswith("flow:"):
-            segments.append(("class:status.text", "  "))
-            segments.append(("class:status.flow", piece))
-        else:
-            segments.append(("class:status.text", f"  {piece}"))
-    return segments
-
-
-def _chat_help_lines() -> list[str]:
-    return [
-        "Slash Commands",
-        "",
-        "/help, /?          Show help.",
-        "/model [SELECTOR]  List or switch models.",
-        "/thunk [NAME]      List or use a thunk.",
-        "/flow [NAME]       List or use a flow.",
-        "/queue             Show queue commands.",
-        "/exit, /quit       Exit chat.",
-    ]
-
-
-def _chat_queue_help_lines() -> list[str]:
-    return [
-        "Queue Commands",
-        "",
-        "/queue steer N   Steer the active run with item #N.",
-        "/queue edit N    Edit item #N in the input box.",
-        "/queue delete N  Delete item #N.",
-        "/queue clear     Clear all items.",
-        "/q s N           First-letter abbreviations are accepted.",
-    ]
-
-
-def _chat_queue_command_index(value: str, item_count: int) -> int | None:
-    index = _int_or_none(value)
-    if index is None or index < 1 or index > item_count:
-        return None
-    return index - 1
-
-
 def _chat_local_command_lines(message: str, body: Sequence[str]) -> list[str]:
     return [
         *_chat_scrollback_user_message_block(message),
@@ -2930,141 +2553,6 @@ def _chat_system_block_lines(body: Sequence[str]) -> list[str]:
         return []
     first, *rest = body
     return [f"{_chat_marker_for('system')} {first}", *[f"  {line}" for line in rest]]
-
-
-def _chat_model_list_lines(payload: Mapping[str, Any]) -> list[str]:
-    items = payload.get("items")
-    if not isinstance(items, list) or not items:
-        return ["No available chat models."]
-    default = _text(payload.get("default"))
-    lines: list[str] = []
-    for item in items:
-        if not isinstance(item, Mapping):
-            continue
-        selector = _text(item.get("selector"))
-        if selector is None:
-            continue
-        suffix = " default" if selector == default else ""
-        detail = _chat_model_item_detail(item)
-        lines.append(f"{selector}{suffix}{f'  {detail}' if detail else ''}")
-    return lines or ["No available chat models."]
-
-
-def _chat_executable_list_lines(payload: Mapping[str, Any], *, selected: str | None) -> list[str]:
-    items = payload.get("items")
-    if not isinstance(items, list) or not items:
-        return ["No available items."]
-    default = _text(payload.get("default"))
-    lines: list[str] = []
-    for item in items:
-        if not isinstance(item, Mapping):
-            continue
-        name = _text(item.get("name"))
-        if name is None:
-            continue
-        labels: list[str] = []
-        if name == selected:
-            labels.append("current")
-        if name == default:
-            labels.append("default")
-        suffix = f"  {' '.join(labels)}" if labels else ""
-        lines.append(f"{name}{suffix}")
-    return lines or ["No available items."]
-
-
-def _chat_model_item_detail(item: Mapping[str, Any]) -> str:
-    pieces = [
-        _text(item.get("provider")),
-        _text(item.get("adapter")),
-    ]
-    return " ".join(piece for piece in pieces if piece)
-
-
-def _chat_render_markdown_lines(text: str) -> list[str]:
-    stream = io.StringIO()
-    section_titles = _chat_markdown_section_titles(text)
-    try:
-        console = Console(
-            file=stream,
-            force_terminal=True,
-            color_system="standard",
-            width=_chat_markdown_width(),
-            soft_wrap=False,
-        )
-        console.print(Markdown(text), width=_chat_markdown_width(), end="")
-    except Exception:
-        return text.splitlines()
-    rendered = stream.getvalue().rstrip("\n")
-    return _chat_compact_markdown_lines(rendered.splitlines(), section_titles=section_titles)
-
-
-def _chat_compact_markdown_lines(lines: Sequence[str], *, section_titles: set[str]) -> list[str]:
-    compact: list[str] = []
-    normalized_lines = [line.rstrip() for line in lines]
-    for index, normalized in enumerate(normalized_lines):
-        visible = _chat_visible_text(normalized)
-        if not visible.strip():
-            if _chat_should_keep_markdown_blank(normalized_lines, index, section_titles=section_titles):
-                if compact and compact[-1] != "":
-                    compact.append("")
-            continue
-        compact.append(normalized)
-    return compact
-
-
-def _chat_should_keep_markdown_blank(lines: Sequence[str], index: int, *, section_titles: set[str]) -> bool:
-    previous = _chat_previous_visible_line(lines, index)
-    next_line = _chat_next_visible_line(lines, index)
-    return _chat_is_section_title(previous, section_titles) or _chat_is_section_title(next_line, section_titles)
-
-
-def _chat_previous_visible_line(lines: Sequence[str], index: int) -> str | None:
-    for candidate in reversed(lines[:index]):
-        visible = _chat_visible_text(candidate).strip()
-        if visible:
-            return visible
-    return None
-
-
-def _chat_next_visible_line(lines: Sequence[str], index: int) -> str | None:
-    for candidate in lines[index + 1 :]:
-        visible = _chat_visible_text(candidate).strip()
-        if visible:
-            return visible
-    return None
-
-
-def _chat_is_section_title(line: str | None, section_titles: set[str]) -> bool:
-    return line is not None and line in section_titles
-
-
-def _chat_markdown_section_titles(text: str) -> set[str]:
-    titles: set[str] = set()
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("#"):
-            continue
-        prefix, _, title = stripped.partition(" ")
-        if 1 <= len(prefix) <= 6 and set(prefix) == {"#"} and title.strip():
-            titles.add(title.strip())
-    return titles
-
-
-def _chat_markdown_width() -> int:
-    return min(100, max(40, _chat_terminal_width() - 4))
-
-
-def _chat_visible_text(text: str) -> str:
-    visible: list[str] = []
-    in_escape = False
-    for char in text:
-        if char == "\x1b":
-            in_escape = True
-        elif in_escape and char == "m":
-            in_escape = False
-        elif not in_escape:
-            visible.append(char)
-    return "".join(visible)
 
 
 def _chat_header_lines(model_label: str, *, home_label: str) -> list[str]:
@@ -3086,19 +2574,6 @@ def _chat_header_lines(model_label: str, *, home_label: str) -> list[str]:
         for line in content
     ]
     return [top, *body, bottom, " "]
-
-
-def _chat_display_len(text: str) -> int:
-    in_escape = False
-    visible: list[str] = []
-    for char in text:
-        if char == "\x1b":
-            in_escape = True
-        elif in_escape and char == "m":
-            in_escape = False
-        elif not in_escape:
-            visible.append(char)
-    return get_cwidth("".join(visible))
 
 
 def _chat_write_lines(lines: list[str], *, hide_cursor: bool = True) -> None:
@@ -3136,133 +2611,3 @@ def _chat_truncate_display(text: str, *, width: int) -> str:
         pieces.append(char)
         used += char_width
     return f"{''.join(pieces).rstrip()}{ellipsis}"
-
-
-
-
-def _toolang_version() -> str:
-    return f"{_base_toolang_version()}{_source_state_suffix()}"
-
-
-def _base_toolang_version() -> str:
-    try:
-        return package_version("toolang")
-    except PackageNotFoundError:
-        pyproject_path = Path(__file__).resolve().parents[3] / "pyproject.toml"
-        try:
-            data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
-        except (OSError, tomllib.TOMLDecodeError):
-            return "unknown"
-        project = data.get("project")
-        if not isinstance(project, dict):
-            return "unknown"
-        version = project.get("version")
-        return version if isinstance(version, str) else "unknown"
-
-
-def _source_state_suffix() -> str:
-    source_root = _source_tree_root()
-    if source_root is None:
-        return ""
-    short_sha = _git_output(source_root, "rev-parse", "--short", "HEAD")
-    if short_sha is None:
-        return ""
-    dirty = _git_output(source_root, "status", "--short")
-    if dirty is None:
-        return f"+{short_sha}"
-    dirty_suffix = "*" if dirty else ""
-    return f"+{short_sha}{dirty_suffix}"
-
-
-def _git_output(source_root: Path, *args: str) -> str | None:
-    try:
-        result = subprocess.run(
-            ["git", *args],
-            cwd=source_root,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            check=False,
-            timeout=2,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip()
-
-
-def _source_tree_root() -> Path | None:
-    current = Path(__file__).resolve()
-    for parent in current.parents:
-        if (parent / ".git").exists():
-            return parent
-    return None
-
-
-def _mapping(value: object) -> Mapping[str, Any]:
-    return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
-
-
-def _list(value: object) -> list[Any]:
-    return value if isinstance(value, list) else []
-
-
-def _text(value: object) -> str | None:
-    if value is None:
-        return None
-    text = str(value)
-    return text or None
-
-
-def _int_or_none(value: object) -> int | None:
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError:
-            return None
-    if value is None:
-        return None
-    return None
-
-
-def _display_run_status(status: object) -> str:
-    text = str(status or "")
-    return "succeeded" if text == "finished" else text
-
-
-def _run_steps(run: Mapping[str, Any]) -> list[Mapping[str, Any]]:
-    output = _mapping(run.get("output"))
-    return [_mapping(item) for item in _list(output.get("steps"))]
-
-
-def _event_message_text(message: object) -> str:
-    if not isinstance(message, Mapping):
-        return ""
-    typed_message = cast(Mapping[str, object], message)
-    parts = typed_message.get("parts")
-    if not isinstance(parts, list):
-        return ""
-    texts: list[str] = []
-    for part in parts:
-        if not isinstance(part, Mapping):
-            continue
-        typed_part = cast(Mapping[str, object], part)
-        if typed_part.get("type") == "text":
-            texts.append(str(typed_part.get("text") or ""))
-    return "".join(texts).strip()
-
-
-def _event_parts_text(parts: object) -> str:
-    if not isinstance(parts, list):
-        return ""
-    texts: list[str] = []
-    for part in parts:
-        if not isinstance(part, Mapping):
-            continue
-        typed_part = cast(Mapping[str, object], part)
-        if typed_part.get("type") == "text":
-            texts.append(str(typed_part.get("text") or ""))
-    return "".join(texts).strip()

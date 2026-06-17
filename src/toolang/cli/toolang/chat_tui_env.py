@@ -1,0 +1,69 @@
+"""Environment and source-version helpers for the chat TUI."""
+
+from __future__ import annotations
+
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
+from pathlib import Path
+import subprocess
+import tomllib
+
+
+def _toolang_version() -> str:
+    return f"{_base_toolang_version()}{_source_state_suffix()}"
+
+
+def _base_toolang_version() -> str:
+    try:
+        return package_version("toolang")
+    except PackageNotFoundError:
+        pyproject_path = Path(__file__).resolve().parents[3] / "pyproject.toml"
+        try:
+            data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError):
+            return "unknown"
+        project = data.get("project")
+        if not isinstance(project, dict):
+            return "unknown"
+        version = project.get("version")
+        return version if isinstance(version, str) else "unknown"
+
+
+def _source_state_suffix() -> str:
+    source_root = _source_tree_root()
+    if source_root is None:
+        return ""
+    short_sha = _git_output(source_root, "rev-parse", "--short", "HEAD")
+    if short_sha is None:
+        return ""
+    dirty = _git_output(source_root, "status", "--short")
+    if dirty is None:
+        return f"+{short_sha}"
+    dirty_suffix = "*" if dirty else ""
+    return f"+{short_sha}{dirty_suffix}"
+
+
+def _git_output(source_root: Path, *args: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=source_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def _source_tree_root() -> Path | None:
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        if (parent / ".git").exists():
+            return parent
+    return None
