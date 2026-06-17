@@ -133,7 +133,7 @@ class StepBlock(MutableBlock):
         return cls(index=step_index(payload), kind=kind, payload=dict(payload), label=step_label(payload, run))
 
     def delta(self, payload: Mapping[str, Any]) -> None:
-        super().delta(payload)
+        MutableBlock.delta(self, payload)
         delta = mapping(payload.get("delta"))
         if delta.get("type") == "text" and text(delta.get("text")):
             self.part_deltas.setdefault(part_index(payload), []).append(text(delta.get("text")) or "")
@@ -741,3 +741,47 @@ def int_or_none(value: object) -> int | None:
         except ValueError:
             return None
     return None
+
+
+def demo() -> ChatCore:
+    core = ChatCore()
+    events: tuple[Mapping[str, Any], ...] = (
+        {
+            "type": "run_starting",
+            "payload": {
+                "run_id": "run_demo",
+                "input": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
+            },
+        },
+        {"type": "run_begin", "payload": {"run_id": "run_demo"}},
+        {"type": "step_begin", "payload": {"run_id": "run_demo", "step_index": 1, "kind": "model"}},
+        {
+            "type": "part_delta",
+            "payload": {"run_id": "run_demo", "step_index": 1, "part_index": 0, "delta": {"type": "text", "text": "Hi"}},
+        },
+        {
+            "type": "step_end",
+            "payload": {
+                "run_id": "run_demo",
+                "step_index": 1,
+                "kind": "model",
+                "output": [{"type": "text", "text": "Hi there."}],
+            },
+        },
+        {"type": "run_end", "payload": {"run_id": "run_demo", "status": "finished"}},
+    )
+    for event in events:
+        core.on_trace_event(event)
+    return core
+
+
+def main() -> None:
+    core = demo()
+    print("scrollback:")
+    print("\n".join(core.scrollback))
+    print("active:")
+    print("\n".join(core.active_lines()) or "<none>")
+
+
+if __name__ == "__main__":
+    main()
