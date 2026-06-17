@@ -745,42 +745,62 @@ def int_or_none(value: object) -> int | None:
 
 def demo() -> ChatCore:
     core = ChatCore()
+    run_demo_turn(core, "run_demo", "hello")
+    return core
+
+
+def run_demo_turn(core: ChatCore, run_id: str, message: str) -> None:
+    reply = f"echo: {message}"
     events: tuple[Mapping[str, Any], ...] = (
         {
             "type": "run_starting",
             "payload": {
-                "run_id": "run_demo",
-                "input": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
+                "run_id": run_id,
+                "input": {"role": "user", "parts": [{"type": "text", "text": message}]},
             },
         },
-        {"type": "run_begin", "payload": {"run_id": "run_demo"}},
-        {"type": "step_begin", "payload": {"run_id": "run_demo", "step_index": 1, "kind": "model"}},
+        {"type": "run_begin", "payload": {"run_id": run_id}},
+        {"type": "step_begin", "payload": {"run_id": run_id, "step_index": 1, "kind": "model"}},
         {
             "type": "part_delta",
-            "payload": {"run_id": "run_demo", "step_index": 1, "part_index": 0, "delta": {"type": "text", "text": "Hi"}},
+            "payload": {"run_id": run_id, "step_index": 1, "part_index": 0, "delta": {"type": "text", "text": reply}},
         },
         {
             "type": "step_end",
             "payload": {
-                "run_id": "run_demo",
+                "run_id": run_id,
                 "step_index": 1,
                 "kind": "model",
-                "output": [{"type": "text", "text": "Hi there."}],
+                "output": [{"type": "text", "text": reply}],
             },
         },
-        {"type": "run_end", "payload": {"run_id": "run_demo", "status": "finished"}},
+        {"type": "run_end", "payload": {"run_id": run_id, "status": "finished"}},
     )
     for event in events:
         core.on_trace_event(event)
-    return core
 
 
 def main() -> None:
-    core = demo()
-    print("scrollback:")
-    print("\n".join(core.scrollback))
-    print("active:")
-    print("\n".join(core.active_lines()) or "<none>")
+    core = ChatCore()
+    print("chat_tui2 demo. Type a message, or /quit to exit.")
+    turn = 1
+    while True:
+        try:
+            message = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if message in {"/q", "/quit", "/exit"}:
+            break
+        if not message:
+            continue
+        run_demo_turn(core, f"run_demo_{turn}", message)
+        turn += 1
+        print("\n".join(core.scrollback[-5:]))
+        active = core.active_lines()
+        if active:
+            print("active:")
+            print("\n".join(active))
 
 
 if __name__ == "__main__":
