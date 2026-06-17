@@ -182,7 +182,7 @@ class ToolStepBlock(StepBlock):
 @dataclass(slots=True)
 class FlowProjectionBlock(MutableBlock):
     def lines(self, run: "Run") -> list[str]:
-        return flow_projection_lines(run)
+        return live_flow_projection_lines(run)
 
 
 @dataclass(slots=True)
@@ -503,18 +503,18 @@ def activity_lines(run: Run) -> list[str]:
 
 
 def activity_blocks(run: Run) -> list[MutableBlock]:
-    if flow_projection_lines(run):
+    if live_flow_projection_lines(run):
         return [FlowProjectionBlock(0, "flow_projection"), *unflushed_commands(run)]
     blocks: list[MutableBlock] = []
     seen_steps: set[int] = set()
-    for kind, index in run.timeline or [("step", index) for index in sorted(run.steps | run.completed_steps)]:
+    for kind, index in run.timeline or [("step", index) for index in sorted(run.steps)]:
         if kind == "command":
             if command := unflushed_command(run, index):
                 blocks.append(command)
             continue
-        if index in seen_steps or index in run.flushed_steps:
+        if index in seen_steps:
             continue
-        if block := step_block_for_index(run, index):
+        if block := run.steps.get(index):
             blocks.append(block)
             seen_steps.add(index)
     if run.mutable_block and run.mutable_block not in blocks:
@@ -530,17 +530,6 @@ def unflushed_command(run: Run, index: int) -> CommandBlock | None:
     block = run.commands.get(index)
     if block is None or isinstance(block, RunStartBlock) or index in run.flushed_commands:
         return None
-    return block
-
-
-def step_block_for_index(run: Run, index: int) -> StepBlock | None:
-    if active := run.steps.get(index):
-        return active
-    payload = run.completed_steps.get(index)
-    if payload is None:
-        return None
-    block = step_block(payload, run)
-    block.finalize(payload)
     return block
 
 
@@ -656,6 +645,18 @@ def flow_projection_lines(run: Run) -> list[str]:
         payload
         for payload in [*run.completed_steps.values(), *(block.payload for block in run.steps.values())]
         if text(payload.get("kind")) in {"step", "parallel", "bind", "run"}
+    ]
+    lines: list[str] = []
+    for payload in sorted(flow_steps, key=step_index):
+        lines.extend(flow_step_lines(payload))
+    return lines
+
+
+def live_flow_projection_lines(run: Run) -> list[str]:
+    flow_steps = [
+        block.payload
+        for block in run.steps.values()
+        if text(block.payload.get("kind")) in {"step", "parallel", "bind", "run"}
     ]
     lines: list[str] = []
     for payload in sorted(flow_steps, key=step_index):
@@ -780,7 +781,45 @@ def run_demo_turn(core: ChatCore, run_id: str, message: str) -> None:
         core.on_trace_event(event)
 
 
+def demo_turn_output(lines: Sequence[str]) -> list[str]:
+    output = list(lines)
+    while output and not output[0].strip():
+        output.pop(0)
+    if output and output[0].startswith("> "):
+        output.pop(0)
+        if output and output[0].startswith("  "):
+            output.pop(0)
+        if output and not output[0].strip():
+            output.pop(0)
+    while output and not output[-1].strip():
+        output.pop()
+    return output
+
+
+def assert_window_drops_finalized_block() -> None:
+    core = ChatCore()
+    core.on_trace_event({"type": "run_starting", "payload": {"run_id": "run_check", "input": {"parts": []}}})
+    core.on_trace_event({"type": "run_begin", "payload": {"run_id": "run_check"}})
+    core.on_trace_event({"type": "step_begin", "payload": {"run_id": "run_check", "step_index": 1, "kind": "model"}})
+    assert any("thinking" in line for line in core.active_lines())
+    run = core.active_run
+    assert run is not None
+    result = run.apply(
+        "step_end",
+        {
+            "run_id": "run_check",
+            "step_index": 1,
+            "kind": "model",
+            "output": [{"type": "text", "text": "done"}],
+        },
+    )
+    assert not any("thinking" in line or "done" in line for line in core.active_lines())
+    core.apply_result(run, result)
+    assert "* done" in core.scrollback
+
+
 def main() -> None:
+    assert_window_drops_finalized_block()
     core = ChatCore()
     print("chat_tui2 demo. Type a message, or /quit to exit.")
     turn = 1
@@ -794,9 +833,10 @@ def main() -> None:
             break
         if not message:
             continue
+        scrollback_start = len(core.scrollback)
         run_demo_turn(core, f"run_demo_{turn}", message)
         turn += 1
-        print("\n".join(core.scrollback[-5:]))
+        print("\n".join(demo_turn_output(core.scrollback[scrollback_start:])))
         active = core.active_lines()
         if active:
             print("active:")
