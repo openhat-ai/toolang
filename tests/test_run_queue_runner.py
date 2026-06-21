@@ -52,6 +52,7 @@ from toolang.execution.events import (
     RunBegin,
     RunStarting,
     RunStopping,
+    RunWaiting,
     StepEnd,
     StepBegin,
 )
@@ -90,7 +91,13 @@ from toolang.config.plugins import ChannelBinding
 from toolang.config.log_spec import PY_LOG_ENV_VAR
 from toolang.execution import execute as run_execute_module
 from toolang.execution.input import RunInput, bind_run_request
-from toolang.execution.runner import DEFAULT_GROUP_LIMITS, QueueRunner, RunOutcome, RunRequest, RunSubmission
+from toolang.execution.runner import (
+    DEFAULT_GROUP_LIMITS,
+    QueueRunner,
+    RunOutcome,
+    RunRequest,
+    RunSubmission,
+)
 from toolang.execution.db import ExecutionStore, execution_db_path
 from toolang.execution.response import SseResponseSink
 from toolang.execution.stream import RuntimeEventBus
@@ -100,7 +107,11 @@ from toolang.components.trigger import files, poll, pulse, watch
 from toolang import file_requests
 from toolang.state.durable import scan_durable_state
 from toolang.state.live import load_live_state
-from toolang.state.prepared import PreparedState, load_prepared_state, write_prepared_lock
+from toolang.state.prepared import (
+    PreparedState,
+    load_prepared_state,
+    write_prepared_lock,
+)
 from toolang.loops.basic import BasicLoop
 from toolang.up import load_model_adapters
 from toolang import up as up_module
@@ -135,18 +146,18 @@ def test_runner_queue_is_fifo() -> None:
     asyncio.run(run_test())
 
 
-def test_runner_enqueue_emits_queue_event_to_response() -> None:
+def test_runner_enqueue_emits_waiting_trace_event_to_response() -> None:
     class CaptureResponse:
         wants_stream = True
 
         def __init__(self) -> None:
-            self.queue_events: list[tuple[str, dict[str, Any]]] = []
+            self.events: list[object] = []
 
         def on_event(self, event: object) -> None:
-            del event
+            self.events.append(event)
 
         def on_queue_event(self, event_type: str, payload: dict[str, Any]) -> None:
-            self.queue_events.append((event_type, payload))
+            raise AssertionError(f"unexpected queue event: {event_type} {payload}")
 
     runner = QueueRunner(delay_sec=0.0)
     response = CaptureResponse()
@@ -160,22 +171,20 @@ def test_runner_enqueue_emits_queue_event_to_response() -> None:
     )
 
     assert runner.enqueue(request, response=response) == 1
-    assert len(response.queue_events) == 1
-    event_type, payload = response.queue_events[0]
-    assert event_type == "run_waiting"
-    assert isinstance(payload.pop("created_at"), str)
-    assert payload == {
-        "type": "run_waiting",
-        "run_id": "run_queuedtest",
-        "thread_id": "term_queue",
-        "origin": "chat",
-        "group": "chat",
-        "request_id": "req_queue",
-        "executable_kind": "flow",
-        "executable_name": "research",
-        "reason": "queue",
-        "position": 1,
-    }
+    assert len(response.events) == 2
+    assert isinstance(response.events[0], RunStarting)
+    waiting = response.events[1]
+    assert isinstance(waiting, RunWaiting)
+    assert waiting.run_id == "run_queuedtest"
+    assert waiting.thread_id == "term_queue"
+    assert waiting.origin == "chat"
+    assert waiting.group == "chat"
+    assert waiting.request_id == "req_queue"
+    assert waiting.executable_kind == "flow"
+    assert waiting.executable_name == "research"
+    assert waiting.reason == "queue"
+    assert waiting.position == 1
+    assert isinstance(waiting.created_at, str)
 
 
 def test_runner_control_command_notifies_response_and_events(tmp_path: Path) -> None:
@@ -207,7 +216,9 @@ def test_runner_control_command_notifies_response_and_events(tmp_path: Path) -> 
         created_at="2026-01-01T00:00:00Z",
         started_at="2026-01-01T00:00:00Z",
     )
-    command = context.store.append_command(run_id=run.run_id, kind="stop", mode="immediate")
+    command = context.store.append_command(
+        run_id=run.run_id, kind="stop", mode="immediate"
+    )
     payload = {
         "run_id": run.run_id,
         "thread_id": run.thread_id,
@@ -218,7 +229,9 @@ def test_runner_control_command_notifies_response_and_events(tmp_path: Path) -> 
     }
     response = CaptureResponse()
     context.runner.enqueue(
-        RunRequest(group="chat", origin="chat", run_id=run.run_id, thread_id=run.thread_id),
+        RunRequest(
+            group="chat", origin="chat", run_id=run.run_id, thread_id=run.thread_id
+        ),
         response=response,
     )
 
@@ -226,19 +239,26 @@ def test_runner_control_command_notifies_response_and_events(tmp_path: Path) -> 
     canceled = context.runner.cancel_run(run_id=run.run_id)
 
     assert canceled.status == "canceled"
-    assert [event_type for event_type, _payload in response.queue_events] == ["run_waiting"]
-    assert len(response.events) == 3
+    assert response.queue_events == []
+    assert len(response.events) == 4
     assert isinstance(response.events[0], RunStarting)
-    assert isinstance(response.events[1], RunStopping)
-    assert isinstance(response.events[2], RunEnd)
-    assert response.events[2].status == "canceled"
-    assert [item.type for item in context.store.list_events(domain="run", domain_id=run.run_id)] == [
+    assert isinstance(response.events[1], RunWaiting)
+    assert isinstance(response.events[2], RunStopping)
+    assert isinstance(response.events[3], RunEnd)
+    assert response.events[3].status == "canceled"
+    assert [
+        item.type
+        for item in context.store.list_events(domain="run", domain_id=run.run_id)
+    ] == [
         "run_starting",
         "run_waiting",
         "run_stopping",
         "run_end",
     ]
-    assert [item.type for item in context.store.list_events(domain="thread", domain_id=run.thread_id)] == [
+    assert [
+        item.type
+        for item in context.store.list_events(domain="thread", domain_id=run.thread_id)
+    ] == [
         "run_starting",
         "run_waiting",
         "run_stopping",
@@ -293,12 +313,20 @@ def test_runner_cancel_releases_thread_lock_for_next_run(tmp_path: Path) -> None
             enabled_features=("inspect",),
             runner=runner,
         )
-        runner.enqueue(RunRequest(group="chat", origin="chat", run_id="run-1", thread_id="thread-1"))
+        runner.enqueue(
+            RunRequest(
+                group="chat", origin="chat", run_id="run-1", thread_id="thread-1"
+            )
+        )
         drain_task = asyncio.create_task(runner.drain(context))
 
         await asyncio.wait_for(runner.first_started.wait(), timeout=1)
         runner.cancel_run(run_id="run-1")
-        runner.enqueue(RunRequest(group="chat", origin="chat", run_id="run-2", thread_id="thread-1"))
+        runner.enqueue(
+            RunRequest(
+                group="chat", origin="chat", run_id="run-2", thread_id="thread-1"
+            )
+        )
 
         await asyncio.wait_for(runner.second_started.wait(), timeout=1)
         runner.close()
@@ -369,11 +397,21 @@ def test_runner_submission_exception_fails_response_without_stopping_drain() -> 
         first_response = CaptureResponse()
         second_response = CaptureResponse()
         runner.enqueue(
-            RunRequest(group="chat", origin="chat", run_id="run_fail_1", message=Message.user("first")),
+            RunRequest(
+                group="chat",
+                origin="chat",
+                run_id="run_fail_1",
+                message=Message.user("first"),
+            ),
             response=first_response,
         )
         runner.enqueue(
-            RunRequest(group="chat", origin="chat", run_id="run_fail_2", message=Message.user("second")),
+            RunRequest(
+                group="chat",
+                origin="chat",
+                run_id="run_fail_2",
+                message=Message.user("second"),
+            ),
             response=second_response,
         )
         runner.close()
@@ -382,12 +420,14 @@ def test_runner_submission_exception_fails_response_without_stopping_drain() -> 
 
         assert [outcome.status for outcome in outcomes] == ["failed", "failed"]
         assert [outcome.run_id for outcome in outcomes] == ["run_fail_1", "run_fail_2"]
-        assert len(first_response.events) == 2
-        assert len(second_response.events) == 2
+        assert len(first_response.events) == 3
+        assert len(second_response.events) == 3
         assert isinstance(first_response.events[0], RunStarting)
         assert isinstance(second_response.events[0], RunStarting)
-        assert getattr(first_response.events[1], "status") == "failed"
-        assert getattr(second_response.events[1], "status") == "failed"
+        assert isinstance(first_response.events[1], RunWaiting)
+        assert isinstance(second_response.events[1], RunWaiting)
+        assert getattr(first_response.events[2], "status") == "failed"
+        assert getattr(second_response.events[2], "status") == "failed"
 
     asyncio.run(run_test())
 
@@ -496,9 +536,7 @@ def test_queue_runner_drains_requests_in_order(tmp_path: Path, caplog) -> None:
             results = await context.runner.drain(context)
 
         printed = [
-            record.message
-            for record in caplog.records
-            if record.name == "toolang.run"
+            record.message for record in caplog.records if record.name == "toolang.run"
         ]
         assert [result.input_text for result in results] == [
             "say hello",
@@ -568,14 +606,18 @@ def test_file_request_input_classifies_common_file_types(tmp_path: Path) -> None
     text, parts = file_requests.render_file_input(text_path)
 
     assert text == '{"ok": true}\n'
-    assert parts == [{"type": "text", "text": '{"ok": true}\n', "path": str(text_path.resolve())}]
+    assert parts == [
+        {"type": "text", "text": '{"ok": true}\n', "path": str(text_path.resolve())}
+    ]
     assert file_requests.path_part_type(tmp_path / "photo.png") == "image"
     assert file_requests.path_part_type(tmp_path / "voice.wav") == "audio"
     assert file_requests.path_part_type(tmp_path / "clip.mp4") == "video"
     assert file_requests.path_part_type(tmp_path / "archive.zip") == "file"
 
 
-def test_collect_file_submissions_scans_existing_inbox_files_once(tmp_path: Path) -> None:
+def test_collect_file_submissions_scans_existing_inbox_files_once(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     inbox = tmp_path / "inbox"
     _write_text(
@@ -632,16 +674,21 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
             assert thread_id.startswith("web_")
             assert body["message"]["parts"][0]["text"] == "say hello"
             assert body["assistant"]["parts"][0]["text"] == "assistant:say hello"
-            assert client.put(
-                "/api/v1/skills/reviewer/wired",
-                json={"visibility": "private", "ref": "acme/reviewer"},
-            ).status_code == 404
+            assert (
+                client.put(
+                    "/api/v1/skills/reviewer/wired",
+                    json={"visibility": "private", "ref": "acme/reviewer"},
+                ).status_code
+                == 404
+            )
 
             runs = client.get("/api/v1/runs").json()["items"]
             profile = client.get("/api/v1/profile").json()
             caps_response = client.get("/api/v1/caps").json()
             threads = client.get("/api/v1/threads").json()["items"]
-            snapshot = inspect.snapshot_context(context, enabled_features=("chat", "inspect"))
+            snapshot = inspect.snapshot_context(
+                context, enabled_features=("chat", "inspect")
+            )
             durable = cast(dict[str, object], snapshot["durable"])
             prepared = cast(dict[str, object], snapshot["prepared"])
             live = cast(dict[str, object], snapshot["live"])
@@ -687,12 +734,16 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
             thread_detail = client.get(f"/api/v1/threads/{thread_id}").json()
             run_detail = client.get(f"/api/v1/runs/{body['run_id']}").json()
             assert thread_detail["info"] == threads[0]
-            assert [item["info"]["id"] for item in thread_detail["runs"]] == [body["run_id"]]
+            assert [item["info"]["id"] for item in thread_detail["runs"]] == [
+                body["run_id"]
+            ]
             assert run_detail["info"] == thread_detail["runs"][0]["info"]
             assert run_detail["input"]["role"] == "user"
             assert run_detail["input"]["parts"][0]["text"] == "say hello"
             assert run_detail["output"]["status"] == "finished"
-            assert [item["record"]["kind"] for item in run_detail["output"]["steps"]] == ["model"]
+            assert [
+                item["record"]["kind"] for item in run_detail["output"]["steps"]
+            ] == ["model"]
             assert run_detail["output"]["steps"][0]["message"]["role"] == "assistant"
             assert (
                 run_detail["output"]["steps"][0]["message"]["parts"][0]["text"]
@@ -713,7 +764,9 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
                 "hash": context_hash,
                 "body": "Context for this run.",
             }
-            assert client.get(f"/api/v1/instructions/{instruct_hash}").status_code == 404
+            assert (
+                client.get(f"/api/v1/instructions/{instruct_hash}").status_code == 404
+            )
             assert definitions["program_source"] == "agents/alice/agent.too"
             assert definitions["private_entries"] == []
             assert prepared_fingerprint == live["fingerprint"]
@@ -723,7 +776,9 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
             assert live["queue_pending"] == 0
 
 
-def test_threads_api_reports_full_run_count_independent_of_recent_run_limit(tmp_path: Path) -> None:
+def test_threads_api_reports_full_run_count_independent_of_recent_run_limit(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
@@ -893,7 +948,10 @@ def test_agent_events_include_thread_updates_for_run_lifecycle(tmp_path: Path) -
         response = client.get("/api/v1/agent/events").json()
 
     assert response["cursor"] == 2
-    assert [item["type"] for item in response["items"]] == ["thread_update", "thread_update"]
+    assert [item["type"] for item in response["items"]] == [
+        "thread_update",
+        "thread_update",
+    ]
     assert response["items"][0]["payload"]["run_id"] == "run-1"
     assert response["items"][0]["payload"]["status"] == "running"
     assert response["items"][1]["payload"]["status"] == "finished"
@@ -1040,12 +1098,12 @@ def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
         {"kind": "step", "index": 1},
         {"kind": "command", "index": 1},
     ]
-    assert events[1]["payload"]["instruct"] == hashlib.sha256(
-        b"call prompt"
-    ).hexdigest()
-    assert events[1]["payload"]["context"] == hashlib.sha256(
-        b"call context"
-    ).hexdigest()
+    assert (
+        events[1]["payload"]["instruct"] == hashlib.sha256(b"call prompt").hexdigest()
+    )
+    assert (
+        events[1]["payload"]["context"] == hashlib.sha256(b"call context").hexdigest()
+    )
 
 
 def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
@@ -1119,7 +1177,9 @@ def test_basic_loop_continues_when_steer_arrives_before_finish() -> None:
 
         def call_model(self) -> ModelCallResult:
             self.model_calls += 1
-            return ModelCallResult(message=Message.assistant(f"answer {self.model_calls}"))
+            return ModelCallResult(
+                message=Message.assistant(f"answer {self.model_calls}")
+            )
 
         def call_tool(self, call):
             raise AssertionError(f"unexpected tool call: {call}")
@@ -1198,7 +1258,10 @@ def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
     )
 
     assert context.store.list_steps(run_id="run-1") == []
-    assert [item.type for item in context.store.list_events(domain="thread", domain_id="thread-1")] == ["run_begin"]
+    assert [
+        item.type
+        for item in context.store.list_events(domain="thread", domain_id="thread-1")
+    ] == ["run_begin"]
 
 
 def test_runtime_start_restores_ignored_termination_signals(monkeypatch) -> None:
@@ -1270,7 +1333,9 @@ def test_agent_events_include_cap_updates(tmp_path: Path) -> None:
     }
 
 
-def test_chat_api_allocates_web_threads_by_default_and_rejects_unknown_thread_ids(tmp_path: Path) -> None:
+def test_chat_api_allocates_web_threads_by_default_and_rejects_unknown_thread_ids(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
@@ -1284,7 +1349,10 @@ def test_chat_api_allocates_web_threads_by_default_and_rejects_unknown_thread_id
         with TestClient(app) as client:
             rejected = client.post(
                 "/api/v1/chat",
-                json={"thread": "web-client-created", "message": _chat_message("hello")},
+                json={
+                    "thread": "web-client-created",
+                    "message": _chat_message("hello"),
+                },
             )
             first = client.post(
                 "/api/v1/chat",
@@ -1354,7 +1422,9 @@ def test_chat_api_creates_empty_terminal_threads(tmp_path: Path) -> None:
     assert thread == body["thread"]
 
 
-def test_chat_rewind_supersedes_previous_run_in_thread_projection(tmp_path: Path) -> None:
+def test_chat_rewind_supersedes_previous_run_in_thread_projection(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
@@ -1380,7 +1450,9 @@ def test_chat_rewind_supersedes_previous_run_in_thread_projection(tmp_path: Path
 
             for _ in range(100):
                 thread_detail = client.get(f"/api/v1/threads/{thread_id}").json()
-                if [item["info"]["id"] for item in thread_detail["runs"]] == [new_run_id]:
+                if [item["info"]["id"] for item in thread_detail["runs"]] == [
+                    new_run_id
+                ]:
                     break
                 time.sleep(0.01)
             old_detail = client.get(f"/api/v1/runs/{old_run_id}").json()
@@ -1425,7 +1497,9 @@ def test_chat_rewind_cancels_running_run_before_superseding(tmp_path: Path) -> N
 
             for _ in range(100):
                 thread_detail = client.get("/api/v1/threads/term_running").json()
-                if [item["info"]["id"] for item in thread_detail["runs"]] == [new_run_id]:
+                if [item["info"]["id"] for item in thread_detail["runs"]] == [
+                    new_run_id
+                ]:
                     break
                 time.sleep(0.01)
             old_detail = client.get("/api/v1/runs/run_running").json()
@@ -1461,7 +1535,10 @@ def test_chat_fork_copies_prior_runs_into_new_thread(tmp_path: Path) -> None:
             first_run_id = first.json()["run_id"]
             second = client.post(
                 "/api/v1/chat",
-                json={"thread": source_thread_id, "message": _chat_message("second input")},
+                json={
+                    "thread": source_thread_id,
+                    "message": _chat_message("second input"),
+                },
             )
             fork = client.post(
                 f"/api/v1/runs/{second.json()['run_id']}/fork",
@@ -1515,7 +1592,10 @@ def test_chat_fork_can_include_anchor_run_in_new_thread(tmp_path: Path) -> None:
             source_thread_id = first.json()["thread_id"]
             second = client.post(
                 "/api/v1/chat",
-                json={"thread": source_thread_id, "message": _chat_message("second input")},
+                json={
+                    "thread": source_thread_id,
+                    "message": _chat_message("second input"),
+                },
             )
             fork = client.post(
                 f"/api/v1/runs/{second.json()['run_id']}/fork",
@@ -1549,7 +1629,9 @@ def test_chat_fork_can_include_anchor_run_in_new_thread(tmp_path: Path) -> None:
     assert thread_detail["info"]["run_count"] == 3
 
 
-def test_chat_api_records_peer_for_new_thread_and_rejects_mismatch(tmp_path: Path) -> None:
+def test_chat_api_records_peer_for_new_thread_and_rejects_mismatch(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "bob" / "agent.too", "agent bob\n")
     context = _build_context(
@@ -1588,7 +1670,11 @@ def test_chat_api_records_peer_for_new_thread_and_rejects_mismatch(tmp_path: Pat
             thread = client.get(f"/api/v1/threads/{thread_id}").json()["info"]
 
     assert first.status_code == 200
-    assert first.json()["thread"]["peer"] == {"type": "agent", "name": "alice", "thread": "term_a"}
+    assert first.json()["thread"]["peer"] == {
+        "type": "agent",
+        "name": "alice",
+        "thread": "term_a",
+    }
     assert accepted.status_code == 200
     assert rejected.status_code == 409
     assert thread["peer"] == {"type": "agent", "name": "alice", "thread": "term_a"}
@@ -1607,7 +1693,9 @@ def test_chat_models_lists_effective_selectors_for_term_thunk(tmp_path: Path) ->
         enabled_features=("chat", "inspect"),
     )
     context.model_environ = {"OPENAI_API_KEY": "secret"}
-    context.config.set("models.allowed_selectors", ("openai/o3[openai]", "openai/gpt-5[openai]"))
+    context.config.set(
+        "models.allowed_selectors", ("openai/o3[openai]", "openai/gpt-5[openai]")
+    )
     app = _create_test_app(context)
 
     with TestClient(app) as client:
@@ -1711,7 +1799,9 @@ def test_chat_executable_endpoints_list_thunks_and_flows(tmp_path: Path) -> None
     }
 
 
-def test_chat_request_passes_selected_thunk_and_flow_to_runner(tmp_path: Path, monkeypatch) -> None:
+def test_chat_request_passes_selected_thunk_and_flow_to_runner(
+    tmp_path: Path, monkeypatch
+) -> None:
     async def run_test() -> None:
         toolang_root = tmp_path / "toolang"
         _write_text(
@@ -2015,11 +2105,16 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
         detail = client.get("/api/v1/runs/run-loop").json()
 
     assert run_item["status"] == "failed"
-    assert run_item["summary"] == "Model tool loop exceeded the maximum number of rounds."
+    assert (
+        run_item["summary"] == "Model tool loop exceeded the maximum number of rounds."
+    )
     assert run_item["failure"] == {
         "reason": "Model tool loop exceeded the maximum number of rounds."
     }
-    assert detail["output"]["error"] == "Model tool loop exceeded the maximum number of rounds."
+    assert (
+        detail["output"]["error"]
+        == "Model tool loop exceeded the maximum number of rounds."
+    )
     assert detail["output"]["failure"] == {
         "reason": "Model tool loop exceeded the maximum number of rounds.",
         "step_index": 2,
@@ -2090,7 +2185,9 @@ def test_chat_stream_emits_tool_and_text_chunks(tmp_path: Path) -> None:
                 json={"message": _chat_message("tool me")},
             ) as response:
                 assert response.status_code == 200
-                stream_text = "".join(chunk.decode("utf-8") for chunk in response.iter_raw())
+                stream_text = "".join(
+                    chunk.decode("utf-8") for chunk in response.iter_raw()
+                )
 
     assert '"type":"start"' in stream_text
     assert '"type":"message-metadata"' in stream_text
@@ -2102,7 +2199,10 @@ def test_chat_stream_emits_tool_and_text_chunks(tmp_path: Path) -> None:
     assert '"toolCallId":"call_1"' in stream_text
     assert '"toolName":"math_add"' in stream_text
     assert '"inputTextDelta":"{\\"a\\":7,\\"b\\":8}"' in stream_text
-    assert '"providerMetadata":{"toolang":{"toolFamily":"math_add","toolName":"math_add"}}' in stream_text
+    assert (
+        '"providerMetadata":{"toolang":{"toolFamily":"math_add","toolName":"math_add"}}'
+        in stream_text
+    )
     assert '"type":"text-delta"' in stream_text
     assert '"delta":"assistant:tool me"' in stream_text
     assert '"type":"finish-step"' in stream_text
@@ -2128,7 +2228,9 @@ def test_chat_stream_tui_client_emits_trace_events(tmp_path: Path) -> None:
                 json={"client": "tui", "message": _chat_message("tool me")},
             ) as response:
                 assert response.status_code == 200
-                stream_text = "".join(chunk.decode("utf-8") for chunk in response.iter_raw())
+                stream_text = "".join(
+                    chunk.decode("utf-8") for chunk in response.iter_raw()
+                )
 
     assert '"type":"run_starting"' in stream_text
     assert '"type":"run_begin"' in stream_text
@@ -2158,7 +2260,9 @@ def test_chat_stream_emits_before_run_completion(tmp_path: Path) -> None:
         timer.start()
         try:
             with _patched_runner_streaming_text(release):
-                async with _running_context(context, enabled_features=("chat", "inspect")):
+                async with _running_context(
+                    context, enabled_features=("chat", "inspect")
+                ):
                     stream = chat_loop._stream_chat_run(
                         context,
                         chat_loop.ChatRequest(
@@ -2191,7 +2295,9 @@ def test_chat_stream_emits_before_run_completion(tmp_path: Path) -> None:
     asyncio.run(run_test())
 
 
-def test_chat_default_executable_uses_default_thunk_not_single_flow(tmp_path: Path) -> None:
+def test_chat_default_executable_uses_default_thunk_not_single_flow(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -2253,7 +2359,9 @@ flow research(in: Text):
                 json={"flow": "research", "message": _chat_message("flow me")},
             ) as response:
                 assert response.status_code == 200
-                stream_text = "".join(chunk.decode("utf-8") for chunk in response.iter_raw())
+                stream_text = "".join(
+                    chunk.decode("utf-8") for chunk in response.iter_raw()
+                )
 
     assert stream_text.count('"type":"start"') == 1
     assert stream_text.count('"type":"message-metadata"') == 1
@@ -2368,7 +2476,9 @@ def test_chat_stream_allows_tool_only_turns(tmp_path: Path) -> None:
                 json={"message": _chat_message("tool only")},
             ) as response:
                 assert response.status_code == 200
-                stream_text = "".join(chunk.decode("utf-8") for chunk in response.iter_raw())
+                stream_text = "".join(
+                    chunk.decode("utf-8") for chunk in response.iter_raw()
+                )
 
     assert '"type":"tool-input-start"' in stream_text
     assert '"type":"tool-input-available"' in stream_text
@@ -2426,7 +2536,9 @@ def test_poll_loop_queues_channel_deliveries_and_delivers_reply(tmp_path: Path) 
                         sender="owner",
                         thread_id="script_tg_123",
                         text="hello from poll",
-                        reply_target=ReplyTarget(channel="telegram", address="chat:123"),
+                        reply_target=ReplyTarget(
+                            channel="telegram", address="chat:123"
+                        ),
                     )
                 ],
                 next_state=ChannelState(cursor="43"),
@@ -2463,6 +2575,7 @@ def test_poll_loop_queues_channel_deliveries_and_delivers_reply(tmp_path: Path) 
     )
 
     with _patched_runner_execution():
+
         async def run_test() -> None:
             async with _running_context(
                 context,
@@ -2478,11 +2591,19 @@ def test_poll_loop_queues_channel_deliveries_and_delivers_reply(tmp_path: Path) 
 
     assert plugin.deliveries == [
         (ReplyTarget(channel="telegram", address="chat:123"), ""),
-        (ReplyTarget(channel="telegram", address="chat:123"), "assistant:hello from poll"),
+        (
+            ReplyTarget(channel="telegram", address="chat:123"),
+            "assistant:hello from poll",
+        ),
     ]
     state_path = agents.channel_room(toolang_root, "alice", "telegram") / "state.json"
     assert state_path.is_file()
-    assert ChannelState.from_data(json.loads(state_path.read_text(encoding="utf-8"))).cursor == "43"
+    assert (
+        ChannelState.from_data(
+            json.loads(state_path.read_text(encoding="utf-8"))
+        ).cursor
+        == "43"
+    )
 
 
 def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> None:
@@ -2647,7 +2768,9 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
             run_execute_module,
             "load_loop",
             return_value=_FakeLoop(
-                run=lambda context: fake_execute_stream(None, None, on_event=context.on_event),
+                run=lambda context: fake_execute_stream(
+                    None, None, on_event=context.on_event
+                ),
             ),
         ),
     ):
@@ -2658,7 +2781,9 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
         "",
         {"action": "typing"},
     )
-    non_typing = [item for item in plugin.deliveries if item[2].get("action") != "typing"]
+    non_typing = [
+        item for item in plugin.deliveries if item[2].get("action") != "typing"
+    ]
     assert non_typing[0][0] == ReplyTarget(channel="telegram", address="chat:123")
     assert non_typing[0][1].startswith("hel")
     assert non_typing[0][2] == {}
@@ -2779,7 +2904,9 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
             run_execute_module,
             "load_loop",
             return_value=_FakeLoop(
-                run=lambda context: fake_execute_stream(None, None, on_event=context.on_event),
+                run=lambda context: fake_execute_stream(
+                    None, None, on_event=context.on_event
+                ),
             ),
         ),
     ):
@@ -2802,7 +2929,9 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
     )
 
 
-def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Path, monkeypatch) -> None:
+def test_control_routes_update_durable_only_without_prepare_reload(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
@@ -2813,7 +2942,9 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
         enabled_features=("manage", "inspect"),
     )
     initial_live_fingerprint = context.live.fingerprint
-    initial_prepared_fingerprint = load_prepared_state(toolang_root, "alice").fingerprint
+    initial_prepared_fingerprint = load_prepared_state(
+        toolang_root, "alice"
+    ).fingerprint
     app = _create_test_app(context)
 
     with TestClient(app) as client:
@@ -2827,7 +2958,9 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
         assert add_response.json()["item"]["form"] == "wired"
         assert add_response.json()["item"]["scope"] == "home"
 
-        snapshot = inspect.snapshot_context(context, enabled_features=("manage", "inspect"))
+        snapshot = inspect.snapshot_context(
+            context, enabled_features=("manage", "inspect")
+        )
         durable = cast(dict[str, object], snapshot["durable"])
         prepared = cast(dict[str, object], snapshot["prepared"])
         live = cast(dict[str, object], snapshot["live"])
@@ -2839,11 +2972,15 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
         assert live["caps"] == []
         assert client.get("/api/v1/skills").json()["items"] == []
 
-        remove_response = client.delete("/api/v1/skills/reviewer/wired?visibility=private")
+        remove_response = client.delete(
+            "/api/v1/skills/reviewer/wired?visibility=private"
+        )
         assert remove_response.status_code == 200
         assert remove_response.json() == {"ok": True}
 
-        snapshot = inspect.snapshot_context(context, enabled_features=("manage", "inspect"))
+        snapshot = inspect.snapshot_context(
+            context, enabled_features=("manage", "inspect")
+        )
         durable = cast(dict[str, object], snapshot["durable"])
         definitions = cast(dict[str, object], durable["definitions"])
         assert definitions["private_entries"] == []
@@ -2858,7 +2995,9 @@ def test_control_routes_update_durable_only_without_prepare_reload(tmp_path: Pat
         assert local_response.json()["item"]["form"] == "file"
         assert local_response.json()["item"]["scope"] == "home"
 
-        delete_local_response = client.delete("/api/v1/prompts/rewrite/file?visibility=private")
+        delete_local_response = client.delete(
+            "/api/v1/prompts/rewrite/file?visibility=private"
+        )
         assert delete_local_response.status_code == 200
         assert delete_local_response.json() == {"ok": True}
 
@@ -2981,7 +3120,9 @@ def test_bind_run_request_allocates_normalized_local_ids(tmp_path: Path) -> None
     assert (toolang_root / "agents" / "alice" / ".runtime" / "ids.json").is_file()
 
 
-def test_bind_run_request_uses_explicit_thread_kind_for_new_thread(tmp_path: Path) -> None:
+def test_bind_run_request_uses_explicit_thread_kind_for_new_thread(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
@@ -3045,10 +3186,15 @@ def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
     assert isinstance(captured["shutdown_signal"], threading.Event)
 
 
-def test_up_logs_runtime_urls_after_start_and_stop(tmp_path: Path, monkeypatch, caplog) -> None:
+def test_up_logs_runtime_urls_after_start_and_stop(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
-    _write_text(toolang_root / "config.toml", '[web]\nui_base_url = "https://agents.example.test"\n')
+    _write_text(
+        toolang_root / "config.toml",
+        '[web]\nui_base_url = "https://agents.example.test"\n',
+    )
 
     def fake_run_uvicorn_app(
         app,
@@ -3086,9 +3232,16 @@ def test_up_logs_runtime_urls_after_start_and_stop(tmp_path: Path, monkeypatch, 
     )
 
     assert result == 0
-    messages = [record.getMessage() for record in caplog.records if record.name == "toolang.runtime"]
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "toolang.runtime"
+    ]
     assert len(messages) == 4
-    assert messages[0] == f"Agent starting root={toolang_root} trigger=none runner=none router=inspect"
+    assert (
+        messages[0]
+        == f"Agent starting root={toolang_root} trigger=none runner=none router=inspect"
+    )
     assert messages[1] == "Agent started webui=https://agents.example.test/8765"
     assert messages[2] == "Agent stopping"
     assert messages[3] == "Agent stopped"
@@ -3103,13 +3256,17 @@ def test_up_logs_runtime_urls_after_start_and_stop(tmp_path: Path, monkeypatch, 
     assert color_messages[1] == "Agent started webui=\x1b[1m%s\x1b[0m"
 
 
-def test_local_runtime_configures_logging_before_state_loaded(tmp_path: Path, monkeypatch) -> None:
+def test_local_runtime_configures_logging_before_state_loaded(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     order: list[str] = []
     captured: dict[str, object] = {}
 
-    def fake_configure_logging(*, spec: str | None, environ: dict[str, str], log_path=None) -> None:
+    def fake_configure_logging(
+        *, spec: str | None, environ: dict[str, str], log_path=None
+    ) -> None:
         del log_path
         order.append("configure")
         captured["spec"] = spec
@@ -3159,7 +3316,11 @@ def test_state_loaded_log_counts_selectable_models(tmp_path: Path, caplog) -> No
     caplog.set_level(logging.INFO, logger="toolang.state")
     up_module._log_state_loaded(context)
 
-    messages = [record.getMessage() for record in caplog.records if record.name == "toolang.state"]
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "toolang.state"
+    ]
     assert messages == [
         (
             f"Agent loaded state={context.live.fingerprint[:12]} "
@@ -3178,7 +3339,9 @@ def test_load_runtime_context_rejects_unmatched_tool_selector(tmp_path: Path) ->
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
 
-    with pytest.raises(ValueError, match="tool selector matched no tools: missing/none"):
+    with pytest.raises(
+        ValueError, match="tool selector matched no tools: missing/none"
+    ):
         up_module._load_runtime_context(
             toolang_root=toolang_root,
             agent_name="alice",
@@ -3274,7 +3437,9 @@ def test_watch_reload_preserves_tool_and_cap_selectors(tmp_path: Path) -> None:
         reload_signal = asyncio.Event()
         reload_signal.set()
         task = asyncio.create_task(
-            watch._run_load_live(context, stop_signal=stop_signal, reload_signal=reload_signal)
+            watch._run_load_live(
+                context, stop_signal=stop_signal, reload_signal=reload_signal
+            )
         )
         for _ in range(50):
             if context.live.fingerprint == prepared.fingerprint:
@@ -3299,7 +3464,9 @@ def test_trigger_logger_names_are_flat() -> None:
     assert poll.logger.name == "toolang.poll"
 
 
-def test_up_reuses_previous_agent_port_when_unspecified(tmp_path: Path, monkeypatch) -> None:
+def test_up_reuses_previous_agent_port_when_unspecified(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     agents.write_runtime_state(
@@ -3409,7 +3576,9 @@ def test_up_falls_back_when_previous_agent_port_is_unavailable(
     assert isinstance(captured["shutdown_signal"], threading.Event)
 
 
-def test_up_falls_back_when_stopped_agent_port_is_unavailable(tmp_path: Path, monkeypatch) -> None:
+def test_up_falls_back_when_stopped_agent_port_is_unavailable(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     agents.write_runtime_state(
@@ -3430,7 +3599,9 @@ def test_up_falls_back_when_stopped_agent_port_is_unavailable(tmp_path: Path, mo
     monkeypatch.setattr("toolang.up._port_is_available", fake_port_is_available)
     monkeypatch.setattr(
         "toolang.up._wait_for_port_available",
-        lambda *_args, **_kwargs: pytest.fail("stopped runtime ports should not be awaited"),
+        lambda *_args, **_kwargs: pytest.fail(
+            "stopped runtime ports should not be awaited"
+        ),
     )
     monkeypatch.setattr(
         "toolang.up._pick_runtime_port",
@@ -3487,7 +3658,9 @@ def test_resolve_runtime_port_does_not_wait_for_stopped_preferred_port(
     monkeypatch.setattr("toolang.up._port_is_available", lambda host, port: False)
     monkeypatch.setattr(
         "toolang.up._wait_for_port_available",
-        lambda *_args, **_kwargs: pytest.fail("stopped runtime ports should not be awaited"),
+        lambda *_args, **_kwargs: pytest.fail(
+            "stopped runtime ports should not be awaited"
+        ),
     )
     monkeypatch.setattr(
         "toolang.up._pick_runtime_port",
@@ -3512,7 +3685,9 @@ def test_resolve_runtime_port_uses_temporary_picker_for_visiting_agents(
 
     monkeypatch.setattr(
         "toolang.up._pick_runtime_port",
-        lambda *_args, **_kwargs: pytest.fail("visiting agents should not use the resident port range"),
+        lambda *_args, **_kwargs: pytest.fail(
+            "visiting agents should not use the resident port range"
+        ),
     )
     monkeypatch.setattr("toolang.up._pick_temporary_runtime_port", lambda host: 45678)
 
@@ -3540,10 +3715,14 @@ def test_resolve_runtime_port_reuses_visiting_agent_previous_port(
         pid=None,
         status="stopped",
     )
-    monkeypatch.setattr("toolang.up._port_is_available", lambda host, port: port == 45679)
+    monkeypatch.setattr(
+        "toolang.up._port_is_available", lambda host, port: port == 45679
+    )
     monkeypatch.setattr(
         "toolang.up._pick_temporary_runtime_port",
-        lambda *_args: pytest.fail("available preferred visiting port should be reused"),
+        lambda *_args: pytest.fail(
+            "available preferred visiting port should be reused"
+        ),
     )
 
     resolved = up_module.resolve_runtime_port(
@@ -3557,7 +3736,9 @@ def test_resolve_runtime_port_reuses_visiting_agent_previous_port(
     assert resolved == 45679
 
 
-def test_pick_runtime_port_uses_first_available_auto_port(tmp_path: Path, monkeypatch) -> None:
+def test_pick_runtime_port_uses_first_available_auto_port(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "bob" / "agent.too", "agent bob\n")
     _write_text(toolang_root / "agents" / "carol" / "agent.too", "agent carol\n")
@@ -3601,8 +3782,7 @@ def test_up_uses_cors_origins_from_root_config(tmp_path: Path, monkeypatch) -> N
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     _write_text(
         toolang_root / "config.toml",
-        '[web]\n'
-        'cors_allowed_origins = ["http://localhost:3000", "https://too.run"]\n',
+        '[web]\ncors_allowed_origins = ["http://localhost:3000", "https://too.run"]\n',
     )
     captured: dict[str, object] = {}
 
@@ -3648,7 +3828,9 @@ def test_up_uses_cors_origins_from_root_config(tmp_path: Path, monkeypatch) -> N
     assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
 
 
-def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeypatch) -> None:
+def test_up_starts_managed_sandbox_without_local_uvicorn(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     captured: dict[str, object] = {}
@@ -3690,10 +3872,17 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
             del state, force
 
     def fail_run_uvicorn_app(*args, **kwargs) -> None:
-        raise AssertionError("_run_uvicorn_app should not be called for managed sandboxes")
+        raise AssertionError(
+            "_run_uvicorn_app should not be called for managed sandboxes"
+        )
 
-    monkeypatch.setattr("toolang.up.create_sandbox_plugin", lambda name, config=None: FakeSandbox())
-    monkeypatch.setattr("toolang.up._wait_for_sandbox_ready", lambda **kwargs: captured.setdefault("ready", kwargs))
+    monkeypatch.setattr(
+        "toolang.up.create_sandbox_plugin", lambda name, config=None: FakeSandbox()
+    )
+    monkeypatch.setattr(
+        "toolang.up._wait_for_sandbox_ready",
+        lambda **kwargs: captured.setdefault("ready", kwargs),
+    )
     monkeypatch.setattr("toolang.up._run_uvicorn_app", fail_run_uvicorn_app)
 
     result = run_experiments_up(
@@ -3708,7 +3897,9 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
 
     assert result == 0
     request = cast("SandboxStartRequest", captured["request"])
-    assert request.selector == SandboxSelector(driver="docker", target="python:3.13-slim")
+    assert request.selector == SandboxSelector(
+        driver="docker", target="python:3.13-slim"
+    )
     assert request.sandbox_root == Path("/root/.toolang")
     assert request.sandbox_home == Path("/root/.toolang/agents/alice")
     assert request.bind_host == "127.0.0.1"
@@ -3725,14 +3916,22 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
         "0.0.0.0",
     )
     assert "--endpoint-host" in request.run_command
-    assert request.run_command[request.run_command.index("--endpoint-host") + 1] == "localhost"
+    assert (
+        request.run_command[request.run_command.index("--endpoint-host") + 1]
+        == "localhost"
+    )
     assert "--sandbox" in request.run_command
     assert request.run_command[request.run_command.index("--sandbox") + 1] == "none"
     assert "--sandbox-child" in request.run_command
     assert "--enable" in request.run_command
-    assert request.run_command[request.run_command.index("--enable") + 1] == "router.inspect"
+    assert (
+        request.run_command[request.run_command.index("--enable") + 1]
+        == "router.inspect"
+    )
     runtime_state = json.loads(
-        agents.agent_runtime_state_path(toolang_root, "alice").read_text(encoding="utf-8")
+        agents.agent_runtime_state_path(toolang_root, "alice").read_text(
+            encoding="utf-8"
+        )
     )
     assert runtime_state["status"] == "running"
     assert runtime_state["endpoint"] == "http://localhost:8765"
@@ -3743,7 +3942,9 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(tmp_path: Path, monkeyp
     assert ready["port"] == 8765
 
 
-def test_up_defaults_docker_target_when_selector_omits_one(tmp_path: Path, monkeypatch) -> None:
+def test_up_defaults_docker_target_when_selector_omits_one(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     captured: dict[str, object] = {}
@@ -3788,7 +3989,9 @@ def test_up_defaults_docker_target_when_selector_omits_one(tmp_path: Path, monke
         def stop(self, state: SandboxState, *, force: bool = False) -> None:
             del state, force
 
-    monkeypatch.setattr("toolang.up.create_sandbox_plugin", lambda name, config=None: FakeSandbox())
+    monkeypatch.setattr(
+        "toolang.up.create_sandbox_plugin", lambda name, config=None: FakeSandbox()
+    )
     monkeypatch.setattr("toolang.up._wait_for_sandbox_ready", lambda **kwargs: None)
 
     result = run_experiments_up(
@@ -3803,10 +4006,14 @@ def test_up_defaults_docker_target_when_selector_omits_one(tmp_path: Path, monke
 
     assert result == 0
     request = cast("SandboxStartRequest", captured["request"])
-    assert request.selector == SandboxSelector(driver="docker", target="python:3.13-slim")
+    assert request.selector == SandboxSelector(
+        driver="docker", target="python:3.13-slim"
+    )
 
 
-def test_up_marks_managed_sandbox_failed_when_ready_check_fails(tmp_path: Path, monkeypatch) -> None:
+def test_up_marks_managed_sandbox_failed_when_ready_check_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
 
@@ -3844,7 +4051,9 @@ def test_up_marks_managed_sandbox_failed_when_ready_check_fails(tmp_path: Path, 
         def stop(self, state: SandboxState, *, force: bool = False) -> None:
             del state, force
 
-    monkeypatch.setattr("toolang.up.create_sandbox_plugin", lambda name, config=None: FakeSandbox())
+    monkeypatch.setattr(
+        "toolang.up.create_sandbox_plugin", lambda name, config=None: FakeSandbox()
+    )
     monkeypatch.setattr(
         "toolang.up._wait_for_sandbox_ready",
         lambda **kwargs: (_ for _ in ()).throw(ValueError("sandbox failed")),
@@ -3866,13 +4075,17 @@ def test_up_marks_managed_sandbox_failed_when_ready_check_fails(tmp_path: Path, 
         raise AssertionError("expected managed sandbox startup failure")
 
     runtime_state = json.loads(
-        agents.agent_runtime_state_path(toolang_root, "alice").read_text(encoding="utf-8")
+        agents.agent_runtime_state_path(toolang_root, "alice").read_text(
+            encoding="utf-8"
+        )
     )
     assert runtime_state["status"] == "failed"
     assert runtime_state["message"] == "sandbox failed"
 
 
-def test_up_marks_managed_sandbox_failed_when_prepare_fails(tmp_path: Path, monkeypatch) -> None:
+def test_up_marks_managed_sandbox_failed_when_prepare_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
 
@@ -3898,7 +4111,9 @@ def test_up_marks_managed_sandbox_failed_when_prepare_fails(tmp_path: Path, monk
         def stop(self, state: SandboxState, *, force: bool = False) -> None:
             del state, force
 
-    monkeypatch.setattr("toolang.up.create_sandbox_plugin", lambda name, config=None: FakeSandbox())
+    monkeypatch.setattr(
+        "toolang.up.create_sandbox_plugin", lambda name, config=None: FakeSandbox()
+    )
 
     try:
         run_experiments_up(
@@ -3916,13 +4131,17 @@ def test_up_marks_managed_sandbox_failed_when_prepare_fails(tmp_path: Path, monk
         raise AssertionError("expected managed sandbox prepare failure")
 
     runtime_state = json.loads(
-        agents.agent_runtime_state_path(toolang_root, "alice").read_text(encoding="utf-8")
+        agents.agent_runtime_state_path(toolang_root, "alice").read_text(
+            encoding="utf-8"
+        )
     )
     assert runtime_state["status"] == "failed"
     assert runtime_state["message"] == "prepare failed"
 
 
-def test_list_agent_statuses_surfaces_preparing_and_failed_states(tmp_path: Path) -> None:
+def test_list_agent_statuses_surfaces_preparing_and_failed_states(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     agents.create_agent(toolang_root, "bob")
@@ -3962,7 +4181,12 @@ def test_list_agent_statuses_surfaces_preparing_and_failed_states(tmp_path: Path
         message="sandbox failed",
     )
 
-    statuses = {item.name: item for item in agents.list_agent_statuses(toolang_root, ui_base_url="http://localhost:3000")}
+    statuses = {
+        item.name: item
+        for item in agents.list_agent_statuses(
+            toolang_root, ui_base_url="http://localhost:3000"
+        )
+    }
 
     assert statuses["alice"].status == "preparing"
     assert statuses["alice"].endpoint == "http://127.0.0.1:8765"
@@ -3974,7 +4198,9 @@ def test_list_agent_statuses_surfaces_preparing_and_failed_states(tmp_path: Path
     assert statuses["bob"].webui_url is None
 
 
-def test_stop_runtime_state_requires_matching_owner_when_expected(tmp_path: Path) -> None:
+def test_stop_runtime_state_requires_matching_owner_when_expected(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     agents.write_runtime_state(
@@ -3992,7 +4218,9 @@ def test_stop_runtime_state_requires_matching_owner_when_expected(tmp_path: Path
         expected_started_at="2026-04-08T10:00:00Z",
     )
 
-    runtime_state = cast(dict[str, object], agents.load_runtime_state(toolang_root, "alice"))
+    runtime_state = cast(
+        dict[str, object], agents.load_runtime_state(toolang_root, "alice")
+    )
     assert stopped is False
     assert runtime_state["status"] == "running"
     assert runtime_state["pid"] == 111
@@ -4004,7 +4232,9 @@ def test_stop_runtime_state_requires_matching_owner_when_expected(tmp_path: Path
         expected_started_at="2026-04-08T10:00:00Z",
     )
 
-    runtime_state = cast(dict[str, object], agents.load_runtime_state(toolang_root, "alice"))
+    runtime_state = cast(
+        dict[str, object], agents.load_runtime_state(toolang_root, "alice")
+    )
     assert stopped is True
     assert runtime_state["status"] == "stopped"
     assert runtime_state["pid"] is None
@@ -4024,9 +4254,13 @@ def test_agent_status_uses_matching_process_when_runtime_state_is_stale(
         status="stopped",
     )
 
-    monkeypatch.setattr("toolang.agents.agent_runtime_process_pids", lambda *_args: (43210,))
+    monkeypatch.setattr(
+        "toolang.agents.agent_runtime_process_pids", lambda *_args: (43210,)
+    )
 
-    status = agents.get_agent_status(toolang_root, "alice", ui_base_url="http://localhost:3000")
+    status = agents.get_agent_status(
+        toolang_root, "alice", ui_base_url="http://localhost:3000"
+    )
 
     assert status is not None
     assert status.status == "running"
@@ -4053,7 +4287,9 @@ def test_resolve_dev_artifact_picks_newest_wheel_recursively(tmp_path: Path) -> 
     assert up_module._resolve_dev_artifact(dist) == newer
 
 
-def test_stop_agent_terminates_local_pid_and_marks_state_stopped(tmp_path: Path, monkeypatch) -> None:
+def test_stop_agent_terminates_local_pid_and_marks_state_stopped(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     pid = 43210
@@ -4079,7 +4315,9 @@ def test_stop_agent_terminates_local_pid_and_marks_state_stopped(tmp_path: Path,
     stopped = agents.stop_agent(toolang_root, "alice")
 
     assert stopped is True
-    runtime_state = cast(dict[str, object], agents.load_runtime_state(toolang_root, "alice"))
+    runtime_state = cast(
+        dict[str, object], agents.load_runtime_state(toolang_root, "alice")
+    )
     assert runtime_state["status"] == "stopped"
     assert runtime_state["pid"] is None
 
@@ -4128,7 +4366,9 @@ def test_stop_agent_terminates_matching_process_when_runtime_state_is_stale(
     )
     stopped_pids: list[int] = []
 
-    monkeypatch.setattr("toolang.agents.agent_runtime_process_pids", lambda *_args: (43210,))
+    monkeypatch.setattr(
+        "toolang.agents.agent_runtime_process_pids", lambda *_args: (43210,)
+    )
     monkeypatch.setattr(
         "toolang.agents._stop_pid",
         lambda pid, *, force: stopped_pids.append(pid) or True,
@@ -4138,7 +4378,9 @@ def test_stop_agent_terminates_matching_process_when_runtime_state_is_stale(
 
     assert stopped is True
     assert stopped_pids == [43210]
-    runtime_state = cast(dict[str, object], agents.load_runtime_state(toolang_root, "alice"))
+    runtime_state = cast(
+        dict[str, object], agents.load_runtime_state(toolang_root, "alice")
+    )
     assert runtime_state["status"] == "stopped"
     assert runtime_state["pid"] is None
 
@@ -4157,17 +4399,23 @@ def test_stop_agent_rejects_stubborn_process_without_marking_state_stopped(
         status="running",
     )
 
-    monkeypatch.setattr("toolang.agents.agent_runtime_process_pids", lambda *_args: (43210,))
+    monkeypatch.setattr(
+        "toolang.agents.agent_runtime_process_pids", lambda *_args: (43210,)
+    )
     monkeypatch.setattr("toolang.agents._stop_pid", lambda _pid, *, force: False)
 
     with pytest.raises(ValueError, match="retry with --force"):
         agents.stop_agent(toolang_root, "alice")
 
-    runtime_state = cast(dict[str, object], agents.load_runtime_state(toolang_root, "alice"))
+    runtime_state = cast(
+        dict[str, object], agents.load_runtime_state(toolang_root, "alice")
+    )
     assert runtime_state["status"] == "running"
 
 
-def test_stop_agent_stops_managed_sandbox_and_marks_state_stopped(tmp_path: Path) -> None:
+def test_stop_agent_stops_managed_sandbox_and_marks_state_stopped(
+    tmp_path: Path,
+) -> None:
     class FakeSandbox:
         def __init__(self) -> None:
             self.runtime_id: str | None = None
@@ -4202,19 +4450,23 @@ def test_stop_agent_stops_managed_sandbox_and_marks_state_stopped(tmp_path: Path
     assert stopped is True
     assert plugin.runtime_id == "sandbox-alice"
     assert plugin.force is True
-    runtime_state = cast(dict[str, object], agents.load_runtime_state(toolang_root, "alice"))
+    runtime_state = cast(
+        dict[str, object], agents.load_runtime_state(toolang_root, "alice")
+    )
     assert runtime_state["status"] == "stopped"
     assert runtime_state["pid"] is None
 
 
-def test_up_reads_web_config_without_validating_experiments_caps(tmp_path: Path, monkeypatch) -> None:
+def test_up_reads_web_config_without_validating_experiments_caps(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     (toolang_root / "config.toml").write_text(
-        '[web]\n'
+        "[web]\n"
         'cors_allowed_origins = ["http://localhost:3000", "https://too.run"]\n'
-        '\n'
-        '[skills]\n'
+        "\n"
+        "[skills]\n"
         'pdf-processing = { ref = "github://by3gus/agent-skills/skills/pdf-processing@main" }\n',
         encoding="utf-8",
     )
@@ -4303,9 +4555,11 @@ def test_prepare_reload_refreshes_service_use_visible_services(tmp_path: Path) -
         )
 
         initial_fingerprint = context.live.fingerprint
-        service_schema = context.tools["service_use__bridge_start"].definition().parameters[
-            "properties"
-        ]["service"]
+        service_schema = (
+            context.tools["service_use__bridge_start"]
+            .definition()
+            .parameters["properties"]["service"]
+        )
         assert "enum" not in service_schema
 
         async with _running_context(
@@ -4324,15 +4578,19 @@ def test_prepare_reload_refreshes_service_use_visible_services(tmp_path: Path) -
             refreshed = await _wait_for_fingerprint_change(context, initial_fingerprint)
             assert refreshed
 
-            service_schema = context.tools["service_use__bridge_start"].definition().parameters[
-                "properties"
-            ]["service"]
+            service_schema = (
+                context.tools["service_use__bridge_start"]
+                .definition()
+                .parameters["properties"]["service"]
+            )
             assert service_schema["enum"] == ["linear"]
 
     asyncio.run(run_test())
 
 
-def test_runtime_tool_plugin_config_maps_service_caps_to_service_use(tmp_path: Path) -> None:
+def test_runtime_tool_plugin_config_maps_service_caps_to_service_use(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     _write_text(
@@ -4417,7 +4675,10 @@ def test_caps_put_list_remove_local_entries(tmp_path: Path) -> None:
     )
 
     assert prompt_path == toolang_root / "prompts" / "rewrite.md"
-    assert skill_path == toolang_root / "agents" / "alice" / "skills" / "reviewer" / "SKILL.md"
+    assert (
+        skill_path
+        == toolang_root / "agents" / "alice" / "skills" / "reviewer" / "SKILL.md"
+    )
     assert service_path == toolang_root / "services" / "linear.md"
 
     shared_entries = list_local_entries(toolang_root, "alice", visibility="shared")
@@ -4431,9 +4692,24 @@ def test_caps_put_list_remove_local_entries(tmp_path: Path) -> None:
         ("skill", "agents/alice/skills/reviewer/SKILL.md")
     ]
 
-    assert remove_local_entry(toolang_root, "alice", visibility="shared", kind="prompt", name="rewrite") is True
-    assert remove_local_entry(toolang_root, "alice", visibility="shared", kind="service", name="linear") is True
-    assert remove_local_entry(toolang_root, "alice", visibility="private", kind="skill", name="reviewer") is True
+    assert (
+        remove_local_entry(
+            toolang_root, "alice", visibility="shared", kind="prompt", name="rewrite"
+        )
+        is True
+    )
+    assert (
+        remove_local_entry(
+            toolang_root, "alice", visibility="shared", kind="service", name="linear"
+        )
+        is True
+    )
+    assert (
+        remove_local_entry(
+            toolang_root, "alice", visibility="private", kind="skill", name="reviewer"
+        )
+        is True
+    )
     assert list_local_entries(toolang_root, "alice", visibility="shared") == ()
     assert list_local_entries(toolang_root, "alice", visibility="private") == ()
 
@@ -4441,7 +4717,9 @@ def test_caps_put_list_remove_local_entries(tmp_path: Path) -> None:
 def test_caps_reject_service_env_map(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
 
-    with pytest.raises(ValueError, match="service env must list environment variable names"):
+    with pytest.raises(
+        ValueError, match="service env must list environment variable names"
+    ):
         put_local_entry(
             toolang_root,
             "alice",
@@ -4457,14 +4735,20 @@ def test_caps_reject_service_env_map(tmp_path: Path) -> None:
         )
 
 
-def test_prepare_materializes_remote_entries_from_config(tmp_path: Path, monkeypatch) -> None:
+def test_prepare_materializes_remote_entries_from_config(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_materialized_files(*, relative_entry_path, kind, name, ref):
         del kind, name, ref
-        return {str(relative_entry_path): b"---\ndescription: Rewrite\n---\nRewrite prompt.\n"}
+        return {
+            str(
+                relative_entry_path
+            ): b"---\ndescription: Rewrite\n---\nRewrite prompt.\n"
+        }
 
     monkeypatch.setattr(caps, "_remote_materialized_files", fake_materialized_files)
 
@@ -4485,7 +4769,10 @@ def test_prepare_materializes_remote_entries_from_config(tmp_path: Path, monkeyp
     assert [entry.source.origin for entry in prepared.shared_lock.entries] == ["remote"]
     assert [entry.source.form for entry in prepared.shared_lock.entries] == ["wired"]
     assert prepared.shared_lock.entries[0].path == ".caps/wired/prompts/rewrite.md"
-    assert prepared.shared_lock.entries[0].ref == "github://acme/agents/prompts/rewrite.md@main"
+    assert (
+        prepared.shared_lock.entries[0].ref
+        == "github://acme/agents/prompts/rewrite.md@main"
+    )
     assert live.caps == (".caps/wired/prompts/rewrite.md",)
 
 
@@ -4511,7 +4798,9 @@ def test_remote_skill_shorthand_probes_agent_skills_and_skills_repos(
         ref="anthropics/pdf",
     )
 
-    config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(encoding="utf-8")
+    config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(
+        encoding="utf-8"
+    )
 
     assert probes == [
         "github://anthropics/agents/skills/pdf@main",
@@ -4523,7 +4812,9 @@ def test_remote_skill_shorthand_probes_agent_skills_and_skills_repos(
     assert 'pdf = { ref = "github://anthropics/skills/skills/pdf@main" }' in config_text
 
 
-def test_remote_cap_repo_shorthand_uses_named_repo_path_probes(tmp_path: Path, monkeypatch) -> None:
+def test_remote_cap_repo_shorthand_uses_named_repo_path_probes(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     probes: list[str] = []
 
@@ -4531,7 +4822,9 @@ def test_remote_cap_repo_shorthand_uses_named_repo_path_probes(tmp_path: Path, m
         probes.append(ref)
         return ref == "github://anthropics/project/pdf@trunk"
 
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "trunk")
+    monkeypatch.setattr(
+        caps, "_github_repo_default_branch", lambda owner, repo: "trunk"
+    )
     monkeypatch.setattr(caps, "_github_remote_exists", fake_exists)
 
     add_remote_entry(
@@ -4542,7 +4835,9 @@ def test_remote_cap_repo_shorthand_uses_named_repo_path_probes(tmp_path: Path, m
         ref="anthropics/project/pdf",
     )
 
-    config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(encoding="utf-8")
+    config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(
+        encoding="utf-8"
+    )
 
     assert probes == [
         "github://anthropics/project/skills/pdf@trunk",
@@ -4551,14 +4846,18 @@ def test_remote_cap_repo_shorthand_uses_named_repo_path_probes(tmp_path: Path, m
     assert 'pdf = { ref = "github://anthropics/project/pdf@trunk" }' in config_text
 
 
-def test_remote_skill_add_canonicalizes_github_tree_url(tmp_path: Path, monkeypatch) -> None:
+def test_remote_skill_add_canonicalizes_github_tree_url(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
 
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         caps,
         "_fetch_github_directory",
-        lambda ref: {"SKILL.md": f"---\ndescription: {ref.render()}\n---\n# Answers\n".encode()},
+        lambda ref: {
+            "SKILL.md": f"---\ndescription: {ref.render()}\n---\n# Answers\n".encode()
+        },
     )
 
     add_remote_entry(
@@ -4569,25 +4868,44 @@ def test_remote_skill_add_canonicalizes_github_tree_url(tmp_path: Path, monkeypa
         ref="https://github.com/brave/brave-search-skills/tree/main/skills/answers",
     )
 
-    config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(encoding="utf-8")
+    config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(
+        encoding="utf-8"
+    )
     durable = scan_durable_state(toolang_root, "alice")
     prepared = watch.build_prepared_state(durable)
 
-    assert 'answers = { ref = "github://brave/brave-search-skills/skills/answers@main" }' in config_text
-    assert prepared.private_lock.entries[0].ref == "github://brave/brave-search-skills/skills/answers@main"
     assert (
-        toolang_root / "agents" / "alice" / ".caps" / "wired" / "skills" / "answers" / "SKILL.md"
+        'answers = { ref = "github://brave/brave-search-skills/skills/answers@main" }'
+        in config_text
+    )
+    assert (
+        prepared.private_lock.entries[0].ref
+        == "github://brave/brave-search-skills/skills/answers@main"
+    )
+    assert (
+        toolang_root
+        / "agents"
+        / "alice"
+        / ".caps"
+        / "wired"
+        / "skills"
+        / "answers"
+        / "SKILL.md"
     ).is_file()
 
 
-def test_remote_skill_add_canonicalizes_github_skill_file_url(tmp_path: Path, monkeypatch) -> None:
+def test_remote_skill_add_canonicalizes_github_skill_file_url(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
 
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         caps,
         "_fetch_github_directory",
-        lambda ref: {"SKILL.md": f"---\ndescription: {ref.render()}\n---\n# Agent Browser\n".encode()},
+        lambda ref: {
+            "SKILL.md": f"---\ndescription: {ref.render()}\n---\n# Agent Browser\n".encode()
+        },
     )
 
     add_remote_entry(
@@ -4598,7 +4916,9 @@ def test_remote_skill_add_canonicalizes_github_skill_file_url(tmp_path: Path, mo
         ref="https://github.com/vercel-labs/agent-browser/blob/main/skills/agent-browser/SKILL.md",
     )
 
-    config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(encoding="utf-8")
+    config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(
+        encoding="utf-8"
+    )
     durable = scan_durable_state(toolang_root, "alice")
     prepared = watch.build_prepared_state(durable)
 
@@ -4607,14 +4927,18 @@ def test_remote_skill_add_canonicalizes_github_skill_file_url(tmp_path: Path, mo
     assert prepared.private_lock.entries[0].ref == expected_ref
 
 
-def test_remote_skill_add_canonicalizes_raw_refs_heads_skill_file_url(tmp_path: Path, monkeypatch) -> None:
+def test_remote_skill_add_canonicalizes_raw_refs_heads_skill_file_url(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
 
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         caps,
         "_fetch_github_directory",
-        lambda ref: {"SKILL.md": f"---\ndescription: {ref.render()}\n---\n# Agent Browser\n".encode()},
+        lambda ref: {
+            "SKILL.md": f"---\ndescription: {ref.render()}\n---\n# Agent Browser\n".encode()
+        },
     )
 
     add_remote_entry(
@@ -4625,23 +4949,31 @@ def test_remote_skill_add_canonicalizes_raw_refs_heads_skill_file_url(tmp_path: 
         ref="https://raw.githubusercontent.com/vercel-labs/agent-browser/refs/heads/main/skills/agent-browser/SKILL.md",
     )
 
-    config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(encoding="utf-8")
+    config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(
+        encoding="utf-8"
+    )
     durable = scan_durable_state(toolang_root, "alice")
     prepared = watch.build_prepared_state(durable)
 
-    expected_ref = "github://vercel-labs/agent-browser/skills/agent-browser@refs/heads/main"
+    expected_ref = (
+        "github://vercel-labs/agent-browser/skills/agent-browser@refs/heads/main"
+    )
     assert f'agent-browser = {{ ref = "{expected_ref}" }}' in config_text
     assert prepared.private_lock.entries[0].ref == expected_ref
 
 
-def test_prepare_apply_changes_records_remote_cap_updates(tmp_path: Path, monkeypatch) -> None:
+def test_prepare_apply_changes_records_remote_cap_updates(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         caps,
         "_fetch_github_directory",
-        lambda ref: {"SKILL.md": f"---\ndescription: {ref.render()}\n---\n# Skill\n".encode()},
+        lambda ref: {
+            "SKILL.md": f"---\ndescription: {ref.render()}\n---\n# Skill\n".encode()
+        },
     )
 
     agents.create_agent(toolang_root, "alice")
@@ -4678,7 +5010,9 @@ def test_prepare_apply_changes_records_remote_cap_updates(tmp_path: Path, monkey
         live = live_state
 
     reload_signal = asyncio.Event()
-    watch.apply_changes(cast(UptimeContext, Context()), {config_path}, reload_signal=reload_signal)
+    watch.apply_changes(
+        cast(UptimeContext, Context()), {config_path}, reload_signal=reload_signal
+    )
 
     assert ("skill_changed", {"name": "review", "visibility": "private"}) in updates
     assert reload_signal.is_set()
@@ -4900,18 +5234,25 @@ def test_concurrent_agent_prepare_reuses_shared_lock_after_another_agent_updates
         return prepared
 
     monkeypatch.setattr(caps, "_fetch_github_file", fake_fetch)
-    monkeypatch.setattr(watch, "_load_prepared_optional", delayed_load_prepared_optional)
+    monkeypatch.setattr(
+        watch, "_load_prepared_optional", delayed_load_prepared_optional
+    )
 
     results: list[object] = []
     errors: list[BaseException] = []
 
     def prepare(agent_name: str) -> None:
         try:
-            results.append(watch.build_prepared_state(scan_durable_state(toolang_root, agent_name)))
+            results.append(
+                watch.build_prepared_state(scan_durable_state(toolang_root, agent_name))
+            )
         except BaseException as exc:
             errors.append(exc)
 
-    threads = [threading.Thread(target=prepare, args=(agent_name,)) for agent_name in ("alice", "bob")]
+    threads = [
+        threading.Thread(target=prepare, args=(agent_name,))
+        for agent_name in ("alice", "bob")
+    ]
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -4921,7 +5262,9 @@ def test_concurrent_agent_prepare_reuses_shared_lock_after_another_agent_updates
     assert errors == []
     assert fetches == ["github://acme/agents/prompts/style.md@main"]
     assert len(results) == 2
-    assert all(len(cast(PreparedState, result).shared_lock.entries) == 1 for result in results)
+    assert all(
+        len(cast(PreparedState, result).shared_lock.entries) == 1 for result in results
+    )
 
 
 def test_prepare_reuses_program_ref_caps_when_inline_program_changes(
@@ -5006,7 +5349,9 @@ def test_list_entries_reuses_prepared_program_ref_resolution(
 
     monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
-    monkeypatch.setattr(caps, "_fetch_github_file", lambda ref: b"Remote psyche body.\n")
+    monkeypatch.setattr(
+        caps, "_fetch_github_file", lambda ref: b"Remote psyche body.\n"
+    )
     agents.create_agent(toolang_root, "alice")
     program_path = toolang_root / "agents" / "alice" / "agent.too"
     program_path.write_text(
@@ -5018,9 +5363,13 @@ def test_list_entries_reuses_prepared_program_ref_resolution(
     monkeypatch.setattr(
         caps,
         "_github_repo_default_branch",
-        lambda owner, repo: pytest.fail(f"unexpected remote branch lookup: {owner}/{repo}"),
+        lambda owner, repo: pytest.fail(
+            f"unexpected remote branch lookup: {owner}/{repo}"
+        ),
     )
-    entries = caps.list_entries(toolang_root, "alice", visibility="private", kinds={"psyche"})
+    entries = caps.list_entries(
+        toolang_root, "alice", visibility="private", kinds={"psyche"}
+    )
 
     assert [(entry.name, entry.ref) for entry in entries] == [
         ("steady", "github://acme/agents/psyches/steady.md@main")
@@ -5040,7 +5389,9 @@ def test_prepare_refetches_remote_caps_when_prepared_output_does_not_match_lock(
     def fake_fetch(ref):
         nonlocal fetch_count
         fetch_count += 1
-        return {"SKILL.md": f"---\ndescription: PDF {fetch_count}\n---\n# PDF\n".encode()}
+        return {
+            "SKILL.md": f"---\ndescription: PDF {fetch_count}\n---\n# PDF\n".encode()
+        }
 
     monkeypatch.setattr(caps, "_fetch_github_directory", fake_fetch)
     add_remote_entry(
@@ -5051,8 +5402,19 @@ def test_prepare_refetches_remote_caps_when_prepared_output_does_not_match_lock(
         ref="acme/pdf",
     )
     watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
-    prepared_file = toolang_root / "agents" / "alice" / ".caps" / "wired" / "skills" / "pdf" / "SKILL.md"
-    prepared_file.write_text("---\ndescription: Corrupt\n---\n# Corrupt\n", encoding="utf-8")
+    prepared_file = (
+        toolang_root
+        / "agents"
+        / "alice"
+        / ".caps"
+        / "wired"
+        / "skills"
+        / "pdf"
+        / "SKILL.md"
+    )
+    prepared_file.write_text(
+        "---\ndescription: Corrupt\n---\n# Corrupt\n", encoding="utf-8"
+    )
 
     watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
 
@@ -5060,11 +5422,15 @@ def test_prepare_refetches_remote_caps_when_prepared_output_does_not_match_lock(
     assert "PDF 2" in prepared_file.read_text(encoding="utf-8")
 
 
-def test_remote_skill_add_rejects_missing_github_tree_url(tmp_path: Path, monkeypatch) -> None:
+def test_remote_skill_add_rejects_missing_github_tree_url(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: False)
 
-    with pytest.raises(ValueError, match="remote skill not found or missing entry file"):
+    with pytest.raises(
+        ValueError, match="remote skill not found or missing entry file"
+    ):
         add_remote_entry(
             toolang_root,
             "alice",
@@ -5076,13 +5442,14 @@ def test_remote_skill_add_rejects_missing_github_tree_url(tmp_path: Path, monkey
     assert not (toolang_root / "agents" / "alice" / "config.toml").exists()
 
 
-def test_prepare_materializes_remote_skill_directory(tmp_path: Path, monkeypatch) -> None:
+def test_prepare_materializes_remote_skill_directory(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     config_path = toolang_root / "agents" / "alice" / "config.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
-        '[skills]\n'
-        'pdf = { ref = "github://anthropics/skills/skills/pdf@main" }\n',
+        '[skills]\npdf = { ref = "github://anthropics/skills/skills/pdf@main" }\n',
         encoding="utf-8",
     )
 
@@ -5099,16 +5466,32 @@ def test_prepare_materializes_remote_skill_directory(tmp_path: Path, monkeypatch
     prepared = watch.build_prepared_state(durable)
 
     assert (
-        toolang_root / "agents" / "alice" / ".caps" / "wired" / "skills" / "pdf" / "SKILL.md"
+        toolang_root
+        / "agents"
+        / "alice"
+        / ".caps"
+        / "wired"
+        / "skills"
+        / "pdf"
+        / "SKILL.md"
     ).read_text(encoding="utf-8") == "---\ndescription: PDF work\n---\n# PDF\n"
     assert (
-        toolang_root / "agents" / "alice" / ".caps" / "wired" / "skills" / "pdf" / "REFERENCE.md"
+        toolang_root
+        / "agents"
+        / "alice"
+        / ".caps"
+        / "wired"
+        / "skills"
+        / "pdf"
+        / "REFERENCE.md"
     ).read_text(encoding="utf-8") == "# Reference\n"
     assert prepared.private_lock.entries[0].meta["description"] == "PDF work"
     assert prepared.private_lock.entries[0].source.form == "wired"
 
 
-def test_prepare_materializes_remote_skill_from_program_use(tmp_path: Path, monkeypatch) -> None:
+def test_prepare_materializes_remote_skill_from_program_use(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -5119,15 +5502,28 @@ def test_prepare_materializes_remote_skill_from_program_use(tmp_path: Path, monk
     monkeypatch.setattr(
         caps,
         "_fetch_github_directory",
-        lambda ref: {"SKILL.md": f"---\ndescription: {ref.render()}\n---\n# Fund\n".encode()},
+        lambda ref: {
+            "SKILL.md": f"---\ndescription: {ref.render()}\n---\n# Fund\n".encode()
+        },
     )
 
     durable = scan_durable_state(toolang_root, "alice")
     prepared = watch.build_prepared_state(durable)
     live = load_live_state(prepared, enabled_features=("watch",))
 
-    skill_path = toolang_root / "agents" / "alice" / ".caps" / "ref" / "skills" / "fund" / "SKILL.md"
-    assert skill_path.read_text(encoding="utf-8").startswith("---\ndescription: github://coinbase/")
+    skill_path = (
+        toolang_root
+        / "agents"
+        / "alice"
+        / ".caps"
+        / "ref"
+        / "skills"
+        / "fund"
+        / "SKILL.md"
+    )
+    assert skill_path.read_text(encoding="utf-8").startswith(
+        "---\ndescription: github://coinbase/"
+    )
     entry = prepared.private_lock.entries[0]
     assert entry.name == "fund"
     assert entry.ref == "github://coinbase/agentic-wallet-skills/skills/fund@main"
@@ -5137,9 +5533,13 @@ def test_prepare_materializes_remote_skill_from_program_use(tmp_path: Path, monk
     assert entry.source.line == 3
     assert live.caps == ("agents/alice/.caps/ref/skills/fund/SKILL.md",)
     lock_data = json.loads(
-        (toolang_root / "agents" / "alice" / ".caps" / "lock.json").read_text(encoding="utf-8")
+        (toolang_root / "agents" / "alice" / ".caps" / "lock.json").read_text(
+            encoding="utf-8"
+        )
     )
-    program = cast(dict[str, object], cast(dict[str, object], lock_data["prepared"])["program"])
+    program = cast(
+        dict[str, object], cast(dict[str, object], lock_data["prepared"])["program"]
+    )
     uses = cast(list[dict[str, object]], program["uses"])
     assert uses[0]["cap"] == 0
     assert "prepared" not in uses[0]
@@ -5169,21 +5569,48 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
     prepared = watch.build_prepared_state(durable)
     live = load_live_state(prepared, enabled_features=("inspect",))
 
-    psyche_path = toolang_root / "agents" / "alice" / ".caps" / "inline" / "psyches" / "reviewer.md"
+    psyche_path = (
+        toolang_root
+        / "agents"
+        / "alice"
+        / ".caps"
+        / "inline"
+        / "psyches"
+        / "reviewer.md"
+    )
     assert psyche_path.read_text(encoding="utf-8") == "Prefer concrete findings."
-    service_path = toolang_root / "agents" / "alice" / ".caps" / "inline" / "services" / "github.md"
+    service_path = (
+        toolang_root
+        / "agents"
+        / "alice"
+        / ".caps"
+        / "inline"
+        / "services"
+        / "github.md"
+    )
     service_content = service_path.read_text(encoding="utf-8")
     assert "description: Use when the agent needs GitHub MCP access." in service_content
     assert "Use this service when the agent needs GitHub access." in service_content
-    prompt_path = toolang_root / "agents" / "alice" / ".caps" / "inline" / "prompts" / "summarize.md"
+    prompt_path = (
+        toolang_root
+        / "agents"
+        / "alice"
+        / ".caps"
+        / "inline"
+        / "prompts"
+        / "summarize.md"
+    )
     prompt_content = prompt_path.read_text(encoding="utf-8")
-    assert prompt_content == (
-        "---\n"
-        "params: style, audience?\n"
-        "---\n\n"
-        "Summarize the user's request in a {{style}} style.\n"
-        "Target audience: {{audience}}\n"
-    ).rstrip()
+    assert (
+        prompt_content
+        == (
+            "---\n"
+            "params: style, audience?\n"
+            "---\n\n"
+            "Summarize the user's request in a {{style}} style.\n"
+            "Target audience: {{audience}}\n"
+        ).rstrip()
+    )
     entries_by_kind = {entry.kind: entry for entry in prepared.private_lock.entries}
     assert set(entries_by_kind) == {"prompt", "psyche", "service"}
     assert entries_by_kind["psyche"].name == "reviewer"
@@ -5206,9 +5633,13 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
         "agents/alice/.caps/inline/services/github.md",
     )
     lock_data = json.loads(
-        (toolang_root / "agents" / "alice" / ".caps" / "lock.json").read_text(encoding="utf-8")
+        (toolang_root / "agents" / "alice" / ".caps" / "lock.json").read_text(
+            encoding="utf-8"
+        )
     )
-    program = cast(dict[str, object], cast(dict[str, object], lock_data["prepared"])["program"])
+    program = cast(
+        dict[str, object], cast(dict[str, object], lock_data["prepared"])["program"]
+    )
     program_caps = cast(list[dict[str, object]], program["caps"])
     assert {item["name"]: item["cap"] for item in program_caps} == {
         "github": 2,
@@ -5237,7 +5668,10 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
         service_response = client.get("/api/v1/services/github")
         assert service_response.status_code == 200
         service_detail = service_response.json()["item"]
-        assert service_detail["description"] == "Use when the agent needs GitHub MCP access."
+        assert (
+            service_detail["description"]
+            == "Use when the agent needs GitHub MCP access."
+        )
         assert service_detail["origin"] == "local"
         assert service_detail["form"] == "inline"
         assert service_detail["scope"] == "here"
@@ -5287,7 +5721,13 @@ def test_prepare_rejects_duplicate_embedded_cap_names(tmp_path: Path) -> None:
         watch.build_prepared_state(durable)
 
     assert not (
-        toolang_root / "agents" / "alice" / ".caps" / "inline" / "prompts" / "summarize.md"
+        toolang_root
+        / "agents"
+        / "alice"
+        / ".caps"
+        / "inline"
+        / "prompts"
+        / "summarize.md"
     ).exists()
 
 
@@ -5298,7 +5738,9 @@ def test_prepare_builds_program_into_private_lock(tmp_path: Path) -> None:
     durable = scan_durable_state(toolang_root, "alice")
     prepared = watch.build_prepared_state(durable)
     lock_data = json.loads(
-        (toolang_root / "agents" / "alice" / ".caps" / "lock.json").read_text(encoding="utf-8")
+        (toolang_root / "agents" / "alice" / ".caps" / "lock.json").read_text(
+            encoding="utf-8"
+        )
     )
 
     assert prepared.program.agent_name == "alice"
@@ -5307,12 +5749,16 @@ def test_prepare_builds_program_into_private_lock(tmp_path: Path) -> None:
     thunks = cast(list[dict[str, object]], program_snapshot["thunks"])
     assert len(thunks) == 1
     assert thunks[0]["name"] == "default"
-    program_snapshot = cast(dict[str, object], prepared.private_lock.to_snapshot()["program"])
+    program_snapshot = cast(
+        dict[str, object], prepared.private_lock.to_snapshot()["program"]
+    )
     assert program_snapshot["agent_name"] == "alice"
     assert lock_data["schema"] == 1
     assert "visibility" not in lock_data
     assert "entries" not in lock_data
-    lock_program = cast(dict[str, object], cast(dict[str, object], lock_data["prepared"])["program"])
+    lock_program = cast(
+        dict[str, object], cast(dict[str, object], lock_data["prepared"])["program"]
+    )
     assert list(lock_program) == [
         "source",
         "source_text",
@@ -5346,7 +5792,9 @@ def test_prepare_rewrites_legacy_private_lock_missing_program(tmp_path: Path) ->
     durable = scan_durable_state(toolang_root, "alice")
     shared_lock, shared_files = build_visibility_lock(durable, visibility="shared")
     write_prepared_lock(toolang_root, shared_lock, files=shared_files)
-    legacy_private_lock, legacy_private_files = build_visibility_lock(durable, visibility="private")
+    legacy_private_lock, legacy_private_files = build_visibility_lock(
+        durable, visibility="private"
+    )
     write_prepared_lock(toolang_root, legacy_private_lock, files=legacy_private_files)
 
     prepared = watch.build_prepared_state(durable)
@@ -5355,11 +5803,13 @@ def test_prepare_rewrites_legacy_private_lock_missing_program(tmp_path: Path) ->
     assert prepared.private_lock.program.agent_name == "alice"
 
 
-def test_prepare_fetches_remote_caps_with_bounded_concurrency(tmp_path: Path, monkeypatch) -> None:
+def test_prepare_fetches_remote_caps_with_bounded_concurrency(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "config.toml",
-        '[psyches]\n'
+        "[psyches]\n"
         'alpha = { ref = "github://acme/agents/psyches/alpha.md@main" }\n'
         'bravo = { ref = "github://acme/agents/psyches/bravo.md@main" }\n',
     )
@@ -5408,8 +5858,10 @@ def test_remote_shorthand_falls_back_to_main_when_default_branch_lookup_fails(
     monkeypatch.setattr(
         caps,
         "_github_remote_exists",
-        lambda kind, ref: kind == "psyche"
-        and ref == "github://briceyan/agents/psyches/senior-engineer.md@main",
+        lambda kind, ref: (
+            kind == "psyche"
+            and ref == "github://briceyan/agents/psyches/senior-engineer.md@main"
+        ),
     )
 
     assert (
@@ -5433,11 +5885,18 @@ def test_caps_list_and_remove_remote_entries(tmp_path: Path, monkeypatch) -> Non
 
     entries = list_entries(toolang_root, "alice", visibility="private", kinds={"skill"})
 
-    assert [(entry.source.origin, entry.source.form, entry.path) for entry in entries] == [
-        ("remote", "wired", "agents/alice/.caps/wired/skills/reviewer/SKILL.md")
-    ]
-    assert remove_remote_entry(toolang_root, "alice", visibility="private", kind="skill", name="reviewer") is True
-    assert list_entries(toolang_root, "alice", visibility="private", kinds={"skill"}) == ()
+    assert [
+        (entry.source.origin, entry.source.form, entry.path) for entry in entries
+    ] == [("remote", "wired", "agents/alice/.caps/wired/skills/reviewer/SKILL.md")]
+    assert (
+        remove_remote_entry(
+            toolang_root, "alice", visibility="private", kind="skill", name="reviewer"
+        )
+        is True
+    )
+    assert (
+        list_entries(toolang_root, "alice", visibility="private", kinds={"skill"}) == ()
+    )
 
 
 def test_runs_bind_latest_live_snapshot(tmp_path: Path) -> None:
@@ -5610,7 +6069,9 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
         task = reopened.json()["item"]
         assert task["lifecycle"] == "ready"
         assert task["path"] == f"tasks/{task_id}.md"
-        assert [item["id"] for item in client.get("/api/v1/jobs").json()["items"]] == [task_id]
+        assert [item["id"] for item in client.get("/api/v1/jobs").json()["items"]] == [
+            task_id
+        ]
 
         rearchived = client.post(f"/api/v1/tasks/{task_id}/archive")
         assert rearchived.status_code == 200
@@ -5746,7 +6207,9 @@ def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
         chore = reopened.json()["item"]
         assert chore["lifecycle"] == "ready"
         assert chore["path"] == f"chores/{chore_id}.md"
-        assert [item["id"] for item in client.get("/api/v1/chores").json()["items"]] == [chore_id]
+        assert [
+            item["id"] for item in client.get("/api/v1/chores").json()["items"]
+        ] == [chore_id]
 
         rearchived = client.post(f"/api/v1/chores/{chore_id}/archive")
         assert rearchived.status_code == 200
@@ -5868,18 +6331,28 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
     instructions = bundle.instructions()
     assert "Treat the user's message as the current task input." in instructions
     assert "Current task:" in instructions
-    assert f"- Path: {toolang_root / 'agents' / 'alice' / 'tasks' / 'review.md'}" in instructions
+    assert (
+        f"- Path: {toolang_root / 'agents' / 'alice' / 'tasks' / 'review.md'}"
+        in instructions
+    )
     assert "The runtime records completion status from the run outcome." in instructions
     assert "If this task mirrors a remote work item" in instructions
-    assert "Do not report the task complete just because you fetched or verified the remote item" in instructions
+    assert (
+        "Do not report the task complete just because you fetched or verified the remote item"
+        in instructions
+    )
     assert "update the remote status when supported" in instructions
-    service_schema = bundle.tools()["service_use__bridge_start"].definition().parameters[
-        "properties"
-    ]["service"]
+    service_schema = (
+        bundle.tools()["service_use__bridge_start"]
+        .definition()
+        .parameters["properties"]["service"]
+    )
     assert service_schema["enum"] == ["linear"]
 
 
-def test_chore_run_includes_remote_task_sync_protocol_in_prompt_bundle(tmp_path: Path) -> None:
+def test_chore_run_includes_remote_task_sync_protocol_in_prompt_bundle(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     _write_text(
@@ -5906,10 +6379,19 @@ def test_chore_run_includes_remote_task_sync_protocol_in_prompt_bundle(tmp_path:
     instructions = RunInput.from_binding(context, bound).instructions()
 
     assert "Treat the user's message as the current chore input." in instructions
-    assert "When creating or updating local tasks that mirror remote work items" in instructions
-    assert "include the remote title, description, link, update timestamp, status" in instructions
+    assert (
+        "When creating or updating local tasks that mirror remote work items"
+        in instructions
+    )
+    assert (
+        "include the remote title, description, link, update timestamp, status"
+        in instructions
+    )
     assert "match by remote_ref, remote URL, or remote id" in instructions
-    assert "instead of creating another local task for the same remote item" in instructions
+    assert (
+        "instead of creating another local task for the same remote item"
+        in instructions
+    )
     assert "update the remote status when supported" in instructions
 
 
@@ -5942,7 +6424,9 @@ def test_pulse_marks_finished_task_job_done(tmp_path: Path) -> None:
         origin="task",
         input=Message.user(claimed.text),
     )
-    context.store.finish_run(run_id=run_id, status="finished", finished_at="2026-01-01T00:00:07Z")
+    context.store.finish_run(
+        run_id=run_id, status="finished", finished_at="2026-01-01T00:00:07Z"
+    )
 
     pulse._record_completed_runs(
         context,
@@ -5999,7 +6483,9 @@ def test_pulse_marks_failed_task_job_failed(tmp_path: Path) -> None:
         origin="task",
         input=Message.user(claimed.text),
     )
-    context.store.finish_run(run_id=claimed.run_id, status="failed", finished_at="2026-01-01T00:00:07Z")
+    context.store.finish_run(
+        run_id=claimed.run_id, status="failed", finished_at="2026-01-01T00:00:07Z"
+    )
 
     pulse._record_completed_runs(
         context,
@@ -6028,7 +6514,9 @@ def test_pulse_marks_failed_task_job_failed(tmp_path: Path) -> None:
     assert updated.status == "failed"
 
 
-def test_assemble_run_input_prefers_thunk_model_over_activation_default(tmp_path: Path) -> None:
+def test_assemble_run_input_prefers_thunk_model_over_activation_default(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -6052,7 +6540,9 @@ def test_assemble_run_input_prefers_thunk_model_over_activation_default(tmp_path
     assert bundle.debug["activation_default_model"] == "openai/gpt-5[openai]"
 
 
-def test_assemble_run_input_accepts_explicit_run_model_within_allowed_set(tmp_path: Path) -> None:
+def test_assemble_run_input_accepts_explicit_run_model_within_allowed_set(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -6064,7 +6554,9 @@ def test_assemble_run_input_accepts_explicit_run_model_within_allowed_set(tmp_pa
         enabled_features=("chat",),
     )
     context.model_environ = {"OPENAI_API_KEY": "secret"}
-    context.config.set("models.allowed_selectors", ("openai/o3[openai]", "openai/gpt-5[openai]"))
+    context.config.set(
+        "models.allowed_selectors", ("openai/o3[openai]", "openai/gpt-5[openai]")
+    )
     bound = bind_run_request(
         context,
         RunRequest(
@@ -6079,13 +6571,18 @@ def test_assemble_run_input_accepts_explicit_run_model_within_allowed_set(tmp_pa
     runtime_context = cast(dict[str, object], bundle.system_template_context["runtime"])
     model_context = cast(dict[str, object], runtime_context["model"])
 
-    assert bundle.effective_model_selectors(context) == ("openai/o3[openai]", "openai/gpt-5[openai]")
+    assert bundle.effective_model_selectors(context) == (
+        "openai/o3[openai]",
+        "openai/gpt-5[openai]",
+    )
     assert bundle.model_selector(context) == "openai/gpt-5[openai]"
     assert model_context["ref"] == "openai/gpt-5"
     assert bundle.debug["requested_model_selector"] == "openai/gpt-5[openai]"
 
 
-def test_assemble_run_input_uses_activation_default_when_thunk_omits_one(tmp_path: Path) -> None:
+def test_assemble_run_input_uses_activation_default_when_thunk_omits_one(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -6134,7 +6631,9 @@ def test_script_run_thread_id_uses_script_prefix(tmp_path: Path) -> None:
     assert bound.thread_id != "script_summarize"
 
 
-def test_assemble_file_run_input_includes_authored_file_thunk_message(tmp_path: Path) -> None:
+def test_assemble_file_run_input_includes_authored_file_thunk_message(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -6169,7 +6668,9 @@ def test_assemble_file_run_input_includes_authored_file_thunk_message(tmp_path: 
     assert "file body" in text
 
 
-def test_assemble_run_input_hides_tools_when_activation_has_no_tools(tmp_path: Path) -> None:
+def test_assemble_run_input_hides_tools_when_activation_has_no_tools(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -6214,7 +6715,9 @@ def test_assemble_run_input_hides_tools_when_activation_has_no_tools(tmp_path: P
     assert term_bundle.debug["tool_names"] == []
 
 
-def test_assemble_run_input_uses_explicit_activation_tools_for_script_runs(tmp_path: Path) -> None:
+def test_assemble_run_input_uses_explicit_activation_tools_for_script_runs(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -6272,7 +6775,9 @@ def test_assemble_run_input_applies_run_resource_selectors(tmp_path: Path) -> No
         agent_name="alice",
         enabled_features=("chat",),
     )
-    context.config.set("models.allowed_selectors", ("openai/gpt-5[openai]", "openai/o3[openai]"))
+    context.config.set(
+        "models.allowed_selectors", ("openai/gpt-5[openai]", "openai/o3[openai]")
+    )
     bound = bind_run_request(
         context,
         RunRequest(
@@ -6320,7 +6825,9 @@ def test_assemble_run_input_logs_activation_set_math(tmp_path: Path, caplog) -> 
         agent_name="alice",
         enabled_features=("chat",),
     )
-    context.config.set("models.allowed_selectors", ("openai/gpt-5[openai]", "openai/o3[openai]"))
+    context.config.set(
+        "models.allowed_selectors", ("openai/gpt-5[openai]", "openai/o3[openai]")
+    )
     bound = bind_run_request(
         context,
         RunRequest(
@@ -6341,7 +6848,10 @@ def test_assemble_run_input_logs_activation_set_math(tmp_path: Path, caplog) -> 
     tool_steps = cast(list[dict[str, object]], tool_math["directive_steps"])
     skill_steps = cast(list[dict[str, object]], skill_math["directive_steps"])
 
-    assert model_math["activation_ceiling"] == ["openai/gpt-5[openai]", "openai/o3[openai]"]
+    assert model_math["activation_ceiling"] == [
+        "openai/gpt-5[openai]",
+        "openai/o3[openai]",
+    ]
     assert model_math["thunk_selectors"] == ["openai/gpt-5"]
     assert model_math["effective"] == ["openai/gpt-5[openai]"]
     assert tool_steps[0]["op"] == "-="
@@ -6351,7 +6861,10 @@ def test_assemble_run_input_logs_activation_set_math(tmp_path: Path, caplog) -> 
         "service_use/auth_start",
         "service_use/tool_call",
     ]
-    assert any(str(item).startswith("service_use__") for item in cast(list[object], tool_steps[0]["matches"]))
+    assert any(
+        str(item).startswith("service_use__")
+        for item in cast(list[object], tool_steps[0]["matches"])
+    )
     for removed_tool in cast(list[object], tool_steps[0]["matches"]):
         assert removed_tool not in cast(list[object], tool_math["effective"])
     assert skill_steps == [
@@ -6366,11 +6879,11 @@ def test_assemble_run_input_logs_activation_set_math(tmp_path: Path, caplog) -> 
     ]
 
     messages = [
-        record.getMessage()
-        for record in caplog.records
-        if record.name == "toolang.run"
+        record.getMessage() for record in caplog.records if record.name == "toolang.run"
     ]
-    detail_line = next(message for message in messages if message.startswith("run.activation "))
+    detail_line = next(
+        message for message in messages if message.startswith("run.activation ")
+    )
     assert "thread=script_" in detail_line
     assert " run=run_" in detail_line
     assert "summary=models 2 = openai/gpt-5 -> 1" in detail_line
@@ -6380,7 +6893,9 @@ def test_assemble_run_input_logs_activation_set_math(tmp_path: Path, caplog) -> 
     assert logged_math["skills"]["effective"] == ["skill/local-reviewer"]
 
 
-def test_assemble_run_input_uses_thunk_user_message_for_script_runs(tmp_path: Path) -> None:
+def test_assemble_run_input_uses_thunk_user_message_for_script_runs(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -6454,7 +6969,9 @@ def test_script_run_can_simulate_history_with_explicit_message_blocks(
         status="finished",
         input=(CommandRef(),),
         output=(TextPart(text="stored answer should not appear"),),
-        payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
+        payload=ModelCallStepPayload(
+            model_ref="gpt-5", input_tokens=0, output_tokens=0
+        ),
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
@@ -6481,7 +6998,9 @@ def test_script_run_can_simulate_history_with_explicit_message_blocks(
     ]
 
 
-def test_script_run_keeps_implicit_user_block_as_single_invoke_message(tmp_path: Path) -> None:
+def test_script_run_keeps_implicit_user_block_as_single_invoke_message(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -6515,7 +7034,9 @@ def test_script_run_keeps_implicit_user_block_as_single_invoke_message(tmp_path:
     ]
 
 
-def test_assemble_run_input_keeps_thread_messages_out_of_system_instructions(tmp_path: Path) -> None:
+def test_assemble_run_input_keeps_thread_messages_out_of_system_instructions(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -6546,7 +7067,9 @@ def test_assemble_run_input_keeps_thread_messages_out_of_system_instructions(tmp
     assert "hello" not in instructions
 
 
-def test_assemble_run_input_expands_embedded_prompt_for_chat_message(tmp_path: Path) -> None:
+def test_assemble_run_input_expands_embedded_prompt_for_chat_message(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -6568,7 +7091,9 @@ def test_assemble_run_input_expands_embedded_prompt_for_chat_message(tmp_path: P
         RunRequest(
             group="chat",
             origin="chat",
-            message=Message.user("/summarize concise developers\n\nAdd a remote skill."),
+            message=Message.user(
+                "/summarize concise developers\n\nAdd a remote skill."
+            ),
         ),
     )
 
@@ -6642,12 +7167,26 @@ def test_run_input_debug_logs_computed_prompt_bundle(tmp_path: Path, caplog) -> 
     with caplog.at_level(logging.DEBUG, logger="toolang.run"):
         RunInput.from_binding(context, bound)
 
-    messages = [record.getMessage() for record in caplog.records if record.name == "toolang.run"]
+    messages = [
+        record.getMessage() for record in caplog.records if record.name == "toolang.run"
+    ]
     assert any(message.startswith("prompt.assembled thread=") for message in messages)
     assert any(message.startswith("prompt.tools thread=") for message in messages)
-    assert any(message.startswith("prompt.instructions thread=") and "text=<runtime-instructions>" in message for message in messages)
-    assert any(message.startswith("prompt.context thread=") and "text=<context>" in message for message in messages)
-    assert any(message.startswith("prompt.messages thread=") and '"role": "user"' in message and "hi" in message for message in messages)
+    assert any(
+        message.startswith("prompt.instructions thread=")
+        and "text=<runtime-instructions>" in message
+        for message in messages
+    )
+    assert any(
+        message.startswith("prompt.context thread=") and "text=<context>" in message
+        for message in messages
+    )
+    assert any(
+        message.startswith("prompt.messages thread=")
+        and '"role": "user"' in message
+        and "hi" in message
+        for message in messages
+    )
 
 
 def test_chat_run_prefers_named_chat_thunk_over_default(tmp_path: Path) -> None:
@@ -6744,12 +7283,7 @@ def test_thunk_instruct_none_suppresses_agent_instruct_layer(tmp_path: Path) -> 
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        (
-            "agent alice\n\n"
-            "thunk quiet:\n"
-            "  instruct none\n\n"
-            "  Reply directly.\n"
-        ),
+        ("agent alice\n\nthunk quiet:\n  instruct none\n\n  Reply directly.\n"),
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -6800,7 +7334,9 @@ def test_thunk_instruct_block_renders_as_agent_instruction(tmp_path: Path) -> No
 def test_agent_markdown_psyche_files_change_default_behavior(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
-    _write_text(toolang_root / "psyches" / "root-style.md", "Use concise root defaults.\n")
+    _write_text(
+        toolang_root / "psyches" / "root-style.md", "Use concise root defaults.\n"
+    )
     _write_text(
         toolang_root / "agents" / "alice" / "psyches" / "home-style.md",
         "Prefer agent-home behavior.\n",
@@ -6822,7 +7358,9 @@ def test_agent_markdown_psyche_files_change_default_behavior(tmp_path: Path) -> 
     assert "Prefer agent-home behavior." in instructions
 
 
-def test_chat_run_uses_program_default_when_chat_thunk_is_missing(tmp_path: Path) -> None:
+def test_chat_run_uses_program_default_when_chat_thunk_is_missing(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -6877,13 +7415,24 @@ def test_chat_run_uses_program_default_when_chat_thunk_is_missing(tmp_path: Path
     assert "agent_chat__peers" in bundle.tools()
     assert f"agent_home: {toolang_root / 'agents' / 'alice'}" in instructions
     assert "sandbox: none" in instructions
-    assert "Do not call tools or inspect files just to explore the environment." in instructions
+    assert (
+        "Do not call tools or inspect files just to explore the environment."
+        in instructions
+    )
     assert "<tool-result-reuse>" in instructions
-    assert "Reuse applicable prior tool results instead of repeating the same tool call." in instructions
-    assert "missing, failed, stale, expired, invalid for the current request" in instructions
+    assert (
+        "Reuse applicable prior tool results instead of repeating the same tool call."
+        in instructions
+    )
+    assert (
+        "missing, failed, stale, expired, invalid for the current request"
+        in instructions
+    )
 
 
-def test_execute_run_rejects_thunk_model_outside_activation_allowlist(tmp_path: Path) -> None:
+def test_execute_run_rejects_thunk_model_outside_activation_allowlist(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -6916,7 +7465,9 @@ def test_execute_run_rejects_thunk_model_outside_activation_allowlist(tmp_path: 
     assert "toolang model list --models <selector>" in outcome.error
 
 
-def test_execute_run_pre_start_failure_does_not_emit_persist_sink_error(tmp_path: Path, caplog) -> None:
+def test_execute_run_pre_start_failure_does_not_emit_persist_sink_error(
+    tmp_path: Path, caplog
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -6951,7 +7502,9 @@ def test_execute_run_pre_start_failure_does_not_emit_persist_sink_error(tmp_path
     assert "persist sink event handling failed" not in caplog.text
 
 
-def test_script_execute_run_logs_lifecycle_without_queue_runner(tmp_path: Path, caplog) -> None:
+def test_script_execute_run_logs_lifecycle_without_queue_runner(
+    tmp_path: Path, caplog
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -6980,9 +7533,7 @@ def test_script_execute_run_logs_lifecycle_without_queue_runner(tmp_path: Path, 
         )
 
     messages = [
-        record.getMessage()
-        for record in caplog.records
-        if record.name == "toolang.run"
+        record.getMessage() for record in caplog.records if record.name == "toolang.run"
     ]
     assert outcome.status == "finished"
     assert messages[0].startswith("Thread created id=script_")
@@ -7059,17 +7610,27 @@ def test_execution_store_records_runs_steps_and_messages(tmp_path: Path) -> None
 
         assert finished.status == "finished"
         assert [item.kind for item in store.list_steps(run_id=run.run_id)] == ["model"]
-        assert [item.to_data() for item in store.recent_conversation_messages(thread_id="thread-1")] == [
+        assert [
+            item.to_data()
+            for item in store.recent_conversation_messages(thread_id="thread-1")
+        ] == [
             {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
-            {"role": "assistant", "parts": [{"type": "text", "text": "assistant:hello"}]},
+            {
+                "role": "assistant",
+                "parts": [{"type": "text", "text": "assistant:hello"}],
+            },
         ]
         assert [item.kind for item in store.list_updates(limit=10)] == ["created"]
-        assert created.payload["path"] == str(toolang_root / "agents" / "alice" / "agent.too")
+        assert created.payload["path"] == str(
+            toolang_root / "agents" / "alice" / "agent.too"
+        )
     finally:
         store.close()
 
 
-def test_chat_accepts_structured_message_parts_and_model_selector(tmp_path: Path) -> None:
+def test_chat_accepts_structured_message_parts_and_model_selector(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
@@ -7089,8 +7650,15 @@ def test_chat_accepts_structured_message_parts_and_model_selector(tmp_path: Path
                         "role": "user",
                         "parts": [
                             {"type": "text", "text": "summarize this"},
-                            {"type": "image", "image_url": "https://example.com/image.png"},
-                            {"type": "file", "file_url": "https://example.com/report.pdf", "filename": "report.pdf"},
+                            {
+                                "type": "image",
+                                "image_url": "https://example.com/image.png",
+                            },
+                            {
+                                "type": "file",
+                                "file_url": "https://example.com/report.pdf",
+                                "filename": "report.pdf",
+                            },
                         ],
                     },
                 },
@@ -7101,8 +7669,16 @@ def test_chat_accepts_structured_message_parts_and_model_selector(tmp_path: Path
     body = response.json()
     assert body["message"]["parts"] == [
         {"type": "text", "text": "summarize this"},
-        {"type": "image", "detail": "auto", "image_url": "https://example.com/image.png"},
-        {"type": "file", "file_url": "https://example.com/report.pdf", "filename": "report.pdf"},
+        {
+            "type": "image",
+            "detail": "auto",
+            "image_url": "https://example.com/image.png",
+        },
+        {
+            "type": "file",
+            "file_url": "https://example.com/report.pdf",
+            "filename": "report.pdf",
+        },
     ]
     assert run_detail["input"]["parts"] == body["message"]["parts"]
 
@@ -7172,7 +7748,10 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
             started_at="2026-01-01T00:00:05Z",
             finished_at="2026-01-01T00:00:06Z",
         )
-        assert [item.to_data() for item in store.recent_conversation_messages(thread_id="thread-1")] == [
+        assert [
+            item.to_data()
+            for item in store.recent_conversation_messages(thread_id="thread-1")
+        ] == [
             {"role": "user", "parts": [{"type": "text", "text": "sum 7 and 8"}]},
             {
                 "role": "assistant",
@@ -7200,7 +7779,10 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
             },
             {"role": "assistant", "parts": [{"type": "text", "text": "15"}]},
         ]
-        assert [item.to_data() for item in store.recent_text_conversation_messages(thread_id="thread-1")] == [
+        assert [
+            item.to_data()
+            for item in store.recent_text_conversation_messages(thread_id="thread-1")
+        ] == [
             {"role": "user", "parts": [{"type": "text", "text": "sum 7 and 8"}]},
             {"role": "assistant", "parts": [{"type": "text", "text": "15"}]},
         ]
@@ -7208,7 +7790,9 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
         store.close()
 
 
-def test_execution_store_does_not_return_orphan_tool_history_when_limited(tmp_path: Path) -> None:
+def test_execution_store_does_not_return_orphan_tool_history_when_limited(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     store = ExecutionStore(execution_db_path(toolang_root, "alice"))
     try:
@@ -7232,7 +7816,9 @@ def test_execution_store_does_not_return_orphan_tool_history_when_limited(tmp_pa
                     input={"a": 7, "b": 8},
                 ),
             ),
-            payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
+            payload=ModelCallStepPayload(
+                model_ref="gpt-5", input_tokens=0, output_tokens=0
+            ),
             started_at="2026-01-01T00:00:01Z",
             finished_at="2026-01-01T00:00:02Z",
         )
@@ -7261,7 +7847,9 @@ def test_execution_store_does_not_return_orphan_tool_history_when_limited(tmp_pa
             status="finished",
             input=(StepOutputRef(step_index=2),),
             output=(TextPart(text="15"),),
-            payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
+            payload=ModelCallStepPayload(
+                model_ref="gpt-5", input_tokens=0, output_tokens=0
+            ),
             started_at="2026-01-01T00:00:05Z",
             finished_at="2026-01-01T00:00:06Z",
         )
@@ -7343,7 +7931,9 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
                 input={"service": "linear"},
             ),
         ),
-        payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
+        payload=ModelCallStepPayload(
+            model_ref="gpt-5", input_tokens=0, output_tokens=0
+        ),
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
@@ -7407,7 +7997,9 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
                 input={"service": "linear", "tool_name": "save_issue"},
             ),
         ),
-        payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
+        payload=ModelCallStepPayload(
+            model_ref="gpt-5", input_tokens=0, output_tokens=0
+        ),
         started_at="2026-01-01T00:00:05Z",
         finished_at="2026-01-01T00:00:06Z",
     )
@@ -7452,7 +8044,9 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         status="finished",
         input=(StepOutputRef(step_index=4),),
         output=(TextPart(text="created XBY-31"),),
-        payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
+        payload=ModelCallStepPayload(
+            model_ref="gpt-5", input_tokens=0, output_tokens=0
+        ),
         started_at="2026-01-01T00:00:09Z",
         finished_at="2026-01-01T00:00:10Z",
     )
@@ -7489,7 +8083,9 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
     assert "service_use__tool_list service=linear succeeded" not in instructions
 
 
-def test_run_input_recall_none_disables_thread_history_and_tool_context(tmp_path: Path) -> None:
+def test_run_input_recall_none_disables_thread_history_and_tool_context(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -7513,7 +8109,9 @@ def test_run_input_recall_none_disables_thread_history_and_tool_context(tmp_path
         status="finished",
         input=(CommandRef(),),
         output=(TextPart(text="old answer"),),
-        payload=ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0),
+        payload=ModelCallStepPayload(
+            model_ref="gpt-5", input_tokens=0, output_tokens=0
+        ),
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
@@ -7583,7 +8181,9 @@ async def _running_context(
 def _create_test_app(context: UptimeContext) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        enabled_features = cast(tuple[str, ...], context.config.require("features.enabled"))
+        enabled_features = cast(
+            tuple[str, ...], context.config.require("features.enabled")
+        )
         async with _running_context(context, enabled_features=enabled_features):
             yield
 
@@ -7626,9 +8226,7 @@ def _build_context(
         model_environ={"OPENAI_API_KEY": "secret"},
         channel_bindings=channel_bindings or {},
         channel_plugins=channel_plugins or {},
-        runner=runner
-        if runner is not None
-        else QueueRunner(delay_sec=0.0),
+        runner=runner if runner is not None else QueueRunner(delay_sec=0.0),
         store=store,
         events=RuntimeEventBus(store, agent_id=agent_name),
         config=UptimeConfig(
@@ -7659,7 +8257,9 @@ def _wait_for_completed_runs(client: TestClient) -> dict[str, object]:
     raise AssertionError("expected completed runs")
 
 
-async def _wait_for_fingerprint_change(context: UptimeContext, fingerprint: str) -> bool:
+async def _wait_for_fingerprint_change(
+    context: UptimeContext, fingerprint: str
+) -> bool:
     for _ in range(200):
         if context.live.fingerprint != fingerprint:
             return True
@@ -7671,9 +8271,9 @@ async def _wait_for_active_run(context: UptimeContext) -> None:
     for _ in range(100):
         live = cast(
             dict[str, object],
-            inspect.snapshot_context(context, enabled_features=context.live.enabled_features)[
-                "live"
-            ],
+            inspect.snapshot_context(
+                context, enabled_features=context.live.enabled_features
+            )["live"],
         )
         if live["active_runs"]:
             return
@@ -7795,7 +8395,9 @@ def _completed(
 ) -> StepEnd:
     del input_step_index, input_part_index
     if kind == "model":
-        payload = ModelCallStepPayload(model_ref="gpt-5", input_tokens=0, output_tokens=0)
+        payload = ModelCallStepPayload(
+            model_ref="gpt-5", input_tokens=0, output_tokens=0
+        )
     elif kind == "tool":
         payload = ToolCallStepPayload()
     else:
@@ -7837,8 +8439,7 @@ def test_model_call_step_payload_round_trips_target_metadata() -> None:
 
     assert restored == payload
     assert (
-        ModelCallStepPayload.from_data({"instructions_hash": "old"}).instruct
-        == "old"
+        ModelCallStepPayload.from_data({"instructions_hash": "old"}).instruct == "old"
     )
 
 
@@ -7876,8 +8477,12 @@ def _patched_run_input_assembly(fake_assemble):
         return fake_assemble(context, bound)
 
     with (
-        patch.object(run_execute_module.RunInput, "from_binding", side_effect=fake_assemble),
-        patch.object(run_execute_module.RunInput, "from_thunk", side_effect=fake_from_thunk),
+        patch.object(
+            run_execute_module.RunInput, "from_binding", side_effect=fake_assemble
+        ),
+        patch.object(
+            run_execute_module.RunInput, "from_thunk", side_effect=fake_from_thunk
+        ),
     ):
         yield
 

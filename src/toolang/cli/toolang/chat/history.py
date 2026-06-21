@@ -28,9 +28,9 @@ class ChatInputHistoryStore:
         with self.path.open("a", encoding="utf-8") as file:
             file.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
             file.write("\n")
-        self.compact_if_needed()
+        self._compact_if_needed()
 
-    def compact_if_needed(self) -> None:
+    def _compact_if_needed(self) -> None:
         if not self.path.exists():
             return
         try:
@@ -59,7 +59,8 @@ class ChatInputHistoryStore:
     def _write_records(self, records: list[dict[str, str]]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         data = "".join(
-            f"{json.dumps(record, ensure_ascii=False, separators=(',', ':'))}\n" for record in records
+            f"{json.dumps(record, ensure_ascii=False, separators=(',', ':'))}\n"
+            for record in records
         )
         self.path.write_text(data, encoding="utf-8")
 

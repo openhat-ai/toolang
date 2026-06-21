@@ -1,4 +1,4 @@
-"""Environment and source-version helpers for the chat TUI."""
+"""Toolang CLI version helpers."""
 
 from __future__ import annotations
 
@@ -9,11 +9,11 @@ import subprocess
 import tomllib
 
 
-def _toolang_version() -> str:
-    return f"{_base_toolang_version()}{_source_state_suffix()}"
+def toolang_version() -> str:
+    return f"{base_toolang_version()}{source_state_suffix()}"
 
 
-def _base_toolang_version() -> str:
+def base_toolang_version() -> str:
     try:
         return package_version("toolang")
     except PackageNotFoundError:
@@ -29,21 +29,21 @@ def _base_toolang_version() -> str:
         return version if isinstance(version, str) else "unknown"
 
 
-def _source_state_suffix() -> str:
-    source_root = _source_tree_root()
+def source_state_suffix() -> str:
+    source_root = source_tree_root()
     if source_root is None:
         return ""
-    short_sha = _git_output(source_root, "rev-parse", "--short", "HEAD")
+    short_sha = git_output(source_root, "rev-parse", "--short", "HEAD")
     if short_sha is None:
         return ""
-    dirty = _git_output(source_root, "status", "--short")
+    dirty = git_output(source_root, "status", "--short")
     if dirty is None:
         return f"+{short_sha}"
     dirty_suffix = "*" if dirty else ""
     return f"+{short_sha}{dirty_suffix}"
 
 
-def _git_output(source_root: Path, *args: str) -> str | None:
+def git_output(source_root: Path, *args: str) -> str | None:
     try:
         result = subprocess.run(
             ["git", *args],
@@ -61,7 +61,7 @@ def _git_output(source_root: Path, *args: str) -> str | None:
     return result.stdout.strip()
 
 
-def _source_tree_root() -> Path | None:
+def source_tree_root() -> Path | None:
     current = Path(__file__).resolve()
     for parent in current.parents:
         if (parent / ".git").exists():
