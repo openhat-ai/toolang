@@ -26,7 +26,12 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.records import ModelCallStepPayload, ToolCallStepPayload
+from toolang.execution.records import (
+    ChildCallStepPayload,
+    FlowOpStepPayload,
+    ModelCallStepPayload,
+    ToolCallStepPayload,
+)
 
 
 def test_chat_trace_events_keep_run_stop_block_until_run_end() -> None:
@@ -139,6 +144,85 @@ def test_chat_tool_step_uses_dim_dot_marker_and_summary() -> None:
 
     assert rendered.startswith("• ran shell__execute")
     assert "ok" in rendered
+
+
+def test_chat_flow_step_blocks_render_flow_operation_summary() -> None:
+    app = FakeApp()
+
+    events.handle_trace_event(_run_begin(executable_kind="flow"), app)
+    events.handle_trace_event(_flow_step_begin(), app)
+
+    assert [block.type for block in app.live_blocks] == [
+        "FlowStepBlock",
+        "RunStopBlock",
+    ]
+    assert "- running stage 1 do summarize prepare" in _render_text(
+        app.live_blocks[0].render()
+    )
+
+    events.handle_trace_event(_flow_step_end(), app)
+
+    assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
+    assert [block.type for block in app.finalized] == ["FlowStepBlock"]
+    assert "- ran stage 1 do summarize prepare count=1" in _render_text(
+        app.finalized[0].render()
+    )
+
+
+def test_chat_flow_child_run_events_do_not_finish_parent_run() -> None:
+    app = FakeApp()
+
+    events.handle_trace_event(_run_begin(executable_kind="flow"), app)
+    events.handle_trace_event(_child_run_step_begin(), app)
+    events.handle_trace_event(_run_begin(run_id="run_child", parent_run_id="run_1"), app)
+    events.handle_trace_event(_model_step_begin(run_id="run_child"), app)
+    events.handle_trace_event(_model_step_end(run_id="run_child", output="child done"), app)
+    events.handle_trace_event(_run_end(run_id="run_child", status="finished"), app)
+
+    assert app.active_run == "run_1"
+    assert not app.finished
+    assert [block.type for block in app.live_blocks] == [
+        "ChildRunStepBlock",
+        "RunStopBlock",
+    ]
+    assert [block.type for block in app.finalized] == ["ModelStepBlock"]
+
+    events.handle_trace_event(_child_run_step_end(), app)
+    events.handle_trace_event(_run_end(status="finished"), app)
+
+    assert app.live_blocks == []
+    assert [block.type for block in app.finalized] == [
+        "ModelStepBlock",
+        "ChildRunStepBlock",
+        "RunStopBlock",
+    ]
+    assert app.finished
+
+
+def test_chat_flow_parallel_child_blocks_finalize_by_step_index() -> None:
+    app = FakeApp()
+
+    events.handle_trace_event(_run_begin(executable_kind="flow"), app)
+    events.handle_trace_event(_parallel_child_step_begin(step_index=2, item_index=0), app)
+    events.handle_trace_event(_parallel_child_step_begin(step_index=3, item_index=1), app)
+
+    assert [block.type for block in app.live_blocks] == [
+        "ChildRunStepBlock",
+        "ChildRunStepBlock",
+        "RunStopBlock",
+    ]
+    assert "item 1/2" in _render_text(app.live_blocks[0].render())
+    assert "item 2/2" in _render_text(app.live_blocks[1].render())
+
+    events.handle_trace_event(_parallel_child_step_end(step_index=2, item_index=0), app)
+
+    assert [block.type for block in app.live_blocks] == [
+        "ChildRunStepBlock",
+        "RunStopBlock",
+    ]
+    assert "item 2/2" in _render_text(app.live_blocks[0].render())
+    assert [block.type for block in app.finalized] == ["ChildRunStepBlock"]
+    assert "item 1/2" in _render_text(app.finalized[0].render())
 
 
 def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
@@ -478,14 +562,22 @@ def _render_text(renderable: RenderableType | None, *, width: int = 80) -> str:
     )
 
 
-def _run_begin() -> RunBegin:
+def _run_begin(
+    *,
+    run_id: str = "run_1",
+    parent_run_id: str | None = None,
+    executable_kind: str = "thunk",
+) -> RunBegin:
     return RunBegin(
-        run_id="run_1",
+        run_id=run_id,
         origin="chat",
         thread_id="thread_1",
         input=Message.user("hello"),
         created_at="2026-01-01T00:00:00Z",
         started_at="2026-01-01T00:00:00Z",
+        root_run_id="run_1",
+        parent_run_id=parent_run_id,
+        executable_kind=executable_kind,
     )
 
 
@@ -529,18 +621,22 @@ def _run_stopping() -> RunStopping:
     )
 
 
-def _run_end(*, status: Literal["running", "finished", "failed", "canceled"]) -> RunEnd:
+def _run_end(
+    *,
+    run_id: str = "run_1",
+    status: Literal["running", "finished", "failed", "canceled"],
+) -> RunEnd:
     return RunEnd(
-        run_id="run_1",
+        run_id=run_id,
         thread_id="thread_1",
         status=status,
         finished_at="2026-01-01T00:00:03Z",
     )
 
 
-def _model_step_begin(*, step_index: int = 1) -> StepBegin:
+def _model_step_begin(*, run_id: str = "run_1", step_index: int = 1) -> StepBegin:
     return StepBegin(
-        run_id="run_1",
+        run_id=run_id,
         thread_id="thread_1",
         step_index=step_index,
         kind="model",
@@ -562,12 +658,13 @@ def _tool_step_begin(*, step_index: int = 1) -> StepBegin:
 
 def _model_step_end(
     *,
+    run_id: str = "run_1",
     output: str,
     step_index: int = 1,
     finished_at: str = "2026-01-01T00:00:02Z",
 ) -> StepEnd:
     return StepEnd(
-        run_id="run_1",
+        run_id=run_id,
         thread_id="thread_1",
         step_index=step_index,
         kind="model",
@@ -580,6 +677,148 @@ def _model_step_end(
         ),
         started_at="2026-01-01T00:00:01Z",
         finished_at=finished_at,
+    )
+
+
+def _flow_step_begin(*, step_index: int = 1) -> StepBegin:
+    return StepBegin(
+        run_id="run_1",
+        thread_id="thread_1",
+        step_index=step_index,
+        kind="step",
+        input=(),
+        started_at="2026-01-01T00:00:01Z",
+        metadata={
+            "op": "prepare_do",
+            "stage_index": 0,
+            "stage_kind": "do",
+            "stage_label": "do summarize",
+        },
+    )
+
+
+def _flow_step_end(*, step_index: int = 1) -> StepEnd:
+    return StepEnd(
+        run_id="run_1",
+        thread_id="thread_1",
+        step_index=step_index,
+        kind="step",
+        status="finished",
+        output=(),
+        payload=FlowOpStepPayload(
+            op="prepare_do",
+            stage_index=0,
+            stage_kind="do",
+            output_preview={"count": 1},
+            metadata={
+                "op": "prepare_do",
+                "stage_index": 0,
+                "stage_kind": "do",
+                "stage_label": "do summarize",
+            },
+        ),
+        started_at="2026-01-01T00:00:01Z",
+        finished_at="2026-01-01T00:00:02Z",
+    )
+
+
+def _child_run_step_begin(*, step_index: int = 2) -> StepBegin:
+    return StepBegin(
+        run_id="run_1",
+        thread_id="thread_1",
+        step_index=step_index,
+        kind="run",
+        input=(),
+        started_at="2026-01-01T00:00:01Z",
+        metadata={
+            "call": "stage",
+            "target_kind": "thunk",
+            "target": "summarize",
+            "child_run_ids": ("run_child",),
+            "stage_index": 0,
+            "stage_kind": "do",
+            "stage_label": "do summarize",
+        },
+    )
+
+
+def _child_run_step_end(*, step_index: int = 2) -> StepEnd:
+    return StepEnd(
+        run_id="run_1",
+        thread_id="thread_1",
+        step_index=step_index,
+        kind="run",
+        status="finished",
+        output=(TextPart(text="done"),),
+        payload=ChildCallStepPayload(
+            call="stage",
+            target_kind="thunk",
+            target="summarize",
+            child_run_ids=("run_child",),
+            stage_index=0,
+            stage_kind="do",
+            metadata={
+                "stage_index": 0,
+                "stage_kind": "do",
+                "stage_label": "do summarize",
+            },
+        ),
+        started_at="2026-01-01T00:00:01Z",
+        finished_at="2026-01-01T00:00:02Z",
+    )
+
+
+def _parallel_child_step_begin(*, step_index: int, item_index: int) -> StepBegin:
+    return StepBegin(
+        run_id="run_1",
+        thread_id="thread_1",
+        step_index=step_index,
+        kind="run",
+        input=(),
+        started_at="2026-01-01T00:00:01Z",
+        metadata={
+            "call": "stage",
+            "target_kind": "thunk",
+            "target": "score",
+            "child_run_ids": (f"run_child_{item_index}",),
+            "parallelism": 2,
+            "lane_index": item_index,
+            "stage_index": 1,
+            "stage_kind": "each",
+            "stage_label": "each score",
+            "item_index": item_index,
+            "item_count": 2,
+        },
+    )
+
+
+def _parallel_child_step_end(*, step_index: int, item_index: int) -> StepEnd:
+    return StepEnd(
+        run_id="run_1",
+        thread_id="thread_1",
+        step_index=step_index,
+        kind="run",
+        status="finished",
+        output=(TextPart(text="done"),),
+        payload=ChildCallStepPayload(
+            call="stage",
+            target_kind="thunk",
+            target="score",
+            child_run_ids=(f"run_child_{item_index}",),
+            parallelism=2,
+            lane_index=item_index,
+            stage_index=1,
+            stage_kind="each",
+            item_indexes=(item_index,),
+            metadata={
+                "stage_index": 1,
+                "stage_kind": "each",
+                "stage_label": "each score",
+                "item_count": 2,
+            },
+        ),
+        started_at="2026-01-01T00:00:01Z",
+        finished_at="2026-01-01T00:00:02Z",
     )
 
 
