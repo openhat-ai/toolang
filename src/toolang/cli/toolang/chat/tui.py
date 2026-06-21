@@ -1,0 +1,416 @@
+"""Terminal chat TUI orchestration."""
+
+from __future__ import annotations
+
+import asyncio
+import threading
+from typing import TypeGuard
+
+import click
+from prompt_toolkit.application import Application
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.layout import HSplit, Layout, Window
+from prompt_toolkit.layout.containers import DynamicContainer
+from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.output.color_depth import ColorDepth
+from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.styles import Style
+from toolang.execution.events import TraceEvent
+
+from ..version import toolang_version
+from . import blocks
+from . import events
+from . import rendering
+from . import slashes
+from . import widgets
+from .base import (
+    AppContext,
+    ChatClient,
+    ChatUIEvent,
+    chat_status_label,
+    friendly_error,
+)
+from .history import ChatInputHistoryStore
+
+
+class ChatTuiAppContext:
+    def __init__(self, app: ChatTuiApp) -> None:
+        self._app = app
+
+    def get_selects(self) -> dict[str, object]:
+        return self._app.selects
+
+    def get_client(self) -> ChatClient:
+        return self._app.client
+
+    def get_queue(self) -> list[str]:
+        return self._app.queue
+
+    def get_active_run(self) -> str | None:
+        return self._app.active_run_id
+
+    def set_active_run(self, run_id: str | None) -> None:
+        self._app.active_run_id = run_id
+
+    def get_live_blocks(self) -> list[blocks.MutableBlock]:
+        return self._app.unfinalized_blocks
+
+    def ensure_thread_id(self) -> str:
+        if self._app.thread_id is None:
+            self._app.thread_id = self._app.client.create_thread()
+        thread_id = self._app.thread_id
+        if thread_id is None:
+            raise RuntimeError("failed to create chat thread")
+        return thread_id
+
+    def is_busy(self) -> bool:
+        return self.get_active_run() is not None or self._app.run_stream_active.is_set()
+
+    def finalize_block(self, block: blocks.MutableBlock) -> None:
+        live_blocks = self.get_live_blocks()
+        live_blocks[:] = [item for item in live_blocks if item is not block]
+        self._app.app.invalidate()
+        rendering.write_renderable(block.render())
+
+    def finish_run(self) -> None:
+        self._app._finish_active_run()
+
+    def set_status_error(self, message: str) -> None:
+        self._app.status_bar.set_error(message)
+
+    def refresh_status(self) -> None:
+        self._app.status_bar.set_status(self._app._status_label())
+
+    def replace_input(self, text: str) -> None:
+        self._app.prompt.replace_input(text)
+
+    def request_steer(self, message: str) -> None:
+        self._app._request_run_steer(message)
+
+    def request_exit(self) -> None:
+        self._app.app.exit()
+
+
+class ChatTuiApp:
+    @staticmethod
+    def run(
+        *,
+        thread_id: str | None,
+        selects: dict[str, object],
+        home: str,
+        input_history: ChatInputHistoryStore | None,
+        client: ChatClient,
+    ) -> None:
+        asyncio.run(
+            ChatTuiApp(
+                thread_id=thread_id,
+                selects=selects,
+                home=home,
+                input_history=input_history,
+                client=client,
+            ).run_loop()
+        )
+
+    def __init__(
+        self,
+        *,
+        thread_id: str | None,
+        selects: dict[str, object],
+        home: str,
+        input_history: ChatInputHistoryStore | None,
+        client: ChatClient,
+    ) -> None:
+        self.thread_id = thread_id
+        self.selects = selects
+        self.home = home
+        self.input_history = input_history
+        self.client = client
+        self.ui_events: asyncio.Queue[ChatUIEvent] = asyncio.Queue()
+        self.queue: list[str] = []
+        self.active_run_id: str | None = None
+        self.cancel_sent_run_id: str | None = None
+        self.interrupt_exit_pending = False
+        self.unfinalized_blocks: list[blocks.MutableBlock] = []
+        self.run_stream_active = threading.Event()
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self.dispatcher_task: asyncio.Task[None] | None = None
+
+        queue_panel = widgets.QueuePanel(lambda: self.queue)
+        self.status_bar = widgets.StatusBar(self._status_label())
+        self.prompt = widgets.PromptBox(
+            self._enqueue_ui_event,
+            self._invalidate_ui,
+            on_text_changed=self._clear_status_error,
+            history_store=self.input_history,
+        )
+        keys = KeyBindings()
+        self.prompt.bind(keys)
+        self.app = Application(
+            layout=Layout(
+                HSplit(
+                    [
+                        DynamicContainer(self._live_blocks_container),
+                        queue_panel.container(),
+                        self.prompt.container(),
+                        self.status_bar.container(),
+                    ]
+                ),
+                focused_element=self.prompt.buffer,
+            ),
+            key_bindings=keys,
+            style=Style.from_dict(widgets._chat_ui_palette()),
+            full_screen=False,
+            color_depth=ColorDepth.DEPTH_24_BIT,
+            erase_when_done=True,
+            mouse_support=False,
+        )
+        self.app_context: AppContext = ChatTuiAppContext(self)
+
+    def _live_blocks_container(self) -> HSplit | Window:
+        if not self.unfinalized_blocks:
+            return Window(height=0)
+        return HSplit([self._block_window(block) for block in self.unfinalized_blocks])
+
+    def _block_window(self, block: blocks.MutableBlock) -> Window:
+        return Window(
+            FormattedTextControl(
+                lambda: rendering.renderable_to_prompt_toolkit(block.render())
+            ),
+            height=lambda: rendering.renderable_height(block.render()),
+            wrap_lines=False,
+            always_hide_cursor=True,
+        )
+
+    def _enqueue_ui_event(self, event: ChatUIEvent) -> None:
+        self.ui_events.put_nowait(event)
+
+    def _enqueue_ui_event_from_thread(self, event: ChatUIEvent) -> None:
+        if self.loop is not None:
+            self.loop.call_soon_threadsafe(self.ui_events.put_nowait, event)
+
+    def _invalidate_ui(self) -> None:
+        if hasattr(self, "app"):
+            self.app.invalidate()
+
+    async def run_loop(self) -> None:
+        self.loop = asyncio.get_running_loop()
+        rendering.write_renderable(
+            blocks.HeaderBlock(
+                self._header_model_label(),
+                self.home,
+                toolang_version(),
+            ).render(),
+            hide_cursor=False,
+        )
+        self.dispatcher_task = asyncio.create_task(self._dispatch_ui_events())
+        try:
+            with patch_stdout(raw=True):
+                await self.app.run_async()
+        finally:
+            self.ui_events.put_nowait(ChatUIEvent("quit"))
+            if self.dispatcher_task and not self.dispatcher_task.done():
+                await self.dispatcher_task
+
+    def _header_model_label(self) -> str:
+        try:
+            return slashes.chat_model_label(self.client.list_models(), self.selects)
+        except click.ClickException:
+            return chat_status_label(self.selects)
+
+    def _status_label(self) -> str:
+        model_label = self._header_model_label()
+        flow = str(self.selects.get("flow") or "")
+        thunk = str(self.selects.get("thunk") or "")
+        executable = f"flow:{flow}" if flow else f"thunk:{thunk}" if thunk else ""
+        return f"{model_label}  {executable}" if executable else model_label
+
+    def _clear_status_error(self) -> None:
+        self.interrupt_exit_pending = False
+        if self.status_bar.error_message:
+            self.status_bar.clear_error()
+            self._invalidate_ui()
+
+    async def _dispatch_ui_events(self) -> None:
+        while True:
+            event = await self.ui_events.get()
+            should_exit = False
+            try:
+                should_exit = self.handle_ui_event(event)
+            finally:
+                self.ui_events.task_done()
+                self.app.invalidate()
+            if should_exit:
+                return
+
+    def handle_ui_event(self, event: ChatUIEvent) -> bool:
+        kind = event.type
+        if kind == "submit":
+            self.handle_submit(str(event.value))
+        elif kind == "runtime" and _is_trace_event(event.value):
+            self.handle_trace_event(event.value)
+        elif kind == "error":
+            self._handle_runtime_error(str(event.value or "runtime request failed"))
+        elif kind == "cancel_error":
+            self._handle_cancel_error(str(event.value or "cancel request failed"))
+        elif kind == "steer_error":
+            self._handle_steer_error(str(event.value or "steer request failed"))
+        elif kind == "interrupt":
+            return self._handle_interrupt()
+        elif kind == "eof":
+            self._handle_eof()
+        elif kind == "cancel":
+            self._request_run_stop()
+        elif kind == "clear":
+            self._handle_clear()
+        elif kind == "quit":
+            if self.app.is_running:
+                self.app.exit()
+            return True
+        return False
+
+    def _handle_interrupt(self) -> bool:
+        if self.prompt.has_input():
+            self.prompt.clear_input()
+            self.interrupt_exit_pending = False
+            return False
+        if self.active_run_id is not None or self.run_stream_active.is_set():
+            self.interrupt_exit_pending = False
+            self._request_run_stop()
+            return False
+        if self.interrupt_exit_pending:
+            if self.app.is_running:
+                self.app.exit()
+            return True
+        self.interrupt_exit_pending = True
+        self.status_bar.set_error("Press Ctrl-C again to exit.")
+        return False
+
+    def _handle_eof(self) -> None:
+        if (
+            not self.prompt.has_input()
+            and self.active_run_id is None
+            and not self.run_stream_active.is_set()
+        ):
+            self.app.exit()
+
+    def _handle_clear(self) -> None:
+        if self.active_run_id is not None or self.run_stream_active.is_set():
+            self.status_bar.set_error("Cannot clear while a run is active.")
+            return
+        self.status_bar.clear_error()
+        self.app.renderer.clear()
+
+    def _finish_active_run(self) -> None:
+        self.active_run_id = None
+        self.cancel_sent_run_id = None
+        self.unfinalized_blocks.clear()
+        self.run_stream_active.clear()
+        self.status_bar.clear_error()
+        if self.queue:
+            self.start_run(self.queue.pop(0))
+
+    def handle_submit(self, message: str) -> None:
+        self.interrupt_exit_pending = False
+        self.status_bar.clear_error()
+        slash_result = slashes.handle(self.app_context, message)
+        if slash_result.handled:
+            if slash_result.lines is not None:
+                rendering.write_renderable(
+                    blocks.SlashBlock(message, slash_result.lines).render()
+                )
+            return
+        if self.active_run_id is not None or self.run_stream_active.is_set():
+            self.queue.append(message)
+        else:
+            self.start_run(message)
+
+    def _handle_runtime_error(self, message: str) -> None:
+        friendly = friendly_error(message)
+        if not events.handle_runtime_error(self.app_context, friendly):
+            self.status_bar.set_error(friendly)
+
+    def _handle_cancel_error(self, message: str) -> None:
+        friendly = friendly_error(message)
+        if self.active_run_id is None:
+            self.status_bar.set_error(friendly)
+        else:
+            self.status_bar.set_error(f"cancel failed: {friendly}")
+
+    def _handle_steer_error(self, message: str) -> None:
+        self.status_bar.set_error(f"steer failed: {friendly_error(message)}")
+
+    def _request_run_stop(self) -> None:
+        if self.active_run_id is None:
+            return
+        self.status_bar.clear_error()
+        if self.cancel_sent_run_id == self.active_run_id:
+            return
+        self.cancel_sent_run_id = self.active_run_id
+        run_id = self.active_run_id
+
+        def consume() -> None:
+            self.client.stop_run(
+                run_id,
+                lambda event: self._enqueue_ui_event_from_thread(
+                    ChatUIEvent("runtime", event)
+                ),
+                lambda message: self._enqueue_ui_event_from_thread(
+                    ChatUIEvent("cancel_error", message)
+                ),
+            )
+
+        threading.Thread(target=consume, daemon=True).start()
+
+    def _request_run_steer(self, message: str) -> None:
+        if self.active_run_id is None:
+            self.status_bar.set_error("No active run to steer.")
+            return
+        self.status_bar.clear_error()
+        run_id = self.active_run_id
+
+        def consume() -> None:
+            self.client.steer_run(
+                run_id,
+                message,
+                lambda event: self._enqueue_ui_event_from_thread(
+                    ChatUIEvent("runtime", event)
+                ),
+                lambda error: self._enqueue_ui_event_from_thread(
+                    ChatUIEvent("steer_error", error)
+                ),
+            )
+
+        threading.Thread(target=consume, daemon=True).start()
+
+    def handle_trace_event(self, event: TraceEvent) -> None:
+        events.handle_trace_event(event, self.app_context)
+
+    def start_run(self, message: str) -> None:
+        try:
+            thread_id = self.app_context.ensure_thread_id()
+        except click.ClickException as exc:
+            self._handle_runtime_error(exc.message)
+            return
+
+        def consume() -> None:
+            try:
+                self.client.start_run(
+                    thread_id,
+                    message,
+                    self.selects,
+                    lambda event: self._enqueue_ui_event_from_thread(
+                        ChatUIEvent("runtime", event)
+                    ),
+                    lambda error: self._enqueue_ui_event_from_thread(
+                        ChatUIEvent("error", error)
+                    ),
+                )
+            finally:
+                self.run_stream_active.clear()
+
+        self.run_stream_active.set()
+        threading.Thread(target=consume, daemon=True).start()
+
+
+def _is_trace_event(value: object) -> TypeGuard[TraceEvent]:
+    return hasattr(value, "type")

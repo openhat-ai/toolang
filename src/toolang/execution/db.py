@@ -21,13 +21,13 @@ from toolang.base.types.message import (
     parts_from_data,
     parts_to_data,
 )
-from .events import RunEnd, RunStart, StepStart, StepEnd, TraceEvent
+from .events import RunEnd, RunBegin, StepBegin, StepEnd, TraceEvent
 from .records import (
     EventDomain,
     EventRecord,
-    RunCommandKind,
-    RunCommandMode,
-    RunCommandRecord,
+    CommandKind,
+    CommandMode,
+    CommandRecord,
     ModelCallStepPayload,
     RunRecord,
     RunStatus,
@@ -873,12 +873,12 @@ class ExecutionStore:
         self,
         *,
         run_id: str,
-        kind: RunCommandKind,
-        mode: RunCommandMode | None = None,
+        kind: CommandKind,
+        mode: CommandMode | None = None,
         request_id: str | None = None,
         message: Message | None = None,
         created_at: str | None = None,
-    ) -> RunCommandRecord:
+    ) -> CommandRecord:
         """Append one client-side input to one run."""
 
         now = created_at or utc_now()
@@ -923,7 +923,7 @@ class ExecutionStore:
             raise RuntimeError("command insert returned no row")
         return _command_from_row(row)
 
-    def get_command(self, *, run_id: str, index: int) -> RunCommandRecord | None:
+    def get_command(self, *, run_id: str, index: int) -> CommandRecord | None:
         with self._lock:
             row = self._conn.execute(
                 'SELECT * FROM commands WHERE run_id = ? AND "index" = ?',
@@ -935,8 +935,8 @@ class ExecutionStore:
         self,
         *,
         run_id: str,
-        kind: RunCommandKind | None = None,
-    ) -> tuple[RunCommandRecord, ...]:
+        kind: CommandKind | None = None,
+    ) -> tuple[CommandRecord, ...]:
         clauses = ["run_id = ?"]
         params: list[object] = [run_id]
         if kind is not None:
@@ -958,8 +958,8 @@ class ExecutionStore:
         self,
         *,
         run_id: str,
-        kind: RunCommandKind,
-    ) -> tuple[RunCommandRecord, ...]:
+        kind: CommandKind,
+    ) -> tuple[CommandRecord, ...]:
         """Return run commands not yet referenced by any step input."""
 
         with self._lock:
@@ -1313,13 +1313,13 @@ def _event_from_row(row: sqlite3.Row) -> EventRecord:
     )
 
 
-def _command_from_row(row: sqlite3.Row) -> RunCommandRecord:
+def _command_from_row(row: sqlite3.Row) -> CommandRecord:
     message_raw = _load_json(str(row["message"])) if row["message"] is not None else None
-    return RunCommandRecord(
+    return CommandRecord(
         run_id=str(row["run_id"]),
         index=int(row["index"]),
-        kind=cast(RunCommandKind, row["kind"]),
-        mode=cast(RunCommandMode, row["mode"]) if row["mode"] is not None else None,
+        kind=cast(CommandKind, row["kind"]),
+        mode=cast(CommandMode, row["mode"]) if row["mode"] is not None else None,
         request_id=str(row["request_id"]) if row["request_id"] is not None else None,
         message=Message.from_data(message_raw) if isinstance(message_raw, Mapping) else None,
         created_at=str(row["created_at"]),
@@ -1441,7 +1441,7 @@ class PersistSink:
         self._last_step_index: dict[str, int] = {}
 
     def on_event(self, event: TraceEvent) -> None:
-        if isinstance(event, RunStart):
+        if isinstance(event, RunBegin):
             self._store.start_run(
                 run_id=event.run_id,
                 thread_id=event.thread_id,
@@ -1459,7 +1459,7 @@ class PersistSink:
                 started_at=event.started_at,
             )
             return
-        if isinstance(event, StepStart):
+        if isinstance(event, StepBegin):
             instruct = (
                 self._store.put_prompt(body=event.instruct)
                 if event.instruct is not None

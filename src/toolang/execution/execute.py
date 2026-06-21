@@ -14,7 +14,7 @@ from toolang.base.types.message import Message
 from toolang.base.types.message import message_summary
 from .context import RunContext
 from .db import PersistSink
-from .events import RunEnd, RunStart, TraceEvent, TraceEventHandler
+from .events import RunEnd, RunBegin, TraceEvent, TraceEventHandler
 from .executor import Executor, Frame, RunCtx
 from .input import RunInput, bind_run_request, select_origin_thunk
 from .model import resolve_model
@@ -50,7 +50,7 @@ async def execute_run(
     try:
         bound = bind_run_request(context, request, live=submission.live)
         executable_kind, executable = _select_executable(bound)
-        _log_run_start(request=request, bound=bound)
+        _log_run_begin(request=request, bound=bound)
         if executable_kind == "thunk":
             _preflight_thunk_run(context, bound, executable)
         frame = Frame.from_invocation(
@@ -71,7 +71,7 @@ async def execute_run(
             context,
             persist,
             response,
-            RunStart(
+            RunBegin(
                 run_id=bound.run_id,
                 origin=bound.origin,
                 thread_id=bound.thread_id,
@@ -197,7 +197,7 @@ def _event_handler(
     return handler
 
 
-def _log_run_start(*, request: RunRequest, bound: RunBinding) -> None:
+def _log_run_begin(*, request: RunRequest, bound: RunBinding) -> None:
     input_summary = request.thunk
     if request.message is not None:
         input_summary = message_summary(request.message.parts) or input_summary
@@ -396,7 +396,7 @@ def _emit_event(
 
 
 def _event_is_after_canceled_run(context: UptimeContext, event: TraceEvent) -> bool:
-    if isinstance(event, RunStart):
+    if isinstance(event, RunBegin):
         return False
     stored = context.store.get_run(run_id=event.run_id)
     return stored is not None and stored.status == "canceled"

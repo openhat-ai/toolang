@@ -12,7 +12,19 @@ from typing import TYPE_CHECKING, Any
 
 from toolang.base.types.message import TextDelta, ToolCallDelta, parts_to_data
 
-from .events import PartDelta, PartEnd, RunEnd, RunStart, StepEnd, StepStart, TraceEvent
+from .events import (
+    PartDelta,
+    PartEnd,
+    RunBegin,
+    RunEnd,
+    RunStarting,
+    RunSteering,
+    RunStopping,
+    RunWaiting,
+    StepBegin,
+    StepEnd,
+    TraceEvent,
+)
 from .records import EventDomain, EventRecord
 
 if TYPE_CHECKING:
@@ -54,33 +66,27 @@ class RuntimeEventBus:
     def publish_trace(self, event: TraceEvent) -> None:
         """Publish the public event projection for one execution trace event."""
 
-        event_type = _trace_event_type(event)
         payload = _trace_event_payload(event)
         run_id = payload.get("run_id")
         thread_id = payload.get("thread_id")
         if isinstance(run_id, str) and run_id:
-            self.publish(domain="run", domain_id=run_id, type=event_type, payload=payload)
-            if isinstance(event, RunStart):
-                self.publish(
-                    domain="run",
-                    domain_id=run_id,
-                    type="run_command",
-                    payload=_run_command_payload(event),
-                )
-        if self._agent_id and isinstance(event, (RunStart, RunEnd)):
+            self.publish(
+                domain="run", domain_id=run_id, type=event.type, payload=payload
+            )
+        if self._agent_id and isinstance(event, (RunBegin, RunEnd)):
             agent_payload = dict(payload)
-            if isinstance(event, RunStart):
+            if isinstance(event, RunBegin):
                 agent_payload["status"] = "running"
-            self.publish(domain="agent", domain_id=self._agent_id, type="thread_update", payload=agent_payload)
+            self.publish(
+                domain="agent",
+                domain_id=self._agent_id,
+                type="thread_update",
+                payload=agent_payload,
+            )
         if isinstance(thread_id, str) and thread_id:
-            self.publish(domain="thread", domain_id=thread_id, type=event_type, payload=payload)
-            if isinstance(event, RunStart):
-                self.publish(
-                    domain="thread",
-                    domain_id=thread_id,
-                    type="run_command",
-                    payload=_run_command_payload(event),
-                )
+            self.publish(
+                domain="thread", domain_id=thread_id, type=event.type, payload=payload
+            )
 
     async def stream(
         self,
@@ -91,7 +97,9 @@ class RuntimeEventBus:
     ) -> AsyncIterator[str]:
         """Yield historical events after the cursor, then live SSE frames."""
 
-        for event in self._store.list_events(domain=domain, domain_id=domain_id, after=after, limit=500):
+        for event in self._store.list_events(
+            domain=domain, domain_id=domain_id, after=after, limit=500
+        ):
             yield _sse_event(event)
             if domain == "run" and event.type == "run_end":
                 return
@@ -145,10 +153,9 @@ def event_data(event: EventRecord) -> dict[str, Any]:
 def trace_event_data(event: TraceEvent) -> dict[str, Any]:
     """Return public stream data for one live trace event."""
 
-    event_type = _trace_event_type(event)
     return {
-        "type": event_type,
-        "event_type": event_type,
+        "type": event.type,
+        "event_type": event.type,
         "payload": _trace_event_payload(event),
     }
 
@@ -158,16 +165,20 @@ def _sse_event(event: EventRecord) -> str:
     return f"id: {event.seq}\nevent: event\ndata: {data}\n\n"
 
 
-def _trace_event_type(event: TraceEvent) -> str:
-    return event.type.replace("-", "_")
-
-
 def _trace_event_payload(event: TraceEvent) -> dict[str, Any]:
     payload = asdict(event)
-    payload["type"] = _trace_event_type(event)
-    if isinstance(event, RunStart):
+    payload["type"] = event.type
+    if isinstance(event, RunWaiting):
+        pass
+    elif isinstance(event, RunStarting):
         payload["input"] = event.input.to_data()
-    elif isinstance(event, StepStart):
+    elif isinstance(event, RunSteering):
+        payload["message"] = event.message.to_data()
+    elif isinstance(event, RunStopping):
+        pass
+    elif isinstance(event, RunBegin):
+        payload["input"] = event.input.to_data()
+    elif isinstance(event, StepBegin):
         payload["instruct"] = (
             _prompt_hash(event.instruct) if event.instruct is not None else None
         )
@@ -191,21 +202,6 @@ def _trace_event_payload(event: TraceEvent) -> dict[str, Any]:
 
 def _prompt_hash(body: str) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
-
-
-def _run_command_payload(event: RunStart) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "run_id": event.run_id,
-        "thread_id": event.thread_id,
-        "ref": {"kind": "command", "index": 0},
-        "kind": "start",
-        "message": event.input.to_data(),
-        "created_at": event.created_at,
-        "type": "run_command",
-    }
-    if event.request_id is not None:
-        payload["request_id"] = event.request_id
-    return payload
 
 
 def _delta_data(delta: TextDelta | ToolCallDelta) -> dict[str, Any]:

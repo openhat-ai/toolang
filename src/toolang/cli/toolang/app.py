@@ -5,16 +5,15 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
-from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 import json
 from pathlib import Path
 import os
+import shutil as shutil
 import subprocess
 import sys
 import threading
 import time
-import tomllib
 from typing import Annotated, Any, Literal, TYPE_CHECKING, cast
 from urllib.parse import urlencode
 from urllib.error import HTTPError, URLError
@@ -22,6 +21,8 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 import click
+from prompt_toolkit.key_binding import KeyBindings as KeyBindings
+from prompt_toolkit.styles import Style as Style
 import typer
 from typer import rich_utils
 from typer.core import TyperCommand, TyperGroup
@@ -29,13 +30,22 @@ from typer.core import TyperCommand, TyperGroup
 from ... import agents
 from ...caps import split_cap_selectors
 from ...base.types.message import message_summary
-from ...config.log import LoggingPlan, configure_logging, configure_logging_plan, resolve_agent_logging
+from ...config.log import (
+    LoggingPlan,
+    configure_logging,
+    configure_logging_plan,
+    resolve_agent_logging,
+)
 from ...execution.db import ExecutionStore, execution_db_path
-from ...execution.detail import run_detail_from_record, thread_info_from_record, thread_info_from_runs
+from ...execution.detail import (
+    run_detail_from_record,
+    thread_info_from_record,
+    thread_info_from_runs,
+)
 from ...execution.records import RunStatus
+from ...execution.events import TraceEvent, trace_event_from_data
 from ...models.resolution import split_model_selectors
 from ...tools.registry import split_tool_selectors
-from ..chat_history import ChatInputHistoryStore
 from ..utils import (
     _PrefixAgentWorkGroup,
     _RequiredPrefixAgentCommand,
@@ -61,8 +71,12 @@ from ..utils import (
     _wrap_user_error,
 )
 from .caps import CAP_KINDS, register_caps_commands
-from . import chat_tui as _chat_tui
+from .chat import slashes as chat_slashes
+from .chat.base import friendly_error as chat_friendly_error
+from .chat.history import ChatInputHistoryStore
+from .chat.tui import ChatTuiApp
 from . import inspect as _inspect_cli
+from . import version as _version
 from .fmt import register_fmt_command
 from .parse import register_parse_command
 
@@ -153,55 +167,31 @@ TOP_LEVEL_COMMANDS = frozenset(
 )
 
 _CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt", "caps")
-_AGENT_PANEL_COMMAND_ORDER = ("new", "clone", "remove", "list", "info", "run", "start", "stop", "chore", "task")
-_THREAD_PANEL_COMMAND_ORDER = ("chat", "cancel", "steer", "rewind", "fork", "inspect", "runs", "threads")
+_AGENT_PANEL_COMMAND_ORDER = (
+    "new",
+    "clone",
+    "remove",
+    "list",
+    "info",
+    "run",
+    "start",
+    "stop",
+    "chore",
+    "task",
+)
+_THREAD_PANEL_COMMAND_ORDER = (
+    "chat",
+    "cancel",
+    "steer",
+    "rewind",
+    "fork",
+    "inspect",
+    "runs",
+    "threads",
+)
 _RUNTIME_PANEL_COMMAND_ORDER = ("model", "tool", "channel", "sandbox")
 _THREAD_TARGET_COMMANDS = frozenset({"steer", "cancel", "rewind", "fork"})
 _HIDDEN_ALIAS_COMMANDS = frozenset({"send", "attach"})
-
-KeyBindings = _chat_tui.KeyBindings
-shutil = _chat_tui.shutil
-Style = _chat_tui.Style
-_CHAT_DIM = _chat_tui._CHAT_DIM
-_CHAT_INPUT_BG = _chat_tui._CHAT_INPUT_BG
-_CHAT_INPUT_FG = _chat_tui._CHAT_INPUT_FG
-_CHAT_MAX_ACTIVE_RUN_ACTIVITY_ROWS = _chat_tui._CHAT_MAX_ACTIVE_RUN_ACTIVITY_ROWS
-_CHAT_STEER_INPUT_BG = _chat_tui._CHAT_STEER_INPUT_BG
-_CHAT_STEER_INPUT_FG = _chat_tui._CHAT_STEER_INPUT_FG
-_ChatLastRunPanel = _chat_tui._ChatLastRunPanel
-_ChatPromptBox = _chat_tui._ChatPromptBox
-_ChatQueueItem = _chat_tui._ChatQueueItem
-_ChatRun = _chat_tui._ChatRun
-_ChatSubmissionQueue = _chat_tui._ChatSubmissionQueue
-_ChatToolCall = _chat_tui._ChatToolCall
-_chat_active_step_line = _chat_tui._chat_active_step_line
-_chat_ansi_style = _chat_tui._chat_ansi_style
-_chat_child_completed_step_lines = _chat_tui._chat_child_completed_step_lines
-_chat_display_len = _chat_tui._chat_display_len
-_chat_executable_list_lines = _chat_tui._chat_executable_list_lines
-_chat_flow_stage_detail_lines = _chat_tui._chat_flow_stage_detail_lines
-_chat_flow_stage_line = _chat_tui._chat_flow_stage_line
-_chat_friendly_error = _chat_tui._chat_friendly_error
-_chat_header_lines = _chat_tui._chat_header_lines
-_chat_help_lines = _chat_tui._chat_help_lines
-_chat_input_block_line = _chat_tui._chat_input_block_line
-_chat_local_command = _chat_tui._chat_local_command
-_chat_markdown_width = _chat_tui._chat_markdown_width
-_chat_model_command_selectors = _chat_tui._chat_model_command_selectors
-_chat_model_list_lines = _chat_tui._chat_model_list_lines
-_chat_plain_value = _chat_tui._chat_plain_value
-_chat_prompt_style = _chat_tui._chat_prompt_style
-_chat_record_system_event = _chat_tui._chat_record_system_event
-_chat_render_markdown_lines = _chat_tui._chat_render_markdown_lines
-_chat_run_lines = _chat_tui._chat_run_lines
-_chat_run_state_line = _chat_tui._chat_run_state_line
-_chat_scrollback_user_block = _chat_tui._chat_scrollback_user_block
-_chat_set_executable_selector = _chat_tui._chat_set_executable_selector
-_chat_steer_input_block = _chat_tui._chat_steer_input_block
-_chat_tool_message_lines = _chat_tui._chat_tool_message_lines
-_chat_ui_palette = _chat_tui._chat_ui_palette
-_chat_visible_text = _chat_tui._chat_visible_text
-_chat_write_lines = _chat_tui._chat_write_lines
 
 
 class _ToolangGroup(TyperGroup):
@@ -211,14 +201,30 @@ class _ToolangGroup(TyperGroup):
         if agent_names:
             first_agent_index = min(names.index(name) for name in agent_names)
             reordered = [name for name in names if name not in agent_names]
-            names = reordered[:first_agent_index] + agent_names + reordered[first_agent_index:]
+            names = (
+                reordered[:first_agent_index]
+                + agent_names
+                + reordered[first_agent_index:]
+            )
         thread_names = [name for name in _THREAD_PANEL_COMMAND_ORDER if name in names]
         ordered_thread_group_names = [*thread_names]
         if ordered_thread_group_names:
-            reordered = [name for name in names if name not in ordered_thread_group_names]
-            runtime_indexes = [reordered.index(name) for name in _RUNTIME_PANEL_COMMAND_ORDER if name in reordered]
-            insertion_index = min(runtime_indexes) if runtime_indexes else len(reordered)
-            names = reordered[:insertion_index] + ordered_thread_group_names + reordered[insertion_index:]
+            reordered = [
+                name for name in names if name not in ordered_thread_group_names
+            ]
+            runtime_indexes = [
+                reordered.index(name)
+                for name in _RUNTIME_PANEL_COMMAND_ORDER
+                if name in reordered
+            ]
+            insertion_index = (
+                min(runtime_indexes) if runtime_indexes else len(reordered)
+            )
+            names = (
+                reordered[:insertion_index]
+                + ordered_thread_group_names
+                + reordered[insertion_index:]
+            )
         cap_names = [name for name in _CAPS_PANEL_COMMAND_ORDER if name in names]
         if len(cap_names) < 2:
             return names
@@ -255,9 +261,26 @@ class _RoamingFileRuntimeOptions:
 
 
 POSTFIX_AGENT_COMMANDS = frozenset(
-    {"run", "start", "stop", "info", "chat", "send", "attach", "threads", "runs", "inspect", "steer", "cancel", "rewind", "fork"}
+    {
+        "run",
+        "start",
+        "stop",
+        "info",
+        "chat",
+        "send",
+        "attach",
+        "threads",
+        "runs",
+        "inspect",
+        "steer",
+        "cancel",
+        "rewind",
+        "fork",
+    }
 )
-ROAMING_THREAD_COMMANDS = frozenset({"threads", "runs", "inspect", "steer", "cancel", "rewind", "fork"})
+ROAMING_THREAD_COMMANDS = frozenset(
+    {"threads", "runs", "inspect", "steer", "cancel", "rewind", "fork"}
+)
 PREFIX_AGENT_COMMANDS = frozenset(
     {
         "run",
@@ -301,59 +324,24 @@ def _toolang_version() -> str:
 
 
 def _base_toolang_version() -> str:
+    original = _version.package_version
+    _version.package_version = package_version
     try:
-        return package_version("toolang")
-    except PackageNotFoundError:
-        pyproject_path = Path(__file__).resolve().parents[3] / "pyproject.toml"
-        try:
-            data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
-        except (OSError, tomllib.TOMLDecodeError):
-            return "unknown"
-        project = data.get("project")
-        if not isinstance(project, dict):
-            return "unknown"
-        version = project.get("version")
-        return version if isinstance(version, str) else "unknown"
+        return _version.base_toolang_version()
+    finally:
+        _version.package_version = original
 
 
 def _source_state_suffix() -> str:
-    source_root = _source_tree_root()
-    if source_root is None:
-        return ""
-    short_sha = _git_output(source_root, "rev-parse", "--short", "HEAD")
-    if short_sha is None:
-        return ""
-    dirty = _git_output(source_root, "status", "--short")
-    if dirty is None:
-        return f"+{short_sha}"
-    dirty_suffix = "*" if dirty else ""
-    return f"+{short_sha}{dirty_suffix}"
+    return _version.source_state_suffix()
 
 
 def _git_output(source_root: Path, *args: str) -> str | None:
-    try:
-        result = subprocess.run(
-            ["git", *args],
-            cwd=source_root,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            check=False,
-            timeout=2,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip()
+    return _version.git_output(source_root, *args)
 
 
 def _source_tree_root() -> Path | None:
-    current = Path(__file__).resolve()
-    for parent in current.parents:
-        if (parent / ".git").exists():
-            return parent
-    return None
+    return _version.source_tree_root()
 
 
 def _version_callback(value: bool) -> None:
@@ -443,7 +431,9 @@ def hidden_commands(ctx: typer.Context) -> None:
     _print_hidden_command_panel(console, "Alias Commands", alias_commands)
 
 
-def _print_hidden_command_panel(console: Any, name: str, commands: list[click.Command]) -> None:
+def _print_hidden_command_panel(
+    console: Any, name: str, commands: list[click.Command]
+) -> None:
     if not commands:
         return
     rich_utils._print_commands_panel(
@@ -455,7 +445,12 @@ def _print_hidden_command_panel(console: Any, name: str, commands: list[click.Co
     )
 
 
-@app.command("new", help="Create an agent.", no_args_is_help=True, rich_help_panel=AGENT_COMMAND_PANEL)
+@app.command(
+    "new",
+    help="Create an agent.",
+    no_args_is_help=True,
+    rich_help_panel=AGENT_COMMAND_PANEL,
+)
 def new_agent(
     ctx: typer.Context,
     agent: Annotated[str, typer.Argument(help="Agent name")],
@@ -481,7 +476,12 @@ def new_agent(
     typer.echo(f"Created agent {agent}: {program_path}")
 
 
-@app.command("clone", help="Clone an agent.", no_args_is_help=True, rich_help_panel=AGENT_COMMAND_PANEL)
+@app.command(
+    "clone",
+    help="Clone an agent.",
+    no_args_is_help=True,
+    rich_help_panel=AGENT_COMMAND_PANEL,
+)
 def clone_agent(
     ctx: typer.Context,
     source: Annotated[str, typer.Argument(help="Agent source selector.")],
@@ -506,7 +506,12 @@ def clone_agent(
     typer.echo(f"Cloned agent {target_name}: {program_path}")
 
 
-@app.command("remove", help="Remove an agent.", no_args_is_help=True, rich_help_panel=AGENT_COMMAND_PANEL)
+@app.command(
+    "remove",
+    help="Remove an agent.",
+    no_args_is_help=True,
+    rich_help_panel=AGENT_COMMAND_PANEL,
+)
 def remove_agent(
     ctx: typer.Context,
     agent: Annotated[str, typer.Argument(help="Agent name")],
@@ -524,7 +529,9 @@ def remove_agent(
     typer.echo(f"Removed agent {agent}")
 
 
-@app.command("list", help="Show agents and their status.", rich_help_panel=AGENT_COMMAND_PANEL)
+@app.command(
+    "list", help="Show agents and their status.", rich_help_panel=AGENT_COMMAND_PANEL
+)
 def list_agents(ctx: typer.Context) -> None:
     items = agents.list_agent_statuses(
         _context_root(ctx),
@@ -581,7 +588,15 @@ def info_agent(
         ("Caps", _info_caps_summary(root, agent_name)),
         ("Jobs", _info_jobs_summary(root, agent_name)),
         ("Tools", _info_tools_summary(root, agent_name)),
-        ("Models", _info_models_summary(root, agent_name, runtime_state=runtime_state, running=status.status != "stopped")),
+        (
+            "Models",
+            _info_models_summary(
+                root,
+                agent_name,
+                runtime_state=runtime_state,
+                running=status.status != "stopped",
+            ),
+        ),
         ("Status", status_value),
     ]
     if status.status == "stopped":
@@ -643,29 +658,51 @@ def chat_command(
             help="Allow selected caps. Pass CSV or repeat.",
         ),
     ] = None,
-    thunk: Annotated[str | None, typer.Option("--thunk", help="Use a thunk for new runs.")] = None,
-    flow: Annotated[str | None, typer.Option("--flow", help="Use a flow for new runs.")] = None,
+    thunk: Annotated[
+        str | None, typer.Option("--thunk", help="Use a thunk for new runs.")
+    ] = None,
+    flow: Annotated[
+        str | None, typer.Option("--flow", help="Use a flow for new runs.")
+    ] = None,
 ) -> None:
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
-    selectors = _chat_selector_payload(models=models, tools=tools, caps=caps, thunk=thunk, flow=flow)
+    selectors = _chat_selector_payload(
+        models=models, tools=tools, caps=caps, thunk=thunk, flow=flow
+    )
     _chat_interactive(ctx, thread_id=thread_id, selector_payload=selectors)
 
 
-@app.command("send", help="Send one message to a thread.", hidden=True, cls=_RequiredPrefixAgentCommand)
+@app.command(
+    "send",
+    help="Send one message to a thread.",
+    hidden=True,
+    cls=_RequiredPrefixAgentCommand,
+)
 def send_command(
     ctx: typer.Context,
     thread: Annotated[str, typer.Argument(help="Thread id.")],
     message: Annotated[str, typer.Argument(help="Message text.")],
-    model: Annotated[str | None, typer.Option("--model", help="Model selector.")] = None,
+    model: Annotated[
+        str | None, typer.Option("--model", help="Model selector.")
+    ] = None,
 ) -> None:
     target = _target_thread_id(ctx, thread)
-    payload: dict[str, Any] = {"thread": target, "client": "tui", "message": _message_payload(message)}
+    payload: dict[str, Any] = {
+        "thread": target,
+        "client": "tui",
+        "message": _message_payload(message),
+    }
     if model is not None:
         payload["model"] = model
     _runtime_stream(ctx, "/api/v1/chat/stream", payload=payload)
 
 
-@app.command("attach", help="Open chat on a thread.", hidden=True, cls=_RequiredPrefixAgentCommand)
+@app.command(
+    "attach",
+    help="Open chat on a thread.",
+    hidden=True,
+    cls=_RequiredPrefixAgentCommand,
+)
 def attach_command(
     ctx: typer.Context,
     thread: Annotated[str, typer.Argument(help="Thread id.")],
@@ -673,19 +710,32 @@ def attach_command(
     _open_thread_ui(ctx, _target_thread_id(ctx, thread))
 
 
-@app.command("threads", help="List threads.", cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
+@app.command(
+    "threads",
+    help="List threads.",
+    cls=_RequiredPrefixAgentCommand,
+    rich_help_panel=THREAD_COMMAND_PANEL,
+)
 def threads_command(
     ctx: typer.Context,
-    origin: Annotated[str | None, typer.Option("--origin", help="Filter by origin.")] = None,
-    channel: Annotated[str | None, typer.Option("--channel", help="Filter by channel.")] = None,
-    status: Annotated[str | None, typer.Option("--status", help="Filter by thread status.")] = None,
+    origin: Annotated[
+        str | None, typer.Option("--origin", help="Filter by origin.")
+    ] = None,
+    channel: Annotated[
+        str | None, typer.Option("--channel", help="Filter by channel.")
+    ] = None,
+    status: Annotated[
+        str | None, typer.Option("--status", help="Filter by thread status.")
+    ] = None,
 ) -> None:
     query = _query_params(origin=origin, channel=channel, status=status)
     path = "/api/v1/threads" if not query else f"/api/v1/threads?{query}"
     result = _runtime_json_or_offline(
         ctx,
         path,
-        lambda: _offline_threads_json(ctx, origin=origin, channel=channel, status=status),
+        lambda: _offline_threads_json(
+            ctx, origin=origin, channel=channel, status=status
+        ),
     )
     rows = [
         (
@@ -701,11 +751,20 @@ def threads_command(
     _echo_table(("THREAD", "TITLE", "RUNS", "STATUS", "UPDATED"), rows)
 
 
-@app.command("runs", help="List runs.", cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
+@app.command(
+    "runs",
+    help="List runs.",
+    cls=_RequiredPrefixAgentCommand,
+    rich_help_panel=THREAD_COMMAND_PANEL,
+)
 def runs_command(
     ctx: typer.Context,
-    thread: Annotated[str | None, typer.Option("--thread", help="Filter by thread id.")] = None,
-    status: Annotated[str | None, typer.Option("--status", help="Filter by run status.")] = None,
+    thread: Annotated[
+        str | None, typer.Option("--thread", help="Filter by thread id.")
+    ] = None,
+    status: Annotated[
+        str | None, typer.Option("--status", help="Filter by run status.")
+    ] = None,
 ) -> None:
     query: list[tuple[str, str]] = []
     if thread is not None:
@@ -722,7 +781,9 @@ def runs_command(
         rows = [
             (
                 str(item.get("id", "")),
-                _truncate_table_text(item.get("summary") or item.get("input_text"), width=48),
+                _truncate_table_text(
+                    item.get("summary") or item.get("input_text"), width=48
+                ),
                 _display_run_status(item.get("status")),
                 str(item.get("created_at", "")),
             )
@@ -735,7 +796,9 @@ def runs_command(
             (
                 str(item.get("thread_id", "")),
                 str(item.get("id", "")),
-                _truncate_table_text(item.get("summary") or item.get("input_text"), width=48),
+                _truncate_table_text(
+                    item.get("summary") or item.get("input_text"), width=48
+                ),
                 _display_run_status(item.get("status")),
                 str(item.get("created_at", "")),
             )
@@ -745,12 +808,24 @@ def runs_command(
         _echo_table(("THREAD", "RUN", "TITLE", "STATUS", "CREATED"), rows)
 
 
-@app.command("inspect", help="Inspect a thread or run.", no_args_is_help=True, cls=_RequiredPrefixAgentCommand, rich_help_panel=THREAD_COMMAND_PANEL)
+@app.command(
+    "inspect",
+    help="Inspect a thread or run.",
+    no_args_is_help=True,
+    cls=_RequiredPrefixAgentCommand,
+    rich_help_panel=THREAD_COMMAND_PANEL,
+)
 def inspect_command(
     ctx: typer.Context,
-    target: Annotated[str, typer.Argument(help="Thread id, run id, or run step path to inspect.")],
-    limit: Annotated[int, typer.Option("--limit", help="Maximum thread runs to read.")] = 100,
-    json_view: Annotated[bool, typer.Option("--json", help="Render preprocessed inspect data as JSON.")] = False,
+    target: Annotated[
+        str, typer.Argument(help="Thread id, run id, or run step path to inspect.")
+    ],
+    limit: Annotated[
+        int, typer.Option("--limit", help="Maximum thread runs to read.")
+    ] = 100,
+    json_view: Annotated[
+        bool, typer.Option("--json", help="Render preprocessed inspect data as JSON.")
+    ] = False,
 ) -> None:
     _inspect_cli.inspect_command(ctx, target, limit=limit, json_view=json_view)
 
@@ -764,11 +839,17 @@ def inspect_command(
 )
 def steer_command(
     ctx: typer.Context,
-    run: str = typer.Argument(..., help="Run id to steer. Thread id means its active run."),
+    run: str = typer.Argument(
+        ..., help="Run id to steer. Thread id means its active run."
+    ),
     message: str = typer.Argument(..., help="Instruction to steer the run."),
 ) -> None:
     run_id = _target_run_id(ctx, run)
-    _runtime_post(ctx, f"/api/v1/runs/{run_id}/steer", payload={"message": _message_payload(message)})
+    _runtime_post(
+        ctx,
+        f"/api/v1/runs/{run_id}/steer",
+        payload={"message": _message_payload(message)},
+    )
     typer.echo(f"steered {run_id}")
 
 
@@ -781,7 +862,9 @@ def steer_command(
 )
 def cancel_command(
     ctx: typer.Context,
-    run: str = typer.Argument(..., help="Run id to cancel. Thread id means its active run."),
+    run: str = typer.Argument(
+        ..., help="Run id to cancel. Thread id means its active run."
+    ),
 ) -> None:
     run_id = _target_run_id(ctx, run)
     _runtime_post(ctx, f"/api/v1/runs/{run_id}/cancel", payload={})
@@ -801,14 +884,19 @@ def rewind_command(
         ...,
         help="Run id to rewind before. Thread id means rewind before its latest run.",
     ),
-    chat: Annotated[bool, typer.Option("--chat", help="Open chat on the rewound thread.")] = False,
+    chat: Annotated[
+        bool, typer.Option("--chat", help="Open chat on the rewound thread.")
+    ] = False,
 ) -> None:
     run_id = _target_latest_run_id(ctx, point)
     result = _runtime_post(ctx, f"/api/v1/runs/{run_id}/rewind", payload={})
     typer.echo(f"rewound {result.get('thread_id')} before {run_id}")
     if chat:
         thread = result.get("thread_id")
-        _open_thread_ui(ctx, str(thread) if isinstance(thread, str) else _target_thread_id(ctx, point))
+        _open_thread_ui(
+            ctx,
+            str(thread) if isinstance(thread, str) else _target_thread_id(ctx, point),
+        )
 
 
 @app.command(
@@ -824,7 +912,9 @@ def fork_command(
         ...,
         help="Run id to fork before. Thread id means fork after its latest run.",
     ),
-    chat: Annotated[bool, typer.Option("--chat", help="Open chat on the forked thread.")] = False,
+    chat: Annotated[
+        bool, typer.Option("--chat", help="Open chat on the forked thread.")
+    ] = False,
 ) -> None:
     run_id, include_anchor = _fork_anchor_run(ctx, point)
     payload: dict[str, object] = {}
@@ -878,15 +968,22 @@ def run_agent(
             help="Allow selected caps. Pass CSV or repeat.",
         ),
     ] = None,
-    host: Annotated[str, typer.Option(help="Bind the agent API to this host.")] = "127.0.0.1",
-    port: Annotated[int | None, typer.Option(help="Bind the agent API to this port.")] = None,
+    host: Annotated[
+        str, typer.Option(help="Bind the agent API to this host.")
+    ] = "127.0.0.1",
+    port: Annotated[
+        int | None, typer.Option(help="Bind the agent API to this port.")
+    ] = None,
     components: Annotated[
         list[str] | None,
         typer.Option("--enable", help="Enable runtime components. Pass CSV or repeat."),
     ] = None,
     inboxes: Annotated[
         list[Path] | None,
-        typer.Option("--inbox", help="Watch an inbox directory for file requests. Repeat to watch more than one."),
+        typer.Option(
+            "--inbox",
+            help="Watch an inbox directory for file requests. Repeat to watch more than one.",
+        ),
     ] = None,
     dev: Annotated[
         Path | None,
@@ -912,7 +1009,9 @@ def run_agent(
     progress = make_cli_progress()
     progress_finished = False
     try:
-        with agents.resolved_run_target(root, selector, progress=as_progress_sink(progress)) as target:
+        with agents.resolved_run_target(
+            root, selector, progress=as_progress_sink(progress)
+        ) as target:
             launch = _resolve_runtime_startup(
                 ctx,
                 target,
@@ -945,7 +1044,12 @@ def run_agent(
         if not progress_finished:
             progress.interrupt()
         raise typer.Exit(130) from None
-    except (FileExistsError, FileNotFoundError, ValueError, click.ClickException) as exc:
+    except (
+        FileExistsError,
+        FileNotFoundError,
+        ValueError,
+        click.ClickException,
+    ) as exc:
         if not progress_finished:
             progress.finish(details=False)
         if isinstance(exc, click.ClickException):
@@ -955,7 +1059,9 @@ def run_agent(
 
 def _active_run_error(status: agents.AgentStatus) -> str:
     message = f"Agent {status.name} already {status.status}"
-    detail = (status.webui_url or status.api_url) if status.status == "running" else None
+    detail = (
+        (status.webui_url or status.api_url) if status.status == "running" else None
+    )
     if detail:
         return f"{message}: {detail}"
     return message
@@ -971,8 +1077,12 @@ def _truncate_table_text(value: object, *, width: int) -> str:
 
 
 def _runtime_base_url(ctx: typer.Context) -> str:
-    agent_name = _required_prefix_agent(ctx, command_name=str(ctx.info_name or "runtime"))
-    status = agents.get_agent_status(_context_root(ctx), agent_name, ui_base_url=_ui_base_url())
+    agent_name = _required_prefix_agent(
+        ctx, command_name=str(ctx.info_name or "runtime")
+    )
+    status = agents.get_agent_status(
+        _context_root(ctx), agent_name, ui_base_url=_ui_base_url()
+    )
     if status is None or status.status != "running" or status.endpoint is None:
         raise click.ClickException(f"agent is not running: {agent_name}")
     return status.endpoint.rstrip("/")
@@ -985,7 +1095,9 @@ def _runtime_json(ctx: typer.Context, path: str) -> dict[str, Any]:
             return cast(dict[str, Any], json.loads(response.read().decode("utf-8")))
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        raise click.ClickException(f"runtime request failed: {exc.code} {detail}") from exc
+        raise click.ClickException(
+            f"runtime request failed: {exc.code} {detail}"
+        ) from exc
     except URLError as exc:
         raise click.ClickException(f"runtime request failed: {exc.reason}") from exc
 
@@ -1004,7 +1116,9 @@ def _runtime_json_or_offline(
         return result
 
 
-def _runtime_post(ctx: typer.Context, path: str, *, payload: dict[str, Any]) -> dict[str, Any]:
+def _runtime_post(
+    ctx: typer.Context, path: str, *, payload: dict[str, Any]
+) -> dict[str, Any]:
     url = f"{_runtime_base_url(ctx)}{path}"
     request = Request(
         url,
@@ -1017,7 +1131,9 @@ def _runtime_post(ctx: typer.Context, path: str, *, payload: dict[str, Any]) -> 
             return cast(dict[str, Any], json.loads(response.read().decode("utf-8")))
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        raise click.ClickException(f"runtime request failed: {exc.code} {detail}") from exc
+        raise click.ClickException(
+            f"runtime request failed: {exc.code} {detail}"
+        ) from exc
     except URLError as exc:
         raise click.ClickException(f"runtime request failed: {exc.reason}") from exc
 
@@ -1040,8 +1156,12 @@ def _offline_threads_json(
             for thread_id in thread_ids
             for run in store.list_thread_runs_chronological(thread_id=thread_id)
         ]
-        steps_by_run = store.list_steps_for_runs(run_ids=tuple(item.run_id for item in ordered_runs))
-        commands_by_run = {run.run_id: store.list_commands(run_id=run.run_id) for run in ordered_runs}
+        steps_by_run = store.list_steps_for_runs(
+            run_ids=tuple(item.run_id for item in ordered_runs)
+        )
+        commands_by_run = {
+            run.run_id: store.list_commands(run_id=run.run_id) for run in ordered_runs
+        }
         grouped_runs: dict[str, list[Any]] = {}
         for run in ordered_runs:
             grouped_runs.setdefault(run.thread_id, []).append(run)
@@ -1066,7 +1186,11 @@ def _offline_threads_json(
             and (channel is None or item.get("channel") == channel)
             and (status is None or item.get("status") == status)
         ]
-        return {"items": sorted(filtered, key=lambda item: str(item.get("updated_at", "")), reverse=True)}
+        return {
+            "items": sorted(
+                filtered, key=lambda item: str(item.get("updated_at", "")), reverse=True
+            )
+        }
     finally:
         store.close()
 
@@ -1083,8 +1207,12 @@ def _offline_runs_json(
     try:
         run_status = _run_status_or_none(status)
         runs = store.list_runs(limit=50, thread_id=thread, status=run_status)
-        steps_by_run = store.list_steps_for_runs(run_ids=tuple(item.run_id for item in runs))
-        commands_by_run = {run.run_id: store.list_commands(run_id=run.run_id) for run in runs}
+        steps_by_run = store.list_steps_for_runs(
+            run_ids=tuple(item.run_id for item in runs)
+        )
+        commands_by_run = {
+            run.run_id: store.list_commands(run_id=run.run_id) for run in runs
+        }
         return {
             "items": [
                 _offline_run_item(
@@ -1103,10 +1231,18 @@ def _offline_run_item(run, *, inputs: Sequence, steps: Sequence) -> dict[str, An
     detail = run_detail_from_record(run, inputs=inputs, steps=steps)
     input_text = message_summary(detail.input.parts) if detail.input is not None else ""
     last_step_message = next(
-        (item.message for item in reversed(detail.output.steps) if item.message is not None),
+        (
+            item.message
+            for item in reversed(detail.output.steps)
+            if item.message is not None
+        ),
         None,
     )
-    summary = message_summary(last_step_message.parts) if last_step_message is not None else input_text
+    summary = (
+        message_summary(last_step_message.parts)
+        if last_step_message is not None
+        else input_text
+    )
     if run.status == "failed" and run.error and (not summary or summary == input_text):
         summary = run.error
     return {
@@ -1170,7 +1306,9 @@ def _int_or_none(value: object) -> int | None:
 
 
 def _open_offline_execution_store(ctx: typer.Context) -> ExecutionStore | None:
-    agent_name = _required_prefix_agent(ctx, command_name=str(ctx.info_name or "runtime"))
+    agent_name = _required_prefix_agent(
+        ctx, command_name=str(ctx.info_name or "runtime")
+    )
     path = execution_db_path(_context_root(ctx), agent_name)
     if not path.exists():
         return None
@@ -1202,7 +1340,9 @@ def _runtime_stream(ctx: typer.Context, path: str, *, payload: dict[str, Any]) -
                     typer.echo(line)
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        raise click.ClickException(f"runtime request failed: {exc.code} {detail}") from exc
+        raise click.ClickException(
+            f"runtime request failed: {exc.code} {detail}"
+        ) from exc
     except URLError as exc:
         raise click.ClickException(f"runtime request failed: {exc.reason}") from exc
 
@@ -1217,7 +1357,9 @@ def _runtime_get_stream(ctx: typer.Context, path: str) -> None:
                     typer.echo(line)
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        raise click.ClickException(f"runtime request failed: {exc.code} {detail}") from exc
+        raise click.ClickException(
+            f"runtime request failed: {exc.code} {detail}"
+        ) from exc
     except URLError as exc:
         raise click.ClickException(f"runtime request failed: {exc.reason}") from exc
 
@@ -1247,7 +1389,9 @@ def _runtime_consume_stream(
                 event_handler(event)
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        raise click.ClickException(f"runtime request failed: {exc.code} {detail}") from exc
+        raise click.ClickException(
+            f"runtime request failed: {exc.code} {detail}"
+        ) from exc
     except URLError as exc:
         raise click.ClickException(f"runtime request failed: {exc.reason}") from exc
 
@@ -1293,7 +1437,9 @@ def _chat_selector_payload(
 
 
 def _query_params(**items: str | None) -> str:
-    return urlencode([(key, value) for key, value in items.items() if value is not None])
+    return urlencode(
+        [(key, value) for key, value in items.items() if value is not None]
+    )
 
 
 def _api_run_status(status: str) -> str:
@@ -1321,9 +1467,13 @@ def _chat_interactive(
     selector_payload: dict[str, object] | None = None,
 ) -> None:
     if not sys.stdin.isatty() or not sys.stdout.isatty():
-        _chat_interactive_scripted(ctx, thread_id=thread_id, selector_payload=selector_payload)
+        _chat_interactive_scripted(
+            ctx, thread_id=thread_id, selector_payload=selector_payload
+        )
         return
-    _chat_interactive_prompt_toolkit(ctx, thread_id=thread_id, selector_payload=selector_payload)
+    _chat_interactive_prompt_toolkit(
+        ctx, thread_id=thread_id, selector_payload=selector_payload
+    )
 
 
 def _chat_input_history_store(ctx: typer.Context) -> ChatInputHistoryStore | None:
@@ -1334,7 +1484,9 @@ def _chat_input_history_store(ctx: typer.Context) -> ChatInputHistoryStore | Non
         return None
     if not agent:
         return None
-    return ChatInputHistoryStore(agents.agent_room(root, agent) / "chat-input-history.jsonl")
+    return ChatInputHistoryStore(
+        agents.agent_room(root, agent) / "chat-input-history.jsonl"
+    )
 
 
 def _chat_home_label(ctx: typer.Context) -> str:
@@ -1347,26 +1499,100 @@ def _chat_home_label(ctx: typer.Context) -> str:
         return "agent home"
 
 
-def _chat_tui_dependencies() -> _chat_tui.ChatTuiDependencies:
-    return _chat_tui.ChatTuiDependencies(
-        runtime_json=lambda ctx, path: _runtime_json(ctx, path),
-        runtime_post=lambda *args, **kwargs: _runtime_post(*args, **kwargs),
-        runtime_consume_stream=lambda *args, **kwargs: _runtime_consume_stream(*args, **kwargs),
-        message_payload=lambda text: _message_payload(text),
-        input_history_store=lambda ctx: _chat_input_history_store(ctx),
-        home_label=lambda ctx: _chat_home_label(ctx),
-        write_lines=lambda *args, **kwargs: _chat_write_lines(*args, **kwargs),
-    )
+class _RuntimeChatClient:
+    def __init__(self, ctx: typer.Context) -> None:
+        self.ctx = ctx
+
+    def list_models(self) -> Mapping[str, Any]:
+        return _runtime_json(self.ctx, "/api/v1/chat/models")
+
+    def list_executables(self, kind: str) -> Mapping[str, Any]:
+        return _runtime_json(self.ctx, f"/api/v1/chat/{kind}s")
+
+    def create_thread(self) -> str:
+        result = _runtime_post(self.ctx, "/api/v1/threads", payload={"client": "tui"})
+        thread_id = result.get("thread_id")
+        if not isinstance(thread_id, str):
+            raise click.ClickException("runtime did not return a thread id")
+        return thread_id
+
+    def start_run(
+        self,
+        thread_id: str,
+        message: str,
+        selects: Mapping[str, object],
+        on_event: Callable[[TraceEvent], None],
+        on_error: Callable[[str], None],
+    ) -> None:
+        try:
+            _runtime_consume_stream(
+                self.ctx,
+                "/api/v1/chat/stream",
+                payload={
+                    "thread": thread_id,
+                    "client": "tui",
+                    "request_id": f"term_{uuid4().hex}",
+                    "message": _message_payload(message),
+                    **selects,
+                },
+                event_handler=lambda event: on_event(trace_event_from_data(event)),
+            )
+        except click.ClickException as exc:
+            on_error(exc.message)
+        except Exception as exc:
+            on_error(f"{type(exc).__name__}: {exc}")
+
+    def stop_run(
+        self,
+        run_id: str,
+        on_event: Callable[[TraceEvent], None],
+        on_error: Callable[[str], None],
+    ) -> None:
+        try:
+            result = _runtime_post(
+                self.ctx,
+                f"/api/v1/runs/{run_id}/cancel",
+                payload={"request_id": f"req_{uuid4().hex}"},
+            )
+            if event := _chat_command_trace_event(result.get("input")):
+                on_event(event)
+        except click.ClickException as exc:
+            on_error(exc.message)
+        except Exception as exc:
+            on_error(f"{type(exc).__name__}: {exc}")
+
+    def steer_run(
+        self,
+        run_id: str,
+        message: str,
+        on_event: Callable[[TraceEvent], None],
+        on_error: Callable[[str], None],
+    ) -> None:
+        try:
+            result = _runtime_post(
+                self.ctx,
+                f"/api/v1/runs/{run_id}/steer",
+                payload={
+                    "request_id": f"req_{uuid4().hex}",
+                    "message": _message_payload(message),
+                },
+            )
+            if event := _chat_command_trace_event(result.get("input")):
+                on_event(event)
+        except click.ClickException as exc:
+            on_error(exc.message)
+        except Exception as exc:
+            on_error(f"{type(exc).__name__}: {exc}")
 
 
-class _ChatBottomApp(_chat_tui._ChatBottomApp):
-    def __init__(self, ctx: typer.Context, *, thread_id: str | None, selector_payload: dict[str, object]) -> None:
-        super().__init__(
-            ctx,
-            thread_id=thread_id,
-            selector_payload=selector_payload,
-            deps=_chat_tui_dependencies(),
-        )
+def _chat_command_trace_event(payload: object) -> TraceEvent | None:
+    if not isinstance(payload, Mapping):
+        return None
+    event_payload = cast(Mapping[str, object], payload)
+    event_type = event_payload.get("type")
+    if not isinstance(event_type, str):
+        return None
+    return trace_event_from_data({"type": event_type, "payload": event_payload})
 
 
 def _chat_interactive_prompt_toolkit(
@@ -1375,16 +1601,23 @@ def _chat_interactive_prompt_toolkit(
     thread_id: str | None,
     selector_payload: dict[str, object] | None = None,
 ) -> None:
-    _chat_tui._chat_interactive_prompt_toolkit(
-        ctx,
+    ChatTuiApp.run(
         thread_id=thread_id,
-        selector_payload=selector_payload,
-        deps=_chat_tui_dependencies(),
+        selects=dict(selector_payload or {}),
+        home=_chat_home_label(ctx),
+        input_history=_chat_input_history_store(ctx),
+        client=_RuntimeChatClient(ctx),
     )
 
 
-def _chat_resolve_model_command_labels(ctx: typer.Context, selectors: Sequence[str]) -> tuple[str, ...] | None:
-    return _chat_tui._chat_resolve_model_command_labels(ctx, selectors, deps=_chat_tui_dependencies())
+def _chat_resolve_model_command_labels(
+    ctx: typer.Context, selectors: Sequence[str]
+) -> tuple[str, ...] | None:
+    try:
+        payload = _runtime_json(ctx, "/api/v1/chat/models")
+    except click.ClickException:
+        return None
+    return chat_slashes._chat_resolve_model_command_labels(payload, selectors)
 
 
 def _chat_interactive_scripted(
@@ -1455,23 +1688,26 @@ def _chat_interactive_scripted(
             listener.stop()
 
 
-
-def _chat_handle_scripted_command(ctx: typer.Context, message: str, selector_payload: dict[str, object]) -> bool:
-    parsed = _chat_local_command(message)
+def _chat_handle_scripted_command(
+    ctx: typer.Context, message: str, selector_payload: dict[str, object]
+) -> bool:
+    parsed = chat_slashes._chat_local_command(message)
     if parsed is None:
         return False
     command, argument = parsed
     if command in {"help", "?"}:
-        for line in _chat_help_lines():
+        for line in chat_slashes._chat_help_lines():
             typer.echo(line)
         return True
     if command in {"thunk", "flow"}:
-        return _chat_handle_scripted_executable_command(ctx, command, argument, selector_payload)
+        return _chat_handle_scripted_executable_command(
+            ctx, command, argument, selector_payload
+        )
     if command not in {"model", "models"}:
         typer.echo(f"Unknown command: /{command}")
         return True
     if argument:
-        selectors = _chat_model_command_selectors(argument)
+        selectors = chat_slashes._chat_model_command_selectors(argument)
         if not selectors:
             typer.echo("/model requires a selector")
             return True
@@ -1485,10 +1721,10 @@ def _chat_handle_scripted_command(ctx: typer.Context, message: str, selector_pay
     try:
         payload = _runtime_json(ctx, "/api/v1/chat/models")
     except click.ClickException as exc:
-        typer.echo(_chat_friendly_error(exc.message))
+        typer.echo(chat_friendly_error(exc.message))
         return True
     typer.echo("available models")
-    for line in _chat_model_list_lines(payload):
+    for line in chat_slashes._chat_model_list_lines(payload):
         typer.echo(line)
     return True
 
@@ -1500,20 +1736,21 @@ def _chat_handle_scripted_executable_command(
     selector_payload: dict[str, object],
 ) -> bool:
     if argument:
-        _chat_set_executable_selector(selector_payload, kind=command, name=argument)
+        chat_slashes._chat_set_executable_selector(
+            selector_payload, kind=command, name=argument
+        )
         typer.echo(f"{command}: {argument}")
         return True
     try:
         payload = _runtime_json(ctx, f"/api/v1/chat/{command}s")
     except click.ClickException as exc:
-        typer.echo(_chat_friendly_error(exc.message))
+        typer.echo(chat_friendly_error(exc.message))
         return True
     selected = _text(selector_payload.get(command))
     typer.echo(f"available {command}s")
-    for line in _chat_executable_list_lines(payload, selected=selected):
+    for line in chat_slashes._chat_executable_list_lines(payload, selected=selected):
         typer.echo(line)
     return True
-
 
 
 class _ThreadEventListener:
@@ -1536,7 +1773,15 @@ def _start_thread_event_listener(
     stop_event = threading.Event()
     thread = threading.Thread(
         target=_run_thread_event_listener_from_cursor,
-        args=(ctx, thread_id, stop_event, local_streaming, local_request_ids, redraw_prompt, event_handler),
+        args=(
+            ctx,
+            thread_id,
+            stop_event,
+            local_streaming,
+            local_request_ids,
+            redraw_prompt,
+            event_handler,
+        ),
         daemon=True,
     )
     thread.start()
@@ -1611,7 +1856,9 @@ def _run_thread_event_listener(
             typer.echo("thread event stream closed", err=True)
 
 
-def _iter_sse_events(response, *, stop_event: threading.Event) -> Iterator[dict[str, Any]]:
+def _iter_sse_events(
+    response, *, stop_event: threading.Event
+) -> Iterator[dict[str, Any]]:
     data_lines: list[str] = []
     for raw_line in response:
         if stop_event.is_set():
@@ -1652,8 +1899,8 @@ class _ThreadEventRenderer:
         payload = event.get("payload")
         if not isinstance(payload, dict):
             return
-        if event_type == "run_command":
-            self._render_run_command(payload)
+        if event_type == "run_starting":
+            self._render_run_starting(payload)
         elif event_type == "part_delta":
             self._render_part_delta(payload)
         elif event_type == "step_end":
@@ -1664,14 +1911,14 @@ class _ThreadEventRenderer:
                 run_id=str(payload.get("run_id") or "") or None,
             )
 
-    def _render_run_command(self, payload: dict[str, Any]) -> None:
-        if payload.get("kind") != "start":
-            return
+    def _render_run_starting(self, payload: dict[str, Any]) -> None:
         self._remember_local_run(payload)
-        text = _event_message_text(payload.get("message"))
+        text = _event_message_text(payload.get("input"))
         if not text:
             return
-        self._close_assistant(redraw_prompt=False, run_id=str(payload.get("run_id") or "") or None)
+        self._close_assistant(
+            redraw_prompt=False, run_id=str(payload.get("run_id") or "") or None
+        )
         typer.echo(f"\nuser: {text}")
 
     def _render_part_delta(self, payload: dict[str, Any]) -> None:
@@ -1708,7 +1955,11 @@ class _ThreadEventRenderer:
             typer.echo()
             self._assistant_open = False
         local_run = run_id is not None and run_id in self._local_run_ids
-        if redraw_prompt and self._redraw_prompt and not self._local_run_active(run_id=run_id):
+        if (
+            redraw_prompt
+            and self._redraw_prompt
+            and not self._local_run_active(run_id=run_id)
+        ):
             typer.echo("> ", nl=False)
         if redraw_prompt and local_run and run_id is not None:
             self._local_run_ids.discard(run_id)
@@ -1718,7 +1969,10 @@ class _ThreadEventRenderer:
         run_id = payload.get("run_id")
         if not isinstance(request_id, str) or not isinstance(run_id, str):
             return
-        if self._local_request_ids is not None and request_id in self._local_request_ids:
+        if (
+            self._local_request_ids is not None
+            and request_id in self._local_request_ids
+        ):
             self._local_run_ids.add(run_id)
 
     def _local_run_active(self, *, run_id: str | None) -> bool:
@@ -1878,7 +2132,10 @@ def _resolve_runtime_startup(
 
     run_root = target.toolang_root
     agent_name = target.agent_name
-    if target.kind == "resident" and not agents.agent_home(run_root, agent_name).is_dir():
+    if (
+        target.kind == "resident"
+        and not agents.agent_home(run_root, agent_name).is_dir()
+    ):
         raise click.ClickException(f"Agent {agent_name} not found")
     existing = agents.get_agent_status(run_root, agent_name, ui_base_url=_ui_base_url())
     if existing is not None and existing.status in {"running", "preparing", "starting"}:
@@ -1934,7 +2191,9 @@ def _resolve_runtime_startup(
 )
 def start_agent(
     ctx: typer.Context,
-    agent: str | None = typer.Argument(None, help="Existing local agent name.", hidden=True),
+    agent: str | None = typer.Argument(
+        None, help="Existing local agent name.", hidden=True
+    ),
     sandbox: Annotated[
         str,
         typer.Option(help="Run the agent in a sandbox."),
@@ -1960,15 +2219,22 @@ def start_agent(
             help="Allow selected caps. Pass CSV or repeat.",
         ),
     ] = None,
-    host: Annotated[str, typer.Option(help="Bind the agent API to this host.")] = "127.0.0.1",
-    port: Annotated[int | None, typer.Option(help="Bind the agent API to this port.")] = None,
+    host: Annotated[
+        str, typer.Option(help="Bind the agent API to this host.")
+    ] = "127.0.0.1",
+    port: Annotated[
+        int | None, typer.Option(help="Bind the agent API to this port.")
+    ] = None,
     components: Annotated[
         list[str] | None,
         typer.Option("--enable", help="Enable runtime components. Pass CSV or repeat."),
     ] = None,
     inboxes: Annotated[
         list[Path] | None,
-        typer.Option("--inbox", help="Watch an inbox directory for file requests. Repeat to watch more than one."),
+        typer.Option(
+            "--inbox",
+            help="Watch an inbox directory for file requests. Repeat to watch more than one.",
+        ),
     ] = None,
     dev: Annotated[
         Path | None,
@@ -1987,12 +2253,16 @@ def start_agent(
     selector = _required_runtime_agent(ctx, agent)
     parsed_selector = _wrap_user_error(agents.parse_agent_selector, selector)
     if parsed_selector.form != "name":
-        raise click.ClickException("start only supports local agent names; clone the remote source first")
+        raise click.ClickException(
+            "start only supports local agent names; clone the remote source first"
+        )
     root = _context_root(ctx)
     normalized_components = _normalize_component_option(components)
     progress = make_cli_progress()
     try:
-        with agents.resolved_run_target(root, selector, progress=as_progress_sink(progress)) as target:
+        with agents.resolved_run_target(
+            root, selector, progress=as_progress_sink(progress)
+        ) as target:
             launch = _resolve_runtime_startup(
                 ctx,
                 target,
@@ -2049,11 +2319,15 @@ def start_agent(
     )
     if status is None:
         if process.poll() is not None:
-            raise click.ClickException(f"Agent {agent_name} failed to start: {log_path}")
+            raise click.ClickException(
+                f"Agent {agent_name} failed to start: {log_path}"
+            )
         raise click.ClickException(f"Agent {agent_name} start timed out: {log_path}")
     if status.status == "failed":
         raise click.ClickException(f"Agent {agent_name} failed to start: {log_path}")
-    typer.echo(f"Started agent {agent_name}: {status.webui_url or status.api_url or status.endpoint or '-'}")
+    typer.echo(
+        f"Started agent {agent_name}: {status.webui_url or status.api_url or status.endpoint or '-'}"
+    )
 
 
 @app.command(
@@ -2074,7 +2348,11 @@ def stop_agent(
     agent_name = _required_runtime_agent(ctx, agent)
     root = _context_root(ctx)
     runtime_state = agents.load_runtime_state(root, agent_name)
-    runtime_pids = () if runtime_state is not None else agents.agent_runtime_process_pids(root, agent_name)
+    runtime_pids = (
+        ()
+        if runtime_state is not None
+        else agents.agent_runtime_process_pids(root, agent_name)
+    )
     if runtime_state is None and not runtime_pids:
         raise click.ClickException(f"Agent {agent_name} not running")
 
@@ -2088,7 +2366,9 @@ def stop_agent(
         selector_data = {str(key): value for key, value in selector.items()}
         driver = selector_data.get("driver")
         if not isinstance(driver, str) or not driver.strip():
-            raise click.ClickException(f"Sandbox driver is missing for agent: {agent_name}")
+            raise click.ClickException(
+                f"Sandbox driver is missing for agent: {agent_name}"
+            )
         sandbox_plugin = agent_up.create_sandbox_plugin(driver.strip(), config={})
 
     stopped = _wrap_user_error(
@@ -2098,7 +2378,9 @@ def stop_agent(
         sandbox_plugin=sandbox_plugin,
         force=force,
     )
-    typer.echo(f"Stopped agent {agent_name}" if stopped else f"Agent {agent_name} not running")
+    typer.echo(
+        f"Stopped agent {agent_name}" if stopped else f"Agent {agent_name} not running"
+    )
 
 
 def _info_caps_summary(toolang_root: Path, agent_name: str) -> str:
@@ -2117,7 +2399,9 @@ def _info_caps_summary(toolang_root: Path, agent_name: str) -> str:
     )
 
 
-def _prepared_info_cap_counts(toolang_root: Path, agent_name: str) -> dict[str, int] | None:
+def _prepared_info_cap_counts(
+    toolang_root: Path, agent_name: str
+) -> dict[str, int] | None:
     from ...state.prepared import load_private_lock, load_shared_lock
 
     try:
@@ -2162,9 +2446,15 @@ def _prepare_info_cap_counts(toolang_root: Path, agent_name: str) -> dict[str, i
             progress=as_progress_sink(progress),
         )
         progress.set_prepare_total(
-            len(cap_store.effective_cap_entries(prepared.shared_lock, prepared.private_lock))
+            len(
+                cap_store.effective_cap_entries(
+                    prepared.shared_lock, prepared.private_lock
+                )
+            )
         )
-        return _prepared_lock_info_cap_counts(prepared.shared_lock, prepared.private_lock)
+        return _prepared_lock_info_cap_counts(
+            prepared.shared_lock, prepared.private_lock
+        )
     finally:
         progress.finish(details=False)
 
@@ -2224,7 +2514,9 @@ def _model_count_summary(
     environ: dict[str, str],
     selectors: Sequence[str] = (),
 ) -> str:
-    rows = _model_rows(toolang_root, environ, agent_name=agent_name, model_selectors=selectors)
+    rows = _model_rows(
+        toolang_root, environ, agent_name=agent_name, model_selectors=selectors
+    )
     provider_count = len({provider for _model, provider, _details in rows})
     return (
         f"{len(rows)} {'model' if len(rows) == 1 else 'models'}, "
@@ -2279,7 +2571,9 @@ def list_models(
             help="Filter models with selector-list syntax. Pass CSV or repeat.",
         ),
     ] = None,
-    refresh: Annotated[bool, typer.Option("--refresh", help="Refresh cached provider model lists.")] = False,
+    refresh: Annotated[
+        bool, typer.Option("--refresh", help="Refresh cached provider model lists.")
+    ] = False,
 ) -> None:
     from ...models.errors import NO_AVAILABLE_MODELS_MESSAGE
     from ...models.resolution import split_model_selectors
@@ -2299,7 +2593,9 @@ def list_models(
     _echo_table(("MODEL", "PROVIDER", "PROFILE"), rows)
     typer.echo()
     provider_count = len({provider for _model, provider, _details in rows})
-    typer.echo(f" {len(rows)} {'model' if len(rows) == 1 else 'models'}, {provider_count} {'provider' if provider_count == 1 else 'providers'}")
+    typer.echo(
+        f" {len(rows)} {'model' if len(rows) == 1 else 'models'}, {provider_count} {'provider' if provider_count == 1 else 'providers'}"
+    )
 
 
 @model_app.command("providers", help="Show configured model providers.")
@@ -2350,7 +2646,9 @@ def list_tools(
     _echo_table(("SET", "TOOL", "DESCRIPTION"), rows)
     typer.echo()
     toolset_count = len({namespace for namespace, _tool, _description in rows})
-    typer.echo(f" {len(rows)} {'tool' if len(rows) == 1 else 'tools'}, {toolset_count} {'toolset' if toolset_count == 1 else 'toolsets'}")
+    typer.echo(
+        f" {len(rows)} {'tool' if len(rows) == 1 else 'tools'}, {toolset_count} {'toolset' if toolset_count == 1 else 'toolsets'}"
+    )
 
 
 @channel_app.command("list", help="List installed channels.")
@@ -2394,7 +2692,9 @@ def _model_rows(
     )
 
 
-def _model_provider_rows(root: Path, environ: dict[str, str]) -> list[tuple[str, str, str]]:
+def _model_provider_rows(
+    root: Path, environ: dict[str, str]
+) -> list[tuple[str, str, str]]:
     from ...models.config import load_model_aliases, load_model_provider_configs
     from ...models.views import model_provider_rows
 
@@ -2436,11 +2736,14 @@ def _tool_rows(
 
 
 def _plugin_info_rows(group: str) -> list[tuple[str, str]]:
-    return [(info.name, info.source) for info in agent_up.list_plugin_infos(group=group)]
+    return [
+        (info.name, info.source) for info in agent_up.list_plugin_infos(group=group)
+    ]
 
 
 def _plugin_source_by_name(group: str) -> dict[str, str]:
     return {info.name: info.source for info in agent_up.list_plugin_infos(group=group)}
+
 
 def _append_work_update(
     toolang_root: Path,
@@ -2551,7 +2854,9 @@ def register_work_commands() -> None:
         ),
         WorkCommandSpec(
             name="run",
-            help=lambda kind: "Trigger a chore run now." if kind == "chore" else f"Run a {kind}.",
+            help=lambda kind: (
+                "Trigger a chore run now." if kind == "chore" else f"Run a {kind}."
+            ),
             factory=_make_run_work_command,
             cls=_RequiredPrefixAgentCommand,
             no_args_is_help=True,
@@ -2579,7 +2884,12 @@ def register_work_commands() -> None:
                 cls=spec.cls,
                 no_args_is_help=spec.no_args_is_help,
             )(spec.factory(kind, title))
-        app.add_typer(work_app, name=kind, no_args_is_help=True, rich_help_panel=AGENT_COMMAND_PANEL)
+        app.add_typer(
+            work_app,
+            name=kind,
+            no_args_is_help=True,
+            rich_help_panel=AGENT_COMMAND_PANEL,
+        )
 
 
 def _make_work_list_command(kind: WorkKind, title: str) -> Callable[..., None]:
@@ -2623,7 +2933,9 @@ def _make_work_list_command(kind: WorkKind, title: str) -> Callable[..., None]:
             rows = [
                 (
                     entry.document.task_id(),
-                    entry.document.display_title(fallback_name=entry.document.task_id()),
+                    entry.document.display_title(
+                        fallback_name=entry.document.task_id()
+                    ),
                     entry.lifecycle,
                     _work_location(root, agent_name, entry.path),
                 )
@@ -2682,7 +2994,9 @@ def _make_new_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
         job_id = path.stem
         if not draft:
             _reconcile_work_jobs(_context_root(ctx), agent_name, kind=kind)
-        _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
+        _append_work_update(
+            _context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path
+        )
         typer.echo(f"{kind} {job_id} created\t{path}")
 
     return new_work
@@ -2704,7 +3018,9 @@ def _make_clone_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
         )
         job_id = path.stem
         _reconcile_work_jobs(_context_root(ctx), agent_name, kind=kind)
-        _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
+        _append_work_update(
+            _context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path
+        )
         typer.echo(f"{kind} {job_id} cloned\t{path}")
 
     return clone_work
@@ -2740,7 +3056,9 @@ def _make_edit_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
             updated_text,
         )
         _reconcile_work_jobs(_context_root(ctx), agent_name, kind=kind)
-        _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
+        _append_work_update(
+            _context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path
+        )
         typer.echo(str(path))
 
     return edit_work
@@ -2764,7 +3082,9 @@ def _make_draft_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
         if path is None:
             raise click.ClickException(f"{kind} not found: {job_id}")
         _reconcile_work_jobs(_context_root(ctx), agent_name, kind=kind)
-        _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
+        _append_work_update(
+            _context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path
+        )
         typer.echo(f"{kind} {job_id} drafted\t{path}")
 
     return draft_work
@@ -2788,7 +3108,9 @@ def _make_ready_work_command(kind: WorkKind, title: str) -> Callable[..., None]:
         if path is None:
             raise click.ClickException(f"{kind} not found: {job_id}")
         _reconcile_work_jobs(_context_root(ctx), agent_name, kind=kind)
-        _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
+        _append_work_update(
+            _context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path
+        )
         typer.echo(f"{kind} {job_id} ready\t{path}")
 
     return ready_work
@@ -2812,7 +3134,9 @@ def _make_archive_work_command(kind: WorkKind, title: str) -> Callable[..., None
         if path is None:
             raise click.ClickException(f"{kind} not found: {job_id}")
         _reconcile_work_jobs(_context_root(ctx), agent_name, kind=kind)
-        _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
+        _append_work_update(
+            _context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path
+        )
         typer.echo(f"{kind} {job_id} archived\t{path}")
 
     return archive_work
@@ -2873,14 +3197,18 @@ def _make_cancel_work_command(kind: WorkKind, title: str) -> Callable[..., None]
             if record is None:
                 raise click.ClickException(f"{kind} not found: {id}")
             if record.status == "running" and record.last_run_id is not None:
-                _runtime_post(ctx, f"/api/v1/runs/{record.last_run_id}/cancel", payload={})
+                _runtime_post(
+                    ctx, f"/api/v1/runs/{record.last_run_id}/cancel", payload={}
+                )
                 typer.echo(f"{kind} {id} cancel requested\t{record.last_run_id}")
                 return
             if kind == "task" and record.status == "todo":
                 updated = store.cancel_pending_task(task_id=id)
                 typer.echo(f"task {id} canceled\t{updated.status}")
                 return
-            raise click.ClickException(f"{kind} cannot be canceled from status: {record.status}")
+            raise click.ClickException(
+                f"{kind} cannot be canceled from status: {record.status}"
+            )
         finally:
             store.close()
 
@@ -2902,7 +3230,9 @@ def _make_delete_work_command(kind: WorkKind, title: str) -> Callable[..., None]
             else work.find_chore(_context_root(ctx), agent_name, job_id, lifecycle=None)
         )
         if active_entry is not None and active_entry.lifecycle != "archived":
-            raise click.ClickException(f"{kind} is not archived: {job_id}; archive it before deleting")
+            raise click.ClickException(
+                f"{kind} is not archived: {job_id}; archive it before deleting"
+            )
         entry = (
             work.find_archived_task(_context_root(ctx), agent_name, job_id)
             if kind == "task"
@@ -2920,13 +3250,17 @@ def _make_delete_work_command(kind: WorkKind, title: str) -> Callable[..., None]
             raise click.ClickException(f"archived {kind} not found: {job_id}")
         path = entry.path
         _reconcile_work_jobs(_context_root(ctx), agent_name, kind=kind)
-        _append_work_update(_context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path)
+        _append_work_update(
+            _context_root(ctx), agent_name, kind=kind, job_id=job_id, path=path
+        )
         typer.echo(f"{kind} {job_id} deleted")
 
     return delete_work
 
 
-def _reconcile_work_jobs(toolang_root: Path, agent_name: str, *, kind: WorkKind) -> None:
+def _reconcile_work_jobs(
+    toolang_root: Path, agent_name: str, *, kind: WorkKind
+) -> None:
     from ... import jobs
 
     store = jobs.open_job_store(toolang_root, agent_name)
@@ -2942,10 +3276,25 @@ def _work_location(toolang_root: Path, agent_name: str, path: Path) -> str:
     except ValueError:
         return str(path)
 
-app.add_typer(model_app, name="model", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
-app.add_typer(tool_app, name="tool", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
-app.add_typer(channel_app, name="channel", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
-app.add_typer(sandbox_app, name="sandbox", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL)
+
+app.add_typer(
+    model_app, name="model", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL
+)
+app.add_typer(
+    tool_app, name="tool", no_args_is_help=True, rich_help_panel=RUNTIME_COMMAND_PANEL
+)
+app.add_typer(
+    channel_app,
+    name="channel",
+    no_args_is_help=True,
+    rich_help_panel=RUNTIME_COMMAND_PANEL,
+)
+app.add_typer(
+    sandbox_app,
+    name="sandbox",
+    no_args_is_help=True,
+    rich_help_panel=RUNTIME_COMMAND_PANEL,
+)
 register_fmt_command(app)
 register_parse_command(app)
 register_caps_commands(app, rich_help_panel=CAPS_COMMAND_PANEL)
@@ -3007,10 +3356,15 @@ def _is_roaming_thread_command(body: list[str]) -> bool:
     return len(body) >= 2 and body[1] in ROAMING_THREAD_COMMANDS
 
 
-def _run_roaming_thread_command(global_args: list[str], body: list[str], *, prog_name: str) -> int:
+def _run_roaming_thread_command(
+    global_args: list[str], body: list[str], *, prog_name: str
+) -> int:
     global _CLI_PREFIX_AGENT
     if global_args:
-        typer.echo("toolang error: too <path>.too does not support global CLI options", err=True)
+        typer.echo(
+            "toolang error: too <path>.too does not support global CLI options",
+            err=True,
+        )
         return 1
     source_path = _roaming_source_path(body[0])
     if source_path is None:
@@ -3044,7 +3398,10 @@ def _run_roaming_thread_command(global_args: list[str], body: list[str], *, prog
 
 def _run_roaming_file_runtime(global_args: list[str], body: list[str]) -> int:
     if global_args:
-        typer.echo("toolang error: too <path>.too does not support global CLI options", err=True)
+        typer.echo(
+            "toolang error: too <path>.too does not support global CLI options",
+            err=True,
+        )
         return 1
     source_path = _roaming_source_path(body[0])
     if source_path is None:
@@ -3053,12 +3410,20 @@ def _run_roaming_file_runtime(global_args: list[str], body: list[str]) -> int:
     try:
         options = _parse_roaming_file_runtime_options(body[1:])
         toolang_root, agent_name = agents.materialize_roaming_program(source_path)
-        existing = agents.get_agent_status(toolang_root, agent_name, ui_base_url=_ui_base_url())
-        if existing is not None and existing.status in {"running", "preparing", "starting"}:
+        existing = agents.get_agent_status(
+            toolang_root, agent_name, ui_base_url=_ui_base_url()
+        )
+        if existing is not None and existing.status in {
+            "running",
+            "preparing",
+            "starting",
+        }:
             raise click.ClickException(_active_run_error(existing))
         from ...config.env import load_runtime_environ
 
-        environ = load_runtime_environ(toolang_root, agent_name, base_environ=os.environ)
+        environ = load_runtime_environ(
+            toolang_root, agent_name, base_environ=os.environ
+        )
         environ["TOOLANG_ROOT"] = str(toolang_root)
         log_plan = resolve_agent_logging(
             mode="run",
@@ -3097,7 +3462,12 @@ def _run_roaming_file_runtime(global_args: list[str], body: list[str]) -> int:
         )
     except KeyboardInterrupt:
         return 130
-    except (FileExistsError, FileNotFoundError, ValueError, click.ClickException) as exc:
+    except (
+        FileExistsError,
+        FileNotFoundError,
+        ValueError,
+        click.ClickException,
+    ) as exc:
         message = exc.message if isinstance(exc, click.ClickException) else str(exc)
         typer.echo(f"toolang error: {message}", err=True)
         return 1
@@ -3233,10 +3603,14 @@ def _parse_roaming_file_runtime_options(argv: list[str]) -> _RoamingFileRuntimeO
             index += 2
             continue
         if token in {"--help", "-h"}:
-            raise click.ClickException("file request runtime usage: toolang SCRIPT --inbox PATH [--inbox PATH...]")
+            raise click.ClickException(
+                "file request runtime usage: toolang SCRIPT --inbox PATH [--inbox PATH...]"
+            )
         if token.startswith("-"):
             raise click.ClickException(f"unknown Toolang runtime option: {token}")
-        raise click.ClickException(f"unexpected thunk argument for file request runtime: {token}")
+        raise click.ClickException(
+            f"unexpected thunk argument for file request runtime: {token}"
+        )
     if not inboxes:
         raise click.ClickException("--inbox is required")
     normalized_components = list(dict.fromkeys(components))
@@ -3312,7 +3686,9 @@ def _extract_global_args(argv: list[str]) -> tuple[list[str], list[str]]:
     return global_args, body
 
 
-def _consume_global_arg(token: str, argv: list[str], index: int) -> tuple[list[str], int] | None:
+def _consume_global_arg(
+    token: str, argv: list[str], index: int
+) -> tuple[list[str], int] | None:
     if token == "--root":
         if index + 1 >= len(argv):
             return ([token], 1)

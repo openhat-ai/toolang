@@ -12,7 +12,7 @@ from typing import Any, Protocol
 from toolang.base.protocols.channel import AgentChannel
 from toolang.base.types.channel import ChannelContext, OutboundMessage, ReplyTarget
 from toolang.base.types.message import TextDelta, TextPart, ToolCallDelta, ToolCallPart, ToolResultPart, message_text
-from .events import RunEnd, RunStart, StepEnd, StepStart, PartStart, PartDelta, PartEnd, TraceEvent, message_data_for_step
+from .events import RunEnd, RunBegin, StepEnd, StepBegin, PartBegin, PartDelta, PartEnd, TraceEvent, message_data_for_step
 from .stream import trace_event_data
 
 
@@ -41,7 +41,7 @@ class BufferedResponseSink:
         return self._assistant
 
     def on_event(self, event: TraceEvent) -> None:
-        if isinstance(event, RunStart):
+        if isinstance(event, RunBegin):
             self._run_id = event.run_id
             self._thread_id = event.thread_id
             return
@@ -113,7 +113,7 @@ class SseResponseSink:
     def on_event(self, event: TraceEvent) -> None:
         if self._closed:
             return
-        if isinstance(event, RunStart):
+        if isinstance(event, RunBegin):
             if self._run_id is not None:
                 if event.root_run_id == self._run_id or event.parent_run_id in self._child_run_ids or event.parent_run_id == self._run_id:
                     self._child_run_ids.add(event.run_id)
@@ -142,18 +142,18 @@ class SseResponseSink:
         event_run_id = getattr(event, "run_id", self._run_id)
         if self._run_id is not None and event_run_id != self._run_id:
             if isinstance(event_run_id, str) and event_run_id in self._child_run_ids:
-                if isinstance(event, (StepStart, StepEnd, RunEnd)):
+                if isinstance(event, (StepBegin, StepEnd, RunEnd)):
                     self._enqueue_payload(trace_event_data(event))
                 if isinstance(event, PartEnd) and isinstance(event.data, ToolCallPart):
                     self._enqueue_payload(trace_event_data(event))
             return
-        if isinstance(event, StepStart):
+        if isinstance(event, StepBegin):
             if event.kind != "model":
                 self._enqueue_payload(trace_event_data(event))
                 return
             self._enqueue_payload({"type": "start-step"})
             return
-        if isinstance(event, PartStart) and event.kind == "text":
+        if isinstance(event, PartBegin) and event.kind == "text":
             self._text_started = True
             self._text_ended = False
             self._enqueue_payload({"type": "text-start", "id": _message_id(event.run_id)})
@@ -281,6 +281,80 @@ class SseResponseSink:
         self._loop.call_soon_threadsafe(self._queue.put_nowait, None)
 
 
+class TraceResponseSink:
+    """Emit normalized trace events for a streaming caller."""
+
+    wants_stream = True
+
+    def __init__(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        self._queue: asyncio.Queue[str | None] = asyncio.Queue()
+        self._run_id: str | None = None
+        self._child_run_ids: set[str] = set()
+        self._closed = False
+
+    async def stream(self) -> AsyncIterator[str]:
+        while True:
+            item = await self._queue.get()
+            if item is None:
+                return
+            yield item
+
+    def on_queue_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        if self._closed:
+            return
+        if self._run_id is None:
+            run_id = payload.get("run_id")
+            if isinstance(run_id, str) and run_id:
+                self._run_id = run_id
+        self._enqueue_payload(
+            {
+                "type": event_type,
+                "event_type": event_type,
+                "payload": dict(payload),
+            }
+        )
+
+    def on_event(self, event: TraceEvent) -> None:
+        if self._closed:
+            return
+        if not self._should_emit(event):
+            return
+        self._enqueue_payload(trace_event_data(event))
+        if isinstance(event, RunEnd) and event.run_id == self._run_id:
+            self._enqueue_done()
+
+    def _should_emit(self, event: TraceEvent) -> bool:
+        event_run_id = getattr(event, "run_id", None)
+        if self._run_id is None:
+            if isinstance(event_run_id, str) and event_run_id:
+                self._run_id = event_run_id
+            return True
+        if event_run_id == self._run_id or event_run_id in self._child_run_ids:
+            return True
+        if isinstance(event, RunBegin) and (
+            event.root_run_id == self._run_id
+            or event.parent_run_id == self._run_id
+            or event.parent_run_id in self._child_run_ids
+        ):
+            self._child_run_ids.add(event.run_id)
+            return True
+        return False
+
+    def _enqueue_payload(self, payload: dict[str, object]) -> None:
+        self._loop.call_soon_threadsafe(
+            self._queue.put_nowait,
+            _sse(payload),
+        )
+
+    def _enqueue_done(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._loop.call_soon_threadsafe(self._queue.put_nowait, "data: [DONE]\n\n")
+        self._loop.call_soon_threadsafe(self._queue.put_nowait, None)
+
+
 class ChannelResponseSink:
     """Progressively deliver one response through one channel binding."""
 
@@ -311,7 +385,7 @@ class ChannelResponseSink:
         self._sender: threading.Thread | None = None
 
     def on_event(self, event: TraceEvent) -> None:
-        if isinstance(event, RunStart):
+        if isinstance(event, RunBegin):
             self._start_sender()
             self._request_typing(force=True)
             return
@@ -337,9 +411,9 @@ class ChannelResponseSink:
                         self._text = text
                 self._wake.set()
             return
-        if isinstance(event, (PartStart, PartDelta, PartEnd)):
+        if isinstance(event, (PartBegin, PartDelta, PartEnd)):
             is_tool_event = (
-                (isinstance(event, PartStart) and event.kind in {"tool_call", "tool_result"})
+                (isinstance(event, PartBegin) and event.kind in {"tool_call", "tool_result"})
                 or (isinstance(event, PartDelta) and isinstance(event.delta, ToolCallDelta))
                 or (
                     isinstance(event, PartEnd)

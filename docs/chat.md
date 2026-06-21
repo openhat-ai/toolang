@@ -15,7 +15,8 @@ Chat uses the same runtime units as the rest of Toolang:
 | `run` | One handling attempt inside that thread |
 | `step` | One execution unit inside the run |
 
-One chat submission creates one run in one thread.
+One chat submission creates one start command, one run, and one thread when no
+thread id is supplied.
 
 Thread ids use one underscore-delimited normalized form:
 
@@ -72,8 +73,9 @@ Current part kinds are:
 - `tool_call`
 - `tool_result`
 
-The initial run input projects to the user message. Step output projects to
-assistant or tool messages.
+The initial `start` command projects to the user message. Later `steer`
+commands project to additional user messages in the same run. Step output
+projects to assistant or tool messages.
 
 
 ## Thread API
@@ -108,7 +110,7 @@ There is no separate top-level `thread.messages` field.
 
 To build a full transcript, flatten:
 
-1. each run input
+1. each run command with a message
 2. each step message in run order
 
 Forked chat threads store their source thread and anchor run in `parent`.
@@ -187,6 +189,16 @@ and the default selector after applying activation config and the `chat` thunk.
 ## Streaming Rule
 
 The stream is the primary real-time output surface for a live chat exchange.
+
+Runtime surfaces should treat the canonical thread and run event streams as the
+source of progress truth. The chat SSE endpoint exposes an AI SDK UI message
+stream adapter for web clients that use AI SDK Elements; it is not the canonical
+execution protocol.
+
+UIs should keep exactly one active mutable block for the visible run. Finalized
+blocks can move into scrollback immediately instead of waiting for the whole run
+to finish. Parallel tool calls, thunk calls, or flow lanes are rendered inside
+the current mutable block.
 
 Thread and run detail endpoints are inspection surfaces used to:
 

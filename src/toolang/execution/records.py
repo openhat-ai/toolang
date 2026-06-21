@@ -14,8 +14,8 @@ StepStatus = Literal["finished", "failed", "canceled"]
 RunLoop = str
 StepKind = Literal["model", "tool", "agent", "run", "step", "parallel", "bind", "system"]
 ThreadPeerType = Literal["user", "agent"]
-RunCommandKind = Literal["start", "steer", "stop"]
-RunCommandMode = Literal["immediate", "next_step", "next_call"]
+CommandKind = Literal["start", "steer", "stop"]
+CommandMode = Literal["immediate", "next_step", "next_call"]
 
 UpdateKind = Literal[
     "created",
@@ -103,14 +103,14 @@ class ThreadRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class RunCommandRef:
+class CommandRef:
     """Reference one run command or one command message part."""
 
     index: int = 0
     part_index: int | None = None
 
     @classmethod
-    def from_data(cls, payload: Mapping[str, Any]) -> RunCommandRef:
+    def from_data(cls, payload: Mapping[str, Any]) -> CommandRef:
         raw_index = payload.get("index", 0)
         part_index = payload.get("part")
         return cls(
@@ -151,7 +151,7 @@ class StepOutputRef:
         return data
 
 
-StepInputItem = RunCommandRef | StepOutputRef | Message
+StepInputItem = CommandRef | StepOutputRef | Message
 
 
 @dataclass(frozen=True, slots=True)
@@ -376,13 +376,13 @@ class EventRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class RunCommandRecord:
+class CommandRecord:
     """One durable client-side command sent to a run."""
 
     run_id: str
     index: int
-    kind: RunCommandKind
-    mode: RunCommandMode | None
+    kind: CommandKind
+    mode: CommandMode | None
     request_id: str | None
     message: Message | None
     created_at: str
@@ -393,7 +393,7 @@ def step_input_item_from_data(payload: Mapping[str, Any]) -> StepInputItem:
 
     kind = str(payload.get("kind", "")).strip()
     if kind == "command":
-        return RunCommandRef.from_data(payload)
+        return CommandRef.from_data(payload)
     if kind == "step":
         return StepOutputRef.from_data(payload)
     if kind == "message":
@@ -410,7 +410,7 @@ def step_input_items_from_data(payloads: list[Mapping[str, Any]]) -> tuple[StepI
 def step_input_item_to_data(item: StepInputItem) -> dict[str, Any]:
     """Return one serialized step input item."""
 
-    if isinstance(item, RunCommandRef):
+    if isinstance(item, CommandRef):
         return item.to_data()
     if isinstance(item, StepOutputRef):
         return item.to_data()

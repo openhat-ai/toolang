@@ -7,11 +7,12 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 import logging
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from toolang.base.types.message import Message, message_text
 from .db import utc_now
-from .events import RunEnd
+from .events import RunEnd, RunStarting, RunSteering, RunStopping, RunWaiting
+from .records import CommandMode
 from ..state.live import LiveState
 
 if TYPE_CHECKING:
@@ -87,6 +88,7 @@ class RunOutcome:
     live_fingerprint: str | None = None
     log_path: str | None = None
 
+
 class QueueRunner:
     """Run queued requests with per-group and per-thread limits."""
 
@@ -107,7 +109,8 @@ class QueueRunner:
         self._sleep = sleep
         self._context: UptimeContext | None = None
         self._group_semaphores = {
-            group: asyncio.Semaphore(limit) for group, limit in self._group_limits.items()
+            group: asyncio.Semaphore(limit)
+            for group, limit in self._group_limits.items()
         }
         self._group_in_flight = {group: 0 for group in self._group_limits}
         self._group_lock = asyncio.Lock()
@@ -142,11 +145,11 @@ class QueueRunner:
         if request.run_id and response is not None:
             self._responses_by_run[request.run_id] = response
         self._ready.set()
-        self._emit_queue_event(
-            "run_queued",
+        self._emit_run_starting(submission)
+        self._emit_run_waiting(
             submission,
             position=len(self._pending),
-            waiting_for="queue",
+            reason="queue",
         )
         return len(self._pending)
 
@@ -245,17 +248,31 @@ class QueueRunner:
 
         return tuple(item.request for item in self._active_requests.values())
 
-    def notify_run_command(self, *, run_id: str, payload: dict[str, Any]) -> None:
-        """Publish one run command to durable events and the active response sink."""
+    def notify_run_control(self, *, run_id: str, payload: dict[str, Any]) -> None:
+        """Publish one accepted run control command."""
 
-        self._emit_response_event(run_id=run_id, event_type="run_command", payload=payload)
+        event = self._command_event(payload)
+        if event is not None:
+            self._emit_response_trace_event(run_id=run_id, event=event)
+            context = self._context
+            if context is not None:
+                context.events.publish_trace(event)
+            return
+        self._emit_response_event(
+            run_id=run_id, event_type=str(payload.get("type") or ""), payload=payload
+        )
         context = self._context
         if context is None:
             return
-        context.events.publish(domain="run", domain_id=run_id, type="run_command", payload=payload)
+        event_type = str(payload.get("type") or "")
+        context.events.publish(
+            domain="run", domain_id=run_id, type=event_type, payload=payload
+        )
         thread_id = payload.get("thread_id")
         if isinstance(thread_id, str) and thread_id:
-            context.events.publish(domain="thread", domain_id=thread_id, type="run_command", payload=payload)
+            context.events.publish(
+                domain="thread", domain_id=thread_id, type=event_type, payload=payload
+            )
 
     def cancel_run(self, *, run_id: str, error: str | None = None) -> RunRecord:
         """Cancel one active run and notify its response sink."""
@@ -284,10 +301,9 @@ class QueueRunner:
             self._tasks_by_run[request.run_id] = current_task
         try:
             if await self._group_is_full(request.group):
-                self._emit_queue_event(
-                    "run_waiting",
+                self._emit_run_waiting(
                     submission,
-                    waiting_for="group",
+                    reason="group",
                 )
             semaphore = await self._semaphore_for_group(request.group)
             async with semaphore:
@@ -296,19 +312,28 @@ class QueueRunner:
                 self._active_requests[request_key] = submission
                 try:
                     result = await self._execute_thread_locked(submission)
-                    if submission.completion is not None and not submission.completion.done():
+                    if (
+                        submission.completion is not None
+                        and not submission.completion.done()
+                    ):
                         submission.completion.set_result(result)
                     self._completed.append(result)
                     return result
                 except asyncio.CancelledError:
                     result = self._cancel_submission(submission)
-                    if submission.completion is not None and not submission.completion.done():
+                    if (
+                        submission.completion is not None
+                        and not submission.completion.done()
+                    ):
                         submission.completion.set_result(result)
                     self._completed.append(result)
                     return result
                 except Exception as exc:
                     result = self._fail_submission(submission, exc)
-                    if submission.completion is not None and not submission.completion.done():
+                    if (
+                        submission.completion is not None
+                        and not submission.completion.done()
+                    ):
                         submission.completion.set_result(result)
                     self._completed.append(result)
                     return result
@@ -327,10 +352,9 @@ class QueueRunner:
             return await self._execute(submission)
         lock = await self._lock_for_thread(request.thread_id)
         if lock.locked():
-            self._emit_queue_event(
-                "run_waiting",
+            self._emit_run_waiting(
                 submission,
-                waiting_for="thread",
+                reason="thread",
             )
         async with lock:
             return await self._execute(submission)
@@ -379,43 +403,36 @@ class QueueRunner:
             limit = self._group_limits.get(group, self._default_group_limit)
             return self._group_in_flight.get(group, 0) >= limit
 
-    def _emit_queue_event(
+    def _emit_run_waiting(
         self,
-        event_type: str,
         submission: RunSubmission,
         *,
-        waiting_for: str,
+        reason: str,
         position: int | None = None,
     ) -> None:
         request = submission.request
-        payload = {
-            "type": event_type,
-            "run_id": request.run_id,
-            "thread_id": request.thread_id,
-            "origin": request.origin,
-            "group": request.group,
-            "request_id": _request_id(request),
-            "executable_kind": _request_executable_kind(request),
-            "executable_name": request.thunk_name,
-            "waiting_for": waiting_for,
-            "position": position,
-            "created_at": utc_now(),
-        }
-        if submission.response is not None:
-            on_queue_event = getattr(submission.response, "on_queue_event", None)
-            if callable(on_queue_event):
-                on_queue_event(event_type, payload)
-        context = self._context
-        if context is None:
+        if not request.run_id:
             return
-        run_id = request.run_id
-        thread_id = request.thread_id or ""
-        if run_id:
-            context.events.publish(domain="run", domain_id=run_id, type=event_type, payload=payload)
-        if thread_id:
-            context.events.publish(domain="thread", domain_id=thread_id, type=event_type, payload=payload)
+        event = RunWaiting(
+            run_id=request.run_id,
+            thread_id=request.thread_id,
+            origin=request.origin,
+            group=request.group,
+            request_id=_request_id(request),
+            executable_kind=_request_executable_kind(request),
+            executable_name=request.thunk_name,
+            reason=reason,
+            position=position,
+            created_at=utc_now(),
+        )
+        self._emit_response_trace_event(run_id=request.run_id, event=event)
+        context = self._context
+        if context is not None:
+            context.events.publish_trace(event)
 
-    def _emit_response_event(self, *, run_id: str, event_type: str, payload: dict[str, Any]) -> None:
+    def _emit_response_event(
+        self, *, run_id: str, event_type: str, payload: dict[str, Any]
+    ) -> None:
         response = self._response_for_run(run_id)
         if response is None:
             return
@@ -426,7 +443,12 @@ class QueueRunner:
             except Exception:
                 _LOGGER.exception("response sink event handling failed")
 
-    def _emit_response_trace_event(self, *, run_id: str, event: RunEnd) -> None:
+    def _emit_response_trace_event(
+        self,
+        *,
+        run_id: str,
+        event: RunStarting | RunWaiting | RunSteering | RunStopping | RunEnd,
+    ) -> None:
         response = self._response_for_run(run_id)
         if response is None:
             return
@@ -435,12 +457,80 @@ class QueueRunner:
         except Exception:
             _LOGGER.exception("response sink event handling failed")
 
+    def _emit_run_starting(self, submission: RunSubmission) -> None:
+        request = submission.request
+        if not request.run_id:
+            return
+        event = RunStarting(
+            run_id=request.run_id,
+            origin=request.origin,
+            thread_id=request.thread_id,
+            input=request.message or Message.user(request.thunk),
+            request_id=_request_id(request),
+            accepted_at=utc_now(),
+        )
+        self._emit_response_trace_event(run_id=request.run_id, event=event)
+        context = self._context
+        if context is not None:
+            context.events.publish_trace(event)
+
+    def _command_event(
+        self, payload: dict[str, Any]
+    ) -> RunSteering | RunStopping | None:
+        kind = payload.get("kind")
+        run_id = payload.get("run_id")
+        thread_id = payload.get("thread_id")
+        ref = payload.get("ref")
+        index = ref.get("index") if isinstance(ref, dict) else payload.get("index")
+        if (
+            not isinstance(run_id, str)
+            or not run_id
+            or not isinstance(thread_id, str)
+            or not thread_id
+        ):
+            return None
+        try:
+            command_index = int(0 if index is None else index)
+        except (TypeError, ValueError):
+            command_index = 0
+        mode = payload.get("mode")
+        mode_value = _command_mode(mode)
+        request_id = payload.get("request_id")
+        request_id_value = str(request_id) if request_id is not None else None
+        accepted_at = str(payload.get("created_at") or utc_now())
+        if kind == "steer":
+            message = payload.get("message")
+            if not isinstance(message, dict):
+                return None
+            return RunSteering(
+                run_id=run_id,
+                thread_id=thread_id,
+                index=command_index,
+                message=Message.from_data(message),
+                mode=mode_value,
+                request_id=request_id_value,
+                accepted_at=accepted_at,
+            )
+        if kind == "stop":
+            reason = payload.get("reason")
+            return RunStopping(
+                run_id=run_id,
+                thread_id=thread_id,
+                index=command_index,
+                mode=mode_value,
+                request_id=request_id_value,
+                reason=str(reason) if reason is not None else None,
+                accepted_at=accepted_at,
+            )
+        return None
+
     def _response_for_run(self, run_id: str) -> ResponseSink | None:
         return self._responses_by_run.get(run_id) or next(
             (
                 submission.response
                 for submission in self._active_requests.values()
-                if submission.request.run_id == run_id and submission.response is not None
+                if submission.request.run_id == run_id
+                and submission.response is not None
             ),
             None,
         )
@@ -468,7 +558,11 @@ class QueueRunner:
     def _fail_submission(self, submission: RunSubmission, exc: Exception) -> RunOutcome:
         request = submission.request
         error = str(exc) or type(exc).__name__
-        _LOGGER.exception("Run request failed before completion run=%s group=%s", request.run_id, request.group)
+        _LOGGER.exception(
+            "Run request failed before completion run=%s group=%s",
+            request.run_id,
+            request.group,
+        )
         run_id = request.run_id or ""
         thread_id = request.thread_id or ""
         if submission.response is not None and run_id:
@@ -527,3 +621,9 @@ def _request_input_text(request: RunRequest) -> str:
     if request.message is None:
         return ""
     return message_text(request.message.parts)
+
+
+def _command_mode(value: object) -> CommandMode | None:
+    if value in {"immediate", "next_step", "next_call"}:
+        return cast(CommandMode, value)
+    return None
