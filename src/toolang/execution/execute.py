@@ -20,6 +20,7 @@ from .input import RunInput, bind_run_request, select_origin_thunk
 from .model import resolve_model
 from .runner import RunOutcome, RunOutcomeStatus, RunRequest, RunSubmission
 from .binding import invoke_params
+from .records import trace_run
 from ..plugin import load_loop
 
 if TYPE_CHECKING:
@@ -72,20 +73,27 @@ async def execute_run(
             persist,
             response,
             RunBegin(
-                run_id=bound.run_id,
-                origin=bound.origin,
-                thread_id=bound.thread_id,
+                run=bound.run_id,
+                parent=None,
+                thread=bound.thread_id,
                 input=bound.message or Message.user(bound.input_text),
                 created_at=bound.created_at,
                 started_at=bound.created_at,
-                request_id=_request_id(bound.metadata),
-                root_run_id=bound.run_id,
-                executable_kind=executable_kind,
-                executable_name=(
-                    executable.thunk_name() if executable_kind == "thunk" else executable.flow_name()
-                ),
-                call_kind="top",
-                metadata=dict(bound.metadata),
+                context={
+                    **dict(bound.metadata),
+                    "origin": bound.origin,
+                    "root": bound.run_id,
+                    "request_id": _request_id(bound.metadata),
+                    "executable": {
+                        "kind": executable_kind,
+                        "name": (
+                            executable.thunk_name()
+                            if executable_kind == "thunk"
+                            else executable.flow_name()
+                        ),
+                    },
+                    "call": "top",
+                },
             ),
         )
         started = True
@@ -109,8 +117,7 @@ async def execute_run(
                 persist,
                 response,
                 RunEnd(
-                    run_id=bound.run_id,
-                    thread_id=bound.thread_id,
+                    run=bound.run_id,
                     status="failed",
                     error=error,
                     finished_at=_utc_now(),
@@ -156,8 +163,7 @@ async def execute_run(
         persist,
         response,
         RunEnd(
-            run_id=bound.run_id,
-            thread_id=bound.thread_id,
+            run=bound.run_id,
             status=final_status,
             error=final_error,
             finished_at=_utc_now(),
@@ -281,8 +287,7 @@ def _emit_pre_start_failure(
         None,
         response,
         RunEnd(
-            run_id=bound.run_id,
-            thread_id=bound.thread_id,
+            run=bound.run_id,
             status="failed",
             error=error,
             finished_at=_utc_now(),
@@ -398,7 +403,10 @@ def _emit_event(
 def _event_is_after_canceled_run(context: UptimeContext, event: TraceEvent) -> bool:
     if isinstance(event, RunBegin):
         return False
-    stored = context.store.get_run(run_id=event.run_id)
+    event_run = event.run if isinstance(event, RunEnd) else trace_run(getattr(event, "step", ""))
+    if not event_run:
+        event_run = getattr(event, "run", "")
+    stored = context.store.get_run(run_id=event_run)
     return stored is not None and stored.status == "canceled"
 
 

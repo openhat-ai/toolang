@@ -39,6 +39,7 @@ from toolang.execution.events import (
     TraceEvent,
 )
 from toolang.execution.labels import child_call_summary, flow_op_summary
+from toolang.execution.records import trace_index, trace_run
 
 from .base import as_text, friendly_error
 from .rendering import (
@@ -84,15 +85,15 @@ class GenericCommandBlock(MutableBlock):
     @classmethod
     def create(cls, event: TraceEvent) -> "GenericCommandBlock":
         return cls(
-            index=int(getattr(event, "index", 0) or 0),
+            index=int(getattr(event, "context", {}).get("cmd", 0) or 0),
             command_kind=event.type.removeprefix("run_") or "command",
-            run_id=getattr(event, "run_id", "") or "",
+            run_id=getattr(event, "run", "") or "",
         )
 
     def update(self, event: TraceEvent) -> None:
         if kind := event.type.removeprefix("run_"):
             self.command_kind = kind
-        self.run_id = getattr(event, "run_id", None) or self.run_id
+        self.run_id = getattr(event, "run", None) or self.run_id
 
     def render(self) -> RenderableType:
         return Text.from_markup(
@@ -115,14 +116,12 @@ class RunStartBlock(MutableBlock):
         if event.type == "run_starting":
             return cls(
                 message=_message_text(cast(RunStarting, event).input),
-                run_id=event.run_id,
+                run_id=event.run,
             )
         waiting = cast(RunWaiting, event)
         return cls(
-            message="",
-            run_id=waiting.run_id,
-            waiting_reason=waiting.reason,
-            waiting_position=waiting.position,
+            message=_message_text(waiting.input),
+            run_id=waiting.run,
             waiting=True,
         )
 
@@ -131,26 +130,28 @@ class RunStartBlock(MutableBlock):
             starting = cast(RunStarting, event)
             if message := _message_text(starting.input):
                 self.message = message
-            self.run_id = starting.run_id or self.run_id
+            self.run_id = starting.run or self.run_id
             self.waiting = False
             self.waiting_reason = ""
             self.waiting_position = None
         elif event.type == "run_waiting":
             waiting = cast(RunWaiting, event)
-            self.run_id = waiting.run_id or self.run_id
+            if message := _message_text(waiting.input):
+                self.message = message
+            self.run_id = waiting.run or self.run_id
             self.waiting = True
-            self.waiting_reason = waiting.reason
-            self.waiting_position = waiting.position
+            self.waiting_reason = ""
+            self.waiting_position = None
         elif event.type == "run_begin":
             begin = cast(RunBegin, event)
             if message := _message_text(begin.input):
                 self.message = message
-            self.run_id = begin.run_id or self.run_id
+            self.run_id = begin.run or self.run_id
             self.waiting = False
             self.waiting_reason = ""
             self.waiting_position = None
         elif event.type == "run_end":
-            self.run_id = event.run_id or self.run_id
+            self.run_id = event.run or self.run_id
             self.waiting = False
             self.waiting_reason = ""
             self.waiting_position = None
@@ -194,18 +195,18 @@ class RunSteerBlock(MutableBlock):
     @classmethod
     def create(cls, event: RunSteering) -> "RunSteerBlock":
         return cls(
-            index=event.index,
-            message=_message_text(event.message),
-            run_id=event.run_id,
+            index=int(event.context.get("cmd", 0) or 0),
+            message=_message_text(event.input),
+            run_id=event.run,
         )
 
     def update(self, event: RunSteering | StepBegin | RunEnd) -> None:
         if event.type == "run_steering" and (
-            message := _message_text(cast(RunSteering, event).message)
+            message := _message_text(cast(RunSteering, event).input)
         ):
             self.message = message
         self.pending = event.type == "run_steering"
-        if run_id := event.run_id:
+        if run_id := _event_run_id(event):
             self.run_id = run_id
 
     def render(self) -> RenderableType:
@@ -238,18 +239,18 @@ class RunStopBlock(MutableBlock):
     @classmethod
     def create(cls, event: RunBegin | RunStopping | RunEnd) -> "RunStopBlock":
         if event.type == "run_begin":
-            return cls(run_id=event.run_id or "run", status="running")
+            return cls(run_id=event.run or "run", status="running")
         if event.type == "run_stopping":
-            return cls(run_id=event.run_id or "run", status="canceling")
+            return cls(run_id=event.run or "run", status="canceling")
         run_end = cast(RunEnd, event)
         return cls(
-            run_id=run_end.run_id or "run",
+            run_id=run_end.run or "run",
             status=cls._display_status(run_end.status),
             error=friendly_error(run_end.error) if run_end.error else "",
         )
 
     def update(self, event: RunBegin | RunStopping | RunEnd) -> None:
-        self.run_id = event.run_id or self.run_id
+        self.run_id = event.run or self.run_id
         if event.type == "run_begin":
             self.status = "running"
             self.error = ""
@@ -346,10 +347,10 @@ class DefaultStepBlock(MutableBlock):
     @classmethod
     def create(cls, event: StepBegin) -> "DefaultStepBlock":
         step_kind = event.kind
-        payload = event.metadata
+        payload = event.context
         return cls(
-            run_id=event.run_id,
-            index=event.step_index,
+            run_id=trace_run(event.step),
+            index=trace_index(event.step) or 0,
             step_kind=step_kind,
             label=cls._initial_label(step_kind, payload),
         )
@@ -364,7 +365,7 @@ class DefaultStepBlock(MutableBlock):
                 if target
                 else f"running {target_kind}"
             )
-        if step_kind in {"step", "parallel", "bind"}:
+        if step_kind in {"seq", "par", "unfold", "map", "filter", "sort", "fold"}:
             return f"running {as_text(payload.get('op')) or 'flow'}"
         if step_kind == "system":
             return (
@@ -377,21 +378,21 @@ class DefaultStepBlock(MutableBlock):
     def update(
         self, event: StepBegin | PartBegin | PartDelta | PartEnd | StepEnd
     ) -> None:
-        self.run_id = event.run_id or self.run_id
+        self.run_id = _event_run_id(event) or self.run_id
         if event.type == "part_delta":
             part_delta = cast(PartDelta, event)
             delta = part_delta.delta
             if not isinstance(delta, TextDelta):
                 return
             if delta.text:
-                self.part_deltas.setdefault(part_delta.part_index, []).append(
+                self.part_deltas.setdefault(part_delta.part, []).append(
                     delta.text
                 )
             return
         if event.type == "step_end":
             step_end = cast(StepEnd, event)
             self.status = "completed"
-            payload = step_end.payload.to_data()
+            payload = step_end.detail
             self.error = step_end.error or ""
             self.final_label = self._final_label(payload)
 
@@ -422,7 +423,7 @@ class DefaultStepBlock(MutableBlock):
         if kind == "run":
             return Text.from_markup(f"[dim]{escape(f'{marker} ran {final_label}')}[/]")
 
-        if kind in {"step", "parallel", "bind"}:
+        if kind in {"seq", "par", "unfold", "map", "filter", "sort", "fold"}:
             return Text.from_markup(f"[dim]{escape(f'{marker} ran {final_label}')}[/]")
 
         if kind in {"system", "error"}:
@@ -440,11 +441,11 @@ class DefaultStepBlock(MutableBlock):
             return "›"
         if self.step_kind == "run":
             return "›"
-        if self.step_kind == "step":
+        if self.step_kind == "seq":
             return "-"
-        if self.step_kind == "parallel":
+        if self.step_kind == "par":
             return "..."
-        if self.step_kind == "bind":
+        if self.step_kind in {"unfold", "map", "filter", "sort", "fold"}:
             return "->"
         if self.step_kind == "system":
             return "◇"
@@ -478,27 +479,23 @@ class FlowStepBlock(MutableBlock):
 
     @classmethod
     def create(cls, event: StepBegin) -> "FlowStepBlock":
-        summary = flow_op_summary(event.metadata) or cls._fallback_summary(
-            event.kind, event.metadata
-        )
+        summary = cls._summary(event.kind, event.context)
         return cls(
-            run_id=event.run_id,
-            index=event.step_index,
+            run_id=trace_run(event.step),
+            index=trace_index(event.step) or 0,
             step_kind=event.kind,
             summary=summary,
         )
 
     def update(self, event: StepBegin | PartBegin | PartDelta | PartEnd | StepEnd) -> None:
-        self.run_id = event.run_id or self.run_id
+        self.run_id = _event_run_id(event) or self.run_id
         if event.type != "step_end":
             return
         step_end = cast(StepEnd, event)
         self.status = step_end.status
         self.error = step_end.error or ""
-        payload = step_end.payload.to_data()
-        self.summary = flow_op_summary(payload) or self._fallback_summary(
-            step_end.kind, payload
-        )
+        payload = step_end.detail
+        self.summary = self._summary(step_end.kind, payload)
 
     def render(self) -> RenderableType:
         marker = self._marker()
@@ -518,20 +515,32 @@ class FlowStepBlock(MutableBlock):
         return Text.from_markup(f"[dim]{escape(f'{marker} ran {summary}')}[/]")
 
     def _marker(self) -> str:
-        if self.step_kind == "parallel":
+        if self.step_kind == "par":
             return "..."
-        if self.step_kind == "bind":
+        if self.step_kind in {"unfold", "map", "filter", "sort", "fold"}:
             return "->"
         return "-"
 
     @staticmethod
     def _fallback_summary(step_kind: str, payload: Mapping[str, Any]) -> str:
+        source = payload.get("source")
+        if isinstance(source, Mapping):
+            payload = {**dict(source), **dict(payload)}
         return (
             as_text(payload.get("stage_label"))
             or as_text(payload.get("op"))
             or step_kind
             or "flow step"
         )
+
+    @classmethod
+    def _summary(cls, step_kind: str, payload: Mapping[str, Any]) -> str:
+        source = payload.get("source")
+        if isinstance(source, Mapping):
+            payload = {**dict(source), **dict(payload)}
+        if "output_preview" not in payload and "preview" in payload:
+            payload = {**dict(payload), "output_preview": payload["preview"]}
+        return flow_op_summary(payload) or cls._fallback_summary(step_kind, payload)
 
 
 @dataclass(slots=True)
@@ -546,21 +555,21 @@ class ChildRunStepBlock(MutableBlock):
 
     @classmethod
     def create(cls, event: StepBegin) -> "ChildRunStepBlock":
-        payload = _child_summary_payload(event.metadata)
+        payload = _child_summary_payload(event.context)
         return cls(
-            run_id=event.run_id,
-            index=event.step_index,
+            run_id=trace_run(event.step),
+            index=trace_index(event.step) or 0,
             summary=child_call_summary(payload) or cls._fallback_summary(payload),
         )
 
     def update(self, event: StepBegin | PartBegin | PartDelta | PartEnd | StepEnd) -> None:
-        self.run_id = event.run_id or self.run_id
+        self.run_id = _event_run_id(event) or self.run_id
         if event.type != "step_end":
             return
         step_end = cast(StepEnd, event)
         self.status = step_end.status
         self.error = step_end.error or ""
-        payload = _child_summary_payload(step_end.payload.to_data())
+        payload = _child_summary_payload(step_end.detail)
         self.summary = child_call_summary(payload) or self._fallback_summary(payload)
 
     def render(self) -> RenderableType:
@@ -598,10 +607,10 @@ class ModelStepBlock(MutableBlock):
 
     @classmethod
     def create(cls, event: StepBegin) -> "ModelStepBlock":
-        payload = event.metadata
+        payload = event.context
         return cls(
-            run_id=event.run_id,
-            index=event.step_index,
+            run_id=trace_run(event.step),
+            index=trace_index(event.step) or 0,
             model=as_text(payload.get("model_ref"))
             or as_text(payload.get("model"))
             or "",
@@ -610,7 +619,7 @@ class ModelStepBlock(MutableBlock):
     def update(
         self, event: StepBegin | PartBegin | PartDelta | PartEnd | StepEnd
     ) -> None:
-        self.run_id = event.run_id or self.run_id
+        self.run_id = _event_run_id(event) or self.run_id
         if event.type == "part_delta":
             delta = cast(PartDelta, event).delta
             if isinstance(delta, TextDelta):
@@ -620,7 +629,7 @@ class ModelStepBlock(MutableBlock):
             self.status = "completed"
             self.output = _parts_text(step_end.output)
             self.tool_requests = self._tool_request_summary(step_end)
-            payload = step_end.payload.to_data()
+            payload = step_end.detail
             self.model = (
                 as_text(payload.get("model_ref"))
                 or as_text(payload.get("model"))
@@ -715,12 +724,16 @@ class ToolStepBlock(MutableBlock):
 
     @classmethod
     def create(cls, event: StepBegin) -> "ToolStepBlock":
-        return cls(run_id=event.run_id, index=event.step_index, detail="tool")
+        return cls(
+            run_id=trace_run(event.step),
+            index=trace_index(event.step) or 0,
+            detail="tool",
+        )
 
     def update(
         self, event: StepBegin | PartBegin | PartDelta | PartEnd | StepEnd
     ) -> None:
-        self.run_id = event.run_id or self.run_id
+        self.run_id = _event_run_id(event) or self.run_id
         if event.type != "step_end":
             return
         step_end = cast(StepEnd, event)
@@ -915,6 +928,23 @@ def _tool_call_display_from_parts(parts: Sequence[Part]) -> str:
 
 def _child_summary_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     data = dict(payload)
+    source = data.get("source")
+    if isinstance(source, Mapping):
+        data = {**dict(source), **data, "metadata": dict(source)}
+    target = data.get("target")
+    if isinstance(target, Mapping):
+        data.setdefault("target_kind", target.get("kind"))
+        data.setdefault("target", target.get("name"))
+    child_runs = data.get("child_runs")
+    if isinstance(child_runs, Sequence) and not isinstance(child_runs, str):
+        data.setdefault("child_run_ids", list(child_runs))
+    lane = data.get("lane")
+    if isinstance(lane, Mapping):
+        data.setdefault("lane_index", lane.get("index"))
+        data.setdefault("parallelism", lane.get("count"))
+    item = data.get("item")
+    if isinstance(item, Mapping):
+        data.setdefault("item_index", item.get("index"))
     if "item_indexes" not in data and data.get("item_index") is not None:
         data["item_indexes"] = [data["item_index"]]
     return data
@@ -936,6 +966,14 @@ def _tool_call_display(name: str, tool_input: dict[str, Any]) -> str:
 
 def _message_text(message: Message) -> str:
     return message_text(message.parts).strip()
+
+
+def _event_run_id(event: TraceEvent) -> str | None:
+    if isinstance(event, (RunStarting, RunWaiting, RunSteering, RunStopping, RunBegin, RunEnd)):
+        return event.run
+    if isinstance(event, (StepBegin, PartBegin, PartDelta, PartEnd, StepEnd)):
+        return trace_run(event.step)
+    return None
 
 
 def _parts_text(parts: Sequence[Part]) -> str:

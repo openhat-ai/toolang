@@ -26,7 +26,7 @@ def flow_op_summary(payload: Mapping[str, Any]) -> str:
 
     label = stage_label(payload)
     phase = _flow_op_phase(_text(payload.get("op")))
-    count = _preview_count(payload.get("output_preview"))
+    count = _preview_count(payload.get("output_preview") or payload.get("preview"))
     return " ".join(item for item in (label, phase, count) if item)
 
 
@@ -43,12 +43,16 @@ def child_call_summary(payload: Mapping[str, Any]) -> str:
 def child_leaf_summary(payload: Mapping[str, Any]) -> str:
     """Return a child-call summary relative to its parent stage."""
 
+    target_payload = _mapping(payload.get("target"))
+    flat_target = payload.get("target")
     target = executable_label(
-        _text(payload.get("target_kind")) or "run",
-        _text(payload.get("target")),
-        metadata=_mapping(payload.get("metadata")),
+        _text(payload.get("target_kind")) or _text(target_payload.get("kind")) or "run",
+        (None if isinstance(flat_target, Mapping) else _text(flat_target))
+        or _text(target_payload.get("name")),
+        metadata=_stage_context(payload),
     )
-    children = ", ".join(item for item in (_text(raw) for raw in _sequence(payload.get("child_run_ids"))) if item)
+    child_ids = _sequence(payload.get("child_run_ids")) or _sequence(payload.get("child_runs"))
+    children = ", ".join(item for item in (_text(raw) for raw in child_ids) if item)
     lane = lane_label(payload)
     return " ".join(item for item in (lane, target, children) if item)
 
@@ -56,19 +60,10 @@ def child_leaf_summary(payload: Mapping[str, Any]) -> str:
 def stage_label(payload: Mapping[str, Any]) -> str:
     """Return one stage label from a step payload or child metadata."""
 
-    metadata = _mapping(payload.get("metadata"))
-    child = _child_metadata(payload, metadata)
-    stage_index = _int_or_none(payload.get("stage_index"))
-    if stage_index is None:
-        stage_index = _int_or_none(metadata.get("stage_index"))
-    if stage_index is None:
-        stage_index = _int_or_none(child.get("stage_index"))
-    stage_kind = _text(payload.get("stage_kind")) or _text(metadata.get("stage_kind"))
-    if stage_kind is None:
-        stage_kind = _text(child.get("stage_kind"))
-    label = _text(payload.get("stage_label")) or _text(metadata.get("stage_label"))
-    if label is None:
-        label = _text(child.get("stage_label"))
+    ctx = _stage_context(payload)
+    stage_index = _int_or_none(ctx.get("stage_index"))
+    stage_kind = _text(ctx.get("stage_kind"))
+    label = _text(ctx.get("stage_label"))
     if label is None and stage_kind is not None:
         label = stage_kind
     if label is None:
@@ -81,28 +76,29 @@ def stage_label(payload: Mapping[str, Any]) -> str:
 def lane_label(payload: Mapping[str, Any]) -> str:
     """Return a compact lane/item label when a stage child was parallelized."""
 
-    metadata = _mapping(payload.get("metadata"))
-    child = _child_metadata(payload, metadata)
+    ctx = _stage_context(payload)
+    lane = _mapping(payload.get("lane"))
+    item = _mapping(payload.get("item"))
     lane_index = _int_or_none(payload.get("lane_index"))
     if lane_index is None:
-        lane_index = _int_or_none(metadata.get("lane_index"))
+        lane_index = _int_or_none(lane.get("index"))
     if lane_index is None:
-        lane_index = _int_or_none(child.get("lane_index"))
+        lane_index = _int_or_none(ctx.get("lane_index"))
     parallelism = _int_or_none(payload.get("parallelism"))
     if parallelism is None:
-        parallelism = _int_or_none(metadata.get("parallelism"))
+        parallelism = _int_or_none(lane.get("count"))
     if parallelism is None:
-        parallelism = _int_or_none(child.get("parallelism"))
+        parallelism = _int_or_none(ctx.get("parallelism"))
     item_index = _first_item_index(payload)
     if item_index is None:
-        item_index = _int_or_none(metadata.get("item_index"))
+        item_index = _int_or_none(item.get("index"))
     if item_index is None:
-        item_index = _int_or_none(child.get("item_index"))
+        item_index = _int_or_none(ctx.get("item_index"))
     item_count = _int_or_none(payload.get("item_count"))
     if item_count is None:
-        item_count = _int_or_none(metadata.get("item_count"))
+        item_count = _int_or_none(item.get("count"))
     if item_count is None:
-        item_count = _int_or_none(child.get("item_count"))
+        item_count = _int_or_none(ctx.get("item_count"))
     pieces: list[str] = []
     if lane_index is not None and parallelism and parallelism > 1:
         pieces.append(f"lane {lane_index + 1}/{parallelism}")
@@ -139,6 +135,24 @@ def _first_item_index(payload: Mapping[str, Any]) -> int | None:
         if value is not None:
             return value
     return None
+
+
+def _stage_context(payload: Mapping[str, Any]) -> dict[str, Any]:
+    ctx: dict[str, Any] = {}
+    for value in (
+        _mapping(payload.get("metadata")),
+        _mapping(payload.get("source")),
+        _child_metadata(payload, _mapping(payload.get("metadata"))),
+    ):
+        ctx.update(value)
+    ctx.update(
+        {
+            key: value
+            for key, value in payload.items()
+            if key not in {"metadata", "source", "child", "target", "lane", "item"}
+        }
+    )
+    return ctx
 
 
 def _source_line(metadata: Mapping[str, Any] | None) -> int | None:

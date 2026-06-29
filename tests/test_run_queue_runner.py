@@ -12,7 +12,7 @@ import socket
 import threading
 import time
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 from unittest.mock import patch
 
 from fastapi import FastAPI
@@ -64,13 +64,7 @@ from toolang.execution.context import (
     SnapshotTask,
     SnapshotTaskServices,
 )
-from toolang.execution.records import (
-    ModelCallStepPayload,
-    CommandRef,
-    RuntimeStepPayload,
-    StepOutputRef,
-    ToolCallStepPayload,
-)
+from toolang.execution.records import InputRef, OutputRef, StepKind, trace_child_path
 from toolang.base.types.sandbox import (
     SandboxPlan,
     SandboxSelector,
@@ -175,16 +169,14 @@ def test_runner_enqueue_emits_waiting_trace_event_to_response() -> None:
     assert isinstance(response.events[0], RunStarting)
     waiting = response.events[1]
     assert isinstance(waiting, RunWaiting)
-    assert waiting.run_id == "run_queuedtest"
-    assert waiting.thread_id == "term_queue"
-    assert waiting.origin == "chat"
-    assert waiting.group == "chat"
-    assert waiting.request_id == "req_queue"
-    assert waiting.executable_kind == "flow"
-    assert waiting.executable_name == "research"
-    assert waiting.reason == "queue"
-    assert waiting.position == 1
-    assert isinstance(waiting.created_at, str)
+    assert waiting.run == "run_queuedtest"
+    assert waiting.context == {
+        "origin": "chat",
+        "group": "chat",
+        "thread": "term_queue",
+        "request_id": "req_queue",
+        "executable": {"kind": "flow", "name": "research"},
+    }
 
 
 def test_runner_control_command_notifies_response_and_events(tmp_path: Path) -> None:
@@ -217,7 +209,7 @@ def test_runner_control_command_notifies_response_and_events(tmp_path: Path) -> 
         started_at="2026-01-01T00:00:00Z",
     )
     command = context.store.append_command(
-        run_id=run.run_id, kind="stop", mode="immediate"
+        run_id=run.run_id, kind="stop", mode="now"
     )
     payload = {
         "run_id": run.run_id,
@@ -343,18 +335,17 @@ def test_sse_response_sink_streams_canceled_run_end() -> None:
         response = SseResponseSink(thread_id="thread-1")
         response.on_event(
             RunBegin(
-                run_id="run-1",
-                origin="chat",
-                thread_id="thread-1",
+                run="run-1",
+                parent=None,
+                thread="thread-1",
                 input=Message.user("hello"),
-                created_at="2026-01-01T00:00:00Z",
+                context={"origin": "chat"},
                 started_at="2026-01-01T00:00:00Z",
             )
         )
         response.on_event(
             RunEnd(
-                run_id="run-1",
-                thread_id="thread-1",
+                run="run-1",
                 status="canceled",
                 finished_at="2026-01-01T00:00:01Z",
             )
@@ -749,21 +740,13 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
                 run_detail["output"]["steps"][0]["message"]["parts"][0]["text"]
                 == "assistant:say hello"
             )
-            payload = run_detail["output"]["steps"][0]["record"]["payload"]
-            instruct_hash = payload["instruct"]
-            context_hash = payload["context"]
+            record_context = run_detail["output"]["steps"][0]["record"]["context"]
+            instruct_hash = record_context["instruct"]
+            context_hash = record_context["prompt_context"]
             assert isinstance(instruct_hash, str) and instruct_hash
             assert isinstance(context_hash, str) and context_hash
-            instruct = client.get(f"/api/v1/instruct/{instruct_hash}").json()
-            context_prompt = client.get(f"/api/v1/context/{context_hash}").json()
-            assert instruct == {
-                "hash": instruct_hash,
-                "body": "You are a helpful assistant.",
-            }
-            assert context_prompt == {
-                "hash": context_hash,
-                "body": "Context for this run.",
-            }
+            assert instruct_hash == "You are a helpful assistant."
+            assert context_hash == "Context for this run."
             assert (
                 client.get(f"/api/v1/instructions/{instruct_hash}").status_code == 404
             )
@@ -926,18 +909,18 @@ def test_agent_events_include_thread_updates_for_run_lifecycle(tmp_path: Path) -
 
     context.events.publish_trace(
         RunBegin(
-            run_id="run-1",
-            origin="chat",
-            thread_id="thread-1",
+            run="run-1",
+            parent=None,
+            thread="thread-1",
             input=Message.user("hello"),
+            context={"origin": "chat"},
             created_at="2026-01-01T00:00:00Z",
             started_at="2026-01-01T00:00:00Z",
         )
     )
     context.events.publish_trace(
         RunEnd(
-            run_id="run-1",
-            thread_id="thread-1",
+            run="run-1",
             status="finished",
             finished_at="2026-01-01T00:00:01Z",
         )
@@ -952,7 +935,7 @@ def test_agent_events_include_thread_updates_for_run_lifecycle(tmp_path: Path) -
         "thread_update",
         "thread_update",
     ]
-    assert response["items"][0]["payload"]["run_id"] == "run-1"
+    assert response["items"][0]["payload"]["run"] == "run-1"
     assert response["items"][0]["payload"]["status"] == "running"
     assert response["items"][1]["payload"]["status"] == "finished"
 
@@ -968,21 +951,18 @@ def test_run_starting_trace_precedes_run_begin(tmp_path: Path) -> None:
 
     context.events.publish_trace(
         RunStarting(
-            run_id="run-1",
-            origin="chat",
-            thread_id="thread-1",
+            run="run-1",
             input=Message.user("hello"),
-            request_id="req-start",
-            accepted_at="2026-01-01T00:00:00Z",
+            context={"origin": "chat", "thread": "thread-1", "request_id": "req-start"},
         )
     )
     context.events.publish_trace(
         RunBegin(
-            run_id="run-1",
-            origin="chat",
-            thread_id="thread-1",
+            run="run-1",
+            parent=None,
+            thread="thread-1",
             input=Message.user("hello"),
-            request_id="req-start",
+            context={"origin": "chat", "request_id": "req-start"},
             created_at="2026-01-01T00:00:00Z",
             started_at="2026-01-01T00:00:00Z",
         )
@@ -993,13 +973,9 @@ def test_run_starting_trace_precedes_run_begin(tmp_path: Path) -> None:
     assert [item.type for item in events] == ["run_starting", "run_begin"]
     assert [item.seq for item in events] == [1, 2]
     assert events[0].payload == {
-        "run_id": "run-1",
-        "origin": "chat",
-        "thread_id": "thread-1",
+        "run": "run-1",
         "input": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
-        "accepted_at": "2026-01-01T00:00:00Z",
-        "request_id": "req-start",
-        "type": "run_starting",
+        "context": {"origin": "chat", "thread": "thread-1", "request_id": "req-start"},
     }
 
 
@@ -1039,10 +1015,9 @@ def test_steer_run_appends_run_steering_event(tmp_path: Path) -> None:
     assert response["input"]["kind"] == "steer"
     assert response["input"]["request_id"] == "req-steer"
     assert [item["type"] for item in events] == ["run_steering"]
-    assert events[0]["payload"]["index"] == 1
-    assert events[0]["payload"]["mode"] == "next_step"
-    assert events[0]["payload"]["request_id"] == "req-steer"
-    assert events[0]["payload"]["message"]["parts"] == [
+    assert events[0]["payload"]["context"]["cmd"] == 1
+    assert events[0]["payload"]["context"]["request_id"] == "req-steer"
+    assert events[0]["payload"]["input"]["parts"] == [
         {"type": "text", "text": "focus on events"}
     ]
 
@@ -1079,31 +1054,26 @@ def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
         )
         context.events.publish_trace(
             StepBegin(
-                run_id="run-1",
-                thread_id="thread-1",
-                step_index=2,
+                step="run-1/2",
                 kind="model",
-                input=(StepOutputRef(step_index=1), CommandRef(index=1)),
+                input=(OutputRef(step="run-1/1"), InputRef(cmd=1)),
                 started_at="2026-01-01T00:00:01Z",
-                instruct="call prompt",
-                context="call context",
+                context={"instruct": "call prompt", "prompt_context": "call context"},
             )
         )
         events = client.get("/api/v1/threads/thread-1/events").json()["items"]
 
     assert [item["type"] for item in events] == ["run_steering", "step_begin"]
     assert [item["cursor"] for item in events] == [1, 2]
-    assert events[0]["payload"]["index"] == 1
+    assert events[0]["payload"]["context"]["cmd"] == 1
     assert events[1]["payload"]["input"] == [
-        {"kind": "step", "index": 1},
-        {"kind": "command", "index": 1},
+        {"step": "run-1/1"},
+        {"cmd": 1},
     ]
-    assert (
-        events[1]["payload"]["instruct"] == hashlib.sha256(b"call prompt").hexdigest()
-    )
-    assert (
-        events[1]["payload"]["context"] == hashlib.sha256(b"call context").hexdigest()
-    )
+    assert events[1]["payload"]["context"] == {
+        "instruct": "call prompt",
+        "prompt_context": "call context",
+    }
 
 
 def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
@@ -1137,15 +1107,10 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
         step_index=2,
         kind="model",
         status="finished",
-        input=(StepOutputRef(step_index=1), CommandRef(index=1)),
+        input=(_output_ref("run-1", 1), InputRef(cmd=1)),
         output=(TextPart(text="ok"),),
-        payload=ModelCallStepPayload(
-            model_ref="gpt-5",
-            input_tokens=0,
-            output_tokens=0,
-            instruct=instruct_hash,
-            context=context_hash,
-        ),
+        detail={"model_ref": "gpt-5", "usage": {"input_tokens": 0, "output_tokens": 0}},
+        context={"instruct": instruct_hash, "prompt_context": context_hash},
         started_at="2026-01-01T00:00:02Z",
         finished_at="2026-01-01T00:00:03Z",
     )
@@ -1155,12 +1120,12 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
         detail = client.get("/api/v1/runs/run-1").json()
 
     assert detail["output"]["steps"][0]["record"]["input"] == [
-        {"kind": "step", "index": 1},
-        {"kind": "command", "index": 1},
+        {"step": "run-1/1"},
+        {"cmd": 1},
     ]
-    assert detail["prompts"] == {
-        instruct_hash: "model instructions",
-        context_hash: "model context",
+    assert detail["output"]["steps"][0]["record"]["context"] == {
+        "instruct": instruct_hash,
+        "prompt_context": context_hash,
     }
 
 
@@ -1217,10 +1182,11 @@ def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
         persist,
         None,
         RunBegin(
-            run_id="run-1",
-            origin="chat",
-            thread_id="thread-1",
+            run="run-1",
+            parent=None,
+            thread="thread-1",
             input=Message.user("hello"),
+            context={"origin": "chat"},
             created_at="2026-01-01T00:00:00Z",
             started_at="2026-01-01T00:00:00Z",
         ),
@@ -1249,8 +1215,7 @@ def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
         persist,
         None,
         RunEnd(
-            run_id="run-1",
-            thread_id="thread-1",
+            run="run-1",
             status="canceled",
             error="User stopped the run.",
             finished_at="2026-01-01T00:00:02Z",
@@ -1906,7 +1871,7 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
         step_index=1,
         kind="model",
         status="finished",
-        input=(CommandRef(),),
+        input=(InputRef(),),
         output=(
             ToolCallPart(
                 tool_call_id="call-1",
@@ -1915,11 +1880,7 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
                 input={"command": "pwd"},
             ),
         ),
-        payload=ModelCallStepPayload(
-            model_ref="gpt-5",
-            input_tokens=11,
-            output_tokens=7,
-        ),
+        detail=_model_detail(input_tokens=11, output_tokens=7),
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
@@ -1928,7 +1889,7 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
         step_index=2,
         kind="tool",
         status="finished",
-        input=(StepOutputRef(step_index=1, part_index=0),),
+        input=(_output_ref(term_run.run_id, 1, 0),),
         output=(
             ToolResultPart(
                 tool_call_id="call-1",
@@ -1937,7 +1898,7 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
                 output={"cwd": "/tmp"},
             ),
         ),
-        payload=ToolCallStepPayload(),
+        detail={"tool": "shell"},
         started_at="2026-01-01T00:00:03Z",
         finished_at="2026-01-01T00:00:04Z",
     )
@@ -1946,13 +1907,9 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
         step_index=3,
         kind="model",
         status="finished",
-        input=(CommandRef(), StepOutputRef(step_index=2)),
+        input=(InputRef(), _output_ref(term_run.run_id, 2)),
         output=(TextPart(text="done"),),
-        payload=ModelCallStepPayload(
-            model_ref="gpt-5",
-            input_tokens=3,
-            output_tokens=5,
-        ),
+        detail=_model_detail(input_tokens=3, output_tokens=5),
         started_at="2026-01-01T00:00:05Z",
         finished_at="2026-01-01T00:00:06Z",
     )
@@ -2049,9 +2006,10 @@ def test_chat_returns_failed_run_as_assistant_message(tmp_path: Path) -> None:
                 "status": "failed",
                 "input": [],
                 "output": [{"type": "text", "text": "model boom"}],
+                "context": {},
+                "detail": {},
                 "started_at": run_detail["info"]["finished_at"],
                 "finished_at": run_detail["info"]["finished_at"],
-                "payload": {},
                 "error": "model boom",
             },
             "message": None,
@@ -2078,7 +2036,7 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
         step_index=1,
         kind="tool",
         status="finished",
-        input=(CommandRef(),),
+        input=(InputRef(),),
         output=(
             ToolResultPart(
                 tool_call_id="call-1",
@@ -2088,7 +2046,7 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
                 output={"ok": True},
             ),
         ),
-        payload=ToolCallStepPayload(),
+        detail={"tool": "service_use__tool_call"},
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
@@ -2134,9 +2092,12 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
                     "text": "Model tool loop exceeded the maximum number of rounds.",
                 }
             ],
+            "context": {},
+            "detail": {
+                "message": "Model tool loop exceeded the maximum number of rounds."
+            },
             "started_at": "2026-01-01T00:00:03Z",
             "finished_at": "2026-01-01T00:00:03Z",
-            "payload": {},
             "error": "Model tool loop exceeded the maximum number of rounds.",
         },
         "message": None,
@@ -2367,7 +2328,7 @@ flow research(in: Text):
     assert stream_text.count('"type":"message-metadata"') == 1
     assert '"type":"step_begin"' in stream_text
     assert '"type":"step_end"' in stream_text
-    assert '"kind":"step"' in stream_text
+    assert '"kind":"seq"' in stream_text
     assert '"kind":"run"' in stream_text
     assert '"type":"finish"' in stream_text
     assert "data: [DONE]" in stream_text
@@ -2678,68 +2639,54 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
         )
         on_event(
             PartBegin(
-                run_id="run-1",
-                thread_id="script_tg_123",
-                step_index=1,
-                part_index=0,
-                kind="tool_call",
+                step="run-1/1",
+                part=0,
+                type_="tool_call",
             )
         )
         on_event(
             PartBegin(
-                run_id="run-1",
-                thread_id="script_tg_123",
-                step_index=1,
-                part_index=1,
-                kind="text",
+                step="run-1/1",
+                part=1,
+                type_="text",
             )
         )
         on_event(
             PartDelta(
-                run_id="run-1",
-                thread_id="script_tg_123",
-                step_index=1,
-                part_index=1,
+                step="run-1/1",
+                part=1,
                 delta=TextDelta(text="hel"),
             )
         )
         time.sleep(0.02)
         on_event(
             PartDelta(
-                run_id="run-1",
-                thread_id="script_tg_123",
-                step_index=1,
-                part_index=1,
+                step="run-1/1",
+                part=1,
                 delta=TextDelta(text="lo"),
             )
         )
         time.sleep(0.02)
         on_event(
             PartDelta(
-                run_id="run-1",
-                thread_id="script_tg_123",
-                step_index=1,
-                part_index=1,
+                step="run-1/1",
+                part=1,
                 delta=TextDelta(text=" world"),
             )
         )
         time.sleep(0.02)
         on_event(
             PartDelta(
-                run_id="run-1",
-                thread_id="script_tg_123",
-                step_index=1,
-                part_index=1,
+                step="run-1/1",
+                part=1,
                 delta=TextDelta(text=" and more"),
             )
         )
         time.sleep(0.02)
         on_event(
             PartDelta(
-                run_id="run-1",
-                thread_id="script_tg_123",
-                step_index=1,
-                part_index=1,
+                step="run-1/1",
+                part=1,
                 delta=TextDelta(text=" from telegram"),
             )
         )
@@ -2861,29 +2808,23 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
         )
         on_event(
             PartBegin(
-                run_id="run-1",
-                thread_id="script_tg_123",
-                step_index=1,
-                part_index=0,
-                kind="text",
+                step="run-1/1",
+                part=0,
+                type_="text",
             )
         )
         on_event(
             PartDelta(
-                run_id="run-1",
-                thread_id="script_tg_123",
-                step_index=1,
-                part_index=0,
+                step="run-1/1",
+                part=0,
                 delta=TextDelta(text="hello"),
             )
         )
         time.sleep(0.02)
         on_event(
             PartDelta(
-                run_id="run-1",
-                thread_id="script_tg_123",
-                step_index=1,
-                part_index=0,
+                step="run-1/1",
+                part=0,
                 delta=TextDelta(text=" world"),
             )
         )
@@ -3171,6 +3112,11 @@ def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
         captured["shutdown_signal"] = shutdown_signal
 
     monkeypatch.setattr("toolang.up._run_uvicorn_app", fake_run_uvicorn_app)
+    monkeypatch.setattr(
+        caps,
+        "_fetch_github_directory",
+        lambda _ref: {"SKILL.md": b"---\ndescription: PDF work\n---\n# PDF\n"},
+    )
 
     result = run_experiments_up(
         toolang_root=toolang_root,
@@ -6967,11 +6913,9 @@ def test_script_run_can_simulate_history_with_explicit_message_blocks(
         step_index=1,
         kind="model",
         status="finished",
-        input=(CommandRef(),),
+        input=(InputRef(),),
         output=(TextPart(text="stored answer should not appear"),),
-        payload=ModelCallStepPayload(
-            model_ref="gpt-5", input_tokens=0, output_tokens=0
-        ),
+        detail=_model_detail(),
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
@@ -7596,13 +7540,9 @@ def test_execution_store_records_runs_steps_and_messages(tmp_path: Path) -> None
             step_index=1,
             kind="model",
             status="finished",
-            input=(CommandRef(),),
+            input=(InputRef(),),
             output=(TextPart(text="assistant:hello"),),
-            payload=ModelCallStepPayload(
-                model_ref="gpt-5",
-                input_tokens=0,
-                output_tokens=0,
-            ),
+            detail=_model_detail(),
             started_at="2026-01-01T00:00:01Z",
             finished_at="2026-01-01T00:00:02Z",
         )
@@ -7698,7 +7638,7 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
             step_index=1,
             kind="model",
             status="finished",
-            input=(CommandRef(),),
+            input=(InputRef(),),
             output=(
                 ToolCallPart(
                     tool_call_id="tool-1",
@@ -7707,11 +7647,7 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
                     input={"a": 7, "b": 8},
                 ),
             ),
-            payload=ModelCallStepPayload(
-                model_ref="gpt-5",
-                input_tokens=0,
-                output_tokens=0,
-            ),
+            detail=_model_detail(),
             started_at="2026-01-01T00:00:01Z",
             finished_at="2026-01-01T00:00:02Z",
         )
@@ -7720,7 +7656,7 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
             step_index=2,
             kind="tool",
             status="finished",
-            input=(StepOutputRef(step_index=1, part_index=0),),
+            input=(_output_ref(run.run_id, 1, 0),),
             output=(
                 ToolResultPart(
                     tool_call_id="tool-1",
@@ -7729,7 +7665,7 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
                     output={"value": 15},
                 ),
             ),
-            payload=ToolCallStepPayload(),
+            detail={"tool": "math_add"},
             started_at="2026-01-01T00:00:03Z",
             finished_at="2026-01-01T00:00:04Z",
         )
@@ -7738,13 +7674,9 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
             step_index=3,
             kind="model",
             status="finished",
-            input=(StepOutputRef(step_index=2),),
+            input=(_output_ref(run.run_id, 2),),
             output=(TextPart(text="15"),),
-            payload=ModelCallStepPayload(
-                model_ref="gpt-5",
-                input_tokens=0,
-                output_tokens=0,
-            ),
+            detail=_model_detail(),
             started_at="2026-01-01T00:00:05Z",
             finished_at="2026-01-01T00:00:06Z",
         )
@@ -7807,7 +7739,7 @@ def test_execution_store_does_not_return_orphan_tool_history_when_limited(
             step_index=1,
             kind="model",
             status="finished",
-            input=(CommandRef(),),
+            input=(InputRef(),),
             output=(
                 ToolCallPart(
                     tool_call_id="tool-1",
@@ -7816,9 +7748,7 @@ def test_execution_store_does_not_return_orphan_tool_history_when_limited(
                     input={"a": 7, "b": 8},
                 ),
             ),
-            payload=ModelCallStepPayload(
-                model_ref="gpt-5", input_tokens=0, output_tokens=0
-            ),
+            detail=_model_detail(),
             started_at="2026-01-01T00:00:01Z",
             finished_at="2026-01-01T00:00:02Z",
         )
@@ -7827,7 +7757,7 @@ def test_execution_store_does_not_return_orphan_tool_history_when_limited(
             step_index=2,
             kind="tool",
             status="finished",
-            input=(StepOutputRef(step_index=1, part_index=0),),
+            input=(_output_ref(run.run_id, 1, 0),),
             output=(
                 ToolResultPart(
                     tool_call_id="tool-1",
@@ -7836,7 +7766,7 @@ def test_execution_store_does_not_return_orphan_tool_history_when_limited(
                     output={"value": 15},
                 ),
             ),
-            payload=ToolCallStepPayload(),
+            detail={"tool": "math_add"},
             started_at="2026-01-01T00:00:03Z",
             finished_at="2026-01-01T00:00:04Z",
         )
@@ -7845,11 +7775,9 @@ def test_execution_store_does_not_return_orphan_tool_history_when_limited(
             step_index=3,
             kind="model",
             status="finished",
-            input=(StepOutputRef(step_index=2),),
+            input=(_output_ref(run.run_id, 2),),
             output=(TextPart(text="15"),),
-            payload=ModelCallStepPayload(
-                model_ref="gpt-5", input_tokens=0, output_tokens=0
-            ),
+            detail=_model_detail(),
             started_at="2026-01-01T00:00:05Z",
             finished_at="2026-01-01T00:00:06Z",
         )
@@ -7878,12 +7806,10 @@ def test_execution_store_replays_model_reasoning_content(tmp_path: Path) -> None
             step_index=1,
             kind="model",
             status="finished",
-            input=(CommandRef(),),
+            input=(InputRef(),),
             output=(TextPart(text="Listing files now."),),
-            payload=ModelCallStepPayload(
-                model_ref="deepseek/deepseek-v4-flash",
-                input_tokens=0,
-                output_tokens=0,
+            detail=_model_detail(
+                "deepseek/deepseek-v4-flash",
                 provider="deepseek",
                 model="deepseek-v4-flash",
                 adapter="chat_completions",
@@ -7921,7 +7847,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         step_index=1,
         kind="model",
         status="finished",
-        input=(CommandRef(),),
+        input=(InputRef(),),
         output=(
             ToolCallPart(
                 tool_call_id="tool-list-call",
@@ -7931,9 +7857,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
                 input={"service": "linear"},
             ),
         ),
-        payload=ModelCallStepPayload(
-            model_ref="gpt-5", input_tokens=0, output_tokens=0
-        ),
+        detail=_model_detail(),
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
@@ -7942,7 +7866,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         step_index=2,
         kind="tool",
         status="finished",
-        input=(StepOutputRef(step_index=1, part_index=0),),
+        input=(_output_ref(previous.run_id, 1, 0),),
         output=(
             ToolResultPart(
                 tool_call_id="tool-list-call",
@@ -7978,7 +7902,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
                 },
             ),
         ),
-        payload=ToolCallStepPayload(),
+        detail={"tool": "service_use__tool_list"},
         started_at="2026-01-01T00:00:03Z",
         finished_at="2026-01-01T00:00:04Z",
     )
@@ -7987,7 +7911,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         step_index=3,
         kind="model",
         status="finished",
-        input=(StepOutputRef(step_index=2),),
+        input=(_output_ref(previous.run_id, 2),),
         output=(
             ToolCallPart(
                 tool_call_id="empty-save-call",
@@ -7997,9 +7921,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
                 input={"service": "linear", "tool_name": "save_issue"},
             ),
         ),
-        payload=ModelCallStepPayload(
-            model_ref="gpt-5", input_tokens=0, output_tokens=0
-        ),
+        detail=_model_detail(),
         started_at="2026-01-01T00:00:05Z",
         finished_at="2026-01-01T00:00:06Z",
     )
@@ -8008,7 +7930,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         step_index=4,
         kind="tool",
         status="finished",
-        input=(StepOutputRef(step_index=3, part_index=0),),
+        input=(_output_ref(previous.run_id, 3, 0),),
         output=(
             ToolResultPart(
                 tool_call_id="empty-save-call",
@@ -8033,7 +7955,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
                 },
             ),
         ),
-        payload=ToolCallStepPayload(),
+        detail={"tool": "service_use__tool_call"},
         started_at="2026-01-01T00:00:07Z",
         finished_at="2026-01-01T00:00:08Z",
     )
@@ -8042,11 +7964,9 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         step_index=5,
         kind="model",
         status="finished",
-        input=(StepOutputRef(step_index=4),),
+        input=(_output_ref(previous.run_id, 4),),
         output=(TextPart(text="created XBY-31"),),
-        payload=ModelCallStepPayload(
-            model_ref="gpt-5", input_tokens=0, output_tokens=0
-        ),
+        detail=_model_detail(),
         started_at="2026-01-01T00:00:09Z",
         finished_at="2026-01-01T00:00:10Z",
     )
@@ -8107,11 +8027,9 @@ def test_run_input_recall_none_disables_thread_history_and_tool_context(
         step_index=1,
         kind="model",
         status="finished",
-        input=(CommandRef(),),
+        input=(InputRef(),),
         output=(TextPart(text="old answer"),),
-        payload=ModelCallStepPayload(
-            model_ref="gpt-5", input_tokens=0, output_tokens=0
-        ),
+        detail=_model_detail(),
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
@@ -8365,20 +8283,24 @@ def _started(
     *,
     run_id: str,
     thread_id: str,
-    kind: Literal["model", "tool", "system"],
+    kind: StepKind,
     input=(),
     instructions: str | None = None,
     context: str | None = None,
 ) -> StepBegin:
+    del thread_id
+    step_context: dict[str, str] = {}
+    if instructions is not None:
+        step_context["instruct"] = instructions
+    if context is not None:
+        step_context["prompt_context"] = context
     return StepBegin(
-        run_id=run_id,
-        thread_id=thread_id,
-        step_index=step_index,
+        step=trace_child_path(run_id, step_index),
         kind=kind,
-        input=tuple(input) or _default_step_input(step_index=step_index, kind=kind),
+        input=tuple(input)
+        or _default_step_input(run_id=run_id, step_index=step_index, kind=kind),
         started_at="2026-01-01T00:00:00Z",
-        instruct=instructions,
-        context=context,
+        context=step_context,
     )
 
 
@@ -8387,60 +8309,70 @@ def _completed(
     *,
     run_id: str,
     thread_id: str,
-    kind: Literal["model", "tool", "system"],
+    kind: StepKind,
     output=(),
     input_step_index: int | None = 0,
     input_part_index: int | None = None,
     error: str | None = None,
 ) -> StepEnd:
-    del input_step_index, input_part_index
+    del thread_id, input_step_index, input_part_index
     if kind == "model":
-        payload = ModelCallStepPayload(
-            model_ref="gpt-5", input_tokens=0, output_tokens=0
-        )
+        detail = {"model_ref": "gpt-5", "usage": {"input_tokens": 0, "output_tokens": 0}}
     elif kind == "tool":
-        payload = ToolCallStepPayload()
+        detail = {"tool": "tool"}
     else:
-        payload = RuntimeStepPayload()
+        detail = {}
     return StepEnd(
-        run_id=run_id,
-        thread_id=thread_id,
-        step_index=step_index,
+        step=trace_child_path(run_id, step_index),
         kind=kind,
         status="failed" if error else "finished",
         output=tuple(output),
-        payload=payload,
+        detail=detail,
         started_at="2026-01-01T00:00:00Z",
         finished_at="2026-01-01T00:00:01Z",
         error=error,
     )
 
 
-def test_model_call_step_payload_round_trips_target_metadata() -> None:
-    payload = ModelCallStepPayload(
-        model_ref="openai/gpt-5",
-        input_tokens=11,
-        output_tokens=7,
-        provider="openrouter",
-        model="openai/gpt-5",
-        adapter="responses",
-        base_url="https://openrouter.ai/api/v1",
-        instruct="abc123",
-        context="def456",
-        adapter_request={
-            "instructions": "system",
-            "messages": [{"role": "user", "parts": [{"type": "text", "text": "hi"}]}],
-            "tools": [{"name": "search", "description": "Search.", "parameters": {}}],
-            "state": {"thread": "state"},
-        },
-    )
+def test_model_step_detail_preserves_target_metadata(tmp_path: Path) -> None:
+    store = ExecutionStore(tmp_path / "runs.db")
+    try:
+        store.start_run(
+            run_id="run-1",
+            thread_id="thread-1",
+            origin="chat",
+            input=Message.user("hi"),
+        )
+        detail = {
+            "model_ref": "openai/gpt-5",
+            "usage": {"input_tokens": 11, "output_tokens": 7},
+            "provider": "openrouter",
+            "model": "openai/gpt-5",
+            "adapter": "responses",
+            "base_url": "https://openrouter.ai/api/v1",
+            "adapter_request": {
+                "instructions": "system",
+                "messages": [{"role": "user", "parts": [{"type": "text", "text": "hi"}]}],
+                "tools": [{"name": "search", "description": "Search.", "parameters": {}}],
+                "state": {"thread": "state"},
+            },
+        }
+        store.append_step(
+            run_id="run-1",
+            step_index=1,
+            kind="model",
+            status="finished",
+            input=(InputRef(),),
+            output=(TextPart(text="ok"),),
+            detail=detail,
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+        step = store.list_steps(run_id="run-1")[0]
+    finally:
+        store.close()
 
-    restored = ModelCallStepPayload.from_data(payload.to_data())
-
-    assert restored == payload
-    assert (
-        ModelCallStepPayload.from_data({"instructions_hash": "old"}).instruct == "old"
-    )
+    assert step.detail == detail
 
 
 def test_prompt_store_uses_content_hash_for_all_prompt_kinds(tmp_path: Path) -> None:
@@ -8459,16 +8391,39 @@ def test_prompt_store_uses_content_hash_for_all_prompt_kinds(tmp_path: Path) -> 
 
 def _default_step_input(
     *,
+    run_id: str,
     step_index: int,
-    kind: Literal["model", "tool", "system"],
+    kind: StepKind,
 ):
     if kind == "system":
         return ()
     if kind == "model":
         if step_index == 1:
-            return (CommandRef(),)
-        return (StepOutputRef(step_index=step_index - 1),)
-    return (StepOutputRef(step_index=max(step_index - 1, 1), part_index=0),)
+            return (InputRef(),)
+        return (OutputRef(step=trace_child_path(run_id, step_index - 1)),)
+    return (OutputRef(step=trace_child_path(run_id, max(step_index - 1, 1)), part=0),)
+
+
+def _output_ref(
+    run_id: str,
+    step_index: int,
+    part_index: int | None = None,
+) -> OutputRef:
+    return OutputRef(step=trace_child_path(run_id, step_index), part=part_index)
+
+
+def _model_detail(
+    model_ref: str = "gpt-5",
+    *,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    **extra: object,
+) -> dict[str, object]:
+    return {
+        "model_ref": model_ref,
+        "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+        **extra,
+    }
 
 
 @contextmanager
@@ -8576,7 +8531,7 @@ def _patched_runner_execution_with_tools(*, output_text: str):
                     run_id=current["run_id"],
                     thread_id=current["thread_id"],
                     kind="tool",
-                    input=(StepOutputRef(step_index=1, part_index=0),),
+                    input=(_output_ref(current["run_id"], 1, 0),),
                 )
             )
             context.on_event(
@@ -8612,19 +8567,15 @@ def _patched_runner_execution_with_tools(*, output_text: str):
             )
             on_event(
                 PartBegin(
-                    run_id=current["run_id"],
-                    thread_id=current["thread_id"],
-                    step_index=1,
-                    part_index=0,
-                    kind="tool_call",
+                    step=trace_child_path(current["run_id"], 1),
+                    part=0,
+                    type_="tool_call",
                 )
             )
             on_event(
                 PartDelta(
-                    run_id=current["run_id"],
-                    thread_id=current["thread_id"],
-                    step_index=1,
-                    part_index=0,
+                    step=trace_child_path(current["run_id"], 1),
+                    part=0,
                     delta=ToolCallDelta(
                         text='{"a":7,"b":8}',
                         tool_call_id="call_1",
@@ -8633,10 +8584,8 @@ def _patched_runner_execution_with_tools(*, output_text: str):
             )
             on_event(
                 PartEnd(
-                    run_id=current["run_id"],
-                    thread_id=current["thread_id"],
-                    step_index=1,
-                    part_index=0,
+                    step=trace_child_path(current["run_id"], 1),
+                    part=0,
                     data=ToolCallPart(
                         tool_call_id="call_1",
                         tool_name="math_add",
@@ -8667,15 +8616,13 @@ def _patched_runner_execution_with_tools(*, output_text: str):
                     run_id=current["run_id"],
                     thread_id=current["thread_id"],
                     kind="tool",
-                    input=(StepOutputRef(step_index=1, part_index=0),),
+                    input=(_output_ref(current["run_id"], 1, 0),),
                 )
             )
             on_event(
                 PartEnd(
-                    run_id=current["run_id"],
-                    thread_id=current["thread_id"],
-                    step_index=2,
-                    part_index=0,
+                    step=trace_child_path(current["run_id"], 2),
+                    part=0,
                     data=ToolResultPart(
                         tool_call_id="call_1",
                         tool_name="math_add",
@@ -8713,19 +8660,15 @@ def _patched_runner_execution_with_tools(*, output_text: str):
             )
             on_event(
                 PartBegin(
-                    run_id=current["run_id"],
-                    thread_id=current["thread_id"],
-                    step_index=3,
-                    part_index=0,
-                    kind="text",
+                    step=trace_child_path(current["run_id"], 3),
+                    part=0,
+                    type_="text",
                 )
             )
             on_event(
                 PartDelta(
-                    run_id=current["run_id"],
-                    thread_id=current["thread_id"],
-                    step_index=3,
-                    part_index=0,
+                    step=trace_child_path(current["run_id"], 3),
+                    part=0,
                     delta=TextDelta(text=output_text),
                 )
             )
@@ -8801,19 +8744,15 @@ def _patched_runner_streaming_text(release: threading.Event):
             )
             on_event(
                 PartBegin(
-                    run_id=current["run_id"],
-                    thread_id=current["thread_id"],
-                    step_index=1,
-                    part_index=0,
-                    kind="text",
+                    step=trace_child_path(current["run_id"], 1),
+                    part=0,
+                    type_="text",
                 )
             )
             on_event(
                 PartDelta(
-                    run_id=current["run_id"],
-                    thread_id=current["thread_id"],
-                    step_index=1,
-                    part_index=0,
+                    step=trace_child_path(current["run_id"], 1),
+                    part=0,
                     delta=TextDelta(text="streaming hello"),
                 )
             )

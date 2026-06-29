@@ -20,6 +20,7 @@ from toolang.execution.events import (
     StepEnd,
     TraceEvent,
 )
+from toolang.execution.records import trace_index, trace_run
 
 from .base import AppContext
 from .blocks import (
@@ -68,14 +69,15 @@ def handle_trace_event(event: TraceEvent, app: AppContext) -> None:
     elif event.type == "step_end":
         _update_and_finalize_blocks(event, app, families={"step"})
     elif event.type == "run_end":
+        run_end = cast(RunEnd, event)
         _update_and_finalize_blocks(
-            event, app, families={"command", "step"}, all_matching=True
+            run_end, app, families={"command", "step"}, all_matching=True
         )
-        if event.run_id == app.get_active_run():
-            if block := _find_block(event, app):
-                _finalize_block(block, app, event)
+        if run_end.run == app.get_active_run():
+            if block := _find_block(run_end, app):
+                _finalize_block(block, app, run_end)
             else:
-                app.finalize_block(run_stop_block(event))
+                app.finalize_block(run_stop_block(run_end))
             app.finish_run()
 
 
@@ -96,8 +98,7 @@ def handle_runtime_error(app: AppContext, message: str) -> bool:
     app.finalize_block(
         run_stop_block(
             RunEnd(
-                run_id=active_run_id or "run",
-                thread_id="",
+                run=active_run_id or "run",
                 status="failed",
                 finished_at="",
                 error=message,
@@ -234,7 +235,7 @@ def step_block(event: TraceEvent) -> MutableBlock:
         return ToolStepBlock.create(step_begin)
     if step_begin.kind == "run":
         return ChildRunStepBlock.create(step_begin)
-    if step_begin.kind in {"step", "parallel", "bind"}:
+    if step_begin.kind in {"seq", "par", "unfold", "map", "filter", "sort", "fold"}:
         return FlowStepBlock.create(step_begin)
     return DefaultStepBlock.create(step_begin)
 
@@ -251,7 +252,7 @@ def event_key(event: TraceEvent, *, run_id: str = "") -> MutableBlockKey | None:
         return MutableBlockKey(
             event_run_id,
             "command",
-            cast(RunSteering, event).index,
+            int(cast(RunSteering, event).context.get("cmd", 0) or 0),
         )
     if event.type == "run_stopping":
         return MutableBlockKey(event_run_id, "run", 0)
@@ -265,9 +266,10 @@ def event_key(event: TraceEvent, *, run_id: str = "") -> MutableBlockKey | None:
         return MutableBlockKey(
             event_run_id,
             "step",
-            cast(
-                StepBegin | PartBegin | PartDelta | PartEnd | StepEnd, event
-            ).step_index,
+            trace_index(
+                cast(StepBegin | PartBegin | PartDelta | PartEnd | StepEnd, event).step
+            )
+            or 0,
         )
     if event.type == "run_end":
         return MutableBlockKey(event_run_id, "run", 0)
@@ -275,7 +277,11 @@ def event_key(event: TraceEvent, *, run_id: str = "") -> MutableBlockKey | None:
 
 
 def event_run_id(event: TraceEvent) -> str | None:
-    return getattr(event, "run_id", None)
+    if isinstance(event, (RunWaiting, RunStarting, RunSteering, RunStopping, RunBegin, RunEnd)):
+        return event.run
+    if isinstance(event, (StepBegin, PartBegin, PartDelta, PartEnd, StepEnd)):
+        return trace_run(event.step)
+    return None
 
 
 def _should_set_active_run(event: TraceEvent, app: AppContext) -> bool:
@@ -287,4 +293,4 @@ def _should_set_active_run(event: TraceEvent, app: AppContext) -> bool:
 
 
 def _is_child_run_begin(event: TraceEvent) -> bool:
-    return event.type == "run_begin" and cast(RunBegin, event).parent_run_id is not None
+    return event.type == "run_begin" and cast(RunBegin, event).parent is not None

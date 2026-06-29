@@ -26,12 +26,6 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.records import (
-    ChildCallStepPayload,
-    FlowOpStepPayload,
-    ModelCallStepPayload,
-    ToolCallStepPayload,
-)
 
 
 def test_chat_trace_events_keep_run_stop_block_until_run_end() -> None:
@@ -228,11 +222,8 @@ def test_chat_flow_parallel_child_blocks_finalize_by_step_index() -> None:
 def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
     start = blocks.RunStartBlock.create(
         RunStarting(
-            run_id="run_1",
-            origin="chat",
-            thread_id="thread_1",
+            run="run_1",
             input=Message.user("hello"),
-            accepted_at="2026-01-01T00:00:00Z",
         )
     )
     assert "> hello" in _render_text(start.render())
@@ -240,11 +231,9 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
 
     steer = blocks.RunSteerBlock.create(
         RunSteering(
-            run_id="run_1",
-            thread_id="thread_1",
-            index=1,
-            message=Message.user("adjust"),
-            accepted_at="2026-01-01T00:00:01Z",
+            run="run_1",
+            input=Message.user("adjust"),
+            context={"cmd": 1},
         )
     )
     assert "+ adjust" in _render_text(steer.render())
@@ -285,10 +274,8 @@ def test_chat_model_step_streaming_wraps_like_final_markdown(
     block = blocks.ModelStepBlock.create(_model_step_begin())
     block.update(
         PartDelta(
-            run_id="run_1",
-            thread_id="thread_1",
-            step_index=1,
-            part_index=0,
+            step="run_1/1",
+            part=0,
             delta=TextDelta(text=long_text),
         )
     )
@@ -307,10 +294,8 @@ def test_chat_model_step_marker_style_does_not_leak_to_streaming_text() -> None:
     block = blocks.ModelStepBlock.create(_model_step_begin())
     block.update(
         PartDelta(
-            run_id="run_1",
-            thread_id="thread_1",
-            step_index=1,
-            part_index=0,
+            step="run_1/1",
+            part=0,
             delta=TextDelta(text="streaming hello"),
         )
     )
@@ -569,55 +554,49 @@ def _run_begin(
     executable_kind: str = "thunk",
 ) -> RunBegin:
     return RunBegin(
-        run_id=run_id,
-        origin="chat",
-        thread_id="thread_1",
+        run=run_id,
+        parent=f"{parent_run_id}/1" if parent_run_id is not None else None,
+        thread="thread_1",
         input=Message.user("hello"),
         created_at="2026-01-01T00:00:00Z",
         started_at="2026-01-01T00:00:00Z",
-        root_run_id="run_1",
-        parent_run_id=parent_run_id,
-        executable_kind=executable_kind,
+        context={
+            "origin": "chat",
+            "root": "run_1",
+            "executable": {"kind": executable_kind, "name": None},
+            "call": "stage" if parent_run_id is not None else "top",
+        },
     )
 
 
 def _run_waiting() -> RunWaiting:
     return RunWaiting(
-        run_id="run_1",
-        origin="chat",
-        thread_id="thread_1",
-        reason="queue",
-        position=1,
-        created_at="2026-01-01T00:00:00Z",
+        run="run_1",
+        input=Message.user("hello"),
+        context={"thread": "thread_1"},
     )
 
 
 def _run_starting() -> RunStarting:
     return RunStarting(
-        run_id="run_1",
-        origin="chat",
-        thread_id="thread_1",
+        run="run_1",
         input=Message.user("hello"),
-        accepted_at="2026-01-01T00:00:00Z",
+        context={"thread": "thread_1"},
     )
 
 
 def _run_steering() -> RunSteering:
     return RunSteering(
-        run_id="run_1",
-        thread_id="thread_1",
-        index=1,
-        message=Message.user("adjust"),
-        accepted_at="2026-01-01T00:00:01Z",
+        run="run_1",
+        input=Message.user("adjust"),
+        context={"thread": "thread_1", "cmd": 1},
     )
 
 
 def _run_stopping() -> RunStopping:
     return RunStopping(
-        run_id="run_1",
-        thread_id="thread_1",
-        index=1,
-        accepted_at="2026-01-01T00:00:01Z",
+        run="run_1",
+        context={"thread": "thread_1", "cmd": 1},
     )
 
 
@@ -627,8 +606,7 @@ def _run_end(
     status: Literal["running", "finished", "failed", "canceled"],
 ) -> RunEnd:
     return RunEnd(
-        run_id=run_id,
-        thread_id="thread_1",
+        run=run_id,
         status=status,
         finished_at="2026-01-01T00:00:03Z",
     )
@@ -636,9 +614,7 @@ def _run_end(
 
 def _model_step_begin(*, run_id: str = "run_1", step_index: int = 1) -> StepBegin:
     return StepBegin(
-        run_id=run_id,
-        thread_id="thread_1",
-        step_index=step_index,
+        step=f"{run_id}/{step_index}",
         kind="model",
         input=(),
         started_at="2026-01-01T00:00:01Z",
@@ -647,9 +623,7 @@ def _model_step_begin(*, run_id: str = "run_1", step_index: int = 1) -> StepBegi
 
 def _tool_step_begin(*, step_index: int = 1) -> StepBegin:
     return StepBegin(
-        run_id="run_1",
-        thread_id="thread_1",
-        step_index=step_index,
+        step=f"run_1/{step_index}",
         kind="tool",
         input=(),
         started_at="2026-01-01T00:00:01Z",
@@ -664,17 +638,11 @@ def _model_step_end(
     finished_at: str = "2026-01-01T00:00:02Z",
 ) -> StepEnd:
     return StepEnd(
-        run_id=run_id,
-        thread_id="thread_1",
-        step_index=step_index,
+        step=f"{run_id}/{step_index}",
         kind="model",
         status="finished",
         output=(TextPart(text=output),),
-        payload=ModelCallStepPayload(
-            model_ref="test/model",
-            input_tokens=1,
-            output_tokens=1,
-        ),
+        detail={"model_ref": "test/model", "usage": {"input_tokens": 1, "output_tokens": 1}},
         started_at="2026-01-01T00:00:01Z",
         finished_at=finished_at,
     )
@@ -682,13 +650,11 @@ def _model_step_end(
 
 def _flow_step_begin(*, step_index: int = 1) -> StepBegin:
     return StepBegin(
-        run_id="run_1",
-        thread_id="thread_1",
-        step_index=step_index,
-        kind="step",
+        step=f"run_1/{step_index}",
+        kind="seq",
         input=(),
         started_at="2026-01-01T00:00:01Z",
-        metadata={
+        context={
             "op": "prepare_do",
             "stage_index": 0,
             "stage_kind": "do",
@@ -699,24 +665,20 @@ def _flow_step_begin(*, step_index: int = 1) -> StepBegin:
 
 def _flow_step_end(*, step_index: int = 1) -> StepEnd:
     return StepEnd(
-        run_id="run_1",
-        thread_id="thread_1",
-        step_index=step_index,
-        kind="step",
+        step=f"run_1/{step_index}",
+        kind="seq",
         status="finished",
         output=(),
-        payload=FlowOpStepPayload(
-            op="prepare_do",
-            stage_index=0,
-            stage_kind="do",
-            output_preview={"count": 1},
-            metadata={
+        detail={
+            "op": "prepare_do",
+            "preview": {"count": 1},
+            "source": {
                 "op": "prepare_do",
                 "stage_index": 0,
                 "stage_kind": "do",
                 "stage_label": "do summarize",
             },
-        ),
+        },
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
@@ -724,13 +686,11 @@ def _flow_step_end(*, step_index: int = 1) -> StepEnd:
 
 def _child_run_step_begin(*, step_index: int = 2) -> StepBegin:
     return StepBegin(
-        run_id="run_1",
-        thread_id="thread_1",
-        step_index=step_index,
+        step=f"run_1/{step_index}",
         kind="run",
         input=(),
         started_at="2026-01-01T00:00:01Z",
-        metadata={
+        context={
             "call": "stage",
             "target_kind": "thunk",
             "target": "summarize",
@@ -744,25 +704,20 @@ def _child_run_step_begin(*, step_index: int = 2) -> StepBegin:
 
 def _child_run_step_end(*, step_index: int = 2) -> StepEnd:
     return StepEnd(
-        run_id="run_1",
-        thread_id="thread_1",
-        step_index=step_index,
+        step=f"run_1/{step_index}",
         kind="run",
         status="finished",
         output=(TextPart(text="done"),),
-        payload=ChildCallStepPayload(
-            call="stage",
-            target_kind="thunk",
-            target="summarize",
-            child_run_ids=("run_child",),
-            stage_index=0,
-            stage_kind="do",
-            metadata={
+        detail={
+            "call": "stage",
+            "target": {"kind": "thunk", "name": "summarize"},
+            "child_runs": ["run_child"],
+            "source": {
                 "stage_index": 0,
                 "stage_kind": "do",
                 "stage_label": "do summarize",
             },
-        ),
+        },
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
@@ -770,13 +725,11 @@ def _child_run_step_end(*, step_index: int = 2) -> StepEnd:
 
 def _parallel_child_step_begin(*, step_index: int, item_index: int) -> StepBegin:
     return StepBegin(
-        run_id="run_1",
-        thread_id="thread_1",
-        step_index=step_index,
+        step=f"run_1/{step_index}",
         kind="run",
         input=(),
         started_at="2026-01-01T00:00:01Z",
-        metadata={
+        context={
             "call": "stage",
             "target_kind": "thunk",
             "target": "score",
@@ -794,29 +747,25 @@ def _parallel_child_step_begin(*, step_index: int, item_index: int) -> StepBegin
 
 def _parallel_child_step_end(*, step_index: int, item_index: int) -> StepEnd:
     return StepEnd(
-        run_id="run_1",
-        thread_id="thread_1",
-        step_index=step_index,
+        step=f"run_1/{step_index}",
         kind="run",
         status="finished",
         output=(TextPart(text="done"),),
-        payload=ChildCallStepPayload(
-            call="stage",
-            target_kind="thunk",
-            target="score",
-            child_run_ids=(f"run_child_{item_index}",),
-            parallelism=2,
-            lane_index=item_index,
-            stage_index=1,
-            stage_kind="each",
-            item_indexes=(item_index,),
-            metadata={
+        detail={
+            "call": "stage",
+            "target": {"kind": "thunk", "name": "score"},
+            "child_runs": [f"run_child_{item_index}"],
+            "lane": {"count": 2, "index": item_index},
+            "item": {"index": item_index},
+            "source": {
                 "stage_index": 1,
                 "stage_kind": "each",
                 "stage_label": "each score",
+                "parallelism": 2,
+                "lane_index": item_index,
                 "item_count": 2,
             },
-        ),
+        },
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
@@ -828,9 +777,7 @@ def _tool_step_end(
     finished_at: str = "2026-01-01T00:00:02Z",
 ) -> StepEnd:
     return StepEnd(
-        run_id="run_1",
-        thread_id="thread_1",
-        step_index=step_index,
+        step=f"run_1/{step_index}",
         kind="tool",
         status="finished",
         output=(
@@ -847,7 +794,7 @@ def _tool_step_end(
                 output={"stdout": "ok\n"},
             ),
         ),
-        payload=ToolCallStepPayload(),
+        detail={"tool": "shell__execute"},
         started_at="2026-01-01T00:00:01Z",
         finished_at=finished_at,
     )

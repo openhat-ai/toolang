@@ -23,7 +23,7 @@ from ...execution.db import ExecutionStore, execution_db_path
 from ...execution.detail import run_detail_from_record, thread_info_from_record, thread_info_from_runs
 from ...execution.labels import child_call_summary, executable_label, flow_op_summary
 from ...execution.projection import child_run_ids
-from ...execution.records import step_input_items_to_data, step_payload_to_data
+from ...execution.records import step_input_items_to_data
 from ..utils import (
     _context_root,
     _required_prefix_agent,
@@ -297,7 +297,8 @@ def _step_record_json(step: Any) -> dict[str, Any]:
         "status": step.status,
         "input": step_input_items_to_data(step.input),
         "output": parts_to_data(step.output),
-        "payload": step_payload_to_data(step.payload),
+        "context": dict(step.context),
+        "detail": dict(step.detail),
         "error": step.error,
         "started_at": step.started_at,
         "finished_at": step.finished_at,
@@ -316,7 +317,7 @@ def _run_prompt_bodies(store: ExecutionStore, run: Mapping[str, Any]) -> dict[st
 def _run_prompt_hashes(run: Mapping[str, Any]) -> tuple[str, ...]:
     hashes: list[str] = []
     for step in _run_steps(run):
-        payload = _mapping(_mapping(step.get("record")).get("payload"))
+        payload = _step_detail(_mapping(step.get("record")))
         for key in ("instruct", "context"):
             value = _text(payload.get(key))
             if value is not None and value not in hashes:
@@ -416,7 +417,7 @@ def _preprocess_step(
         return data
     input_items = [dict(_mapping(item)) for item in _list(record.get("input"))]
     output = [dict(_mapping(item)) for item in _list(record.get("output"))]
-    payload = dict(_mapping(record.get("payload")))
+    payload = dict(_step_detail(record))
     data["record"] = dict(record)
     if message:
         data["message"] = dict(message)
@@ -569,7 +570,7 @@ def _child_runs_for_step(
     child_runs: list[Mapping[str, Any]] = []
     seen: set[str] = set()
     record = _mapping(step.get("record"))
-    payload = _mapping(record.get("payload"))
+    payload = _step_detail(record)
     for child_id in child_run_ids(payload, record):
         child = run_by_id.get(child_id)
         if child is not None and child_id not in seen:
@@ -1121,7 +1122,7 @@ def _last_text_part(parts: object) -> str:
 
 
 def _step_summary(record: Mapping[str, Any], message: Mapping[str, Any], *, run: Mapping[str, Any]) -> tuple[str, str | None, str | None]:
-    payload = _mapping(record.get("payload"))
+    payload = _step_detail(record)
     kind = _text(record.get("kind"))
     if kind == "model":
         text = _message_summary(message) or _parts_summary(record.get("output"))
@@ -1136,8 +1137,12 @@ def _step_summary(record: Mapping[str, Any], message: Mapping[str, Any], *, run:
         return _tool_result_summary(record, run=run)
     if kind == "run":
         return child_call_summary(payload), None, None
-    if kind in {"step", "parallel", "bind"}:
-        return flow_op_summary(payload), None, None
+    if kind in {"seq", "par", "unfold", "map", "filter", "sort", "fold", "system"}:
+        summary = flow_op_summary(payload)
+        if summary:
+            return summary, None, None
+        text = _parts_summary(record.get("output"))
+        return text or _text(record.get("error")) or "-", None, None
     text = _parts_summary(record.get("output"))
     return text or _text(record.get("error")) or "-", None, None
 
@@ -1383,6 +1388,13 @@ def _public_document(value: object) -> object:
 
 def _mapping(value: object) -> Mapping[str, Any]:
     return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
+
+
+def _step_detail(record: Mapping[str, Any]) -> Mapping[str, Any]:
+    detail = _mapping(record.get("detail"))
+    if detail:
+        return detail
+    return _mapping(record.get("payload"))
 
 
 def _list(value: object) -> list[Any]:

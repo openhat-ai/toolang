@@ -26,28 +26,33 @@ from .records import (
     EventDomain,
     EventRecord,
     CommandKind,
-    CommandMode,
+    CommandApply,
     CommandRecord,
-    ModelCallStepPayload,
+    InputRef,
+    OutputRef,
     RunRecord,
     RunStatus,
-    RuntimeStepPayload,
     StepInputItem,
     StepKind,
-    StepPayload,
     StepRecord,
     StepStatus,
     ThreadPeer,
     ThreadRecord,
     UpdateKind,
     UpdateRecord,
+    input_ref_from_data,
+    input_ref_to_data,
+    output_ref_from_data,
+    output_ref_to_data,
     step_input_items_from_data,
     step_input_items_to_data,
-    step_payload_from_data,
-    step_payload_to_data,
+    trace_child_path,
+    trace_index,
+    trace_parent,
+    trace_run,
 )
 
-_SCHEMA_VERSION = 9
+_SCHEMA_VERSION = 10
 
 
 class ExecutionStore:
@@ -82,9 +87,19 @@ class ExecutionStore:
         request_id: str | None = None,
         created_at: str | None = None,
         started_at: str | None = None,
+        parent: str | None = None,
+        context: Mapping[str, Any] | None = None,
     ) -> RunRecord:
         created = created_at or utc_now()
         started = started_at or created
+        run_context = dict(context or metadata or {})
+        run_context.setdefault("origin", origin)
+        run_context.setdefault("root", root_run_id or run_id)
+        run_context.setdefault("executable", {"kind": executable_kind, "name": executable_name})
+        run_context.setdefault("call", call_kind)
+        if request_id is not None:
+            run_context.setdefault("request_id", request_id)
+        parent_path = parent or _parent_trace_path(parent_run_id, parent_step_index)
         with self._lock:
             self._ensure_thread_locked(
                 thread_id=thread_id,
@@ -97,37 +112,27 @@ class ExecutionStore:
             self._conn.execute(
                 """
                 INSERT INTO runs(
-                    run_id,
-                    thread_id,
-                    origin,
-                    root_run_id,
-                    parent_run_id,
-                    parent_step_index,
-                    executable_kind,
-                    executable_name,
-                    call_kind,
-                    metadata,
+                    id,
+                    parent,
+                    thread,
+                    input,
+                    output,
+                    context,
                     status,
                     error,
-                    superseded,
                     created_at,
                     started_at,
                     finished_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
+                    parent_path,
                     thread_id,
-                    origin,
-                    root_run_id or run_id,
-                    parent_run_id,
-                    parent_step_index,
-                    executable_kind,
-                    executable_name,
-                    call_kind,
-                    _dump_json(dict(metadata or {})),
-                    "running",
+                    _dump_json(input_ref_to_data(InputRef(cmd=0))),
                     None,
+                    _dump_json(run_context),
+                    "running",
                     None,
                     created,
                     started,
@@ -137,27 +142,33 @@ class ExecutionStore:
             self._conn.execute(
                 """
                     INSERT INTO commands(
-                        run_id,
+                        run,
                         "index",
                         kind,
-                        mode,
-                        request_id,
-                        message,
-                    created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        apply,
+                        input,
+                        context,
+                        status,
+                        error,
+                        created_at,
+                        finished_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
                     0,
                     "start",
-                    None,
-                    request_id,
+                    "now",
                     _dump_json(input.to_data()),
+                    _dump_json({"request_id": request_id} if request_id is not None else {}),
+                    "finished",
+                    None,
+                    created,
                     created,
                 ),
             )
             row = self._conn.execute(
-                "SELECT * FROM runs WHERE run_id = ?",
+                "SELECT * FROM runs WHERE id = ?",
                 (run_id,),
             ).fetchone()
             self._conn.commit()
@@ -244,19 +255,29 @@ class ExecutionStore:
         status: RunStatus = "finished",
         error: str | None = None,
         finished_at: str | None = None,
+        output: OutputRef | None = None,
+        detail: Mapping[str, Any] | None = None,
     ) -> RunRecord:
         now = finished_at or utc_now()
+        context_patch = {"detail": dict(detail)} if detail else {}
         with self._lock:
             self._conn.execute(
                 """
                 UPDATE runs
-                SET status = ?, error = ?, finished_at = ?
-                WHERE run_id = ?
+                SET status = ?, error = ?, output = ?, context = json_patch(context, ?), finished_at = ?
+                WHERE id = ?
                 """,
-                (status, error, now, run_id),
+                (
+                    status,
+                    error,
+                    _dump_json(output_ref_to_data(output)) if output is not None else None,
+                    _dump_json(context_patch),
+                    now,
+                    run_id,
+                ),
             )
             row = self._conn.execute(
-                "SELECT * FROM runs WHERE run_id = ?",
+                "SELECT * FROM runs WHERE id = ?",
                 (run_id,),
             ).fetchone()
             self._conn.commit()
@@ -300,11 +321,11 @@ class ExecutionStore:
     ) -> RunRecord:
         with self._lock:
             self._conn.execute(
-                "UPDATE runs SET superseded = ? WHERE run_id = ?",
-                (_dump_json(dict(superseded)), run_id),
+                "UPDATE runs SET context = json_patch(context, ?) WHERE id = ?",
+                (_dump_json({"superseded": dict(superseded)}), run_id),
             )
             row = self._conn.execute(
-                "SELECT * FROM runs WHERE run_id = ?",
+                "SELECT * FROM runs WHERE id = ?",
                 (run_id,),
             ).fetchone()
             self._conn.commit()
@@ -315,7 +336,7 @@ class ExecutionStore:
     def get_run(self, *, run_id: str) -> RunRecord | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT * FROM runs WHERE run_id = ?",
+                "SELECT * FROM runs WHERE id = ?",
                 (run_id,),
             ).fetchone()
         return _run_from_row(row) if row is not None else None
@@ -331,13 +352,13 @@ class ExecutionStore:
         clauses: list[str] = []
         params: list[object] = []
         if thread_id is not None:
-            clauses.append("thread_id = ?")
+            clauses.append("thread = ?")
             params.append(thread_id)
         if status is not None:
             clauses.append("status = ?")
             params.append(status)
         if not include_superseded:
-            clauses.append("superseded IS NULL")
+            clauses.append("json_extract(context, '$.superseded') IS NULL")
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         query = f"SELECT * FROM runs {where} ORDER BY created_at DESC"
         if limit is not None:
@@ -362,10 +383,10 @@ class ExecutionStore:
     ) -> tuple[RunRecord, ...]:
         """Return one thread's runs in durable chronological order."""
 
-        clauses = ["thread_id = ?"]
+        clauses = ["thread = ?"]
         params: list[object] = [thread_id]
         if not include_superseded:
-            clauses.append("superseded IS NULL")
+            clauses.append("json_extract(context, '$.superseded') IS NULL")
         query = f"""
             SELECT * FROM runs
             WHERE {' AND '.join(clauses)}
@@ -383,7 +404,7 @@ class ExecutionStore:
 
         with self._lock:
             anchor = self._conn.execute(
-                "SELECT rowid, * FROM runs WHERE run_id = ?",
+                "SELECT rowid, * FROM runs WHERE id = ?",
                 (run_id,),
             ).fetchone()
             if anchor is None:
@@ -391,15 +412,15 @@ class ExecutionStore:
             rows = self._conn.execute(
                 """
                 SELECT * FROM runs
-                WHERE thread_id = ?
-                  AND superseded IS NULL
+                WHERE thread = ?
+                  AND json_extract(context, '$.superseded') IS NULL
                   AND (
                     created_at < ?
                     OR (created_at = ? AND rowid < ?)
                   )
                 ORDER BY created_at ASC, rowid ASC
                 """,
-                (anchor["thread_id"], anchor["created_at"], anchor["created_at"], anchor["rowid"]),
+                (anchor["thread"], anchor["created_at"], anchor["created_at"], anchor["rowid"]),
             ).fetchall()
         return tuple(_run_from_row(row) for row in rows)
 
@@ -417,11 +438,23 @@ class ExecutionStore:
         if not source_run_ids:
             return ()
         run_id_map = dict(zip(source_run_ids, target_run_ids, strict=True))
+
+        def remap_path(value: str | None) -> str | None:
+            if value is None:
+                return None
+            for source_id, target_id in run_id_map.items():
+                if value == source_id:
+                    return target_id
+                prefix = f"{source_id}/"
+                if value.startswith(prefix):
+                    return f"{target_id}/{value[len(prefix):]}"
+            return value
+
         with self._lock:
             copied: list[sqlite3.Row] = []
             for source_run_id, target_run_id in zip(source_run_ids, target_run_ids, strict=True):
                 source_run = self._conn.execute(
-                    "SELECT * FROM runs WHERE run_id = ?",
+                    "SELECT * FROM runs WHERE id = ?",
                     (source_run_id,),
                 ).fetchone()
                 if source_run is None:
@@ -429,42 +462,28 @@ class ExecutionStore:
                 self._conn.execute(
                     """
                     INSERT INTO runs(
-                        run_id,
-                        thread_id,
-                        origin,
-                        root_run_id,
-                        parent_run_id,
-                        parent_step_index,
-                        executable_kind,
-                        executable_name,
-                        call_kind,
-                        metadata,
+                        id,
+                        parent,
+                        thread,
+                        input,
+                        output,
+                        context,
                         status,
                         error,
-                        superseded,
                         created_at,
                         started_at,
                         finished_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         target_run_id,
+                        remap_path(source_run["parent"]),
                         target_thread_id,
-                        source_run["origin"],
-                        run_id_map.get(source_run["root_run_id"], target_run_id),
-                        (
-                            run_id_map.get(source_run["parent_run_id"])
-                            if source_run["parent_run_id"] is not None
-                            else None
-                        ),
-                        source_run["parent_step_index"],
-                        source_run["executable_kind"],
-                        source_run["executable_name"],
-                        source_run["call_kind"],
-                        source_run["metadata"],
+                        source_run["input"],
+                        source_run["output"],
+                        source_run["context"],
                         source_run["status"],
                         source_run["error"],
-                        source_run["superseded"],
                         source_run["created_at"],
                         source_run["started_at"],
                         source_run["finished_at"],
@@ -473,7 +492,7 @@ class ExecutionStore:
                 command_rows = self._conn.execute(
                     """
                     SELECT * FROM commands
-                    WHERE run_id = ?
+                    WHERE run = ?
                     ORDER BY "index" ASC
                     """,
                     (source_run_id,),
@@ -481,24 +500,30 @@ class ExecutionStore:
                 self._conn.executemany(
                     """
                     INSERT INTO commands(
-                        run_id,
+                        run,
                         "index",
                         kind,
-                        mode,
-                        request_id,
-                        message,
-                        created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        apply,
+                        input,
+                        context,
+                        status,
+                        error,
+                        created_at,
+                        finished_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     [
                         (
                             target_run_id,
                             row["index"],
                             row["kind"],
-                            row["mode"],
-                            row["request_id"],
-                            row["message"],
+                            row["apply"],
+                            row["input"],
+                            row["context"],
+                            row["status"],
+                            row["error"],
                             row["created_at"],
+                            row["finished_at"],
                         )
                         for row in command_rows
                     ],
@@ -506,36 +531,40 @@ class ExecutionStore:
                 step_rows = self._conn.execute(
                     """
                     SELECT * FROM steps
-                    WHERE run_id = ?
-                    ORDER BY step_index ASC
+                    WHERE parent = ? OR parent LIKE ?
+                    ORDER BY parent ASC, "index" ASC
                     """,
-                    (source_run_id,),
+                    (source_run_id, f"{source_run_id}/%"),
                 ).fetchall()
                 self._conn.executemany(
                     """
                     INSERT INTO steps(
-                        run_id,
-                        step_index,
+                        parent,
+                        "index",
                         kind,
-                        status,
                         input,
                         output,
-                        payload,
+                        context,
+                        detail,
+                        status,
                         error,
+                        created_at,
                         started_at,
                         finished_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     [
                         (
-                            target_run_id,
-                            row["step_index"],
+                            remap_path(row["parent"]),
+                            row["index"],
                             row["kind"],
-                            row["status"],
                             row["input"],
                             row["output"],
-                            row["payload"],
+                            row["context"],
+                            row["detail"],
+                            row["status"],
                             row["error"],
+                            row["created_at"],
                             row["started_at"],
                             row["finished_at"],
                         )
@@ -543,7 +572,7 @@ class ExecutionStore:
                     ],
                 )
                 inserted = self._conn.execute(
-                    "SELECT * FROM runs WHERE run_id = ?",
+                    "SELECT * FROM runs WHERE id = ?",
                     (target_run_id,),
                 ).fetchone()
                 if inserted is None:
@@ -567,26 +596,26 @@ class ExecutionStore:
             rows = self._conn.execute(
                 """
                 SELECT * FROM runs
-                WHERE thread_id = ?
-                  AND superseded IS NULL
+                WHERE thread = ?
+                  AND json_extract(context, '$.superseded') IS NULL
                   AND created_at >= ?
                 ORDER BY created_at
                 """,
-                (anchor.thread_id, anchor.created_at),
+                (anchor.thread, anchor.created_at),
             ).fetchall()
             self._conn.executemany(
-                "UPDATE runs SET superseded = ? WHERE run_id = ?",
-                [(_dump_json(dict(superseded)), str(row["run_id"])) for row in rows],
+                "UPDATE runs SET context = json_patch(context, ?) WHERE id = ?",
+                [(_dump_json({"superseded": dict(superseded)}), str(row["id"])) for row in rows],
             )
             updated = self._conn.execute(
                 """
                 SELECT * FROM runs
-                WHERE thread_id = ?
-                  AND superseded IS NOT NULL
+                WHERE thread = ?
+                  AND json_extract(context, '$.superseded') IS NOT NULL
                   AND created_at >= ?
                 ORDER BY created_at
                 """,
-                (anchor.thread_id, anchor.created_at),
+                (anchor.thread, anchor.created_at),
             ).fetchall()
             self._conn.commit()
         return tuple(_run_from_row(row) for row in updated)
@@ -594,49 +623,62 @@ class ExecutionStore:
     def append_step(
         self,
         *,
-        run_id: str,
-        step_index: int,
+        run_id: str | None = None,
+        step_index: int | None = None,
+        parent: str | None = None,
+        index: int | None = None,
         kind: StepKind,
         status: StepStatus,
         input: Sequence[StepInputItem],
         output: Sequence[Part],
-        payload: StepPayload,
+        detail: Mapping[str, Any] | None = None,
         error: str | None = None,
         started_at: str,
-        finished_at: str,
+        finished_at: str | None,
+        context: Mapping[str, Any] | None = None,
+        created_at: str | None = None,
     ) -> StepRecord:
+        step_parent = parent or run_id
+        step_index = index if index is not None else step_index
+        if step_parent is None or step_index is None:
+            raise ValueError("append_step requires parent/index or run_id/step_index")
+        created = created_at or started_at
         with self._lock:
             self._conn.execute(
                 """
                 INSERT INTO steps(
-                    run_id,
-                    step_index,
+                    parent,
+                    "index",
                     kind,
-                    status,
                     input,
                     output,
-                    payload,
+                    context,
+                    detail,
+                    status,
                     error,
+                    created_at,
                     started_at,
                     finished_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    run_id,
+                    step_parent,
                     step_index,
                     kind,
-                    status,
                     _dump_json(step_input_items_to_data(tuple(input))),
                     _dump_json(parts_to_data(output)),
-                    _dump_json(step_payload_to_data(payload)),
+                    _dump_json(dict(context or {})),
+                    _dump_json(dict(detail or {})),
+                    status,
                     error,
+                    created,
                     started_at,
                     finished_at,
                 ),
             )
             row = self._conn.execute(
-                "SELECT * FROM steps WHERE run_id = ? AND step_index = ?",
-                (run_id, step_index),
+                'SELECT * FROM steps WHERE parent = ? AND "index" = ?',
+                (step_parent, step_index),
             ).fetchone()
             self._conn.commit()
         if row is None:
@@ -646,8 +688,8 @@ class ExecutionStore:
     def list_steps(self, *, run_id: str) -> list[StepRecord]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM steps WHERE run_id = ? ORDER BY step_index ASC",
-                (run_id,),
+                'SELECT * FROM steps WHERE parent = ? OR parent LIKE ? ORDER BY parent ASC, "index" ASC',
+                (run_id, f"{run_id}/%"),
             ).fetchall()
         return [_step_from_row(row) for row in rows]
 
@@ -655,15 +697,14 @@ class ExecutionStore:
         run_id_list = [item for item in run_ids if item]
         if not run_id_list:
             return {}
-        placeholders = ",".join("?" for _ in run_id_list)
         with self._lock:
             rows = self._conn.execute(
                 f"""
                 SELECT * FROM steps
-                WHERE run_id IN ({placeholders})
-                ORDER BY run_id ASC, step_index ASC
+                WHERE {' OR '.join('(parent = ? OR parent LIKE ?)' for _ in run_id_list)}
+                ORDER BY parent ASC, "index" ASC
                 """,
-                tuple(run_id_list),
+                tuple(item for run_id in run_id_list for item in (run_id, f"{run_id}/%")),
             ).fetchall()
         grouped: dict[str, list[StepRecord]] = {run_id: [] for run_id in run_id_list}
         for row in rows:
@@ -874,20 +915,31 @@ class ExecutionStore:
         *,
         run_id: str,
         kind: CommandKind,
-        mode: CommandMode | None = None,
+        mode: CommandApply | None = None,
         request_id: str | None = None,
         message: Message | None = None,
         created_at: str | None = None,
+        apply: CommandApply | None = None,
+        input: Message | None = None,
+        context: Mapping[str, Any] | None = None,
+        status: str = "pending",
+        error: str | None = None,
+        finished_at: str | None = None,
     ) -> CommandRecord:
         """Append one client-side input to one run."""
 
         now = created_at or utc_now()
+        command_input = input if input is not None else message
+        command_context = dict(context or {})
+        if request_id is not None:
+            command_context["request_id"] = request_id
+        command_apply = apply or mode or "now"
         with self._lock:
             index_row = self._conn.execute(
                 """
                 SELECT COALESCE(MAX("index"), -1) + 1 AS next_index
                 FROM commands
-                WHERE run_id = ?
+                WHERE run = ?
                 """,
                 (run_id,),
             ).fetchone()
@@ -895,27 +947,33 @@ class ExecutionStore:
             self._conn.execute(
                 """
                 INSERT INTO commands(
-                    run_id,
+                    run,
                     "index",
                     kind,
-                    mode,
-                    request_id,
-                    message,
-                    created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    apply,
+                    input,
+                    context,
+                    status,
+                    error,
+                    created_at,
+                    finished_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
                     index,
                     kind,
-                    mode,
-                    request_id,
-                    _dump_json(message.to_data()) if message is not None else None,
+                    command_apply,
+                    _dump_json(command_input.to_data()) if command_input is not None else None,
+                    _dump_json(command_context),
+                    status,
+                    error,
                     now,
+                    finished_at,
                 ),
             )
             row = self._conn.execute(
-                'SELECT * FROM commands WHERE run_id = ? AND "index" = ?',
+                'SELECT * FROM commands WHERE run = ? AND "index" = ?',
                 (run_id, index),
             ).fetchone()
             self._conn.commit()
@@ -926,7 +984,7 @@ class ExecutionStore:
     def get_command(self, *, run_id: str, index: int) -> CommandRecord | None:
         with self._lock:
             row = self._conn.execute(
-                'SELECT * FROM commands WHERE run_id = ? AND "index" = ?',
+                'SELECT * FROM commands WHERE run = ? AND "index" = ?',
                 (run_id, index),
             ).fetchone()
         return _command_from_row(row) if row is not None else None
@@ -937,7 +995,7 @@ class ExecutionStore:
         run_id: str,
         kind: CommandKind | None = None,
     ) -> tuple[CommandRecord, ...]:
-        clauses = ["run_id = ?"]
+        clauses = ["run = ?"]
         params: list[object] = [run_id]
         if kind is not None:
             clauses.append("kind = ?")
@@ -966,7 +1024,7 @@ class ExecutionStore:
             command_rows = self._conn.execute(
                 """
                 SELECT * FROM commands
-                WHERE run_id = ? AND kind = ?
+                WHERE run = ? AND kind = ?
                 ORDER BY "index" ASC
                 """,
                 (run_id, kind),
@@ -974,9 +1032,9 @@ class ExecutionStore:
             step_rows = self._conn.execute(
                 """
                 SELECT input FROM steps
-                WHERE run_id = ?
+                WHERE parent = ? OR parent LIKE ?
                 """,
-                (run_id,),
+                (run_id, f"{run_id}/%"),
             ).fetchall()
         used = _used_command_indexes(step_rows)
         return tuple(_command_from_row(row) for row in command_rows if int(row["index"]) not in used)
@@ -1011,21 +1069,16 @@ class ExecutionStore:
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS runs (
-                    run_id TEXT PRIMARY KEY,
-                    thread_id TEXT NOT NULL,
-                    origin TEXT NOT NULL,
-                    root_run_id TEXT NOT NULL,
-                    parent_run_id TEXT,
-                    parent_step_index INTEGER,
-                    executable_kind TEXT NOT NULL,
-                    executable_name TEXT,
-                    call_kind TEXT NOT NULL,
-                    metadata TEXT NOT NULL,
+                    id TEXT PRIMARY KEY,
+                    parent TEXT,
+                    thread TEXT NOT NULL,
+                    input TEXT NOT NULL,
+                    output TEXT,
+                    context TEXT NOT NULL,
                     status TEXT NOT NULL,
                     error TEXT,
-                    superseded TEXT,
                     created_at TEXT NOT NULL,
-                    started_at TEXT NOT NULL,
+                    started_at TEXT,
                     finished_at TEXT
                 )
                 """
@@ -1033,33 +1086,37 @@ class ExecutionStore:
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS commands (
-                    run_id TEXT NOT NULL,
+                    run TEXT NOT NULL,
                     "index" INTEGER NOT NULL,
                     kind TEXT NOT NULL,
-                    mode TEXT,
-                    request_id TEXT,
-                    message TEXT,
+                    apply TEXT NOT NULL,
+                    input TEXT,
+                    context TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    error TEXT,
                     created_at TEXT NOT NULL,
-                    PRIMARY KEY(run_id, "index"),
-                    FOREIGN KEY(run_id) REFERENCES runs(run_id)
+                    finished_at TEXT,
+                    PRIMARY KEY(run, "index"),
+                    FOREIGN KEY(run) REFERENCES runs(id)
                 )
                 """
             )
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS steps (
-                    run_id TEXT NOT NULL,
-                    step_index INTEGER NOT NULL,
+                    parent TEXT NOT NULL,
+                    "index" INTEGER NOT NULL,
                     kind TEXT NOT NULL,
-                    status TEXT NOT NULL,
                     input TEXT NOT NULL,
                     output TEXT NOT NULL,
-                    payload TEXT NOT NULL,
+                    context TEXT NOT NULL,
+                    detail TEXT NOT NULL,
+                    status TEXT NOT NULL,
                     error TEXT,
+                    created_at TEXT NOT NULL,
                     started_at TEXT NOT NULL,
-                    finished_at TEXT NOT NULL,
-                    PRIMARY KEY(run_id, step_index),
-                    FOREIGN KEY(run_id) REFERENCES runs(run_id)
+                    finished_at TEXT,
+                    PRIMARY KEY(parent, "index")
                 )
                 """
             )
@@ -1096,19 +1153,16 @@ class ExecutionStore:
                 """
             )
             self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_runs_thread_created ON runs(thread_id, created_at)"
+                "CREATE INDEX IF NOT EXISTS idx_runs_thread_created ON runs(thread, created_at)"
             )
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_threads_updated ON threads(updated_at)"
             )
             self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_steps_run_step_index ON steps(run_id, step_index)"
+                "CREATE INDEX IF NOT EXISTS idx_steps_parent_index ON steps(parent, \"index\")"
             )
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_updates_created ON updates(created_at)"
-            )
-            self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_commands_request_id ON commands(request_id) WHERE request_id IS NOT NULL"
             )
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_events_domain_seq ON events(domain, domain_id, seq)"
@@ -1196,49 +1250,29 @@ def _load_json(value: str) -> Any:
 
 
 def _run_from_row(row: sqlite3.Row) -> RunRecord:
-    raw_superseded = row["superseded"] if "superseded" in row.keys() else None
+    context_raw = _load_json(str(row["context"])) if row["context"] is not None else {}
+    output_raw = _load_json(str(row["output"])) if row["output"] is not None else None
     return RunRecord(
-        run_id=str(row["run_id"]),
-        thread_id=str(row["thread_id"]),
-        origin=str(row["origin"]),
-        root_run_id=str(row["root_run_id"]) if "root_run_id" in row.keys() else str(row["run_id"]),
-        parent_run_id=(
-            str(row["parent_run_id"])
-            if "parent_run_id" in row.keys() and row["parent_run_id"] is not None
-            else None
-        ),
-        parent_step_index=(
-            int(row["parent_step_index"])
-            if "parent_step_index" in row.keys() and row["parent_step_index"] is not None
-            else None
-        ),
-        executable_kind=(
-            str(row["executable_kind"])
-            if "executable_kind" in row.keys()
-            else "thunk"
-        ),
-        executable_name=(
-            str(row["executable_name"])
-            if "executable_name" in row.keys() and row["executable_name"] is not None
-            else None
-        ),
-        call_kind=(
-            str(row["call_kind"])
-            if "call_kind" in row.keys()
-            else "top"
-        ),
-        metadata=(
-            cast(dict[str, Any], _load_json(str(row["metadata"])))
-            if "metadata" in row.keys() and row["metadata"] is not None
-            else {}
-        ),
+        id=str(row["id"]),
+        parent=str(row["parent"]) if row["parent"] is not None else None,
+        thread=str(row["thread"]),
+        input=input_ref_from_data(cast(Mapping[str, Any], _load_json(str(row["input"])))),
+        output=output_ref_from_data(cast(Mapping[str, Any], output_raw) if isinstance(output_raw, Mapping) else None),
+        context=dict(context_raw) if isinstance(context_raw, Mapping) else {},
         status=cast(RunStatus, row["status"]),
         error=str(row["error"]) if row["error"] is not None else None,
-        superseded=cast(dict[str, Any], _load_json(str(raw_superseded))) if raw_superseded is not None else None,
         created_at=str(row["created_at"]),
-        started_at=str(row["started_at"]),
+        started_at=str(row["started_at"] or ""),
         finished_at=str(row["finished_at"]) if row["finished_at"] is not None else None,
     )
+
+
+def _parent_trace_path(parent_run_id: str | None, parent_step_index: int | None) -> str | None:
+    if not parent_run_id:
+        return None
+    if parent_step_index is None:
+        return parent_run_id
+    return trace_child_path(parent_run_id, parent_step_index)
 
 
 def _thread_from_row(row: sqlite3.Row) -> ThreadRecord:
@@ -1258,7 +1292,8 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
     raw = dict(row)
     input_raw = _load_json(str(raw["input"]))
     output_raw = _load_json(str(raw["output"]))
-    payload_raw = _load_json(str(raw["payload"]))
+    context_raw = _load_json(str(raw["context"]))
+    detail_raw = _load_json(str(raw["detail"]))
     input_items = (
         input_raw
         if isinstance(input_raw, Sequence) and not isinstance(input_raw, (str, bytes, bytearray))
@@ -1270,23 +1305,22 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
         else []
     )
     return StepRecord(
-        run_id=str(raw["run_id"]),
-        step_index=int(cast(int | str, raw["step_index"])),
+        parent=str(raw["parent"]),
+        index=int(cast(int | str, raw["index"])),
         kind=cast(StepKind, raw["kind"]),
-        status=cast(StepStatus, raw["status"]),
         input=step_input_items_from_data(
             [item for item in input_items if isinstance(item, Mapping)]
         ),
         output=parts_from_data(
             [item for item in output_items if isinstance(item, Mapping)]
         ),
-        started_at=str(raw["started_at"]),
-        finished_at=str(raw["finished_at"]),
-        payload=step_payload_from_data(
-            cast(StepKind, raw["kind"]),
-            payload_raw if isinstance(payload_raw, Mapping) else {},
-        ),
+        context=dict(context_raw) if isinstance(context_raw, Mapping) else {},
+        detail=dict(detail_raw) if isinstance(detail_raw, Mapping) else {},
+        status=cast(StepStatus, raw["status"]),
         error=str(raw["error"]) if raw["error"] is not None else None,
+        created_at=str(raw["created_at"]),
+        started_at=str(raw["started_at"]),
+        finished_at=str(raw["finished_at"]) if raw["finished_at"] is not None else None,
     )
 
 
@@ -1314,15 +1348,19 @@ def _event_from_row(row: sqlite3.Row) -> EventRecord:
 
 
 def _command_from_row(row: sqlite3.Row) -> CommandRecord:
-    message_raw = _load_json(str(row["message"])) if row["message"] is not None else None
+    input_raw = _load_json(str(row["input"])) if row["input"] is not None else None
+    context_raw = _load_json(str(row["context"])) if row["context"] is not None else {}
     return CommandRecord(
-        run_id=str(row["run_id"]),
+        run=str(row["run"]),
         index=int(row["index"]),
         kind=cast(CommandKind, row["kind"]),
-        mode=cast(CommandMode, row["mode"]) if row["mode"] is not None else None,
-        request_id=str(row["request_id"]) if row["request_id"] is not None else None,
-        message=Message.from_data(message_raw) if isinstance(message_raw, Mapping) else None,
+        apply=cast(CommandApply, row["apply"]),
+        input=Message.from_data(input_raw) if isinstance(input_raw, Mapping) else None,
+        context=dict(context_raw) if isinstance(context_raw, Mapping) else {},
+        status=row["status"],
+        error=str(row["error"]) if row["error"] is not None else None,
         created_at=str(row["created_at"]),
+        finished_at=str(row["finished_at"]) if row["finished_at"] is not None else None,
     )
 
 
@@ -1335,8 +1373,8 @@ def _used_command_indexes(rows: Sequence[sqlite3.Row]) -> set[int]:
         for item in raw:
             if not isinstance(item, Mapping):
                 continue
-            if item.get("kind") == "command":
-                used.add(int(item.get("index", 0)))
+            if "cmd" in item:
+                used.add(int(item.get("cmd", 0)))
     return used
 
 
@@ -1347,8 +1385,9 @@ def _replay_messages_from_step(step: StepRecord) -> list[Message]:
     meta: dict[str, Any] = {}
     if step.error is not None:
         meta["error"] = step.error
-    if isinstance(step.payload, ModelCallStepPayload) and step.payload.reasoning_content:
-        meta["reasoning_content"] = step.payload.reasoning_content
+    reasoning_content = step.detail.get("reasoning_content")
+    if isinstance(reasoning_content, str) and reasoning_content:
+        meta["reasoning_content"] = reasoning_content
     return [Message(role=role, parts=tuple(step.output), meta=meta)]
 
 
@@ -1437,105 +1476,81 @@ class PersistSink:
 
     def __init__(self, store: ExecutionStore) -> None:
         self._store = store
-        self._pending_steps: dict[tuple[str, int], tuple[tuple[StepInputItem, ...], str, str | None, str | None]] = {}
+        self._pending_steps: dict[str, tuple[tuple[StepInputItem, ...], str, dict[str, Any]]] = {}
         self._last_step_index: dict[str, int] = {}
 
     def on_event(self, event: TraceEvent) -> None:
         if isinstance(event, RunBegin):
             self._store.start_run(
-                run_id=event.run_id,
-                thread_id=event.thread_id,
-                origin=event.origin,
+                run_id=event.run,
+                thread_id=event.thread,
+                origin=str(event.context.get("origin", "chat")),
                 input=event.input,
-                root_run_id=event.root_run_id,
-                parent_run_id=event.parent_run_id,
-                parent_step_index=event.parent_step_index,
-                executable_kind=event.executable_kind,
-                executable_name=event.executable_name,
-                call_kind=event.call_kind,
-                metadata=event.metadata,
-                request_id=event.request_id,
+                parent=event.parent,
+                context=event.context,
                 created_at=event.created_at,
                 started_at=event.started_at,
             )
             return
         if isinstance(event, StepBegin):
-            instruct = (
-                self._store.put_prompt(body=event.instruct)
-                if event.instruct is not None
-                else None
-            )
-            context = (
-                self._store.put_prompt(body=event.context)
-                if event.context is not None
-                else None
-            )
-            self._pending_steps[(event.run_id, event.step_index)] = (
-                tuple(event.input),
+            self._pending_steps[event.step] = (
+                cast(tuple[StepInputItem, ...], tuple(event.input)),
                 event.started_at,
-                instruct,
-                context,
+                dict(event.context),
             )
             return
         if isinstance(event, StepEnd):
-            step_input, started_at, instruct, context = self._pending_steps.pop(
-                (event.run_id, event.step_index),
-                ((), event.started_at, None, None),
+            step_input, started_at, context = self._pending_steps.pop(
+                event.step,
+                ((), event.started_at, {}),
             )
-            payload = event.payload
-            if isinstance(payload, ModelCallStepPayload):
-                payload = ModelCallStepPayload(
-                    model_ref=payload.model_ref,
-                    input_tokens=payload.input_tokens,
-                    output_tokens=payload.output_tokens,
-                    provider=payload.provider,
-                    model=payload.model,
-                    adapter=payload.adapter,
-                    base_url=payload.base_url,
-                    instruct=instruct,
-                    context=context,
-                    reasoning_content=payload.reasoning_content,
-                    adapter_request=payload.adapter_request,
-                )
+            parent = trace_parent(event.step)
+            index = trace_index(event.step)
+            if parent is None or index is None:
+                raise ValueError(f"step_end requires a step path: {event.step}")
             self._store.append_step(
-                run_id=event.run_id,
-                step_index=event.step_index,
+                parent=parent,
+                index=index,
                 kind=event.kind,
                 status=event.status,
                 input=step_input,
                 output=event.output,
-                payload=payload,
+                context=context,
+                detail=event.detail,
                 error=event.error,
                 started_at=started_at,
                 finished_at=event.finished_at,
             )
-            self._last_step_index[event.run_id] = max(
-                self._last_step_index.get(event.run_id, 0),
-                event.step_index,
+            run_id = trace_run(event.step)
+            self._last_step_index[run_id] = max(
+                self._last_step_index.get(run_id, 0),
+                index,
             )
             return
         if isinstance(event, RunEnd):
             if event.error is not None:
                 self._append_runtime_failure_step(event)
             self._store.finish_run(
-                run_id=event.run_id,
+                run_id=event.run,
                 status=event.status,
                 error=event.error,
+                output=output_ref_from_data(cast(Mapping[str, Any], event.output)) if isinstance(event.output, Mapping) else None,
+                detail=event.detail,
                 finished_at=event.finished_at,
             )
 
     def _append_runtime_failure_step(self, event: RunEnd) -> None:
-        step_index = self._last_step_index.get(event.run_id, 0) + 1
+        step_index = self._last_step_index.get(event.run, 0) + 1
         self._store.append_step(
-            run_id=event.run_id,
-            step_index=step_index,
+            parent=event.run,
+            index=step_index,
             kind="system",
             status="failed",
             input=(),
             output=(TextPart(text=event.error or "Run failed."),),
-            payload=RuntimeStepPayload(),
+            detail={},
             error=event.error,
             started_at=event.finished_at,
             finished_at=event.finished_at,
         )
-        self._last_step_index[event.run_id] = step_index
+        self._last_step_index[event.run] = step_index

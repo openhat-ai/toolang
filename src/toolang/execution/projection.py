@@ -209,23 +209,21 @@ def _project_flow_steps(
     calls: dict[str, FlowCallView] = {}
     for step in steps:
         record = _mapping(step)
-        payload = _mapping(record.get("payload"))
-        if not payload and isinstance(record.get("metadata"), Mapping):
-            payload = _mapping(record.get("metadata"))
+        payload = _step_data(record)
         kind = _text(record.get("kind"))
-        if kind in {"step", "parallel", "bind"}:
+        if kind in {"seq", "par", "unfold", "map", "filter", "sort", "fold", "system"}:
             stage = _ensure_stage(payload, stages=stages, stage_order=stage_order)
-            metadata = _mapping(payload.get("metadata"))
-            op = _text(payload.get("op")) or _text(metadata.get("op")) or ""
-            input_preview = metadata.get("input_preview")
+            source = _mapping(payload.get("source"))
+            op = _text(payload.get("op")) or _text(source.get("op")) or ""
+            input_preview = payload.get("input_preview") or source.get("input_preview")
             if input_preview is not None:
                 stage.input_shape = shape_label(input_preview)
-            output_preview = payload.get("output_preview")
+            output_preview = payload.get("output_preview") or payload.get("preview")
             if output_preview is not None:
                 if op.startswith("prepare_"):
                     stage.item_total = preview_count(output_preview) or stage.item_total
                     stage.status = "running"
-                if op == "set_current":
+                if op in {"set_current", "fold", "unfold", "filter", "sort", "map"}:
                     stage.output_shape = shape_label(
                         output_preview,
                         fallback_count=output_count(record),
@@ -311,10 +309,11 @@ def _ensure_call(
     call = calls.get(run_id)
     ctx = _stage_context(payload)
     if call is None:
+        target_payload = _mapping(payload.get("target"))
         target = executable_label(
-            _text(payload.get("target_kind")) or "run",
-            _text(payload.get("target")),
-            metadata=_mapping(payload.get("metadata")),
+            _text(payload.get("target_kind")) or _text(target_payload.get("kind")) or "run",
+            _text(payload.get("target_name")) or _text(target_payload.get("name")),
+            metadata=_mapping(payload.get("metadata")) or _mapping(payload.get("source")),
         ).replace(":", " ", 1)
         call = FlowCallView(
             key=run_id,
@@ -339,10 +338,19 @@ def _ensure_call(
 
 def _stage_context(payload: Mapping[str, Any]) -> dict[str, Any]:
     metadata = _mapping(payload.get("metadata"))
-    child = _mapping(payload.get("child")) or _mapping(metadata.get("child"))
+    source = _mapping(payload.get("source"))
+    child = _mapping(payload.get("child")) or _mapping(metadata.get("child")) or _mapping(source.get("child"))
     ctx: dict[str, Any] = dict(child)
+    ctx.update(source)
     ctx.update(metadata)
     ctx.update(payload)
+    lane = _mapping(payload.get("lane"))
+    if lane:
+        ctx.setdefault("lane_index", lane.get("index"))
+        ctx.setdefault("parallelism", lane.get("count"))
+    item = _mapping(payload.get("item"))
+    if item:
+        ctx.setdefault("item_index", item.get("index"))
     if "item_index" not in ctx:
         item_indexes = _list(payload.get("item_indexes"))
         if item_indexes:
@@ -351,10 +359,14 @@ def _stage_context(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _child_run_ids(payload: Mapping[str, Any], record: Mapping[str, Any]) -> tuple[str, ...]:
-    child_ids = tuple(str(item) for item in _list(payload.get("child_run_ids")) if item is not None)
+    child_ids = tuple(
+        str(item)
+        for item in (*_list(payload.get("child_run_ids")), *_list(payload.get("child_runs")))
+        if item is not None
+    )
     if child_ids:
         return child_ids
-    return (f"{record.get('step_index', 'step')}",)
+    return (f"{record.get('step', record.get('index', 'step'))}",)
 
 
 def _call_label(target: str, ctx: Mapping[str, Any]) -> str:
@@ -369,6 +381,19 @@ def _call_label(target: str, ctx: Mapping[str, Any]) -> str:
 def _run_steps(run: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     output = _mapping(run.get("output"))
     return [_mapping(item) for item in _list(output.get("steps"))]
+
+
+def _step_data(record: Mapping[str, Any]) -> Mapping[str, Any]:
+    detail = _mapping(record.get("detail"))
+    context = _mapping(record.get("context"))
+    payload = _mapping(record.get("payload"))
+    if detail:
+        return {**dict(context), **dict(detail)}
+    if payload:
+        return payload
+    if context:
+        return context
+    return {}
 
 
 def _mapping(value: object) -> Mapping[str, Any]:

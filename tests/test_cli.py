@@ -30,7 +30,6 @@ from toolang.components.trigger import watch
 from toolang.config.log import DEFAULT_AGENT_LOG_SPEC
 from toolang.config.log_spec import PY_LOG_ENV_VAR
 from toolang.execution.events import RunEnd, RunBegin, StepEnd, StepBegin
-from toolang.execution.records import ChildCallStepPayload, FlowOpStepPayload
 from toolang.common.progress import ProgressEvent
 from toolang import work
 from toolang.execution.db import ExecutionStore, execution_db_path
@@ -2266,10 +2265,11 @@ thunk:
         del toolang_root, agent_name, thunk_name, input_text, models, metadata, environ, log_spec, prepared_state
         response.on_event(
             RunBegin(
-                run_id="run_test",
-                origin="script",
-                thread_id="script_test",
+                run="run_test",
+                parent=None,
+                thread="script_test",
                 input=Message.user("hello"),
+                context={"origin": "script"},
                 created_at="2026-05-21T00:00:00Z",
                 started_at="2026-05-21T00:00:00Z",
             )
@@ -7604,16 +7604,19 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
                             {
                                 "record": {
                                     "step_index": 1,
-                                    "kind": "step",
+                                    "kind": "seq",
                                     "status": "finished",
-                                    "payload": {
-                                        "stage_index": 0,
-                                        "stage_total": 2,
-                                        "stage_kind": "rank",
-                                        "stage_title": "Rank candidates",
+                                    "detail": {
                                         "op": "prepare_rank",
                                         "output_preview": {"count": 3},
-                                        "metadata": {"input_preview": {"count": 3}, "parallelism": 2},
+                                        "source": {
+                                            "stage_index": 0,
+                                            "stage_total": 2,
+                                            "stage_kind": "rank",
+                                            "stage_title": "Rank candidates",
+                                            "input_preview": {"count": 3},
+                                            "parallelism": 2,
+                                        },
                                     },
                                     "output": [],
                                 },
@@ -7624,17 +7627,16 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
                                     "step_index": 2,
                                     "kind": "run",
                                     "status": "finished",
-                                    "payload": {
-                                        "target_kind": "thunk",
-                                        "target": "score",
-                                        "child_run_ids": ["run_child"],
-                                        "parallelism": 2,
-                                        "lane_index": 0,
-                                        "stage_index": 0,
-                                        "stage_total": 2,
-                                        "stage_kind": "rank",
-                                        "item_indexes": [0],
-                                        "metadata": {
+                                    "detail": {
+                                        "call": "stage",
+                                        "target": {"kind": "thunk", "name": "score"},
+                                        "child_runs": ["run_child"],
+                                        "lane": {"index": 0, "count": 2},
+                                        "item": {"index": 0},
+                                        "source": {
+                                            "stage_index": 0,
+                                            "stage_total": 2,
+                                            "stage_kind": "rank",
                                             "stage_title": "Rank candidates",
                                             "parallelism": 2,
                                             "item_count": 3,
@@ -7647,16 +7649,19 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
                             {
                                 "record": {
                                     "step_index": 3,
-                                    "kind": "step",
+                                    "kind": "system",
                                     "status": "finished",
-                                    "payload": {
-                                        "stage_index": 0,
-                                        "stage_total": 2,
-                                        "stage_kind": "rank",
-                                        "stage_title": "Rank candidates",
+                                    "detail": {
                                         "op": "set_current",
                                         "output_preview": {"count": 2},
-                                        "metadata": {"input_preview": {"count": 3}, "parallelism": 2},
+                                        "source": {
+                                            "stage_index": 0,
+                                            "stage_total": 2,
+                                            "stage_kind": "rank",
+                                            "stage_title": "Rank candidates",
+                                            "input_preview": {"count": 3},
+                                            "parallelism": 2,
+                                        },
                                     },
                                     "output": [],
                                 },
@@ -7667,13 +7672,17 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
                                     "step_index": 4,
                                     "kind": "run",
                                     "status": "finished",
-                                    "payload": {
-                                        "target_kind": "thunk",
-                                        "child_run_ids": ["run_inline"],
-                                        "stage_index": 1,
-                                        "stage_total": 2,
-                                        "stage_kind": "do",
-                                        "metadata": {"source_line": 34, "stage_title": "Inline summary"},
+                                    "detail": {
+                                        "call": "stage",
+                                        "target": {"kind": "thunk", "name": None},
+                                        "child_runs": ["run_inline"],
+                                        "source": {
+                                            "stage_index": 1,
+                                            "stage_total": 2,
+                                            "stage_kind": "do",
+                                            "source_line": 34,
+                                            "stage_title": "Inline summary",
+                                        },
                                     },
                                     "output": [],
                                 },
@@ -7696,7 +7705,7 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
                                     "step_index": 1,
                                     "kind": "tool",
                                     "status": "finished",
-                                    "payload": {},
+                                    "detail": {},
                                     "input": [],
                                     "output": [
                                         {
@@ -7736,10 +7745,10 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
     assert "run run_parent  succeeded  flow=research  thread=term_thread" in result.stdout
     assert "# input\nquery" in result.stdout
     assert "# steps" in result.stdout
-    assert "\n✓ 1   step    stage 1 rank prepare count=3" in result.stdout
+    assert "\n✓ 1   seq     stage 1 rank prepare count=3" in result.stdout
     assert "\n✓ 2   run" in result.stdout
     assert "item 1/3 thunk:score run_child" in result.stdout
-    assert "\n✓ 3   step    stage 1 rank done count=2" in result.stdout
+    assert "\n✓ 3   system  stage 1 rank done count=2" in result.stdout
     assert "\n✓ 4   run     stage 2 do -> thunk:<L34> run_inline" in result.stdout
     assert "2.1 tool" not in result.stdout
 
@@ -7793,7 +7802,7 @@ def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> Non
                     "step_index": 1,
                     "kind": "model",
                     "status": "finished",
-                    "payload": {"model_ref": "deepseek/deepseek-chat-v3"},
+                    "detail": {"model_ref": "deepseek/deepseek-chat-v3"},
                     "output": [
                         {"type": "text", "text": "I should inspect services.\n"},
                         {
@@ -7822,7 +7831,7 @@ def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> Non
                     "step_index": 2,
                     "kind": "system",
                     "status": "failed",
-                    "payload": {},
+                    "detail": {},
                     "output": [{"type": "text", "text": "unknown tool call: service_use__service_list"}],
                     "error": "unknown tool call: service_use__service_list",
                 },
@@ -8278,30 +8287,33 @@ def test_script_progress_defaults_to_stage_summary() -> None:
 
     sink.on_event(
         RunBegin(
-            run_id="run_parent",
-            origin="script",
-            thread_id="script_1",
+            run="run_parent",
+            parent=None,
+            thread="script_1",
             input=Message.user("query"),
             created_at="2026-01-01T00:00:00Z",
             started_at="2026-01-01T00:00:00Z",
-            executable_kind="flow",
-            executable_name="research",
+            context={
+                "origin": "script",
+                "root": "run_parent",
+                "executable": {"kind": "flow", "name": "research"},
+                "call": "top",
+            },
         )
     )
     sink.on_event(
         RunBegin(
-            run_id="run_child",
-            origin="script",
-            thread_id="script_1",
+            run="run_child",
+            parent="run_parent/2",
+            thread="script_1",
             input=Message.user("query"),
             created_at="2026-01-01T00:00:01Z",
             started_at="2026-01-01T00:00:01Z",
-            parent_run_id="run_parent",
-            parent_step_index=2,
-            executable_kind="thunk",
-            executable_name="search_web",
-            call_kind="stage",
-            metadata={
+            context={
+                "origin": "script",
+                "root": "run_parent",
+                "executable": {"kind": "thunk", "name": "search_web"},
+                "call": "stage",
                 "child": {
                     "stage_label": "each: Search the web",
                     "stage_index": 1,
@@ -8316,9 +8328,7 @@ def test_script_progress_defaults_to_stage_summary() -> None:
     )
     sink.on_event(
         StepBegin(
-            run_id="run_child",
-            thread_id="script_1",
-            step_index=1,
+            step="run_child/1",
             kind="model",
             input=(),
             started_at="2026-01-01T00:00:01Z",
@@ -8326,90 +8336,78 @@ def test_script_progress_defaults_to_stage_summary() -> None:
     )
     sink.on_event(
         StepEnd(
-            run_id="run_parent",
-            thread_id="script_1",
-            step_index=1,
-            kind="step",
+            step="run_parent/1",
+            kind="par",
             status="finished",
             output=(),
-            payload=FlowOpStepPayload(
-                op="prepare_each",
-                stage_index=1,
-                stage_kind="each",
-                output_preview={"count": 3},
-                metadata={"stage_label": "each: Search the web", "stage_index": 1, "stage_kind": "each"},
-            ),
+            detail={
+                "op": "prepare_each",
+                "preview": {"count": 3},
+                "source": {
+                    "stage_label": "each: Search the web",
+                    "stage_index": 1,
+                    "stage_kind": "each",
+                },
+            },
             started_at="2026-01-01T00:00:00Z",
             finished_at="2026-01-01T00:00:01Z",
         )
     )
     sink.on_event(
         StepEnd(
-            run_id="run_parent",
-            thread_id="script_1",
-            step_index=2,
+            step="run_parent/2",
             kind="run",
             status="finished",
             output=(TextPart(text="done"),),
-            payload=ChildCallStepPayload(
-                call="stage",
-                target_kind="thunk",
-                target="search_web",
-                child_run_ids=("run_child",),
-                parallelism=2,
-                lane_index=0,
-                stage_index=1,
-                stage_kind="each",
-                item_indexes=(0,),
-                metadata={
+            detail={
+                "call": "stage",
+                "target": {"kind": "thunk", "name": "search_web"},
+                "child_runs": ["run_child"],
+                "lane": {"count": 2, "index": 0},
+                "item": {"index": 0},
+                "source": {
                     "stage_label": "each: Search the web",
                     "stage_index": 1,
                     "stage_kind": "each",
                     "parallelism": 2,
                     "item_count": 3,
                 },
-            ),
+            },
             started_at="2026-01-01T00:00:01Z",
             finished_at="2026-01-01T00:00:02Z",
         )
     )
     sink.on_event(
         RunEnd(
-            run_id="run_unknown_child",
-            thread_id="script_1",
+            run="run_unknown_child",
             status="finished",
             finished_at="2026-01-01T00:00:02Z",
         )
     )
     sink.on_event(
         StepEnd(
-            run_id="run_parent",
-            thread_id="script_1",
-            step_index=3,
-            kind="step",
+            step="run_parent/3",
+            kind="system",
             status="finished",
             output=(),
-            payload=FlowOpStepPayload(
-                op="set_current",
-                stage_index=1,
-                stage_kind="each",
-                output_preview={"count": 3},
-                metadata={
+            detail={
+                "op": "set_current",
+                "preview": {"count": 3},
+                "source": {
                     "stage_label": "each: Search the web",
                     "stage_index": 1,
                     "stage_kind": "each",
                     "input_preview": {"count": 3},
                     "parallelism": 2,
                 },
-            ),
+            },
             started_at="2026-01-01T00:00:02Z",
             finished_at="2026-01-01T00:00:03Z",
         )
     )
     sink.on_event(
         RunEnd(
-            run_id="run_parent",
-            thread_id="script_1",
+            run="run_parent",
             status="finished",
             finished_at="2026-01-01T00:00:03Z",
         )
@@ -8430,31 +8428,32 @@ def test_script_progress_expands_lanes_with_verbosity() -> None:
     sink = cli_invoke._ScriptProgressSink(thunk_name="research", render=False, verbosity=2)
     sink.on_event(
         RunBegin(
-            run_id="run_parent",
-            origin="script",
-            thread_id="script_1",
+            run="run_parent",
+            parent=None,
+            thread="script_1",
             input=Message.user("query"),
             created_at="2026-01-01T00:00:00Z",
             started_at="2026-01-01T00:00:00Z",
-            executable_kind="flow",
-            executable_name="research",
+            context={
+                "origin": "script",
+                "executable": {"kind": "flow", "name": "research"},
+            },
         )
     )
     for run_id, item_index in (("run_second", 1), ("run_first", 0)):
         sink.on_event(
             RunBegin(
-                run_id=run_id,
-                origin="script",
-                thread_id="script_1",
+                run=run_id,
+                parent=f"run_parent/{item_index + 1}",
+                thread="script_1",
                 input=Message.user("query"),
                 created_at="2026-01-01T00:00:01Z",
                 started_at="2026-01-01T00:00:01Z",
-                parent_run_id="run_parent",
-                parent_step_index=item_index + 1,
-                executable_kind="thunk",
-                executable_name="search_web",
-                call_kind="stage",
-                metadata={
+                context={
+                    "origin": "script",
+                    "root": "run_parent",
+                    "executable": {"kind": "thunk", "name": "search_web"},
+                    "call": "stage",
                     "child": {
                         "stage_label": "each: Search the web",
                         "stage_index": 0,
@@ -8497,14 +8496,16 @@ def test_script_progress_keeps_final_frame_visible(monkeypatch) -> None:
 
     sink.on_event(
         RunBegin(
-            run_id="run_parent",
-            origin="script",
-            thread_id="script_1",
+            run="run_parent",
+            parent=None,
+            thread="script_1",
             input=Message.user("query"),
             created_at="2026-01-01T00:00:00Z",
             started_at="2026-01-01T00:00:00Z",
-            executable_kind="flow",
-            executable_name="research",
+            context={
+                "origin": "script",
+                "executable": {"kind": "flow", "name": "research"},
+            },
         )
     )
 

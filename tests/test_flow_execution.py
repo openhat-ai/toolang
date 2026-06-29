@@ -11,7 +11,6 @@ from toolang.components.trigger import watch
 from toolang.execution.db import ExecutionStore, execution_db_path
 from toolang.execution.executor import _stage_thunk_with_default_recall
 from toolang.execution.model_call import recall_values, recalls_history
-from toolang.execution.records import ChildCallStepPayload, FlowOpStepPayload, ModelCallStepPayload
 from toolang.execution.runner import QueueRunner, RunRequest
 from toolang.execution.stream import RuntimeEventBus
 from toolang.lang.ast import Directive, SourceSpan, Thunk
@@ -173,23 +172,18 @@ def test_flow_run_records_child_thunk_run(tmp_path: Path) -> None:
         assert child.root_run_id == parent.run_id
         assert child.call_kind == "stage"
         steps = context.store.list_steps(run_id=parent.run_id)
-        assert [step.kind for step in steps] == ["step", "run", "bind"]
-        assert isinstance(steps[0].payload, FlowOpStepPayload)
-        assert steps[0].payload.metadata is not None
-        assert steps[0].payload.metadata["stage_label"] == "do summarize"
-        assert isinstance(steps[1].payload, ChildCallStepPayload)
-        assert steps[1].payload.metadata is not None
-        assert steps[1].payload.metadata["stage_label"] == "do summarize"
-        assert steps[1].payload.child_run_ids == (child.run_id,)
+        assert [step.kind for step in steps] == ["seq", "run", "system"]
+        assert steps[0].detail["source"]["stage_label"] == "do summarize"
+        assert steps[1].detail["source"]["stage_label"] == "do summarize"
+        assert steps[1].detail["child_runs"] == [child.run_id]
         child_model_step = context.store.list_steps(run_id=child.run_id)[0]
         assert child_model_step.kind == "model"
-        assert isinstance(child_model_step.payload, ModelCallStepPayload)
-        assert child_model_step.payload.adapter_request is not None
-        message_text = child_model_step.payload.adapter_request["messages"][-1]["parts"][0]["text"]
+        assert child_model_step.detail["adapter_request"] is not None
+        message_text = child_model_step.detail["adapter_request"]["messages"][-1]["parts"][0]["text"]
         assert "Summarize the input." in message_text
         assert "hello" in message_text
-        assert child_model_step.payload.adapter_request["tools"] == []
-        assert child_model_step.payload.adapter_request["state"] is None
+        assert child_model_step.detail["adapter_request"]["tools"] == []
+        assert child_model_step.detail["adapter_request"]["state"] is None
 
     asyncio.run(run_test())
 
@@ -231,12 +225,10 @@ def test_flow_run_records_inline_stage_child_thunk(tmp_path: Path) -> None:
         assert child.call_kind == "stage"
         assert child.metadata["child"]["source_line"] == 4
         steps = context.store.list_steps(run_id=parent.run_id)
-        assert isinstance(steps[1].payload, ChildCallStepPayload)
-        assert steps[1].payload.target_kind == "thunk"
-        assert steps[1].payload.target is None
-        assert steps[1].payload.metadata is not None
-        assert steps[1].payload.metadata["source_line"] == 4
-        assert steps[1].payload.child_run_ids == (child.run_id,)
+        assert steps[1].detail["target"]["kind"] == "thunk"
+        assert steps[1].detail["target"]["name"] is None
+        assert steps[1].detail["source"]["source_line"] == 4
+        assert steps[1].detail["child_runs"] == [child.run_id]
         assert context.store.list_steps(run_id=child.run_id)[0].kind == "model"
 
     asyncio.run(run_test())
@@ -275,23 +267,20 @@ def test_flow_parallel_child_calls_record_lane_metadata(tmp_path: Path) -> None:
         child_steps = [
             step
             for step in context.store.list_steps(run_id=parent.run_id)
-            if isinstance(step.payload, ChildCallStepPayload)
+            if step.kind == "run"
         ]
         assert len(child_steps) == 3
-        first = child_steps[0].payload
-        third = child_steps[2].payload
-        assert isinstance(first, ChildCallStepPayload)
-        assert isinstance(third, ChildCallStepPayload)
-        assert first.parallelism == 2
-        assert first.lane_index == 0
-        assert first.item_indexes == (0,)
-        assert first.metadata is not None
-        assert first.metadata["parallelism"] == 2
-        assert first.metadata["lane_index"] == 0
-        assert first.metadata["item_count"] == 3
-        assert third.parallelism == 2
-        assert third.lane_index in {0, 1}
-        assert third.item_indexes == (2,)
+        first = child_steps[0].detail
+        third = child_steps[2].detail
+        assert first["lane"]["count"] == 2
+        assert first["lane"]["index"] == 0
+        assert first["item"]["index"] == 0
+        assert first["source"]["parallelism"] == 2
+        assert first["source"]["lane_index"] == 0
+        assert first["source"]["item_count"] == 3
+        assert third["lane"]["count"] == 2
+        assert third["lane"]["index"] in {0, 1}
+        assert third["item"]["index"] == 2
 
     asyncio.run(run_test())
 

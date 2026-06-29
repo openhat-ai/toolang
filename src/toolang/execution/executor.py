@@ -23,13 +23,11 @@ from .events import PartEnd, PartBegin, RunEnd, RunBegin, StepEnd, StepBegin, Tr
 from .input import effective_origin_model_selectors
 from .model import resolve_model
 from .records import (
-    ChildCallStepPayload,
-    FlowOpStepPayload,
-    ModelCallStepPayload,
-    CommandRef,
+    InputRef,
     RunStatus,
     StepKind,
     StepStatus,
+    trace_child_path,
 )
 
 if TYPE_CHECKING:
@@ -184,11 +182,9 @@ class Executor:
         prompt = _render_inline_thunk(thunk, ctx)
         self._on_event(
             StepBegin(
-                run_id=ctx.id,
-                thread_id=ctx.thread,
-                step_index=step_index,
+                step=trace_child_path(ctx.id, step_index),
                 kind="model",
-                input=(CommandRef(),),
+                input=(InputRef(),),
                 started_at=started_at,
             )
         )
@@ -206,19 +202,15 @@ class Executor:
         part = TextPart(text=output_text)
         self._on_event(
             PartBegin(
-                run_id=ctx.id,
-                thread_id=ctx.thread,
-                step_index=step_index,
-                part_index=0,
-                kind="text",
+                step=trace_child_path(ctx.id, step_index),
+                part=0,
+                type_="text",
             )
         )
         self._on_event(
             PartEnd(
-                run_id=ctx.id,
-                thread_id=ctx.thread,
-                step_index=step_index,
-                part_index=0,
+                step=trace_child_path(ctx.id, step_index),
+                part=0,
                 data=part,
             )
         )
@@ -226,21 +218,21 @@ class Executor:
         ctx.frame.set_current(output_text)
         self._on_event(
             StepEnd(
-                run_id=ctx.id,
-                thread_id=ctx.thread,
-                step_index=step_index,
+                step=trace_child_path(ctx.id, step_index),
                 kind="model",
                 status="finished",
                 output=(part,),
-                payload=ModelCallStepPayload(
-                    model_ref=model.ref,
-                    input_tokens=result.usage.input_tokens if result.usage is not None else 0,
-                    output_tokens=result.usage.output_tokens if result.usage is not None else 0,
-                    provider=model.provider,
-                    model=model.model,
-                    adapter=model.adapter,
-                    base_url=model.base_url,
-                ),
+                detail={
+                    "model_ref": model.ref,
+                    "usage": {
+                        "input_tokens": result.usage.input_tokens if result.usage is not None else 0,
+                        "output_tokens": result.usage.output_tokens if result.usage is not None else 0,
+                    },
+                    "provider": model.provider,
+                    "model": model.model,
+                    "adapter": model.adapter,
+                    "base_url": model.base_url,
+                },
                 started_at=started_at,
                 finished_at=_utc_now(),
             )
@@ -666,27 +658,26 @@ class Executor:
     def _emit_run_begin(self, ctx: RunCtx, *, executable_name: str | None, executable_kind: str) -> None:
         self._on_event(
             RunBegin(
-                run_id=ctx.id,
-                origin=ctx.binding.origin,
-                thread_id=ctx.thread,
+                run=ctx.id,
+                parent=_child_parent_path(ctx),
+                thread=ctx.thread,
                 input=Message.user(ctx.binding.input_text),
                 created_at=ctx.binding.created_at,
                 started_at=ctx.binding.created_at,
-                root_run_id=ctx.root,
-                parent_run_id=ctx.parent,
-                parent_step_index=ctx.parent_step,
-                executable_kind=executable_kind,
-                executable_name=executable_name,
-                call_kind=ctx.call,
-                metadata=dict(ctx.binding.metadata),
+                context={
+                    **dict(ctx.binding.metadata),
+                    "origin": ctx.binding.origin,
+                    "root": ctx.root,
+                    "executable": {"kind": executable_kind, "name": executable_name},
+                    "call": ctx.call,
+                },
             )
         )
 
     def _emit_run_end(self, ctx: RunCtx, *, status: RunStatus, error: str | None = None) -> None:
         self._on_event(
             RunEnd(
-                run_id=ctx.id,
-                thread_id=ctx.thread,
+                run=ctx.id,
                 status=status,
                 error=error,
                 finished_at=_utc_now(),
@@ -703,13 +694,11 @@ class Executor:
     ) -> None:
         self._on_event(
             StepBegin(
-                run_id=parent.id,
-                thread_id=parent.thread,
-                step_index=step_index,
+                step=trace_child_path(parent.id, step_index),
                 kind="run",
-                input=(CommandRef(),),
+                input=(InputRef(),),
                 started_at=started_at,
-                metadata=dict(metadata),
+                context=dict(metadata),
             )
         )
 
@@ -730,25 +719,19 @@ class Executor:
     ) -> None:
         self._on_event(
             StepEnd(
-                run_id=parent.id,
-                thread_id=parent.thread,
-                step_index=step_index,
+                step=trace_child_path(parent.id, step_index),
                 kind="run",
                 status=status,
                 output=(TextPart(text=_value_to_text(output)),),
-                payload=ChildCallStepPayload(
-                    call=call,
-                    target_kind=target_kind,
-                    target=target,
-                    child_run_ids=(child.id,),
-                    batch_index=_meta_int(meta, "batch_index"),
-                    parallelism=_meta_int(meta, "parallelism"),
-                    lane_index=_meta_int(meta, "lane_index"),
-                    stage_index=_meta_int(meta, "stage_index"),
-                    stage_kind=_meta_str(meta, "stage_kind"),
-                    item_indexes=(() if _meta_int(meta, "item_index") is None else (_meta_int(meta, "item_index") or 0,)),
-                    metadata=dict(meta),
-                ),
+                detail={
+                    "call": call,
+                    "target": {"kind": target_kind, "name": target},
+                    "child_runs": [child.id],
+                    "batch_index": _meta_int(meta, "batch_index"),
+                    "lane": {"index": _meta_int(meta, "lane_index"), "count": _meta_int(meta, "parallelism")},
+                    "item": {"index": _meta_int(meta, "item_index")},
+                    "source": dict(meta),
+                },
                 started_at=started_at,
                 finished_at=_utc_now(),
                 error=error,
@@ -772,30 +755,24 @@ class Executor:
         kind = _flow_op_step_kind(op=op, stage=stage)
         self._on_event(
             StepBegin(
-                run_id=ctx.id,
-                thread_id=ctx.thread,
-                step_index=step_index,
+                step=trace_child_path(ctx.id, step_index),
                 kind=kind,
-                input=(CommandRef(),),
+                input=(InputRef(),),
                 started_at=now,
-                metadata=metadata,
+                context=metadata,
             )
         )
         self._on_event(
             StepEnd(
-                run_id=ctx.id,
-                thread_id=ctx.thread,
-                step_index=step_index,
+                step=trace_child_path(ctx.id, step_index),
                 kind=kind,
                 status="finished",
                 output=(TextPart(text=_value_to_text(output)),) if output is not None else (),
-                payload=FlowOpStepPayload(
-                    op=op,
-                    stage_index=index,
-                    stage_kind=stage.kind,
-                    output_preview=_json_preview(output),
-                    metadata=metadata,
-                ),
+                detail={
+                    "op": op,
+                    "source": metadata,
+                    "preview": _json_preview(output),
+                },
                 started_at=now,
                 finished_at=_utc_now(),
             )
@@ -857,10 +834,18 @@ def _score_value(value: Value) -> float:
 
 def _flow_op_step_kind(*, op: str, stage: FlowStage) -> StepKind:
     if op == "set_current":
-        return "bind"
+        return "system"
     if stage.kind in {"each", "rank", "keep", "drop"}:
-        return "parallel"
-    return "step"
+        return "par"
+    return "seq"
+
+
+def _child_parent_path(ctx: RunCtx) -> str | None:
+    if ctx.parent is None:
+        return None
+    if ctx.parent_step is None:
+        return ctx.parent
+    return trace_child_path(ctx.parent, ctx.parent_step)
 
 
 def _truthy_value(value: Value) -> bool:
