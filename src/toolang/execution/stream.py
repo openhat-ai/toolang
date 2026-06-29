@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import asdict
-import hashlib
 import json
 import threading
 from typing import TYPE_CHECKING, Any
@@ -13,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from toolang.base.types.message import TextDelta, ToolCallDelta, parts_to_data
 
 from .events import (
+    PartBegin,
     PartDelta,
     PartEnd,
     RunBegin,
@@ -25,7 +25,7 @@ from .events import (
     StepEnd,
     TraceEvent,
 )
-from .records import EventDomain, EventRecord
+from .records import EventDomain, EventRecord, trace_run
 
 if TYPE_CHECKING:
     from .db import ExecutionStore
@@ -67,8 +67,18 @@ class RuntimeEventBus:
         """Publish the public event projection for one execution trace event."""
 
         payload = _trace_event_payload(event)
-        run_id = payload.get("run_id")
-        thread_id = payload.get("thread_id")
+        run_id = payload.get("run")
+        if not isinstance(run_id, str):
+            step = payload.get("step")
+            if isinstance(step, str) and step:
+                run_id = trace_run(step)
+        thread_id = payload.get("thread")
+        if not isinstance(thread_id, str):
+            thread_id = _event_context(payload).get("thread")
+        if not isinstance(thread_id, str) and isinstance(run_id, str) and run_id:
+            run = self._store.get_run(run_id=run_id)
+            if run is not None:
+                thread_id = run.thread
         if isinstance(run_id, str) and run_id:
             self.publish(
                 domain="run", domain_id=run_id, type=event.type, payload=payload
@@ -167,41 +177,38 @@ def _sse_event(event: EventRecord) -> str:
 
 def _trace_event_payload(event: TraceEvent) -> dict[str, Any]:
     payload = asdict(event)
-    payload["type"] = event.type
-    if isinstance(event, RunWaiting):
-        pass
-    elif isinstance(event, RunStarting):
+    payload.pop("type", None)
+    if isinstance(event, (RunWaiting, RunStarting)):
         payload["input"] = event.input.to_data()
     elif isinstance(event, RunSteering):
-        payload["message"] = event.message.to_data()
+        payload["input"] = event.input.to_data()
     elif isinstance(event, RunStopping):
         pass
     elif isinstance(event, RunBegin):
         payload["input"] = event.input.to_data()
     elif isinstance(event, StepBegin):
-        payload["instruct"] = (
-            _prompt_hash(event.instruct) if event.instruct is not None else None
-        )
-        payload["context"] = (
-            _prompt_hash(event.context) if event.context is not None else None
-        )
         payload["input"] = [
             asdict(item) if not hasattr(item, "to_data") else item.to_data()
             for item in event.input
         ]
+    elif isinstance(event, PartBegin):
+        payload["type"] = event.type_
+        payload.pop("type_", None)
     elif isinstance(event, PartDelta):
         payload["delta"] = _delta_data(event.delta)
     elif isinstance(event, PartEnd):
-        payload["part"] = parts_to_data((event.data,))[0]
-        payload.pop("data", None)
+        payload["data"] = parts_to_data((event.data,))[0]
     elif isinstance(event, StepEnd):
         payload["output"] = parts_to_data(event.output)
-        payload["payload"] = event.payload.to_data()
+    elif isinstance(event, RunEnd):
+        if hasattr(event.output, "to_data"):
+            payload["output"] = event.output.to_data()
     return payload
 
 
-def _prompt_hash(body: str) -> str:
-    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+def _event_context(payload: dict[str, Any]) -> dict[str, Any]:
+    context = payload.get("context")
+    return dict(context) if isinstance(context, dict) else {}
 
 
 def _delta_data(delta: TextDelta | ToolCallDelta) -> dict[str, Any]:

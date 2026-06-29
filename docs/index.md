@@ -33,6 +33,7 @@ Use this directory for:
 | [tasks.md](./tasks.md) | Job model, including task, chore, will, and thread mapping |
 | [webui-jobs.md](./webui-jobs.md) | Web UI job board integration guide |
 | [execution.md](./execution.md) | Execution model, including durable records, trace events, and response events |
+| [run-step-records.md](./run-step-records.md) | Proposed run, step, command, and trace-event record model |
 | [chat.md](./chat.md) | Chat and transcript model, including thread, run, message, and stream behavior |
 | [models.md](./models.md) | Model integrations, including selectors, providers, routes, and built-in model providers |
 | [tools.md](./tools.md) | Tool runtime, including built-in tools and service-cap integration |

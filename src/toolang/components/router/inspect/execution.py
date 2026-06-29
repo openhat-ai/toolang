@@ -96,7 +96,7 @@ def create_router() -> APIRouter:
         command_record = context.store.append_command(
             run_id=run.run_id,
             kind="stop",
-            mode=_shared._input_mode(payload.mode if payload else "immediate"),
+            apply=_shared._input_apply(payload.mode if payload else "immediate"),
             request_id=payload.request_id if payload else None,
         )
         input_payload = _shared._input_event_payload(run, command_record)
@@ -265,9 +265,9 @@ def create_router() -> APIRouter:
         command_record = context.store.append_command(
             run_id=run.run_id,
             kind="steer",
-            mode=_shared._input_mode(payload.mode),
+            apply=_shared._input_apply(payload.mode),
             request_id=payload.request_id,
-            message=message,
+            input=message,
         )
         event_payload = _shared._input_event_payload(run, command_record)
         context.runner.notify_run_control(run_id=run.run_id, payload=event_payload)

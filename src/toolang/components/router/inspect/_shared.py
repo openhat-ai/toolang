@@ -25,15 +25,12 @@ from ....execution.detail import (
 from ....execution.events import MessageData, run_message_data
 from ....execution.input import allocate_run_id
 from ....execution.records import (
-    CommandMode,
+    CommandApply,
     CommandRecord,
-    ModelCallStepPayload,
     RunRecord,
     RunStatus,
-    RuntimeStepPayload,
     StepRecord,
     step_input_items_to_data,
-    step_payload_to_data,
 )
 from ....execution.runner import RunRequest
 from ....execution.stream import event_data
@@ -306,7 +303,7 @@ def create_router() -> APIRouter:
         command_record = context.store.append_command(
             run_id=run.run_id,
             kind="stop",
-            mode=_input_mode(payload.mode if payload else "immediate"),
+            apply=_input_apply(payload.mode if payload else "immediate"),
             request_id=payload.request_id if payload else None,
         )
         input_payload = _input_event_payload(run, command_record)
@@ -471,9 +468,9 @@ def create_router() -> APIRouter:
         command_record = context.store.append_command(
             run_id=run.run_id,
             kind="steer",
-            mode=_input_mode(payload.mode),
+            apply=_input_apply(payload.mode),
             request_id=payload.request_id,
-            message=message,
+            input=message,
         )
         event_payload = _input_event_payload(run, command_record)
         context.runner.notify_run_control(run_id=run.run_id, payload=event_payload)
@@ -1527,15 +1524,15 @@ def _virtual_runtime_failure_step(
     step_index = max((item.step_index for item in steps), default=0) + 1
     timestamp = run_detail.info.finished_at or run_detail.info.updated_at
     return StepRecord(
-        run_id=run_detail.info.id,
-        step_index=step_index,
+        parent=run_detail.info.id,
+        index=step_index,
         kind="system",
         status="failed",
         input=(),
         output=(TextPart(text=error),),
         started_at=timestamp,
         finished_at=timestamp,
-        payload=RuntimeStepPayload(),
+        detail={"message": error},
         error=error,
     )
 
@@ -1548,7 +1545,8 @@ def _step_record_data(step: StepRecord) -> dict[str, object]:
         "status": step.status,
         "input": step_input_items_to_data(step.input),
         "output": parts_to_data(step.output),
-        "payload": step_payload_to_data(step.payload),
+        "context": dict(step.context),
+        "detail": dict(step.detail),
         "error": step.error,
         "started_at": step.started_at,
         "finished_at": step.finished_at,
@@ -1602,9 +1600,10 @@ def _profile_metrics(context: UptimeContext) -> dict[str, object]:
             step_total += 1
             if step.kind == "model":
                 model_total += 1
-                if isinstance(step.payload, ModelCallStepPayload):
-                    input_tokens += step.payload.input_tokens
-                    output_tokens += step.payload.output_tokens
+                usage = step.detail.get("usage")
+                if isinstance(usage, Mapping):
+                    input_tokens += int(usage.get("input_tokens", 0) or 0)
+                    output_tokens += int(usage.get("output_tokens", 0) or 0)
             elif step.kind == "tool":
                 tool_total += 1
             else:
@@ -1723,12 +1722,12 @@ def _input_message(payload: RunInputMessagePayload) -> Message:
     return message
 
 
-def _input_mode(value: str) -> CommandMode:
+def _input_apply(value: str) -> CommandApply:
     if value not in {"immediate", "next_step", "next_call"}:
         raise HTTPException(
             status_code=422, detail=f"unsupported run input mode: {value}"
         )
-    return cast(CommandMode, value)
+    return "now" if value == "immediate" else cast(CommandApply, value)
 
 
 def _input_event_payload(run: RunRecord, input: CommandRecord) -> dict[str, object]:

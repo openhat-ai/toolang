@@ -2,20 +2,38 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 from toolang.base.types.message import Message, Part
 
 
-RunStatus = Literal["running", "finished", "failed", "canceled"]
-StepStatus = Literal["finished", "failed", "canceled"]
+TracePath = str
+RunId = str
 RunLoop = str
-StepKind = Literal["model", "tool", "agent", "run", "step", "parallel", "bind", "system"]
+
+RunStatus = Literal["pending", "running", "finished", "failed", "canceled"]
+StepStatus = Literal["running", "finished", "failed", "canceled"]
+CommandStatus = Literal["pending", "finished", "canceled"]
+
+StepKind = Literal[
+    "seq",
+    "par",
+    "run",
+    "agent",
+    "model",
+    "tool",
+    "unfold",
+    "map",
+    "filter",
+    "sort",
+    "fold",
+    "system",
+]
 ThreadPeerType = Literal["user", "agent"]
 CommandKind = Literal["start", "steer", "stop"]
-CommandMode = Literal["immediate", "next_step", "next_call"]
+CommandApply = Literal["now", "next_step", "next_call"]
 
 UpdateKind = Literal[
     "created",
@@ -35,25 +53,119 @@ EventDomain = Literal["agent", "thread", "run"]
 
 
 @dataclass(frozen=True, slots=True)
+class InputRef:
+    """Reference one run command input or one command input part."""
+
+    cmd: int = 0
+    part: int | None = None
+
+    @classmethod
+    def from_data(cls, payload: Mapping[str, Any]) -> "InputRef":
+        return cls(
+            cmd=int(payload.get("cmd", 0) or 0),
+            part=_optional_int(payload.get("part")),
+        )
+
+    def to_data(self) -> dict[str, Any]:
+        data: dict[str, Any] = {"cmd": self.cmd}
+        if self.part is not None:
+            data["part"] = self.part
+        return data
+
+
+@dataclass(frozen=True, slots=True)
+class OutputRef:
+    """Reference one step output or one step output part."""
+
+    step: TracePath
+    part: int | None = None
+
+    @classmethod
+    def from_data(cls, payload: Mapping[str, Any]) -> "OutputRef":
+        return cls(
+            step=str(payload.get("step", "")),
+            part=_optional_int(payload.get("part")),
+        )
+
+    def to_data(self) -> dict[str, Any]:
+        data: dict[str, Any] = {"step": self.step}
+        if self.part is not None:
+            data["part"] = self.part
+        return data
+
+
+StepInputItem = InputRef | OutputRef | Message
+
+
+@dataclass(frozen=True, slots=True)
 class RunRecord:
     """Durable run truth."""
 
-    run_id: str
-    thread_id: str
-    origin: str
-    root_run_id: str
-    parent_run_id: str | None
-    parent_step_index: int | None
-    executable_kind: str
-    executable_name: str | None
-    call_kind: str
-    metadata: dict[str, Any]
-    status: RunStatus
-    error: str | None
-    superseded: dict[str, Any] | None
-    created_at: str
-    started_at: str
-    finished_at: str | None
+    id: RunId
+    parent: TracePath | None
+    thread: str
+    input: InputRef
+    output: OutputRef | None
+    context: dict[str, Any] = field(default_factory=dict)
+    status: RunStatus = "pending"
+    error: str | None = None
+    created_at: str = ""
+    started_at: str = ""
+    finished_at: str | None = None
+
+    @property
+    def run_id(self) -> str:
+        return self.id
+
+    @property
+    def thread_id(self) -> str:
+        return self.thread
+
+    @property
+    def root_run_id(self) -> str:
+        value = self.context.get("root")
+        return str(value) if value is not None else self.id
+
+    @property
+    def parent_run_id(self) -> str | None:
+        return trace_run(self.parent) if self.parent else None
+
+    @property
+    def parent_step_index(self) -> int | None:
+        return trace_index(self.parent) if self.parent else None
+
+    @property
+    def origin(self) -> str:
+        value = self.context.get("origin")
+        return str(value) if value is not None else ""
+
+    @property
+    def executable_kind(self) -> str:
+        executable = self.context.get("executable")
+        if isinstance(executable, Mapping):
+            return str(executable.get("kind") or "")
+        return ""
+
+    @property
+    def executable_name(self) -> str | None:
+        executable = self.context.get("executable")
+        if isinstance(executable, Mapping) and executable.get("name") is not None:
+            return str(executable.get("name"))
+        return None
+
+    @property
+    def call_kind(self) -> str:
+        value = self.context.get("call")
+        return str(value) if value is not None else ""
+
+    @property
+    def superseded(self) -> dict[str, Any] | None:
+        value = self.context.get("superseded")
+        return dict(value) if isinstance(value, Mapping) else None
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        return dict(self.context)
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,258 +215,42 @@ class ThreadRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class CommandRef:
-    """Reference one run command or one command message part."""
-
-    index: int = 0
-    part_index: int | None = None
-
-    @classmethod
-    def from_data(cls, payload: Mapping[str, Any]) -> CommandRef:
-        raw_index = payload.get("index", 0)
-        part_index = payload.get("part")
-        return cls(
-            index=int(raw_index) if raw_index is not None else 0,
-            part_index=int(part_index) if part_index is not None else None,
-        )
-
-    def to_data(self) -> dict[str, Any]:
-        data: dict[str, Any] = {"kind": "command", "index": self.index}
-        if self.part_index is not None:
-            data["part"] = self.part_index
-        return data
-
-
-@dataclass(frozen=True, slots=True)
-class StepOutputRef:
-    """Reference one prior step output or one output part."""
-
-    step_index: int
-    part_index: int | None = None
-
-    @classmethod
-    def from_data(cls, payload: Mapping[str, Any]) -> StepOutputRef:
-        raw_index = payload.get("index", 0)
-        part_index = payload.get("part")
-        return cls(
-            step_index=int(raw_index),
-            part_index=int(part_index) if part_index is not None else None,
-        )
-
-    def to_data(self) -> dict[str, Any]:
-        data: dict[str, Any] = {
-            "kind": "step",
-            "index": self.step_index,
-        }
-        if self.part_index is not None:
-            data["part"] = self.part_index
-        return data
-
-
-StepInputItem = CommandRef | StepOutputRef | Message
-
-
-@dataclass(frozen=True, slots=True)
-class ModelCallStepPayload:
-    """One model-call step payload."""
-
-    model_ref: str
-    input_tokens: int
-    output_tokens: int
-    provider: str = ""
-    model: str = ""
-    adapter: str = ""
-    base_url: str | None = None
-    instruct: str | None = None
-    context: str | None = None
-    reasoning_content: str | None = None
-    adapter_request: dict[str, Any] | None = None
-
-    @classmethod
-    def from_data(cls, payload: Mapping[str, Any]) -> ModelCallStepPayload:
-        instruct = payload.get("instruct", payload.get("instructions_hash"))
-        adapter_request = payload.get("adapter_request")
-        return cls(
-            model_ref=str(payload.get("model_ref", "")),
-            input_tokens=int(payload.get("input_tokens", 0)),
-            output_tokens=int(payload.get("output_tokens", 0)),
-            provider=str(payload.get("provider", "")),
-            model=str(payload.get("model", "")),
-            adapter=str(payload.get("adapter", "")),
-            base_url=(
-                str(payload.get("base_url"))
-                if payload.get("base_url") is not None
-                else None
-            ),
-            instruct=(
-                str(instruct)
-                if instruct is not None
-                else None
-            ),
-            context=(
-                str(payload.get("context"))
-                if payload.get("context") is not None
-                else None
-            ),
-            reasoning_content=(
-                str(payload.get("reasoning_content"))
-                if payload.get("reasoning_content") is not None
-                else None
-            ),
-            adapter_request=(
-                dict(adapter_request)
-                if isinstance(adapter_request, Mapping)
-                else None
-            ),
-        )
-
-    def to_data(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass(frozen=True, slots=True)
-class ToolCallStepPayload:
-    """One tool-call step payload."""
-
-    @classmethod
-    def from_data(cls, payload: Mapping[str, Any]) -> ToolCallStepPayload:
-        del payload
-        return cls()
-
-    def to_data(self) -> dict[str, Any]:
-        return {}
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeStepPayload:
-    """One runtime step payload."""
-
-    @classmethod
-    def from_data(cls, payload: Mapping[str, Any]) -> RuntimeStepPayload:
-        del payload
-        return cls()
-
-    def to_data(self) -> dict[str, Any]:
-        return {}
-
-
-@dataclass(frozen=True, slots=True)
-class ChildCallStepPayload:
-    """One child-run call step payload."""
-
-    call: str
-    target_kind: str
-    target: str | None
-    child_run_ids: tuple[str, ...] = ()
-    batch_index: int | None = None
-    parallelism: int | None = None
-    lane_index: int | None = None
-    stage_index: int | None = None
-    stage_kind: str | None = None
-    item_indexes: tuple[int, ...] = ()
-    metadata: dict[str, Any] | None = None
-
-    @classmethod
-    def from_data(cls, payload: Mapping[str, Any]) -> ChildCallStepPayload:
-        return cls(
-            call=str(payload.get("call", "")),
-            target_kind=str(payload.get("target_kind", "")),
-            target=_optional_text(payload.get("target")),
-            child_run_ids=tuple(str(item) for item in payload.get("child_run_ids", ()) if item is not None),
-            batch_index=_optional_int(payload.get("batch_index")),
-            parallelism=_optional_int(payload.get("parallelism")),
-            lane_index=_optional_int(payload.get("lane_index")),
-            stage_index=_optional_int(payload.get("stage_index")),
-            stage_kind=_optional_text(payload.get("stage_kind")),
-            item_indexes=tuple(int(item) for item in payload.get("item_indexes", ()) if item is not None),
-            metadata=dict(payload.get("metadata", {})) if isinstance(payload.get("metadata"), Mapping) else None,
-        )
-
-    def to_data(self) -> dict[str, Any]:
-        data: dict[str, Any] = {
-            "call": self.call,
-            "target_kind": self.target_kind,
-            "child_run_ids": list(self.child_run_ids),
-        }
-        if self.target is not None:
-            data["target"] = self.target
-        if self.batch_index is not None:
-            data["batch_index"] = self.batch_index
-        if self.parallelism is not None:
-            data["parallelism"] = self.parallelism
-        if self.lane_index is not None:
-            data["lane_index"] = self.lane_index
-        if self.stage_index is not None:
-            data["stage_index"] = self.stage_index
-        if self.stage_kind is not None:
-            data["stage_kind"] = self.stage_kind
-        if self.item_indexes:
-            data["item_indexes"] = list(self.item_indexes)
-        if self.metadata:
-            data["metadata"] = dict(self.metadata)
-        return data
-
-
-@dataclass(frozen=True, slots=True)
-class FlowOpStepPayload:
-    """One deterministic flow operation step payload."""
-
-    op: str
-    stage_index: int | None = None
-    stage_kind: str | None = None
-    input_preview: Any = None
-    output_preview: Any = None
-    metadata: dict[str, Any] | None = None
-
-    @classmethod
-    def from_data(cls, payload: Mapping[str, Any]) -> FlowOpStepPayload:
-        metadata = payload.get("metadata")
-        return cls(
-            op=str(payload.get("op", "")),
-            stage_index=_optional_int(payload.get("stage_index")),
-            stage_kind=_optional_text(payload.get("stage_kind")),
-            input_preview=payload.get("input_preview"),
-            output_preview=payload.get("output_preview"),
-            metadata=dict(metadata) if isinstance(metadata, Mapping) else None,
-        )
-
-    def to_data(self) -> dict[str, Any]:
-        data: dict[str, Any] = {"op": self.op}
-        if self.stage_index is not None:
-            data["stage_index"] = self.stage_index
-        if self.stage_kind is not None:
-            data["stage_kind"] = self.stage_kind
-        if self.input_preview is not None:
-            data["input_preview"] = self.input_preview
-        if self.output_preview is not None:
-            data["output_preview"] = self.output_preview
-        if self.metadata:
-            data["metadata"] = dict(self.metadata)
-        return data
-
-
-StepPayload = ModelCallStepPayload | ToolCallStepPayload | RuntimeStepPayload | ChildCallStepPayload | FlowOpStepPayload
-
-
-@dataclass(frozen=True, slots=True)
 class StepRecord:
-    """One durable step record."""
+    """One durable execution step."""
 
-    run_id: str
-    step_index: int
+    parent: TracePath
+    index: int
     kind: StepKind
-    status: StepStatus
     input: tuple[StepInputItem, ...]
     output: tuple[Part, ...]
-    started_at: str
-    finished_at: str
-    payload: StepPayload
+    context: dict[str, Any] = field(default_factory=dict)
+    detail: dict[str, Any] = field(default_factory=dict)
+    status: StepStatus = "running"
     error: str | None = None
+    created_at: str = ""
+    started_at: str = ""
+    finished_at: str | None = None
+
+    @property
+    def path(self) -> TracePath:
+        return trace_child_path(self.parent, self.index)
+
+    @property
+    def run_id(self) -> str:
+        return trace_run(self.parent)
+
+    @property
+    def step_index(self) -> int:
+        return self.index
+
+    @property
+    def payload(self) -> dict[str, Any]:
+        return dict(self.detail)
 
 
 @dataclass(frozen=True, slots=True)
 class UpdateRecord:
-    """One durable agent-local update record."""
+    """One agent-local operational update."""
 
     update_id: int
     kind: UpdateKind
@@ -364,7 +260,7 @@ class UpdateRecord:
 
 @dataclass(frozen=True, slots=True)
 class EventRecord:
-    """One durable resource-scoped event record."""
+    """One durable resource-scoped event."""
 
     event_id: int
     domain: EventDomain
@@ -377,31 +273,109 @@ class EventRecord:
 
 @dataclass(frozen=True, slots=True)
 class CommandRecord:
-    """One durable client-side command sent to a run."""
+    """One durable command sent to a run."""
 
-    run_id: str
+    run: RunId
     index: int
     kind: CommandKind
-    mode: CommandMode | None
-    request_id: str | None
-    message: Message | None
-    created_at: str
+    apply: CommandApply
+    input: Message | None
+    context: dict[str, Any] = field(default_factory=dict)
+    status: CommandStatus = "pending"
+    error: str | None = None
+    created_at: str = ""
+    finished_at: str | None = None
+
+    @property
+    def run_id(self) -> str:
+        return self.run
+
+    @property
+    def mode(self) -> CommandApply:
+        return self.apply
+
+    @property
+    def message(self) -> Message | None:
+        return self.input
+
+    @property
+    def request_id(self) -> str | None:
+        value = self.context.get("request_id")
+        return str(value) if value is not None else None
+
+
+def trace_run(path: TracePath) -> RunId:
+    """Return the run id component of one trace path."""
+
+    return path.split("/", 1)[0]
+
+
+def trace_parent(path: TracePath) -> TracePath | None:
+    """Return the parent trace path for a step path."""
+
+    if "/" not in path:
+        return None
+    return path.rsplit("/", 1)[0]
+
+
+def trace_index(path: TracePath) -> int | None:
+    """Return the leaf step index for a step path."""
+
+    if "/" not in path:
+        return None
+    try:
+        return int(path.rsplit("/", 1)[1])
+    except ValueError:
+        return None
+
+
+def trace_child_path(parent: TracePath, index: int) -> TracePath:
+    """Return a child step path under one trace path."""
+
+    return f"{parent}/{index}"
+
+
+def input_ref_from_data(payload: Mapping[str, Any] | None) -> InputRef:
+    """Return one input ref from serialized data."""
+
+    return InputRef.from_data(payload or {})
+
+
+def input_ref_to_data(ref: InputRef) -> dict[str, Any]:
+    """Return serialized input ref data."""
+
+    return ref.to_data()
+
+
+def output_ref_from_data(payload: Mapping[str, Any] | None) -> OutputRef | None:
+    """Return one output ref from serialized data."""
+
+    if not payload:
+        return None
+    return OutputRef.from_data(payload)
+
+
+def output_ref_to_data(ref: OutputRef | None) -> dict[str, Any] | None:
+    """Return serialized output ref data."""
+
+    return ref.to_data() if ref is not None else None
 
 
 def step_input_item_from_data(payload: Mapping[str, Any]) -> StepInputItem:
     """Return one step input item from one serialized payload."""
 
-    kind = str(payload.get("kind", "")).strip()
-    if kind == "command":
-        return CommandRef.from_data(payload)
-    if kind == "step":
-        return StepOutputRef.from_data(payload)
-    if kind == "message":
-        return Message.from_data(payload.get("message", {}))
-    raise ValueError(f"unknown step input item kind: {kind or '<empty>'}")
+    if "cmd" in payload:
+        return InputRef.from_data(payload)
+    if "step" in payload:
+        return OutputRef.from_data(payload)
+    if "message" in payload:
+        return Message.from_data(_mapping(payload.get("message")))
+    if "role" in payload and "parts" in payload:
+        return Message.from_data(payload)
+    raise ValueError("unknown step input item shape")
 
 
-def step_input_items_from_data(payloads: list[Mapping[str, Any]]) -> tuple[StepInputItem, ...]:
+def step_input_items_from_data(payloads: Sequence[Mapping[str, Any]]) -> tuple[StepInputItem, ...]:
     """Return step input items from one serialized sequence."""
 
     return tuple(step_input_item_from_data(item) for item in payloads)
@@ -410,37 +384,17 @@ def step_input_items_from_data(payloads: list[Mapping[str, Any]]) -> tuple[StepI
 def step_input_item_to_data(item: StepInputItem) -> dict[str, Any]:
     """Return one serialized step input item."""
 
-    if isinstance(item, CommandRef):
+    if isinstance(item, InputRef):
         return item.to_data()
-    if isinstance(item, StepOutputRef):
+    if isinstance(item, OutputRef):
         return item.to_data()
-    return {"kind": "message", "message": item.to_data()}
+    return {"message": item.to_data()}
 
 
 def step_input_items_to_data(items: tuple[StepInputItem, ...]) -> list[dict[str, Any]]:
     """Return serialized step input items."""
 
     return [step_input_item_to_data(item) for item in items]
-
-
-def step_payload_from_data(kind: StepKind, payload: Mapping[str, Any]) -> StepPayload:
-    """Return one step payload for one step kind."""
-
-    if kind == "model":
-        return ModelCallStepPayload.from_data(payload)
-    if kind == "tool":
-        return ToolCallStepPayload.from_data(payload)
-    if kind == "run":
-        return ChildCallStepPayload.from_data(payload)
-    if kind in {"step", "parallel", "bind"}:
-        return FlowOpStepPayload.from_data(payload)
-    return RuntimeStepPayload.from_data(payload)
-
-
-def step_payload_to_data(payload: StepPayload) -> dict[str, Any]:
-    """Return one serialized step payload."""
-
-    return payload.to_data()
 
 
 def step_input_messages(items: tuple[StepInputItem, ...]) -> tuple[Message, ...]:
@@ -457,14 +411,11 @@ def cast_message_role(role: str) -> Literal["user", "assistant", "tool"]:
     return cast(Literal["user", "assistant", "tool"], role)
 
 
+def _mapping(value: object) -> Mapping[str, Any]:
+    return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
+
+
 def _optional_int(value: Any) -> int | None:
     if value is None:
         return None
     return int(value)
-
-
-def _optional_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value)
-    return text or None

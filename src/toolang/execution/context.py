@@ -49,11 +49,10 @@ from .events import (
 )
 from .records import (
     CommandRecord,
-    ModelCallStepPayload,
-    CommandRef,
+    InputRef,
+    OutputRef,
     StepInputItem,
-    StepOutputRef,
-    ToolCallStepPayload,
+    trace_child_path,
 )
 from .binding import RunBinding, invoke_params, invoke_parts
 
@@ -246,7 +245,7 @@ class RunContext:
         step_started = time.perf_counter()
         started_at = _utc_now()
         consumed_inputs = self._consume_pending_inputs()
-        step_input = (*self._model_step_input(), *(CommandRef(index=item.index) for item in consumed_inputs))
+        step_input = (*self._model_step_input(), *(InputRef(cmd=item.index) for item in consumed_inputs))
         self._start_model_step(step_index)
         _RUN_LOGGER.info(
             "Step started thread=%s run=%s step=%s kind=model",
@@ -256,14 +255,14 @@ class RunContext:
         )
         self._emit(
             StepBegin(
-                run_id=self._input.run.run_id,
-                thread_id=self._input.run.thread_id,
-                step_index=step_index,
+                step=trace_child_path(self._input.run.run_id, step_index),
                 kind="model",
                 input=step_input,
                 started_at=started_at,
-                instruct=self._input.instructions(),
-                context=self._input.context(),
+                context={
+                    "prompt_context": self._input.context(),
+                    "instruct": self._input.instructions(),
+                },
             )
         )
         request = ModelCall(
@@ -322,15 +321,12 @@ class RunContext:
         step_input: tuple[StepInputItem, ...]
         if source is not None:
             step_input = (
-                StepOutputRef(
-                    step_index=source[0],
-                    part_index=source[1],
-                ),
+                OutputRef(step=trace_child_path(self._input.run.run_id, source[0]), part=source[1]),
             )
         elif self._last_step_index is not None:
-            step_input = (StepOutputRef(step_index=self._last_step_index),)
+            step_input = (OutputRef(step=trace_child_path(self._input.run.run_id, self._last_step_index)),)
         else:
-            step_input = (CommandRef(),)
+            step_input = (InputRef(),)
         _RUN_LOGGER.info(
             "Step started thread=%s run=%s step=%s kind=tool tool=%s",
             self._input.run.thread_id,
@@ -347,9 +343,7 @@ class RunContext:
         )
         self._emit(
             StepBegin(
-                run_id=self._input.run.run_id,
-                thread_id=self._input.run.thread_id,
-                step_index=step_index,
+                step=trace_child_path(self._input.run.run_id, step_index),
                 kind="tool",
                 input=step_input,
                 started_at=started_at,
@@ -370,19 +364,15 @@ class RunContext:
         )
         self._emit(
             PartBegin(
-                run_id=self._input.run.run_id,
-                thread_id=self._input.run.thread_id,
-                step_index=step_index,
-                part_index=0,
-                kind=part.type,
+                step=trace_child_path(self._input.run.run_id, step_index),
+                part=0,
+                type_=part.type,
             )
         )
         self._emit(
             PartEnd(
-                run_id=self._input.run.run_id,
-                thread_id=self._input.run.thread_id,
-                step_index=step_index,
-                part_index=0,
+                step=trace_child_path(self._input.run.run_id, step_index),
+                part=0,
                 data=part,
             )
         )
@@ -396,13 +386,16 @@ class RunContext:
         )
         self._emit(
             StepEnd(
-                run_id=self._input.run.run_id,
-                thread_id=self._input.run.thread_id,
-                step_index=step_index,
+                step=trace_child_path(self._input.run.run_id, step_index),
                 kind="tool",
                 status=status,
                 output=(part,),
-                payload=ToolCallStepPayload(),
+                detail={
+                    "tool": call.name,
+                    "plugin": plugin_name,
+                    "tool_call_id": call.tool_call_id,
+                    "call_id": call.call_id,
+                },
                 started_at=started_at,
                 finished_at=_utc_now(),
                 error=record.error,
@@ -460,10 +453,8 @@ class RunContext:
             self._emit_part_begin(step_index=step_index, part_index=part_index, kind=part.type)
             self._emit(
                 PartEnd(
-                    run_id=self._input.run.run_id,
-                    thread_id=self._input.run.thread_id,
-                    step_index=step_index,
-                    part_index=part_index,
+                    step=trace_child_path(self._input.run.run_id, step_index),
+                    part=part_index,
                     data=part,
                 )
             )
@@ -476,23 +467,23 @@ class RunContext:
         self._round += 1
         self._emit(
             StepEnd(
-                run_id=self._input.run.run_id,
-                thread_id=self._input.run.thread_id,
-                step_index=step_index,
+                step=trace_child_path(self._input.run.run_id, step_index),
                 kind="model",
                 status="finished",
                 output=output,
-                payload=ModelCallStepPayload(
-                    model_ref=self._model.ref,
-                    input_tokens=current.usage.input_tokens if current.usage is not None else 0,
-                    output_tokens=current.usage.output_tokens if current.usage is not None else 0,
-                    provider=self._model.provider,
-                    model=self._model.model,
-                    adapter=self._model.adapter,
-                    base_url=self._model.base_url,
-                    reasoning_content=_message_reasoning_content(current.message),
-                    adapter_request=_model_call_request_data(request),
-                ),
+                detail={
+                    "model_ref": self._model.ref,
+                    "usage": {
+                        "input_tokens": current.usage.input_tokens if current.usage is not None else 0,
+                        "output_tokens": current.usage.output_tokens if current.usage is not None else 0,
+                    },
+                    "provider": self._model.provider,
+                    "model": self._model.model,
+                    "adapter": self._model.adapter,
+                    "base_url": self._model.base_url,
+                    "reasoning_content": _message_reasoning_content(current.message),
+                    "adapter_request": _model_call_request_data(request),
+                },
                 started_at=started_at,
                 finished_at=_utc_now(),
             )
@@ -531,10 +522,8 @@ class RunContext:
                 if event.delta.text:
                     self._emit(
                         PartDelta(
-                            run_id=self._input.run.run_id,
-                            thread_id=self._input.run.thread_id,
-                            step_index=step_index,
-                            part_index=part_index,
+                            step=trace_child_path(self._input.run.run_id, step_index),
+                            part=part_index,
                             delta=event.delta,
                         )
                     )
@@ -549,10 +538,8 @@ class RunContext:
                 if event.delta.text:
                     self._emit(
                         PartDelta(
-                            run_id=self._input.run.run_id,
-                            thread_id=self._input.run.thread_id,
-                            step_index=step_index,
-                            part_index=part_index,
+                            step=trace_child_path(self._input.run.run_id, step_index),
+                            part=part_index,
                             delta=event.delta,
                         )
                     )
@@ -605,8 +592,8 @@ class RunContext:
 
     def _model_step_input(self) -> tuple[StepInputItem, ...]:
         if self._last_step_index is None:
-            return (CommandRef(),)
-        return (StepOutputRef(step_index=self._last_step_index),)
+            return (InputRef(),)
+        return (OutputRef(step=trace_child_path(self._input.run.run_id, self._last_step_index)),)
 
     def _consume_pending_inputs(self) -> tuple[CommandRecord, ...]:
         inputs = self._pending_inputs()
@@ -648,11 +635,9 @@ class RunContext:
         self._started_part_indexes.add(part_index)
         self._emit(
             PartBegin(
-                run_id=self._input.run.run_id,
-                thread_id=self._input.run.thread_id,
-                step_index=step_index,
-                part_index=part_index,
-                kind=kind,
+                step=trace_child_path(self._input.run.run_id, step_index),
+                part=part_index,
+                type_=kind,
             )
         )
 

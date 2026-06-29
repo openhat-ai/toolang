@@ -27,6 +27,7 @@ from ..config.env import load_runtime_environ
 from ..config.log_spec import PY_LOG_ENV_VAR
 from ..execution.events import RunBegin, RunEnd, StepBegin, StepEnd, TraceEvent
 from ..execution.labels import executable_label
+from ..execution.records import trace_index, trace_run
 from ..execution.runner import RunOutcome
 from ..models.errors import NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSAGE
 from ..lang.ast import Flow, ParamDecl, Thunk
@@ -677,38 +678,47 @@ class _ScriptProgressSink:
 
     def on_event(self, event: TraceEvent) -> None:
         if isinstance(event, RunBegin):
-            label = executable_label(event.executable_kind, event.executable_name, metadata=event.metadata)
-            self._run_labels[event.run_id] = label
-            if event.parent_run_id is None:
-                self._run_id = event.run_id
-                self._title = f"Running {label}: {event.run_id}"
+            executable = self._mapping(event.context.get("executable"))
+            label = executable_label(
+                self._text(executable.get("kind")) or "run",
+                self._text(executable.get("name")),
+                metadata=event.context,
+            )
+            self._run_labels[event.run] = label
+            if event.parent is None:
+                self._run_id = event.run
+                self._title = f"Running {label}: {event.run}"
                 self._render()
                 return
-            if event.call_kind == "stage":
-                stage = self._ensure_stage(event.metadata)
+            if event.context.get("call") == "stage":
+                stage = self._ensure_stage(event.context)
                 call = self._ensure_call(
-                    run_id=event.run_id,
+                    run_id=event.run,
                     stage=stage,
                     target_label=label,
-                    payload=event.metadata,
+                    payload=event.context,
                 )
                 call.status = "running"
                 self._render()
             return
         if isinstance(event, StepBegin):
-            if event.kind not in {"step", "parallel", "bind", "run"}:
-                self._update_call_step(event.run_id, event.step_index, f"{event.kind} running")
+            if event.kind not in {"seq", "par", "unfold", "map", "filter", "sort", "fold", "run"}:
+                self._update_call_step(
+                    trace_run(event.step),
+                    trace_index(event.step) or 0,
+                    f"{event.kind} running",
+                )
             return
         if isinstance(event, StepEnd):
             self._update_step(event)
             return
         if isinstance(event, RunEnd):
-            if event.run_id == self._run_id:
+            if event.run == self._run_id:
                 self._finished = True
                 self._render()
                 self.finish()
                 return
-            call = self._call_for_run(event.run_id)
+            call = self._call_for_run(event.run)
             if call is not None:
                 call.status = self._status_word(event.status)
                 self._render()
@@ -723,17 +733,17 @@ class _ScriptProgressSink:
         self.finish()
 
     def _update_step(self, event: StepEnd) -> None:
-        payload = event.payload.to_data()
-        if event.kind in {"step", "parallel", "bind"}:
+        payload = event.detail
+        if event.kind in {"seq", "par", "unfold", "map", "filter", "sort", "fold", "system"}:
             stage = self._ensure_stage(payload)
             op = str(payload.get("op", ""))
-            metadata = self._metadata(payload)
-            if input_preview := metadata.get("input_preview"):
+            source = self._mapping(payload.get("source"))
+            if input_preview := payload.get("input_preview") or source.get("input_preview"):
                 stage.input_shape = self._shape_label(input_preview)
-            if preview := payload.get("output_preview"):
+            if preview := payload.get("output_preview") or payload.get("preview"):
                 if op.startswith("prepare_"):
                     stage.item_total = self._preview_count(preview) or stage.item_total
-                if op == "set_current":
+                if op in {"set_current", "fold", "unfold", "filter", "sort", "map"}:
                     stage.output_shape = self._shape_label(preview)
                     stage.status = "done"
                 elif stage.status != "done":
@@ -747,8 +757,11 @@ class _ScriptProgressSink:
                     run_id=run_id,
                     stage=stage,
                     target_label=executable_label(
-                        str(payload.get("target_kind") or "run"),
-                        str(payload.get("target")) if payload.get("target") is not None else None,
+                        self._text(payload.get("target_kind"))
+                        or self._text(self._mapping(payload.get("target")).get("kind"))
+                        or "run",
+                        self._text(payload.get("target_name"))
+                        or self._text(self._mapping(payload.get("target")).get("name")),
                         metadata=self._metadata(payload),
                     ),
                     payload=payload,
@@ -756,7 +769,11 @@ class _ScriptProgressSink:
                 call.status = self._status_word(event.status)
             self._render()
             return
-        self._update_call_step(event.run_id, event.step_index, f"{event.kind} {self._status_word(event.status)}")
+        self._update_call_step(
+            trace_run(event.step),
+            trace_index(event.step) or 0,
+            f"{event.kind} {self._status_word(event.status)}",
+        )
 
     def _ensure_stage(self, payload: Mapping[str, object]) -> _StageProgress:
         ctx = self._context(payload)
@@ -826,15 +843,24 @@ class _ScriptProgressSink:
 
     def _context(self, payload: Mapping[str, object]) -> dict[str, object]:
         metadata = self._metadata(payload)
+        source = self._mapping(payload.get("source"))
         child = payload.get("child")
         if isinstance(child, Mapping):
             child = cast(Mapping[str, object], child)
         else:
-            child = metadata.get("child")
+            child = metadata.get("child") or source.get("child")
             child = cast(Mapping[str, object], child) if isinstance(child, Mapping) else {}
         ctx: dict[str, object] = dict(child)
+        ctx.update(source)
         ctx.update(metadata)
         ctx.update({key: value for key, value in payload.items() if key != "metadata"})
+        lane = self._mapping(payload.get("lane"))
+        if lane:
+            ctx.setdefault("lane_index", lane.get("index"))
+            ctx.setdefault("parallelism", lane.get("count"))
+        item = self._mapping(payload.get("item"))
+        if item:
+            ctx.setdefault("item_index", item.get("index"))
         if "item_index" not in ctx:
             item_indexes = payload.get("item_indexes")
             if isinstance(item_indexes, (list, tuple)) and item_indexes:
@@ -845,13 +871,25 @@ class _ScriptProgressSink:
         metadata = payload.get("metadata")
         return cast(Mapping[str, object], metadata) if isinstance(metadata, Mapping) else {}
 
+    def _mapping(self, value: object) -> Mapping[str, object]:
+        return cast(Mapping[str, object], value) if isinstance(value, Mapping) else {}
+
+    def _text(self, value: object) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
     def _child_run_ids(self, payload: Mapping[str, object], event: StepEnd) -> tuple[str, ...]:
-        child_ids = payload.get("child_run_ids")
-        if isinstance(child_ids, (list, tuple)):
-            ids = tuple(str(item) for item in child_ids if item is not None)
-            if ids:
-                return ids
-        return (f"{event.run_id}:{event.step_index}",)
+        ids: list[object] = []
+        for key in ("child_run_ids", "child_runs"):
+            value = payload.get(key)
+            if isinstance(value, (list, tuple)):
+                ids.extend(value)
+        child_ids = tuple(str(item) for item in ids if item is not None)
+        if child_ids:
+            return child_ids
+        return (event.step,)
 
     def _call_label(self, target_label: str, ctx: Mapping[str, object]) -> str:
         item_index = self._int_payload(ctx.get("item_index"))

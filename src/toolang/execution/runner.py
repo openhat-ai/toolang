@@ -7,12 +7,11 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 import logging
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 from toolang.base.types.message import Message, message_text
 from .db import utc_now
 from .events import RunEnd, RunStarting, RunSteering, RunStopping, RunWaiting
-from .records import CommandMode
 from ..state.live import LiveState
 
 if TYPE_CHECKING:
@@ -282,8 +281,7 @@ class QueueRunner:
             raise RuntimeError("runner context is not attached")
         run = context.store.cancel_run(run_id=run_id, error=error)
         event = RunEnd(
-            run_id=run.run_id,
-            thread_id=run.thread_id,
+            run=run.id,
             status="canceled",
             error=run.error,
             finished_at=run.finished_at or utc_now(),
@@ -414,16 +412,18 @@ class QueueRunner:
         if not request.run_id:
             return
         event = RunWaiting(
-            run_id=request.run_id,
-            thread_id=request.thread_id,
-            origin=request.origin,
-            group=request.group,
-            request_id=_request_id(request),
-            executable_kind=_request_executable_kind(request),
-            executable_name=request.thunk_name,
-            reason=reason,
-            position=position,
-            created_at=utc_now(),
+            run=request.run_id,
+            input=request.message or Message.user(request.thunk),
+            context={
+                "origin": request.origin,
+                "group": request.group,
+                "thread": request.thread_id,
+                "request_id": _request_id(request),
+                "executable": {
+                    "kind": _request_executable_kind(request),
+                    "name": request.thunk_name,
+                },
+            },
         )
         self._emit_response_trace_event(run_id=request.run_id, event=event)
         context = self._context
@@ -462,12 +462,18 @@ class QueueRunner:
         if not request.run_id:
             return
         event = RunStarting(
-            run_id=request.run_id,
-            origin=request.origin,
-            thread_id=request.thread_id,
+            run=request.run_id,
             input=request.message or Message.user(request.thunk),
-            request_id=_request_id(request),
-            accepted_at=utc_now(),
+            context={
+                "origin": request.origin,
+                "group": request.group,
+                "thread": request.thread_id,
+                "request_id": _request_id(request),
+                "executable": {
+                    "kind": _request_executable_kind(request),
+                    "name": request.thunk_name,
+                },
+            },
         )
         self._emit_response_trace_event(run_id=request.run_id, event=event)
         context = self._context
@@ -479,48 +485,36 @@ class QueueRunner:
     ) -> RunSteering | RunStopping | None:
         kind = payload.get("kind")
         run_id = payload.get("run_id")
-        thread_id = payload.get("thread_id")
         ref = payload.get("ref")
         index = ref.get("index") if isinstance(ref, dict) else payload.get("index")
-        if (
-            not isinstance(run_id, str)
-            or not run_id
-            or not isinstance(thread_id, str)
-            or not thread_id
-        ):
+        if not isinstance(run_id, str) or not run_id:
             return None
         try:
             command_index = int(0 if index is None else index)
         except (TypeError, ValueError):
             command_index = 0
-        mode = payload.get("mode")
-        mode_value = _command_mode(mode)
         request_id = payload.get("request_id")
         request_id_value = str(request_id) if request_id is not None else None
-        accepted_at = str(payload.get("created_at") or utc_now())
+        context = {
+            "cmd": command_index,
+            "thread": payload.get("thread_id"),
+            "request_id": request_id_value,
+        }
         if kind == "steer":
             message = payload.get("message")
             if not isinstance(message, dict):
                 return None
             return RunSteering(
-                run_id=run_id,
-                thread_id=thread_id,
-                index=command_index,
-                message=Message.from_data(message),
-                mode=mode_value,
-                request_id=request_id_value,
-                accepted_at=accepted_at,
+                run=run_id,
+                input=Message.from_data(message),
+                context=context,
             )
         if kind == "stop":
             reason = payload.get("reason")
             return RunStopping(
-                run_id=run_id,
-                thread_id=thread_id,
-                index=command_index,
-                mode=mode_value,
-                request_id=request_id_value,
+                run=run_id,
                 reason=str(reason) if reason is not None else None,
-                accepted_at=accepted_at,
+                context=context,
             )
         return None
 
@@ -568,8 +562,7 @@ class QueueRunner:
         if submission.response is not None and run_id:
             submission.response.on_event(
                 RunEnd(
-                    run_id=run_id,
-                    thread_id=thread_id,
+                    run=run_id,
                     status="failed",
                     error=error,
                     finished_at=utc_now(),
@@ -621,9 +614,3 @@ def _request_input_text(request: RunRequest) -> str:
     if request.message is None:
         return ""
     return message_text(request.message.parts)
-
-
-def _command_mode(value: object) -> CommandMode | None:
-    if value in {"immediate", "next_step", "next_call"}:
-        return cast(CommandMode, value)
-    return None
