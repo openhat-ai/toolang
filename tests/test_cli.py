@@ -195,7 +195,7 @@ def test_cli_main_normalizes_agent_postfix_shortcut(monkeypatch) -> None:
 
 def test_cli_main_intercepts_local_too_program_before_typer(monkeypatch, tmp_path: Path) -> None:
     program_path = tmp_path / "demo.too"
-    program_path.write_text("thunk:\n  Reply directly.\n", encoding="utf-8")
+    program_path.write_text("agic:\n  Reply directly.\n", encoding="utf-8")
     captured: dict[str, object] = {}
 
     def fake_handle(global_args: list[str], body: list[str], *, prog_name: str) -> int:
@@ -217,7 +217,7 @@ def test_cli_main_intercepts_local_too_program_before_typer(monkeypatch, tmp_pat
 
 def test_cli_main_runs_roaming_file_runtime_for_script_inbox(monkeypatch, tmp_path: Path) -> None:
     program_path = tmp_path / "demo.too"
-    program_path.write_text("thunk file(in: Part[]):\n  Process a file.\n", encoding="utf-8")
+    program_path.write_text("agic file(in: Part[]):\n  Process a file.\n", encoding="utf-8")
     inbox = tmp_path / "inbox"
     inbox.mkdir()
     captured: dict[str, object] = {}
@@ -242,7 +242,7 @@ def test_cli_main_routes_roaming_thread_commands_to_materialized_agent(
     tmp_path: Path,
 ) -> None:
     program_path = tmp_path / "demo.too"
-    program_path.write_text("thunk:\n  Reply directly.\n", encoding="utf-8")
+    program_path.write_text("agic:\n  Reply directly.\n", encoding="utf-8")
     toolang_root = tmp_path / ".toolang"
     captured: dict[str, object] = {}
 
@@ -278,7 +278,7 @@ def test_cli_main_roaming_threads_can_read_offline_materialized_store(
     monkeypatch,
     capsys,
 ) -> None:
-    program_path = _write_roaming_program(tmp_path, "thunk:\n  Reply directly.\n", name="demo")
+    program_path = _write_roaming_program(tmp_path, "agic:\n  Reply directly.\n", name="demo")
     toolang_root, agent_name = agents.materialize_roaming_program(program_path)
     store = ExecutionStore(execution_db_path(toolang_root, agent_name))
     try:
@@ -306,7 +306,7 @@ def test_cli_main_roaming_threads_can_read_offline_materialized_store(
 
 def test_cli_main_keeps_roaming_thunk_invoke_when_thunk_is_present(monkeypatch, tmp_path: Path) -> None:
     program_path = tmp_path / "demo.too"
-    program_path.write_text("thunk file(in: Part[]):\n  Process a file.\n", encoding="utf-8")
+    program_path.write_text("agic file(in: Part[]):\n  Process a file.\n", encoding="utf-8")
     inbox = tmp_path / "inbox"
     inbox.mkdir()
     captured: dict[str, object] = {}
@@ -335,7 +335,7 @@ def test_cli_main_keeps_roaming_thunk_invoke_when_thunk_is_present(monkeypatch, 
 
 def test_cli_main_does_not_preconfigure_roaming_invoke_from_py_log(monkeypatch, tmp_path: Path) -> None:
     program_path = tmp_path / "demo.too"
-    program_path.write_text("thunk:\n  Reply directly.\n", encoding="utf-8")
+    program_path.write_text("agic:\n  Reply directly.\n", encoding="utf-8")
     captured: dict[str, object] = {}
 
     def fake_configure_logging(*, spec: str | None, environ) -> None:
@@ -1686,7 +1686,7 @@ def test_visiting_run_target_refetches_stale_program_cache(tmp_path: Path, monke
 
 
 def test_roaming_materialize_links_source_and_toolang_config(tmp_path: Path) -> None:
-    program_path = _write_roaming_program(tmp_path, "agent demo\n\nthunk:\n  First")
+    program_path = _write_roaming_program(tmp_path, "agent demo\n\nagic:\n  First")
     (tmp_path / "toolang.toml").write_text("[models]\ndefault = \"test/model\"\n", encoding="utf-8")
 
     toolang_root, agent_name = agents.materialize_roaming_program(program_path)
@@ -1700,7 +1700,7 @@ def test_roaming_materialize_links_source_and_toolang_config(tmp_path: Path) -> 
     assert (materialized_program.parent / os.readlink(materialized_program)).resolve() == program_path.resolve()
     assert (materialized_config.parent / os.readlink(materialized_config)).resolve() == (tmp_path / "toolang.toml").resolve()
 
-    program_path.write_text("agent demo\n\nthunk:\n  Second\n", encoding="utf-8")
+    program_path.write_text("agent demo\n\nagic:\n  Second\n", encoding="utf-8")
     assert "Second" in materialized_program.read_text(encoding="utf-8")
 
 
@@ -1724,14 +1724,14 @@ def test_cli_roaming_program_help_lists_available_targets(capsys, tmp_path: Path
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk:
+agic:
   Reply directly.
 
-thunk summarize(in: Part[], style?):
+agic summarize(in: Part[], style?):
   Summarize the current workspace in a concise style.
 
 flow review(in: Text):
-  each: Review one item.
+  map: Review one item.
 """.strip(),
     )
 
@@ -1746,7 +1746,7 @@ flow review(in: Text):
     assert result == 0
     assert "Usage: toolang" in captured.out
     assert "SCRIPT TARGET [OPTIONS] [PARAMS] [INPUT]..." in captured.out
-    assert "Invoke a thunk or flow from a Toolang script." in captured.out
+    assert "Invoke an agic or flow from a Toolang script." in captured.out
     assert "Script:" in captured.out
     assert "* SCRIPT" not in captured.out
     assert program_path.name in captured.out
@@ -1779,7 +1779,7 @@ def test_cli_roaming_thunk_help_is_dynamic(capsys, tmp_path: Path) -> None:
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk summarize(in: Part[], style?, audience?):
+agic summarize(in: Part[], style?, audience?):
   Summarize the current workspace in a concise style.
 """.strip(),
     )
@@ -1798,7 +1798,7 @@ thunk summarize(in: Part[], style?, audience?):
     assert "Summarize the current workspace in a concise style." in captured.out
     assert "Script:" in captured.out
     assert program_path.name in captured.out
-    assert "Thunk:  summarize" in captured.out
+    assert "Agic:  summarize" in captured.out
     assert "* TARGET" not in captured.out
     assert "summarize" in captured.out
     assert "[OPTIONS]" in captured.out
@@ -1830,7 +1830,7 @@ def test_cli_roaming_invoke_passes_default_thunk_params_and_parts(tmp_path: Path
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk(in: Part[], tone?, retries?: Number, dry_run?: Boolean):
+agic(in: Part[], tone?, retries?: Number, dry_run?: Boolean):
   Rewrite the input using the provided controls.
 """.strip(),
     )
@@ -1916,7 +1916,7 @@ def test_cli_roaming_invoke_passes_explicit_tool_selectors(tmp_path: Path, monke
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk(in: Part[]):
+agic(in: Part[]):
   Reply directly.
 """.strip(),
     )
@@ -1973,7 +1973,7 @@ def test_cli_roaming_invoke_passes_explicit_cap_selectors(tmp_path: Path, monkey
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk(in: Part[]):
+agic(in: Part[]):
   Reply directly.
 """.strip(),
     )
@@ -2032,7 +2032,7 @@ def test_cli_roaming_invoke_quiet_after_thunk_suppresses_progress_output(
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk:
+agic:
   Reply directly.
 """.strip(),
     )
@@ -2081,7 +2081,7 @@ def test_cli_roaming_invoke_uses_progress_sink_for_tty_stderr(
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk:
+agic:
   Reply directly.
 """.strip(),
     )
@@ -2129,7 +2129,7 @@ def test_cli_roaming_invoke_passes_prepare_progress_for_tty_stderr(
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk:
+agic:
   Reply directly.
 """.strip(),
     )
@@ -2186,7 +2186,7 @@ def test_cli_roaming_invoke_suppresses_prepare_progress_when_quiet(
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk:
+agic:
   Reply directly.
 """.strip(),
     )
@@ -2244,7 +2244,7 @@ def test_cli_roaming_invoke_handles_keyboard_interrupt_without_traceback(
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk:
+agic:
   Reply directly.
 """.strip(),
     )
@@ -2299,7 +2299,7 @@ def test_cli_roaming_invoke_reports_missing_models_without_run_id(
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk:
+agic:
   Reply directly.
 """.strip(),
     )
@@ -2322,7 +2322,7 @@ def test_cli_roaming_invoke_requires_explicit_target_name(tmp_path: Path, capsys
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk:
+agic:
   Reply directly.
 """.strip(),
     )
@@ -2338,7 +2338,7 @@ def test_cli_roaming_invoke_requires_part_for_message_input(tmp_path: Path, caps
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk summarize(in: Part[]):
+agic summarize(in: Part[]):
   Summarize the current workspace in a concise style.
 """.strip(),
     )
@@ -2350,7 +2350,7 @@ thunk summarize(in: Part[]):
     assert "Usage:" in output.out
     assert "SCRIPT TARGET [OPTIONS] [INPUT]..." in output.out
     assert "Summarize the current workspace in a concise style." in output.out
-    assert "Thunk:  summarize" in output.out
+    assert "Agic:  summarize" in output.out
     assert output.err == ""
 
 
@@ -2358,7 +2358,7 @@ def test_cli_roaming_invoke_rejects_unknown_target_name(tmp_path: Path, capsys) 
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk:
+agic:
   Reply directly.
 """.strip(),
     )
@@ -2375,7 +2375,7 @@ def test_cli_roaming_invoke_passes_flow_executable_kind(tmp_path: Path, monkeypa
         tmp_path,
         """
 flow review(in: Text):
-  each: Normalize the item.
+  map: Normalize the item.
 """.strip(),
     )
     captured: dict[str, object] = {}
@@ -2430,7 +2430,7 @@ def test_cli_roaming_invoke_supports_end_of_options_separator(tmp_path: Path, mo
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk:
+agic:
   Reply directly.
 """.strip(),
     )
@@ -2493,7 +2493,7 @@ def test_cli_roaming_invoke_treats_unknown_name_equals_value_as_message_part(
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk(in: Part[], tone?):
+agic(in: Part[], tone?):
   Reply directly.
 """.strip(),
     )
@@ -2547,7 +2547,7 @@ def test_cli_roaming_invoke_reads_md_path_as_text_part(tmp_path: Path, monkeypat
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk(in: Part[]):
+agic(in: Part[]):
   Reply directly.
 """.strip(),
     )
@@ -2601,7 +2601,7 @@ def test_cli_roaming_invoke_reads_mdx_path_as_text_part(tmp_path: Path, monkeypa
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk(in: Part[]):
+agic(in: Part[]):
   Reply directly.
 """.strip(),
     )
@@ -2656,7 +2656,7 @@ def test_cli_roaming_invoke_passes_video_path_part(tmp_path: Path, monkeypatch, 
     program_path = _write_roaming_program(
         tmp_path,
         """
-thunk(in: Part[]):
+agic(in: Part[]):
   Reply directly.
 """.strip(),
     )
@@ -5501,7 +5501,7 @@ def test_cli_cap_new_cancel_does_not_resolve_program_remote_uses(tmp_path: Path,
     toolang_root = tmp_path / "toolang"
     (toolang_root / "agents" / "alice").mkdir(parents=True)
     (toolang_root / "agents" / "alice" / "agent.too").write_text(
-        "agent alice\n\nuse skill briceyan/pdf-processing\n",
+        "agent alice\n\nwith skill briceyan/pdf-processing\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(cli.click, "edit", lambda *_args, **_kwargs: None)
@@ -5526,7 +5526,7 @@ def test_cli_cap_new_save_does_not_resolve_program_remote_uses(tmp_path: Path, m
     toolang_root = tmp_path / "toolang"
     (toolang_root / "agents" / "alice").mkdir(parents=True)
     (toolang_root / "agents" / "alice" / "agent.too").write_text(
-        "agent alice\n\nuse skill briceyan/pdf-processing\n",
+        "agent alice\n\nwith skill briceyan/pdf-processing\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
@@ -6044,7 +6044,7 @@ def test_cli_parse_prints_too_ast(tmp_path: Path) -> None:
         "struct Result:\n"
         "  title: Text\n"
         "\n"
-        "thunk review(in: Pack) -> Json:\n"
+        "agic review(in: Pack) -> Json:\n"
         "  models = deepseek/*\n"
         "  user: Review it.\n",
         encoding="utf-8",
@@ -6056,74 +6056,41 @@ def test_cli_parse_prints_too_ast(tmp_path: Path) -> None:
     ast_data = json.loads(result.stdout)
     assert "_source_lines" not in ast_data
     assert "declarations" not in ast_data
-    assert ast_data["node"] == "program"
-    assert [item["node"] for item in ast_data["items"]] == ["struct", "thunk"]
-    assert ast_data["items"][0] == {
-        "node": "struct",
-        "name": "Result",
-        "fields": [
-            {
-                "name": "title",
-                "type": {"kind": "builtin", "name": "Text", "array_depth": 0},
-                "optional": False,
-                "span": {"line": 2},
-            }
-        ],
-        "span": {"line": 1},
-    }
-    assert ast_data["items"][1] == {
-        "node": "thunk",
-        "directives": [
-            {
-                "name": "models",
-                "op": "=",
-                "values": ["deepseek/*"],
-                "span": {"line": 5},
-            }
-        ],
-        "messages": [
-            {
-                "content": "Review it.",
-                "span": {"line": 6},
-                "role": "user",
-            }
-        ],
-        "span": {"line": 4},
-        "name": "review",
-        "params": [
-            {
-                "name": "in",
-                "optional": False,
-                "type": {"kind": "builtin", "name": "Pack", "array_depth": 0},
-            }
-        ],
-        "return": {"kind": "builtin", "name": "Json", "array_depth": 0},
-    }
+    assert ast_data["kind"] == "program"
+    assert ast_data["structs"][0]["name"] == "Result"
+    assert ast_data["structs"][0]["fields"][0]["type_name"] == "Text"
+    agic = ast_data["agics"][0]
+    assert agic["kind"] == "agic"
+    assert agic["name"] == "review"
+    assert agic["input"]["type_name"] == "Pack"
+    assert agic["output"] == "Json"
+    assert agic["directives"][0]["name"] == "models"
+    assert agic["messages"][0]["content"] == "Review it."
 
 
 def test_cli_parse_supports_stdin_and_compact_output() -> None:
     result = runner.invoke(
         cli.app,
         ["parse", "--compact", "--stdin-filepath", "buffer.too", "-"],
-        input="thunk:\n  hello\n",
+        input="agic:\n  hello\n",
     )
 
     assert result.exit_code == 0
     assert "\n  " not in result.stdout
     ast_data = json.loads(result.stdout)
-    assert ast_data["items"][0]["messages"][0]["content"] == "hello"
+    assert ast_data["agics"][0]["messages"][0]["content"] == "hello"
 
 
-def test_cli_parse_include_source_lines() -> None:
+def test_cli_parse_does_not_embed_source_lines() -> None:
     result = runner.invoke(
         cli.app,
-        ["parse", "--source-lines", "-"],
-        input="thunk:\n  hello\n",
+        ["parse", "-"],
+        input="agic:\n  hello\n",
     )
 
     assert result.exit_code == 0
     ast_data = json.loads(result.stdout)
-    assert ast_data["_source_lines"] == ["thunk:", "  hello"]
+    assert "_source_lines" not in ast_data
 
 
 def test_cli_fmt_formats_too_file(tmp_path: Path) -> None:
@@ -6134,7 +6101,7 @@ def test_cli_fmt_formats_too_file(tmp_path: Path) -> None:
         "struct Result:\n"
         "    title:Text\n"
         "\n"
-        "thunk review( input:Message)->Json:\n"
+        "agic review( input:Message)->Json:\n"
         "    model= deepseek/*\n"
         "    user:   Review it.\n",
         encoding="utf-8",
@@ -6150,7 +6117,7 @@ def test_cli_fmt_formats_too_file(tmp_path: Path) -> None:
         "struct Result:\n"
         "  title: Text\n"
         "\n"
-        "thunk review(in: Pack) -> Json:\n"
+        "agic review(in: Pack) -> Json:\n"
         "  models = deepseek/*\n"
         "\n"
         "  user: Review it.\n"
@@ -6159,7 +6126,7 @@ def test_cli_fmt_formats_too_file(tmp_path: Path) -> None:
 
 def test_cli_fmt_check_reports_unformatted_without_writing(tmp_path: Path) -> None:
     source_path = tmp_path / "agent.too"
-    source = "thunk review( input:Message):\n    user:   Review it.\n"
+    source = "agic review( input:Message):\n    user:   Review it.\n"
     source_path.write_text(source, encoding="utf-8")
 
     result = runner.invoke(cli.app, ["fmt", "--check", str(source_path)])
@@ -6173,12 +6140,12 @@ def test_cli_fmt_formats_stdin_with_filepath() -> None:
     result = runner.invoke(
         cli.app,
         ["fmt", "--stdin-filepath", "buffer.too"],
-        input="thunk review( input:Message):\n    user:   Review it.\n",
+        input="agic review( input:Message):\n    user:   Review it.\n",
     )
 
     assert result.exit_code == 0
     assert result.stdout == (
-        "thunk review(in: Pack):\n"
+        "agic review(in: Pack):\n"
         "  user: Review it.\n"
     )
 
@@ -6187,12 +6154,12 @@ def test_cli_fmt_formats_dash_as_stdin() -> None:
     result = runner.invoke(
         cli.app,
         ["fmt", "-"],
-        input="thunk review( input:Message):\n    user:   Review it.\n",
+        input="agic review( input:Message):\n    user:   Review it.\n",
     )
 
     assert result.exit_code == 0
     assert result.stdout == (
-        "thunk review(in: Pack):\n"
+        "agic review(in: Pack):\n"
         "  user: Review it.\n"
     )
 
@@ -6202,7 +6169,7 @@ def test_cli_fmt_handles_implicit_message_before_roles() -> None:
         cli.app,
         ["fmt", "-"],
         input=(
-            "thunk is_relevant(in:Part[]):\n"
+            "agic is_relevant(in:Part[]):\n"
             "    Evidence bundle:\n"
             "    {{ _ }}\n"
             "\n"
@@ -6216,7 +6183,7 @@ def test_cli_fmt_handles_implicit_message_before_roles() -> None:
 
     assert result.exit_code == 0
     assert result.stdout == (
-        "thunk is_relevant(in: Part[]):\n"
+        "agic is_relevant(in: Part[]):\n"
         "  Evidence bundle:\n"
         "  {{ _ }}\n"
         "\n"
@@ -6232,12 +6199,12 @@ def test_cli_fmt_formats_stdin_with_tab_size() -> None:
     result = runner.invoke(
         cli.app,
         ["fmt", "--tab-size", "4", "-"],
-        input="thunk review( input:Message):\n  user:\n    Review it.\n",
+        input="agic review( input:Message):\n  user:\n    Review it.\n",
     )
 
     assert result.exit_code == 0
     assert result.stdout == (
-        "thunk review(in: Pack):\n"
+        "agic review(in: Pack):\n"
         "    user:\n"
         "        Review it.\n"
     )
@@ -6256,12 +6223,12 @@ def test_cli_fmt_allows_stdin_filepath_with_dash() -> None:
 
 def test_cli_fmt_rejects_stdin_filepath_with_file_args(tmp_path: Path) -> None:
     source_path = tmp_path / "agent.too"
-    source_path.write_text("thunk:\n  hello\n", encoding="utf-8")
+    source_path.write_text("agic:\n  hello\n", encoding="utf-8")
 
     result = runner.invoke(
         cli.app,
         ["fmt", "--stdin-filepath", "buffer.too", str(source_path)],
-        input="thunk:\n  hello\n",
+        input="agic:\n  hello\n",
     )
 
     assert result.exit_code != 0
@@ -6270,12 +6237,12 @@ def test_cli_fmt_rejects_stdin_filepath_with_file_args(tmp_path: Path) -> None:
 
 def test_cli_fmt_rejects_dash_with_other_file_args(tmp_path: Path) -> None:
     source_path = tmp_path / "agent.too"
-    source_path.write_text("thunk:\n  hello\n", encoding="utf-8")
+    source_path.write_text("agic:\n  hello\n", encoding="utf-8")
 
     result = runner.invoke(
         cli.app,
         ["fmt", "-", str(source_path)],
-        input="thunk:\n  hello\n",
+        input="agic:\n  hello\n",
     )
 
     assert result.exit_code != 0
@@ -8269,7 +8236,7 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
     assert "  input:" not in result.stdout
     assert "  output:" not in result.stdout
     assert "{query}" not in result.stdout
-    assert "thunk:summarize" not in result.stdout
+    assert "agic:summarize" not in result.stdout
     long_input = cast(dict[str, object], successful["input"])
     long_input["parts"] = [{"type": "text", "text": f"李白同学是谁，{'中文内容' * 30}"}]
     long_result = _invoke_app(["inspect", "dev", "term_thread"])

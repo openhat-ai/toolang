@@ -1,254 +1,328 @@
-"""Semantic AST nodes for Toolang programs."""
+"""Static semantic AST nodes for Toolang programs."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Literal
+from dataclasses import dataclass, field, fields, is_dataclass
+from typing import Any, ClassVar, Literal
 
-MessageBlockKind = Literal["context", "instruct", "user", "assistant", "tool"]
-FlowStageKind = Literal[
-    "bare",
-    "do",
-    "ask",
-    "unfold",
-    "keep",
-    "drop",
-    "rank",
-    "each",
-    "fold",
-    "repeat",
-]
+CapKind = Literal["psyche", "skill", "service", "prompt"]
+WorkKind = Literal["task", "chore"]
+Role = Literal["user", "assistant", "tool"]
+Position = Literal["first", "last"]
+Limit = Literal["top", "bottom"]
 
 
-@dataclass(slots=True)
-class SourceSpan:
+@dataclass(frozen=True, slots=True)
+class Span:
     line: int
 
 
-@dataclass(slots=True)
-class UseDecl:
-    kind: str
-    reference: str
-    span: SourceSpan
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Node:
+    span: Span
     doc: str | None = None
 
+    kind: ClassVar[str]
 
-@dataclass(slots=True)
-class ParamDecl:
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class WithDecl(Node):
+    kind: ClassVar[str] = "with"
+
+    cap_kind: CapKind
+    reference: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Parameter(Node):
+    kind: ClassVar[str] = "parameter"
+
     name: str
     optional: bool = False
     type_name: str | None = None
 
 
-@dataclass(slots=True)
-class CapDecl:
-    kind: str
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CapDecl(Node):
+    kind: ClassVar[str] = "cap"
+
+    cap_kind: CapKind
     name: str
     body: str
-    span: SourceSpan
     language: str | None = None
     meta: dict[str, Any] = field(default_factory=dict)
-    params: list[ParamDecl] = field(default_factory=list)
-    doc: str | None = None
+    params: tuple[Parameter, ...] = ()
 
 
-@dataclass(slots=True)
-class WorkDecl:
-    kind: str
+@dataclass(frozen=True, slots=True, kw_only=True)
+class WorkDecl(Node):
+    kind: ClassVar[str] = "work"
+
+    work_kind: WorkKind
     name: str
     body: str
-    span: SourceSpan
     meta: dict[str, Any] = field(default_factory=dict)
-    doc: str | None = None
 
 
-@dataclass(slots=True)
-class InstructBlock:
-    name: str | None
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ContextDecl(Node):
+    kind: ClassVar[str] = "context"
+
+    name: str
     body: str
-    span: SourceSpan
     language: str | None = None
-    doc: str | None = None
 
 
-@dataclass(slots=True)
-class ContextBlock:
-    name: str | None
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InstructDecl(Node):
+    kind: ClassVar[str] = "instruct"
+
+    name: str
     body: str
-    span: SourceSpan
     language: str | None = None
-    doc: str | None = None
 
 
-@dataclass(slots=True)
-class StructFieldDecl:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Field(Node):
+    kind: ClassVar[str] = "field"
+
     name: str
     type_name: str
-    span: SourceSpan
     optional: bool = False
-    doc: str | None = None
 
 
-@dataclass(slots=True)
-class StructDecl:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StructDecl(Node):
+    kind: ClassVar[str] = "struct"
+
     name: str
-    fields: list[StructFieldDecl]
-    span: SourceSpan
-    doc: str | None = None
+    fields: tuple[Field, ...] = ()
 
 
-@dataclass(frozen=True, slots=True)
-class Directive:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Directive(Node):
+    kind: ClassVar[str] = "directive"
+
     name: str
     operator: str
     values: tuple[str, ...]
-    span: SourceSpan
 
 
-@dataclass(frozen=True, slots=True)
-class MessageBlock:
-    kind: MessageBlockKind
-    text: str
-    span: SourceSpan
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Message(Node):
+    kind: ClassVar[str] = "message"
+
+    role: Role
+    content: str
     explicit: bool = True
 
 
-@dataclass(slots=True)
-class Thunk:
-    name: str | None
-    input: ParamDecl | None = None
-    params: list[ParamDecl] = field(default_factory=list)
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AgicDecl(Node):
+    kind: ClassVar[str] = "agic"
+
+    name: str
+    input: Parameter | None = None
+    params: tuple[Parameter, ...] = ()
     output: str | None = None
     directives: tuple[Directive, ...] = ()
-    context: MessageBlock | None = None
-    instruct: MessageBlock | None = None
-    messages: tuple[MessageBlock, ...] = ()
-    span: SourceSpan = field(default_factory=lambda: SourceSpan(0))
-    doc: str | None = None
+    context: str | None = None
+    instruct: str | None = None
+    messages: tuple[Message, ...] = ()
     params_explicit: bool = False
 
-    def thunk_name(self) -> str:
-        return self.name or "default"
 
-    def is_thread_thunk(self) -> bool:
-        return self.thunk_name() in {"chat", "task", "chore", "file"}
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RunStmt(Node):
+    kind: ClassVar[str] = "run"
 
-    def directives_for(self, name: str) -> tuple[Directive, ...]:
-        return tuple(item for item in self.directives if _directive_family(item.name) == name)
-
-    def message_blocks(self, kind: MessageBlockKind) -> tuple[MessageBlock, ...]:
-        blocks: list[MessageBlock] = []
-        if self.context is not None and kind == "context":
-            blocks.append(self.context)
-        if self.instruct is not None and kind == "instruct":
-            blocks.append(self.instruct)
-        blocks.extend(item for item in self.messages if item.kind == kind)
-        return tuple(blocks)
-
-    def messages_text(self) -> str:
-        return "\n\n".join(
-            block.text
-            for block in self.messages
-            if block.text.strip()
-        ).strip()
+    binding: str | None = "_"
+    runnable: str
 
 
-@dataclass(frozen=True, slots=True)
-class FlowStage:
-    kind: FlowStageKind
-    span: SourceSpan
-    target: str | None = None
-    targets: tuple[str, ...] = ()
-    body: str | None = None
-    doc: str | None = None
-    output: str | None = None
-    parallelism: int | None = None
-    limit: int | None = None
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SeekStmt(Node):
+    kind: ClassVar[str] = "seek"
+
+    binding: str | None = "_"
+    agent: str
+    runnable: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AskStmt(Node):
+    kind: ClassVar[str] = "ask"
+
+    binding: str | None = "_"
+    body: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScatterStmt(Node):
+    kind: ClassVar[str] = "scatter"
+
+    binding: str | None = "_"
+    count: int
+    runnable: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StormStmt(Node):
+    kind: ClassVar[str] = "storm"
+
+    binding: str | None = "_"
+    count: int
+    runnable: str
+    par: int | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GatherStmt(Node):
+    kind: ClassVar[str] = "gather"
+
+    binding: str | None = "_"
+    runnable: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SettleStmt(Node):
+    kind: ClassVar[str] = "settle"
+
+    binding: str | None = "_"
+    runnable: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MapStmt(Node):
+    kind: ClassVar[str] = "map"
+
+    binding: str | None = "_"
+    runnable: str
+    par: int | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class KeepStmt(Node):
+    kind: ClassVar[str] = "keep"
+
+    binding: str | None = "_"
+    position: Position | None = None
     count: int | None = None
-    condition: str | None = None
-    stages: tuple["FlowStage", ...] = ()
+    predicate: str | None = None
+    par: int | None = None
 
 
-@dataclass(slots=True)
-class Flow:
-    name: str | None
-    input: ParamDecl | None = None
-    params: list[ParamDecl] = field(default_factory=list)
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DropStmt(Node):
+    kind: ClassVar[str] = "drop"
+
+    binding: str | None = "_"
+    position: Position | None = None
+    count: int | None = None
+    predicate: str | None = None
+    par: int | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RankStmt(Node):
+    kind: ClassVar[str] = "rank"
+
+    binding: str | None = "_"
+    scorer: str
+    limit: Limit | None = None
+    count: int | None = None
+    par: int | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RepeatStmt(Node):
+    kind: ClassVar[str] = "repeat"
+
+    binding: str | None = "_"
+    count: int | None = None
+    stmts: tuple[FlowStmt, ...] = ()
+    until: str | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LetStmt(Node):
+    kind: ClassVar[str] = "let"
+
+    binding: str | None = "_"
+    value: str
+
+
+FlowStmt = (
+    RunStmt
+    | SeekStmt
+    | AskStmt
+    | ScatterStmt
+    | StormStmt
+    | GatherStmt
+    | SettleStmt
+    | MapStmt
+    | KeepStmt
+    | DropStmt
+    | RankStmt
+    | RepeatStmt
+    | LetStmt
+)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FlowDecl(Node):
+    kind: ClassVar[str] = "flow"
+
+    name: str
+    input: Parameter | None = None
+    params: tuple[Parameter, ...] = ()
     output: str | None = None
     directives: tuple[Directive, ...] = ()
-    stages: tuple[FlowStage, ...] = ()
-    span: SourceSpan = field(default_factory=lambda: SourceSpan(0))
-    doc: str | None = None
+    stmts: tuple[FlowStmt, ...] = ()
     params_explicit: bool = False
 
-    def flow_name(self) -> str:
-        return self.name or "main"
 
-    def directives_for(self, name: str) -> tuple[Directive, ...]:
-        return tuple(item for item in self.directives if _directive_family(item.name) == name)
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Program(Node):
+    kind: ClassVar[str] = "program"
 
+    withs: tuple[WithDecl, ...] = ()
+    caps: tuple[CapDecl, ...] = ()
+    works: tuple[WorkDecl, ...] = ()
+    structs: tuple[StructDecl, ...] = ()
+    contexts: tuple[ContextDecl, ...] = ()
+    instructs: tuple[InstructDecl, ...] = ()
+    agics: tuple[AgicDecl, ...] = ()
+    flows: tuple[FlowDecl, ...] = ()
 
-@dataclass(slots=True)
-class Program:
-    doc: str | None = None
-    uses: list[UseDecl] = field(default_factory=list)
-    caps: list[CapDecl] = field(default_factory=list)
-    tasks: list[WorkDecl] = field(default_factory=list)
-    chores: list[WorkDecl] = field(default_factory=list)
-    structs: list[StructDecl] = field(default_factory=list)
-    contexts: list[ContextBlock] = field(default_factory=list)
-    instructs: list[InstructBlock] = field(default_factory=list)
-    thunks: list[Thunk] = field(default_factory=list)
-    flows: list[Flow] = field(default_factory=list)
-    _source_lines: list[str] | None = field(default=None, repr=False, compare=False)
+    @classmethod
+    def from_source(cls, source: str) -> Program:
+        from . import cst
+        from .lower import lower
+        from .validate import validate
 
-    def get_cap(self, kind: str, name: str) -> CapDecl | None:
-        for item in self.caps:
-            if item.kind == kind and item.name == name:
-                return item
-        return None
-
-    def get_instruct(self, name: str | None) -> InstructBlock | None:
-        for item in self.instructs:
-            if item.name == name:
-                return item
-        return None
-
-    def get_context(self, name: str | None) -> ContextBlock | None:
-        for item in self.contexts:
-            if item.name == name:
-                return item
-        return None
-
-    def get_struct(self, name: str) -> StructDecl | None:
-        for item in self.structs:
-            if item.name == name:
-                return item
-        return None
-
-    def get_flow(self, name: str) -> Flow | None:
-        for item in self.flows:
-            if item.flow_name() == name:
-                return item
-        return None
+        program = lower(cst.parse(source))
+        validate(program)
+        return program
 
 
-def _directive_family(subject: str) -> str:
-    normalized = subject.strip()
-    if normalized == "models":
-        return "model"
-    if normalized in {"tool", "tools"}:
-        return "tool"
-    if normalized in {"psyche", "psyches"}:
-        return "psyche"
-    if normalized in {"skill", "skills"}:
-        return "skill"
-    if normalized in {"service", "services"}:
-        return "service"
-    if normalized == "hands":
-        return "hands"
-    if normalized == "handoffs":
-        return "handoffs"
-    if normalized == "recall":
-        return "recall"
-    return normalized
+def to_data(value: object) -> object:
+    """Return a JSON-compatible representation of an AST value."""
+
+    if isinstance(value, Node):
+        return {
+            "kind": value.kind,
+            **{
+                item.name: to_data(getattr(value, item.name))
+                for item in fields(value)
+            },
+        }
+    if isinstance(value, Span):
+        return {"line": value.line}
+    if is_dataclass(value) and not isinstance(value, type):
+        return {item.name: to_data(getattr(value, item.name)) for item in fields(value)}
+    if isinstance(value, tuple | list):
+        return [to_data(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): to_data(item) for key, item in value.items()}
+    return value

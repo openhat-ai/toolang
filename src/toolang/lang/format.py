@@ -27,7 +27,7 @@ DIRECTIVE_KEY_ALIASES = {
     "handoffs": "handoffs",
     "recall": "recall",
 }
-THUNK_HEADER_RE = re.compile(r"^(?P<indent>[ \t]*)thunk(?P<rest>.*):(?P<suffix>[ \t]*(?:#.*)?)$")
+AGIC_HEADER_RE = re.compile(r"^(?P<indent>[ \t]*)agic(?P<rest>.*):(?P<suffix>[ \t]*(?:#.*)?)$")
 STRUCT_HEADER_RE = re.compile(r"^(?P<indent>[ \t]*)struct(?P<rest>.*):(?P<suffix>[ \t]*(?:#.*)?)$")
 FIELD_RE = re.compile(
     r"^(?P<indent>[ \t]+)(?P<name>[a-z][a-z0-9_-]*)(?P<optional>\?)?:"
@@ -37,8 +37,8 @@ DIRECTIVE_RE = re.compile(
     r"^(?P<indent>[ \t]*)(?P<key>model|models|tool|tools|skill|skills|service|services|"
     r"psyche|psyches|hands|handoffs|recall)(?P<space>[ \t]*)(?P<op>=|\+=|-=)"
 )
-TOP_LEVEL_RE = re.compile(r"^(use|struct|psyche|skill|service|prompt|task|chore|context|instruct|thunk|flow)\b")
-USE_LINE_RE = re.compile(r"^use[ \t]+(?P<kind>\S+)[ \t]+(?P<reference>.+?)$")
+TOP_LEVEL_RE = re.compile(r"^(with|struct|psyche|skill|service|prompt|task|chore|context|instruct|agic|flow)\b")
+WITH_LINE_RE = re.compile(r"^with[ \t]+(?P<kind>\S+)[ \t]+(?P<reference>.+?)$")
 DECL_HEADER_RE = re.compile(
     r"^(?P<kind>psyche|skill|service|prompt|task|chore)[ \t]+(?P<name>[^:\s]+)[ \t]*:"
     r"(?P<body>[ \t]*.*)$"
@@ -92,7 +92,7 @@ def _format_source_lines(lines: list[str], *, tab_size: int) -> list[str]:
     formatted: list[str] = []
     current_top: str | None = None
     in_fence = False
-    thunk_block_indent: int | None = None
+    agic_block_indent: int | None = None
     indent = " " * tab_size
 
     for index, raw_line in enumerate(lines):
@@ -111,25 +111,25 @@ def _format_source_lines(lines: list[str], *, tab_size: int) -> list[str]:
             continue
 
         if not stripped:
-            if current_top == "thunk":
-                thunk_block_indent = None
+            if current_top == "agic":
+                agic_block_indent = None
             formatted.append("")
             continue
 
         if not leading:
             current_top = _top_level_kind(stripped)
-            thunk_block_indent = None
+            agic_block_indent = None
             if stripped.startswith("#"):
                 formatted.append(_format_comment_line(stripped))
                 continue
-            if current_top == "use":
-                formatted.append(_format_use_line(stripped))
+            if current_top == "with":
+                formatted.append(_format_with_line(stripped))
                 continue
             if current_top == "struct":
                 formatted.append(_format_struct_header_line(stripped))
                 continue
-            if current_top == "thunk":
-                formatted.append(_format_thunk_header_line(stripped))
+            if current_top == "agic":
+                formatted.append(_format_agic_header_line(stripped))
                 continue
             if current_top in {"context", "instruct"}:
                 rendered = _format_named_block_header_line(stripped)
@@ -148,10 +148,10 @@ def _format_source_lines(lines: list[str], *, tab_size: int) -> list[str]:
             formatted.append(_format_struct_body_line(stripped, indent=indent))
             continue
 
-        if current_top == "thunk":
-            rendered, thunk_block_indent = _format_thunk_body_line(
+        if current_top == "agic":
+            rendered, agic_block_indent = _format_agic_body_line(
                 line,
-                block_indent=thunk_block_indent,
+                block_indent=agic_block_indent,
                 indent=indent,
             )
             formatted.append(rendered)
@@ -186,12 +186,12 @@ def _top_level_kind(stripped_line: str) -> str | None:
     return match.group(1)
 
 
-def _format_use_line(stripped_line: str) -> str:
+def _format_with_line(stripped_line: str) -> str:
     body, comment = _split_inline_comment(stripped_line)
-    match = USE_LINE_RE.match(body)
+    match = WITH_LINE_RE.match(body)
     if match is None:
         return stripped_line
-    return f"use {match.group('kind')} {match.group('reference').strip()}{comment}"
+    return f"with {match.group('kind')} {match.group('reference').strip()}{comment}"
 
 
 def _format_comment_line(stripped_line: str) -> str:
@@ -247,8 +247,8 @@ def _format_struct_body_line(stripped_line: str, *, indent: str) -> str:
     )
 
 
-def _format_thunk_header_line(stripped_line: str) -> str:
-    match = THUNK_HEADER_RE.match(stripped_line)
+def _format_agic_header_line(stripped_line: str) -> str:
+    match = AGIC_HEADER_RE.match(stripped_line)
     if match is None:
         return stripped_line
     rest = match.group("rest").strip()
@@ -257,10 +257,10 @@ def _format_thunk_header_line(stripped_line: str) -> str:
         rest, raw_output = rest.rsplit("->", 1)
         output_type = raw_output.strip()
         output = f" -> {output_type}" if output_type else ""
-    name, params = _parse_thunk_rest(rest)
+    name, params = _parse_agic_rest(rest)
     rendered_name = f" {name}" if name else ""
     rendered_params = "" if params is None else f"({_format_signature_params(params)})"
-    return f"thunk{rendered_name}{rendered_params}{output}:{match.group('suffix')}"
+    return f"agic{rendered_name}{rendered_params}{output}:{match.group('suffix')}"
 
 
 def _format_signature_params(raw: str) -> str:
@@ -291,7 +291,7 @@ def _format_signature_params(raw: str) -> str:
     return ", ".join(rendered)
 
 
-def _format_thunk_body_line(line: str, *, block_indent: int | None, indent: str) -> tuple[str, int | None]:
+def _format_agic_body_line(line: str, *, block_indent: int | None, indent: str) -> tuple[str, int | None]:
     stripped = line.strip()
     leading_width = len(_leading_whitespace(line).expandtabs(2))
     directive_match = DIRECTIVE_RE.match(line)
@@ -376,7 +376,7 @@ def _order_program_comments(lines: list[str]) -> list[str]:
 def _order_control_segments(lines: list[str], *, tab_size: int) -> list[str]:
     ordered: list[str] = []
     in_fence = False
-    in_thunk = False
+    in_agic = False
     index = 0
 
     while index < len(lines):
@@ -391,9 +391,9 @@ def _order_control_segments(lines: list[str], *, tab_size: int) -> list[str]:
 
         top_level = _top_level_kind(stripped) if stripped and not _leading_whitespace(line) else None
         if top_level is not None:
-            in_thunk = top_level == "thunk"
+            in_agic = top_level == "agic"
 
-        if in_thunk and _control_header_kind(line, tab_size=tab_size) is not None:
+        if in_agic and _control_header_kind(line, tab_size=tab_size) is not None:
             segments, index = _collect_control_segments(lines, index, tab_size=tab_size)
             for segment in [*segments[0], *segments[1]]:
                 ordered.extend(segment)
@@ -462,7 +462,7 @@ def _is_block_continuation(line: str, *, tab_size: int) -> bool:
 def _normalize_blank_lines(lines: list[str], *, tab_size: int) -> list[str]:
     normalized: list[str] = []
     in_fence = False
-    in_thunk = False
+    in_agic = False
     previous_kind: str | None = None
     previous_significant_kind: str | None = None
     pending_blank = False
@@ -479,7 +479,7 @@ def _normalize_blank_lines(lines: list[str], *, tab_size: int) -> list[str]:
             pending_blank = True
             continue
 
-        kind = _formatted_line_kind(line, in_thunk=in_thunk, tab_size=tab_size)
+        kind = _formatted_line_kind(line, in_agic=in_agic, tab_size=tab_size)
         if _needs_blank_line(previous_kind, kind, pending_blank=pending_blank):
             _append_blank_line(normalized)
         elif previous_kind == "comment" and _needs_blank_line_after_comment(previous_significant_kind, kind):
@@ -491,7 +491,7 @@ def _normalize_blank_lines(lines: list[str], *, tab_size: int) -> list[str]:
 
         top_level = _top_level_kind(stripped) if not _leading_whitespace(line) else None
         if top_level is not None:
-            in_thunk = top_level == "thunk"
+            in_agic = top_level == "agic"
         if _opens_fence(line):
             in_fence = True
         previous_kind = kind
@@ -501,7 +501,7 @@ def _normalize_blank_lines(lines: list[str], *, tab_size: int) -> list[str]:
     return normalized
 
 
-def _formatted_line_kind(line: str, *, in_thunk: bool, tab_size: int) -> str:
+def _formatted_line_kind(line: str, *, in_agic: bool, tab_size: int) -> str:
     stripped = line.strip()
     if line.startswith("#!"):
         return "shebang"
@@ -511,12 +511,12 @@ def _formatted_line_kind(line: str, *, in_thunk: bool, tab_size: int) -> str:
         if stripped.startswith("#"):
             return "top_comment"
         top_level = _top_level_kind(stripped)
-        if top_level == "thunk":
-            return "thunk_header"
+        if top_level == "agic":
+            return "agic_header"
         if top_level is not None:
             return "top_level"
         return "other_top_level"
-    if not in_thunk:
+    if not in_agic:
         return "indented"
     if DIRECTIVE_RE.match(line):
         return "directive"
@@ -544,7 +544,7 @@ def _formatted_message_header_match(line: str, *, tab_size: int) -> re.Match[str
 def _needs_blank_line(previous_kind: str | None, current_kind: str, *, pending_blank: bool) -> bool:
     if previous_kind is None:
         return False
-    if current_kind in {"top_level", "thunk_header", "other_top_level"}:
+    if current_kind in {"top_level", "agic_header", "other_top_level"}:
         return previous_kind not in {"top_comment"} or pending_blank
     if current_kind == "top_comment":
         return previous_kind not in {"shebang", "top_comment"}
@@ -553,7 +553,7 @@ def _needs_blank_line(previous_kind: str | None, current_kind: str, *, pending_b
     if current_kind == "comment":
         return previous_kind in {"block_body", "message_body", "message_header"}
     if current_kind == "directive":
-        return previous_kind not in {"thunk_header", "directive"}
+        return previous_kind not in {"agic_header", "directive"}
     if current_kind == "control":
         return previous_kind in {"directive", "message_header", "message_body", "block_body"}
     if current_kind == "control_block_header":
@@ -570,7 +570,7 @@ def _needs_blank_line(previous_kind: str | None, current_kind: str, *, pending_b
             "message_block_header",
             "message_header",
             "message_body",
-            "thunk_header",
+            "agic_header",
         }
     return False
 
@@ -608,14 +608,14 @@ def _tree_sitter_source(source: str) -> _TreeSitterSource:
 
     while index < len(original_lines):
         line = original_lines[index]
-        thunk_match = THUNK_HEADER_RE.match(line)
-        if thunk_match is None:
-            transformed.append(_transform_non_thunk_line(line))
+        agic_match = AGIC_HEADER_RE.match(line)
+        if agic_match is None:
+            transformed.append(_transform_non_agic_line(line))
             line_map.append(index)
             index += 1
             continue
 
-        transformed.append(_transform_thunk_header(line))
+        transformed.append(_transform_agic_header(line))
         line_map.append(index)
         index += 1
 
@@ -643,7 +643,7 @@ def _tree_sitter_source(source: str) -> _TreeSitterSource:
                     index += 1
                 continue
 
-            transformed.append(_transform_non_thunk_line(body_line))
+            transformed.append(_transform_non_agic_line(body_line))
             line_map.append(index)
             index += 1
 
@@ -657,7 +657,7 @@ def _tree_sitter_source(source: str) -> _TreeSitterSource:
     )
 
 
-def _transform_non_thunk_line(line: str) -> str:
+def _transform_non_agic_line(line: str) -> str:
     if STRUCT_HEADER_RE.match(line) is not None:
         return line
 
@@ -673,8 +673,8 @@ def _transform_non_thunk_line(line: str) -> str:
     return _transform_directive_line(line)
 
 
-def _transform_thunk_header(line: str) -> str:
-    match = THUNK_HEADER_RE.match(line)
+def _transform_agic_header(line: str) -> str:
+    match = AGIC_HEADER_RE.match(line)
     if match is None:
         return line
     rest = match.group("rest")
@@ -682,10 +682,10 @@ def _transform_thunk_header(line: str) -> str:
     if "->" in rest:
         rest, raw_output = rest.rsplit("->", 1)
         output = f" -> {_tree_sitter_type_name(raw_output.strip())}"
-    name, params = _parse_thunk_rest(rest)
+    name, params = _parse_agic_rest(rest)
     rendered_name = f" {name}" if name else ""
     rendered_params = "" if params is None else f"({_tree_sitter_params(params)})"
-    return f"{match.group('indent')}thunk{rendered_name}{rendered_params}{output}:{match.group('suffix')}"
+    return f"{match.group('indent')}agic{rendered_name}{rendered_params}{output}:{match.group('suffix')}"
 
 
 def _transform_directive_line(line: str) -> str:
@@ -738,7 +738,7 @@ def _tree_sitter_type_name(type_name: str | None) -> str:
     return type_name
 
 
-def _parse_thunk_rest(rest: str) -> tuple[str | None, str | None]:
+def _parse_agic_rest(rest: str) -> tuple[str | None, str | None]:
     rest = rest.strip()
     if not rest:
         return None, None

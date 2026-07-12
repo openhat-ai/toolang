@@ -14,7 +14,7 @@
 #     --model anthropic/claude-sonnet-4.5@openrouter \
 #     --model google/gemini-3.1-pro-preview@openrouter
 
-thunk rewrite(in: Part[]):
+agic rewrite(in: Part[]):
   model = openai/gpt-5, anthropic/claude-sonnet-4.5, google/gemini-3.1-pro-preview
 
   Rewrite the input for a technical audience.

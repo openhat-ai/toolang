@@ -30,7 +30,7 @@ from ..execution.labels import executable_label
 from ..execution.records import trace_index, trace_run
 from ..execution.runner import RunOutcome
 from ..models.errors import NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSAGE
-from ..lang.ast import Flow, ParamDecl, Thunk
+from ..lang.ast import FlowDecl, Parameter, AgicDecl
 from ..state.prepared import PreparedState
 from ..caps import split_cap_selectors
 from ..state.program import LiveProgram, load_live_program
@@ -121,7 +121,7 @@ class _RoamingThunkHelpCommand(TyperCommand):
     usage_tail = "[OPTIONS]"
     show_params = False
     show_parts = False
-    help_executable: Thunk | Flow | None = None
+    help_executable: AgicDecl | FlowDecl | None = None
 
     def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         if not HAS_RICH or self.rich_markup_mode is None:
@@ -395,18 +395,18 @@ def _load_roaming_live_program(
 def _select_roaming_executable(
     program: LiveProgram,
     argv: list[str],
-) -> tuple[str, Thunk | Flow, list[str]]:
+) -> tuple[str, AgicDecl | FlowDecl, list[str]]:
     for thunk in program.thunks:
         if _thunk_name(thunk) == argv[0]:
             return "thunk", thunk, argv[1:]
     for flow in program.flows:
-        if flow.flow_name() == argv[0]:
+        if flow.name == argv[0]:
             return "flow", flow, argv[1:]
     raise click.ClickException(f"unknown target: {argv[0]}")
 
 
 def _parse_roaming_invoke_request(
-    executable: Thunk | Flow,
+    executable: AgicDecl | FlowDecl,
     argv: list[str],
     *,
     executable_kind: str,
@@ -536,7 +536,7 @@ def _parse_boolean_value(raw: str, *, option_name: str) -> bool:
     raise click.ClickException(f"{option_name} expects a boolean value")
 
 
-def _coerce_invoke_value(raw: str, *, param: ParamDecl) -> object:
+def _coerce_invoke_value(raw: str, *, param: Parameter) -> object:
     type_name = param.type_name
     if type_name == "Number":
         try:
@@ -1070,7 +1070,7 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
         invoke_without_command=True,
         pretty_exceptions_enable=False,
         pretty_exceptions_show_locals=False,
-        help=f"Invoke a thunk or flow from a Toolang script.\n\nScript: {source_label}",
+        help=f"Invoke an agic or flow from a Toolang script.\n\nScript: {source_label}",
     )
 
     @app.callback()
@@ -1106,11 +1106,11 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
             help=_roaming_executable_help_text(source_label, thunk),
             short_help=_executable_summary(thunk),
             cls=_make_roaming_executable_help_command_class(thunk),
-            rich_help_panel="Thunks",
+            rich_help_panel="Agics",
         )(_make_roaming_help_command())
     for flow in program.flows:
         app.command(
-            flow.flow_name(),
+            flow.name,
             help=_roaming_executable_help_text(source_label, flow),
             short_help=_executable_summary(flow),
             cls=_make_roaming_executable_help_command_class(flow),
@@ -1119,14 +1119,14 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
     return app
 
 
-def _roaming_executable_help_text(source_label: str, executable: Thunk | Flow) -> str:
+def _roaming_executable_help_text(source_label: str, executable: AgicDecl | FlowDecl) -> str:
     summary = _executable_summary(executable)
-    intro = "Invoke a thunk or flow from a Toolang script." if summary == "-" else summary
-    label = "Thunk" if isinstance(executable, Thunk) else "Flow"
+    intro = "Invoke an agic or flow from a Toolang script." if summary == "-" else summary
+    label = "Agic" if isinstance(executable, AgicDecl) else "Flow"
     return f"{intro}\n\nScript: {source_label}\n{label}:  {_executable_name(executable)}"
 
 
-def _make_roaming_executable_help_command_class(executable: Thunk | Flow) -> type[_RoamingThunkHelpCommand]:
+def _make_roaming_executable_help_command_class(executable: AgicDecl | FlowDecl) -> type[_RoamingThunkHelpCommand]:
     class _ConfiguredRoamingThunkHelpCommand(_RoamingThunkHelpCommand):
         usage_tail = _roaming_executable_usage_tail(executable)
         show_params = bool(executable.params)
@@ -1166,7 +1166,7 @@ def _make_roaming_help_command() -> Callable[..., None]:
     return command
 
 
-def _roaming_executable_usage_tail(executable: Thunk | Flow) -> str:
+def _roaming_executable_usage_tail(executable: AgicDecl | FlowDecl) -> str:
     pieces = ["[OPTIONS]"]
     if executable.params:
         pieces.append("[PARAMS]")
@@ -1175,7 +1175,7 @@ def _roaming_executable_usage_tail(executable: Thunk | Flow) -> str:
     return " ".join(pieces)
 
 
-def _param_assignment_label(param: ParamDecl) -> str:
+def _param_assignment_label(param: Parameter) -> str:
     type_name = param.type_name or "TEXT"
     if param.type_name == "Number":
         type_name = "NUMBER"
@@ -1188,14 +1188,14 @@ def _param_assignment_label(param: ParamDecl) -> str:
     return f"{param.name}={type_name}"
 
 
-def _executable_summary(executable: Thunk | Flow) -> str:
-    if isinstance(executable, Thunk):
-        for line in executable.messages_text().splitlines():
+def _executable_summary(executable: AgicDecl | FlowDecl) -> str:
+    if isinstance(executable, AgicDecl):
+        for line in "\n\n".join(item.content for item in executable.messages).splitlines():
             text = line.strip()
             if text:
                 return text
-    if isinstance(executable, Flow) and executable.stages:
-        return f"{len(executable.stages)} flow stages"
+    if isinstance(executable, FlowDecl) and executable.stmts:
+        return f"{len(executable.stmts)} flow statements"
     return "-"
 
 
@@ -1205,7 +1205,7 @@ def _help_arguments(
     show_params: bool,
     show_parts: bool,
     show_input_forms: bool,
-    executable: Thunk | Flow | None = None,
+    executable: AgicDecl | FlowDecl | None = None,
 ) -> list[click.Parameter]:
     args: list[click.Parameter] = []
     if show_thunk:
@@ -1216,7 +1216,7 @@ def _help_arguments(
                 required=False,
                 default=None,
                 expose_value=False,
-                help="Thunk or flow to invoke.",
+                help="Agic or flow to invoke.",
                 rich_help_panel="Arguments",
             )
         )
@@ -1275,14 +1275,14 @@ def _help_arguments(
     return args
 
 
-def _thunk_name(thunk: Thunk) -> str:
+def _thunk_name(thunk: AgicDecl) -> str:
     return thunk.name or "default"
 
 
-def _executable_name(executable: Thunk | Flow) -> str:
-    if isinstance(executable, Thunk):
+def _executable_name(executable: AgicDecl | FlowDecl) -> str:
+    if isinstance(executable, AgicDecl):
         return _thunk_name(executable)
-    return executable.flow_name()
+    return executable.name
 
 
 def _rich_format_roaming_help(

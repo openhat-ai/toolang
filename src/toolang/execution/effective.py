@@ -12,7 +12,7 @@ from toolang.base.error import ToolangError
 from toolang.base.types.model import ModelTarget
 
 from .. import caps as cap_store
-from ..lang.ast import Thunk, Directive
+from ..lang.ast import AgicDecl, Directive
 from ..state.live import LiveState
 from ..state.prepared import PreparedEntry
 from ..tools.registry import selected_tool_names, tool_ref_for_model_tool
@@ -50,7 +50,7 @@ def select_origin_thunk(
     *,
     origin: str,
     thunk_name: str | None = None,
-) -> Thunk:
+) -> AgicDecl:
     """Return the effective thunk for one run origin."""
 
     if thunk_name is not None:
@@ -87,7 +87,7 @@ def effective_run_sets(
     context: UptimeContext,
     *,
     run: RunBinding,
-    thunk: Thunk,
+    thunk: AgicDecl,
 ) -> EffectiveRunSets:
     models_base = run_allowed_model_selectors(context, run=run)
     tools_base = run_tools_base(context, run=run)
@@ -97,7 +97,7 @@ def effective_run_sets(
     services_base = cap_entries(selected_cap_entries, kind="service")
     effective_tools, tool_math = select_tools_with_trace(
         tools_base,
-        thunk.directives_for("tool"),
+        directives_for(thunk, "tool"),
     )
     effective_models, model_math = model_set_math(
         context,
@@ -106,15 +106,15 @@ def effective_run_sets(
     )
     effective_psyches, psyche_math = select_entries_with_trace(
         psyches_base,
-        thunk.directives_for("psyche"),
+        directives_for(thunk, "psyche"),
     )
     effective_skills, skill_math = select_entries_with_trace(
         skills_base,
-        thunk.directives_for("skill"),
+        directives_for(thunk, "skill"),
     )
     effective_services, service_math = select_entries_with_trace(
         services_base,
-        thunk.directives_for("service"),
+        directives_for(thunk, "service"),
     )
     set_math: dict[str, object] = {
         "models": model_math,
@@ -226,7 +226,7 @@ def run_cap_entries(context: UptimeContext, *, run: RunBinding) -> tuple[Prepare
 def effective_model_selectors(
     context: UptimeContext,
     *,
-    thunk: Thunk,
+    thunk: AgicDecl,
     models_base: tuple[str, ...],
 ) -> tuple[str, ...]:
     effective, _math = model_set_math(
@@ -240,12 +240,12 @@ def effective_model_selectors(
 def model_set_math(
     context: UptimeContext,
     *,
-    thunk: Thunk,
+    thunk: AgicDecl,
     models_base: tuple[str, ...],
 ) -> tuple[tuple[str, ...], dict[str, object]]:
     thunk_selectors, thunk_steps = _apply_string_directives_with_trace(
         (),
-        thunk.directives_for("model"),
+        directives_for(thunk, "model"),
     )
     effective = select_model_selectors(
         context,
@@ -267,8 +267,8 @@ def model_set_math(
     )
 
 
-def thunk_model_refs(thunk: Thunk) -> tuple[str, ...]:
-    return _apply_string_directives((), thunk.directives_for("model"))
+def thunk_model_refs(thunk: AgicDecl) -> tuple[str, ...]:
+    return _apply_string_directives((), directives_for(thunk, "model"))
 
 
 def select_tools(
@@ -340,24 +340,41 @@ def resolve_runtime_models(
     )
 
 
-def log_set_math(*, run: RunBinding, thunk: Thunk, set_math: dict[str, object]) -> None:
+def log_set_math(*, run: RunBinding, thunk: AgicDecl, set_math: dict[str, object]) -> None:
     if not _LOGGER.isEnabledFor(logging.DEBUG):
         return
     _LOGGER.debug(
         "run.activation thread=%s run=%s thunk=%s summary=%s math=%s",
         run.thread_id,
         run.run_id,
-        thunk.thunk_name(),
+        thunk.name,
         _set_math_summary(set_math),
         json.dumps(set_math, ensure_ascii=False, sort_keys=True),
     )
 
 
-def _find_named_thunk(thunks: tuple[Thunk, ...], name: str) -> Thunk | None:
+def _find_named_thunk(thunks: tuple[AgicDecl, ...], name: str) -> AgicDecl | None:
     for thunk in thunks:
-        if thunk.thunk_name() == name:
+        if thunk.name == name:
             return thunk
     return None
+
+
+def directives_for(agic: AgicDecl, name: str) -> tuple[Directive, ...]:
+    """Return directives belonging to one normalized directive family."""
+
+    aliases = {
+        "models": "model",
+        "tools": "tool",
+        "psyches": "psyche",
+        "skills": "skill",
+        "services": "service",
+    }
+    return tuple(
+        item
+        for item in agic.directives
+        if aliases.get(item.name, item.name) == name
+    )
 
 
 def _apply_tool_directives_with_trace(

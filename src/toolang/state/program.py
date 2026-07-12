@@ -7,25 +7,25 @@ import json
 import re
 import shlex
 from re import Match
+from typing import cast
 
 from ..agents import agent_program_path
 from ..lang.ast import (
-    ContextBlock,
+    AgicDecl,
     CapDecl,
-    Flow,
-    FlowStage,
-    InstructBlock,
-    MessageBlock,
-    ParamDecl,
+    ContextDecl,
+    FlowDecl,
+    FlowStmt,
+    InstructDecl,
+    Message,
+    Parameter,
     Program,
-    SourceSpan,
+    Span,
     StructDecl,
-    Thunk,
     Directive,
-    UseDecl,
+    WithDecl,
+    to_data,
 )
-from ..lang.lower import parse
-from ..lang.validate import validate_program
 from .durable import DurableState
 from toolang.base.error import ToolangError
 
@@ -69,7 +69,7 @@ class PreparedProgram:
             "source": "program",
             "source_text": self.source_text,
             "body_text": self.body_text,
-            "uses": [_use_to_lock_data(item, line_offset=line_offset) for item in program.uses],
+            "uses": [_with_to_lock_data(item, line_offset=line_offset) for item in program.withs],
             "structs": [_struct_to_lock_data(item, line_offset=line_offset) for item in program.structs],
             "contexts": [_context_to_lock_data(item, line_offset=line_offset) for item in program.contexts],
             "instructs": [_instruct_to_lock_data(item, line_offset=line_offset) for item in program.instructs],
@@ -119,42 +119,44 @@ class LiveProgram:
         return self.prepared.body_text
 
     @property
-    def thunks(self) -> tuple[Thunk, ...]:
+    def thunks(self) -> tuple[AgicDecl, ...]:
         return _program_thunks(self.parsed)
 
     @property
-    def flows(self) -> tuple[Flow, ...]:
+    def flows(self) -> tuple[FlowDecl, ...]:
         return tuple(self.parsed.flows)
 
-    def get_thunk(self, name: str | None) -> Thunk:
+    def get_thunk(self, name: str | None) -> AgicDecl:
         if name is not None:
             for thunk in self.thunks:
-                if _thunk_name(thunk) == name:
+                if thunk.name == name:
                     return thunk
             raise ToolangError(f"Thunk not found: {name}")
         for thunk in self.thunks:
-            if _thunk_name(thunk) == "default":
+            if thunk.name == "default":
                 return thunk
         if len(self.thunks) == 1:
             return self.thunks[0]
         raise ToolangError("No default thunk found in prepared program.")
 
-    def get_flow(self, name: str | None) -> Flow:
+    def get_flow(self, name: str | None) -> FlowDecl:
         if name is not None:
-            flow = self.parsed.get_flow(name)
-            if flow is not None:
-                return flow
+            for flow in self.flows:
+                if flow.name == name:
+                    return flow
             raise ToolangError(f"Flow not found: {name}")
         for flow in self.flows:
-            if flow.flow_name() == "main":
+            if flow.name == "main":
                 return flow
         raise ToolangError("No default flow found in prepared program.")
 
-    def get_instruct(self, name: str | None) -> InstructBlock | None:
-        return self.parsed.get_instruct(name)
+    def get_instruct(self, name: str | None) -> InstructDecl | None:
+        selected = "default" if name is None else name
+        return next((item for item in self.parsed.instructs if item.name == selected), None)
 
-    def get_context(self, name: str | None) -> ContextBlock | None:
-        return self.parsed.get_context(name)
+    def get_context(self, name: str | None) -> ContextDecl | None:
+        selected = "default" if name is None else name
+        return next((item for item in self.parsed.contexts if item.name == selected), None)
 
     def expand_input(self, raw_input: str) -> str:
         if not raw_input:
@@ -168,7 +170,14 @@ class LiveProgram:
             return raw_input
 
         prompt_name = match.group(1)
-        prompt_cap = self.parsed.get_cap("prompt", prompt_name)
+        prompt_cap = next(
+            (
+                item
+                for item in self.parsed.caps
+                if item.cap_kind == "prompt" and item.name == prompt_name
+            ),
+            None,
+        )
         if prompt_cap is None:
             raise ToolangError(f"Prompt not found: {prompt_name}")
 
@@ -236,15 +245,13 @@ def _body_text(source_text: str) -> str:
 
 def _parse_body_text(body_text: str) -> Program:
     if not body_text.strip():
-        return Program(_source_lines=[])
-    program = parse(body_text)
-    validate_program(program)
-    return program
+        return Program(span=Span(line=1))
+    return Program.from_source(body_text)
 
 
-def _program_thunks(program: Program) -> tuple[Thunk, ...]:
-    thunks = tuple(program.thunks)
-    if any(thunk.thunk_name() == "default" for thunk in thunks):
+def _program_thunks(program: Program) -> tuple[AgicDecl, ...]:
+    thunks = tuple(program.agics)
+    if any(thunk.name == "default" for thunk in thunks):
         return thunks
     return (*thunks, _default_thunk())
 
@@ -261,10 +268,10 @@ def _body_line_offset(*, source_text: str, body_text: str) -> int:
     return 0
 
 
-def _default_thunk() -> Thunk:
-    return Thunk(
+def _default_thunk() -> AgicDecl:
+    return AgicDecl(
         name="default",
-        input=ParamDecl(name="in", type_name="Pack"),
+        input=Parameter(name="in", type_name="Pack", span=_default_span()),
         span=_default_span(),
     )
 
@@ -272,7 +279,7 @@ def _default_thunk() -> Thunk:
 def _parse_prompt_args(
     raw_args: str,
     *,
-    params: list[ParamDecl],
+    params: tuple[Parameter, ...],
     prompt_name: str,
 ) -> dict[str, str]:
     if not raw_args.strip():
@@ -325,7 +332,7 @@ def _render_template_var(match: Match[str], bindings: dict[str, str]) -> str:
     return bindings[name]
 
 
-def _param_to_data(param: ParamDecl) -> dict[str, object]:
+def _param_to_data(param: Parameter) -> dict[str, object]:
     return {
         "name": param.name,
         "optional": param.optional,
@@ -339,60 +346,32 @@ def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def _thunk_name(thunk: Thunk) -> str:
-    return thunk.name or "default"
-
-
-def _thunk_to_data(thunk: Thunk) -> dict[str, object]:
+def _thunk_to_data(thunk: AgicDecl) -> dict[str, object]:
     return {
-        "name": _thunk_name(thunk),
+        "name": thunk.name,
         "input": _param_to_data(thunk.input) if thunk.input is not None else None,
         "params": [_param_to_data(item) for item in thunk.params],
         "output": thunk.output,
         "directives": [_directive_to_data(item) for item in thunk.directives],
-        "context": _message_block_to_data(thunk.context) if thunk.context is not None else None,
-        "instruct": _message_block_to_data(thunk.instruct) if thunk.instruct is not None else None,
-        "messages": [_message_block_to_data(item) for item in thunk.messages],
+        "context": thunk.context,
+        "instruct": thunk.instruct,
+        "messages": [_message_to_data(item) for item in thunk.messages],
     }
 
 
-def _flow_to_data(flow: Flow) -> dict[str, object]:
+def _flow_to_data(flow: FlowDecl) -> dict[str, object]:
     return {
-        "name": flow.flow_name(),
+        "name": flow.name,
         "input": _param_to_data(flow.input) if flow.input is not None else None,
         "params": [_param_to_data(item) for item in flow.params],
         "output": flow.output,
         "directives": [_directive_to_data(item) for item in flow.directives],
-        "stages": [_flow_stage_to_data(item) for item in flow.stages],
+        "stmts": [_flow_stmt_to_data(item) for item in flow.stmts],
     }
 
 
-def _flow_stage_to_data(stage: FlowStage) -> dict[str, object]:
-    data: dict[str, object] = {
-        "kind": stage.kind,
-        "line": stage.span.line,
-    }
-    if stage.target is not None:
-        data["target"] = stage.target
-    if stage.targets:
-        data["targets"] = list(stage.targets)
-    if stage.body is not None:
-        data["body"] = stage.body
-    if stage.doc is not None:
-        data["doc"] = stage.doc
-    if stage.output is not None:
-        data["output"] = stage.output
-    if stage.parallelism is not None:
-        data["parallelism"] = stage.parallelism
-    if stage.limit is not None:
-        data["limit"] = stage.limit
-    if stage.count is not None:
-        data["count"] = stage.count
-    if stage.condition is not None:
-        data["condition"] = stage.condition
-    if stage.stages:
-        data["stages"] = [_flow_stage_to_data(item) for item in stage.stages]
-    return data
+def _flow_stmt_to_data(stmt: FlowStmt) -> dict[str, object]:
+    return cast(dict[str, object], to_data(stmt))
 
 
 def _directive_to_data(directive: Directive) -> dict[str, object]:
@@ -404,18 +383,18 @@ def _directive_to_data(directive: Directive) -> dict[str, object]:
     }
 
 
-def _message_block_to_data(block: MessageBlock) -> dict[str, object]:
+def _message_to_data(message: Message) -> dict[str, object]:
     return {
-        "kind": block.kind,
-        "text": block.text,
-        "line": block.span.line,
-        "explicit": block.explicit,
+        "role": message.role,
+        "content": message.content,
+        "explicit": message.explicit,
+        "line": message.span.line,
     }
 
 
-def _use_to_lock_data(use: UseDecl, *, line_offset: int) -> dict[str, object]:
+def _with_to_lock_data(use: WithDecl, *, line_offset: int) -> dict[str, object]:
     return {
-        "kind": use.kind,
+        "kind": use.cap_kind,
         "ref": use.reference,
         "line": use.span.line + line_offset,
     }
@@ -437,7 +416,7 @@ def _struct_to_lock_data(struct: StructDecl, *, line_offset: int) -> dict[str, o
     }
 
 
-def _instruct_to_lock_data(instruct: InstructBlock, *, line_offset: int) -> dict[str, object]:
+def _instruct_to_lock_data(instruct: InstructDecl, *, line_offset: int) -> dict[str, object]:
     return {
         "name": instruct.name,
         "line": instruct.span.line + line_offset,
@@ -445,7 +424,7 @@ def _instruct_to_lock_data(instruct: InstructBlock, *, line_offset: int) -> dict
     }
 
 
-def _context_to_lock_data(context: ContextBlock, *, line_offset: int) -> dict[str, object]:
+def _context_to_lock_data(context: ContextDecl, *, line_offset: int) -> dict[str, object]:
     return {
         "name": context.name,
         "line": context.span.line + line_offset,
@@ -455,40 +434,41 @@ def _context_to_lock_data(context: ContextBlock, *, line_offset: int) -> dict[st
 
 def _cap_to_lock_data(cap: CapDecl, *, line_offset: int) -> dict[str, object]:
     return {
-        "kind": cap.kind,
+        "kind": cap.cap_kind,
         "name": cap.name,
         "line": cap.span.line + line_offset,
     }
 
 
-def _thunk_to_lock_data(thunk: Thunk, *, line_offset: int) -> dict[str, object]:
-    blocks = tuple(item for item in (thunk.context, thunk.instruct) if item is not None) + thunk.messages
+def _thunk_to_lock_data(thunk: AgicDecl, *, line_offset: int) -> dict[str, object]:
     data: dict[str, object] = {
-        "name": _thunk_name(thunk),
+        "name": thunk.name,
         "line": thunk.span.line + line_offset,
         "params": _thunk_params_to_lock_data(thunk),
         "directives": [_directive_to_lock_data(item, line_offset=line_offset) for item in thunk.directives],
-        "blocks": [_block_to_lock_data(item, line_offset=line_offset) for item in blocks],
+        "context": thunk.context,
+        "instruct": thunk.instruct,
+        "messages": [_message_to_lock_data(item, line_offset=line_offset) for item in thunk.messages],
     }
     if thunk.output is not None:
         data["output"] = _source_type_name(thunk.output)
     return data
 
 
-def _flow_to_lock_data(flow: Flow, *, line_offset: int) -> dict[str, object]:
+def _flow_to_lock_data(flow: FlowDecl, *, line_offset: int) -> dict[str, object]:
     data: dict[str, object] = {
-        "name": flow.flow_name(),
+        "name": flow.name,
         "line": flow.span.line + line_offset,
         "params": _flow_params_to_lock_data(flow),
         "directives": [_directive_to_lock_data(item, line_offset=line_offset) for item in flow.directives],
-        "stages": [_flow_stage_to_lock_data(item, line_offset=line_offset) for item in flow.stages],
+        "stmts": [_flow_stmt_to_lock_data(item, line_offset=line_offset) for item in flow.stmts],
     }
     if flow.output is not None:
         data["output"] = _source_type_name(flow.output)
     return data
 
 
-def _flow_params_to_lock_data(flow: Flow) -> list[dict[str, object]]:
+def _flow_params_to_lock_data(flow: FlowDecl) -> list[dict[str, object]]:
     params: list[dict[str, object]] = []
     if flow.input is not None:
         params.append(_param_to_lock_data(flow.input))
@@ -496,15 +476,13 @@ def _flow_params_to_lock_data(flow: Flow) -> list[dict[str, object]]:
     return params
 
 
-def _flow_stage_to_lock_data(stage: FlowStage, *, line_offset: int) -> dict[str, object]:
-    data = _flow_stage_to_data(stage)
-    data["line"] = stage.span.line + line_offset
-    if stage.stages:
-        data["stages"] = [_flow_stage_to_lock_data(item, line_offset=line_offset) for item in stage.stages]
+def _flow_stmt_to_lock_data(stmt: FlowStmt, *, line_offset: int) -> dict[str, object]:
+    data = _flow_stmt_to_data(stmt)
+    data["span"] = {"line": stmt.span.line + line_offset}
     return data
 
 
-def _thunk_params_to_lock_data(thunk: Thunk) -> list[dict[str, object]]:
+def _thunk_params_to_lock_data(thunk: AgicDecl) -> list[dict[str, object]]:
     params: list[dict[str, object]] = []
     if thunk.input is not None:
         params.append(_param_to_lock_data(thunk.input))
@@ -512,7 +490,7 @@ def _thunk_params_to_lock_data(thunk: Thunk) -> list[dict[str, object]]:
     return params
 
 
-def _param_to_lock_data(param: ParamDecl) -> dict[str, object]:
+def _param_to_lock_data(param: Parameter) -> dict[str, object]:
     return {
         "name": param.name,
         "type": _source_type_name(param.type_name or "Text"),
@@ -529,18 +507,13 @@ def _directive_to_lock_data(directive: Directive, *, line_offset: int) -> dict[s
     }
 
 
-def _block_to_lock_data(block: MessageBlock, *, line_offset: int) -> dict[str, object]:
-    data: dict[str, object] = {
-        "kind": block.kind,
-        "line": block.span.line + line_offset,
+def _message_to_lock_data(message: Message, *, line_offset: int) -> dict[str, object]:
+    return {
+        "role": message.role,
+        "content": message.content,
+        "explicit": message.explicit,
+        "line": message.span.line + line_offset,
     }
-    if block.text in {"default", "none"}:
-        data["value"] = block.text
-    else:
-        data["content"] = block.text
-    if not block.explicit:
-        data["explicit"] = False
-    return data
 
 
 def _source_type_name(type_name: str | None) -> str:
@@ -549,5 +522,5 @@ def _source_type_name(type_name: str | None) -> str:
     return type_name
 
 
-def _default_span() -> SourceSpan:
-    return SourceSpan(0)
+def _default_span() -> Span:
+    return Span(0)

@@ -7,7 +7,7 @@ from typing import Literal
 
 from toolang.base.error import ToolangError
 
-from .ast import SourceSpan
+from .ast import Span
 
 DiagnosticSeverity = Literal["error", "warning", "hint"]
 
@@ -15,7 +15,7 @@ DiagnosticSeverity = Literal["error", "warning", "hint"]
 @dataclass(frozen=True, slots=True)
 class Diagnostic:
     message: str
-    span: SourceSpan | None = None
+    span: Span | None = None
     severity: DiagnosticSeverity = "error"
 
 

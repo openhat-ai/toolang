@@ -12,10 +12,11 @@ from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.model import ModelTarget
 
 from .. import caps as cap_store, work
-from ..lang.ast import MessageBlock, Thunk
+from ..lang.ast import AgicDecl, Message as AstMessage
 from ..state.prepared import PreparedEntry
 from ..common.template import render_text_template
 from . import prompts
+from .effective import directives_for
 
 if TYPE_CHECKING:
     from ..state.program import LiveProgram
@@ -33,7 +34,7 @@ class ModelCallAssembly:
     user_template_context: dict[str, object]
     system_template_context: dict[str, object]
     context_text: str
-    rendered_messages: tuple[MessageBlock, ...]
+    rendered_messages: tuple[AstMessage, ...]
     message: Message
     instructions: str
 
@@ -42,7 +43,7 @@ def build_model_call_assembly(
     context: UptimeContext,
     *,
     run: RunBinding,
-    thunk: Thunk,
+    thunk: AgicDecl,
     input_text: str,
     params: dict[str, Any],
     models: tuple[ModelTarget, ...],
@@ -103,9 +104,9 @@ def build_model_call_assembly(
 def run_message(
     *,
     run: RunBinding,
-    thunk: Thunk,
+    thunk: AgicDecl,
     input_text: str,
-    rendered_messages: tuple[MessageBlock, ...],
+    rendered_messages: tuple[AstMessage, ...],
     context_text: str,
 ) -> Message:
     if run.origin != "script" and run.message is not None:
@@ -132,7 +133,7 @@ def user_template_context_for_run(
     context: UptimeContext,
     *,
     run: RunBinding,
-    thunk: Thunk,
+    thunk: AgicDecl,
     params: dict[str, Any],
 ) -> dict[str, object]:
     return _template_context(
@@ -149,7 +150,7 @@ def system_template_context_for_run(
     context: UptimeContext,
     *,
     run: RunBinding,
-    thunk: Thunk,
+    thunk: AgicDecl,
     params: dict[str, Any],
     models: tuple[ModelTarget, ...],
     tools: dict[str, AgentTool],
@@ -181,20 +182,21 @@ def system_template_context_for_run(
 
 
 def render_thunk_messages(
-    blocks: tuple[MessageBlock, ...],
+    blocks: tuple[AstMessage, ...],
     *,
     user_context: dict[str, object],
     system_context: dict[str, object],
-) -> tuple[MessageBlock, ...]:
-    rendered: list[MessageBlock] = []
+) -> tuple[AstMessage, ...]:
+    del system_context
+    rendered: list[AstMessage] = []
     for block in blocks:
-        context = system_context if block.kind == "instruct" else user_context
         rendered.append(
-            MessageBlock(
-                kind=block.kind,
-                text=render_text_template(block.text, context).strip(),
-                span=block.span,
+            AstMessage(
+                role=block.role,
+                content=render_text_template(block.content, user_context).strip(),
                 explicit=block.explicit,
+                span=block.span,
+                doc=block.doc,
             )
         )
     return tuple(rendered)
@@ -203,7 +205,7 @@ def render_thunk_messages(
 def assembled_instructions(
     *,
     live_program: LiveProgram,
-    thunk: Thunk,
+    thunk: AgicDecl,
     system_context: dict[str, object],
 ) -> str:
     template = _selected_instruct_template(live_program=live_program, thunk=thunk)
@@ -215,7 +217,7 @@ def assembled_instructions(
 def selected_context_text(
     *,
     live_program: LiveProgram,
-    thunk: Thunk,
+    thunk: AgicDecl,
     system_context: dict[str, object],
 ) -> str:
     template = _selected_context_template(live_program=live_program, thunk=thunk)
@@ -224,15 +226,15 @@ def selected_context_text(
     return render_text_template(template, system_context).strip()
 
 
-def recalls_history(thunk: Thunk) -> bool:
+def recalls_history(thunk: AgicDecl) -> bool:
     values = recall_values(thunk)
     if not values or "default" in values:
         return True
     return "history" in values
 
 
-def recall_values(thunk: Thunk) -> tuple[str, ...]:
-    directives = thunk.directives_for("recall")
+def recall_values(thunk: AgicDecl) -> tuple[str, ...]:
+    directives = directives_for(thunk, "recall")
     if not directives:
         return ()
     return tuple(item for item in directives[0].values if item)
@@ -255,25 +257,17 @@ def _expanded_run_message(message: Message, *, input_text: str, context_text: st
 def _selected_instruct_template(
     *,
     live_program: LiveProgram,
-    thunk: Thunk,
+    thunk: AgicDecl,
 ) -> str:
-    blocks = thunk.message_blocks("instruct")
-    if not blocks:
+    name = thunk.instruct
+    if name is None or name == "default":
         return _default_program_instruct_template(live_program)
-    block = blocks[0]
-    value = block.text.strip()
-    if not block.explicit:
-        return _join_message_texts(_default_program_instruct_template(live_program), block.text)
-    if value == "none":
+    if name == "none":
         return ""
-    if value == "default":
-        return _default_program_instruct_template(live_program)
-    if _looks_like_template_name(value):
-        instruct = _program_instruct(live_program, value)
-        if instruct is None:
-            raise ToolangError(f"Instruct not found: {value}")
-        return instruct.body
-    return block.text
+    instruct = _program_instruct(live_program, name)
+    if instruct is None:
+        raise ToolangError(f"Instruct not found: {name}")
+    return instruct.body
 
 
 def _default_program_instruct_template(live_program: LiveProgram) -> str:
@@ -286,22 +280,17 @@ def _default_program_instruct_template(live_program: LiveProgram) -> str:
 def _selected_context_template(
     *,
     live_program: LiveProgram,
-    thunk: Thunk,
+    thunk: AgicDecl,
 ) -> str:
-    block = thunk.context
-    if block is None:
+    name = thunk.context
+    if name is None or name == "default":
         return _default_program_context_template(live_program)
-    value = block.text.strip()
-    if value == "none":
+    if name == "none":
         return ""
-    if value == "default":
-        return _default_program_context_template(live_program)
-    if _looks_like_template_name(value):
-        context = _program_context(live_program, value)
-        if context is None:
-            raise ToolangError(f"Context not found: {value}")
-        return context.body
-    return block.text
+    context = _program_context(live_program, name)
+    if context is None:
+        raise ToolangError(f"Context not found: {name}")
+    return context.body
 
 
 def _default_program_context_template(live_program: LiveProgram) -> str:
@@ -325,19 +314,7 @@ def _program_context(live_program: LiveProgram, name: str | None) -> Any | None:
     return get_context(name)
 
 
-def _looks_like_template_name(value: str) -> bool:
-    if not value or any(char.isspace() for char in value):
-        return False
-    if "\n" in value:
-        return False
-    first = value[0]
-    return (first.isalpha() or first == "_") and all(
-        char.isalnum() or char in {"_", "-"}
-        for char in value
-    )
-
-
-def _template_param_values(thunk: Thunk, params: dict[str, Any]) -> dict[str, object]:
+def _template_param_values(thunk: AgicDecl, params: dict[str, Any]) -> dict[str, object]:
     values: dict[str, object] = {}
     if thunk.input is not None:
         values[thunk.input.name] = params.get(thunk.input.name)
@@ -362,7 +339,7 @@ def _runtime_base(
     context: UptimeContext,
     *,
     run: RunBinding,
-    thunk: Thunk,
+    thunk: AgicDecl,
 ) -> dict[str, object]:
     return {
         "origin": run.origin,
@@ -380,7 +357,7 @@ def _runtime_base(
             "home": str(context.home),
         },
         "thunk": {
-            "name": thunk.thunk_name(),
+            "name": thunk.name,
             "output": thunk.output,
         },
         "job": _job_context(context, run),
@@ -425,14 +402,17 @@ def _prepared_entry_to_context(
 
 def _script_message_text(
     *,
-    thunk: Thunk,
+    thunk: AgicDecl,
     input_text: str,
-    rendered_messages: tuple[MessageBlock, ...],
+    rendered_messages: tuple[AstMessage, ...],
     context_text: str,
 ) -> str:
-    user_messages = tuple(item for item in rendered_messages if item.kind == "user")
+    user_messages = tuple(item for item in rendered_messages if item.role == "user")
     authored_text = _message_blocks_body(user_messages)
-    if input_text.strip() and any(item.kind == "user" and not item.explicit for item in thunk.messages):
+    if input_text.strip() and any(
+        item.role == "user" and not item.explicit
+        for item in thunk.messages
+    ):
         return _join_message_texts(context_text, authored_text, input_text)
     if authored_text:
         return _join_message_texts(context_text, authored_text)
@@ -442,10 +422,10 @@ def _script_message_text(
 def _file_message_text(
     *,
     input_text: str,
-    rendered_messages: tuple[MessageBlock, ...],
+    rendered_messages: tuple[AstMessage, ...],
     context_text: str,
 ) -> str:
-    user_messages = tuple(item for item in rendered_messages if item.kind == "user")
+    user_messages = tuple(item for item in rendered_messages if item.role == "user")
     authored_text = _message_blocks_body(user_messages)
     return _join_message_texts(context_text, authored_text, input_text)
 
@@ -454,8 +434,12 @@ def _join_message_texts(*parts: str) -> str:
     return "\n\n".join(part.strip() for part in parts if part.strip()).strip()
 
 
-def _message_blocks_body(blocks: tuple[MessageBlock, ...]) -> str:
-    return "\n\n".join(block.text.strip() for block in blocks if block.text.strip()).strip()
+def _message_blocks_body(blocks: tuple[AstMessage, ...]) -> str:
+    return "\n\n".join(
+        block.content.strip()
+        for block in blocks
+        if block.content.strip()
+    ).strip()
 
 
 def _runtime_sandbox(context: UptimeContext) -> str:

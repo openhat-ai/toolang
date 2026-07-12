@@ -36,7 +36,7 @@ from toolang.up import load_model_providers
 from toolang.models.adapters import chat_completions as chat_completions_models
 from toolang.models.adapters import responses as responses_models
 from toolang.models.adapters.responses import encode_message, response_payload
-from toolang.lang.ast import MessageBlock, ParamDecl, SourceSpan, Thunk
+from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Span
 from toolang.plugin import load_loop, load_loops
 from toolang.models.config import load_default_models, load_model_aliases
 
@@ -2216,10 +2216,11 @@ def _run_input() -> RunInput:
             live=cast(Any, live),
             created_at="2026-04-10T00:00:00Z",
         ),
-        thunk=Thunk(
+        thunk=AgicDecl(
             name="main",
-            input=ParamDecl(name="_"),
-            messages=(MessageBlock(kind="user", text="Reply directly.", span=SourceSpan(1)),),
+            input=Parameter(name="_", span=Span(1)),
+            messages=(AstMessage(role="user", content="Reply directly.", span=Span(1)),),
+            span=Span(1),
         ),
         input_text="hello",
         message=Message.user("hello"),

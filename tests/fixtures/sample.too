@@ -1,4 +1,4 @@
-use skill briceyan/pdf-processing
+with skill briceyan/pdf-processing
 
 prompt summarize:
   params = style, audience?
@@ -10,7 +10,7 @@ struct WorkspaceSummary:
   title: Text
   summary: Text
 
-thunk summarize(in: Part[]) -> WorkspaceSummary:
+agic summarize(in: Part[]) -> WorkspaceSummary:
   models = gpt-5
   skills = review
 

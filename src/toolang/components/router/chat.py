@@ -164,7 +164,7 @@ def create_router() -> APIRouter:
         program = request.app.state.runtime.live.program
         return {
             "default": _default_thunk_name(program, origin="chat"),
-            "items": [{"name": thunk.thunk_name()} for thunk in program.thunks],
+            "items": [{"name": thunk.name} for thunk in program.thunks],
         }
 
     @router.get("/chat/flows", summary="List Chat Flows")
@@ -172,7 +172,7 @@ def create_router() -> APIRouter:
         program = request.app.state.runtime.live.program
         return {
             "default": None,
-            "items": [{"name": flow.flow_name()} for flow in program.flows],
+            "items": [{"name": flow.name} for flow in program.flows],
         }
 
     @router.post("/chat/stream", summary="Submit Chat Stream")
@@ -426,6 +426,6 @@ def _model_cache_refresh(context: UptimeContext) -> bool:
 
 def _default_thunk_name(program: Any, *, origin: str) -> str | None:
     try:
-        return select_origin_thunk(program, origin=origin).thunk_name()
+        return select_origin_thunk(program, origin=origin).name
     except ToolangError:
         return None

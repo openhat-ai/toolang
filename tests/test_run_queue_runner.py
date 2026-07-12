@@ -613,7 +613,7 @@ def test_collect_file_submissions_scans_existing_inbox_files_once(
     inbox = tmp_path / "inbox"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk file(in: Part[]):\n  Process a file.\n",
+        "agent alice\n\nagic file(in: Part[]):\n  Process a file.\n",
     )
     _write_text(inbox / "note.txt", "hello")
     context = _build_context(
@@ -1650,7 +1650,7 @@ def test_chat_models_lists_effective_selectors_for_term_thunk(tmp_path: Path) ->
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk chat:\n  models = openai/gpt-5, openai/o3\n\n  Reply directly.\n",
+        "agent alice\n\nagic chat:\n  models = openai/gpt-5, openai/o3\n\n  Reply directly.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -1733,12 +1733,12 @@ def test_chat_executable_endpoints_list_thunks_and_flows(tmp_path: Path) -> None
         toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
-            "thunk chat:\n"
+            "agic chat:\n"
             "  Reply directly.\n\n"
-            "thunk summarize:\n"
+            "agic summarize:\n"
             "  Summarize it.\n\n"
             "flow review:\n"
-            "  do chat\n"
+            "  run chat\n"
         ),
     )
     context = _build_context(
@@ -1773,12 +1773,12 @@ def test_chat_request_passes_selected_thunk_and_flow_to_runner(
             toolang_root / "agents" / "alice" / "agent.too",
             (
                 "agent alice\n\n"
-                "thunk chat:\n"
+                "agic chat:\n"
                 "  Reply directly.\n\n"
-                "thunk summarize:\n"
+                "agic summarize:\n"
                 "  Summarize it.\n\n"
                 "flow review:\n"
-                "  do chat\n"
+                "  run chat\n"
             ),
         )
         context = _build_context(
@@ -2263,14 +2263,14 @@ def test_chat_default_executable_uses_default_thunk_not_single_flow(
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
         """
-thunk expand(in: Part[]):
+agic expand(in: Part[]):
   Expand.
 
-thunk search(in: Part[]):
+agic search(in: Part[]):
   Search.
 
 flow research(in: Text):
-  do expand
+  run expand
 """,
     )
     context = _build_context(
@@ -2287,22 +2287,22 @@ flow research(in: Text):
     kind, executable = run_execute_module._select_executable(bound)
 
     assert kind == "thunk"
-    assert executable.thunk_name() == "default"
+    assert executable.name == "default"
 
 
-def test_chat_stream_flow_emits_single_message_start(tmp_path: Path) -> None:
+def test_chat_stream_reports_new_flow_executor_requirement(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
         """
-thunk expand(in: Part[]):
+agic expand(in: Part[]):
   Expand.
 
-thunk search(in: Part[]):
+agic search(in: Part[]):
   Search.
 
 flow research(in: Text):
-  do expand
+  run expand
 """,
     )
     context = _build_context(
@@ -2326,10 +2326,8 @@ flow research(in: Text):
 
     assert stream_text.count('"type":"start"') == 1
     assert stream_text.count('"type":"message-metadata"') == 1
-    assert '"type":"step_begin"' in stream_text
-    assert '"type":"step_end"' in stream_text
-    assert '"kind":"seq"' in stream_text
-    assert '"kind":"run"' in stream_text
+    assert '"type":"error"' in stream_text
+    assert "Flow execution requires the new step executor." in stream_text
     assert '"type":"finish"' in stream_text
     assert "data: [DONE]" in stream_text
 
@@ -2340,10 +2338,10 @@ def test_chat_stream_pre_start_failure_emits_error_and_done(tmp_path: Path) -> N
         _write_text(
             toolang_root / "agents" / "alice" / "agent.too",
             """
-thunk expand(in: Part[]):
+agic expand(in: Part[]):
   Expand.
 
-thunk search(in: Part[]):
+agic search(in: Part[]):
   Search.
 """,
         )
@@ -5230,7 +5228,7 @@ def test_prepare_reuses_program_ref_caps_when_inline_program_changes(
     agents.create_agent(toolang_root, "alice")
     program_path = toolang_root / "agents" / "alice" / "agent.too"
     program_path.write_text(
-        "agent alice\n\nuse psyche github://acme/agents/psyches/steady.md@main\n",
+        "agent alice\n\nwith psyche github://acme/agents/psyches/steady.md@main\n",
         encoding="utf-8",
     )
     watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
@@ -5264,8 +5262,8 @@ def test_prepare_fetches_only_changed_program_ref_cap(
     program_path = toolang_root / "agents" / "alice" / "agent.too"
     program_path.write_text(
         "agent alice\n\n"
-        "use psyche github://acme/agents/psyches/steady.md@main\n"
-        "use psyche github://acme/agents/psyches/change.md@main\n",
+        "with psyche github://acme/agents/psyches/steady.md@main\n"
+        "with psyche github://acme/agents/psyches/change.md@main\n",
         encoding="utf-8",
     )
     watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
@@ -5301,7 +5299,7 @@ def test_list_entries_reuses_prepared_program_ref_resolution(
     agents.create_agent(toolang_root, "alice")
     program_path = toolang_root / "agents" / "alice" / "agent.too"
     program_path.write_text(
-        "agent alice\n\nuse psyche acme/steady\n",
+        "agent alice\n\nwith psyche acme/steady\n",
         encoding="utf-8",
     )
     watch.build_prepared_state(scan_durable_state(toolang_root, "alice"))
@@ -5441,7 +5439,7 @@ def test_prepare_materializes_remote_skill_from_program_use(
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nuse skill https://github.com/coinbase/agentic-wallet-skills/tree/main/skills/fund\n",
+        "agent alice\n\nwith skill https://github.com/coinbase/agentic-wallet-skills/tree/main/skills/fund\n",
     )
 
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
@@ -6466,7 +6464,7 @@ def test_assemble_run_input_prefers_thunk_model_over_activation_default(
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk chat:\n  models = openai/gpt-5\n\n  Reply directly.\n",
+        "agent alice\n\nagic chat:\n  models = openai/gpt-5\n\n  Reply directly.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -6492,7 +6490,7 @@ def test_assemble_run_input_accepts_explicit_run_model_within_allowed_set(
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk chat:\n  models = openai/gpt-5, openai/o3\n\n  Reply directly.\n",
+        "agent alice\n\nagic chat:\n  models = openai/gpt-5, openai/o3\n\n  Reply directly.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -6532,7 +6530,7 @@ def test_assemble_run_input_uses_activation_default_when_thunk_omits_one(
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk chat:\n  instruct:\n    Reply directly.\n",
+        "agent alice\n\nagic chat:\n  instruct:\n    Reply directly.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -6555,7 +6553,7 @@ def test_script_run_thread_id_uses_script_prefix(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk summarize(in: Part[]):\n  Summarize it.\n",
+        "agent alice\n\nagic summarize(in: Part[]):\n  Summarize it.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -6585,7 +6583,7 @@ def test_assemble_file_run_input_includes_authored_file_thunk_message(
         toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
-            "thunk file(in: Part[]):\n"
+            "agic file(in: Part[]):\n"
             "  tools = filesystem/*\n\n"
             "  user:\n"
             "    Write one short text summary to outbox/index.md.\n"
@@ -6620,7 +6618,7 @@ def test_assemble_run_input_hides_tools_when_activation_has_no_tools(
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk summarize(in: Part[]):\n  Reply directly.\n",
+        "agent alice\n\nagic summarize(in: Part[]):\n  Reply directly.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -6667,7 +6665,7 @@ def test_assemble_run_input_uses_explicit_activation_tools_for_script_runs(
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk summarize(in: Part[]):\n  Reply directly.\n",
+        "agent alice\n\nagic summarize(in: Part[]):\n  Reply directly.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -6698,7 +6696,7 @@ def test_assemble_run_input_applies_run_resource_selectors(tmp_path: Path) -> No
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk chat:\n  Reply directly.\n",
+        "agent alice\n\nagic chat:\n  Reply directly.\n",
     )
     caps.put_local_entry_text(
         toolang_root,
@@ -6751,7 +6749,7 @@ def test_assemble_run_input_logs_activation_set_math(tmp_path: Path, caplog) -> 
         toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
-            "thunk summarize(in: Part[]):\n"
+            "agic summarize(in: Part[]):\n"
             "  models = openai/gpt-5\n"
             "  tools -= service_use/bridge_start, service_use/init, service_use/auth_start, service_use/tool_call\n"
             "  skills = local-reviewer\n\n"
@@ -6845,7 +6843,7 @@ def test_assemble_run_input_uses_thunk_user_message_for_script_runs(
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk rewrite(in: Part[]):\n  Rewrite the input for a technical audience.\n",
+        "agent alice\n\nagic rewrite(in: Part[]):\n  Rewrite the input for a technical audience.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -6885,7 +6883,7 @@ def test_script_run_can_simulate_history_with_explicit_message_blocks(
         toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
-            "thunk replay(in: Part[]):\n"
+            "agic replay(in: Part[]):\n"
             f"  recall = {recall}\n"
             "  context none\n"
             "  instruct none\n\n"
@@ -6950,7 +6948,7 @@ def test_script_run_keeps_implicit_user_block_as_single_invoke_message(
         toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
-            "thunk replay(in: Part[]):\n"
+            "agic replay(in: Part[]):\n"
             "  recall = none\n"
             "  context none\n\n"
             "  Use one invoke message.\n"
@@ -6984,7 +6982,7 @@ def test_assemble_run_input_keeps_thread_messages_out_of_system_instructions(
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk chat:\n  instruct:\n    Reply directly.\n",
+        "agent alice\n\nagic chat:\n  instruct:\n    Reply directly.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -7062,7 +7060,7 @@ def test_run_input_prepends_selected_context_to_user_message(tmp_path: Path) -> 
             "agent alice\n\n"
             "context report:\n"
             "  Agent {{runtime.agent.name}} is preparing a report.\n\n"
-            "thunk chat:\n"
+            "agic chat:\n"
             "  context report\n"
         ),
     )
@@ -7096,7 +7094,7 @@ def test_run_input_debug_logs_computed_prompt_bundle(tmp_path: Path, caplog) -> 
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk chat:\n  user: hello\n",
+        "agent alice\n\nagic chat:\n  user: hello\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -7139,9 +7137,9 @@ def test_chat_run_prefers_named_chat_thunk_over_default(tmp_path: Path) -> None:
         toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
-            "thunk:\n"
+            "agic:\n"
             "  Script default.\n\n"
-            "thunk chat:\n"
+            "agic chat:\n"
             "  instruct:\n"
             "    Reply directly.\n"
         ),
@@ -7172,7 +7170,7 @@ def test_program_default_instruct_overrides_runtime_default(tmp_path: Path) -> N
             "instruct:\n"
             "  Agent {{runtime.agent.name}} in sandbox {{runtime.sandbox}}.\n"
             "  Reply directly.\n\n"
-            "thunk chat:\n"
+            "agic chat:\n"
             "  user: hello\n"
         ),
     )
@@ -7201,7 +7199,7 @@ def test_thunk_instruct_can_select_named_instruct(tmp_path: Path) -> None:
             "agent alice\n\n"
             "instruct reviewer:\n"
             "  Review with {{runtime.thunk.name}}.\n\n"
-            "thunk review:\n"
+            "agic review:\n"
             "  instruct reviewer\n\n"
             "  Review the target carefully.\n"
         ),
@@ -7227,7 +7225,7 @@ def test_thunk_instruct_none_suppresses_agent_instruct_layer(tmp_path: Path) -> 
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        ("agent alice\n\nthunk quiet:\n  instruct none\n\n  Reply directly.\n"),
+        ("agent alice\n\nagic quiet:\n  instruct none\n\n  Reply directly.\n"),
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -7253,7 +7251,7 @@ def test_thunk_instruct_block_renders_as_agent_instruction(tmp_path: Path) -> No
         toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
-            "thunk custom:\n"
+            "agic custom:\n"
             "  instruct:\n"
             "    Use {{runtime.agent.name}} and {{runtime.thunk.name}}.\n\n"
             "  Reply directly.\n"
@@ -7308,7 +7306,7 @@ def test_chat_run_uses_program_default_when_chat_thunk_is_missing(
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk:\n  Script default.\n",
+        "agent alice\n\nagic:\n  Script default.\n",
     )
     _write_text(
         toolang_root / "psyches" / "reviewer.md",
@@ -7345,7 +7343,7 @@ def test_chat_run_uses_program_default_when_chat_thunk_is_missing(
     bundle = RunInput.from_binding(context, bound)
     instructions = bundle.instructions()
 
-    assert bundle.thunk.thunk_name() == "default"
+    assert bundle.thunk.name == "default"
     assert "Script default." not in instructions
     assert "<psyches>" in instructions
     assert "Be precise." in instructions
@@ -7380,7 +7378,7 @@ def test_execute_run_rejects_thunk_model_outside_activation_allowlist(
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk chat:\n  models = openai/gpt-5\n\n  Reply directly.\n",
+        "agent alice\n\nagic chat:\n  models = openai/gpt-5\n\n  Reply directly.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -7415,7 +7413,7 @@ def test_execute_run_pre_start_failure_does_not_emit_persist_sink_error(
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk chat:\n  Reply directly.\n",
+        "agent alice\n\nagic chat:\n  Reply directly.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -7452,7 +7450,7 @@ def test_script_execute_run_logs_lifecycle_without_queue_runner(
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk:\n  Reply directly.\n",
+        "agent alice\n\nagic:\n  Reply directly.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -8009,7 +8007,7 @@ def test_run_input_recall_none_disables_thread_history_and_tool_context(
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nthunk chat:\n  recall = none\n",
+        "agent alice\n\nagic chat:\n  recall = none\n",
     )
     context = _build_context(
         toolang_root=toolang_root,

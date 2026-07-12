@@ -1,7 +1,7 @@
 # Alice is a small remote-ready assistant example.
 # The goal is one file that can be published and used without local setup.
 
-use skill briceyan/pdf-processing
+with skill briceyan/pdf-processing
 
 service context7:
   description = Use when current library or framework documentation matters.
@@ -16,7 +16,7 @@ psyche alice:
   Be practical, concise, and source-aware.
   Prefer concrete next steps over broad explanations.
 
-thunk:
+agic:
   Help the user directly.
 
   Use the `pdf-processing` skill when the request or attached files involve

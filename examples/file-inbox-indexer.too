@@ -11,7 +11,7 @@
 #
 # examples/.toolang/agents/file-inbox-indexer/outbox/index.md
 
-thunk file(in: Part[]):
+agic file(in: Part[]):
   tools = filesystem/*
 
   user:
