@@ -3,71 +3,36 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from typing import Any
 
-from toolang.base.error import ToolangError
-
-from .ast import CapDecl, Flow, Program, Thunk
+from . import ast
+from .diagnostics import ToolangValidationError
 
 SERVICE_FIELDS = frozenset({"description", "transport", "protocol", "target", "headers", "env"})
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+PARAM_NAME_RE = re.compile(r"^[A-Za-z_][\w-]*$")
 
 
-def validate_program(program: Program) -> None:
-    """Validate one lowered semantic AST as a Toolang program."""
+def validate(program: ast.Program) -> None:
+    """Validate one complete semantic AST."""
 
-    seen_cap_names: set[tuple[str, str]] = set()
-    seen_context_names: set[str | None] = set()
-    seen_instruct_names: set[str | None] = set()
-    seen_struct_names: set[str] = set()
-    seen_thunk_names: set[str] = set()
-    seen_flow_names: set[str] = set()
+    _validate_caps(program.caps)
+    _unique((item.name for item in program.structs), label="struct")
+    contexts = _namespace(program.contexts, label="context")
+    instructs = _namespace(program.instructs, label="instruct")
+    runnables = _runnable_namespace(program)
 
-    for cap in program.caps:
-        cap_key = (cap.kind, cap.name)
-        if cap_key in seen_cap_names:
-            raise ToolangError(f"Duplicate {cap.kind} name {cap.name!r}.")
-        seen_cap_names.add(cap_key)
-        _validate_cap_metadata(cap)
-        _validate_cap_params(cap)
-
-    for context in program.contexts:
-        if context.name in {"default", "none"}:
-            raise ToolangError(f"Context name {context.name!r} is reserved.")
-        if context.name in seen_context_names:
-            label = "default" if context.name is None else context.name
-            raise ToolangError(f"Duplicate context name {label!r}.")
-        seen_context_names.add(context.name)
-
-    for instruct in program.instructs:
-        if instruct.name in {"default", "none"}:
-            raise ToolangError(f"Instruct name {instruct.name!r} is reserved.")
-        if instruct.name in seen_instruct_names:
-            label = "default" if instruct.name is None else instruct.name
-            raise ToolangError(f"Duplicate instruct name {label!r}.")
-        seen_instruct_names.add(instruct.name)
-
-    for struct in program.structs:
-        if struct.name in seen_struct_names:
-            raise ToolangError(f"Duplicate struct name {struct.name!r}.")
-        seen_struct_names.add(struct.name)
-
-    for thunk in program.thunks:
-        thunk_name = _thunk_name(thunk)
-        if thunk_name in seen_thunk_names:
-            raise ToolangError(f"Duplicate thunk name {thunk_name!r}.")
-        seen_thunk_names.add(thunk_name)
-        _validate_thunk_params(thunk, thunk_name=thunk_name)
-        _validate_thunk_directives(thunk, thunk_name=thunk_name)
-        _validate_thunk_messages(thunk, thunk_name=thunk_name)
+    for agic in program.agics:
+        _validate_parameters(agic.input, agic.params, owner=f"Agic {agic.name!r}")
+        _validate_directives(agic.directives, owner=f"Agic {agic.name!r}")
+        _validate_prompt_ref(agic.context, contexts, target="context", owner=agic.name)
+        _validate_prompt_ref(agic.instruct, instructs, target="instruct", owner=agic.name)
 
     for flow in program.flows:
-        flow_name = flow.flow_name()
-        if flow_name in seen_flow_names:
-            raise ToolangError(f"Duplicate flow name {flow_name!r}.")
-        seen_flow_names.add(flow_name)
-        _validate_flow_params(flow, flow_name=flow_name)
-        _validate_flow_directives(flow, flow_name=flow_name)
+        _validate_parameters(flow.input, flow.params, owner=f"Flow {flow.name!r}")
+        _validate_directives(flow.directives, owner=f"Flow {flow.name!r}")
+        _validate_stmts(flow.stmts, runnables=runnables)
 
 
 def validate_service_meta(
@@ -76,158 +41,229 @@ def validate_service_meta(
     line_number: int,
     require_description: bool = False,
 ) -> None:
-    _require_exact_fields(
-        meta=meta,
-        allowed=SERVICE_FIELDS,
-        kind="service",
-        line_number=line_number,
-    )
+    _require_exact_fields(meta, SERVICE_FIELDS, kind="service", line=line_number)
     description = meta.get("description")
     if require_description and (not isinstance(description, str) or not description):
-        raise ToolangError(f"Service cap at line {line_number} is missing description.")
+        raise ToolangValidationError(f"Service cap at line {line_number} is missing description.")
     if description is not None and not isinstance(description, str):
-        raise ToolangError(f"Service cap at line {line_number} must define description as a string.")
+        raise ToolangValidationError(f"Service cap at line {line_number} must define description as a string.")
     transport = meta.get("transport") or meta.get("protocol")
     if not isinstance(transport, str) or not transport:
-        raise ToolangError(f"Service cap at line {line_number} is missing protocol.")
+        raise ToolangValidationError(f"Service cap at line {line_number} is missing protocol.")
     if transport not in {"http", "stdio"}:
-        raise ToolangError(
-            f"Service cap at line {line_number} uses unsupported transport {transport!r}."
-        )
+        raise ToolangValidationError(f"Service cap at line {line_number} uses unsupported transport {transport!r}.")
     target = meta.get("target")
     if not isinstance(target, str) or not target:
-        raise ToolangError(f"Service cap at line {line_number} is missing target.")
+        raise ToolangValidationError(f"Service cap at line {line_number} is missing target.")
     headers = meta.get("headers")
     if headers is not None and not isinstance(headers, str) and not _is_string_map(headers):
-        raise ToolangError(
-            f"Service cap at line {line_number} must define headers as a string map."
-        )
+        raise ToolangValidationError(f"Service cap at line {line_number} must define headers as a string map.")
     env = meta.get("env")
     if env is not None and not _is_env_names(env):
-        raise ToolangError(
-            f"Service cap at line {line_number} must list environment variable names."
-        )
+        raise ToolangValidationError(f"Service cap at line {line_number} must list environment variable names.")
 
 
-def _validate_cap_params(cap: CapDecl) -> None:
+def _validate_caps(caps: tuple[ast.CapDecl, ...]) -> None:
+    seen: set[tuple[ast.CapKind, str]] = set()
+    for cap in caps:
+        key = (cap.kind, cap.name)
+        if key in seen:
+            raise ToolangValidationError(f"Duplicate {cap.kind} name {cap.name!r}.")
+        seen.add(key)
+        if cap.kind == "service":
+            validate_service_meta(cap.meta, line_number=cap.span.line, require_description=True)
+        elif cap.kind == "prompt":
+            _require_exact_fields(cap.meta, frozenset({"params"}), kind="prompt", line=cap.span.line)
+            _unique((item.name for item in cap.params), label=f"parameter in prompt {cap.name!r}")
+            for param in cap.params:
+                if PARAM_NAME_RE.fullmatch(param.name) is None:
+                    raise ToolangValidationError(
+                        f"Invalid prompt parameter {param.name!r} at line {param.span.line}."
+                    )
+
+
+def _runnable_namespace(program: ast.Program) -> dict[str, ast.AgicDecl | ast.FlowDecl]:
+    values: dict[str, ast.AgicDecl | ast.FlowDecl] = {}
+    for item in (*program.agics, *program.flows):
+        if item.name in values:
+            raise ToolangValidationError(f"Duplicate runnable name {item.name!r}.")
+        values[item.name] = item
+    return values
+
+
+def _namespace(items: Iterable[ast.ContextDecl | ast.InstructDecl], *, label: str) -> dict[str, object]:
+    values: dict[str, object] = {}
+    for item in items:
+        if item.name in values:
+            raise ToolangValidationError(f"Duplicate {label} name {item.name!r}.")
+        values[item.name] = item
+    return values
+
+
+def _unique(values: Iterable[str], *, label: str) -> None:
     seen: set[str] = set()
-    for param in cap.params:
-        if param.name in seen:
-            raise ToolangError(
-                f"Duplicate prompt parameter {param.name!r} in {cap.kind} {cap.name}."
-            )
-        seen.add(param.name)
+    for value in values:
+        if value in seen:
+            raise ToolangValidationError(f"Duplicate {label} name {value!r}.")
+        seen.add(value)
 
 
-def _validate_cap_metadata(cap: CapDecl) -> None:
-    if cap.kind == "service":
-        validate_service_meta(
-            cap.meta,
-            line_number=cap.span.line,
-            require_description=True,
-        )
-
-
-def _validate_thunk_params(thunk: Thunk, *, thunk_name: str) -> None:
-    if thunk.input is not None and thunk.input.name == "runtime":
-        raise ToolangError(f"Thunk {thunk_name!r} must not use reserved parameter name 'runtime'.")
-    seen: set[str] = set()
-    for param in thunk.params:
+def _validate_parameters(
+    input_param: ast.Parameter | None,
+    params: tuple[ast.Parameter, ...],
+    *,
+    owner: str,
+) -> None:
+    seen = {input_param.name} if input_param is not None else set()
+    if "runtime" in seen:
+        raise ToolangValidationError(f"{owner} must not use reserved parameter name 'runtime'.")
+    for param in params:
         if param.name == "runtime":
-            raise ToolangError(f"Thunk {thunk_name!r} must not use reserved parameter name 'runtime'.")
+            raise ToolangValidationError(f"{owner} must not use reserved parameter name 'runtime'.")
         if param.name in seen:
-            raise ToolangError(f"Duplicate thunk parameter {param.name!r} in {thunk_name!r}.")
+            raise ToolangValidationError(f"Duplicate parameter {param.name!r} in {owner}.")
         seen.add(param.name)
 
 
-def _validate_thunk_directives(thunk: Thunk, *, thunk_name: str) -> None:
-    model_directives = [directive for directive in thunk.directives if _directive_family(directive.name) == "model"]
-    if len(model_directives) > 1:
-        raise ToolangError(f"Thunk {thunk_name!r} may declare at most one models directive.")
-    if model_directives:
-        directive = model_directives[0]
+def _validate_directives(directives: tuple[ast.Directive, ...], *, owner: str) -> None:
+    models = [item for item in directives if item.name == "models"]
+    if len(models) > 1:
+        raise ToolangValidationError(f"{owner} may declare at most one models directive.")
+    if models:
+        directive = models[0]
         if directive.operator != "=":
-            raise ToolangError(f"Thunk {thunk_name!r} must use '=' for its models directive.")
+            raise ToolangValidationError(f"{owner} must use '=' for its models directive.")
         if not directive.values:
-            raise ToolangError(f"Thunk {thunk_name!r} must declare at least one model selector.")
-        routed = [selector for selector in directive.values if "@" in selector]
-        if routed:
-            joined = ", ".join(routed)
-            raise ToolangError(
-                f"Thunk {thunk_name!r} must declare route-neutral model refs, not routed selectors: {joined}"
+            raise ToolangValidationError(f"{owner} must declare at least one model selector.")
+        if routed := [selector for selector in directive.values if "@" in selector]:
+            raise ToolangValidationError(
+                f"{owner} must declare route-neutral model refs, not routed selectors: {', '.join(routed)}"
             )
 
-    recall_directives = [directive for directive in thunk.directives if _directive_family(directive.name) == "recall"]
-    if len(recall_directives) > 1:
-        raise ToolangError(f"Thunk {thunk_name!r} may declare at most one recall directive.")
-    if not recall_directives:
+    recalls = [item for item in directives if item.name == "recall"]
+    if len(recalls) > 1:
+        raise ToolangValidationError(f"{owner} may declare at most one recall directive.")
+    if not recalls:
         return
-    recall = recall_directives[0]
+    recall = recalls[0]
     if recall.operator != "=":
-        raise ToolangError(f"Thunk {thunk_name!r} must use '=' for its recall directive.")
+        raise ToolangValidationError(f"{owner} must use '=' for its recall directive.")
     values = set(recall.values)
-    if not values:
-        raise ToolangError(f"Thunk {thunk_name!r} must declare at least one recall source.")
     if values in ({"none"}, {"default"}, {"history"}, {"memory"}, {"history", "memory"}):
         return
-    joined = ", ".join(recall.values)
-    raise ToolangError(f"Thunk {thunk_name!r} has unsupported recall directive values: {joined}.")
+    if not values:
+        raise ToolangValidationError(f"{owner} must declare at least one recall source.")
+    raise ToolangValidationError(f"{owner} has unsupported recall directive values: {', '.join(recall.values)}.")
 
 
-def _validate_thunk_messages(thunk: Thunk, *, thunk_name: str) -> None:
-    instruct_count = len(thunk.message_blocks("instruct"))
-    if instruct_count > 1:
-        raise ToolangError(f"Thunk {thunk_name!r} may declare at most one instruct block.")
-    context_count = len(thunk.message_blocks("context"))
-    if context_count > 1:
-        raise ToolangError(f"Thunk {thunk_name!r} may declare at most one context block.")
-    unsupported = [block.kind for block in thunk.messages if block.kind not in {"user", "assistant", "tool"}]
-    if unsupported:
-        joined = ", ".join(unsupported)
-        raise ToolangError(
-            f"Thunk {thunk_name!r} does not yet support message blocks: {joined}."
-        )
+def _validate_prompt_ref(ref: str | None, namespace: dict[str, object], *, target: str, owner: str) -> None:
+    if ref is None or ref in {"default", "none"}:
+        return
+    if ref not in namespace:
+        raise ToolangValidationError(f"Agic {owner!r} references unknown {target} {ref!r}.")
 
 
-def _validate_flow_params(flow: Flow, *, flow_name: str) -> None:
-    seen: set[str] = set()
-    if flow.input is not None and flow.input.name in {"runtime"}:
-        raise ToolangError(f"Flow {flow_name!r} must not use reserved parameter name 'runtime'.")
-    for param in flow.params:
-        if param.name == "runtime":
-            raise ToolangError(f"Flow {flow_name!r} must not use reserved parameter name 'runtime'.")
-        if param.name in seen:
-            raise ToolangError(f"Duplicate flow parameter {param.name!r} in {flow_name!r}.")
-        seen.add(param.name)
-
-
-def _validate_flow_directives(flow: Flow, *, flow_name: str) -> None:
-    model_directives = [directive for directive in flow.directives if _directive_family(directive.name) == "model"]
-    if len(model_directives) > 1:
-        raise ToolangError(f"Flow {flow_name!r} may declare at most one models directive.")
-    recall_directives = [directive for directive in flow.directives if _directive_family(directive.name) == "recall"]
-    if len(recall_directives) > 1:
-        raise ToolangError(f"Flow {flow_name!r} may declare at most one recall directive.")
-
-
-def _require_exact_fields(
+def _validate_stmts(
+    stmts: tuple[ast.FlowStmt, ...],
     *,
-    meta: dict[str, Any],
-    allowed: frozenset[str],
-    kind: str,
-    line_number: int,
+    runnables: dict[str, ast.AgicDecl | ast.FlowDecl],
 ) -> None:
-    unknown = sorted(set(meta) - allowed)
-    if unknown:
-        joined = ", ".join(unknown)
-        raise ToolangError(f"{kind.capitalize()} at line {line_number} has unsupported field(s): {joined}.")
+    for stmt in stmts:
+        _validate_binding(stmt)
+        if isinstance(stmt, ast.SeekStmt):
+            if stmt.runnable.startswith("<"):
+                _require_runnable(stmt.runnable, runnables, stmt=stmt)
+            continue
+        if isinstance(stmt, ast.AskStmt | ast.LetStmt):
+            if isinstance(stmt, ast.LetStmt) and stmt.binding in {None, "_"}:
+                raise ToolangValidationError(f"Let statement at line {stmt.span.line} requires a named binding.")
+            continue
+        if isinstance(stmt, ast.KeepStmt | ast.DropStmt):
+            positional = stmt.position is not None or stmt.count is not None
+            filtered = stmt.predicate is not None
+            if positional == filtered:
+                raise ToolangValidationError(f"{stmt.kind.capitalize()} at line {stmt.span.line} requires position or predicate.")
+            if positional:
+                if stmt.position is None or stmt.count is None or stmt.par is not None:
+                    raise ToolangValidationError(f"Invalid positional {stmt.kind} at line {stmt.span.line}.")
+                _non_negative(stmt.count, field="count", line=stmt.span.line)
+            else:
+                _require_runnable(stmt.predicate or "", runnables, stmt=stmt)
+                _positive_optional(stmt.par, field="par", line=stmt.span.line)
+            continue
+        if isinstance(stmt, ast.RankStmt):
+            _require_runnable(stmt.scorer, runnables, stmt=stmt)
+            if (stmt.limit is None) != (stmt.count is None):
+                raise ToolangValidationError(f"Rank at line {stmt.span.line} has an incomplete limit.")
+            if stmt.count is not None:
+                _non_negative(stmt.count, field="count", line=stmt.span.line)
+            _positive_optional(stmt.par, field="par", line=stmt.span.line)
+            continue
+        if isinstance(stmt, ast.RepeatStmt):
+            if stmt.count is None and stmt.until is None:
+                raise ToolangValidationError(f"Repeat at line {stmt.span.line} requires count or until.")
+            if stmt.count is not None:
+                _non_negative(stmt.count, field="count", line=stmt.span.line)
+            if stmt.until is not None:
+                _require_runnable(stmt.until, runnables, stmt=stmt)
+            _validate_stmts(stmt.stmts, runnables=runnables)
+            continue
+
+        runnable = _stmt_runnable(stmt)
+        _require_runnable(runnable, runnables, stmt=stmt)
+        if isinstance(stmt, ast.ScatterStmt | ast.StormStmt):
+            _non_negative(stmt.count, field="count", line=stmt.span.line)
+        if isinstance(stmt, ast.StormStmt | ast.MapStmt):
+            _positive_optional(stmt.par, field="par", line=stmt.span.line)
+
+
+def _validate_binding(stmt: ast.FlowStmt) -> None:
+    binding = stmt.binding
+    if binding is not None and binding != "_" and not re.fullmatch(r"[a-z][a-z0-9_]*", binding):
+        raise ToolangValidationError(f"Invalid binding {binding!r} at line {stmt.span.line}.")
+
+
+def _stmt_runnable(stmt: ast.FlowStmt) -> str:
+    if isinstance(
+        stmt,
+        ast.RunStmt
+        | ast.ScatterStmt
+        | ast.StormStmt
+        | ast.GatherStmt
+        | ast.SettleStmt
+        | ast.MapStmt,
+    ):
+        return stmt.runnable
+    raise RuntimeError(f"Statement {stmt.kind!r} has no runnable field.")
+
+
+def _require_runnable(
+    name: str,
+    runnables: dict[str, ast.AgicDecl | ast.FlowDecl],
+    *,
+    stmt: ast.FlowStmt,
+) -> None:
+    if name not in runnables:
+        raise ToolangValidationError(f"{stmt.kind.capitalize()} at line {stmt.span.line} references unknown runnable {name!r}.")
+
+
+def _non_negative(value: int, *, field: str, line: int) -> None:
+    if value < 0:
+        raise ToolangValidationError(f"{field} at line {line} must not be negative.")
+
+
+def _positive_optional(value: int | None, *, field: str, line: int) -> None:
+    if value is not None and value <= 0:
+        raise ToolangValidationError(f"{field} at line {line} must be positive.")
+
+
+def _require_exact_fields(meta: dict[str, Any], allowed: frozenset[str], *, kind: str, line: int) -> None:
+    if unknown := sorted(set(meta) - allowed):
+        raise ToolangValidationError(f"{kind.capitalize()} at line {line} has unsupported field(s): {', '.join(unknown)}.")
 
 
 def _is_string_map(value: object) -> bool:
-    return isinstance(value, dict) and all(
-        isinstance(key, str) and isinstance(item, str)
-        for key, item in value.items()
-    )
+    return isinstance(value, dict) and all(isinstance(key, str) and isinstance(item, str) for key, item in value.items())
 
 
 def _is_env_names(value: object) -> bool:
@@ -240,28 +276,3 @@ def _is_env_names(value: object) -> bool:
     else:
         return False
     return bool(items) and all(ENV_NAME_RE.fullmatch(item) is not None for item in items)
-
-
-def _thunk_name(thunk: Thunk) -> str:
-    return thunk.name or "default"
-
-
-def _directive_family(name: str) -> str:
-    normalized = name.strip()
-    if normalized in {"model", "models"}:
-        return "model"
-    if normalized in {"tool", "tools"}:
-        return "tool"
-    if normalized in {"psyche", "psyches"}:
-        return "psyche"
-    if normalized in {"skill", "skills"}:
-        return "skill"
-    if normalized in {"service", "services"}:
-        return "service"
-    if normalized == "hands":
-        return "hand"
-    if normalized == "handoffs":
-        return "handoff"
-    if normalized == "recall":
-        return "recall"
-    return normalized

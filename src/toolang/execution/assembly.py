@@ -5,13 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 import logging
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from toolang.base.protocols.tool import AgentTool
-from toolang.base.types.message import Message, MessageRole, TextPart, message_summary, message_text
+from toolang.base.types.message import Message, TextPart, message_summary, message_text
 from toolang.base.types.model import ModelTarget
 
-from ..lang.ast import MessageBlock, Thunk
+from ..lang.ast import AgicDecl, Message as AstMessage
 from ..state.prepared import PreparedEntry
 from .binding import RunBinding, invoke_params, run_selected_model_selector
 from .context import RunSnapshot, build_run_snapshot
@@ -19,6 +19,7 @@ from .effective import (
     activation_default_model_selector,
     effective_model_selectors,
     effective_run_sets,
+    directives_for,
     log_set_math,
     select_entries,
     select_origin_thunk,
@@ -46,7 +47,7 @@ class RunInput:
     """One assembled semantic input for one run."""
 
     run: RunBinding
-    thunk: Thunk
+    thunk: AgicDecl
     input_text: str
     message: Message
     context_text: str
@@ -75,7 +76,7 @@ class RunInput:
         return cls.from_thunk(context, run, thunk)
 
     @classmethod
-    def from_thunk(cls, context: UptimeContext, run: RunBinding, thunk: Thunk) -> RunInput:
+    def from_thunk(cls, context: UptimeContext, run: RunBinding, thunk: AgicDecl) -> RunInput:
         """Build one semantic run input from a resolved thunk object."""
 
         program = run.live.program
@@ -143,12 +144,12 @@ class RunInput:
             debug={
                 "run_id": run.run_id,
                 "thread_id": run.thread_id,
-                "thunk_name": thunk.thunk_name(),
+                "thunk_name": thunk.name,
                 "input_text": input_text,
                 "params": dict(params),
                 "message_text": message_summary(call.message.parts),
                 "rendered_messages": [
-                    {"kind": item.kind, "text": item.text}
+                    {"role": item.role, "content": item.content}
                     for item in call.rendered_messages
                 ],
                 "context_text": call.context_text,
@@ -217,24 +218,24 @@ class RunInput:
     def tools(self) -> dict[str, AgentTool]:
         """Return the effective tool mapping for this run."""
 
-        return select_tools(self.tools_base, self.thunk.directives_for("tool"))
+        return select_tools(self.tools_base, directives_for(self.thunk, "tool"))
 
     def psyches(self) -> tuple[PreparedEntry, ...]:
         """Return the effective psyche entries for this run."""
 
-        return select_entries(self.psyches_base, self.thunk.directives_for("psyche"))
+        return select_entries(self.psyches_base, directives_for(self.thunk, "psyche"))
 
     def skills(self) -> tuple[PreparedEntry, ...]:
         """Return the effective skill entries for this run."""
 
-        return select_entries(self.skills_base, self.thunk.directives_for("skill"))
+        return select_entries(self.skills_base, directives_for(self.thunk, "skill"))
 
     def services(self) -> tuple[PreparedEntry, ...]:
         """Return the effective service entries for this run."""
 
-        return select_entries(self.services_base, self.thunk.directives_for("service"))
+        return select_entries(self.services_base, directives_for(self.thunk, "service"))
 
-    def rendered_messages(self) -> tuple[MessageBlock, ...]:
+    def rendered_messages(self) -> tuple[AstMessage, ...]:
         """Return authored thunk messages rendered with the current params."""
 
         return render_thunk_messages(
@@ -303,7 +304,7 @@ def _log_model_call_assembly(
         run.thread_id,
         run.run_id,
         run.origin,
-        bundle.thunk.thunk_name(),
+        bundle.thunk.name,
     )
     _LOGGER.debug(
         "prompt.tools thread=%s run=%s tools=%s",
@@ -332,14 +333,14 @@ def _log_model_call_assembly(
 
 def _script_messages(
     *,
-    rendered_messages: tuple[MessageBlock, ...],
+    rendered_messages: tuple[AstMessage, ...],
     context_text: str,
     fallback: Message,
 ) -> tuple[Message, ...]:
     conversation_blocks = tuple(
         block
         for block in rendered_messages
-        if block.kind in {"user", "assistant", "tool"}
+        if block.role in {"user", "assistant", "tool"}
     )
     if not any(block.explicit for block in conversation_blocks):
         return (fallback,)
@@ -347,15 +348,15 @@ def _script_messages(
     messages: list[Message] = []
     context_pending = bool(context_text.strip())
     for block in conversation_blocks:
-        text = block.text.strip()
-        if not text and not (context_pending and block.kind == "user"):
+        text = block.content.strip()
+        if not text and not (context_pending and block.role == "user"):
             continue
-        if context_pending and block.kind == "user":
+        if context_pending and block.role == "user":
             text = _join_message_texts(context_text, text)
             context_pending = False
         messages.append(
             Message(
-                role=cast(MessageRole, block.kind),
+                role=block.role,
                 parts=(TextPart(text=text),),
             )
         )

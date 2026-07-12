@@ -3,26 +3,26 @@ from toolang.lang.format import format_source
 
 def test_format_source_normalizes_too_spacing() -> None:
     source = """
-use   skill   briceyan/pdf-processing
+with skill   briceyan/pdf-processing
 
 struct ReviewSummary:
     title:Text
     summary?:   Text
 
-thunk review( input:Message,path?:Path)->Json:
+agic review( input:Message,path?:Path)->Json:
     model= gpt-5
     skills += review,patch
     user:   Review the target carefully.
 """.strip()
 
     assert format_source(source) == (
-        "use skill briceyan/pdf-processing\n"
+        "with skill briceyan/pdf-processing\n"
         "\n"
         "struct ReviewSummary:\n"
         "  title: Text\n"
         "  summary?: Text\n"
         "\n"
-        "thunk review(in: Pack, path?: Path) -> Json:\n"
+        "agic review(in: Pack, path?: Path) -> Json:\n"
         "  models = gpt-5\n"
         "  skills += review, patch\n"
         "\n"
@@ -35,7 +35,7 @@ def test_format_source_uses_configured_tab_size() -> None:
 struct ReviewSummary:
   title:Text
 
-thunk review(input:Message):
+agic review(input:Message):
   user:
     Review it.
 """.strip()
@@ -44,7 +44,7 @@ thunk review(input:Message):
         "struct ReviewSummary:\n"
         "    title: Text\n"
         "\n"
-        "thunk review(in: Pack):\n"
+        "agic review(in: Pack):\n"
         "    user:\n"
         "        Review it.\n"
     )
@@ -87,7 +87,7 @@ def test_format_source_accepts_unformatted_shebang_file() -> None:
     source = """
 #!/usr/bin/env toolang
 
-thunk followup:
+agic followup:
     models = deepseek/*
     recall = none
 
@@ -100,7 +100,7 @@ thunk followup:
     assert format_source(source) == (
         "#!/usr/bin/env toolang\n"
         "\n"
-        "thunk followup:\n"
+        "agic followup:\n"
         "  models = deepseek/*\n"
         "  recall = none\n"
         "\n"
@@ -113,7 +113,7 @@ thunk followup:
 
 def test_format_source_normalizes_thunk_blank_lines_by_section() -> None:
     source = """
-thunk review(input: Message):
+agic review(input: Message):
 
     models = gpt-5
 
@@ -130,7 +130,7 @@ thunk review(input: Message):
 """.strip()
 
     assert format_source(source) == (
-        "thunk review(in: Pack):\n"
+        "agic review(in: Pack):\n"
         "  models = gpt-5\n"
         "  tools = shell\n"
         "\n"
@@ -149,7 +149,7 @@ thunk review(input: Message):
 
 def test_format_source_keeps_instruct_block_body_attached() -> None:
     source = """
-thunk followup:
+agic followup:
   models = deepseek/*
   recall = none
 
@@ -162,7 +162,7 @@ thunk followup:
 """.strip()
 
     assert format_source(source) == (
-        "thunk followup:\n"
+        "agic followup:\n"
         "  models = deepseek/*\n"
         "  recall = none\n"
         "\n"
@@ -178,7 +178,7 @@ thunk followup:
 
 def test_format_source_keeps_inline_controls_together() -> None:
     source = """
-thunk followup:
+agic followup:
   instruct: strict
 
   context: none
@@ -187,7 +187,7 @@ thunk followup:
 """.strip()
 
     assert format_source(source) == (
-        "thunk followup:\n"
+        "agic followup:\n"
         "  instruct: strict\n"
         "  context: none\n"
         "\n"
@@ -197,7 +197,7 @@ thunk followup:
 
 def test_format_source_orders_inline_controls_before_block_controls() -> None:
     source = """
-thunk followup:
+agic followup:
   context:
       repo context
 
@@ -206,7 +206,7 @@ thunk followup:
 """.strip()
 
     assert format_source(source) == (
-        "thunk followup:\n"
+        "agic followup:\n"
         "  instruct: strict\n"
         "\n"
         "  context:\n"
@@ -218,7 +218,7 @@ thunk followup:
 
 def test_format_source_does_not_absorb_implicit_message_after_control_block() -> None:
     source = """
-thunk slug(title) -> Text:
+agic slug(title) -> Text:
     models = sss
 
     instruct: hello
@@ -231,7 +231,7 @@ thunk slug(title) -> Text:
 """.strip()
 
     assert format_source(source, tab_size=4) == (
-        "thunk slug(title) -> Text:\n"
+        "agic slug(title) -> Text:\n"
         "    models = sss\n"
         "\n"
         "    instruct: hello\n"
@@ -246,7 +246,7 @@ thunk slug(title) -> Text:
 
 def test_format_source_does_not_absorb_same_indent_implicit_message_after_control_block() -> None:
     source = """
-thunk slug(title) -> Text:
+agic slug(title) -> Text:
     context:
         abcdef sdfss
     Convert the provided title into a concise lowercase slug.
@@ -254,7 +254,7 @@ thunk slug(title) -> Text:
 """.strip()
 
     assert format_source(source, tab_size=4) == (
-        "thunk slug(title) -> Text:\n"
+        "agic slug(title) -> Text:\n"
         "    context:\n"
         "        abcdef sdfss\n"
         "\n"
@@ -268,9 +268,9 @@ def test_format_source_preserves_implicit_message_paragraphs() -> None:
 # Alice is a small remote-ready assistant example.
 # The goal is one file that can be published and used without local setup.
 
-use skill briceyan/pdf-processing
+with skill briceyan/pdf-processing
 
-thunk:
+agic:
 
   Help the user directly.
 
@@ -283,9 +283,9 @@ thunk:
         "# Alice is a small remote-ready assistant example.\n"
         "# The goal is one file that can be published and used without local setup.\n"
         "\n"
-        "use skill briceyan/pdf-processing\n"
+        "with skill briceyan/pdf-processing\n"
         "\n"
-        "thunk:\n"
+        "agic:\n"
         "  Help the user directly.\n"
         "\n"
         "  Use the selected skills when they apply.\n"
@@ -296,7 +296,7 @@ thunk:
 
 def test_format_source_keeps_explicit_roles_after_implicit_messages() -> None:
     source = """
-thunk is_relevant(in: Part[]):
+agic is_relevant(in: Part[]):
     Evidence bundle:
     {{ _ }}
 
@@ -311,7 +311,7 @@ thunk is_relevant(in: Part[]):
 """.strip()
 
     assert format_source(source) == (
-        "thunk is_relevant(in: Part[]):\n"
+        "agic is_relevant(in: Part[]):\n"
         "  Evidence bundle:\n"
         "  {{ _ }}\n"
         "\n"
@@ -329,14 +329,14 @@ thunk is_relevant(in: Part[]):
 
 def test_format_source_uses_comments_to_split_implicit_messages() -> None:
     source = """
-thunk split:
+agic split:
     first message
     # Plain comment splits messages.
     second message
 """.strip()
 
     assert format_source(source) == (
-        "thunk split:\n"
+        "agic split:\n"
         "  first message\n"
         "\n"
         "  # Plain comment splits messages.\n"
@@ -347,7 +347,7 @@ thunk split:
 
 def test_format_source_keeps_comment_separators_between_thunk_sections() -> None:
     source = """
-thunk split:
+agic split:
   models = gpt-5
   # directive comment
   context: repo
@@ -358,7 +358,7 @@ thunk split:
 """.strip()
 
     assert format_source(source) == (
-        "thunk split:\n"
+        "agic split:\n"
         "  models = gpt-5\n"
         "  # directive comment\n"
         "\n"

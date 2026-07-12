@@ -1422,8 +1422,8 @@ def _collect_program_use_entries(
         body_text=prepared_program.body_text,
     )
     requests: list[_RemoteEntryRequest] = []
-    for use in live_program.parsed.uses:
-        kind = cast(EntryKind, use.kind)
+    for use in live_program.parsed.withs:
+        kind = cast(EntryKind, use.cap_kind)
         if kind not in CAP_KINDS:
             continue
         if kinds is not None and kind not in kinds:

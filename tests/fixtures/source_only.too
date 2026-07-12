@@ -19,7 +19,7 @@ struct ReviewSummary:
   title: Text
   summary: Text
 
-thunk summarize(in: Part[]) -> ReviewSummary:
+agic summarize(in: Part[]) -> ReviewSummary:
   models = gpt-5
 
   Summarize the request and keep the output compact.

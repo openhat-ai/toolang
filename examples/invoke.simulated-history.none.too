@@ -6,7 +6,7 @@
 #
 #   toolang examples/invoke.simulated-history.none.too followup "What is my name?"
 
-thunk followup(in: Part[]):
+agic followup(in: Part[]):
   recall = none
   context none
 

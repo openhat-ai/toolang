@@ -26,25 +26,21 @@ def parse_program(
         bool,
         typer.Option("--compact", help="Emit compact JSON."),
     ] = False,
-    include_source_lines: Annotated[
-        bool,
-        typer.Option("--source-lines", help="Include parser source lines."),
-    ] = False,
     stdin_filepath: Annotated[
         Path | None,
         typer.Option("--stdin-filepath", help="Path label for stdin."),
     ] = None,
 ) -> None:
     from ...base.error import ToolangError
-    from ...lang.lower import parse, program_to_ast_data
+    from ...lang.ast import Program, to_data
 
     label, text = _read_source(source, stdin_filepath=stdin_filepath)
     try:
-        program = parse(text)
+        program = Program.from_source(text)
     except ToolangError as exc:
         raise click.ClickException(f"{label}: {exc}") from exc
     payload = json.dumps(
-        program_to_ast_data(program, include_source_lines=include_source_lines),
+        to_data(program),
         ensure_ascii=False,
         indent=None if compact else 2,
         separators=(",", ":") if compact else None,

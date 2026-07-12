@@ -1,11 +1,11 @@
-thunk expand_queries(in: Part[]):
+agic expand_queries(in: Part[]):
   Research question:
   {{ _ }}
 
   Turn this research question into 6 diverse web search queries.
   Return one query per line. No bullets, no numbering.
 
-thunk search_web(in: Part[]):
+agic search_web(in: Part[]):
   tools = web_search/*
 
   Query:
@@ -18,7 +18,7 @@ thunk search_web(in: Part[]):
   - title, url, date if available
   - one sentence on why it matters
 
-thunk extract_findings(in: Part[]):
+agic extract_findings(in: Part[]):
   Evidence bundle:
   {{ _ }}
 
@@ -26,7 +26,7 @@ thunk extract_findings(in: Part[]):
   Prefer source-backed claims.
   Return concise bullets with URLs preserved.
 
-thunk synthesize_report(in: Part[]):
+agic synthesize_report(in: Part[]):
   Findings:
   {{ _ }}
 
@@ -41,19 +41,19 @@ thunk synthesize_report(in: Part[]):
 
 flow research(in: Text):
   ## Expand the research question into diverse search queries
-  do expand_queries
+  run expand_queries
   ## Search the web for each query
-  each par 4 search_web
+  map search_web par 4
   ## Keep evidence bundles that answer the research task
   keep is_relevant
   ## Rank the remaining evidence by relevance
-  rank 8: Return a numeric relevance score from 0 to 10. Higher is better.
+  rank top 8: Return a numeric relevance score from 0 to 10. Higher is better.
   ## Extract source-backed findings from each evidence bundle
-  each par 4 extract_findings
+  map extract_findings par 4
   ## Synthesize the final research brief
-  do synthesize_report
+  run synthesize_report
 
-thunk is_relevant(in: Part[]):
+agic is_relevant(in: Part[]):
   Evidence bundle:
   {{ _ }}
 

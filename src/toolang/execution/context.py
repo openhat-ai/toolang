@@ -11,7 +11,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from .. import agents, work
-from ..lang.ast import Thunk
+from ..lang.ast import AgicDecl
 from toolang.base.error import ToolangError
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.protocols.tool import AgentTool
@@ -144,7 +144,7 @@ class RunSnapshot:
 def build_run_snapshot(
     context: UptimeContext,
     run: RunBinding,
-    thunk: Thunk,
+    thunk: AgicDecl,
     *,
     tools: dict[str, AgentTool],
 ) -> RunSnapshot:
@@ -746,9 +746,9 @@ def _task_snapshot(
     )
 
 
-def _thunk_to_data(thunk: Thunk) -> dict[str, object]:
+def _thunk_to_data(thunk: AgicDecl) -> dict[str, object]:
     return {
-        "name": thunk.thunk_name(),
+        "name": thunk.name,
         "input": (
             {
                 "name": param.name,
@@ -778,10 +778,10 @@ def _thunk_to_data(thunk: Thunk) -> dict[str, object]:
         ],
         "messages": [
             {
-                "kind": item.kind,
-                "text": item.text,
-                "line": item.span.line,
+                "role": item.role,
+                "content": item.content,
                 "explicit": item.explicit,
+                "line": item.span.line,
             }
             for item in thunk.messages
         ],

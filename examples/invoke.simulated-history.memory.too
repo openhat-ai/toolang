@@ -6,7 +6,7 @@
 #
 #   toolang examples/invoke.simulated-history.memory.too followup "What did I ask you to remember?"
 
-thunk followup(in: Part[]):
+agic followup(in: Part[]):
   recall = memory
 
   context none

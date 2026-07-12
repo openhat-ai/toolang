@@ -86,11 +86,7 @@ async def execute_run(
                     "request_id": _request_id(bound.metadata),
                     "executable": {
                         "kind": executable_kind,
-                        "name": (
-                            executable.thunk_name()
-                            if executable_kind == "thunk"
-                            else executable.flow_name()
-                        ),
+                        "name": executable.name,
                     },
                     "call": "top",
                 },
@@ -231,10 +227,7 @@ def _log_run_prepared(*, run: RunBinding, run_input: RunInput, model: object) ->
 
 def _thunk_name(run_input: RunInput) -> str:
     thunk = getattr(run_input, "thunk", None)
-    thunk_name = getattr(thunk, "thunk_name", None)
-    if callable(thunk_name):
-        return str(thunk_name())
-    return "-"
+    return str(getattr(thunk, "name", "-"))
 
 
 def _entry_count(run_input: RunInput, method_name: str) -> int:

@@ -1,315 +1,169 @@
 from __future__ import annotations
 
-import asyncio
-from pathlib import Path
+import pytest
 
-from toolang import agents
-from toolang.base.types.message import Message, message_text
-from toolang.base.types.model import ModelInfo, ModelTarget
-from toolang.base.types.run import ModelCall, ModelCallResult
-from toolang.components.trigger import watch
-from toolang.execution.db import ExecutionStore, execution_db_path
-from toolang.execution.executor import _stage_thunk_with_default_recall
-from toolang.execution.model_call import recall_values, recalls_history
-from toolang.execution.runner import QueueRunner, RunRequest
-from toolang.execution.stream import RuntimeEventBus
-from toolang.lang.ast import Directive, SourceSpan, Thunk
-from toolang.models.config import load_model_aliases
-from toolang.state.durable import scan_durable_state
-from toolang.state.live import load_live_state
-from toolang.up import UptimeConfig, UptimeContext
-
-
-class _FakeProvider:
-    name = "fake"
-    description = None
-
-    def required_env_vars(self) -> tuple[str, ...]:
-        return ()
-
-    def default_base_url(self, *, environ):
-        del environ
-        return None
-
-    def default_api_key_env(self):
-        return None
-
-    def list_models(self, *, environ):
-        del environ
-        return (
-            ModelInfo(
-                ref="gpt-5",
-                provider="fake",
-                name="Fake",
-                model="fake",
-                adapter="fake",
-                selectors=("gpt-5",),
-                tools=False,
-                streaming=False,
-            ),
-        )
-
-    def prepare_target(self, target: ModelTarget) -> ModelTarget:
-        return target
+from toolang.base.error import ToolangError
+from toolang.lang.ast import (
+    AskStmt,
+    DropStmt,
+    KeepStmt,
+    LetStmt,
+    MapStmt,
+    Program,
+    RankStmt,
+    RepeatStmt,
+    RunStmt,
+    ScatterStmt,
+    SeekStmt,
+    StormStmt,
+)
 
 
-class _FakeAdapter:
-    name = "fake"
-    description = None
+FLOW_SOURCE = """
+agic helper(in: Text) -> Text:
+  user: {{in}}
 
-    def invoke(self, target: ModelTarget, request: ModelCall) -> ModelCallResult:
-        del target
-        text = message_text(request.messages[-1].parts) if request.messages else ""
-        return ModelCallResult(message=Message.assistant(f"handled {text}".strip()))
-
-    def stream(self, target: ModelTarget, request: ModelCall, *, on_event):
-        del on_event
-        return self.invoke(target, request)
-
-
-def test_flow_stage_thunk_defaults_recall_to_none_without_mutating_source() -> None:
-    thunk = Thunk(name="search", span=SourceSpan(10))
-
-    stage_thunk = _stage_thunk_with_default_recall(thunk)
-
-    assert stage_thunk is not thunk
-    assert recall_values(stage_thunk) == ("none",)
-    assert not recalls_history(stage_thunk)
-    assert recall_values(thunk) == ()
-    assert recalls_history(thunk)
-
-
-def test_flow_stage_thunk_preserves_explicit_recall_directive() -> None:
-    thunk = Thunk(
-        name="search",
-        directives=(Directive(name="recall", operator="=", values=("history",), span=SourceSpan(11)),),
-        span=SourceSpan(10),
-    )
-
-    stage_thunk = _stage_thunk_with_default_recall(thunk)
-
-    assert stage_thunk is thunk
-    assert recall_values(stage_thunk) == ("history",)
-    assert recalls_history(stage_thunk)
+flow pipeline(in: Text) -> Text:
+  run helper
+  run -> Text: inline run
+  bare inline run
+  seek alice helper
+  seek bob -> Text: inline seek
+  ask: continue?
+  scatter 3 helper
+  storm 4 helper par 2
+  gather helper
+  settle helper
+  map helper par 2
+  keep first 2
+  keep helper par 2
+  drop last 1
+  rank helper top 3 par 2
+  repeat 2:
+    run helper
+    until: done?
+  let result = run helper
+  let run helper
+  let note: authored text
+"""
 
 
-def test_program_parse_flow_stages() -> None:
-    from toolang.lang.lower import parse
-
-    program = parse(
-        "flow review(in: Text):\n"
-        "  do summarize\n"
-        "  each par 2: Rewrite item\n"
-        "  rank 3: Score item\n"
-    )
-
+def test_flow_statements_lower_to_specific_nodes() -> None:
+    program = Program.from_source(FLOW_SOURCE)
     flow = program.flows[0]
-    assert flow.flow_name() == "review"
-    assert flow.input is not None
-    assert flow.input.name == "in"
-    assert [(stage.kind, stage.target, stage.body) for stage in flow.stages] == [
-        ("do", "summarize", None),
-        ("each", None, "Rewrite item"),
-        ("rank", None, "Score item"),
+
+    assert flow.name == "pipeline"
+    assert flow.input is not None and flow.input.type_name == "Text"
+    assert flow.output == "Text"
+    assert [stmt.kind for stmt in flow.stmts] == [
+        "run",
+        "run",
+        "run",
+        "seek",
+        "seek",
+        "ask",
+        "scatter",
+        "storm",
+        "gather",
+        "settle",
+        "map",
+        "keep",
+        "keep",
+        "drop",
+        "rank",
+        "repeat",
+        "run",
+        "run",
+        "let",
     ]
-    assert flow.stages[1].parallelism == 2
-    assert flow.stages[2].limit == 3
 
-
-def test_program_parse_flow_stage_doc_comments() -> None:
-    from toolang.lang.lower import parse
-
-    program = parse(
-        "flow review(in: Text):\n"
-        "  ## Expand query variants\n"
-        "  do expand_queries\n"
-        "  ## Score evidence\n"
-        "  ## Prefer recent source-backed results\n"
-        "  rank 3: Score item\n"
+    assert isinstance(flow.stmts[0], RunStmt)
+    assert flow.stmts[0].runnable == "helper"
+    assert isinstance(flow.stmts[3], SeekStmt)
+    assert flow.stmts[3].agent == "alice"
+    assert isinstance(flow.stmts[5], AskStmt)
+    assert flow.stmts[5].body == "continue?"
+    assert isinstance(flow.stmts[6], ScatterStmt)
+    assert flow.stmts[6].count == 3
+    assert isinstance(flow.stmts[7], StormStmt)
+    assert (flow.stmts[7].count, flow.stmts[7].par) == (4, 2)
+    assert isinstance(flow.stmts[10], MapStmt)
+    assert flow.stmts[10].par == 2
+    assert isinstance(flow.stmts[11], KeepStmt)
+    assert (flow.stmts[11].position, flow.stmts[11].count) == ("first", 2)
+    assert isinstance(flow.stmts[13], DropStmt)
+    assert (flow.stmts[13].position, flow.stmts[13].count) == ("last", 1)
+    assert isinstance(flow.stmts[14], RankStmt)
+    assert (flow.stmts[14].limit, flow.stmts[14].count, flow.stmts[14].par) == (
+        "top",
+        3,
+        2,
     )
 
+
+def test_inline_runnables_are_generated_once_and_referenced_by_name() -> None:
+    program = Program.from_source(FLOW_SOURCE)
     flow = program.flows[0]
-    assert flow.stages[0].doc == "Expand query variants"
-    assert flow.stages[1].doc == "Score evidence\nPrefer recent source-backed results"
+    generated = {agic.name: agic for agic in program.agics if agic.name.startswith("<agic:")}
+
+    inline_run = flow.stmts[1]
+    bare_run = flow.stmts[2]
+    inline_seek = flow.stmts[4]
+    repeat = flow.stmts[15]
+    assert isinstance(inline_run, RunStmt)
+    assert isinstance(bare_run, RunStmt)
+    assert isinstance(inline_seek, SeekStmt)
+    assert isinstance(repeat, RepeatStmt)
+    assert inline_run.runnable in generated
+    assert generated[inline_run.runnable].output == "Text"
+    assert bare_run.runnable in generated
+    assert generated[bare_run.runnable].messages[0].content == "bare inline run"
+    assert inline_seek.runnable in generated
+    assert repeat.until in generated
+    assert generated[repeat.until].output == "Boolean"
 
 
-def test_flow_run_records_child_thunk_run(tmp_path: Path) -> None:
-    async def run_test() -> None:
-        toolang_root = tmp_path / "toolang"
-        source = (
-            "agent alice\n\n"
-            "thunk summarize(in: Part[]):\n"
-            "  Summarize the input.\n\n"
-            "flow review(in: Text):\n"
-            "  do summarize\n"
-        )
-        program_path = agents.agent_program_path(toolang_root, "alice")
-        program_path.parent.mkdir(parents=True)
-        program_path.write_text(source, encoding="utf-8")
-        context = _build_context(toolang_root, "alice")
-        completion = asyncio.get_running_loop().create_future()
-        context.runner.enqueue(
-            RunRequest(
-                group="chat",
-                origin="script",
-                thunk_name="review",
-                thunk="hello",
-                metadata={"executable_kind": "flow"},
-            ),
-            completion=completion,
-        )
-        context.runner.close()
-        await context.runner.drain(context)
-        outcome = completion.result()
+def test_flow_bindings_are_independent_of_statement_kind() -> None:
+    flow = Program.from_source(FLOW_SOURCE).flows[0]
 
-        assert outcome.status == "finished"
-        parent = context.store.get_run(run_id=outcome.run_id)
-        assert parent is not None
-        assert parent.executable_kind == "flow"
-        runs = context.store.list_runs(limit=None, include_superseded=True)
-        child = next(item for item in runs if item.parent_run_id == parent.run_id)
-        assert child.executable_kind == "thunk"
-        assert child.root_run_id == parent.run_id
-        assert child.call_kind == "stage"
-        steps = context.store.list_steps(run_id=parent.run_id)
-        assert [step.kind for step in steps] == ["seq", "run", "system"]
-        assert steps[0].detail["source"]["stage_label"] == "do summarize"
-        assert steps[1].detail["source"]["stage_label"] == "do summarize"
-        assert steps[1].detail["child_runs"] == [child.run_id]
-        child_model_step = context.store.list_steps(run_id=child.run_id)[0]
-        assert child_model_step.kind == "model"
-        assert child_model_step.detail["adapter_request"] is not None
-        message_text = child_model_step.detail["adapter_request"]["messages"][-1]["parts"][0]["text"]
-        assert "Summarize the input." in message_text
-        assert "hello" in message_text
-        assert child_model_step.detail["adapter_request"]["tools"] == []
-        assert child_model_step.detail["adapter_request"]["state"] is None
-
-    asyncio.run(run_test())
+    named = flow.stmts[-3]
+    discarded = flow.stmts[-2]
+    authored = flow.stmts[-1]
+    assert isinstance(named, RunStmt) and named.binding == "result"
+    assert isinstance(discarded, RunStmt) and discarded.binding is None
+    assert isinstance(authored, LetStmt)
+    assert (authored.binding, authored.value) == ("note", "authored text")
 
 
-def test_flow_run_records_inline_stage_child_thunk(tmp_path: Path) -> None:
-    async def run_test() -> None:
-        toolang_root = tmp_path / "toolang"
-        source = (
-            "agent alice\n\n"
-            "flow review(in: Text):\n"
-            "  do: Rewrite the input.\n"
-        )
-        program_path = agents.agent_program_path(toolang_root, "alice")
-        program_path.parent.mkdir(parents=True)
-        program_path.write_text(source, encoding="utf-8")
-        context = _build_context(toolang_root, "alice")
-        completion = asyncio.get_running_loop().create_future()
-        context.runner.enqueue(
-            RunRequest(
-                group="chat",
-                origin="script",
-                thunk_name="review",
-                thunk="hello",
-                metadata={"executable_kind": "flow"},
-            ),
-            completion=completion,
-        )
-        context.runner.close()
-        await context.runner.drain(context)
-        outcome = completion.result()
-
-        assert outcome.status == "finished"
-        parent = context.store.get_run(run_id=outcome.run_id)
-        assert parent is not None
-        runs = context.store.list_runs(limit=None, include_superseded=True)
-        child = next(item for item in runs if item.parent_run_id == parent.run_id)
-        assert child.executable_kind == "thunk"
-        assert child.executable_name is None
-        assert child.call_kind == "stage"
-        assert child.metadata["child"]["source_line"] == 4
-        steps = context.store.list_steps(run_id=parent.run_id)
-        assert steps[1].detail["target"]["kind"] == "thunk"
-        assert steps[1].detail["target"]["name"] is None
-        assert steps[1].detail["source"]["source_line"] == 4
-        assert steps[1].detail["child_runs"] == [child.run_id]
-        assert context.store.list_steps(run_id=child.run_id)[0].kind == "model"
-
-    asyncio.run(run_test())
-
-
-def test_flow_parallel_child_calls_record_lane_metadata(tmp_path: Path) -> None:
-    async def run_test() -> None:
-        toolang_root = tmp_path / "toolang"
-        source = (
-            "agent alice\n\n"
-            "flow review(in: Text):\n"
-            "  each par 2: Rewrite the input.\n"
-        )
-        program_path = agents.agent_program_path(toolang_root, "alice")
-        program_path.parent.mkdir(parents=True)
-        program_path.write_text(source, encoding="utf-8")
-        context = _build_context(toolang_root, "alice")
-        completion = asyncio.get_running_loop().create_future()
-        context.runner.enqueue(
-            RunRequest(
-                group="chat",
-                origin="script",
-                thunk_name="review",
-                thunk="a\nb\nc",
-                metadata={"executable_kind": "flow"},
-            ),
-            completion=completion,
-        )
-        context.runner.close()
-        await context.runner.drain(context)
-        outcome = completion.result()
-
-        assert outcome.status == "finished"
-        parent = context.store.get_run(run_id=outcome.run_id)
-        assert parent is not None
-        child_steps = [
-            step
-            for step in context.store.list_steps(run_id=parent.run_id)
-            if step.kind == "run"
-        ]
-        assert len(child_steps) == 3
-        first = child_steps[0].detail
-        third = child_steps[2].detail
-        assert first["lane"]["count"] == 2
-        assert first["lane"]["index"] == 0
-        assert first["item"]["index"] == 0
-        assert first["source"]["parallelism"] == 2
-        assert first["source"]["lane_index"] == 0
-        assert first["source"]["item_count"] == 3
-        assert third["lane"]["count"] == 2
-        assert third["lane"]["index"] in {0, 1}
-        assert third["item"]["index"] == 2
-
-    asyncio.run(run_test())
-
-
-def _build_context(toolang_root: Path, agent_name: str) -> UptimeContext:
-    durable = scan_durable_state(toolang_root, agent_name)
-    prepared = watch.build_prepared_state(durable)
-    live = load_live_state(prepared, enabled_features=("chat",))
-    store = ExecutionStore(execution_db_path(toolang_root, agent_name))
-    return UptimeContext(
-        root=toolang_root,
-        name=agent_name,
-        live=live,
-        tools={},
-        model_providers={"fake": _FakeProvider()},
-        model_adapters={"fake": _FakeAdapter()},
-        model_aliases=load_model_aliases(toolang_root, agent_name),
-        default_models=("gpt-5",),
-        model_environ={},
-        channel_bindings={},
-        channel_plugins={},
-        runner=QueueRunner(delay_sec=0.0),
-        store=store,
-        events=RuntimeEventBus(store, agent_id=agent_name),
-        config=UptimeConfig(
-            {
-                "features.enabled": ("chat",),
-                "components.enabled": ("runner.chat",),
-                "runtime.sandbox": "none",
-            }
-        ),
+def test_inline_context_and_instruct_are_program_owned_declarations() -> None:
+    program = Program.from_source(
+        """
+agic answer:
+  context:
+    Runtime context.
+  instruct:
+    Be concise.
+  user: Answer now.
+"""
     )
+    agic = program.agics[0]
+
+    assert agic.context == "<context:3>"
+    assert agic.instruct == "<instruct:5>"
+    assert program.contexts[0].name == agic.context
+    assert program.contexts[0].body == "Runtime context."
+    assert program.instructs[0].name == agic.instruct
+    assert program.instructs[0].body == "Be concise."
+
+
+def test_agic_and_flow_names_share_one_namespace() -> None:
+    with pytest.raises(ToolangError, match="Duplicate runnable name"):
+        Program.from_source(
+            """
+agic shared:
+  Hello.
+
+flow shared:
+  run shared
+"""
+        )
