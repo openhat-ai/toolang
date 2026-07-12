@@ -44,9 +44,7 @@ class Parameter(Node):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CapDecl(Node):
-    kind: ClassVar[str] = "cap"
-
-    cap_kind: CapKind
+    kind: CapKind
     name: str
     body: str
     language: str | None = None
@@ -56,9 +54,7 @@ class CapDecl(Node):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class WorkDecl(Node):
-    kind: ClassVar[str] = "work"
-
-    work_kind: WorkKind
+    kind: WorkKind
     name: str
     body: str
     meta: dict[str, Any] = field(default_factory=dict)

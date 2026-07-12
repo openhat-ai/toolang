@@ -1500,9 +1500,9 @@ def _collect_program_embedded_entries(
 
 
 def _embedded_cap_kind(cap: CapDecl) -> EntryKind | None:
-    if cap.cap_kind not in EMBEDDED_CAP_KINDS:
+    if cap.kind not in EMBEDDED_CAP_KINDS:
         return None
-    return cast(EntryKind, cap.cap_kind)
+    return cast(EntryKind, cap.kind)
 
 
 def _embedded_entry_from_cap(

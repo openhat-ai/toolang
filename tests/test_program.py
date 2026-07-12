@@ -53,7 +53,7 @@ flow main:
         ("skill", "briceyan/review")
     ]
     service, prompt = program.caps
-    assert service.cap_kind == "service"
+    assert service.kind == "service"
     assert service.meta["target"] == "https://mcp.github.com/mcp"
     assert [(item.name, item.optional) for item in prompt.params] == [
         ("path", False),

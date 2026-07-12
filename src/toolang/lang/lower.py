@@ -113,7 +113,7 @@ class _Lowerer:
             else ()
         )
         return ast.CapDecl(
-            cap_kind=cast(ast.CapKind, node.type),
+            kind=cast(ast.CapKind, node.type),
             name=self._required_text(node, "name").strip(),
             body=self._content_text(body),
             meta=meta,
@@ -125,7 +125,7 @@ class _Lowerer:
     def _lower_work(self, node: CstNode, *, doc: str | None) -> ast.WorkDecl:
         body = self._required(node, "body")
         return ast.WorkDecl(
-            work_kind=cast(ast.WorkKind, node.type),
+            kind=cast(ast.WorkKind, node.type),
             name=self._required_text(node, "name").strip(),
             body=self._content_text(body),
             meta=self._properties(body),

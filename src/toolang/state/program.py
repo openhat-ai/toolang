@@ -174,7 +174,7 @@ class LiveProgram:
             (
                 item
                 for item in self.parsed.caps
-                if item.cap_kind == "prompt" and item.name == prompt_name
+                if item.kind == "prompt" and item.name == prompt_name
             ),
             None,
         )
@@ -434,7 +434,7 @@ def _context_to_lock_data(context: ContextDecl, *, line_offset: int) -> dict[str
 
 def _cap_to_lock_data(cap: CapDecl, *, line_offset: int) -> dict[str, object]:
     return {
-        "kind": cap.cap_kind,
+        "kind": cap.kind,
         "name": cap.name,
         "line": cap.span.line + line_offset,
     }

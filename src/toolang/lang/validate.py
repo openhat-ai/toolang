@@ -66,13 +66,13 @@ def validate_service_meta(
 def _validate_caps(caps: tuple[ast.CapDecl, ...]) -> None:
     seen: set[tuple[ast.CapKind, str]] = set()
     for cap in caps:
-        key = (cap.cap_kind, cap.name)
+        key = (cap.kind, cap.name)
         if key in seen:
-            raise ToolangValidationError(f"Duplicate {cap.cap_kind} name {cap.name!r}.")
+            raise ToolangValidationError(f"Duplicate {cap.kind} name {cap.name!r}.")
         seen.add(key)
-        if cap.cap_kind == "service":
+        if cap.kind == "service":
             validate_service_meta(cap.meta, line_number=cap.span.line, require_description=True)
-        elif cap.cap_kind == "prompt":
+        elif cap.kind == "prompt":
             _require_exact_fields(cap.meta, frozenset({"params"}), kind="prompt", line=cap.span.line)
             _unique((item.name for item in cap.params), label=f"parameter in prompt {cap.name!r}")
             for param in cap.params:
