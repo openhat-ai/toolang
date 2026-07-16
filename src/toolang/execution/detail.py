@@ -46,11 +46,10 @@ class RunInfo:
     """One run identity payload."""
 
     id: str
+    parent: str | None
     origin: str
     thread_id: str
     root_run_id: str
-    parent_run_id: str | None
-    parent_step_index: int | None
     executable_kind: str
     executable_name: str | None
     call_kind: str
@@ -178,11 +177,10 @@ def run_info_from_record(run: RunRecord) -> RunInfo:
 
     return RunInfo(
         id=run.run_id,
+        parent=run.parent,
         origin=run.origin,
         thread_id=run.thread_id,
         root_run_id=run.root_run_id,
-        parent_run_id=run.parent_run_id,
-        parent_step_index=run.parent_step_index,
         executable_kind=run.executable_kind,
         executable_name=run.executable_name,
         call_kind=run.call_kind,

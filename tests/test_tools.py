@@ -171,7 +171,7 @@ def test_agent_chat_tool_creates_child_thread_and_sends_peer_request(monkeypatch
             input
             for run in local_runs
             for input in store.list_commands(run_id=run.run_id)
-            if input.message is not None
+            if input.input is not None
         ]
         local_steps = store.list_steps(run_id=str(result["local_run_id"]))
     finally:
@@ -197,7 +197,7 @@ def test_agent_chat_tool_creates_child_thread_and_sends_peer_request(monkeypatch
     assert local is not None
     assert local.parent == "term_user"
     assert local.peer == ThreadPeer(type="agent", name="bob", thread="term_bob")
-    assert [message_text(input.message.parts) for input in local_commands if input.message is not None] == ["please review"]
+    assert [message_text(input.input.parts) for input in local_commands if input.input is not None] == ["please review"]
     assert [part.text for part in local_steps[0].output if isinstance(part, TextPart)] == ["bob says yes"]
 
 
@@ -251,7 +251,7 @@ def test_agent_chat_tool_accepts_direct_peer_object_without_config(monkeypatch, 
             input
             for run in local_runs
             for input in store.list_commands(run_id=run.run_id)
-            if input.message is not None
+            if input.input is not None
         ]
     finally:
         store.close()
@@ -271,7 +271,7 @@ def test_agent_chat_tool_accepts_direct_peer_object_without_config(monkeypatch, 
     assert result["assistant_text"] == "pong"
     assert local is not None
     assert local.peer == ThreadPeer(type="agent", name="merkle", thread="term_merkle")
-    assert [message_text(input.message.parts) for input in local_commands if input.message is not None] == ["ping"]
+    assert [message_text(input.input.parts) for input in local_commands if input.input is not None] == ["ping"]
 
 
 def test_agent_chat_tool_can_call_streaming_peer_chat(monkeypatch, tmp_path: Path) -> None:

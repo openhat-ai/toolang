@@ -192,6 +192,7 @@ class RunContext:
         *,
         on_event: TraceEventHandler | None = None,
         consume_inputs: Callable[[str], Sequence[CommandRecord]] | None = None,
+        before_call: Callable[[], None] | None = None,
         stream: bool = False,
     ) -> None:
         self._input = run_input
@@ -199,13 +200,14 @@ class RunContext:
         self._adapter = adapter
         self._on_event = on_event
         self._consume_inputs = consume_inputs
+        self._before_call = before_call
         self._stream = stream
         self._snapshot = run_input.snapshot
         self._messages = list(run_input.messages())
         self._state: dict[str, Any] | None = None
         self._output_text = ""
         self._round = 0
-        self._step_index = 0
+        self._step_index = -1
         self._last_step_index: int | None = None
         self._active_model_step_index: int | None = None
         self._active_part_count = 0
@@ -241,6 +243,8 @@ class RunContext:
     def call_model(self) -> ModelCallResult:
         """Perform one model call and update run state."""
 
+        if self._before_call is not None:
+            self._before_call()
         step_index = self._next_step_index()
         step_started = time.perf_counter()
         started_at = _utc_now()
@@ -313,6 +317,8 @@ class RunContext:
     def call_tool(self, call: ToolCall) -> ToolCallResult:
         """Perform one tool call and update run state."""
 
+        if self._before_call is not None:
+            self._before_call()
         step_index = self._next_step_index()
         step_started = time.perf_counter()
         started_at = _utc_now()
@@ -598,9 +604,9 @@ class RunContext:
     def _consume_pending_inputs(self) -> tuple[CommandRecord, ...]:
         inputs = self._pending_inputs()
         for input in inputs:
-            if input.kind != "steer" or input.message is None:
+            if input.kind != "steer" or input.input is None:
                 continue
-            self._messages.append(input.message)
+            self._messages.append(input.input)
         return inputs
 
     def _pending_inputs(self) -> tuple[CommandRecord, ...]:

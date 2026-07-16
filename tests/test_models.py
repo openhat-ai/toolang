@@ -1972,13 +1972,13 @@ def test_run_context_logs_model_and_tool_io_at_debug(caplog) -> None:
         )
 
     assert result.output_text == "done"
-    assert "model.request thread=thread-1 run=run-1 step=1 instructions=" in caplog.text
+    assert "model.request thread=thread-1 run=run-1 step=0 instructions=" in caplog.text
     assert '"command": "pwd"' in caplog.text
-    assert "model.result thread=thread-1 run=run-1 step=1 message=" in caplog.text
+    assert "model.result thread=thread-1 run=run-1 step=0 message=" in caplog.text
     assert '"output_tokens": 7' in caplog.text
-    assert "tool.request thread=thread-1 run=run-1 step=2 plugin=" in caplog.text
+    assert "tool.request thread=thread-1 run=run-1 step=1 plugin=" in caplog.text
     assert "tool=shell__execute" in caplog.text
-    assert "tool.result thread=thread-1 run=run-1 step=2 plugin=" in caplog.text
+    assert "tool.result thread=thread-1 run=run-1 step=1 plugin=" in caplog.text
     assert '"stdout": "ran:pwd"' in caplog.text
 
 
@@ -2219,7 +2219,14 @@ def _run_input() -> RunInput:
         thunk=AgicDecl(
             name="main",
             input=Parameter(name="_", span=Span(1)),
-            messages=(AstMessage(role="user", content="Reply directly.", span=Span(1)),),
+            messages=(
+                AstMessage(
+                    role="user",
+                    content="Reply directly.",
+                    explicit=False,
+                    span=Span(1),
+                ),
+            ),
             span=Span(1),
         ),
         input_text="hello",

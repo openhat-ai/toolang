@@ -64,13 +64,19 @@
 - `docs/concepts.md` defines the shared runtime vocabulary.
 - `docs/ids.md` defines Toolang-owned id families, reversible encoding, and
   durable allocator state.
-- `docs/program.md` defines `.too` program syntax, including `struct`,
-  `slash`, thunk signatures, thunk directives, and surface rules.
+- `docs/program.md` defines `.too` declarations, executable signatures,
+  agics, flows, directives, and surface rules.
+- `docs/flow-syntax.md` defines flow statements, bindings, and clauses.
+- `docs/input-syntax.md` defines commands, content, executable input coercion,
+  and output rendering.
 - `docs/layout.md` defines Toolang root, agent home, and agent room layout.
 - `docs/caps.md` defines cap kinds, scopes, sources, and effective-cap rules.
 - `docs/tasks.md` defines task and chore documents and their runtime mapping.
-- `docs/execution.md` defines durable records, trace events, and response
-  events.
+- `docs/execution.md` defines execution boundaries, lifecycle, locals,
+  persistence, and reply projection.
+- `docs/executor.md` defines agic and flow executor behavior.
+- `docs/run-step-records.md` defines durable execution records and their source
+  trace events.
 - `docs/chat.md` defines thread, run, and message projections.
 - `docs/models.md` defines model selectors, profiles, and built-in model
   integrations.

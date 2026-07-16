@@ -20,7 +20,7 @@ from toolang.execution.events import (
     StepEnd,
     TraceEvent,
 )
-from toolang.execution.records import trace_index, trace_run
+from toolang.execution.records import trace_run
 
 from .base import AppContext
 from .blocks import (
@@ -41,7 +41,7 @@ from .blocks import (
 class MutableBlockKey:
     run_id: str
     family: Literal["command", "step", "run"]
-    index: int
+    identity: str
 
 
 def handle_trace_event(event: TraceEvent, app: AppContext) -> None:
@@ -58,7 +58,7 @@ def handle_trace_event(event: TraceEvent, app: AppContext) -> None:
         _create_or_update_block(event, app, run_stop_block)
     elif event.type == "run_begin":
         _update_and_finalize_blocks(event, app, families={"command"})
-        if not _is_child_run_begin(event):
+        if cast(RunBegin, event).run == app.get_active_run():
             _ensure_tail_block(event, app, run_stop_block)
     elif event.type == "step_begin":
         _update_and_finalize_blocks(event, app, families={"command"}, all_matching=True)
@@ -149,9 +149,8 @@ def _create_or_update_block(
 def _insert_live_block(app: AppContext, block: MutableBlock) -> None:
     live_blocks = app.get_live_blocks()
     active_run_id = app.get_active_run() or ""
-    if _block_key(block, active_run_id=active_run_id) == MutableBlockKey(
-        getattr(block, "run_id", None) or active_run_id, "run", 0
-    ):
+    key = _block_key(block, active_run_id=active_run_id)
+    if key is not None and key.family == "run":
         live_blocks.append(block)
         return
     for index in range(len(live_blocks) - 1, -1, -1):
@@ -203,9 +202,9 @@ def _finalize_block(block: MutableBlock, app: AppContext, event: TraceEvent) -> 
 def _block_key(block: MutableBlock, *, active_run_id: str) -> MutableBlockKey | None:
     run_id = getattr(block, "run_id", None) or active_run_id
     if block.type == "RunStartBlock":
-        return MutableBlockKey(run_id, "command", 0)
+        return MutableBlockKey(run_id, "command", "0")
     if block.type == "RunSteerBlock":
-        return MutableBlockKey(run_id, "command", int(getattr(block, "index", 0) or 0))
+        return MutableBlockKey(run_id, "command", str(getattr(block, "index", 0)))
     if block.type in {
         "ChildRunStepBlock",
         "DefaultStepBlock",
@@ -213,9 +212,10 @@ def _block_key(block: MutableBlock, *, active_run_id: str) -> MutableBlockKey | 
         "ModelStepBlock",
         "ToolStepBlock",
     }:
-        return MutableBlockKey(run_id, "step", int(getattr(block, "index", 0) or 0))
+        step = str(getattr(block, "step", ""))
+        return MutableBlockKey(trace_run(step), "step", step)
     if block.type == "RunStopBlock":
-        return MutableBlockKey(run_id, "run", 0)
+        return MutableBlockKey(run_id, "run", "end")
     return None
 
 
@@ -235,7 +235,7 @@ def step_block(event: TraceEvent) -> MutableBlock:
         return ToolStepBlock.create(step_begin)
     if step_begin.kind == "run":
         return ChildRunStepBlock.create(step_begin)
-    if step_begin.kind in {"seq", "par", "unfold", "map", "filter", "sort", "fold"}:
+    if step_begin.context.get("statement"):
         return FlowStepBlock.create(step_begin)
     return DefaultStepBlock.create(step_begin)
 
@@ -245,17 +245,17 @@ def run_stop_block(event: TraceEvent) -> RunStopBlock:
 
 
 def event_key(event: TraceEvent, *, run_id: str = "") -> MutableBlockKey | None:
-    event_run_id = getattr(event, "run_id", None) or run_id
+    event_run = event_run_id(event) or run_id
     if event.type in {"run_waiting", "run_starting", "run_begin"}:
-        return MutableBlockKey(event_run_id, "command", 0)
+        return MutableBlockKey(event_run, "command", "0")
     if event.type == "run_steering":
         return MutableBlockKey(
-            event_run_id,
+            event_run,
             "command",
-            int(cast(RunSteering, event).context.get("cmd", 0) or 0),
+            str(cast(RunSteering, event).cmd),
         )
     if event.type == "run_stopping":
-        return MutableBlockKey(event_run_id, "run", 0)
+        return MutableBlockKey(event_run, "run", "end")
     if event.type in {
         "step_begin",
         "part_begin",
@@ -263,34 +263,36 @@ def event_key(event: TraceEvent, *, run_id: str = "") -> MutableBlockKey | None:
         "part_end",
         "step_end",
     }:
-        return MutableBlockKey(
-            event_run_id,
-            "step",
-            trace_index(
-                cast(StepBegin | PartBegin | PartDelta | PartEnd | StepEnd, event).step
-            )
-            or 0,
-        )
+        step = cast(StepBegin | PartBegin | PartDelta | PartEnd | StepEnd, event).step
+        return MutableBlockKey(event_run, "step", step)
     if event.type == "run_end":
-        return MutableBlockKey(event_run_id, "run", 0)
+        return MutableBlockKey(event_run, "run", "end")
     return None
 
 
 def event_run_id(event: TraceEvent) -> str | None:
-    if isinstance(event, (RunWaiting, RunStarting, RunSteering, RunStopping, RunBegin, RunEnd)):
-        return event.run
-    if isinstance(event, (StepBegin, PartBegin, PartDelta, PartEnd, StepEnd)):
-        return trace_run(event.step)
+    if event.type in {
+        "run_waiting",
+        "run_starting",
+        "run_steering",
+        "run_stopping",
+        "run_begin",
+        "run_end",
+    }:
+        return cast(
+            RunWaiting | RunStarting | RunSteering | RunStopping | RunBegin | RunEnd,
+            event,
+        ).run
+    if event.type in {"step_begin", "part_begin", "part_delta", "part_end", "step_end"}:
+        return trace_run(
+            cast(StepBegin | PartBegin | PartDelta | PartEnd | StepEnd, event).step
+        )
     return None
 
 
 def _should_set_active_run(event: TraceEvent, app: AppContext) -> bool:
     if event.type in {"run_waiting", "run_starting"}:
-        return True
+        return cast(RunWaiting | RunStarting, event).parent is None
     if event.type == "run_begin":
-        return not _is_child_run_begin(event)
+        return app.get_active_run() in {None, cast(RunBegin, event).run}
     return app.get_active_run() is None
-
-
-def _is_child_run_begin(event: TraceEvent) -> bool:
-    return event.type == "run_begin" and cast(RunBegin, event).parent is not None

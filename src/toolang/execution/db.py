@@ -21,7 +21,17 @@ from toolang.base.types.message import (
     parts_from_data,
     parts_to_data,
 )
-from .events import RunEnd, RunBegin, StepBegin, StepEnd, TraceEvent
+from .events import (
+    RunBegin,
+    RunEnd,
+    RunStarting,
+    RunSteering,
+    RunStopping,
+    RunWaiting,
+    StepBegin,
+    StepEnd,
+    TraceEvent,
+)
 from .records import (
     EventDomain,
     EventRecord,
@@ -34,6 +44,7 @@ from .records import (
     RunStatus,
     StepInputItem,
     StepKind,
+    StepPath,
     StepRecord,
     StepStatus,
     ThreadPeer,
@@ -46,13 +57,13 @@ from .records import (
     output_ref_to_data,
     step_input_items_from_data,
     step_input_items_to_data,
-    trace_child_path,
     trace_index,
     trace_parent,
     trace_run,
 )
 
 _SCHEMA_VERSION = 10
+_DEFAULT_BINDING = object()
 
 
 class ExecutionStore:
@@ -78,9 +89,7 @@ class ExecutionStore:
         origin: str,
         input: Message,
         root_run_id: str | None = None,
-        parent_run_id: str | None = None,
-        parent_step_index: int | None = None,
-        executable_kind: str = "thunk",
+        executable_kind: str = "agic",
         executable_name: str | None = None,
         call_kind: str = "top",
         metadata: Mapping[str, Any] | None = None,
@@ -95,11 +104,12 @@ class ExecutionStore:
         run_context = dict(context or metadata or {})
         run_context.setdefault("origin", origin)
         run_context.setdefault("root", root_run_id or run_id)
-        run_context.setdefault("executable", {"kind": executable_kind, "name": executable_name})
+        run_context.setdefault(
+            "executable", {"kind": executable_kind, "name": executable_name}
+        )
         run_context.setdefault("call", call_kind)
         if request_id is not None:
             run_context.setdefault("request_id", request_id)
-        parent_path = parent or _parent_trace_path(parent_run_id, parent_step_index)
         with self._lock:
             self._ensure_thread_locked(
                 thread_id=thread_id,
@@ -127,7 +137,7 @@ class ExecutionStore:
                 """,
                 (
                     run_id,
-                    parent_path,
+                    parent,
                     thread_id,
                     _dump_json(input_ref_to_data(InputRef(cmd=0))),
                     None,
@@ -160,7 +170,9 @@ class ExecutionStore:
                     "start",
                     "now",
                     _dump_json(input.to_data()),
-                    _dump_json({"request_id": request_id} if request_id is not None else {}),
+                    _dump_json(
+                        {"request_id": request_id} if request_id is not None else {}
+                    ),
                     "finished",
                     None,
                     created,
@@ -175,6 +187,226 @@ class ExecutionStore:
         if row is None:
             raise RuntimeError("run insert returned no row")
         return _run_from_row(row)
+
+    def accept_run(
+        self,
+        *,
+        run_id: str,
+        command_index: int,
+        parent: str | None,
+        thread: str,
+        input: Message,
+        context: Mapping[str, Any],
+        created_at: str,
+    ) -> RunRecord:
+        """Project one accepted start command into a pending run."""
+
+        origin = str(context.get("origin") or "chat")
+        with self._lock:
+            self._ensure_thread_locked(
+                thread_id=thread,
+                origin=origin,
+                peer=None,
+                parent=None,
+                created_at=created_at,
+                updated_at=created_at,
+            )
+            self._conn.execute(
+                """
+                INSERT INTO runs(
+                    id, parent, thread, input, output, context, status, error,
+                    created_at, started_at, finished_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, ?, NULL, NULL)
+                ON CONFLICT(id) DO NOTHING
+                """,
+                (
+                    run_id,
+                    parent,
+                    thread,
+                    _dump_json(input_ref_to_data(InputRef(cmd=command_index))),
+                    None,
+                    _dump_json(dict(context)),
+                    created_at,
+                ),
+            )
+            self._conn.execute(
+                """
+                INSERT INTO commands(
+                    run, "index", kind, apply, input, context, status, error,
+                    created_at, finished_at
+                ) VALUES (?, ?, 'start', 'now', ?, ?, 'pending', NULL, ?, NULL)
+                ON CONFLICT(run, "index") DO NOTHING
+                """,
+                (
+                    run_id,
+                    command_index,
+                    _dump_json(input.to_data()),
+                    _dump_json(dict(context)),
+                    created_at,
+                ),
+            )
+            run_row = self._conn.execute(
+                "SELECT * FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            command_row = self._conn.execute(
+                'SELECT * FROM commands WHERE run = ? AND "index" = ?',
+                (run_id, command_index),
+            ).fetchone()
+            self._conn.commit()
+        if run_row is None or command_row is None:
+            raise RuntimeError(f"accepted run projection failed: {run_id}")
+        run = _run_from_row(run_row)
+        command = _command_from_row(command_row)
+        if (
+            run.parent != parent
+            or run.thread != thread
+            or run.input != InputRef(cmd=command_index)
+            or any(run.context.get(key) != value for key, value in context.items())
+            or command.kind != "start"
+            or command.input != input
+            or command.context != dict(context)
+            or command.created_at != created_at
+        ):
+            raise ValueError(f"conflicting accepted run event: {run_id}")
+        return run
+
+    def accept_command(
+        self,
+        *,
+        run_id: str,
+        index: int,
+        kind: CommandKind,
+        apply: CommandApply,
+        input: Message | None,
+        context: Mapping[str, Any],
+        created_at: str,
+    ) -> CommandRecord:
+        """Project one accepted steer or stop command."""
+
+        with self._lock:
+            if (
+                self._conn.execute(
+                    "SELECT 1 FROM runs WHERE id = ?", (run_id,)
+                ).fetchone()
+                is None
+            ):
+                raise ValueError(f"run not found: {run_id}")
+            self._conn.execute(
+                """
+                INSERT INTO commands(
+                    run, "index", kind, apply, input, context, status, error,
+                    created_at, finished_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, ?, NULL)
+                ON CONFLICT(run, "index") DO NOTHING
+                """,
+                (
+                    run_id,
+                    index,
+                    kind,
+                    apply,
+                    _dump_json(input.to_data()) if input is not None else None,
+                    _dump_json(dict(context)),
+                    created_at,
+                ),
+            )
+            row = self._conn.execute(
+                'SELECT * FROM commands WHERE run = ? AND "index" = ?',
+                (run_id, index),
+            ).fetchone()
+            self._conn.commit()
+        if row is None:
+            raise RuntimeError(f"accepted command projection failed: {run_id}:{index}")
+        command = _command_from_row(row)
+        if (
+            command.kind != kind
+            or command.apply != apply
+            or command.input != input
+            or command.context != dict(context)
+            or command.created_at != created_at
+        ):
+            raise ValueError(f"conflicting accepted command event: {run_id}:{index}")
+        return command
+
+    def begin_run(
+        self,
+        *,
+        run_id: str,
+        started_at: str,
+        context: Mapping[str, Any] | None = None,
+    ) -> RunRecord:
+        """Project run execution beginning."""
+
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT context FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if existing is None:
+                raise ValueError(f"run not found: {run_id}")
+            stored = _load_json(str(existing["context"]))
+            merged = {
+                **(dict(stored) if isinstance(stored, Mapping) else {}),
+                **dict(context or {}),
+            }
+            self._conn.execute(
+                """
+                UPDATE runs
+                SET status = 'running',
+                    context = ?,
+                    started_at = COALESCE(started_at, ?)
+                WHERE id = ? AND status IN ('pending', 'running')
+                """,
+                (_dump_json(merged), started_at, run_id),
+            )
+            row = self._conn.execute(
+                "SELECT * FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            self._conn.commit()
+        if row is None:
+            raise ValueError(f"run not found: {run_id}")
+        run = _run_from_row(row)
+        if run.started_at != started_at or any(
+            run.context.get(key) != value for key, value in (context or {}).items()
+        ):
+            raise ValueError(f"conflicting run_begin event: {run_id}")
+        return run
+
+    def finish_commands(
+        self,
+        *,
+        run_id: str,
+        indexes: Sequence[int],
+        finished_at: str,
+    ) -> None:
+        """Mark pending commands consumed by one execution event as finished."""
+
+        command_indexes = tuple(dict.fromkeys(int(index) for index in indexes))
+        if not command_indexes:
+            return
+        placeholders = ", ".join("?" for _ in command_indexes)
+        with self._lock:
+            self._conn.execute(
+                f"""
+                UPDATE commands
+                SET status = 'finished', finished_at = ?
+                WHERE run = ? AND "index" IN ({placeholders}) AND status = 'pending'
+                """,
+                (finished_at, run_id, *command_indexes),
+            )
+            self._conn.commit()
+
+    def cancel_pending_commands(self, *, run_id: str, finished_at: str) -> None:
+        """Cancel commands that were accepted but never consumed."""
+
+        with self._lock:
+            self._conn.execute(
+                """
+                UPDATE commands
+                SET status = 'canceled', finished_at = ?
+                WHERE run = ? AND status = 'pending'
+                """,
+                (finished_at, run_id),
+            )
+            self._conn.commit()
 
     def ensure_thread(
         self,
@@ -256,22 +488,21 @@ class ExecutionStore:
         error: str | None = None,
         finished_at: str | None = None,
         output: OutputRef | None = None,
-        detail: Mapping[str, Any] | None = None,
     ) -> RunRecord:
         now = finished_at or utc_now()
-        context_patch = {"detail": dict(detail)} if detail else {}
         with self._lock:
             self._conn.execute(
                 """
                 UPDATE runs
-                SET status = ?, error = ?, output = ?, context = json_patch(context, ?), finished_at = ?
-                WHERE id = ?
+                SET status = ?, error = ?, output = ?, finished_at = ?
+                WHERE id = ? AND status IN ('pending', 'running')
                 """,
                 (
                     status,
                     error,
-                    _dump_json(output_ref_to_data(output)) if output is not None else None,
-                    _dump_json(context_patch),
+                    _dump_json(output_ref_to_data(output))
+                    if output is not None
+                    else None,
                     now,
                     run_id,
                 ),
@@ -283,7 +514,15 @@ class ExecutionStore:
             self._conn.commit()
         if row is None:
             raise RuntimeError(f"run not found: {run_id}")
-        return _run_from_row(row)
+        run = _run_from_row(row)
+        if (
+            run.status != status
+            or run.error != error
+            or run.output != output
+            or run.finished_at != now
+        ):
+            raise ValueError(f"conflicting run_end event: {run_id}")
+        return run
 
     def fail_run(
         self,
@@ -389,7 +628,7 @@ class ExecutionStore:
             clauses.append("json_extract(context, '$.superseded') IS NULL")
         query = f"""
             SELECT * FROM runs
-            WHERE {' AND '.join(clauses)}
+            WHERE {" AND ".join(clauses)}
             ORDER BY created_at ASC, rowid ASC
         """
         if limit is not None:
@@ -420,7 +659,12 @@ class ExecutionStore:
                   )
                 ORDER BY created_at ASC, rowid ASC
                 """,
-                (anchor["thread"], anchor["created_at"], anchor["created_at"], anchor["rowid"]),
+                (
+                    anchor["thread"],
+                    anchor["created_at"],
+                    anchor["created_at"],
+                    anchor["rowid"],
+                ),
             ).fetchall()
         return tuple(_run_from_row(row) for row in rows)
 
@@ -447,12 +691,14 @@ class ExecutionStore:
                     return target_id
                 prefix = f"{source_id}/"
                 if value.startswith(prefix):
-                    return f"{target_id}/{value[len(prefix):]}"
+                    return f"{target_id}/{value[len(prefix) :]}"
             return value
 
         with self._lock:
             copied: list[sqlite3.Row] = []
-            for source_run_id, target_run_id in zip(source_run_ids, target_run_ids, strict=True):
+            for source_run_id, target_run_id in zip(
+                source_run_ids, target_run_ids, strict=True
+            ):
                 source_run = self._conn.execute(
                     "SELECT * FROM runs WHERE id = ?",
                     (source_run_id,),
@@ -605,7 +851,10 @@ class ExecutionStore:
             ).fetchall()
             self._conn.executemany(
                 "UPDATE runs SET context = json_patch(context, ?) WHERE id = ?",
-                [(_dump_json({"superseded": dict(superseded)}), str(row["id"])) for row in rows],
+                [
+                    (_dump_json({"superseded": dict(superseded)}), str(row["id"]))
+                    for row in rows
+                ],
             )
             updated = self._conn.execute(
                 """
@@ -685,6 +934,113 @@ class ExecutionStore:
             raise RuntimeError("step insert returned no row")
         return _step_from_row(row)
 
+    def begin_step(
+        self,
+        *,
+        parent: str,
+        index: int,
+        kind: StepKind,
+        input: Sequence[StepInputItem],
+        context: Mapping[str, Any],
+        started_at: str,
+    ) -> StepRecord:
+        """Project one step_begin event."""
+
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO steps(
+                    parent, "index", kind, input, output, context, detail,
+                    status, error, created_at, started_at, finished_at
+                ) VALUES (?, ?, ?, ?, '[]', ?, '{}', 'running', NULL, ?, ?, NULL)
+                ON CONFLICT(parent, "index") DO NOTHING
+                """,
+                (
+                    parent,
+                    index,
+                    kind,
+                    _dump_json(step_input_items_to_data(tuple(input))),
+                    _dump_json(dict(context)),
+                    started_at,
+                    started_at,
+                ),
+            )
+            row = self._conn.execute(
+                'SELECT * FROM steps WHERE parent = ? AND "index" = ?',
+                (parent, index),
+            ).fetchone()
+            self._conn.commit()
+        if row is None:
+            raise RuntimeError(f"step begin projection failed: {parent}/{index}")
+        step = _step_from_row(row)
+        if (
+            step.kind != kind
+            or step.input != tuple(input)
+            or step.context != dict(context)
+            or step.started_at != started_at
+        ):
+            raise ValueError(f"conflicting step_begin event: {parent}/{index}")
+        return step
+
+    def finish_step(
+        self,
+        *,
+        parent: str,
+        index: int,
+        kind: StepKind,
+        status: StepStatus,
+        output: Sequence[Part],
+        detail: Mapping[str, Any],
+        error: str | None,
+        finished_at: str,
+    ) -> StepRecord:
+        """Project one step_end event."""
+
+        with self._lock:
+            existing = self._conn.execute(
+                'SELECT * FROM steps WHERE parent = ? AND "index" = ?',
+                (parent, index),
+            ).fetchone()
+            if existing is None:
+                raise ValueError(f"step not found: {parent}/{index}")
+            existing_step = _step_from_row(existing)
+            if existing_step.kind != kind:
+                raise ValueError(f"step kind changed: {parent}/{index}")
+            if existing_step.status == "running":
+                self._conn.execute(
+                    """
+                    UPDATE steps
+                    SET output = ?, detail = ?, status = ?, error = ?, finished_at = ?
+                    WHERE parent = ? AND "index" = ?
+                    """,
+                    (
+                        _dump_json(parts_to_data(output)),
+                        _dump_json(dict(detail)),
+                        status,
+                        error,
+                        finished_at,
+                        parent,
+                        index,
+                    ),
+                )
+            row = self._conn.execute(
+                'SELECT * FROM steps WHERE parent = ? AND "index" = ?',
+                (parent, index),
+            ).fetchone()
+            self._conn.commit()
+        if row is None:
+            raise RuntimeError(f"step end projection failed: {parent}/{index}")
+        step = _step_from_row(row)
+        if (
+            step.status != status
+            or step.output != tuple(output)
+            or step.detail != dict(detail)
+            or step.error != error
+            or step.finished_at != finished_at
+        ):
+            raise ValueError(f"conflicting step_end event: {parent}/{index}")
+        return step
+
     def list_steps(self, *, run_id: str) -> list[StepRecord]:
         with self._lock:
             rows = self._conn.execute(
@@ -693,7 +1049,9 @@ class ExecutionStore:
             ).fetchall()
         return [_step_from_row(row) for row in rows]
 
-    def list_steps_for_runs(self, *, run_ids: Sequence[str]) -> dict[str, list[StepRecord]]:
+    def list_steps_for_runs(
+        self, *, run_ids: Sequence[str]
+    ) -> dict[str, list[StepRecord]]:
         run_id_list = [item for item in run_ids if item]
         if not run_id_list:
             return {}
@@ -701,10 +1059,12 @@ class ExecutionStore:
             rows = self._conn.execute(
                 f"""
                 SELECT * FROM steps
-                WHERE {' OR '.join('(parent = ? OR parent LIKE ?)' for _ in run_id_list)}
+                WHERE {" OR ".join("(parent = ? OR parent LIKE ?)" for _ in run_id_list)}
                 ORDER BY parent ASC, "index" ASC
                 """,
-                tuple(item for run_id in run_id_list for item in (run_id, f"{run_id}/%")),
+                tuple(
+                    item for run_id in run_id_list for item in (run_id, f"{run_id}/%")
+                ),
             ).fetchall()
         grouped: dict[str, list[StepRecord]] = {run_id: [] for run_id in run_id_list}
         for row in rows:
@@ -740,14 +1100,30 @@ class ExecutionStore:
             return None
         return str(row["body"])
 
-    def recent_conversation_messages(self, *, thread_id: str, limit: int = 20) -> list[Message]:
-        runs = self._conversation_runs(thread_id=thread_id, limit=max(limit, 20))
-        steps_by_run = self.list_steps_for_runs(run_ids=tuple(run.run_id for run in runs))
+    def recent_conversation_messages(
+        self,
+        *,
+        thread_id: str,
+        limit: int = 20,
+        exclude_run_id: str | None = None,
+    ) -> list[Message]:
+        runs = self._conversation_runs(
+            thread_id=thread_id,
+            limit=max(limit + (1 if exclude_run_id else 0), 20),
+        )
+        if exclude_run_id is not None:
+            runs = [run for run in runs if run.run_id != exclude_run_id]
+            runs = runs[-limit:]
+        steps_by_run = self.list_steps_for_runs(
+            run_ids=tuple(run.run_id for run in runs)
+        )
         results: list[Message] = []
         for run in runs:
             inputs = self.list_commands(run_id=run.run_id)
             if inputs:
-                results.extend(item.message for item in inputs if item.message is not None)
+                results.extend(
+                    item.input for item in inputs if item.input is not None
+                )
             for step in steps_by_run.get(run.run_id, ()):
                 results.extend(_replay_messages_from_step(step))
         return _recent_valid_model_history(results, limit=limit)
@@ -761,11 +1137,15 @@ class ExecutionStore:
         """Return recent actor messages without raw tool-call or tool-result parts."""
 
         runs = self._conversation_runs(thread_id=thread_id, limit=max(limit * 4, 100))
-        steps_by_run = self.list_steps_for_runs(run_ids=tuple(run.run_id for run in runs))
+        steps_by_run = self.list_steps_for_runs(
+            run_ids=tuple(run.run_id for run in runs)
+        )
         results: list[Message] = []
         for run in runs:
             inputs = self.list_commands(run_id=run.run_id)
-            input_messages = [item.message for item in inputs if item.message is not None]
+            input_messages = [
+                item.input for item in inputs if item.input is not None
+            ]
             for input_message in input_messages:
                 actor_message = _actor_text_message(input_message)
                 if actor_message is not None:
@@ -778,7 +1158,9 @@ class ExecutionStore:
         return results[-limit:]
 
     def _conversation_runs(self, *, thread_id: str, limit: int) -> list[RunRecord]:
-        current = list(self.list_thread_runs_chronological(thread_id=thread_id, limit=None))
+        current = list(
+            self.list_thread_runs_chronological(thread_id=thread_id, limit=None)
+        )
         return current[-limit:]
 
     def append_update(
@@ -890,7 +1272,7 @@ class ExecutionStore:
             rows = self._conn.execute(
                 f"""
                 SELECT * FROM events
-                WHERE {' AND '.join(clauses)}
+                WHERE {" AND ".join(clauses)}
                 ORDER BY seq ASC
                 LIMIT ?
                 """,
@@ -964,7 +1346,9 @@ class ExecutionStore:
                     index,
                     kind,
                     command_apply,
-                    _dump_json(command_input.to_data()) if command_input is not None else None,
+                    _dump_json(command_input.to_data())
+                    if command_input is not None
+                    else None,
                     _dump_json(command_context),
                     status,
                     error,
@@ -980,6 +1364,20 @@ class ExecutionStore:
         if row is None:
             raise RuntimeError("command insert returned no row")
         return _command_from_row(row)
+
+    def next_command_index(self, *, run_id: str) -> int:
+        """Return the next command index for one run."""
+
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT COALESCE(MAX("index"), -1) + 1 AS next_index
+                FROM commands
+                WHERE run = ?
+                """,
+                (run_id,),
+            ).fetchone()
+        return int(row["next_index"]) if row is not None else 0
 
     def get_command(self, *, run_id: str, index: int) -> CommandRecord | None:
         with self._lock:
@@ -1018,26 +1416,18 @@ class ExecutionStore:
         run_id: str,
         kind: CommandKind,
     ) -> tuple[CommandRecord, ...]:
-        """Return run commands not yet referenced by any step input."""
+        """Return accepted commands not yet consumed by an execution event."""
 
         with self._lock:
-            command_rows = self._conn.execute(
+            rows = self._conn.execute(
                 """
                 SELECT * FROM commands
-                WHERE run = ? AND kind = ?
+                WHERE run = ? AND kind = ? AND status = 'pending'
                 ORDER BY "index" ASC
                 """,
                 (run_id, kind),
             ).fetchall()
-            step_rows = self._conn.execute(
-                """
-                SELECT input FROM steps
-                WHERE parent = ? OR parent LIKE ?
-                """,
-                (run_id, f"{run_id}/%"),
-            ).fetchall()
-        used = _used_command_indexes(step_rows)
-        return tuple(_command_from_row(row) for row in command_rows if int(row["index"]) not in used)
+        return tuple(_command_from_row(row) for row in rows)
 
     def _init_schema(self) -> None:
         with self._lock:
@@ -1159,7 +1549,7 @@ class ExecutionStore:
                 "CREATE INDEX IF NOT EXISTS idx_threads_updated ON threads(updated_at)"
             )
             self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_steps_parent_index ON steps(parent, \"index\")"
+                'CREATE INDEX IF NOT EXISTS idx_steps_parent_index ON steps(parent, "index")'
             )
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_updates_created ON updates(created_at)"
@@ -1200,7 +1590,9 @@ class ExecutionStore:
                     (thread_id,),
                 ).fetchone()
                 if updated is None:
-                    raise RuntimeError(f"thread not found after parent update: {thread_id}")
+                    raise RuntimeError(
+                        f"thread not found after parent update: {thread_id}"
+                    )
                 return _thread_from_row(updated)
             return record
         effective_peer = peer or ThreadPeer()
@@ -1256,8 +1648,14 @@ def _run_from_row(row: sqlite3.Row) -> RunRecord:
         id=str(row["id"]),
         parent=str(row["parent"]) if row["parent"] is not None else None,
         thread=str(row["thread"]),
-        input=input_ref_from_data(cast(Mapping[str, Any], _load_json(str(row["input"])))),
-        output=output_ref_from_data(cast(Mapping[str, Any], output_raw) if isinstance(output_raw, Mapping) else None),
+        input=input_ref_from_data(
+            cast(Mapping[str, Any], _load_json(str(row["input"])))
+        ),
+        output=output_ref_from_data(
+            cast(Mapping[str, Any], output_raw)
+            if isinstance(output_raw, Mapping)
+            else None
+        ),
         context=dict(context_raw) if isinstance(context_raw, Mapping) else {},
         status=cast(RunStatus, row["status"]),
         error=str(row["error"]) if row["error"] is not None else None,
@@ -1265,14 +1663,6 @@ def _run_from_row(row: sqlite3.Row) -> RunRecord:
         started_at=str(row["started_at"] or ""),
         finished_at=str(row["finished_at"]) if row["finished_at"] is not None else None,
     )
-
-
-def _parent_trace_path(parent_run_id: str | None, parent_step_index: int | None) -> str | None:
-    if not parent_run_id:
-        return None
-    if parent_step_index is None:
-        return parent_run_id
-    return trace_child_path(parent_run_id, parent_step_index)
 
 
 def _thread_from_row(row: sqlite3.Row) -> ThreadRecord:
@@ -1296,12 +1686,14 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
     detail_raw = _load_json(str(raw["detail"]))
     input_items = (
         input_raw
-        if isinstance(input_raw, Sequence) and not isinstance(input_raw, (str, bytes, bytearray))
+        if isinstance(input_raw, Sequence)
+        and not isinstance(input_raw, (str, bytes, bytearray))
         else []
     )
     output_items = (
         output_raw
-        if isinstance(output_raw, Sequence) and not isinstance(output_raw, (str, bytes, bytearray))
+        if isinstance(output_raw, Sequence)
+        and not isinstance(output_raw, (str, bytes, bytearray))
         else []
     )
     return StepRecord(
@@ -1364,20 +1756,6 @@ def _command_from_row(row: sqlite3.Row) -> CommandRecord:
     )
 
 
-def _used_command_indexes(rows: Sequence[sqlite3.Row]) -> set[int]:
-    used: set[int] = set()
-    for row in rows:
-        raw = _load_json(str(row["input"]))
-        if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes, bytearray)):
-            continue
-        for item in raw:
-            if not isinstance(item, Mapping):
-                continue
-            if "cmd" in item:
-                used.add(int(item.get("cmd", 0)))
-    return used
-
-
 def _replay_messages_from_step(step: StepRecord) -> list[Message]:
     role = _role_for_step(step.kind)
     if role is None or not step.output:
@@ -1412,7 +1790,9 @@ def _actor_text_message(message: Message) -> Message | None:
     return Message(role=message.role, parts=parts, meta=dict(message.meta))
 
 
-def _recent_valid_model_history(messages: Sequence[Message], *, limit: int) -> list[Message]:
+def _recent_valid_model_history(
+    messages: Sequence[Message], *, limit: int
+) -> list[Message]:
     if limit <= 0:
         return []
     groups = _valid_model_history_groups(messages)
@@ -1430,7 +1810,9 @@ def _recent_valid_model_history(messages: Sequence[Message], *, limit: int) -> l
     return [message for group in selected for message in group]
 
 
-def _valid_model_history_groups(messages: Sequence[Message]) -> list[tuple[Message, ...]]:
+def _valid_model_history_groups(
+    messages: Sequence[Message],
+) -> list[tuple[Message, ...]]:
     groups: list[tuple[Message, ...]] = []
     index = 0
     while index < len(messages):
@@ -1464,11 +1846,19 @@ def _valid_model_history_groups(messages: Sequence[Message]) -> list[tuple[Messa
 
 
 def _message_tool_call_ids(message: Message) -> tuple[str, ...]:
-    return tuple(part.tool_call_id for part in message.parts if isinstance(part, ToolCallPart) and part.tool_call_id)
+    return tuple(
+        part.tool_call_id
+        for part in message.parts
+        if isinstance(part, ToolCallPart) and part.tool_call_id
+    )
 
 
 def _message_tool_result_ids(message: Message) -> set[str]:
-    return {part.tool_call_id for part in message.parts if isinstance(part, ToolResultPart) and part.tool_call_id}
+    return {
+        part.tool_call_id
+        for part in message.parts
+        if isinstance(part, ToolResultPart) and part.tool_call_id
+    }
 
 
 class PersistSink:
@@ -1476,81 +1866,197 @@ class PersistSink:
 
     def __init__(self, store: ExecutionStore) -> None:
         self._store = store
-        self._pending_steps: dict[str, tuple[tuple[StepInputItem, ...], str, dict[str, Any]]] = {}
+        self._lock = threading.Lock()
         self._last_step_index: dict[str, int] = {}
+        self._failed_runs: set[str] = set()
+        self._locals: dict[StepPath, dict[str, InputRef | OutputRef]] = {}
+        self._bindings: dict[StepPath, str | None] = {}
 
     def on_event(self, event: TraceEvent) -> None:
-        if isinstance(event, RunBegin):
-            self._store.start_run(
-                run_id=event.run,
-                thread_id=event.thread,
-                origin=str(event.context.get("origin", "chat")),
-                input=event.input,
-                parent=event.parent,
-                context=event.context,
-                created_at=event.created_at,
-                started_at=event.started_at,
+        """Project one trace event atomically."""
+
+        with self._lock:
+            self._on_event(event)
+
+    def _on_event(self, event: TraceEvent) -> None:
+        if event.type in {"run_waiting", "run_starting"}:
+            accepted = cast(RunWaiting | RunStarting, event)
+            self._store.accept_run(
+                run_id=accepted.run,
+                command_index=accepted.cmd,
+                parent=accepted.parent,
+                thread=accepted.thread,
+                input=accepted.input,
+                context=accepted.context,
+                created_at=accepted.created_at,
             )
             return
-        if isinstance(event, StepBegin):
-            self._pending_steps[event.step] = (
-                cast(tuple[StepInputItem, ...], tuple(event.input)),
-                event.started_at,
-                dict(event.context),
+        if event.type == "run_steering":
+            steering = cast(RunSteering, event)
+            self._store.accept_command(
+                run_id=steering.run,
+                index=steering.cmd,
+                kind="steer",
+                apply=steering.apply,
+                input=steering.input,
+                context=steering.context,
+                created_at=steering.created_at,
             )
             return
-        if isinstance(event, StepEnd):
-            step_input, started_at, context = self._pending_steps.pop(
-                event.step,
-                ((), event.started_at, {}),
+        if event.type == "run_stopping":
+            stopping = cast(RunStopping, event)
+            self._store.accept_command(
+                run_id=stopping.run,
+                index=stopping.cmd,
+                kind="stop",
+                apply=stopping.apply,
+                input=stopping.input,
+                context=stopping.context,
+                created_at=stopping.created_at,
             )
-            parent = trace_parent(event.step)
-            index = trace_index(event.step)
+            return
+        if event.type == "run_begin":
+            run_begin = cast(RunBegin, event)
+            self._store.finish_commands(
+                run_id=run_begin.run,
+                indexes=(run_begin.input.cmd,),
+                finished_at=run_begin.started_at,
+            )
+            self._store.begin_run(
+                run_id=run_begin.run,
+                context=run_begin.context,
+                started_at=run_begin.started_at,
+            )
+            self._locals[run_begin.run] = {"_": run_begin.input}
+            return
+        if event.type == "step_begin":
+            step_begin = cast(StepBegin, event)
+            run_id = trace_run(step_begin.step)
+            self._store.finish_commands(
+                run_id=run_id,
+                indexes=tuple(
+                    item.cmd for item in step_begin.input if isinstance(item, InputRef)
+                ),
+                finished_at=step_begin.started_at,
+            )
+            parent = trace_parent(step_begin.step)
+            index = trace_index(step_begin.step)
             if parent is None or index is None:
-                raise ValueError(f"step_end requires a step path: {event.step}")
-            self._store.append_step(
+                raise ValueError(f"step_begin requires a step path: {step_begin.step}")
+            locals = self._locals.setdefault(parent, {})
+            explicit = tuple(step_begin.input)
+            steer_inputs = [
+                item for item in explicit if isinstance(item, InputRef) and item.cmd > 0
+            ]
+            if steer_inputs:
+                locals["_"] = steer_inputs[-1]
+            reads = step_begin.context.get("reads")
+            inferred = (
+                tuple(locals[name] for name in reads if isinstance(name, str) and name in locals)
+                if isinstance(reads, Sequence) and not isinstance(reads, (str, bytes))
+                else ()
+            )
+            inputs = _unique_step_inputs((*explicit, *inferred))
+            self._store.begin_step(
                 parent=parent,
                 index=index,
-                kind=event.kind,
-                status=event.status,
-                input=step_input,
-                output=event.output,
-                context=context,
-                detail=event.detail,
-                error=event.error,
-                started_at=started_at,
-                finished_at=event.finished_at,
+                kind=step_begin.kind,
+                input=inputs,
+                context=step_begin.context,
+                started_at=step_begin.started_at,
             )
-            run_id = trace_run(event.step)
-            self._last_step_index[run_id] = max(
-                self._last_step_index.get(run_id, 0),
-                index,
+            self._locals[step_begin.step] = dict(locals)
+            raw_binding = step_begin.context.get("binding", _DEFAULT_BINDING)
+            self._bindings[step_begin.step] = (
+                "_"
+                if raw_binding is _DEFAULT_BINDING and step_begin.kind == "model"
+                else raw_binding
+                if isinstance(raw_binding, str)
+                else None
             )
+            if parent == run_id:
+                self._last_step_index[run_id] = max(
+                    self._last_step_index.get(run_id, -1), index
+                )
             return
-        if isinstance(event, RunEnd):
-            if event.error is not None:
-                self._append_runtime_failure_step(event)
-            self._store.finish_run(
-                run_id=event.run,
-                status=event.status,
-                error=event.error,
-                output=output_ref_from_data(cast(Mapping[str, Any], event.output)) if isinstance(event.output, Mapping) else None,
-                detail=event.detail,
-                finished_at=event.finished_at,
+        if event.type == "step_end":
+            step_end = cast(StepEnd, event)
+            if step_end.status == "failed":
+                self._failed_runs.add(trace_run(step_end.step))
+            parent = trace_parent(step_end.step)
+            index = trace_index(step_end.step)
+            if parent is None or index is None:
+                raise ValueError(f"step_end requires a step path: {step_end.step}")
+            self._store.finish_step(
+                parent=parent,
+                index=index,
+                kind=step_end.kind,
+                status=step_end.status,
+                output=step_end.output,
+                detail=step_end.detail,
+                error=step_end.error,
+                finished_at=step_end.finished_at,
             )
+            binding = self._bindings.pop(step_end.step, None)
+            if step_end.status == "finished" and binding is not None:
+                self._locals.setdefault(parent, {})[binding] = OutputRef(
+                    step=step_end.step
+                )
+            self._locals.pop(step_end.step, None)
+            return
+        if event.type == "run_end":
+            run_end = cast(RunEnd, event)
+            if run_end.input is not None:
+                self._store.finish_commands(
+                    run_id=run_end.run,
+                    indexes=(run_end.input.cmd,),
+                    finished_at=run_end.finished_at,
+                )
+            if run_end.status == "failed" and run_end.run not in self._failed_runs:
+                self._append_runtime_failure_step(run_end)
+            projected_output = self._locals.get(run_end.run, {}).get("_")
+            self._store.finish_run(
+                run_id=run_end.run,
+                status=run_end.status,
+                error=run_end.error,
+                output=(
+                    projected_output
+                    if isinstance(projected_output, OutputRef)
+                    else run_end.output
+                ),
+                finished_at=run_end.finished_at,
+            )
+            self._store.cancel_pending_commands(
+                run_id=run_end.run, finished_at=run_end.finished_at
+            )
+            self._locals.pop(run_end.run, None)
 
     def _append_runtime_failure_step(self, event: RunEnd) -> None:
-        step_index = self._last_step_index.get(event.run, 0) + 1
-        self._store.append_step(
+        step_index = self._last_step_index.get(event.run, -1) + 1
+        self._store.begin_step(
+            parent=event.run,
+            index=step_index,
+            kind="system",
+            input=(),
+            context={},
+            started_at=event.finished_at,
+        )
+        self._store.finish_step(
             parent=event.run,
             index=step_index,
             kind="system",
             status="failed",
-            input=(),
             output=(TextPart(text=event.error or "Run failed."),),
             detail={},
             error=event.error,
-            started_at=event.finished_at,
             finished_at=event.finished_at,
         )
         self._last_step_index[event.run] = step_index
+
+
+def _unique_step_inputs(items: Sequence[StepInputItem]) -> tuple[StepInputItem, ...]:
+    result: list[StepInputItem] = []
+    for item in items:
+        if item not in result:
+            result.append(item)
+    return tuple(result)

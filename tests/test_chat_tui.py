@@ -26,6 +26,7 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
+from toolang.execution.records import InputRef
 
 
 def test_chat_trace_events_keep_run_stop_block_until_run_end() -> None:
@@ -150,7 +151,7 @@ def test_chat_flow_step_blocks_render_flow_operation_summary() -> None:
         "FlowStepBlock",
         "RunStopBlock",
     ]
-    assert "- running stage 1 do summarize prepare" in _render_text(
+    assert "... running map summarize" in _render_text(
         app.live_blocks[0].render()
     )
 
@@ -158,7 +159,7 @@ def test_chat_flow_step_blocks_render_flow_operation_summary() -> None:
 
     assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
     assert [block.type for block in app.finalized] == ["FlowStepBlock"]
-    assert "- ran stage 1 do summarize prepare count=1" in _render_text(
+    assert "... ran map summarize" in _render_text(
         app.finalized[0].render()
     )
 
@@ -193,36 +194,35 @@ def test_chat_flow_child_run_events_do_not_finish_parent_run() -> None:
     assert app.finished
 
 
-def test_chat_flow_parallel_child_blocks_finalize_by_step_index() -> None:
+def test_chat_nested_step_blocks_are_keyed_by_full_path() -> None:
     app = FakeApp()
 
     events.handle_trace_event(_run_begin(executable_kind="flow"), app)
-    events.handle_trace_event(_parallel_child_step_begin(step_index=2, item_index=0), app)
-    events.handle_trace_event(_parallel_child_step_begin(step_index=3, item_index=1), app)
+    events.handle_trace_event(_flow_step_begin(step_index=0), app)
+    events.handle_trace_event(_child_run_step_begin(step="run_1/0/0"), app)
 
     assert [block.type for block in app.live_blocks] == [
-        "ChildRunStepBlock",
+        "FlowStepBlock",
         "ChildRunStepBlock",
         "RunStopBlock",
     ]
-    assert "item 1/2" in _render_text(app.live_blocks[0].render())
-    assert "item 2/2" in _render_text(app.live_blocks[1].render())
 
-    events.handle_trace_event(_parallel_child_step_end(step_index=2, item_index=0), app)
+    events.handle_trace_event(_child_run_step_end(step="run_1/0/0"), app)
 
     assert [block.type for block in app.live_blocks] == [
-        "ChildRunStepBlock",
+        "FlowStepBlock",
         "RunStopBlock",
     ]
-    assert "item 2/2" in _render_text(app.live_blocks[0].render())
     assert [block.type for block in app.finalized] == ["ChildRunStepBlock"]
-    assert "item 1/2" in _render_text(app.finalized[0].render())
 
 
 def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
     start = blocks.RunStartBlock.create(
         RunStarting(
             run="run_1",
+            cmd=0,
+            parent=None,
+            thread="thread_1",
             input=Message.user("hello"),
         )
     )
@@ -232,8 +232,9 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
     steer = blocks.RunSteerBlock.create(
         RunSteering(
             run="run_1",
+            cmd=1,
             input=Message.user("adjust"),
-            context={"cmd": 1},
+            apply="next_step",
         )
     )
     assert "+ adjust" in _render_text(steer.render())
@@ -553,18 +554,14 @@ def _run_begin(
     parent_run_id: str | None = None,
     executable_kind: str = "thunk",
 ) -> RunBegin:
+    del parent_run_id, executable_kind
     return RunBegin(
         run=run_id,
-        parent=f"{parent_run_id}/1" if parent_run_id is not None else None,
-        thread="thread_1",
-        input=Message.user("hello"),
-        created_at="2026-01-01T00:00:00Z",
+        input=InputRef(cmd=0),
         started_at="2026-01-01T00:00:00Z",
         context={
             "origin": "chat",
             "root": "run_1",
-            "executable": {"kind": executable_kind, "name": None},
-            "call": "stage" if parent_run_id is not None else "top",
         },
     )
 
@@ -572,31 +569,37 @@ def _run_begin(
 def _run_waiting() -> RunWaiting:
     return RunWaiting(
         run="run_1",
+        cmd=0,
+        parent=None,
+        thread="thread_1",
         input=Message.user("hello"),
-        context={"thread": "thread_1"},
     )
 
 
 def _run_starting() -> RunStarting:
     return RunStarting(
         run="run_1",
+        cmd=0,
+        parent=None,
+        thread="thread_1",
         input=Message.user("hello"),
-        context={"thread": "thread_1"},
     )
 
 
 def _run_steering() -> RunSteering:
     return RunSteering(
         run="run_1",
+        cmd=1,
         input=Message.user("adjust"),
-        context={"thread": "thread_1", "cmd": 1},
+        apply="next_step",
     )
 
 
 def _run_stopping() -> RunStopping:
     return RunStopping(
         run="run_1",
-        context={"thread": "thread_1", "cmd": 1},
+        cmd=1,
+        apply="now",
     )
 
 
@@ -651,14 +654,13 @@ def _model_step_end(
 def _flow_step_begin(*, step_index: int = 1) -> StepBegin:
     return StepBegin(
         step=f"run_1/{step_index}",
-        kind="seq",
+        kind="par",
         input=(),
         started_at="2026-01-01T00:00:01Z",
         context={
-            "op": "prepare_do",
-            "stage_index": 0,
-            "stage_kind": "do",
-            "stage_label": "do summarize",
+            "statement": "map",
+            "runnable": "summarize",
+            "par": 2,
         },
     )
 
@@ -666,57 +668,47 @@ def _flow_step_begin(*, step_index: int = 1) -> StepBegin:
 def _flow_step_end(*, step_index: int = 1) -> StepEnd:
     return StepEnd(
         step=f"run_1/{step_index}",
-        kind="seq",
+        kind="par",
         status="finished",
         output=(),
         detail={
-            "op": "prepare_do",
-            "preview": {"count": 1},
-            "source": {
-                "op": "prepare_do",
-                "stage_index": 0,
-                "stage_kind": "do",
-                "stage_label": "do summarize",
-            },
+            "statement": "map",
+            "runnable": "summarize",
+            "par": 2,
+            "shape": "list",
         },
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
 
 
-def _child_run_step_begin(*, step_index: int = 2) -> StepBegin:
+def _child_run_step_begin(
+    *, step_index: int = 2, step: str | None = None
+) -> StepBegin:
     return StepBegin(
-        step=f"run_1/{step_index}",
+        step=step or f"run_1/{step_index}",
         kind="run",
         input=(),
         started_at="2026-01-01T00:00:01Z",
         context={
-            "call": "stage",
-            "target_kind": "thunk",
-            "target": "summarize",
-            "child_run_ids": ("run_child",),
-            "stage_index": 0,
-            "stage_kind": "do",
-            "stage_label": "do summarize",
+            "statement": "run",
+            "runnable": "summarize",
         },
     )
 
 
-def _child_run_step_end(*, step_index: int = 2) -> StepEnd:
+def _child_run_step_end(
+    *, step_index: int = 2, step: str | None = None
+) -> StepEnd:
     return StepEnd(
-        step=f"run_1/{step_index}",
+        step=step or f"run_1/{step_index}",
         kind="run",
         status="finished",
         output=(TextPart(text="done"),),
         detail={
-            "call": "stage",
-            "target": {"kind": "thunk", "name": "summarize"},
-            "child_runs": ["run_child"],
-            "source": {
-                "stage_index": 0,
-                "stage_kind": "do",
-                "stage_label": "do summarize",
-            },
+            "statement": "run",
+            "runnable": "summarize",
+            "shape": "item",
         },
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",

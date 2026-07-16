@@ -300,19 +300,15 @@ def create_router() -> APIRouter:
         run = _run_or_404(context, run_id)
         if run.status != "running":
             raise HTTPException(status_code=409, detail=f"run is not running: {run_id}")
-        command_record = context.store.append_command(
+        command_record, run = await context.runner.stop_run(
             run_id=run.run_id,
-            kind="stop",
             apply=_input_apply(payload.mode if payload else "immediate"),
             request_id=payload.request_id if payload else None,
+            reason=payload.reason if payload else None,
         )
         input_payload = _input_event_payload(run, command_record)
         if payload is not None and payload.reason is not None:
             input_payload["reason"] = payload.reason
-        context.runner.notify_run_control(run_id=run.run_id, payload=input_payload)
-        run = context.runner.cancel_run(
-            run_id=run_id, error=payload.reason if payload else None
-        )
         return {
             "run": _run_item(
                 run,
@@ -333,7 +329,9 @@ def create_router() -> APIRouter:
             _input_message(payload.message) if payload.message is not None else None
         )
         new_run_id = allocate_run_id(context) if message is not None else None
-        _cancel_running_replaced_runs(context, anchor=run, reason="Run was rewound.")
+        await _cancel_running_replaced_runs(
+            context, anchor=run, reason="Run was rewound."
+        )
         superseded = context.store.supersede_thread_from_run(
             run_id=run.run_id,
             superseded={"type": "rewound", "by": new_run_id, "from_run_id": run.run_id},
@@ -465,15 +463,13 @@ def create_router() -> APIRouter:
         if run.status != "running":
             raise HTTPException(status_code=409, detail=f"run is not running: {run_id}")
         message = _input_message(payload.message)
-        command_record = context.store.append_command(
+        command_record = context.runner.steer_run(
             run_id=run.run_id,
-            kind="steer",
             apply=_input_apply(payload.mode),
             request_id=payload.request_id,
-            input=message,
+            message=message,
         )
         event_payload = _input_event_payload(run, command_record)
-        context.runner.notify_run_control(run_id=run.run_id, payload=event_payload)
         return {"input": event_payload}
 
     @router.get(
@@ -1539,8 +1535,9 @@ def _virtual_runtime_failure_step(
 
 def _step_record_data(step: StepRecord) -> dict[str, object]:
     return {
-        "run_id": step.run_id,
-        "step_index": step.step_index,
+        "parent": step.parent,
+        "index": step.index,
+        "path": step.path,
         "kind": step.kind,
         "status": step.status,
         "input": step_input_items_to_data(step.input),
@@ -1737,19 +1734,17 @@ def _input_event_payload(run: RunRecord, input: CommandRecord) -> dict[str, obje
         "stop": "run_stopping",
     }[input.kind]
     payload: dict[str, object] = {
-        "run_id": run.run_id,
-        "thread_id": run.thread_id,
+        "run": run.id,
+        "thread": run.thread,
         "type": event_type,
-        "ref": {"kind": "command", "index": input.index},
+        "cmd": input.index,
         "kind": input.kind,
+        "apply": input.apply,
+        "context": dict(input.context),
         "created_at": input.created_at,
     }
-    if input.mode is not None:
-        payload["mode"] = input.mode
-    if input.request_id is not None:
-        payload["request_id"] = input.request_id
-    if input.message is not None:
-        payload["message"] = input.message.to_data()
+    if input.input is not None:
+        payload["input"] = input.input.to_data()
     return payload
 
 
@@ -1799,7 +1794,7 @@ def _require_branchable_thread(context: UptimeContext, run: RunRecord) -> None:
         )
 
 
-def _cancel_running_replaced_runs(
+async def _cancel_running_replaced_runs(
     context: UptimeContext, *, anchor: RunRecord, reason: str
 ) -> None:
     runs = [
@@ -1811,17 +1806,7 @@ def _cancel_running_replaced_runs(
         if item.created_at >= anchor.created_at and item.status == "running"
     ]
     for run in runs:
-        canceled = context.store.cancel_run(run_id=run.run_id, error=reason)
-        payload = _run_event_payload(canceled)
-        context.events.publish(
-            domain="run", domain_id=canceled.run_id, type="run_end", payload=payload
-        )
-        context.events.publish(
-            domain="thread",
-            domain_id=canceled.thread_id,
-            type="run_end",
-            payload=payload,
-        )
+        await context.runner.stop_run(run_id=run.run_id, reason=reason)
 
 
 def _copy_fork_history(

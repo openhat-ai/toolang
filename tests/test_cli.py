@@ -15,7 +15,7 @@ from typer.testing import CliRunner
 
 from toolang import agents
 from toolang import caps
-from toolang.base.types.message import Message, TextPart
+from toolang.base.types.message import Message
 from toolang.base.types.model import ModelInfo
 from toolang.base.types.tool import ToolContext, ToolDefinition
 import toolang.cli.toolang.app as cli
@@ -29,11 +29,12 @@ from toolang.cli.progress import CliProgress
 from toolang.components.trigger import watch
 from toolang.config.log import DEFAULT_AGENT_LOG_SPEC
 from toolang.config.log_spec import PY_LOG_ENV_VAR
-from toolang.execution.events import RunEnd, RunBegin, StepEnd, StepBegin
+from toolang.execution.events import RunEnd, RunStarting, StepEnd, StepBegin
 from toolang.common.progress import ProgressEvent
 from toolang import work
 from toolang.execution.db import ExecutionStore, execution_db_path
 from wcwidth import wcswidth
+
 runner = CliRunner()
 DEFAULT_AGENT_SOURCE = "# Customize this agent here.\n# Docs: https://toolang.ai/docs\n"
 
@@ -141,7 +142,9 @@ class _FakeLeafTool:
     def definition(self) -> ToolDefinition:
         return ToolDefinition(name=self.name, description=self._description)
 
-    def invoke(self, arguments: Mapping[str, Any], context: ToolContext) -> dict[str, Any]:
+    def invoke(
+        self, arguments: Mapping[str, Any], context: ToolContext
+    ) -> dict[str, Any]:
         del arguments, context
         return {}
 
@@ -153,9 +156,13 @@ class _FakeLoadedTool:
         self.name = f"{plugin_name}__{leaf_name}"
 
     def definition(self) -> ToolDefinition:
-        return ToolDefinition(name=self.name, description=self.leaf_tool.definition().description)
+        return ToolDefinition(
+            name=self.name, description=self.leaf_tool.definition().description
+        )
 
-    def invoke(self, arguments: Mapping[str, Any], context: ToolContext) -> dict[str, Any]:
+    def invoke(
+        self, arguments: Mapping[str, Any], context: ToolContext
+    ) -> dict[str, Any]:
         del arguments, context
         return {}
 
@@ -193,7 +200,9 @@ def test_cli_main_normalizes_agent_postfix_shortcut(monkeypatch) -> None:
     assert captured["args"] == ["stop", "alice"]
 
 
-def test_cli_main_intercepts_local_too_program_before_typer(monkeypatch, tmp_path: Path) -> None:
+def test_cli_main_intercepts_local_too_program_before_typer(
+    monkeypatch, tmp_path: Path
+) -> None:
     program_path = tmp_path / "demo.too"
     program_path.write_text("agic:\n  Reply directly.\n", encoding="utf-8")
     captured: dict[str, object] = {}
@@ -215,9 +224,13 @@ def test_cli_main_intercepts_local_too_program_before_typer(monkeypatch, tmp_pat
     assert captured["prog_name"] == "toolang"
 
 
-def test_cli_main_runs_roaming_file_runtime_for_script_inbox(monkeypatch, tmp_path: Path) -> None:
+def test_cli_main_runs_roaming_file_runtime_for_script_inbox(
+    monkeypatch, tmp_path: Path
+) -> None:
     program_path = tmp_path / "demo.too"
-    program_path.write_text("agic file(in: Part[]):\n  Process a file.\n", encoding="utf-8")
+    program_path.write_text(
+        "agic file(in: Part[]):\n  Process a file.\n", encoding="utf-8"
+    )
     inbox = tmp_path / "inbox"
     inbox.mkdir()
     captured: dict[str, object] = {}
@@ -278,7 +291,9 @@ def test_cli_main_roaming_threads_can_read_offline_materialized_store(
     monkeypatch,
     capsys,
 ) -> None:
-    program_path = _write_roaming_program(tmp_path, "agic:\n  Reply directly.\n", name="demo")
+    program_path = _write_roaming_program(
+        tmp_path, "agic:\n  Reply directly.\n", name="demo"
+    )
     toolang_root, agent_name = agents.materialize_roaming_program(program_path)
     store = ExecutionStore(execution_db_path(toolang_root, agent_name))
     try:
@@ -304,9 +319,13 @@ def test_cli_main_roaming_threads_can_read_offline_materialized_store(
     assert "roaming input" in output.out
 
 
-def test_cli_main_keeps_roaming_thunk_invoke_when_thunk_is_present(monkeypatch, tmp_path: Path) -> None:
+def test_cli_main_keeps_roaming_thunk_invoke_when_thunk_is_present(
+    monkeypatch, tmp_path: Path
+) -> None:
     program_path = tmp_path / "demo.too"
-    program_path.write_text("agic file(in: Part[]):\n  Process a file.\n", encoding="utf-8")
+    program_path.write_text(
+        "agic file(in: Part[]):\n  Process a file.\n", encoding="utf-8"
+    )
     inbox = tmp_path / "inbox"
     inbox.mkdir()
     captured: dict[str, object] = {}
@@ -333,7 +352,9 @@ def test_cli_main_keeps_roaming_thunk_invoke_when_thunk_is_present(monkeypatch, 
     assert captured["prog_name"] == "toolang"
 
 
-def test_cli_main_does_not_preconfigure_roaming_invoke_from_py_log(monkeypatch, tmp_path: Path) -> None:
+def test_cli_main_does_not_preconfigure_roaming_invoke_from_py_log(
+    monkeypatch, tmp_path: Path
+) -> None:
     program_path = tmp_path / "demo.too"
     program_path.write_text("agic:\n  Reply directly.\n", encoding="utf-8")
     captured: dict[str, object] = {}
@@ -363,7 +384,9 @@ def test_cli_main_does_not_preconfigure_roaming_invoke_from_py_log(monkeypatch, 
     assert captured["prog_name"] == "toolang"
 
 
-def test_cli_main_does_not_preconfigure_logging_for_standard_commands(monkeypatch) -> None:
+def test_cli_main_does_not_preconfigure_logging_for_standard_commands(
+    monkeypatch,
+) -> None:
     calls: list[tuple[str | None, dict[str, str]]] = []
 
     def fake_configure_logging(*, spec: str | None, environ) -> None:
@@ -427,7 +450,9 @@ def test_cli_main_passes_cap_command_without_agent_prefix(monkeypatch) -> None:
     assert captured["args"] == ["skill", "add", "by3gus/pdf-processing"]
 
 
-def test_cli_main_normalizes_agent_prefix_shortcut_for_task_commands(monkeypatch) -> None:
+def test_cli_main_normalizes_agent_prefix_shortcut_for_task_commands(
+    monkeypatch,
+) -> None:
     captured: dict[str, object] = {}
 
     def fake_app(*, args, prog_name: str, standalone_mode: bool) -> None:
@@ -443,7 +468,9 @@ def test_cli_main_normalizes_agent_prefix_shortcut_for_task_commands(monkeypatch
     assert captured["prefix_agent"] == "alice"
 
 
-def test_cli_main_normalizes_agent_prefix_shortcut_for_cap_commands(monkeypatch) -> None:
+def test_cli_main_normalizes_agent_prefix_shortcut_for_cap_commands(
+    monkeypatch,
+) -> None:
     captured: dict[str, object] = {}
 
     def fake_app(*, args, prog_name: str, standalone_mode: bool) -> None:
@@ -462,7 +489,9 @@ def test_cli_main_normalizes_agent_prefix_shortcut_for_cap_commands(monkeypatch)
 def test_cli_new_creates_agent(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
 
-    result = runner.invoke(cli.app, ["new", "alice"], env={"TOOLANG_ROOT": str(toolang_root)})
+    result = runner.invoke(
+        cli.app, ["new", "alice"], env={"TOOLANG_ROOT": str(toolang_root)}
+    )
 
     assert result.exit_code in {0, 2}
     program_path = toolang_root / "agents" / "alice" / "agent.too"
@@ -480,10 +509,14 @@ def test_cli_new_uses_named_template(tmp_path: Path) -> None:
     )
 
     assert result.exit_code in {0, 2}
-    assert (toolang_root / "agents" / "alice" / "agent.too").read_text(encoding="utf-8") == DEFAULT_AGENT_SOURCE
+    assert (toolang_root / "agents" / "alice" / "agent.too").read_text(
+        encoding="utf-8"
+    ) == DEFAULT_AGENT_SOURCE
 
 
-def test_cli_callback_configures_logging_for_standard_commands_from_py_log(monkeypatch, tmp_path: Path) -> None:
+def test_cli_callback_configures_logging_for_standard_commands_from_py_log(
+    monkeypatch, tmp_path: Path
+) -> None:
     toolang_root = tmp_path / "toolang"
     calls: list[tuple[str | None, dict[str, str]]] = []
 
@@ -514,7 +547,9 @@ def test_cli_new_supports_template_alias(tmp_path: Path) -> None:
     )
 
     assert result.exit_code in {0, 2}
-    assert (toolang_root / "agents" / "alice" / "agent.too").read_text(encoding="utf-8") == DEFAULT_AGENT_SOURCE
+    assert (toolang_root / "agents" / "alice" / "agent.too").read_text(
+        encoding="utf-8"
+    ) == DEFAULT_AGENT_SOURCE
 
 
 def test_cli_clone_copies_agent_without_caps(tmp_path: Path) -> None:
@@ -523,7 +558,9 @@ def test_cli_clone_copies_agent_without_caps(tmp_path: Path) -> None:
     (source_home / "skills" / "reviewer").mkdir(parents=True, exist_ok=True)
     (source_home / ".caps").mkdir(parents=True, exist_ok=True)
     (source_home / "agent.too").write_text("agent alice\n", encoding="utf-8")
-    (source_home / "skills" / "reviewer" / "SKILL.md").write_text("# Reviewer\n", encoding="utf-8")
+    (source_home / "skills" / "reviewer" / "SKILL.md").write_text(
+        "# Reviewer\n", encoding="utf-8"
+    )
     (source_home / ".caps" / "lock.json").write_text("{}", encoding="utf-8")
 
     result = runner.invoke(
@@ -536,7 +573,9 @@ def test_cli_clone_copies_agent_without_caps(tmp_path: Path) -> None:
     target_program = toolang_root / "agents" / "bob" / "agent.too"
     assert result.stdout.strip() == f"Cloned agent bob: {target_program}"
     assert target_program.read_text(encoding="utf-8") == "agent bob\n"
-    assert (toolang_root / "agents" / "bob" / "skills" / "reviewer" / "SKILL.md").is_file()
+    assert (
+        toolang_root / "agents" / "bob" / "skills" / "reviewer" / "SKILL.md"
+    ).is_file()
     assert not (toolang_root / "agents" / "bob" / ".caps").exists()
 
 
@@ -544,7 +583,9 @@ def test_agent_selector_parsing_supports_name_shorthand_and_ref() -> None:
     local = agents.parse_agent_selector("alice")
     github_short = agents.parse_agent_selector("brice/alice")
     host_short = agents.parse_agent_selector("toolang.ai/alice")
-    github_ref = agents.parse_agent_selector("github://brice/agents/team/alice.too@main")
+    github_ref = agents.parse_agent_selector(
+        "github://brice/agents/team/alice.too@main"
+    )
 
     assert local.form == "name"
     assert local.name == "alice"
@@ -554,7 +595,10 @@ def test_agent_selector_parsing_supports_name_shorthand_and_ref() -> None:
     assert host_short.form == "shorthand"
     assert host_short.resolved_ref().render() == "https://toolang.ai/alice.too"
     assert github_ref.form == "ref"
-    assert github_ref.resolved_ref().render() == "github://brice/agents/team/alice.too@main"
+    assert (
+        github_ref.resolved_ref().render()
+        == "github://brice/agents/team/alice.too@main"
+    )
 
 
 def test_agent_selector_parsing_supports_repo_shorthand() -> None:
@@ -572,10 +616,15 @@ def test_agent_selector_canonicalizes_raw_refs_heads_url() -> None:
     )
 
     assert selector.form == "ref"
-    assert selector.resolved_ref().render() == "github://briceyan/agents/dev.too@refs/heads/main"
+    assert (
+        selector.resolved_ref().render()
+        == "github://briceyan/agents/dev.too@refs/heads/main"
+    )
 
 
-def test_cli_clone_remote_shorthand_defaults_target_name(tmp_path: Path, monkeypatch) -> None:
+def test_cli_clone_remote_shorthand_defaults_target_name(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     probes: list[str] = []
 
@@ -587,7 +636,9 @@ def test_cli_clone_remote_shorthand_defaults_target_name(tmp_path: Path, monkeyp
         probes.append(ref.render())
         return ref.path == "agents/alice.too"
 
-    monkeypatch.setattr(agents, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(
+        agents, "_github_repo_default_branch", lambda owner, repo: "main"
+    )
     monkeypatch.setattr(agents, "_github_agent_ref_exists", fake_exists)
     monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
 
@@ -606,7 +657,9 @@ def test_cli_clone_remote_shorthand_defaults_target_name(tmp_path: Path, monkeyp
     ]
 
 
-def test_cli_clone_remote_repo_shorthand_uses_named_repo(tmp_path: Path, monkeypatch) -> None:
+def test_cli_clone_remote_repo_shorthand_uses_named_repo(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     probes: list[str] = []
 
@@ -618,7 +671,9 @@ def test_cli_clone_remote_repo_shorthand_uses_named_repo(tmp_path: Path, monkeyp
         probes.append(ref.render())
         return ref.path == "alice.too"
 
-    monkeypatch.setattr(agents, "_github_repo_default_branch", lambda owner, repo: "trunk")
+    monkeypatch.setattr(
+        agents, "_github_repo_default_branch", lambda owner, repo: "trunk"
+    )
     monkeypatch.setattr(agents, "_github_agent_ref_exists", fake_exists)
     monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
 
@@ -629,14 +684,18 @@ def test_cli_clone_remote_repo_shorthand_uses_named_repo(tmp_path: Path, monkeyp
     )
 
     assert result.exit_code in {0, 2}
-    assert (toolang_root / "agents" / "alice" / "agent.too").read_text(encoding="utf-8") == "agent alice\n"
+    assert (toolang_root / "agents" / "alice" / "agent.too").read_text(
+        encoding="utf-8"
+    ) == "agent alice\n"
     assert probes == [
         "github://brice/project/agents/alice.too@trunk",
         "github://brice/project/alice.too@trunk",
     ]
 
 
-def test_agent_shorthand_falls_back_to_main_when_default_branch_probe_fails(monkeypatch) -> None:
+def test_agent_shorthand_falls_back_to_main_when_default_branch_probe_fails(
+    monkeypatch,
+) -> None:
     probes: list[str] = []
 
     def fail_default_branch(owner: str, repo: str) -> str:
@@ -661,12 +720,16 @@ def test_agent_shorthand_falls_back_to_main_when_default_branch_probe_fails(monk
 
 
 def test_agent_shorthand_error_uses_input_shape(monkeypatch) -> None:
-    monkeypatch.setattr(agents, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(
+        agents, "_github_repo_default_branch", lambda owner, repo: "main"
+    )
     monkeypatch.setattr(agents, "_github_agent_ref_exists", lambda ref: False)
 
     selector = agents.parse_agent_selector("briceyan/dev")
 
-    with pytest.raises(ValueError, match="could not resolve agent shorthand: briceyan/dev"):
+    with pytest.raises(
+        ValueError, match="could not resolve agent shorthand: briceyan/dev"
+    ):
         agents.resolve_agent_selector_ref(selector)
 
 
@@ -680,14 +743,21 @@ def test_github_agent_fetch_uses_raw_url(monkeypatch) -> None:
     monkeypatch.setattr(agents, "_fetch_http_text", fake_fetch)
 
     text = agents._fetch_github_text(
-        agents.GitHubAgentRef(owner="briceyan", repo="agents", path="dev.too", rev="main")
+        agents.GitHubAgentRef(
+            owner="briceyan", repo="agents", path="dev.too", rev="main"
+        )
     )
 
     assert text == "agent dev\n"
-    assert captured["url"] == "https://raw.githubusercontent.com/briceyan/agents/main/dev.too"
+    assert (
+        captured["url"]
+        == "https://raw.githubusercontent.com/briceyan/agents/main/dev.too"
+    )
 
 
-def test_cli_clone_remote_url_supports_explicit_target(tmp_path: Path, monkeypatch) -> None:
+def test_cli_clone_remote_url_supports_explicit_target(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
 
     def fake_fetch(ref: agents.AgentRef) -> str:
@@ -1390,13 +1460,19 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
         captured["toolang_root"] = startup.toolang_root
         captured["agent_name"] = startup.agent_name
         captured["port"] = startup.port
-        program_path = startup.toolang_root / "agents" / startup.agent_name / "agent.too"
+        program_path = (
+            startup.toolang_root / "agents" / startup.agent_name / "agent.too"
+        )
         captured["program_exists"] = program_path.is_file()
         captured["program_text"] = program_path.read_text(encoding="utf-8")
         return 0
 
-    monkeypatch.setattr(agents, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(agents, "_github_agent_ref_exists", lambda ref: ref.path == "agents/alice.too")
+    monkeypatch.setattr(
+        agents, "_github_repo_default_branch", lambda owner, repo: "main"
+    )
+    monkeypatch.setattr(
+        agents, "_github_agent_ref_exists", lambda ref: ref.path == "agents/alice.too"
+    )
     monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
     monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
     monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
@@ -1476,7 +1552,9 @@ def test_cli_run_rejects_active_resident_agent(tmp_path: Path, monkeypatch) -> N
     monkeypatch.setattr(
         cli.agent_up,
         "prepare_agent",
-        lambda **_kwargs: pytest.fail("active agents should be rejected before prepare"),
+        lambda **_kwargs: pytest.fail(
+            "active agents should be rejected before prepare"
+        ),
     )
 
     result = runner.invoke(
@@ -1496,7 +1574,9 @@ def test_cli_run_rejects_missing_resident_agent(tmp_path: Path, monkeypatch) -> 
     monkeypatch.setattr(
         cli.agent_up,
         "prepare_agent",
-        lambda **_kwargs: pytest.fail("missing agents should be rejected before prepare"),
+        lambda **_kwargs: pytest.fail(
+            "missing agents should be rejected before prepare"
+        ),
     )
 
     result = runner.invoke(
@@ -1550,11 +1630,15 @@ def test_cli_run_rejects_active_visiting_agent(tmp_path: Path, monkeypatch) -> N
         started_at="2026-04-07T11:00:00Z",
         pid=os.getpid(),
     )
-    monkeypatch.setattr(agents, "fetch_agent_ref", lambda *_args, **_kwargs: "agent researcher\n")
+    monkeypatch.setattr(
+        agents, "fetch_agent_ref", lambda *_args, **_kwargs: "agent researcher\n"
+    )
     monkeypatch.setattr(
         cli.agent_up,
         "prepare_agent",
-        lambda **_kwargs: pytest.fail("active visiting agents should be rejected before prepare"),
+        lambda **_kwargs: pytest.fail(
+            "active visiting agents should be rejected before prepare"
+        ),
     )
 
     result = runner.invoke(
@@ -1595,7 +1679,9 @@ def test_visiting_run_target_reuses_stable_root_and_program(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    ref = agents.HttpAgentRef(url=f"https://toolang.ai/demo/{uuid4().hex}/researcher.too")
+    ref = agents.HttpAgentRef(
+        url=f"https://toolang.ai/demo/{uuid4().hex}/researcher.too"
+    )
     fetches: list[agents.AgentRef] = []
 
     def fake_fetch(fetch_ref: agents.AgentRef, **_kwargs) -> str:
@@ -1616,7 +1702,9 @@ def test_visiting_run_target_reuses_stable_root_and_program(
         first_program = first.toolang_root / "agents" / first.agent_name / "agent.too"
 
     with agents.resolved_run_target(toolang_root, ref.render()) as second:
-        second_program = second.toolang_root / "agents" / second.agent_name / "agent.too"
+        second_program = (
+            second.toolang_root / "agents" / second.agent_name / "agent.too"
+        )
 
     assert first.toolang_root == agents.visiting_root(toolang_root, ref)
     assert second.toolang_root == first.toolang_root
@@ -1629,27 +1717,37 @@ def test_visiting_run_target_reuses_stable_root_and_program(
     assert second_program == first_program
     assert second_program.read_text(encoding="utf-8") == "agent researcher\n"
     assert fetches == [ref]
-    assert agents.preferred_runtime_port(second.toolang_root, second.agent_name) == 45678
+    assert (
+        agents.preferred_runtime_port(second.toolang_root, second.agent_name) == 45678
+    )
 
 
 def test_visiting_root_ignores_local_toolang_root(tmp_path: Path) -> None:
     ref = agents.HttpAgentRef(url="https://toolang.ai/demo/researcher.too")
 
-    assert agents.visiting_root(tmp_path / "one", ref) == agents.visiting_root(tmp_path / "two", ref)
+    assert agents.visiting_root(tmp_path / "one", ref) == agents.visiting_root(
+        tmp_path / "two", ref
+    )
 
 
-def test_visiting_run_target_reuses_shorthand_cache_without_resolving(tmp_path: Path, monkeypatch) -> None:
+def test_visiting_run_target_reuses_shorthand_cache_without_resolving(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     selector_text = f"briceyan/{uuid4().hex}"
     agent_name = selector_text.split("/", 1)[1]
-    run_root = agents.visiting_source_root(toolang_root, source=selector_text, agent_name=agent_name)
+    run_root = agents.visiting_source_root(
+        toolang_root, source=selector_text, agent_name=agent_name
+    )
     program_path = run_root / "agents" / agent_name / "agent.too"
     program_path.parent.mkdir(parents=True, exist_ok=True)
     program_path.write_text(f"agent {agent_name}\n", encoding="utf-8")
     monkeypatch.setattr(
         agents,
         "resolve_agent_selector_ref",
-        lambda *_args, **_kwargs: pytest.fail("fresh visiting cache should not resolve"),
+        lambda *_args, **_kwargs: pytest.fail(
+            "fresh visiting cache should not resolve"
+        ),
     )
 
     with agents.resolved_run_target(toolang_root, selector_text) as target:
@@ -1658,9 +1756,13 @@ def test_visiting_run_target_reuses_shorthand_cache_without_resolving(tmp_path: 
         assert target.kind == "visiting"
 
 
-def test_visiting_run_target_refetches_stale_program_cache(tmp_path: Path, monkeypatch) -> None:
+def test_visiting_run_target_refetches_stale_program_cache(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
-    ref = agents.HttpAgentRef(url=f"https://toolang.ai/demo/{uuid4().hex}/researcher.too")
+    ref = agents.HttpAgentRef(
+        url=f"https://toolang.ai/demo/{uuid4().hex}/researcher.too"
+    )
     fetched_sources = iter(("agent old-name\n", "agent newer-name\n"))
     fetches: list[agents.AgentRef] = []
 
@@ -1678,7 +1780,9 @@ def test_visiting_run_target_refetches_stale_program_cache(tmp_path: Path, monke
     os.utime(program_path, (stale_time, stale_time))
 
     with agents.resolved_run_target(toolang_root, ref.render()) as second:
-        refreshed_program = second.toolang_root / "agents" / second.agent_name / "agent.too"
+        refreshed_program = (
+            second.toolang_root / "agents" / second.agent_name / "agent.too"
+        )
 
     assert refreshed_program == program_path
     assert refreshed_program.read_text(encoding="utf-8") == "agent researcher\n"
@@ -1687,7 +1791,9 @@ def test_visiting_run_target_refetches_stale_program_cache(tmp_path: Path, monke
 
 def test_roaming_materialize_links_source_and_toolang_config(tmp_path: Path) -> None:
     program_path = _write_roaming_program(tmp_path, "agent demo\n\nagic:\n  First")
-    (tmp_path / "toolang.toml").write_text("[models]\ndefault = \"test/model\"\n", encoding="utf-8")
+    (tmp_path / "toolang.toml").write_text(
+        '[models]\ndefault = "test/model"\n', encoding="utf-8"
+    )
 
     toolang_root, agent_name = agents.materialize_roaming_program(program_path)
 
@@ -1697,8 +1803,12 @@ def test_roaming_materialize_links_source_and_toolang_config(tmp_path: Path) -> 
     materialized_config = agent_home / "config.toml"
     assert materialized_program.is_symlink()
     assert materialized_config.is_symlink()
-    assert (materialized_program.parent / os.readlink(materialized_program)).resolve() == program_path.resolve()
-    assert (materialized_config.parent / os.readlink(materialized_config)).resolve() == (tmp_path / "toolang.toml").resolve()
+    assert (
+        materialized_program.parent / os.readlink(materialized_program)
+    ).resolve() == program_path.resolve()
+    assert (
+        materialized_config.parent / os.readlink(materialized_config)
+    ).resolve() == (tmp_path / "toolang.toml").resolve()
 
     program_path.write_text("agent demo\n\nagic:\n  Second\n", encoding="utf-8")
     assert "Second" in materialized_program.read_text(encoding="utf-8")
@@ -1707,7 +1817,7 @@ def test_roaming_materialize_links_source_and_toolang_config(tmp_path: Path) -> 
 def test_roaming_materialize_removes_stale_config_symlink(tmp_path: Path) -> None:
     program_path = _write_roaming_program(tmp_path, "agent demo")
     config_path = tmp_path / "toolang.toml"
-    config_path.write_text("[models]\ndefault = \"test/model\"\n", encoding="utf-8")
+    config_path.write_text('[models]\ndefault = "test/model"\n', encoding="utf-8")
 
     toolang_root, _agent_name = agents.materialize_roaming_program(program_path)
     config_link = toolang_root / "agents" / "demo" / "config.toml"
@@ -1720,7 +1830,9 @@ def test_roaming_materialize_removes_stale_config_symlink(tmp_path: Path) -> Non
     assert not config_link.is_symlink()
 
 
-def test_cli_roaming_program_help_lists_available_targets(capsys, tmp_path: Path) -> None:
+def test_cli_roaming_program_help_lists_available_targets(
+    capsys, tmp_path: Path
+) -> None:
     program_path = _write_roaming_program(
         tmp_path,
         """
@@ -1757,7 +1869,11 @@ flow review(in: Text):
     assert "Allow selected tools. Pass CSV or repeat." in captured.out
     assert "--caps" in captured.out
     assert "Allow selected caps. Pass CSV or repeat." in captured.out
-    assert captured.out.index("--models") < captured.out.index("--tools") < captured.out.index("--caps")
+    assert (
+        captured.out.index("--models")
+        < captured.out.index("--tools")
+        < captured.out.index("--caps")
+    )
     assert "--quiet" in captured.out
     assert "Params" in captured.out
     assert "NAME=VALUE" in captured.out
@@ -1772,7 +1888,12 @@ flow review(in: Text):
     assert "default" in captured.out
     assert "summarize" in captured.out
     assert "review" in captured.out
-    assert captured.out.index("Options") < captured.out.index("Targets") < captured.out.index("Params") < captured.out.index("Input")
+    assert (
+        captured.out.index("Options")
+        < captured.out.index("Targets")
+        < captured.out.index("Params")
+        < captured.out.index("Input")
+    )
 
 
 def test_cli_roaming_thunk_help_is_dynamic(capsys, tmp_path: Path) -> None:
@@ -1812,7 +1933,11 @@ agic summarize(in: Part[], style?, audience?):
     assert "Allow selected tools. Pass CSV or repeat." in captured.out
     assert "--caps" in captured.out
     assert "Allow selected caps. Pass CSV or repeat." in captured.out
-    assert captured.out.index("--models") < captured.out.index("--tools") < captured.out.index("--caps")
+    assert (
+        captured.out.index("--models")
+        < captured.out.index("--tools")
+        < captured.out.index("--caps")
+    )
     assert "--quiet" in captured.out
     assert "Params" in captured.out
     assert "Input" in captured.out
@@ -1823,10 +1948,16 @@ agic summarize(in: Part[], style?, audience?):
     assert "@PATH.mp3" not in captured.out
     assert "Modality is inferred from the extension." in captured.out
     assert "Thunks" not in captured.out
-    assert captured.out.index("Options") < captured.out.index("Params") < captured.out.index("Input")
+    assert (
+        captured.out.index("Options")
+        < captured.out.index("Params")
+        < captured.out.index("Input")
+    )
 
 
-def test_cli_roaming_invoke_passes_default_thunk_params_and_parts(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_cli_roaming_invoke_passes_default_thunk_params_and_parts(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     program_path = _write_roaming_program(
         tmp_path,
         """
@@ -1912,7 +2043,9 @@ agic(in: Part[], tone?, retries?: Number, dry_run?: Boolean):
     }
 
 
-def test_cli_roaming_invoke_passes_explicit_tool_selectors(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_cli_roaming_invoke_passes_explicit_tool_selectors(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     program_path = _write_roaming_program(
         tmp_path,
         """
@@ -1969,7 +2102,9 @@ agic(in: Part[]):
     assert captured["tools"] == ("filesystem", "shell", "service_use")
 
 
-def test_cli_roaming_invoke_passes_explicit_cap_selectors(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_cli_roaming_invoke_passes_explicit_cap_selectors(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     program_path = _write_roaming_program(
         tmp_path,
         """
@@ -2051,7 +2186,17 @@ agic:
         log_spec: str | None = None,
         prepared_state=None,
     ):
-        del toolang_root, agent_name, thunk_name, input_text, models, metadata, environ, log_spec, prepared_state
+        del (
+            toolang_root,
+            agent_name,
+            thunk_name,
+            input_text,
+            models,
+            metadata,
+            environ,
+            log_spec,
+            prepared_state,
+        )
         captured["response"] = response
 
         class _Outcome:
@@ -2100,7 +2245,17 @@ agic:
         log_spec: str | None = None,
         prepared_state=None,
     ):
-        del toolang_root, agent_name, thunk_name, input_text, models, metadata, environ, log_spec, prepared_state
+        del (
+            toolang_root,
+            agent_name,
+            thunk_name,
+            input_text,
+            models,
+            metadata,
+            environ,
+            log_spec,
+            prepared_state,
+        )
         captured["response"] = response
 
         class _Outcome:
@@ -2157,7 +2312,18 @@ agic:
         log_spec: str | None = None,
         prepared_state=None,
     ):
-        del toolang_root, agent_name, thunk_name, input_text, models, metadata, environ, response, log_spec, prepared_state
+        del (
+            toolang_root,
+            agent_name,
+            thunk_name,
+            input_text,
+            models,
+            metadata,
+            environ,
+            response,
+            log_spec,
+            prepared_state,
+        )
 
         class _Outcome:
             run_id = "run_test"
@@ -2214,7 +2380,18 @@ agic:
         log_spec: str | None = None,
         prepared_state=None,
     ):
-        del toolang_root, agent_name, thunk_name, input_text, models, metadata, environ, response, log_spec, prepared_state
+        del (
+            toolang_root,
+            agent_name,
+            thunk_name,
+            input_text,
+            models,
+            metadata,
+            environ,
+            response,
+            log_spec,
+            prepared_state,
+        )
 
         class _Outcome:
             run_id = "run_test"
@@ -2262,16 +2439,26 @@ agic:
         log_spec: str | None = None,
         prepared_state=None,
     ):
-        del toolang_root, agent_name, thunk_name, input_text, models, metadata, environ, log_spec, prepared_state
+        del (
+            toolang_root,
+            agent_name,
+            thunk_name,
+            input_text,
+            models,
+            metadata,
+            environ,
+            log_spec,
+            prepared_state,
+        )
         response.on_event(
-            RunBegin(
+            RunStarting(
                 run="run_test",
+                cmd=0,
                 parent=None,
                 thread="script_test",
                 input=Message.user("hello"),
                 context={"origin": "script"},
                 created_at="2026-05-21T00:00:00Z",
-                started_at="2026-05-21T00:00:00Z",
             )
         )
         raise KeyboardInterrupt
@@ -2318,7 +2505,9 @@ agic:
     assert "Run: run_" not in output.err
 
 
-def test_cli_roaming_invoke_requires_explicit_target_name(tmp_path: Path, capsys) -> None:
+def test_cli_roaming_invoke_requires_explicit_target_name(
+    tmp_path: Path, capsys
+) -> None:
     program_path = _write_roaming_program(
         tmp_path,
         """
@@ -2334,7 +2523,9 @@ agic:
     assert "Targets" in output.out
 
 
-def test_cli_roaming_invoke_requires_part_for_message_input(tmp_path: Path, capsys) -> None:
+def test_cli_roaming_invoke_requires_part_for_message_input(
+    tmp_path: Path, capsys
+) -> None:
     program_path = _write_roaming_program(
         tmp_path,
         """
@@ -2370,7 +2561,9 @@ agic:
     assert "unknown target: summarize" in output.err
 
 
-def test_cli_roaming_invoke_passes_flow_executable_kind(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_cli_roaming_invoke_passes_flow_executable_kind(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     program_path = _write_roaming_program(
         tmp_path,
         """
@@ -2393,7 +2586,15 @@ flow review(in: Text):
         log_spec: str | None = None,
         prepared_state=None,
     ):
-        del toolang_root, agent_name, models, environ, response, log_spec, prepared_state
+        del (
+            toolang_root,
+            agent_name,
+            models,
+            environ,
+            response,
+            log_spec,
+            prepared_state,
+        )
         captured["thunk_name"] = thunk_name
         captured["input_text"] = input_text
         captured["metadata"] = dict(metadata or {})
@@ -2426,7 +2627,9 @@ flow review(in: Text):
     }
 
 
-def test_cli_roaming_invoke_supports_end_of_options_separator(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_cli_roaming_invoke_supports_end_of_options_separator(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     program_path = _write_roaming_program(
         tmp_path,
         """
@@ -2449,7 +2652,16 @@ agic:
         log_spec: str | None = None,
         prepared_state=None,
     ):
-        del toolang_root, agent_name, thunk_name, models, environ, response, log_spec, prepared_state
+        del (
+            toolang_root,
+            agent_name,
+            thunk_name,
+            models,
+            environ,
+            response,
+            log_spec,
+            prepared_state,
+        )
         captured["input_text"] = input_text
         captured["metadata"] = dict(metadata or {})
 
@@ -2512,7 +2724,16 @@ agic(in: Part[], tone?):
         log_spec: str | None = None,
         prepared_state=None,
     ):
-        del toolang_root, agent_name, thunk_name, models, environ, response, log_spec, prepared_state
+        del (
+            toolang_root,
+            agent_name,
+            thunk_name,
+            models,
+            environ,
+            response,
+            log_spec,
+            prepared_state,
+        )
         captured["input_text"] = input_text
         captured["metadata"] = dict(metadata or {})
 
@@ -2543,7 +2764,9 @@ agic(in: Part[], tone?):
     }
 
 
-def test_cli_roaming_invoke_reads_md_path_as_text_part(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_cli_roaming_invoke_reads_md_path_as_text_part(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     program_path = _write_roaming_program(
         tmp_path,
         """
@@ -2568,7 +2791,16 @@ agic(in: Part[]):
         log_spec: str | None = None,
         prepared_state=None,
     ):
-        del toolang_root, agent_name, thunk_name, models, environ, response, log_spec, prepared_state
+        del (
+            toolang_root,
+            agent_name,
+            thunk_name,
+            models,
+            environ,
+            response,
+            log_spec,
+            prepared_state,
+        )
         captured["input_text"] = input_text
         captured["metadata"] = dict(metadata or {})
 
@@ -2592,12 +2824,18 @@ agic(in: Part[]):
     assert captured["metadata"] == {
         "invoke_params": {},
         "invoke_parts": [
-            {"type": "text", "text": "# Title\n\nBody text.\n", "path": str(note.resolve())},
+            {
+                "type": "text",
+                "text": "# Title\n\nBody text.\n",
+                "path": str(note.resolve()),
+            },
         ],
     }
 
 
-def test_cli_roaming_invoke_reads_mdx_path_as_text_part(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_cli_roaming_invoke_reads_mdx_path_as_text_part(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     program_path = _write_roaming_program(
         tmp_path,
         """
@@ -2622,7 +2860,16 @@ agic(in: Part[]):
         log_spec: str | None = None,
         prepared_state=None,
     ):
-        del toolang_root, agent_name, thunk_name, models, environ, response, log_spec, prepared_state
+        del (
+            toolang_root,
+            agent_name,
+            thunk_name,
+            models,
+            environ,
+            response,
+            log_spec,
+            prepared_state,
+        )
         captured["input_text"] = input_text
         captured["metadata"] = dict(metadata or {})
 
@@ -2652,7 +2899,9 @@ agic(in: Part[]):
     }
 
 
-def test_cli_roaming_invoke_passes_video_path_part(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_cli_roaming_invoke_passes_video_path_part(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     program_path = _write_roaming_program(
         tmp_path,
         """
@@ -2677,7 +2926,16 @@ agic(in: Part[]):
         log_spec: str | None = None,
         prepared_state=None,
     ):
-        del toolang_root, agent_name, thunk_name, models, environ, response, log_spec, prepared_state
+        del (
+            toolang_root,
+            agent_name,
+            thunk_name,
+            models,
+            environ,
+            response,
+            log_spec,
+            prepared_state,
+        )
         captured["input_text"] = input_text
         captured["metadata"] = dict(metadata or {})
 
@@ -2716,7 +2974,10 @@ def test_cli_start_rejects_remote_selector(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 1
-    assert "start only supports local agent names; clone the remote source first" in result.stderr
+    assert (
+        "start only supports local agent names; clone the remote source first"
+        in result.stderr
+    )
 
 
 def test_cli_start_rejects_missing_agent(tmp_path: Path, monkeypatch) -> None:
@@ -2724,7 +2985,9 @@ def test_cli_start_rejects_missing_agent(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         cli.agent_up,
         "resolve_startup",
-        lambda **_kwargs: pytest.fail("missing agents should be rejected before startup resolution"),
+        lambda **_kwargs: pytest.fail(
+            "missing agents should be rejected before startup resolution"
+        ),
     )
 
     result = runner.invoke(
@@ -2790,7 +3053,9 @@ def test_cli_remove_rejects_orphan_runtime_process(tmp_path: Path, monkeypatch) 
     assert (toolang_root / "agents" / "alice").is_dir()
 
 
-def test_cli_stop_stops_orphan_runtime_process_without_state(tmp_path: Path, monkeypatch) -> None:
+def test_cli_stop_stops_orphan_runtime_process_without_state(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     stopped: list[tuple[int, bool]] = []
@@ -2894,8 +3159,7 @@ def test_cli_list_uses_ui_base_url_from_root_config(tmp_path: Path) -> None:
         pid=os.getpid(),
     )
     (toolang_root / "config.toml").write_text(
-        '[web]\n'
-        'ui_base_url = "https://agents.example.test"\n',
+        '[web]\nui_base_url = "https://agents.example.test"\n',
         encoding="utf-8",
     )
 
@@ -2909,7 +3173,9 @@ def test_cli_list_uses_ui_base_url_from_root_config(tmp_path: Path) -> None:
     assert "https://agents.example.test/8765" in result.stdout
 
 
-def test_cli_list_reads_web_config_without_validating_experiments_caps(tmp_path: Path) -> None:
+def test_cli_list_reads_web_config_without_validating_experiments_caps(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     agents.write_runtime_state(
@@ -2920,10 +3186,10 @@ def test_cli_list_reads_web_config_without_validating_experiments_caps(tmp_path:
         pid=os.getpid(),
     )
     (toolang_root / "config.toml").write_text(
-        '[web]\n'
+        "[web]\n"
         'ui_base_url = "http://localhost:3000"\n'
-        '\n'
-        '[skills]\n'
+        "\n"
+        "[skills]\n"
         'pdf-processing = { ref = "github://by3gus/agent-skills/skills/pdf-processing@main" }\n',
         encoding="utf-8",
     )
@@ -2942,8 +3208,7 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     (toolang_root / "agents" / "alice" / "config.toml").write_text(
-        '[models]\n'
-        'default = ["o3", "gpt-5"]\n',
+        '[models]\ndefault = ["o3", "gpt-5"]\n',
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -3057,7 +3322,11 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
     assert "alice" in result.stdout
     assert "-----" in result.stdout
     assert "Home" in result.stdout
-    assert result.stdout.index("██████████") < result.stdout.index("ALICE") < result.stdout.index("Home")
+    assert (
+        result.stdout.index("██████████")
+        < result.stdout.index("ALICE")
+        < result.stdout.index("Home")
+    )
     assert str(toolang_root / "agents" / "alice") in "".join(result.stdout.split())
     assert "ROOM" not in result.stdout
     assert "PROGRAM" not in result.stdout
@@ -3108,7 +3377,9 @@ def test_cli_info_console_uses_terminal_width(monkeypatch) -> None:
 
 def test_cli_info_narrow_layout_separates_avatar_from_table(monkeypatch) -> None:
     output = io.StringIO()
-    console = cli_utils.Console(file=output, width=80, highlight=False, color_system=None)
+    console = cli_utils.Console(
+        file=output, width=80, highlight=False, color_system=None
+    )
     monkeypatch.setattr(cli_utils, "_INFO_CONSOLE", console)
 
     cli_utils._echo_pairs_table([("Home", "x")], avatar="AA\nBB", title="DEV")
@@ -3118,10 +3389,14 @@ def test_cli_info_narrow_layout_separates_avatar_from_table(monkeypatch) -> None
 
 def test_cli_info_wide_layout_aligns_avatar_with_table(monkeypatch) -> None:
     output = io.StringIO()
-    console = cli_utils.Console(file=output, width=120, highlight=False, color_system=None)
+    console = cli_utils.Console(
+        file=output, width=120, highlight=False, color_system=None
+    )
     monkeypatch.setattr(cli_utils, "_INFO_CONSOLE", console)
 
-    cli_utils._echo_pairs_table([("Home", "x"), ("Caps", "y")], avatar="AA\nBB", title="DEV")
+    cli_utils._echo_pairs_table(
+        [("Home", "x"), ("Caps", "y")], avatar="AA\nBB", title="DEV"
+    )
 
     assert "AA    Home x" in output.getvalue()
 
@@ -3149,7 +3424,9 @@ def test_cli_info_avatar_matches_logo_proportions() -> None:
     assert "▄▄▄▄████" in avatar
 
 
-def test_cli_info_reads_cap_counts_from_prepared_locks(tmp_path: Path, monkeypatch) -> None:
+def test_cli_info_reads_cap_counts_from_prepared_locks(
+    tmp_path: Path, monkeypatch
+) -> None:
     from toolang.state.prepared import write_prepared_lock
 
     toolang_root = tmp_path / "toolang"
@@ -3178,7 +3455,9 @@ def test_cli_info_reads_cap_counts_from_prepared_locks(tmp_path: Path, monkeypat
     )
     durable = caps.scan_durable_state(toolang_root, "alice")
     shared_lock, shared_files = caps.build_visibility_lock(durable, visibility="shared")
-    private_lock, private_files = caps.build_visibility_lock(durable, visibility="private")
+    private_lock, private_files = caps.build_visibility_lock(
+        durable, visibility="private"
+    )
     write_prepared_lock(toolang_root, shared_lock, files=shared_files)
     write_prepared_lock(toolang_root, private_lock, files=private_files)
 
@@ -3219,7 +3498,9 @@ def test_cli_info_rebuilds_missing_prepared_lock(tmp_path: Path, monkeypatch) ->
     shutil.rmtree(private_lock_path.parent)
 
     def fail_list_entries(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("info should rebuild prepared locks instead of scanning entries")
+        raise AssertionError(
+            "info should rebuild prepared locks instead of scanning entries"
+        )
 
     monkeypatch.setattr(caps, "list_entries", fail_list_entries)
 
@@ -3271,7 +3552,9 @@ def test_cli_info_for_stopped_agent_shows_created_only(tmp_path: Path) -> None:
     assert "PID" not in result.stdout
 
 
-def test_cli_info_for_running_docker_sandbox_shows_container_pid(tmp_path: Path, monkeypatch) -> None:
+def test_cli_info_for_running_docker_sandbox_shows_container_pid(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     monkeypatch.setattr(agents, "docker_container_running", lambda _name: True)
@@ -3311,12 +3594,13 @@ def test_cli_info_for_running_docker_sandbox_shows_container_pid(tmp_path: Path,
     assert result.stdout.index("PID") < result.stdout.index("API")
 
 
-def test_cli_info_prefers_runtime_models_for_active_agent(tmp_path: Path, monkeypatch) -> None:
+def test_cli_info_prefers_runtime_models_for_active_agent(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     (toolang_root / "agents" / "alice" / "config.toml").write_text(
-        '[models]\n'
-        'default = ["o3", "gpt-5"]\n',
+        '[models]\ndefault = ["o3", "gpt-5"]\n',
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -3648,7 +3932,9 @@ def test_cli_tool_list_reports_no_matched_tools_for_empty_filter(monkeypatch) ->
     monkeypatch.setattr(
         cli.agent_up,
         "list_plugin_infos",
-        lambda *, group: [cli.agent_up.PluginInfo(name="filesystem", source="built-in")],
+        lambda *, group: [
+            cli.agent_up.PluginInfo(name="filesystem", source="built-in")
+        ],
     )
 
     result = runner.invoke(cli.app, ["tool", "list", "--select", "shell/*"])
@@ -3751,7 +4037,10 @@ def test_cli_model_providers_orders_config_fields(monkeypatch) -> None:
     )
 
     assert result.exit_code == 0
-    assert "url=https://api.openai.com/v1, adapter=responses, env=OPENAI_API_KEY" in result.stdout
+    assert (
+        "url=https://api.openai.com/v1, adapter=responses, env=OPENAI_API_KEY"
+        in result.stdout
+    )
 
 
 def test_cli_model_providers_marks_missing_env_and_offline_url(monkeypatch) -> None:
@@ -4015,13 +4304,24 @@ def test_cli_run_hands_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     assert captured["tools"] is None
     assert captured["dev"] is None
     assert captured["sandbox_child"] is False
-    assert captured["component_names"] == ("router.chat", "runner.chat", "router.inspect")
+    assert captured["component_names"] == (
+        "router.chat",
+        "runner.chat",
+        "router.inspect",
+    )
     assert captured["log_spec"] == DEFAULT_AGENT_LOG_SPEC
-    assert cast(dict[str, str], captured["environ"])["TOOLANG_ROOT"] == str(toolang_root)
-    assert cast(dict[str, str], captured["environ"])[PY_LOG_ENV_VAR] == DEFAULT_AGENT_LOG_SPEC
+    assert cast(dict[str, str], captured["environ"])["TOOLANG_ROOT"] == str(
+        toolang_root
+    )
+    assert (
+        cast(dict[str, str], captured["environ"])[PY_LOG_ENV_VAR]
+        == DEFAULT_AGENT_LOG_SPEC
+    )
 
 
-def test_cli_run_reuses_prepared_state_for_foreground_runtime(tmp_path: Path, monkeypatch) -> None:
+def test_cli_run_reuses_prepared_state_for_foreground_runtime(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     prepared_state = object()
@@ -4109,7 +4409,9 @@ def test_cli_run_resolves_port_when_unspecified(tmp_path: Path, monkeypatch) -> 
     assert captured["sandbox_child"] is False
     assert captured["component_names"] == ("router.chat", "runner.chat")
     assert captured["log_spec"] == DEFAULT_AGENT_LOG_SPEC
-    assert cast(dict[str, str], captured["environ"])["TOOLANG_ROOT"] == str(toolang_root)
+    assert cast(dict[str, str], captured["environ"])["TOOLANG_ROOT"] == str(
+        toolang_root
+    )
 
 
 def test_cli_run_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
@@ -4139,10 +4441,17 @@ def test_cli_run_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
     )
 
     assert result.exit_code == 0
-    assert captured["component_names"] == ("router.chat", "runner.chat", "router.inspect", "trigger.poll")
+    assert captured["component_names"] == (
+        "router.chat",
+        "runner.chat",
+        "router.inspect",
+        "trigger.poll",
+    )
 
 
-def test_cli_run_passes_model_selectors_to_agent_up(tmp_path: Path, monkeypatch) -> None:
+def test_cli_run_passes_model_selectors_to_agent_up(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     captured: dict[str, object] = {}
@@ -4172,7 +4481,9 @@ def test_cli_run_passes_model_selectors_to_agent_up(tmp_path: Path, monkeypatch)
     assert captured["models"] == ("openai/gpt-5[openai]", "o3")
 
 
-def test_cli_run_accepts_glob_model_selector_as_available_model_filter(tmp_path: Path, monkeypatch) -> None:
+def test_cli_run_accepts_glob_model_selector_as_available_model_filter(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     captured: dict[str, object] = {}
@@ -4254,7 +4565,14 @@ def test_cli_run_passes_cap_selectors_to_agent_up(tmp_path: Path, monkeypatch) -
 
     result = runner.invoke(
         cli.app,
-        ["run", "alice", "--caps", "skill/reviewer,service/*[home]", "--caps", "[here]"],
+        [
+            "run",
+            "alice",
+            "--caps",
+            "skill/reviewer,service/*[home]",
+            "--caps",
+            "[here]",
+        ],
         env={"TOOLANG_ROOT": str(toolang_root), "OPENAI_API_KEY": "secret"},
     )
 
@@ -4317,7 +4635,9 @@ def test_cli_run_uses_py_log_spec(tmp_path: Path, monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert captured["log_spec"] == "toolang.run=debug"
-    assert cast(dict[str, str], captured["environ"])[PY_LOG_ENV_VAR] == "toolang.run=debug"
+    assert (
+        cast(dict[str, str], captured["environ"])[PY_LOG_ENV_VAR] == "toolang.run=debug"
+    )
 
 
 def test_cli_run_requires_agent(tmp_path: Path) -> None:
@@ -4336,10 +4656,14 @@ def test_cli_run_requires_agent(tmp_path: Path) -> None:
     assert "Existing local agent name, remote agent ref, or URL." in result.stdout
 
 
-def test_cli_run_loads_root_and_agent_env_with_agent_override(tmp_path: Path, monkeypatch) -> None:
+def test_cli_run_loads_root_and_agent_env_with_agent_override(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     toolang_root.mkdir(parents=True, exist_ok=True)
-    (toolang_root / ".env").write_text("TELEGRAM_BOT_TOKEN=root-token\nROOT_ONLY=1\n", encoding="utf-8")
+    (toolang_root / ".env").write_text(
+        "TELEGRAM_BOT_TOKEN=root-token\nROOT_ONLY=1\n", encoding="utf-8"
+    )
     (toolang_root / "agents" / "alice").mkdir(parents=True, exist_ok=True)
     (toolang_root / "agents" / "alice" / ".env").write_text(
         "TELEGRAM_BOT_TOKEN=agent-token\nAGENT_ONLY=1\n",
@@ -4387,7 +4711,9 @@ def test_cli_run_loads_root_and_agent_env_with_agent_override(tmp_path: Path, mo
     assert captured["log_spec"] == DEFAULT_AGENT_LOG_SPEC
 
 
-def test_cli_start_spawns_background_run_and_reports_status(tmp_path: Path, monkeypatch) -> None:
+def test_cli_start_spawns_background_run_and_reports_status(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     captured: dict[str, object] = {}
@@ -4429,7 +4755,16 @@ def test_cli_start_spawns_background_run_and_reports_status(tmp_path: Path, monk
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(toolang_root), "start", "alice", "--sandbox", "none", "--enable", "inspect"],
+        [
+            "--root",
+            str(toolang_root),
+            "start",
+            "alice",
+            "--sandbox",
+            "none",
+            "--enable",
+            "inspect",
+        ],
         env={},
     )
 
@@ -4455,14 +4790,21 @@ def test_cli_start_spawns_background_run_and_reports_status(tmp_path: Path, monk
         "router.inspect",
     ]
     assert cast(dict[str, str], captured["env"])["TOOLANG_ROOT"] == str(toolang_root)
-    assert cast(dict[str, str], captured["env"])[PY_LOG_ENV_VAR] == DEFAULT_AGENT_LOG_SPEC
+    assert (
+        cast(dict[str, str], captured["env"])[PY_LOG_ENV_VAR] == DEFAULT_AGENT_LOG_SPEC
+    )
     assert captured["cwd"] == str(Path.cwd())
     assert captured["start_new_session"] is True
     assert captured["close_fds"] is True
-    assert agents.agent_runtime_log_path(toolang_root, "alice").read_text(encoding="utf-8") == "launcher\n"
+    assert (
+        agents.agent_runtime_log_path(toolang_root, "alice").read_text(encoding="utf-8")
+        == "launcher\n"
+    )
 
 
-def test_cli_start_propagates_py_log_to_agent_process(tmp_path: Path, monkeypatch) -> None:
+def test_cli_start_propagates_py_log_to_agent_process(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     captured: dict[str, object] = {}
@@ -4523,7 +4865,10 @@ def test_cli_start_propagates_py_log_to_agent_process(tmp_path: Path, monkeypatc
         "--root",
         str(toolang_root),
     ]
-    assert cast(dict[str, str], captured["env"])[PY_LOG_ENV_VAR] == "toolang.run=debug,httpx=off"
+    assert (
+        cast(dict[str, str], captured["env"])[PY_LOG_ENV_VAR]
+        == "toolang.run=debug,httpx=off"
+    )
 
 
 def test_cli_start_rejects_active_agent(tmp_path: Path) -> None:
@@ -4549,7 +4894,9 @@ def test_cli_start_rejects_active_agent(tmp_path: Path) -> None:
     assert "Stop:" not in result.stderr
 
 
-def test_cli_start_allows_restart_after_stale_preparing_state(tmp_path: Path, monkeypatch) -> None:
+def test_cli_start_allows_restart_after_stale_preparing_state(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     agents.write_runtime_state(
@@ -4662,7 +5009,9 @@ def test_cli_start_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None
     ]
 
 
-def test_cli_start_includes_model_selectors_in_background_command(tmp_path: Path, monkeypatch) -> None:
+def test_cli_start_includes_model_selectors_in_background_command(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     captured: dict[str, object] = {}
@@ -4719,7 +5068,9 @@ def test_cli_start_includes_model_selectors_in_background_command(tmp_path: Path
     assert command[second_flag + 1] == "o3"
 
 
-def test_cli_start_includes_tool_selectors_in_background_command(tmp_path: Path, monkeypatch) -> None:
+def test_cli_start_includes_tool_selectors_in_background_command(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     captured: dict[str, object] = {}
@@ -4778,11 +5129,13 @@ def test_cli_start_includes_tool_selectors_in_background_command(tmp_path: Path,
     assert command[third_flag + 1] == "service_use"
 
 
-def test_cli_start_rejects_unconfigured_model_selector(tmp_path: Path, monkeypatch) -> None:
+def test_cli_start_rejects_unconfigured_model_selector(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     (toolang_root / "config.toml").write_text(
-        '[models.aliases.gateway]\n'
+        "[models.aliases.gateway]\n"
         'ref = "openai/gpt-5"\n'
         'provider = "openai"\n'
         'adapter = "responses"\n'
@@ -4805,7 +5158,9 @@ def test_cli_start_rejects_unconfigured_model_selector(tmp_path: Path, monkeypat
     assert "STARTUP_MISSING_API_KEY" in result.stderr
 
 
-def test_cli_start_rejects_missing_default_model_env(tmp_path: Path, monkeypatch) -> None:
+def test_cli_start_rejects_missing_default_model_env(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     monkeypatch.setattr(
@@ -4970,7 +5325,9 @@ def test_cli_start_reuses_preferred_runtime_port(tmp_path: Path, monkeypatch) ->
     ]
 
 
-def test_cli_start_reports_failed_when_process_exits_before_state(tmp_path: Path, monkeypatch) -> None:
+def test_cli_start_reports_failed_when_process_exits_before_state(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
 
@@ -5050,7 +5407,9 @@ def test_cli_stop_stops_sandboxed_agent(tmp_path: Path, monkeypatch) -> None:
             captured["runtime_id"] = state.runtime_id
             captured["force"] = force
 
-    monkeypatch.setattr(cli.agent_up, "create_sandbox_plugin", lambda name, config=None: FakeSandbox())
+    monkeypatch.setattr(
+        cli.agent_up, "create_sandbox_plugin", lambda name, config=None: FakeSandbox()
+    )
 
     result = runner.invoke(
         cli.app,
@@ -5072,7 +5431,9 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
         caps,
         "_remote_materialized_files",
         lambda *, relative_entry_path, kind, name, ref, progress=None: {
-            str(relative_entry_path): b"---\ndescription: Review code\n---\n# Reviewer\n"
+            str(
+                relative_entry_path
+            ): b"---\ndescription: Review code\n---\n# Reviewer\n"
         },
     )
 
@@ -5082,13 +5443,28 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
         prefix_agent="alice",
     )
     assert add_result.exit_code == 0
-    assert add_result.stdout.strip() == "Added skill reviewer: github://acme/agents/skills/reviewer@main"
-
-    config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(encoding="utf-8")
-    assert "[skills]" in config_text
-    assert 'reviewer = { ref = "github://acme/agents/skills/reviewer@main" }' in config_text
     assert (
-        toolang_root / "agents" / "alice" / ".caps" / "wired" / "skills" / "reviewer" / "SKILL.md"
+        add_result.stdout.strip()
+        == "Added skill reviewer: github://acme/agents/skills/reviewer@main"
+    )
+
+    config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(
+        encoding="utf-8"
+    )
+    assert "[skills]" in config_text
+    assert (
+        'reviewer = { ref = "github://acme/agents/skills/reviewer@main" }'
+        in config_text
+    )
+    assert (
+        toolang_root
+        / "agents"
+        / "alice"
+        / ".caps"
+        / "wired"
+        / "skills"
+        / "reviewer"
+        / "SKILL.md"
     ).read_text(encoding="utf-8") == "---\ndescription: Review code\n---\n# Reviewer\n"
 
     list_remote_result = _invoke_caps_app(
@@ -5105,7 +5481,10 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     assert "reviewer" in list_remote_result.stdout
     assert "wired" in list_remote_result.stdout
     assert "home" in list_remote_result.stdout
-    assert "https://github.com/acme/agents/tree/main/skills/reviewer" in list_remote_result.stdout
+    assert (
+        "https://github.com/acme/agents/tree/main/skills/reviewer"
+        in list_remote_result.stdout
+    )
 
     remove_result = _invoke_caps_app(
         ["skill", "remove", "reviewer"],
@@ -5113,17 +5492,16 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
         prefix_agent="alice",
     )
     assert remove_result.exit_code == 0
-    assert remove_result.stdout.strip() == "Removed skill reviewer: github://acme/agents/skills/reviewer@main"
+    assert (
+        remove_result.stdout.strip()
+        == "Removed skill reviewer: github://acme/agents/skills/reviewer@main"
+    )
 
     monkeypatch.setattr(
         cli.click,
         "edit",
         lambda *_args, **_kwargs: (
-            "---\n"
-            "description: Review code\n"
-            "---\n"
-            "# Reviewer\n\n"
-            "Review code carefully.\n"
+            "---\ndescription: Review code\n---\n# Reviewer\n\nReview code carefully.\n"
         ),
     )
 
@@ -5153,14 +5531,18 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     assert "agents/alice/skills/reviewer" in list_result.stdout
 
 
-def test_cli_cap_remote_list_shows_accessible_source_url(tmp_path: Path, monkeypatch) -> None:
+def test_cli_cap_remote_list_shows_accessible_source_url(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         caps,
         "_remote_materialized_files",
         lambda *, relative_entry_path, kind, name, ref, progress=None: {
-            str(relative_entry_path): b"---\ndescription: Review code\n---\n# Reviewer\n"
+            str(
+                relative_entry_path
+            ): b"---\ndescription: Review code\n---\n# Reviewer\n"
         },
     )
 
@@ -5170,7 +5552,10 @@ def test_cli_cap_remote_list_shows_accessible_source_url(tmp_path: Path, monkeyp
         prefix_agent="alice",
     )
     assert add_result.exit_code == 0
-    assert add_result.stdout.strip() == "Added skill reviewer: github://acme/agents/skills/reviewer@main"
+    assert (
+        add_result.stdout.strip()
+        == "Added skill reviewer: github://acme/agents/skills/reviewer@main"
+    )
 
     list_result = _invoke_caps_app(
         ["skill", "list"],
@@ -5179,11 +5564,15 @@ def test_cli_cap_remote_list_shows_accessible_source_url(tmp_path: Path, monkeyp
     )
     assert list_result.exit_code == 0
     assert "SOURCE" in list_result.stdout
-    assert "https://github.com/acme/agents/tree/main/skills/reviewer" in list_result.stdout
+    assert (
+        "https://github.com/acme/agents/tree/main/skills/reviewer" in list_result.stdout
+    )
     assert "github://acme/agents/skills/reviewer@main" not in list_result.stdout
 
 
-def test_cli_cap_remote_file_list_uses_github_blob_url(tmp_path: Path, monkeypatch) -> None:
+def test_cli_cap_remote_file_list_uses_github_blob_url(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
@@ -5207,7 +5596,10 @@ def test_cli_cap_remote_file_list_uses_github_blob_url(tmp_path: Path, monkeypat
         prefix_agent="alice",
     )
     assert list_result.exit_code == 0
-    assert "https://github.com/acme/agents/blob/main/psyches/concise.md" in list_result.stdout
+    assert (
+        "https://github.com/acme/agents/blob/main/psyches/concise.md"
+        in list_result.stdout
+    )
 
 
 def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -> None:
@@ -5217,11 +5609,7 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
         cli.click,
         "edit",
         lambda *_args, **_kwargs: (
-            "---\n"
-            "description: Review code\n"
-            "---\n"
-            "# Reviewer\n\n"
-            "Review code carefully.\n"
+            "---\ndescription: Review code\n---\n# Reviewer\n\nReview code carefully.\n"
         ),
     )
     new_result = _invoke_caps_app(
@@ -5236,9 +5624,9 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     )
     assert new_result.stderr == ""
     assert (
-        toolang_root / "agents" / "alice" / "skills" / "reviewer" / "SKILL.md"
-    ).read_text(encoding="utf-8").startswith(
-        "---\ndescription: Review code\n---\n# Reviewer\n"
+        (toolang_root / "agents" / "alice" / "skills" / "reviewer" / "SKILL.md")
+        .read_text(encoding="utf-8")
+        .startswith("---\ndescription: Review code\n---\n# Reviewer\n")
     )
 
     list_result = _invoke_caps_app(
@@ -5316,7 +5704,9 @@ def test_cli_cap_local_new_edit_remove_round_trip(tmp_path: Path, monkeypatch) -
     assert "Skill reviewer not found" in missing_result.stderr
 
 
-def test_cli_cap_local_new_reuses_existing_remote_cap_outputs(tmp_path: Path, monkeypatch) -> None:
+def test_cli_cap_local_new_reuses_existing_remote_cap_outputs(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     fetches: list[str] = []
 
@@ -5345,11 +5735,7 @@ def test_cli_cap_local_new_reuses_existing_remote_cap_outputs(tmp_path: Path, mo
         cli.click,
         "edit",
         lambda *_args, **_kwargs: (
-            "---\n"
-            "description: Review code\n"
-            "---\n"
-            "# Reviewer\n\n"
-            "Review code carefully.\n"
+            "---\ndescription: Review code\n---\n# Reviewer\n\nReview code carefully.\n"
         ),
     )
     new_result = _invoke_caps_app(
@@ -5377,15 +5763,16 @@ def test_cli_cap_remote_add_reports_not_found(tmp_path: Path, monkeypatch) -> No
     assert "Wired skill acme/missing not found" in result.stderr
 
 
-def test_cli_cap_add_preserves_unrelated_config_sections(tmp_path: Path, monkeypatch) -> None:
+def test_cli_cap_add_preserves_unrelated_config_sections(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     config_path = toolang_root / "config.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
-        '[web]\n'
-        'cors_allowed_origins = ["http://localhost:3000", "https://too.run"]\n',
+        '[web]\ncors_allowed_origins = ["http://localhost:3000", "https://too.run"]\n',
         encoding="utf-8",
     )
 
@@ -5409,7 +5796,9 @@ def test_cli_cap_add_preserves_unrelated_config_sections(tmp_path: Path, monkeyp
     )
 
 
-def test_cli_remote_cap_add_remove_reuses_existing_wired_outputs(tmp_path: Path, monkeypatch) -> None:
+def test_cli_remote_cap_add_remove_reuses_existing_wired_outputs(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     fetches: list[str] = []
@@ -5482,7 +5871,9 @@ def test_cli_cap_new_cancel_does_not_create(tmp_path: Path, monkeypatch) -> None
     assert not (toolang_root / "prompts" / "rewrite.md").exists()
 
 
-def test_cli_cap_new_unchanged_template_does_not_create(tmp_path: Path, monkeypatch) -> None:
+def test_cli_cap_new_unchanged_template_does_not_create(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
 
     monkeypatch.setattr(cli.click, "edit", lambda *_args, **_kwargs: None)
@@ -5497,7 +5888,9 @@ def test_cli_cap_new_unchanged_template_does_not_create(tmp_path: Path, monkeypa
     assert not (toolang_root / "prompts" / "rewrite.md").exists()
 
 
-def test_cli_cap_new_cancel_does_not_resolve_program_remote_uses(tmp_path: Path, monkeypatch) -> None:
+def test_cli_cap_new_cancel_does_not_resolve_program_remote_uses(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     (toolang_root / "agents" / "alice").mkdir(parents=True)
     (toolang_root / "agents" / "alice" / "agent.too").write_text(
@@ -5508,7 +5901,9 @@ def test_cli_cap_new_cancel_does_not_resolve_program_remote_uses(tmp_path: Path,
     monkeypatch.setattr(
         caps,
         "_github_repo_default_branch",
-        lambda owner, repo: pytest.fail(f"unexpected remote branch lookup: {owner}/{repo}"),
+        lambda owner, repo: pytest.fail(
+            f"unexpected remote branch lookup: {owner}/{repo}"
+        ),
     )
 
     result = _invoke_caps_app(
@@ -5522,7 +5917,9 @@ def test_cli_cap_new_cancel_does_not_resolve_program_remote_uses(tmp_path: Path,
     assert not (toolang_root / "agents" / "alice" / "psyches" / "add3.md").exists()
 
 
-def test_cli_cap_new_save_does_not_resolve_program_remote_uses(tmp_path: Path, monkeypatch) -> None:
+def test_cli_cap_new_save_does_not_resolve_program_remote_uses(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     (toolang_root / "agents" / "alice").mkdir(parents=True)
     (toolang_root / "agents" / "alice" / "agent.too").write_text(
@@ -5542,7 +5939,9 @@ def test_cli_cap_new_save_does_not_resolve_program_remote_uses(tmp_path: Path, m
     monkeypatch.setattr(
         caps,
         "_github_repo_default_branch",
-        lambda owner, repo: pytest.fail(f"unexpected remote branch lookup: {owner}/{repo}"),
+        lambda owner, repo: pytest.fail(
+            f"unexpected remote branch lookup: {owner}/{repo}"
+        ),
     )
 
     result = _invoke_caps_app(
@@ -5595,7 +5994,10 @@ def test_cli_task_new_persists_id(tmp_path: Path, monkeypatch) -> None:
     assert result.exit_code == 0
     task = work.list_tasks(toolang_root, "alice")[0]
     saved = task.path.read_text(encoding="utf-8")
-    assert task.path == toolang_root / "agents" / "alice" / "tasks" / f"{task.document.task_id()}.md"
+    assert (
+        task.path
+        == toolang_root / "agents" / "alice" / "tasks" / f"{task.document.task_id()}.md"
+    )
     assert "\nid: " in saved
     assert "title: Task title" in saved
     assert "stage: todo" not in saved
@@ -5653,11 +6055,7 @@ def test_cli_task_list_shows_task_rows(tmp_path: Path, monkeypatch) -> None:
         cli.click,
         "edit",
         lambda *_args, **_kwargs: (
-            "---\n"
-            "state: inactive\n"
-            "stage: running\n"
-            "---\n"
-            "Review the current plan.\n"
+            "---\nstate: inactive\nstage: running\n---\nReview the current plan.\n"
         ),
     )
     _invoke_app(
@@ -5720,7 +6118,10 @@ def test_cli_task_delete_requires_archived_task(tmp_path: Path, monkeypatch) -> 
     )
 
     assert active_delete.exit_code == 1
-    assert f"task is not archived: {task_id}; archive it before deleting" in active_delete.output
+    assert (
+        f"task is not archived: {task_id}; archive it before deleting"
+        in active_delete.output
+    )
     assert work.find_task(toolang_root, "alice", task_id) is not None
 
     archive_result = _invoke_app(
@@ -5923,16 +6324,15 @@ def test_cli_task_new_records_task_changed_update(tmp_path: Path, monkeypatch) -
     assert str(updates[0].payload["id"]).strip()
 
 
-def test_cli_global_cap_change_does_not_create_agent_local_update_store(tmp_path: Path, monkeypatch) -> None:
+def test_cli_global_cap_change_does_not_create_agent_local_update_store(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(
         cli.click,
         "edit",
         lambda *_args, **_kwargs: (
-            "---\n"
-            "description: Example entry\n"
-            "---\n"
-            "Example body.\n"
+            "---\ndescription: Example entry\n---\nExample body.\n"
         ),
     )
 
@@ -5944,7 +6344,6 @@ def test_cli_global_cap_change_does_not_create_agent_local_update_store(tmp_path
 
     assert result.exit_code == 0
     assert not execution_db_path(toolang_root, "default").exists()
-
 
 
 def test_cli_task_requires_agent_prefix(tmp_path: Path) -> None:
@@ -6144,10 +6543,7 @@ def test_cli_fmt_formats_stdin_with_filepath() -> None:
     )
 
     assert result.exit_code == 0
-    assert result.stdout == (
-        "agic review(in: Pack):\n"
-        "  user: Review it.\n"
-    )
+    assert result.stdout == ("agic review(in: Pack):\n  user: Review it.\n")
 
 
 def test_cli_fmt_formats_dash_as_stdin() -> None:
@@ -6158,10 +6554,7 @@ def test_cli_fmt_formats_dash_as_stdin() -> None:
     )
 
     assert result.exit_code == 0
-    assert result.stdout == (
-        "agic review(in: Pack):\n"
-        "  user: Review it.\n"
-    )
+    assert result.stdout == ("agic review(in: Pack):\n  user: Review it.\n")
 
 
 def test_cli_fmt_handles_implicit_message_before_roles() -> None:
@@ -6203,11 +6596,7 @@ def test_cli_fmt_formats_stdin_with_tab_size() -> None:
     )
 
     assert result.exit_code == 0
-    assert result.stdout == (
-        "agic review(in: Pack):\n"
-        "    user:\n"
-        "        Review it.\n"
-    )
+    assert result.stdout == ("agic review(in: Pack):\n    user:\n        Review it.\n")
 
 
 def test_cli_fmt_allows_stdin_filepath_with_dash() -> None:
@@ -6368,12 +6757,17 @@ def test_cli_cap_template_outputs_named_template() -> None:
         "---\ndescription: Trigger this skill for requests that need this workflow.\n---"
     )
     assert "`description` is the trigger summary." in skill_result.stdout
-    assert prompt_result.stdout.strip().startswith("Write the reusable prompt text here.\n")
+    assert prompt_result.stdout.strip().startswith(
+        "Write the reusable prompt text here.\n"
+    )
     assert "transport: http" in service_result.stdout
     assert "# headers:" in service_result.stdout
     assert "# env:" not in service_result.stdout
     assert "Use optional `headers` for HTTP auth." in service_result.stdout
-    assert "Header values like `$API_TOKEN` declare required environment variables." in service_result.stdout
+    assert (
+        "Header values like `$API_TOKEN` declare required environment variables."
+        in service_result.stdout
+    )
     assert "Prefer:" in psyche_result.stdout
 
 
@@ -6560,16 +6954,15 @@ def test_cli_skill_list_help_mentions_agent_scope_concisely() -> None:
     assert "agent      TEXT  Also include this agent's home skills." in result.stdout
 
 
-def test_cli_cap_list_with_agent_defaults_to_all_scopes(tmp_path: Path, monkeypatch) -> None:
+def test_cli_cap_list_with_agent_defaults_to_all_scopes(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(
         cli.click,
         "edit",
         lambda *_args, **_kwargs: (
-            "---\n"
-            "description: Local psyche\n"
-            "---\n"
-            "Agent guidance.\n"
+            "---\ndescription: Local psyche\n---\nAgent guidance.\n"
         ),
     )
     runner.invoke(
@@ -6603,12 +6996,7 @@ def test_cli_cap_list_global_filters_results(tmp_path: Path, monkeypatch) -> Non
     monkeypatch.setattr(
         cli.click,
         "edit",
-        lambda *_args, **_kwargs: (
-            "---\n"
-            "description: Local psyche\n"
-            "---\n"
-            "Guidance.\n"
-        ),
+        lambda *_args, **_kwargs: "---\ndescription: Local psyche\n---\nGuidance.\n",
     )
     runner.invoke(
         caps_cli.app,
@@ -6674,7 +7062,10 @@ def test_cli_cap_list_concept_filters_results(tmp_path: Path, monkeypatch) -> No
     assert "local-reviewer" not in result.stdout
     assert "wired" in result.stdout
     assert "home" in result.stdout
-    assert "https://github.com/acme/agents/tree/main/skills/remote-reviewer" in result.stdout
+    assert (
+        "https://github.com/acme/agents/tree/main/skills/remote-reviewer"
+        in result.stdout
+    )
 
     union_result = _invoke_caps_app(
         ["skill", "list", "--filter", "file,wired,home"],
@@ -6811,7 +7202,9 @@ def test_standalone_caps_command_lists_all_cap_kinds(tmp_path: Path) -> None:
     assert "agents/alice/skills/reviewer" in result.stdout
 
 
-def test_standalone_caps_list_collects_all_kinds_once(tmp_path: Path, monkeypatch) -> None:
+def test_standalone_caps_list_collects_all_kinds_once(
+    tmp_path: Path, monkeypatch
+) -> None:
     calls: list[set[str] | None] = []
 
     def fake_list_entries(_toolang_root, _agent_name, *, visibility=None, kinds=None):
@@ -6832,7 +7225,9 @@ def test_standalone_caps_list_collects_all_kinds_once(tmp_path: Path, monkeypatc
     assert calls == [{"psyche", "skill", "service", "prompt"}]
 
 
-def test_standalone_caps_all_kind_list_prepares_agent_once_with_progress(tmp_path: Path) -> None:
+def test_standalone_caps_all_kind_list_prepares_agent_once_with_progress(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     caps.put_local_entry_text(
@@ -6894,11 +7289,7 @@ def test_standalone_caps_command_treats_here_caps_as_not_root(tmp_path: Path) ->
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     (toolang_root / "agents" / "alice" / "agent.too").write_text(
-        (
-            "agent alice\n\n"
-                "psyche reviewer:\n"
-                "  Prefer concrete findings.\n"
-        ),
+        ("agent alice\n\npsyche reviewer:\n  Prefer concrete findings.\n"),
         encoding="utf-8",
     )
 
@@ -6915,7 +7306,9 @@ def test_standalone_caps_command_treats_here_caps_as_not_root(tmp_path: Path) ->
     assert "here" in result.stdout
 
 
-def test_cli_main_normalizes_agent_prefix_shortcut_for_caps_command(monkeypatch) -> None:
+def test_cli_main_normalizes_agent_prefix_shortcut_for_caps_command(
+    monkeypatch,
+) -> None:
     captured: dict[str, object] = {}
 
     def fake_app(*, args, prog_name: str, standalone_mode: bool) -> None:
@@ -7000,7 +7393,9 @@ def test_cli_threads_lists_title_and_run_count(monkeypatch) -> None:
     assert title not in result.stdout
 
 
-def test_cli_threads_lists_offline_runs_when_agent_is_not_running(tmp_path: Path) -> None:
+def test_cli_threads_lists_offline_runs_when_agent_is_not_running(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     store = ExecutionStore(execution_db_path(toolang_root, "alice"))
     try:
@@ -7082,7 +7477,9 @@ def test_cli_runs_falls_back_to_offline_store_when_api_is_unavailable(
     monkeypatch.setattr(
         cli,
         "_runtime_json",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(cli.click.ClickException("runtime request failed")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            cli.click.ClickException("runtime request failed")
+        ),
     )
 
     result = _invoke_app(
@@ -7126,7 +7523,9 @@ def test_cli_runs_hides_thread_column_when_filtered_by_thread(monkeypatch) -> No
 def test_cli_send_uses_terminal_client_and_streams(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_runtime_stream(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> None:
+    def fake_runtime_stream(
+        _ctx: Any, request_path: str, *, payload: dict[str, object]
+    ) -> None:
         captured["path"] = request_path
         captured["payload"] = payload
 
@@ -7139,7 +7538,10 @@ def test_cli_send_uses_terminal_client_and_streams(monkeypatch) -> None:
     assert captured["payload"] == {
         "thread": "term_thread",
         "client": "tui",
-        "message": {"role": "user", "parts": [{"type": "text", "text": "review this repo"}]},
+        "message": {
+            "role": "user",
+            "parts": [{"type": "text", "text": "review this repo"}],
+        },
     }
 
 
@@ -7212,7 +7614,9 @@ def test_cli_chat_without_agent_shows_help_without_opening_ui(monkeypatch) -> No
 
 
 @pytest.mark.parametrize("command", ("chat", "threads", "runs"))
-def test_cli_required_agent_thread_commands_without_agent_exit_after_help(monkeypatch, command: str) -> None:
+def test_cli_required_agent_thread_commands_without_agent_exit_after_help(
+    monkeypatch, command: str
+) -> None:
     runtime_calls: list[str] = []
 
     def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
@@ -7220,7 +7624,9 @@ def test_cli_required_agent_thread_commands_without_agent_exit_after_help(monkey
         return {"items": []}
 
     monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
-    monkeypatch.setattr(cli, "_chat_interactive", lambda *_args, **_kwargs: runtime_calls.append("chat"))
+    monkeypatch.setattr(
+        cli, "_chat_interactive", lambda *_args, **_kwargs: runtime_calls.append("chat")
+    )
 
     result = _invoke_app([command])
 
@@ -7230,10 +7636,14 @@ def test_cli_required_agent_thread_commands_without_agent_exit_after_help(monkey
     assert "AGENT" in result.stdout
 
 
-def test_cli_chat_without_args_does_not_create_thread_until_first_message(monkeypatch) -> None:
+def test_cli_chat_without_args_does_not_create_thread_until_first_message(
+    monkeypatch,
+) -> None:
     calls: list[tuple[str, object]] = []
 
-    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+    def fake_runtime_post(
+        _ctx: Any, request_path: str, *, payload: dict[str, object]
+    ) -> dict[str, object]:
         calls.append((request_path, payload))
         return {"thread_id": "term_new"}
 
@@ -7261,7 +7671,9 @@ def test_cli_chat_without_args_does_not_create_thread_until_first_message(monkey
 def test_cli_chat_scripted_help_command_does_not_create_thread(monkeypatch) -> None:
     posts: list[tuple[str, object]] = []
 
-    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+    def fake_runtime_post(
+        _ctx: Any, request_path: str, *, payload: dict[str, object]
+    ) -> dict[str, object]:
         posts.append((request_path, payload))
         return {"thread_id": "term_new"}
 
@@ -7289,7 +7701,9 @@ def test_cli_chat_scripted_help_command_does_not_create_thread(monkeypatch) -> N
     assert "/flow [name]" in result.stdout
 
 
-def test_cli_chat_without_thread_creates_thread_for_first_scripted_message(monkeypatch) -> None:
+def test_cli_chat_without_thread_creates_thread_for_first_scripted_message(
+    monkeypatch,
+) -> None:
     posts: list[tuple[str, object]] = []
     streams: list[tuple[str, dict[str, object]]] = []
     listeners: list[str] = []
@@ -7298,11 +7712,15 @@ def test_cli_chat_without_thread_creates_thread_for_first_scripted_message(monke
         def stop(self) -> None:
             listeners.append("stopped")
 
-    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+    def fake_runtime_post(
+        _ctx: Any, request_path: str, *, payload: dict[str, object]
+    ) -> dict[str, object]:
         posts.append((request_path, payload))
         return {"thread_id": "term_new"}
 
-    def fake_start_thread_event_listener(_ctx: Any, thread_id: str, **_kwargs: object) -> FakeListener:
+    def fake_start_thread_event_listener(
+        _ctx: Any, thread_id: str, **_kwargs: object
+    ) -> FakeListener:
         listeners.append(thread_id)
         return FakeListener()
 
@@ -7317,7 +7735,9 @@ def test_cli_chat_without_thread_creates_thread_for_first_scripted_message(monke
         streams.append((request_path, payload))
 
     monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
-    monkeypatch.setattr(cli, "_start_thread_event_listener", fake_start_thread_event_listener)
+    monkeypatch.setattr(
+        cli, "_start_thread_event_listener", fake_start_thread_event_listener
+    )
     monkeypatch.setattr(cli, "_runtime_consume_stream", fake_runtime_consume_stream)
     monkeypatch.setattr(
         cli.agents,
@@ -7342,7 +7762,10 @@ def test_cli_chat_without_thread_creates_thread_for_first_scripted_message(monke
     request_path, payload = streams[0]
     assert request_path == "/api/v1/chat/stream"
     assert payload["thread"] == "term_new"
-    assert payload["message"] == {"role": "user", "parts": [{"type": "text", "text": "hello"}]}
+    assert payload["message"] == {
+        "role": "user",
+        "parts": [{"type": "text", "text": "hello"}],
+    }
 
 
 def test_cli_chat_thread_without_message_sends_interactive_lines(monkeypatch) -> None:
@@ -7353,14 +7776,20 @@ def test_cli_chat_thread_without_message_sends_interactive_lines(monkeypatch) ->
         def stop(self) -> None:
             listeners.append("stopped")
 
-    def fake_start_thread_event_listener(_ctx: Any, thread_id: str, **_kwargs: object) -> FakeListener:
+    def fake_start_thread_event_listener(
+        _ctx: Any, thread_id: str, **_kwargs: object
+    ) -> FakeListener:
         listeners.append(thread_id)
         return FakeListener()
 
-    def fake_runtime_consume_stream(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> None:
+    def fake_runtime_consume_stream(
+        _ctx: Any, request_path: str, *, payload: dict[str, object]
+    ) -> None:
         calls.append((request_path, payload))
 
-    monkeypatch.setattr(cli, "_start_thread_event_listener", fake_start_thread_event_listener)
+    monkeypatch.setattr(
+        cli, "_start_thread_event_listener", fake_start_thread_event_listener
+    )
     monkeypatch.setattr(cli, "_runtime_consume_stream", fake_runtime_consume_stream)
 
     result = _invoke_app(["chat", "dev", "term_existing"], input="hello\n/exit\n")
@@ -7373,7 +7802,10 @@ def test_cli_chat_thread_without_message_sends_interactive_lines(monkeypatch) ->
     assert request_path == "/api/v1/chat/stream"
     assert payload["thread"] == "term_existing"
     assert payload["client"] == "tui"
-    assert payload["message"] == {"role": "user", "parts": [{"type": "text", "text": "hello"}]}
+    assert payload["message"] == {
+        "role": "user",
+        "parts": [{"type": "text", "text": "hello"}],
+    }
     assert isinstance(payload["request_id"], str)
     assert payload["request_id"].startswith("term_")
 
@@ -7396,20 +7828,28 @@ def test_cli_chat_interactive_tty_uses_prompt_toolkit(monkeypatch) -> None:
 
     monkeypatch.setattr(cli, "_chat_interactive_prompt_toolkit", fake_prompt_toolkit)
 
-    cli._chat_interactive(cast(Any, object()), thread_id="term_existing", selector_payload={"models": ["openai/gpt-5"]})
+    cli._chat_interactive(
+        cast(Any, object()),
+        thread_id="term_existing",
+        selector_payload={"models": ["openai/gpt-5"]},
+    )
 
     assert captured["thread_id"] == "term_existing"
     assert captured["selector_payload"] == {"models": ["openai/gpt-5"]}
 
 
-def test_cli_chat_interactive_tty_accepts_missing_thread_without_creating_thread(monkeypatch) -> None:
+def test_cli_chat_interactive_tty_accepts_missing_thread_without_creating_thread(
+    monkeypatch,
+) -> None:
     captured: dict[str, object] = {}
     posts: list[tuple[str, object]] = []
 
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
 
-    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+    def fake_runtime_post(
+        _ctx: Any, request_path: str, *, payload: dict[str, object]
+    ) -> dict[str, object]:
         posts.append((request_path, payload))
         return {"thread_id": "term_new"}
 
@@ -7439,12 +7879,19 @@ def test_cli_thread_event_renderer_prints_thread_messages(capsys) -> None:
         {
             "type": "run_starting",
             "payload": {
-                "input": {"role": "user", "parts": [{"type": "text", "text": "hello from web"}]},
+                "input": {
+                    "role": "user",
+                    "parts": [{"type": "text", "text": "hello from web"}],
+                },
             },
         }
     )
-    renderer.render({"type": "part_delta", "payload": {"delta": {"type": "text", "text": "hi"}}})
-    renderer.render({"type": "part_delta", "payload": {"delta": {"type": "text", "text": " there"}}})
+    renderer.render(
+        {"type": "part_delta", "payload": {"delta": {"type": "text", "text": "hi"}}}
+    )
+    renderer.render(
+        {"type": "part_delta", "payload": {"delta": {"type": "text", "text": " there"}}}
+    )
     renderer.render({"type": "run_end", "payload": {"status": "finished"}})
 
     assert capsys.readouterr().out == "\nuser: hello from web\nassistant: hi there\n"
@@ -7453,8 +7900,15 @@ def test_cli_thread_event_renderer_prints_thread_messages(capsys) -> None:
 def test_cli_thread_event_renderer_redraws_prompt_for_remote_run(capsys) -> None:
     renderer = cli._ThreadEventRenderer(redraw_prompt=True)
 
-    renderer.render({"type": "part_delta", "payload": {"run_id": "run_web", "delta": {"type": "text", "text": "hi"}}})
-    renderer.render({"type": "run_end", "payload": {"run_id": "run_web", "status": "finished"}})
+    renderer.render(
+        {
+            "type": "part_delta",
+            "payload": {"run_id": "run_web", "delta": {"type": "text", "text": "hi"}},
+        }
+    )
+    renderer.render(
+        {"type": "run_end", "payload": {"run_id": "run_web", "status": "finished"}}
+    )
 
     assert capsys.readouterr().out == "assistant: hi\n> "
 
@@ -7462,17 +7916,28 @@ def test_cli_thread_event_renderer_redraws_prompt_for_remote_run(capsys) -> None
 def test_cli_thread_event_renderer_skips_prompt_during_local_stream(capsys) -> None:
     local_streaming = cli.threading.Event()
     local_streaming.set()
-    renderer = cli._ThreadEventRenderer(redraw_prompt=True, local_streaming=local_streaming)
+    renderer = cli._ThreadEventRenderer(
+        redraw_prompt=True, local_streaming=local_streaming
+    )
 
-    renderer.render({"type": "part_delta", "payload": {"run_id": "run_tui", "delta": {"type": "text", "text": "hi"}}})
-    renderer.render({"type": "run_end", "payload": {"run_id": "run_tui", "status": "finished"}})
+    renderer.render(
+        {
+            "type": "part_delta",
+            "payload": {"run_id": "run_tui", "delta": {"type": "text", "text": "hi"}},
+        }
+    )
+    renderer.render(
+        {"type": "run_end", "payload": {"run_id": "run_tui", "status": "finished"}}
+    )
 
     assert capsys.readouterr().out == "assistant: hi\n"
 
 
 def test_cli_thread_event_renderer_skips_prompt_for_local_request(capsys) -> None:
     local_request_ids = {"term_req"}
-    renderer = cli._ThreadEventRenderer(redraw_prompt=True, local_request_ids=local_request_ids)
+    renderer = cli._ThreadEventRenderer(
+        redraw_prompt=True, local_request_ids=local_request_ids
+    )
 
     renderer.render(
         {
@@ -7484,13 +7949,22 @@ def test_cli_thread_event_renderer_skips_prompt_for_local_request(capsys) -> Non
             },
         }
     )
-    renderer.render({"type": "part_delta", "payload": {"run_id": "run_tui", "delta": {"type": "text", "text": "hi"}}})
-    renderer.render({"type": "run_end", "payload": {"run_id": "run_tui", "status": "finished"}})
+    renderer.render(
+        {
+            "type": "part_delta",
+            "payload": {"run_id": "run_tui", "delta": {"type": "text", "text": "hi"}},
+        }
+    )
+    renderer.render(
+        {"type": "run_end", "payload": {"run_id": "run_tui", "status": "finished"}}
+    )
 
     assert capsys.readouterr().out == "\nuser: local\nassistant: hi\n"
 
 
-def test_cli_thread_event_renderer_prints_step_end_without_streaming_delta(capsys) -> None:
+def test_cli_thread_event_renderer_prints_step_end_without_streaming_delta(
+    capsys,
+) -> None:
     renderer = cli._ThreadEventRenderer()
 
     renderer.render(
@@ -7503,7 +7977,12 @@ def test_cli_thread_event_renderer_prints_step_end_without_streaming_delta(capsy
             },
         }
     )
-    renderer.render({"type": "run_end", "payload": {"run_id": "run_non_streaming", "status": "finished"}})
+    renderer.render(
+        {
+            "type": "run_end",
+            "payload": {"run_id": "run_non_streaming", "status": "finished"},
+        }
+    )
 
     assert capsys.readouterr().out == "assistant: complete answer\n"
 
@@ -7558,7 +8037,9 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
     def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
         calls.append(request_path)
         if request_path == "/api/v1/runs/run_parent":
-            return _inspect_run_detail("run_parent", thread_id="term_thread", root_run_id="run_parent")
+            return _inspect_run_detail(
+                "run_parent", thread_id="term_thread", root_run_id="run_parent"
+            )
         if request_path == "/api/v1/threads/term_thread?limit=100":
             return {
                 "info": {"id": "term_thread"},
@@ -7570,86 +8051,43 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
                         steps=[
                             {
                                 "record": {
+                                    "parent": "run_parent",
+                                    "index": 0,
+                                    "path": "run_parent/0",
+                                    "step_index": 0,
+                                    "kind": "par",
+                                    "status": "finished",
+                                    "context": {
+                                        "statement": "rank",
+                                        "scorer": "score",
+                                        "limit": "top",
+                                        "count": 2,
+                                        "par": 2,
+                                    },
+                                    "detail": {
+                                        "statement": "rank",
+                                        "shape": "list",
+                                        "items": 2,
+                                    },
+                                    "output": [],
+                                },
+                                "message": None,
+                            },
+                            {
+                                "record": {
+                                    "parent": "run_parent",
+                                    "index": 1,
+                                    "path": "run_parent/1",
                                     "step_index": 1,
-                                    "kind": "seq",
-                                    "status": "finished",
-                                    "detail": {
-                                        "op": "prepare_rank",
-                                        "output_preview": {"count": 3},
-                                        "source": {
-                                            "stage_index": 0,
-                                            "stage_total": 2,
-                                            "stage_kind": "rank",
-                                            "stage_title": "Rank candidates",
-                                            "input_preview": {"count": 3},
-                                            "parallelism": 2,
-                                        },
-                                    },
-                                    "output": [],
-                                },
-                                "message": None,
-                            },
-                            {
-                                "record": {
-                                    "step_index": 2,
                                     "kind": "run",
                                     "status": "finished",
-                                    "detail": {
-                                        "call": "stage",
-                                        "target": {"kind": "thunk", "name": "score"},
-                                        "child_runs": ["run_child"],
-                                        "lane": {"index": 0, "count": 2},
-                                        "item": {"index": 0},
-                                        "source": {
-                                            "stage_index": 0,
-                                            "stage_total": 2,
-                                            "stage_kind": "rank",
-                                            "stage_title": "Rank candidates",
-                                            "parallelism": 2,
-                                            "item_count": 3,
-                                        },
+                                    "context": {
+                                        "statement": "run",
+                                        "runnable": "<agic:34>",
                                     },
-                                    "output": [],
-                                },
-                                "message": None,
-                            },
-                            {
-                                "record": {
-                                    "step_index": 3,
-                                    "kind": "system",
-                                    "status": "finished",
                                     "detail": {
-                                        "op": "set_current",
-                                        "output_preview": {"count": 2},
-                                        "source": {
-                                            "stage_index": 0,
-                                            "stage_total": 2,
-                                            "stage_kind": "rank",
-                                            "stage_title": "Rank candidates",
-                                            "input_preview": {"count": 3},
-                                            "parallelism": 2,
-                                        },
-                                    },
-                                    "output": [],
-                                },
-                                "message": None,
-                            },
-                            {
-                                "record": {
-                                    "step_index": 4,
-                                    "kind": "run",
-                                    "status": "finished",
-                                    "detail": {
-                                        "call": "stage",
-                                        "target": {"kind": "thunk", "name": None},
-                                        "child_runs": ["run_inline"],
-                                        "source": {
-                                            "stage_index": 1,
-                                            "stage_total": 2,
-                                            "stage_kind": "do",
-                                            "source_line": 34,
-                                            "stage_title": "Inline summary",
-                                        },
+                                        "statement": "run",
+                                        "shape": "item",
                                     },
                                     "output": [],
                                 },
@@ -7661,15 +8099,17 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
                         "run_child",
                         thread_id="term_thread",
                         root_run_id="run_parent",
-                        parent_run_id="run_parent",
-                        parent_step_index=2,
-                        executable_kind="thunk",
+                        parent="run_parent/0",
+                        executable_kind="agic",
                         executable_name="score",
-                        call_kind="stage",
+                        call_kind="run",
                         steps=[
                             {
                                 "record": {
-                                    "step_index": 1,
+                                    "parent": "run_child",
+                                    "index": 0,
+                                    "path": "run_child/0",
+                                    "step_index": 0,
                                     "kind": "tool",
                                     "status": "finished",
                                     "detail": {},
@@ -7691,12 +8131,10 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
                         "run_inline",
                         thread_id="term_thread",
                         root_run_id="run_parent",
-                        parent_run_id="run_parent",
-                        parent_step_index=4,
-                        executable_kind="thunk",
-                        executable_name=None,
-                        call_kind="stage",
-                        metadata={"child": {"source_line": 34}},
+                        parent="run_parent/1",
+                        executable_kind="agic",
+                        executable_name="<agic:34>",
+                        call_kind="run",
                     ),
                 ],
             }
@@ -7709,46 +8147,100 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
     assert result.exit_code == 0
     assert calls == ["/api/v1/runs/run_parent", "/api/v1/threads/term_thread?limit=100"]
     assert "# run" in result.stdout
-    assert "run run_parent  succeeded  flow=research  thread=term_thread" in result.stdout
+    assert (
+        "run run_parent  succeeded  flow=research  thread=term_thread" in result.stdout
+    )
     assert "# input\nquery" in result.stdout
     assert "# steps" in result.stdout
-    assert "\n✓ 1   seq     stage 1 rank prepare count=3" in result.stdout
-    assert "\n✓ 2   run" in result.stdout
-    assert "item 1/3 thunk:score run_child" in result.stdout
-    assert "\n✓ 3   system  stage 1 rank done count=2" in result.stdout
-    assert "\n✓ 4   run     stage 2 do -> thunk:<L34> run_inline" in result.stdout
-    assert "2.1 tool" not in result.stdout
+    assert "\n✓ 0   par     rank score top 2 par 2" in result.stdout
+    assert "\n✓ 1   run     run <agic:34>" in result.stdout
+    assert "0.0 tool" not in result.stdout
 
-    parent_path_json = _invoke_app(["inspect", "dev", "run_parent:2", "--json"])
+    parent_path_json = _invoke_app(["inspect", "dev", "run_parent:0", "--json"])
 
     assert parent_path_json.exit_code == 0
     parent_path_data = json.loads(parent_path_json.stdout)
     assert parent_path_data["step"]["variant"] == "compound"
-    assert parent_path_data["step"]["children"][0]["path"] == "2.1"
-    assert parent_path_data["step"]["children"][0]["summary"] == 'filesystem__read_text result "tool output"'
+    assert parent_path_data["step"]["children"][0]["path"] == "0.0"
+    assert (
+        parent_path_data["step"]["children"][0]["summary"]
+        == 'filesystem__read_text result "tool output"'
+    )
     assert "record" not in parent_path_data["step"]["children"][0]
 
-    child_path_json = _invoke_app(["inspect", "dev", "run_parent:2.1", "--json"])
+    child_path_json = _invoke_app(["inspect", "dev", "run_parent:0.0", "--json"])
 
     assert child_path_json.exit_code == 0
     child_path_data = json.loads(child_path_json.stdout)
     assert child_path_data["step"]["variant"] == "tool"
     assert child_path_data["step"]["tool_calls"][0]["result"] == "tool output"
 
-    parent_path_result = _invoke_app(["inspect", "dev", "run_parent:2"])
+    parent_path_result = _invoke_app(["inspect", "dev", "run_parent:0"])
 
     assert parent_path_result.exit_code == 0
-    assert "step run_parent:2  succeeded  kind=run" in parent_path_result.stdout
+    assert "step run_parent:0  succeeded  kind=par" in parent_path_result.stdout
     assert "# children" in parent_path_result.stdout
-    assert '\n  ✓ 2.1 tool    filesystem__read_text result "tool output"' in parent_path_result.stdout
+    assert (
+        '\n  ✓ 0.0 tool    filesystem__read_text result "tool output"'
+        in parent_path_result.stdout
+    )
     assert "input_refs" not in parent_path_result.stdout
 
-    path_result = _invoke_app(["inspect", "dev", "run_parent:2.1"])
+    path_result = _invoke_app(["inspect", "dev", "run_parent:0.0"])
 
     assert path_result.exit_code == 0
-    assert "step run_child:2.1  succeeded  kind=tool" in path_result.stdout
+    assert "step run_child:0.0  succeeded  kind=tool" in path_result.stdout
     assert "output" in path_result.stdout
     assert "tool output" in path_result.stdout
+
+
+def test_cli_inspect_nests_steps_by_parent_path() -> None:
+    run = _inspect_run_detail(
+        "run_parent",
+        thread_id="term_thread",
+        steps=[
+            {
+                "record": {
+                    "parent": "run_parent",
+                    "index": 0,
+                    "path": "run_parent/0",
+                    "step_index": 0,
+                    "kind": "loop",
+                    "status": "finished",
+                    "context": {"statement": "repeat"},
+                    "detail": {"statement": "repeat", "shape": "item"},
+                    "output": [],
+                },
+                "message": None,
+            },
+            {
+                "record": {
+                    "parent": "run_parent/0",
+                    "index": 0,
+                    "path": "run_parent/0/0",
+                    "step_index": 0,
+                    "kind": "system",
+                    "status": "finished",
+                    "context": {"statement": "let"},
+                    "detail": {"statement": "let", "shape": "item"},
+                    "output": [{"type": "text", "text": "done"}],
+                },
+                "message": None,
+            },
+        ],
+    )
+
+    document = inspect_cli.preprocess_inspect(
+        {
+            "kind": "run",
+            "run": run,
+            "thread": {"info": {"id": "term_thread"}, "runs": [run]},
+        },
+        target=inspect_cli.InspectTarget(kind="run", identifier="run_parent"),
+    )
+
+    assert [step["path"] for step in document["steps"]] == ["0"]
+    assert document["steps"][0]["children"][0]["path"] == "0.0"
 
 
 def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> None:
@@ -7758,8 +8250,7 @@ def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> Non
         "run_child",
         thread_id="term_thread",
         root_run_id="run_parent",
-        parent_run_id="run_parent",
-        parent_step_index=2,
+        parent="run_parent/2",
         executable_kind="thunk",
         executable_name="expand_queries",
         call_kind="stage",
@@ -7799,7 +8290,12 @@ def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> Non
                     "kind": "system",
                     "status": "failed",
                     "detail": {},
-                    "output": [{"type": "text", "text": "unknown tool call: service_use__service_list"}],
+                    "output": [
+                        {
+                            "type": "text",
+                            "text": "unknown tool call: service_use__service_list",
+                        }
+                    ],
                     "error": "unknown tool call: service_use__service_list",
                 },
                 "message": None,
@@ -7825,7 +8321,9 @@ def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> Non
             return {
                 "info": {"id": "term_thread"},
                 "runs": [
-                    _inspect_run_detail("run_parent", thread_id="term_thread", root_run_id="run_parent"),
+                    _inspect_run_detail(
+                        "run_parent", thread_id="term_thread", root_run_id="run_parent"
+                    ),
                     child,
                 ],
             }
@@ -7838,13 +8336,23 @@ def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> Non
     assert result.exit_code == 0
     assert calls == ["/api/v1/runs/run_child", "/api/v1/threads/term_thread?limit=100"]
     assert "# run" in result.stdout
-    assert "run run_child  failed  thunk=expand_queries  thread=term_thread" in result.stdout
+    assert (
+        "run run_child  failed  thunk=expand_queries  thread=term_thread"
+        in result.stdout
+    )
     assert "# output" in result.stdout
-    assert "error: unknown tool call: service_use__service_list (step 2 system)" in result.stdout
-    assert "unknown tool call: service_use__service_list (step 2 system)" in result.stdout
+    assert (
+        "error: unknown tool call: service_use__service_list (step 2 system)"
+        in result.stdout
+    )
+    assert (
+        "unknown tool call: service_use__service_list (step 2 system)" in result.stdout
+    )
     assert "\n✓ 1   model   I should inspect services." in result.stdout
     assert 'service_use__service_list call  {visibility: "all"}' in result.stdout
-    assert "\n✗ 2   system  unknown tool call: service_use__service_list" in result.stdout
+    assert (
+        "\n✗ 2   system  unknown tool call: service_use__service_list" in result.stdout
+    )
     assert "- run_parent flow:research" not in result.stdout
 
 
@@ -7914,7 +8422,9 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
         ],
     )
     run["prompts"] = {
-        "prompt_instruct": "\n".join(f"instruct line {index}" for index in range(1, 13)),
+        "prompt_instruct": "\n".join(
+            f"instruct line {index}" for index in range(1, 13)
+        ),
         "prompt_context": "<context>\nagent_name: alice\nthread_id: term_thread\nsandbox: none\n</context>",
     }
 
@@ -7933,7 +8443,9 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
     assert result.exit_code == 0
     assert calls == ["/api/v1/runs/run_thunk", "/api/v1/threads/term_thread?limit=100"]
     assert "# run" in result.stdout
-    assert "run run_thunk  succeeded  thunk=summarize  thread=term_thread" in result.stdout
+    assert (
+        "run run_thunk  succeeded  thunk=summarize  thread=term_thread" in result.stdout
+    )
     assert "# input\nquery" in result.stdout
     assert "# output\nSummary complete." in result.stdout
     assert "# steps" in result.stdout
@@ -7952,10 +8464,16 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
     assert "# input" in focus_result.stdout
     assert "· user:  query" in focus_result.stdout
     assert "# output" in focus_result.stdout
-    assert "✓ assistant:  Ready to read the task. [1 tool call] filesystem__read_text  {path: \"task.md\"}" in focus_result.stdout
+    assert (
+        '✓ assistant:  Ready to read the task. [1 tool call] filesystem__read_text  {path: "task.md"}'
+        in focus_result.stdout
+    )
     assert "\n[1 tool call]" not in focus_result.stdout
     assert "# context" in focus_result.stdout
-    assert "<context>\nagent_name: alice\nthread_id: term_thread\nsandbox: none\n</context>" in focus_result.stdout
+    assert (
+        "<context>\nagent_name: alice\nthread_id: term_thread\nsandbox: none\n</context>"
+        in focus_result.stdout
+    )
     assert "# instruct" in focus_result.stdout
     assert "instruct line 10" in focus_result.stdout
     assert "instruct line 11" not in focus_result.stdout
@@ -7972,8 +8490,14 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
 
     assert history_focus_result.exit_code == 0
     assert "· user:       query" in history_focus_result.stdout
-    assert "· assistant:  Ready to read the task. filesystem__read_text call  {path: \"task.md\"}" in history_focus_result.stdout
-    assert "· tool:       filesystem__read_text result \"task body\"" in history_focus_result.stdout
+    assert (
+        '· assistant:  Ready to read the task. filesystem__read_text call  {path: "task.md"}'
+        in history_focus_result.stdout
+    )
+    assert (
+        '· tool:       filesystem__read_text result "task body"'
+        in history_focus_result.stdout
+    )
 
     tool_focus_result = _invoke_app(["inspect", "dev", "run_thunk:2"])
 
@@ -7984,7 +8508,7 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
     assert "# input_refs" not in tool_focus_result.stdout
     assert "# input" in tool_focus_result.stdout
     assert 'tool: "filesystem__read_text"' in tool_focus_result.stdout
-    assert 'input: {' in tool_focus_result.stdout
+    assert "input: {" in tool_focus_result.stdout
     assert 'path: "task.md"' in tool_focus_result.stdout
     assert "# output" in tool_focus_result.stdout
     assert "# result" not in tool_focus_result.stdout
@@ -8107,7 +8631,11 @@ def test_cli_inspect_rejects_removed_view_options(option_args: list[str]) -> Non
 
 def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
     calls: list[str] = []
-    monkeypatch.setattr(inspect_cli.shutil, "get_terminal_size", lambda fallback: os.terminal_size((80, 24)))
+    monkeypatch.setattr(
+        inspect_cli.shutil,
+        "get_terminal_size",
+        lambda fallback: os.terminal_size((80, 24)),
+    )
     parent = _inspect_run_detail(
         "run_parent",
         thread_id="term_thread",
@@ -8162,8 +8690,7 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
         "run_child",
         thread_id="term_thread",
         root_run_id="run_parent",
-        parent_run_id="run_parent",
-        parent_step_index=2,
+        parent="run_parent/2",
         executable_kind="thunk",
         executable_name="expand_queries",
         call_kind="stage",
@@ -8191,7 +8718,9 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
                     "kind": "model",
                     "status": "finished",
                     "payload": {"model_ref": "deepseek/deepseek-chat-v3"},
-                    "output": [{"type": "text", "text": f"李白同学是谁，{'中文内容' * 30}"}],
+                    "output": [
+                        {"type": "text", "text": f"李白同学是谁，{'中文内容' * 30}"}
+                    ],
                 },
                 "message": None,
             },
@@ -8228,8 +8757,12 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
     assert "\n✗ run_parent   1.0s   [3]   query" in result.stdout
     assert "\n\n✓ run_success" not in result.stdout
     assert "\n✓ run_success  1.0s   [2]   query" in result.stdout
-    parent_line = next(line for line in result.stdout.splitlines() if line.startswith("✗ run_parent"))
-    success_line = next(line for line in result.stdout.splitlines() if line.startswith("✓ run_success"))
+    parent_line = next(
+        line for line in result.stdout.splitlines() if line.startswith("✗ run_parent")
+    )
+    success_line = next(
+        line for line in result.stdout.splitlines() if line.startswith("✓ run_success")
+    )
     assert parent_line.index("1.0s") == success_line.index("1.0s")
     assert parent_line.index("[3]") == success_line.index("[2]")
     assert parent_line.index("query") == success_line.index("query")
@@ -8240,7 +8773,11 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
     long_input = cast(dict[str, object], successful["input"])
     long_input["parts"] = [{"type": "text", "text": f"李白同学是谁，{'中文内容' * 30}"}]
     long_result = _invoke_app(["inspect", "dev", "term_thread"])
-    success_output_line = next(line for line in long_result.stdout.splitlines() if line.startswith("✓ run_success"))
+    success_output_line = next(
+        line
+        for line in long_result.stdout.splitlines()
+        if line.startswith("✓ run_success")
+    )
     assert 110 <= wcswidth(success_output_line) <= 120
     assert success_output_line.endswith("...")
     assert "\n# run\n" not in result.stdout
@@ -8253,13 +8790,13 @@ def test_script_progress_defaults_to_stage_summary() -> None:
     sink = cli_invoke._ScriptProgressSink(thunk_name="research", render=False)
 
     sink.on_event(
-        RunBegin(
+        RunStarting(
             run="run_parent",
+            cmd=0,
             parent=None,
             thread="script_1",
             input=Message.user("query"),
             created_at="2026-01-01T00:00:00Z",
-            started_at="2026-01-01T00:00:00Z",
             context={
                 "origin": "script",
                 "root": "run_parent",
@@ -8269,104 +8806,54 @@ def test_script_progress_defaults_to_stage_summary() -> None:
         )
     )
     sink.on_event(
-        RunBegin(
+        StepBegin(
+            step="run_parent/0",
+            kind="par",
+            input=(),
+            started_at="2026-01-01T00:00:01Z",
+            context={
+                "statement": "map",
+                "runnable": "search_web",
+                "par": 2,
+            },
+        )
+    )
+    sink.on_event(
+        RunStarting(
             run="run_child",
-            parent="run_parent/2",
+            cmd=0,
+            parent="run_parent/0",
             thread="script_1",
             input=Message.user("query"),
             created_at="2026-01-01T00:00:01Z",
-            started_at="2026-01-01T00:00:01Z",
             context={
                 "origin": "script",
                 "root": "run_parent",
-                "executable": {"kind": "thunk", "name": "search_web"},
-                "call": "stage",
-                "child": {
-                    "stage_label": "each: Search the web",
-                    "stage_index": 1,
-                    "stage_kind": "each",
-                    "parallelism": 2,
-                    "lane_index": 0,
-                    "item_index": 0,
-                    "item_count": 3,
-                }
+                "executable": {"kind": "agic", "name": "search_web"},
+                "call": "run",
+                "placement": {"item": 0, "items": 3, "lane": 0, "lanes": 2},
             },
-        )
-    )
-    sink.on_event(
-        StepBegin(
-            step="run_child/1",
-            kind="model",
-            input=(),
-            started_at="2026-01-01T00:00:01Z",
-        )
-    )
-    sink.on_event(
-        StepEnd(
-            step="run_parent/1",
-            kind="par",
-            status="finished",
-            output=(),
-            detail={
-                "op": "prepare_each",
-                "preview": {"count": 3},
-                "source": {
-                    "stage_label": "each: Search the web",
-                    "stage_index": 1,
-                    "stage_kind": "each",
-                },
-            },
-            started_at="2026-01-01T00:00:00Z",
-            finished_at="2026-01-01T00:00:01Z",
-        )
-    )
-    sink.on_event(
-        StepEnd(
-            step="run_parent/2",
-            kind="run",
-            status="finished",
-            output=(TextPart(text="done"),),
-            detail={
-                "call": "stage",
-                "target": {"kind": "thunk", "name": "search_web"},
-                "child_runs": ["run_child"],
-                "lane": {"count": 2, "index": 0},
-                "item": {"index": 0},
-                "source": {
-                    "stage_label": "each: Search the web",
-                    "stage_index": 1,
-                    "stage_kind": "each",
-                    "parallelism": 2,
-                    "item_count": 3,
-                },
-            },
-            started_at="2026-01-01T00:00:01Z",
-            finished_at="2026-01-01T00:00:02Z",
         )
     )
     sink.on_event(
         RunEnd(
-            run="run_unknown_child",
+            run="run_child",
             status="finished",
             finished_at="2026-01-01T00:00:02Z",
         )
     )
     sink.on_event(
         StepEnd(
-            step="run_parent/3",
-            kind="system",
+            step="run_parent/0",
+            kind="par",
             status="finished",
             output=(),
             detail={
-                "op": "set_current",
-                "preview": {"count": 3},
-                "source": {
-                    "stage_label": "each: Search the web",
-                    "stage_index": 1,
-                    "stage_kind": "each",
-                    "input_preview": {"count": 3},
-                    "parallelism": 2,
-                },
+                "statement": "map",
+                "runnable": "search_web",
+                "par": 2,
+                "shape": "list",
+                "items": 3,
             },
             started_at="2026-01-01T00:00:02Z",
             finished_at="2026-01-01T00:00:03Z",
@@ -8383,53 +8870,65 @@ def test_script_progress_defaults_to_stage_summary() -> None:
     assert sink._title == "Running flow:research: run_parent"
     lines = sink._render_lines()
     assert len(lines) == 3
-    assert lines[1].startswith("[2] Search the web")
-    assert "Search the web" in lines[1]
-    assert "3 items -> 3 items" in lines[1]
+    assert lines[1].startswith("[1] map search_web")
+    assert "3 items" in lines[1]
     assert "2 lanes" in lines[1]
     assert lines[2] == "Done · 1 stages · 1 calls · 0 failed"
     assert "run_child" not in "\n".join(lines)
 
 
 def test_script_progress_expands_lanes_with_verbosity() -> None:
-    sink = cli_invoke._ScriptProgressSink(thunk_name="research", render=False, verbosity=2)
+    sink = cli_invoke._ScriptProgressSink(
+        thunk_name="research", render=False, verbosity=2
+    )
     sink.on_event(
-        RunBegin(
+        RunStarting(
             run="run_parent",
+            cmd=0,
             parent=None,
             thread="script_1",
             input=Message.user("query"),
             created_at="2026-01-01T00:00:00Z",
-            started_at="2026-01-01T00:00:00Z",
             context={
                 "origin": "script",
                 "executable": {"kind": "flow", "name": "research"},
             },
         )
     )
+    sink.on_event(
+        StepBegin(
+            step="run_parent/0",
+            kind="par",
+            input=(),
+            context={
+                "statement": "storm",
+                "count": 2,
+                "runnable": "search_web",
+                "par": 2,
+            },
+            started_at="2026-01-01T00:00:01Z",
+        )
+    )
     for run_id, item_index in (("run_second", 1), ("run_first", 0)):
         sink.on_event(
-            RunBegin(
+            RunStarting(
                 run=run_id,
-                parent=f"run_parent/{item_index + 1}",
+                cmd=0,
+                parent="run_parent/0",
                 thread="script_1",
                 input=Message.user("query"),
                 created_at="2026-01-01T00:00:01Z",
-                started_at="2026-01-01T00:00:01Z",
                 context={
                     "origin": "script",
                     "root": "run_parent",
-                    "executable": {"kind": "thunk", "name": "search_web"},
-                    "call": "stage",
-                    "child": {
-                        "stage_label": "each: Search the web",
-                        "stage_index": 0,
-                        "stage_kind": "each",
-                        "parallelism": 2,
-                        "lane_index": item_index,
-                        "item_index": item_index,
-                        "item_count": 2,
-                    }
+                    "executable": {"kind": "agic", "name": "search_web"},
+                    "call": "run",
+                    "placement": {
+                        "item": item_index,
+                        "items": 2,
+                        "lane": item_index,
+                        "lanes": 2,
+                    },
                 },
             )
         )
@@ -8462,13 +8961,13 @@ def test_script_progress_keeps_final_frame_visible(monkeypatch) -> None:
     sink = cli_invoke._ScriptProgressSink(thunk_name="research", render=True)
 
     sink.on_event(
-        RunBegin(
+        RunStarting(
             run="run_parent",
+            cmd=0,
             parent=None,
             thread="script_1",
             input=Message.user("query"),
             created_at="2026-01-01T00:00:00Z",
-            started_at="2026-01-01T00:00:00Z",
             context={
                 "origin": "script",
                 "executable": {"kind": "flow", "name": "research"},
@@ -8487,7 +8986,9 @@ def test_cli_inspect_no_longer_accepts_steps_view() -> None:
 
 
 def test_cli_inspect_no_longer_accepts_events_view() -> None:
-    result = _invoke_app(["inspect", "dev", "run_parent", "--view", "events", "--limit", "25"])
+    result = _invoke_app(
+        ["inspect", "dev", "run_parent", "--view", "events", "--limit", "25"]
+    )
 
     assert result.exit_code == 2
     assert "No such option: --view" in result.stderr
@@ -8546,10 +9047,14 @@ def test_cli_rewind_and_fork_help_describe_latest_run_target() -> None:
     assert "Open chat on the forked thread." in fork.stdout
 
 
-def test_cli_chat_term_without_message_exits_without_creating_thread(monkeypatch) -> None:
+def test_cli_chat_term_without_message_exits_without_creating_thread(
+    monkeypatch,
+) -> None:
     posts: list[tuple[str, object]] = []
 
-    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+    def fake_runtime_post(
+        _ctx: Any, request_path: str, *, payload: dict[str, object]
+    ) -> dict[str, object]:
         posts.append((request_path, payload))
         return {"thread_id": "term_new"}
 
@@ -8563,7 +9068,9 @@ def test_cli_chat_term_without_message_exits_without_creating_thread(monkeypatch
 
 
 @pytest.mark.parametrize("command", ("steer", "cancel", "rewind", "fork"))
-def test_cli_thread_control_commands_show_help_without_target(command: str, monkeypatch) -> None:
+def test_cli_thread_control_commands_show_help_without_target(
+    command: str, monkeypatch
+) -> None:
     monkeypatch.setattr(cli.sys, "argv", ["too"])
 
     with pytest.raises(SystemExit) as exc:
@@ -8579,7 +9086,9 @@ def test_cli_rewind_accepts_thread_target(monkeypatch) -> None:
         calls.append(("json", request_path))
         return {"info": {"latest_run": {"id": "run_latest"}}}
 
-    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+    def fake_runtime_post(
+        _ctx: Any, request_path: str, *, payload: dict[str, object]
+    ) -> dict[str, object]:
         calls.append(("post", (request_path, payload)))
         return {"thread_id": "term_thread", "run_id": None}
 
@@ -8608,7 +9117,9 @@ def test_cli_rewind_without_message_does_not_send_empty_message(monkeypatch) -> 
         calls.append(("json", request_path))
         return {"info": {"latest_run": {"id": "run_latest"}}}
 
-    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+    def fake_runtime_post(
+        _ctx: Any, request_path: str, *, payload: dict[str, object]
+    ) -> dict[str, object]:
         calls.append(("post", (request_path, payload)))
         return {"thread_id": "term_thread", "run_id": None}
 
@@ -8631,7 +9142,9 @@ def test_cli_rewind_chat_opens_rewound_thread(monkeypatch) -> None:
         calls.append(("json", request_path))
         return {"info": {"latest_run": {"id": "run_latest"}}}
 
-    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+    def fake_runtime_post(
+        _ctx: Any, request_path: str, *, payload: dict[str, object]
+    ) -> dict[str, object]:
         calls.append(("post", (request_path, payload)))
         return {"thread_id": "term_thread", "run_id": None}
 
@@ -8665,7 +9178,9 @@ def test_cli_fork_thread_target_copies_through_latest_run(monkeypatch) -> None:
         calls.append(("json", request_path))
         return {"info": {"latest_run": {"id": "run_latest"}}}
 
-    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+    def fake_runtime_post(
+        _ctx: Any, request_path: str, *, payload: dict[str, object]
+    ) -> dict[str, object]:
         calls.append(("post", (request_path, payload)))
         return {"thread_id": "term_fork", "run_id": None}
 
@@ -8695,7 +9210,9 @@ def test_cli_fork_chat_opens_forked_thread(monkeypatch) -> None:
         calls.append(("json", request_path))
         return {"info": {"latest_run": {"id": "run_latest"}}}
 
-    def fake_runtime_post(_ctx: Any, request_path: str, *, payload: dict[str, object]) -> dict[str, object]:
+    def fake_runtime_post(
+        _ctx: Any, request_path: str, *, payload: dict[str, object]
+    ) -> dict[str, object]:
         calls.append(("post", (request_path, payload)))
         return {"thread_id": "term_fork", "run_id": None}
 
@@ -8755,7 +9272,10 @@ def test_standalone_caps_help_shows_agent_prefix_usage() -> None:
     assert "Manage composable agent primitives." in result.stdout
     assert "caps [AGENT] [OPTIONS] COMMAND [ARGS]..." in result.stdout
     assert "Scope" not in result.stdout
-    assert "agent      TEXT  Apply to this agent's home caps instead of root caps." in result.stdout
+    assert (
+        "agent      TEXT  Apply to this agent's home caps instead of root caps."
+        in result.stdout
+    )
     assert "--agent" not in result.stdout
 
 
@@ -8792,7 +9312,10 @@ def test_standalone_cap_group_help_shows_agent_prefix_usage() -> None:
     assert "Scope" not in result.stdout
     assert "Manage psyche caps." in result.stdout
     assert "List psyches." in result.stdout
-    assert "agent      TEXT  Apply to this agent's home psyches instead of root" in result.stdout
+    assert (
+        "agent      TEXT  Apply to this agent's home psyches instead of root"
+        in result.stdout
+    )
     assert "psyches." in result.stdout
     assert "--agent" not in result.stdout
 
@@ -8805,7 +9328,10 @@ def test_standalone_cap_template_help_uses_inspect_description() -> None:
     assert "Inspect psyche templates." in result.stdout
     assert "name       TEXT  Template name." in result.stdout
     assert "Scope" not in result.stdout
-    assert "agent      TEXT  Apply to this agent's home psyches instead of root" in result.stdout
+    assert (
+        "agent      TEXT  Apply to this agent's home psyches instead of root"
+        in result.stdout
+    )
     assert "psyches." in result.stdout
 
 
@@ -8832,7 +9358,9 @@ def test_standalone_caps_main_rejects_removed_agent_option() -> None:
     assert result.exit_code != 0
 
 
-def test_standalone_caps_list_prepares_agent_once_with_progress(tmp_path: Path, monkeypatch) -> None:
+def test_standalone_caps_list_prepares_agent_once_with_progress(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     caps.put_local_entry_text(
@@ -8851,7 +9379,11 @@ def test_standalone_caps_list_prepares_agent_once_with_progress(tmp_path: Path, 
         calls += 1
         return original_build_prepared_state(*args, **kwargs)
 
-    monkeypatch.setattr(caps_commands.watch_feature, "build_prepared_state", counted_build_prepared_state)
+    monkeypatch.setattr(
+        caps_commands.watch_feature,
+        "build_prepared_state",
+        counted_build_prepared_state,
+    )
 
     result = _invoke_caps_app(
         ["--root", str(toolang_root), "list"],
@@ -8866,7 +9398,9 @@ def test_standalone_caps_list_prepares_agent_once_with_progress(tmp_path: Path, 
     assert "Resolved 1 caps" in result.stderr
 
 
-def test_standalone_cap_kind_list_prepares_agent_once_with_progress(tmp_path: Path, monkeypatch) -> None:
+def test_standalone_cap_kind_list_prepares_agent_once_with_progress(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     caps.put_local_entry_text(
@@ -8885,7 +9419,11 @@ def test_standalone_cap_kind_list_prepares_agent_once_with_progress(tmp_path: Pa
         calls += 1
         return original_build_prepared_state(*args, **kwargs)
 
-    monkeypatch.setattr(caps_commands.watch_feature, "build_prepared_state", counted_build_prepared_state)
+    monkeypatch.setattr(
+        caps_commands.watch_feature,
+        "build_prepared_state",
+        counted_build_prepared_state,
+    )
 
     result = _invoke_caps_app(
         ["--root", str(toolang_root), "skill", "list"],
@@ -8900,7 +9438,9 @@ def test_standalone_cap_kind_list_prepares_agent_once_with_progress(tmp_path: Pa
     assert "Resolved 1 caps" in result.stderr
 
 
-def test_standalone_cap_kind_list_summarizes_updated_remote_caps(tmp_path: Path, monkeypatch) -> None:
+def test_standalone_cap_kind_list_summarizes_updated_remote_caps(
+    tmp_path: Path, monkeypatch
+) -> None:
     toolang_root = tmp_path / "toolang"
     agents.create_agent(toolang_root, "alice")
     config_path = toolang_root / "agents" / "alice" / "config.toml"
@@ -8909,7 +9449,9 @@ def test_standalone_cap_kind_list_summarizes_updated_remote_caps(tmp_path: Path,
         encoding="utf-8",
     )
 
-    def fake_remote_materialized_files(*, relative_entry_path, kind, name, ref, progress=None):
+    def fake_remote_materialized_files(
+        *, relative_entry_path, kind, name, ref, progress=None
+    ):
         del name
         if progress is not None:
             progress(
@@ -8921,9 +9463,15 @@ def test_standalone_cap_kind_list_summarizes_updated_remote_caps(tmp_path: Path,
                     detail="1 file",
                 )
             )
-        return {str(relative_entry_path): b"---\ndescription: Review changes\n---\n# Review\n"}
+        return {
+            str(
+                relative_entry_path
+            ): b"---\ndescription: Review changes\n---\n# Review\n"
+        }
 
-    monkeypatch.setattr(caps, "_remote_materialized_files", fake_remote_materialized_files)
+    monkeypatch.setattr(
+        caps, "_remote_materialized_files", fake_remote_materialized_files
+    )
 
     result = _invoke_caps_app(
         ["--root", str(toolang_root), "skill", "list"],
@@ -9067,7 +9615,13 @@ def test_cli_help_lists_cap_commands() -> None:
     prompt_index = result.stdout.index("prompt")
     caps_index = result.stdout.rindex("caps")
     assert "plugin" not in result.stdout
-    assert result.stdout.index("Agent Commands") < stop_index < chore_index < task_index < result.stdout.index("Thread Commands")
+    assert (
+        result.stdout.index("Agent Commands")
+        < stop_index
+        < chore_index
+        < task_index
+        < result.stdout.index("Thread Commands")
+    )
     assert (
         result.stdout.index("Thread Commands")
         < chat_index
@@ -9093,8 +9647,7 @@ def _inspect_run_detail(
     *,
     thread_id: str,
     root_run_id: str | None = None,
-    parent_run_id: str | None = None,
-    parent_step_index: int | None = None,
+    parent: str | None = None,
     executable_kind: str = "flow",
     executable_name: str | None = "research",
     call_kind: str = "root",
@@ -9104,11 +9657,10 @@ def _inspect_run_detail(
     return {
         "info": {
             "id": run_id,
+            "parent": parent,
             "origin": "script",
             "thread_id": thread_id,
             "root_run_id": root_run_id or run_id,
-            "parent_run_id": parent_run_id,
-            "parent_step_index": parent_step_index,
             "executable_kind": executable_kind,
             "executable_name": executable_name,
             "call_kind": call_kind,
@@ -9129,7 +9681,9 @@ def _inspect_run_detail(
     }
 
 
-def _write_roaming_program(tmp_path: Path, body_text: str, *, name: str = "demo") -> Path:
+def _write_roaming_program(
+    tmp_path: Path, body_text: str, *, name: str = "demo"
+) -> Path:
     path = tmp_path / f"{name}.too"
     path.write_text(body_text + "\n", encoding="utf-8")
     return path

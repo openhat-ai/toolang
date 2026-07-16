@@ -25,15 +25,18 @@ Use this directory for:
 | --- | --- |
 | [concepts.md](./concepts.md) | Developer overview and core runtime vocabulary |
 | [ids.md](./ids.md) | Toolang-owned id families, reversible encoding, and durable allocator model |
-| [program.md](./program.md) | Program syntax, including `struct`, `slash`, thunk signatures, directives, and surface rules |
+| [program.md](./program.md) | Program declarations, executable signatures, agics, flows, directives, and surface rules |
+| [flow-syntax.md](./flow-syntax.md) | Flow declarations, statements, result binding, and clauses |
+| [input-syntax.md](./input-syntax.md) | Commands, content, primary executable input, coercion, dispatch, and escaping |
 | [layout.md](./layout.md) | Layout and storage, including Toolang root, agent home, and runtime room paths |
 | [prepared-lock.md](./prepared-lock.md) | Prepared `lock.json` format and source/artifact comparison rules |
 | [caps.md](./caps.md) | Capability model, including form, scope, origin, refs, precedence, and effective-cap rules |
-| [selectors.md](./selectors.md) | Shared selector-list syntax for filters, activation flags, and thunk directives |
+| [selectors.md](./selectors.md) | Shared selector-list syntax for filters, activation flags, and agic directives |
 | [tasks.md](./tasks.md) | Job model, including task, chore, will, and thread mapping |
 | [webui-jobs.md](./webui-jobs.md) | Web UI job board integration guide |
-| [execution.md](./execution.md) | Execution model, including durable records, trace events, and response events |
-| [run-step-records.md](./run-step-records.md) | Proposed run, step, command, and trace-event record model |
+| [execution.md](./execution.md) | Execution boundaries, lifecycle, locals, traces, persistence, and replies |
+| [executor.md](./executor.md) | Executor design for agic, flow, step execution, locals, reshapes, and sinks |
+| [run-step-records.md](./run-step-records.md) | Durable run, step, and command records plus their source trace events |
 | [chat.md](./chat.md) | Chat and transcript model, including thread, run, message, and stream behavior |
 | [models.md](./models.md) | Model integrations, including selectors, providers, routes, and built-in model providers |
 | [tools.md](./tools.md) | Tool runtime, including built-in tools and service-cap integration |

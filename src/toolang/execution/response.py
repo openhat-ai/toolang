@@ -12,7 +12,7 @@ from typing import Any, Protocol
 from toolang.base.protocols.channel import AgentChannel
 from toolang.base.types.channel import ChannelContext, OutboundMessage, ReplyTarget
 from toolang.base.types.message import TextDelta, TextPart, ToolCallDelta, ToolCallPart, ToolResultPart, message_text
-from .events import RunEnd, RunBegin, StepEnd, StepBegin, PartBegin, PartDelta, PartEnd, TraceEvent, message_data_for_step
+from .events import RunEnd, RunBegin, RunStarting, StepEnd, StepBegin, PartBegin, PartDelta, PartEnd, TraceEvent, message_data_for_step
 from .records import trace_index, trace_run
 from .stream import trace_event_data
 
@@ -35,19 +35,20 @@ class BufferedResponseSink:
         self._assistant = None
         self._run_id: str | None = None
         self._thread_id: str | None = None
-        self._last_step_index = 0
+        self._last_step_index = -1
 
     @property
     def assistant(self):
         return self._assistant
 
     def on_event(self, event: TraceEvent) -> None:
-        if isinstance(event, RunBegin):
+        if isinstance(event, RunStarting) and self._run_id is None:
             self._run_id = event.run
             self._thread_id = event.thread
             return
         if isinstance(event, StepEnd) and event.kind == "model":
-            self._last_step_index = trace_index(event.step) or self._last_step_index
+            if (step_index := trace_index(event.step)) is not None:
+                self._last_step_index = step_index
             self._assistant = message_data_for_step(
                 step=event.step,
                 thread=self._thread_id or "",
@@ -64,7 +65,7 @@ class BufferedResponseSink:
             and self._assistant is None
         ):
             self._assistant = message_data_for_step(
-                step=f"{self._run_id or event.run}/{max(self._last_step_index, 1)}",
+                step=f"{self._run_id or event.run}/{self._last_step_index + 1}",
                 thread=self._thread_id or "",
                 kind="model",
                 output=(TextPart(text=event.error),),
@@ -112,7 +113,7 @@ class SseResponseSink:
     def on_event(self, event: TraceEvent) -> None:
         if self._closed:
             return
-        if isinstance(event, RunBegin):
+        if isinstance(event, RunStarting):
             if self._run_id is not None:
                 parent_run = trace_run(event.parent) if event.parent else None
                 if parent_run == self._run_id or parent_run in self._child_run_ids:
@@ -332,8 +333,8 @@ class TraceResponseSink:
             return True
         if event_run_id == self._run_id or event_run_id in self._child_run_ids:
             return True
-        parent_run = trace_run(event.parent) if isinstance(event, RunBegin) and event.parent else None
-        if isinstance(event, RunBegin) and (
+        parent_run = trace_run(event.parent) if isinstance(event, RunStarting) and event.parent else None
+        if isinstance(event, RunStarting) and (
             parent_run == self._run_id or parent_run in self._child_run_ids
         ):
             self._child_run_ids.add(event.run)
