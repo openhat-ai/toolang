@@ -1,6 +1,9 @@
 # Execution Model
 
-This document defines the runtime execution model.
+This document defines Toolang's runtime execution boundaries. Exact durable
+record and event fields are specified in
+[run-step-records.md](./run-step-records.md); executor control flow is specified
+in [executor.md](./executor.md).
 
 
 ## State Forms
@@ -11,250 +14,271 @@ Toolang uses three forms of state:
 | --- | --- |
 | `durable` | Authored files and persisted execution truth |
 | `prepared` | Immutable runtime-ready snapshots |
-| `live` | In-memory state used by the active runtime |
+| `live` | In-memory state available to accept later work |
 
-One run is bound to one prepared snapshot for its full lifetime.
+A run captures one prepared `LiveState` when accepted. Accepted queued runs
+retain that snapshot, and child runs inherit it from their parent. A live-state
+update therefore affects only requests accepted later.
 
 
 ## Durable Store
 
-`runs.db` is the durable store for thread and run truth.
-
-It stores:
+`runs.db` owns durable thread and execution truth:
 
 - threads
 - runs
-- steps
+- commands
+- steps and output parts
 - agent-local updates
 - deduplicated prompt bodies
 
-`.runtime/jobs.db` stores the scheduler projection for ready task and chore
-documents. It is used for atomic job claims and completion bookkeeping; it is
-not the transcript or run-history store.
-
-`.runtime/files.db` stores file request claims for inbox directories. It records
-the watched root, relative path, absolute path, size, mtime, content
-fingerprint, terminal status, run id, timestamps, and terminal error. It is used
-for deduplicating file fingerprints and completion bookkeeping; it is not the
+`.runtime/jobs.db` is a scheduler projection for ready task and chore
+documents. `.runtime/files.db` is a file-request claim projection. Neither is a
 transcript or run-history store.
 
 
-## Durable Records
+## Durable Execution Records
 
-### RunRecord
+The three execution records are:
 
-`RunRecord` stores run-level truth:
+```text
+RunRecord
+  id, parent, thread, input, output, context, status, error,
+  created_at, started_at, finished_at
 
-- `run_id`
-- `thread_id`
-- `origin`
-- `status`
-- `error`
-- `created_at`
-- `started_at`
-- `finished_at`
+CommandRecord
+  run, index, kind, apply, input, context, status, error,
+  created_at, finished_at
 
-Toolang-owned run ids use `run_<id>`, where `<id>` is encoded with the `run`
-id family. Thread ids use `<kind>_<id>`, such as `tsk_3nprht9x`,
-`chr_xy1234ab`, `file_def456gh`, or `web_def456gh`.
+StepRecord
+  parent, index, kind, input, output, context, detail, status, error,
+  created_at, started_at, finished_at
+```
 
-File request runs use origin `file` and explicitly invoke the thunk named
-`file`. The start command stores the rendered file message, and run metadata
-stores the `invoke_parts` file attachment data plus the file request id and
-fingerprint.
+`RunRecord` is the aggregate root. Every run has command index `0` with kind
+`start`; later `steer` and `stop` commands belong to the same run. Child runs
+use `RunRecord.parent` to point at the calling `StepPath`.
 
-### CommandRecord
+Step indexes are zero-based and local to their parent. A full step path is:
 
-`CommandRecord` stores one accepted client command for a run:
+```text
+StepPath = run[/step_index/...]
+```
 
-- `run_id`
-- `index`
-- `kind`: `start`, `steer`, or `stop`
-- optional `mode`: `immediate`, `next_step`, or `next_call`
-- optional `request_id`
-- optional `message`
-- `created_at`
-
-`index = 0` is the `start` command that created the run. Later `steer`
-commands belong to the same running run and can be referenced by later steps.
-Cancel operations append a `stop` command and then finish the run as canceled.
-
-### StepRecord
-
-`StepRecord` stores one real execution step:
-
-- `run_id`
-- `step_index`
-- `kind`
-- `status`
-- `input`
-- `output`
-- `payload`
-- `error`
-- `started_at`
-- `finished_at`
-
-Current step kinds are:
-
-- `model_call`
-- `tool_call`
-- `runtime`
-
-Current step statuses are:
-
-- `finished`
-- `failed`
-- `canceled`
-
-Step input is an ordered mix of:
-
-- command refs: `{ "kind": "command", "index": 0 }`
-- step refs: `{ "kind": "step", "index": 1, "part": 0 }`
-- inline `Message`
-
-This allows one step to depend on accepted run commands, prior step output, and
-new inline messages in one ordered list.
-
-### UpdateRecord
-
-`UpdateRecord` stores agent-local operational updates such as:
-
-- `started`
-- `stopped`
-- `program_changed`
-- `task_changed`
-- `chore_changed`
+Durable data edges use `InputRef` and `OutputRef`. Runtime `Local` values do not
+contain these refs.
 
 
-## Model-Call Payload
+## Record Projection
 
-`model_call` steps use a dedicated payload with:
+Trace events are the only source of durable execution records:
 
-- `model_ref`
-- `input_tokens`
-- `output_tokens`
-- `instruct`
-- `context`
+```text
+request handling / executor -> TraceEventHandler -> PersistSink -> runs.db
+                                                -> ReplySink(s)
+                                                -> resource event bus
+```
 
-Instruction and context bodies are stored separately in `prompts` and referenced
-by content hash.
+Request handling may allocate run and command ids. Queues may retain pending
+requests in memory. Neither request handling, the queue, nor the executor may
+create or update execution records directly.
 
-
-## Trace Events
-
-Trace events are the internal execution fact stream.
-
-Current trace-event types are:
-
-- `RunStarting`
-- `RunSteering`
-- `RunStopping`
-- `RunBegin`
-- `StepBegin`
-- `PartBegin`
-- `PartDelta`
-- `PartEnd`
-- `StepEnd`
-- `RunEnd`
-
-Trace events drive both:
-
-- durable persistence
-- caller-facing response projection
-
-Trace events do not duplicate run commands as synthetic steps. A run emits
-`RunStarting` when the runtime accepts the start command. It emits `RunBegin`
-when execution actually begins. If a started run waits behind another run, the
-resource-scoped event stream may publish `run_waiting` between those events.
-
-The command trace events map to public event names as:
-
-- `RunStarting` -> `run_starting`
-- `RunSteering` -> `run_steering`
-- `RunStopping` -> `run_stopping`
-
-The execution trace events map to public event names as:
-
-- `RunBegin` -> `run_begin`
-- `StepBegin` -> `step_begin`
-- `PartBegin` -> `part_begin`
-- `PartDelta` -> `part_delta`
-- `PartEnd` -> `part_end`
-- `StepEnd` -> `step_end`
-- `RunEnd` -> `run_end`
-
-The runtime must publish trace events in causal order. A command event must be
-published before any step that can reference that command.
+`PersistSink` consumes the ordered trace, creates records, applies lifecycle
+updates, accumulates parts, and maintains projection-only input/output
+provenance. Replaying the same trace must produce the same record state.
 
 
-## Canonical Content Model
+## Run Lifecycle
 
-Toolang uses one shared content model from `toolang.base`:
+An external start may wait:
 
-- `Message`
-- `Part`
-- `Delta`
+```text
+run_waiting
+run_starting
+run_begin input={cmd: 0}
+step and part events
+run_end
+```
 
-Current part kinds are:
+Waiting is optional. Child runs normally start directly:
 
-- `text`
-- `tool_call`
-- `tool_result`
+```text
+parent step_begin[run]
+child run_starting
+child run_begin input={cmd: 0}
+...
+child run_end
+parent step_end[run]
+```
 
-Current delta kinds are:
+`run_waiting`, `run_starting`, `run_steering`, and `run_stopping` are runtime
+acceptance facts, not client requests. Existing execution events record command
+application through their input edges.
 
-- `text`
-- `tool_call`
+`run_begin` means execution started. `run_end` is emitted exactly once by the
+executor and carries the terminal status:
+
+```text
+finished | failed | canceled
+```
 
 
-## Response Events
+## Step Lifecycle
 
-Caller-facing streaming responses are derived from trace events.
+Every real operation emits:
 
-`POST /api/v1/chat/stream` uses an AI SDK UI message stream subset with:
+```text
+step_begin
+[part_begin, part_delta..., part_end]...
+step_end
+```
 
-- `start`
-- `message-metadata`
-- `text-start`
-- `text-delta`
-- `text-end`
-- `tool-input-start`
-- `tool-input-delta`
-- `tool-input-available`
-- `tool-output-available`
-- `start-step`
-- `finish-step`
-- `finish`
-- `error`
-- `[DONE]`
+Step kinds are intentionally small:
 
-This layer is transport output. It is not the durable execution truth.
+```text
+run | agent | human | model | tool | par | loop | system
+```
+
+- `run` and `agent` create child runs.
+- `human`, `model`, and `tool` call actors or capabilities.
+- `par` and `loop` organize child steps.
+- `system` records executor-owned work.
+
+Flow transformations such as unfold, fold, filtering, and ranking are result
+reshapes, not additional step kinds.
+
+
+## Executor Locals
+
+Each run owns:
+
+```python
+locals: dict[str, Local]
+```
+
+One `Local` contains only runtime data:
+
+```text
+value
+shape = none | item | list
+```
+
+`_` is the primary local. Run input initializes it, ordinary statements replace
+it, and run output reads it. Named parameters and `let` bindings use other
+local names.
+
+A step reads an immutable snapshot and returns a `Local`. The surrounding flow
+updates its locals only after the step succeeds. Nested and parallel work uses
+private copies, so a failed child or sibling branch cannot partially update
+parent state.
+
+
+## Agic And Flow
+
+An `AgicDecl` executes the dynamic model/tool loop. Model responses may create
+additional model and tool steps at runtime. Its terminal assistant parts are
+decoded according to the declared output type and become the primary local.
+
+A `FlowDecl` executes its authored statements in source order. Each statement
+may read current locals, produces one result, and then applies its independent
+binding:
+
+```text
+statement       write `_`
+let name = ...  write `name`
+let ...         discard the result
+```
+
+Runnable flow statements recursively start agic or flow child runs. The
+top-level executable itself is never wrapped in a synthetic step.
+
+
+## Commands And Cancellation
+
+Command application modes are:
+
+```text
+now | next_step | next_call
+```
+
+Agic loops and flows consume accepted commands at explicit checkpoints.
+`run_begin.input` references the applied start command, `step_begin.input`
+references applied steer commands, and `run_end.input` references the stop
+command that caused cancellation. When a run ends, `PersistSink` marks any
+accepted but unapplied commands as canceled.
+
+Command status is therefore derived rather than announced by another event.
+The consuming event supplies `CommandRecord.finished_at`; repeated references
+do not change an already terminal command.
+
+Stopping cancels the active task. Cancellation unwinds from child steps and
+child runs toward the root, emitting terminal events in that order. The parent
+run ends only after visible descendants have ended.
+
+
+## Canonical Content
+
+Toolang uses the shared content model from `toolang.base`:
+
+- `Message`: one role plus ordered parts
+- `Part`: one complete content part
+- `Delta`: one streaming part update
+
+`Part[]` is a Toolang value type. It normally occupies one `Local` with
+`shape=item`; it is not a flow collection merely because its value is an
+array. Content parsing and executable signatures are defined in
+[input-syntax.md](./input-syntax.md) and [program.md](./program.md).
+
+
+## Replies
+
+Reply sinks project the trace for callers without changing durable truth.
+
+Examples include:
+
+- buffered script results
+- SSE/public trace streams
+- AI SDK UI message streams
+- channel messages
+- terminal UI updates
+
+The AI SDK stream is a transport projection containing events such as text
+deltas, tool input/output, step boundaries, finish, and error. It is not the
+durable execution model.
 
 
 ## Live UI Projection
 
-Real-time UIs consume the public event stream as mutable blocks. A mutable block
-has four operations:
+The TUI maps trace events to mutable blocks. A block owns only the state needed
+to render itself and exposes:
 
-- `create`
-- `update`
-- `delta`
-- `finalize`
+```text
+create(event)
+update(event)
+render()
+```
 
-Each active run owns a sequence of step blocks driven by SSE events:
+The event handler creates or finds a matching live block, updates it, and asks
+the application to finalize it when the terminal event arrives. Finalization
+is framework behavior: the block's current render is written to scrollback and
+the live window is removed.
 
-- `run_starting` creates the start-command block
-- `run_begin` updates that block with the runtime run id and finalizes it
-- `step_begin` creates a step block
-- `part_delta` updates the current step block
-- `step_end` finalizes the current step block with the durable result
-- `run_stopping` marks the active run as canceling
-- `run_end` finalizes the run status
+Typical mappings are:
 
-A UI keeps at most one top-level mutable block at a time. Finalized blocks leave
-mutable state and may move to scrollback immediately. Parallel work is rendered
-inside the current mutable block rather than by opening additional top-level
-mutable blocks.
+```text
+run_starting   create RunStartBlock
+run_begin      update and finalize RunStartBlock
+run_steering   create RunSteerBlock
+step_begin     finalize referenced RunSteerBlock; create a step-kind block
+part events    update the matching step block
+step_end       update and finalize the matching step block
+run_stopping   update RunStopBlock to canceling
+run_end        update and finalize RunStopBlock
+```
+
+Multiple live blocks may exist for nested or parallel activity. Block keys use
+run and step identity so interleaved events update the correct block. The TUI
+does not infer execution state that was not emitted by the runtime.
 
 
 ## Inspection Views
@@ -270,5 +294,4 @@ Thread detail is exposed as:
 - `info`
 - `runs`
 
-The detail API projects messages from durable run input and durable step
-output. It does not rely on a separate durable chat store.
+These views project from `runs.db`; there is no separate durable chat store.

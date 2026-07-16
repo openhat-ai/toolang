@@ -157,7 +157,7 @@ def create_router() -> APIRouter:
             if record.status == "todo":
                 return {"job": store.cancel_pending_task(task_id=task_id)}
             if record.status == "running" and record.last_run_id is not None:
-                context.store.cancel_run(run_id=record.last_run_id)
+                await context.runner.stop_run(run_id=record.last_run_id)
                 return {"job": record, "run_id": record.last_run_id}
             raise HTTPException(status_code=409, detail=f"task cannot be canceled from status: {record.status}")
         finally:
@@ -216,7 +216,7 @@ def create_router() -> APIRouter:
             if record is None:
                 raise HTTPException(status_code=404, detail=f"chore not found: {chore_id}")
             if record.status == "running" and record.last_run_id is not None:
-                context.store.cancel_run(run_id=record.last_run_id)
+                await context.runner.stop_run(run_id=record.last_run_id)
                 return {"job": record, "run_id": record.last_run_id}
             raise HTTPException(status_code=409, detail=f"chore cannot be canceled from status: {record.status}")
         finally:

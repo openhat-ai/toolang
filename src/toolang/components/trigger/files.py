@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from ... import file_requests
 from ...execution.input import allocate_run_id
@@ -233,7 +233,9 @@ def _record_completed_runs(
 
 
 def _outcome_status(status: str) -> RunStatus:
-    return "finished" if status == "finished" else "failed"
+    if status in {"finished", "failed", "canceled"}:
+        return cast(RunStatus, status)
+    return "failed"
 
 
 def _file_age_ms(mtime_ns: int, *, now: datetime) -> float:

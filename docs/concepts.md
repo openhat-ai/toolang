@@ -94,8 +94,19 @@ Caps are assembled from the materialized root and source:
 | `roaming` | Source-local `toolang.toml`, inline caps, and referenced caps from the local `.too` source |
 
 Caps do not have a separate placement allowlist. A program cap or reference
-makes a cap available to that program, but it does not make the cap
-effective for every thunk by itself.
+makes a cap available to that program, but it does not make the cap effective
+for every agic by itself.
+
+
+## Executable
+
+An executable is a named program entrypoint. Toolang has two executable kinds:
+
+- `agic`: a dynamic model/tool loop
+- `flow`: an ordered set of static statements
+
+Agics and flows share one program namespace and the same parameter and output
+signature rules. A flow may start either kind as a child run.
 
 
 ## Jobs
@@ -130,7 +141,7 @@ A run is one concrete handling attempt inside one thread.
 A run has:
 
 - one origin
-- one input message
+- one start command input
 - one status
 - zero or more steps
 
@@ -141,7 +152,7 @@ The run origin names the semantic source of the run. Current origins are:
 | `chat` | A conversational user message |
 | `task` | A local task execution |
 | `chore` | A scheduled chore execution |
-| `script` | A direct CLI thunk execution |
+| `script` | A direct CLI executable invocation |
 
 Placement and origin are independent. Placement decides how the agent is
 assembled; origin decides how instructions, messages, and execution context are
@@ -160,9 +171,10 @@ Placement provides a default resource set. CLI options may override or adjust
 that default for one activation. The result is the activation set.
 
 Programs may also define inline caps or reference resources. Those items form
-a program set. Program resources are not automatically effective for every thunk.
+a program set. Program resources are not automatically effective for every
+agic.
 
-Thunk directives compute the effective set from the activation set:
+Agic directives compute the effective set from the activation set:
 
 ```text
 current_set = activation_set
@@ -183,18 +195,37 @@ A step is one execution unit inside one run.
 
 Current step kinds are:
 
-- `model_call`
-- `tool_call`
-- `runtime`
+- `run`
+- `agent`
+- `human`
+- `model`
+- `tool`
+- `par`
+- `loop`
+- `system`
 
 Steps record execution truth. They do not define transport behavior.
 
 
+## Local
+
+A local is one runtime value inside a run. It contains a value and one shape:
+
+```text
+none | item | list
+```
+
+`_` is the primary local. Run input initializes it, ordinary flow statements
+replace it, and run output reads it. Named parameters and `let` bindings use
+other local names. Durable input and output refs are persistence metadata, not
+part of a local.
+
+
 ## Message
 
-A message is the canonical content unit used across:
+A message is the canonical model and projection unit used across:
 
-- run input
+- command input projection
 - model calls
 - projected thread history
 - streaming chat responses
@@ -210,6 +241,9 @@ Current core part kinds are:
 - `text`
 - `tool_call`
 - `tool_result`
+
+Toolang executable values use `Part` and `Part[]`; `Message` is not a language
+value type.
 
 
 ## Relationships

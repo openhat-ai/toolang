@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from ... import jobs, work
 from ...execution.input import allocate_run_id
@@ -181,4 +181,6 @@ def _record_completed_runs(
 
 
 def _outcome_status(status: str) -> RunStatus:
-    return "finished" if status == "finished" else "failed"
+    if status in {"finished", "failed", "canceled"}:
+        return cast(RunStatus, status)
+    return "failed"

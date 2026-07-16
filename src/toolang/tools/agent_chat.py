@@ -14,8 +14,9 @@ from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.tool import ToolContext
 from toolang.base.utils.function_tools import create_function_tool, tool
-from toolang.execution.db import ExecutionStore, utc_now
-from toolang.execution.records import InputRef, ThreadPeer, ThreadRecord
+from toolang.execution.db import ExecutionStore, PersistSink, utc_now
+from toolang.execution.events import RunBegin, RunEnd, RunStarting, StepBegin, StepEnd
+from toolang.execution.records import InputRef, OutputRef, ThreadPeer, ThreadRecord
 from toolang.common.ids import LOCAL_ID_FAMILY, RUN_ID_FAMILY, allocate_id
 
 DEFAULT_TIMEOUT_SEC = 60
@@ -290,44 +291,79 @@ def _record_local_a2a_exchange(
 ) -> str:
     run_id = f"run_{allocate_id(context.home / '.runtime' / 'ids.json', family=RUN_ID_FAMILY).value}"
     started_at = utc_now()
-    store.start_run(
-        run_id=run_id,
-        thread_id=thread.thread_id,
-        origin="chat",
-        input=Message(
-            role="user",
-            parts=(TextPart(text=message),),
-            meta={
-                "agent_chat": {
-                    "peer": peer,
-                    "remote_thread": thread.peer.thread,
-                    "remote_run_id": remote_run_id,
-                    "parent_thread": thread.parent,
-                }
-            },
-        ),
-        created_at=started_at,
-        started_at=started_at,
+    input_message = Message(
+        role="user",
+        parts=(TextPart(text=message),),
+        meta={
+            "agent_chat": {
+                "peer": peer,
+                "remote_thread": thread.peer.thread,
+                "remote_run_id": remote_run_id,
+                "parent_thread": thread.parent,
+            }
+        },
+    )
+    run_context = {
+        "origin": "chat",
+        "root": run_id,
+        "executable": {"kind": "agent", "name": peer},
+        "call": "agent_chat",
+    }
+    sink = PersistSink(store)
+    sink.on_event(
+        RunStarting(
+            run=run_id,
+            cmd=0,
+            parent=None,
+            thread=thread.thread_id,
+            input=input_message,
+            context=run_context,
+            created_at=started_at,
+        )
+    )
+    sink.on_event(
+        RunBegin(
+            run=run_id,
+            input=InputRef(cmd=0),
+            context=run_context,
+            started_at=started_at,
+        )
+    )
+    sink.on_event(
+        StepBegin(
+            step=f"{run_id}/0",
+            kind="model",
+            input=(InputRef(cmd=0),),
+            context={"model_ref": f"agent_chat/{peer}"},
+            started_at=started_at,
+        )
     )
     finished_at = utc_now()
-    store.append_step(
-        run_id=run_id,
-        step_index=1,
-        kind="model",
-        status="finished",
-        input=(InputRef(),),
-        output=(TextPart(text=assistant_text),),
-        detail={
-            "model_ref": f"agent_chat/{peer}",
-            "usage": {"input_tokens": 0, "output_tokens": 0},
-            "provider": "agent_chat",
-            "model": peer,
-            "adapter": "chat",
-        },
-        started_at=started_at,
-        finished_at=finished_at,
+    sink.on_event(
+        StepEnd(
+            step=f"{run_id}/0",
+            kind="model",
+            status="finished",
+            output=(TextPart(text=assistant_text),),
+            detail={
+                "model_ref": f"agent_chat/{peer}",
+                "usage": {"input_tokens": 0, "output_tokens": 0},
+                "provider": "agent_chat",
+                "model": peer,
+                "adapter": "chat",
+            },
+            started_at=started_at,
+            finished_at=finished_at,
+        )
     )
-    store.finish_run(run_id=run_id, status="finished", finished_at=finished_at)
+    sink.on_event(
+        RunEnd(
+            run=run_id,
+            status="finished",
+            output=OutputRef(step=f"{run_id}/0"),
+            finished_at=finished_at,
+        )
+    )
     return run_id
 
 

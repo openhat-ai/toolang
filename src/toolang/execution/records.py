@@ -9,7 +9,7 @@ from typing import Any, Literal, cast
 from toolang.base.types.message import Message, Part
 
 
-TracePath = str
+StepPath = str
 RunId = str
 RunLoop = str
 
@@ -18,17 +18,13 @@ StepStatus = Literal["running", "finished", "failed", "canceled"]
 CommandStatus = Literal["pending", "finished", "canceled"]
 
 StepKind = Literal[
-    "seq",
-    "par",
     "run",
     "agent",
+    "human",
     "model",
     "tool",
-    "unfold",
-    "map",
-    "filter",
-    "sort",
-    "fold",
+    "par",
+    "loop",
     "system",
 ]
 ThreadPeerType = Literal["user", "agent"]
@@ -77,7 +73,7 @@ class InputRef:
 class OutputRef:
     """Reference one step output or one step output part."""
 
-    step: TracePath
+    step: StepPath
     part: int | None = None
 
     @classmethod
@@ -102,7 +98,7 @@ class RunRecord:
     """Durable run truth."""
 
     id: RunId
-    parent: TracePath | None
+    parent: StepPath | None
     thread: str
     input: InputRef
     output: OutputRef | None
@@ -125,14 +121,6 @@ class RunRecord:
     def root_run_id(self) -> str:
         value = self.context.get("root")
         return str(value) if value is not None else self.id
-
-    @property
-    def parent_run_id(self) -> str | None:
-        return trace_run(self.parent) if self.parent else None
-
-    @property
-    def parent_step_index(self) -> int | None:
-        return trace_index(self.parent) if self.parent else None
 
     @property
     def origin(self) -> str:
@@ -218,7 +206,7 @@ class ThreadRecord:
 class StepRecord:
     """One durable execution step."""
 
-    parent: TracePath
+    parent: StepPath
     index: int
     kind: StepKind
     input: tuple[StepInputItem, ...]
@@ -232,7 +220,7 @@ class StepRecord:
     finished_at: str | None = None
 
     @property
-    def path(self) -> TracePath:
+    def path(self) -> StepPath:
         return trace_child_path(self.parent, self.index)
 
     @property
@@ -290,27 +278,13 @@ class CommandRecord:
     def run_id(self) -> str:
         return self.run
 
-    @property
-    def mode(self) -> CommandApply:
-        return self.apply
-
-    @property
-    def message(self) -> Message | None:
-        return self.input
-
-    @property
-    def request_id(self) -> str | None:
-        value = self.context.get("request_id")
-        return str(value) if value is not None else None
-
-
-def trace_run(path: TracePath) -> RunId:
+def trace_run(path: StepPath) -> RunId:
     """Return the run id component of one trace path."""
 
     return path.split("/", 1)[0]
 
 
-def trace_parent(path: TracePath) -> TracePath | None:
+def trace_parent(path: StepPath) -> StepPath | None:
     """Return the parent trace path for a step path."""
 
     if "/" not in path:
@@ -318,7 +292,7 @@ def trace_parent(path: TracePath) -> TracePath | None:
     return path.rsplit("/", 1)[0]
 
 
-def trace_index(path: TracePath) -> int | None:
+def trace_index(path: StepPath) -> int | None:
     """Return the leaf step index for a step path."""
 
     if "/" not in path:
@@ -329,7 +303,7 @@ def trace_index(path: TracePath) -> int | None:
         return None
 
 
-def trace_child_path(parent: TracePath, index: int) -> TracePath:
+def trace_child_path(parent: StepPath, index: int) -> StepPath:
     """Return a child step path under one trace path."""
 
     return f"{parent}/{index}"

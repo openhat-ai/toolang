@@ -5,13 +5,16 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import logging
+import threading
 from typing import TYPE_CHECKING, Any, Literal
 
 from toolang.base.types.message import Message, message_text
+from .binding import RunBinding, bind_run_request
 from .db import utc_now
 from .events import RunEnd, RunStarting, RunSteering, RunStopping, RunWaiting
+from .records import CommandApply, CommandRecord, InputRef
 from ..state.live import LiveState
 
 if TYPE_CHECKING:
@@ -53,13 +56,16 @@ class RunRequest:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class RunSubmission:
     """One runner-bound request plus execution attachments."""
 
     request: RunRequest
     response: ResponseSink | None = field(default=None, compare=False, repr=False)
     live: LiveState | None = None
+    binding: RunBinding | None = field(default=None, compare=False, repr=False)
+    waiting_emitted: bool = field(default=False, compare=False, repr=False)
+    starting_emitted: bool = field(default=False, compare=False, repr=False)
     completion: asyncio.Future["RunOutcome"] | None = field(
         default=None,
         compare=False,
@@ -67,7 +73,7 @@ class RunSubmission:
     )
 
 
-RunOutcomeStatus = Literal["finished", "failed"]
+RunOutcomeStatus = Literal["finished", "failed", "canceled"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +126,7 @@ class QueueRunner:
         self._active_requests: dict[int, RunSubmission] = {}
         self._responses_by_run: dict[str, ResponseSink] = {}
         self._tasks_by_run: dict[str, asyncio.Task[RunOutcome]] = {}
+        self._command_lock = threading.Lock()
 
     def enqueue(
         self,
@@ -133,23 +140,19 @@ class QueueRunner:
 
         if self._closed:
             raise RuntimeError("run queue is closed")
-        self._pending.append(
-            submission := RunSubmission(
-                request=request,
-                response=response,
-                live=live,
-                completion=completion,
-            )
+        submission = RunSubmission(
+            request=request,
+            response=response,
+            live=live,
+            completion=completion,
         )
-        if request.run_id and response is not None:
-            self._responses_by_run[request.run_id] = response
+        self._bind_submission(submission)
+        self._pending.append(submission)
+        run_id = submission.request.run_id
+        if run_id and response is not None:
+            self._responses_by_run[run_id] = response
         self._ready.set()
-        self._emit_run_starting(submission)
-        self._emit_run_waiting(
-            submission,
-            position=len(self._pending),
-            reason="queue",
-        )
+        self._emit_run_waiting(submission)
         return len(self._pending)
 
     async def dequeue(self) -> RunRequest | None:
@@ -247,51 +250,72 @@ class QueueRunner:
 
         return tuple(item.request for item in self._active_requests.values())
 
-    def notify_run_control(self, *, run_id: str, payload: dict[str, Any]) -> None:
-        """Publish one accepted run control command."""
+    def steer_run(
+        self,
+        *,
+        run_id: str,
+        message: Message,
+        apply: CommandApply,
+        request_id: str | None = None,
+    ) -> CommandRecord:
+        """Accept one steer command and publish its trace event."""
 
-        event = self._command_event(payload)
-        if event is not None:
-            self._emit_response_trace_event(run_id=run_id, event=event)
-            context = self._context
-            if context is not None:
-                context.events.publish_trace(event)
-            return
-        self._emit_response_event(
-            run_id=run_id, event_type=str(payload.get("type") or ""), payload=payload
+        event = self._accept_command(
+            run_id=run_id,
+            kind="steer",
+            input=message,
+            apply=apply,
+            request_id=request_id,
         )
-        context = self._context
-        if context is None:
-            return
-        event_type = str(payload.get("type") or "")
-        context.events.publish(
-            domain="run", domain_id=run_id, type=event_type, payload=payload
+        return self._command_record(run_id=run_id, index=event.cmd)
+
+    async def stop_run(
+        self,
+        *,
+        run_id: str,
+        apply: CommandApply = "now",
+        request_id: str | None = None,
+        reason: str | None = None,
+    ) -> tuple[CommandRecord, RunRecord]:
+        """Accept one stop command and wait for the run to unwind."""
+
+        event = self._accept_command(
+            run_id=run_id,
+            kind="stop",
+            input=Message.user(reason) if reason else None,
+            apply=apply,
+            request_id=request_id,
         )
-        thread_id = payload.get("thread_id")
-        if isinstance(thread_id, str) and thread_id:
-            context.events.publish(
-                domain="thread", domain_id=thread_id, type=event_type, payload=payload
+        task = self._tasks_by_run.get(run_id)
+        if task is not None and not task.done() and apply == "now":
+            task.cancel()
+        if task is not None and not task.done():
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        context = self._require_context()
+        run = context.store.get_run(run_id=run_id)
+        if run is None:
+            raise ValueError(f"run not found: {run_id}")
+        if run.status in {"pending", "running"} and apply == "now":
+            terminal = RunEnd(
+                run=run_id,
+                status="canceled",
+                input=InputRef(cmd=event.cmd),
+                error=reason,
+                finished_at=utc_now(),
             )
-
-    def cancel_run(self, *, run_id: str, error: str | None = None) -> RunRecord:
-        """Cancel one active run and notify its response sink."""
-
-        context = self._context
-        if context is None:
-            raise RuntimeError("runner context is not attached")
-        run = context.store.cancel_run(run_id=run_id, error=error)
-        event = RunEnd(
-            run=run.id,
-            status="canceled",
-            error=run.error,
-            finished_at=run.finished_at or utc_now(),
-        )
-        self._emit_response_trace_event(run_id=run.run_id, event=event)
-        context.events.publish_trace(event)
-        self._cancel_task(run.run_id)
-        return run
+            context.events.publish_trace(terminal)
+            self._emit_response_trace_event(run_id=run_id, event=terminal)
+            run = context.store.get_run(run_id=run_id)
+            if run is None:
+                raise RuntimeError(f"run disappeared after cancellation: {run_id}")
+        return self._command_record(run_id=run_id, index=event.cmd), run
 
     async def _run_request(self, submission: RunSubmission) -> RunOutcome:
+        self._bind_submission(submission)
+        self._emit_run_waiting(submission)
         request = submission.request
         request_key = id(submission)
         current_task = asyncio.current_task()
@@ -299,10 +323,7 @@ class QueueRunner:
             self._tasks_by_run[request.run_id] = current_task
         try:
             if await self._group_is_full(request.group):
-                self._emit_run_waiting(
-                    submission,
-                    reason="group",
-                )
+                self._emit_run_waiting(submission)
             semaphore = await self._semaphore_for_group(request.group)
             async with semaphore:
                 self._waiting_requests.pop(request_key, None)
@@ -350,10 +371,7 @@ class QueueRunner:
             return await self._execute(submission)
         lock = await self._lock_for_thread(request.thread_id)
         if lock.locked():
-            self._emit_run_waiting(
-                submission,
-                reason="thread",
-            )
+            self._emit_run_waiting(submission)
         async with lock:
             return await self._execute(submission)
 
@@ -364,6 +382,7 @@ class QueueRunner:
             raise RuntimeError("runner context is not attached")
         context = self._context
         request = submission.request
+        self._emit_run_starting(submission)
         delay_sec = self._delay_sec if request.delay_sec is None else request.delay_sec
         return await execute_run(
             context,
@@ -404,44 +423,25 @@ class QueueRunner:
     def _emit_run_waiting(
         self,
         submission: RunSubmission,
-        *,
-        reason: str,
-        position: int | None = None,
     ) -> None:
-        request = submission.request
-        if not request.run_id:
+        binding = submission.binding
+        if binding is None or submission.waiting_emitted:
             return
+        submission.waiting_emitted = True
+        request = submission.request
         event = RunWaiting(
-            run=request.run_id,
+            run=binding.run_id,
+            cmd=0,
+            parent=None,
+            thread=binding.thread_id,
             input=request.message or Message.user(request.thunk),
-            context={
-                "origin": request.origin,
-                "group": request.group,
-                "thread": request.thread_id,
-                "request_id": _request_id(request),
-                "executable": {
-                    "kind": _request_executable_kind(request),
-                    "name": request.thunk_name,
-                },
-            },
+            context=_start_context(request, binding),
+            created_at=binding.created_at,
         )
-        self._emit_response_trace_event(run_id=request.run_id, event=event)
         context = self._context
         if context is not None:
             context.events.publish_trace(event)
-
-    def _emit_response_event(
-        self, *, run_id: str, event_type: str, payload: dict[str, Any]
-    ) -> None:
-        response = self._response_for_run(run_id)
-        if response is None:
-            return
-        on_queue_event = getattr(response, "on_queue_event", None)
-        if callable(on_queue_event):
-            try:
-                on_queue_event(event_type, payload)
-            except Exception:
-                _LOGGER.exception("response sink event handling failed")
+        self._emit_response_trace_event(run_id=binding.run_id, event=event)
 
     def _emit_response_trace_event(
         self,
@@ -458,65 +458,92 @@ class QueueRunner:
             _LOGGER.exception("response sink event handling failed")
 
     def _emit_run_starting(self, submission: RunSubmission) -> None:
-        request = submission.request
-        if not request.run_id:
+        binding = submission.binding
+        if binding is None or submission.starting_emitted:
             return
+        submission.starting_emitted = True
+        request = submission.request
         event = RunStarting(
-            run=request.run_id,
+            run=binding.run_id,
+            cmd=0,
+            parent=None,
+            thread=binding.thread_id,
             input=request.message or Message.user(request.thunk),
-            context={
-                "origin": request.origin,
-                "group": request.group,
-                "thread": request.thread_id,
-                "request_id": _request_id(request),
-                "executable": {
-                    "kind": _request_executable_kind(request),
-                    "name": request.thunk_name,
-                },
-            },
+            context=_start_context(request, binding),
+            created_at=binding.created_at,
         )
-        self._emit_response_trace_event(run_id=request.run_id, event=event)
         context = self._context
         if context is not None:
             context.events.publish_trace(event)
+        self._emit_response_trace_event(run_id=binding.run_id, event=event)
 
-    def _command_event(
-        self, payload: dict[str, Any]
-    ) -> RunSteering | RunStopping | None:
-        kind = payload.get("kind")
-        run_id = payload.get("run_id")
-        ref = payload.get("ref")
-        index = ref.get("index") if isinstance(ref, dict) else payload.get("index")
-        if not isinstance(run_id, str) or not run_id:
-            return None
-        try:
-            command_index = int(0 if index is None else index)
-        except (TypeError, ValueError):
-            command_index = 0
-        request_id = payload.get("request_id")
-        request_id_value = str(request_id) if request_id is not None else None
-        context = {
-            "cmd": command_index,
-            "thread": payload.get("thread_id"),
-            "request_id": request_id_value,
-        }
-        if kind == "steer":
-            message = payload.get("message")
-            if not isinstance(message, dict):
-                return None
-            return RunSteering(
-                run=run_id,
-                input=Message.from_data(message),
-                context=context,
-            )
-        if kind == "stop":
-            reason = payload.get("reason")
-            return RunStopping(
-                run=run_id,
-                reason=str(reason) if reason is not None else None,
-                context=context,
-            )
-        return None
+    def _bind_submission(self, submission: RunSubmission) -> None:
+        if submission.binding is not None or self._context is None:
+            return
+        binding = bind_run_request(
+            self._context, submission.request, live=submission.live
+        )
+        submission.binding = binding
+        submission.live = binding.live
+        submission.request = replace(
+            submission.request,
+            run_id=binding.run_id,
+            thread_id=binding.thread_id,
+        )
+
+    def _accept_command(
+        self,
+        *,
+        run_id: str,
+        kind: Literal["steer", "stop"],
+        input: Message | None,
+        apply: CommandApply,
+        request_id: str | None,
+    ) -> RunSteering | RunStopping:
+        context = self._require_context()
+        run = context.store.get_run(run_id=run_id)
+        if run is None:
+            raise ValueError(f"run not found: {run_id}")
+        with self._command_lock:
+            command_index = context.store.next_command_index(run_id=run_id)
+            command_context = {"thread": run.thread, "request_id": request_id}
+            created_at = utc_now()
+            if kind == "steer":
+                if input is None:
+                    raise ValueError("steer command requires input")
+                event: RunSteering | RunStopping = RunSteering(
+                    run=run_id,
+                    cmd=command_index,
+                    input=input,
+                    apply=apply,
+                    context=command_context,
+                    created_at=created_at,
+                )
+            else:
+                event = RunStopping(
+                    run=run_id,
+                    cmd=command_index,
+                    input=input,
+                    apply=apply,
+                    context=command_context,
+                    created_at=created_at,
+                )
+            context.events.publish_trace(event)
+        self._emit_response_trace_event(run_id=run_id, event=event)
+        return event
+
+    def _command_record(self, *, run_id: str, index: int) -> CommandRecord:
+        command = self._require_context().store.get_command(
+            run_id=run_id, index=index
+        )
+        if command is None:
+            raise RuntimeError(f"command projection missing: {run_id}:{index}")
+        return command
+
+    def _require_context(self) -> UptimeContext:
+        if self._context is None:
+            raise RuntimeError("runner context is not attached")
+        return self._context
 
     def _response_for_run(self, run_id: str) -> ResponseSink | None:
         return self._responses_by_run.get(run_id) or next(
@@ -535,11 +562,6 @@ class QueueRunner:
             return
         if self._responses_by_run.get(run_id) is submission.response:
             self._responses_by_run.pop(run_id, None)
-
-    def _cancel_task(self, run_id: str) -> None:
-        task = self._tasks_by_run.get(run_id)
-        if task is not None and not task.done():
-            task.cancel()
 
     def _forget_task(self, submission: RunSubmission) -> None:
         run_id = submission.request.run_id
@@ -590,7 +612,7 @@ class QueueRunner:
             thunk_name=request.thunk_name,
             thread_id=request.thread_id or "",
             delay_sec=0.0,
-            status="failed",
+            status="canceled",
             error="canceled",
         )
 
@@ -603,9 +625,25 @@ def _request_id(request: RunRequest) -> str | None:
     return str(value) if value is not None else None
 
 
+def _start_context(request: RunRequest, binding: RunBinding) -> dict[str, Any]:
+    return {
+        **dict(binding.metadata),
+        "origin": binding.origin,
+        "group": binding.group,
+        "root": binding.run_id,
+        "request_id": _request_id(request),
+        "executable": {
+            "kind": _request_executable_kind(request),
+            "name": request.thunk_name,
+        },
+        "call": "top",
+    }
+
+
 def _request_executable_kind(request: RunRequest) -> str:
     value = request.metadata.get("executable_kind")
-    return str(value) if value is not None else "thunk"
+    kind = str(value) if value is not None else "agic"
+    return "agic" if kind == "thunk" else kind
 
 
 def _request_input_text(request: RunRequest) -> str:

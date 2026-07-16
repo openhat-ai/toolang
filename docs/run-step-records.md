@@ -1,58 +1,53 @@
 # Run and Step Records
 
-This document captures the proposed run, step, command, and trace-event model.
-It is intentionally narrow: records are designed for durable storage and
-queries, while trace events are designed for readable streaming.
+This document defines durable execution records and the trace events from
+which they are projected. Records favor storage and queries; events favor
+causal execution and streaming.
 
 
-## Core Types
+## Paths And References
 
-`TracePath` identifies a run or a step globally:
+`StepPath` identifies a position in one run's step tree:
 
 ```text
-TracePath = run[/step/...]
+StepPath = run[/step_index/...]
 ```
 
 Examples:
 
 ```text
-run_a        # run
-run_a/1      # top-level step
-run_a/1/2    # nested step
+run_abc123        run root; not itself a StepRecord
+run_abc123/0      first top-level step
+run_abc123/0/0    first child of the first top-level step
+run_abc123/0/1    second child of the first top-level step
 ```
 
-Reference shapes:
+Every step index is zero-based and local to its parent. The bare run id is a
+valid root path, so a top-level step can use the run id as its `parent`.
 
-- `InputRef`: `cmd`, optional `part`
-- `OutputRef`: `step`, optional `part`
+Durable data edges use two small references:
 
-`InputRef` points to command input. `OutputRef` points to step output.
+```text
+InputRef:   cmd, [part]
+OutputRef:  step, [part]
+```
+
+`InputRef` points to one command input in the record's run. `OutputRef` points
+to one step output globally through its `StepPath`.
 
 
 ## Status
 
-Run status:
-
 ```text
-pending | running | finished | failed | canceled
+RunStatus      pending | running | finished | failed | canceled
+StepStatus     running | finished | failed | canceled
+CommandStatus  pending | finished | canceled
 ```
 
-Step status:
-
-```text
-running | finished | failed | canceled
-```
-
-Command status:
-
-```text
-pending | finished | canceled
-```
-
-For commands, `finished` means the command was applied.
+For a command, `finished` means applied, not merely accepted.
 
 
-## Records
+## Durable Records
 
 `RunRecord`:
 
@@ -102,187 +97,382 @@ created_at
 finished_at
 ```
 
-Field notes:
+Field rules:
 
-- `RunRecord.parent` is `TracePath | None`.
-- `RunRecord.input` is an `InputRef`.
+- `RunRecord.parent` is `StepPath | None`.
+- `RunRecord.input` is normally `InputRef(cmd=0)`.
 - `RunRecord.output` is `OutputRef | None`.
-- `StepRecord.parent` is a `TracePath`.
-- `StepRecord.index` is local under `parent`.
-- A step path is derived as `parent / index`.
+- `StepRecord.parent` is a `StepPath`; `index` is zero-based under it.
+- A step's path is `parent / index`.
 - `CommandRecord.kind` is `start | steer | stop`.
 - `CommandRecord.apply` is `now | next_step | next_call`.
+- `(run, index)` identifies one command within a run.
+- Every run, including a child run, has command index `0` with kind `start`.
+
+`RunRecord` is the aggregate root for its commands:
+
+```text
+RunRecord(id=run_abc123)
+  CommandRecord(run=run_abc123, index=0, kind=start)
+  CommandRecord(run=run_abc123, index=1, kind=steer)
+  CommandRecord(run=run_abc123, index=2, kind=stop)
+```
+
+Only `RunRecord.parent` carries run-tree hierarchy. Commands never duplicate
+that link.
 
 
-## Context and Detail
+## Context And Detail
 
-`context` is begin-time structured information. It is known before execution
-starts.
+`context` is structured information known when an operation begins. `detail`
+is structured execution information known when it ends.
 
-`detail` is end-time structured execution detail. It is known when the step
-finishes.
+`input` and `output` remain top-level fields because they are data edges, not
+metadata:
 
-`input` and `output` remain top-level fields because they are data edges:
+- `input` is data consumed by a command, run, or step.
+- `output` is data produced by a run or step.
 
-- `input` is consumable input to a run, step, or command.
-- `output` is consumable output from a run or step.
+Common run context:
 
-Suggested context shapes:
+```text
+source       user, scheduler, trigger, parent run, or another accepted source
+executable   kind and name
+selectors    resolved run selection
+root         root run id when this is a descendant
+```
 
-- `source`: source/program link such as kind, name, index, label, span
-- `shape`: current shape information
-- `item`: item index and count
-- `lane`: lane index and count
-- `loop`: loop index
-- `target`: target kind and name
-- `refs`: related `InputRef` or `OutputRef`
-- `params`: structured parameters
+Common command context:
 
-Suggested detail shapes:
+```text
+request_id   caller idempotency key when present
+source       surface or parent operation that issued the command
+```
 
-- `usage`: token or runtime usage
-- `child_runs`: child run ids
-- `pending`: pending item-aligned values produced by `par`
-- `selected`: selected item indexes
-- `scores`: score values or score refs
-- `preview`: compact value preview
+Common step context:
+
+```text
+source       AST kind, name, and span
+binding      "_", a named local, or null
+reads        local names read by the operation
+target       runnable, agent, model, or tool target
+item         item index and count
+lane         logical lane index and count
+loop         loop iteration
+body_index   nested statement position
+```
+
+Common step detail:
+
+```text
+shape        result shape
+reshape      executor reshape applied after the operation
+usage        token or runtime usage
+child_runs   child run ids
+items        input or result item count
+iterations   loop iteration count
+selected     selected item indexes
+scores       item-aligned ranking scores
+```
+
+Fields that do not apply are omitted. Context and detail are typed per event or
+step kind in code; the lists above are vocabulary, not one universal payload.
 
 
 ## Step Kinds
 
-Control steps:
-
 ```text
-seq
-par
+run | agent | human | model | tool | par | loop | system
 ```
 
-Call steps:
+- `run` calls an agic or flow in the current program.
+- `agent` calls an executable on another agent.
+- `human`, `model`, and `tool` call external actors or capabilities.
+- `par` and `loop` organize nested steps.
+- `system` records executor-owned work that does not make a call.
+
+Unfolding, folding, filtering, and ranking are result reshapes recorded in
+context or detail. They are not separate step kinds. A flow body is already
+sequential and does not require a synthetic `seq` step.
+
+
+## Event Principle
+
+Trace events are the only input to durable execution persistence:
 
 ```text
-run
-agent
+request handling / executor -> trace events -> PersistSink -> records
+                                          -> ReplySink(s)
 ```
 
-Action steps:
+Request handling may allocate ids and retain in-memory queue state, but it must
+not create or update `RunRecord`, `CommandRecord`, or `StepRecord` directly.
+The same rule applies to top-level runs and child runs.
+
+`PersistSink` processes events in order and owns any projection state needed
+to build normalized refs. Replaying the same ordered stream must produce the
+same durable records.
+
+Projection is idempotent by durable identity:
 
 ```text
-model
-tool
-unfold
-map
-filter
-sort
-fold
-system
+run      id
+command  (run, index)
+step     (parent, index)
+part     (step, part)
 ```
 
 
-## Trace Events
+## Command Events
 
-Trace events use globally readable names. Record fields may stay normalized for
-storage, but stream events should be easy for UI consumers to read.
-
-Run command acceptance events:
+Command events mean that the runtime accepted a command. They are not client
+request messages.
 
 ```text
-run_waiting:   run, input, context?
-run_starting:  run, input, context?
-run_steering:  run, input, context?
-run_stopping:  run, reason?, context?
+run_waiting:
+  run, cmd, parent?, thread, input, context?, created_at
+
+run_starting:
+  run, cmd, parent?, thread, input, context?, created_at
+
+run_steering:
+  run, cmd, input, apply, context?, created_at
+
+run_stopping:
+  run, cmd, input?, apply, context?, created_at
 ```
 
-These events are stream signals emitted after the runtime accepts a command.
-They do not duplicate the durable command record. The event type already
-identifies the command kind, and command application policy remains on
-`CommandRecord.apply`.
+Rules:
 
-`run_waiting` and `run_starting` have the same shape. Some requests emit
-`run_waiting` and then `run_starting`; others emit `run_starting` directly.
-Some runs, including child runs, may begin without a waiting event.
+- `run_waiting` and `run_starting` have the same shape and identify the same
+  start command. The start command uses `cmd=0` and `apply=now` implicitly.
+- An external request may emit `run_waiting` followed by `run_starting`, or
+  `run_starting` directly.
+- Child runs normally emit `run_starting` directly.
+- `run_steering` and `run_stopping` include `apply` because `PersistSink` must
+  project the complete command without reading another store.
 
-Run lifecycle events:
+Reusing `(run, cmd)` is an idempotent replay only when immutable command fields
+match. In particular, `run_waiting` followed by `run_starting` updates one run
+and one start command; it never inserts a second command. A conflicting replay
+is a trace error.
+
+Acceptance and application remain separate. This is required for `next_step`
+and `next_call`.
+
+
+## Run And Step Events
+
+Run lifecycle:
 
 ```text
-run_begin:     run, parent?, thread?, input?, context?
-run_end:       run, status, output?, detail?, error?
+run_begin:  run, input, context?, started_at
+run_end:    run, status, input?, output?, detail?, error?, finished_at
 ```
 
-Step events:
+The start event already carries `parent`, `thread`, and command input, so
+`run_begin` does not repeat them. Its `input` is normally `InputRef(cmd=0)`.
+When a stop command causes cancellation, `run_end.input` references that stop
+command. A run that ends without consuming a stop command omits this field.
+`run_end.detail` remains trace metadata; `RunRecord` deliberately has no
+terminal-detail field and does not merge it into begin-time `context`.
+
+Step lifecycle:
 
 ```text
-step_begin:    step, kind, input?, context?
-step_end:      step, kind, status, output?, detail?, error?
+step_begin:  step, kind, input?, context?, started_at
+step_end:    step, kind, status, output?, detail?, error?, finished_at
 ```
 
-Part events:
+`step_begin.input` carries explicit semantic inputs and normalized refs. A
+steer command is applied when a later step includes its `InputRef`. The
+`context.reads` field identifies additional locals read by the operation;
+`PersistSink` combines those names with its local-provenance projection to
+construct the complete `StepRecord.input`.
+
+The same input-edge rule completes commands for every lifecycle:
 
 ```text
-part_begin:    step, part, type
-part_delta:    step, part, delta
-part_end:      step, part, data
+run_begin.input   -> finish referenced start command
+step_begin.input  -> finish referenced steer commands
+run_end.input     -> finish referenced stop command
 ```
 
-When discussing event streams informally, step events may be abbreviated as
-`step_begin[KIND]` or `step_end[KIND]`. The serialized event still carries
-`kind` as a field. `part_begin.type` is a part type.
+At `run_end`, any command that remains pending is marked `canceled`.
 
-Names:
+Command transitions are monotonic:
+
+```text
+pending -> finished
+pending -> canceled
+```
+
+The first consuming input edge finishes a pending command. Later references to
+the same command are valid data dependencies but do not change its status or
+timestamp again.
+
+Part lifecycle:
+
+```text
+part_begin:  step, part, type
+part_delta:  step, part, delta
+part_end:    step, part, data
+```
+
+Informal traces may write `step_begin[KIND]` or `step_end[KIND]`. Serialized
+events retain `kind` and `status` as fields.
+
+Names are deliberately short:
 
 - `run` is a run id.
-- `step` is a full `TracePath`.
-- `part` is an output part index.
+- `cmd` is a zero-based command index within that run.
+- `step` is a full `StepPath`.
+- `part` is a zero-based output part index within that step.
 
-Part data shapes:
+Part data uses the canonical `Part` shapes from `toolang.base`. Delta data uses
+the corresponding canonical `Delta` shapes.
 
-```text
-text:        type, text
-image:       type, image_url?, file_id?, detail, filename?, media_type?
-audio:       type, data, format, filename?, media_type?
-file:        type, file_data?, file_url?, file_id?, filename?, media_type?
-tool_call:   type, tool_call_id, tool_name, tool_family, input, call_id?
-tool_result: type, tool_call_id, tool_name, tool_family, output, call_id?
-```
 
-Delta shapes:
+## Persistence Projection
+
+`PersistSink` applies events as follows:
 
 ```text
-text:      kind, text
-tool_call: kind, text, tool_call_id
+run_waiting / run_starting
+  upsert pending RunRecord and its pending start CommandRecord
+
+run_steering / run_stopping
+  create the pending CommandRecord identified by (run, cmd)
+
+run_begin
+  finish commands referenced by input and change RunRecord to running
+
+step_begin
+  finish commands referenced by input and create a running StepRecord
+
+part events
+  stream canonical in-progress output; step_end carries the complete durable
+  output
+
+step_end
+  finish the StepRecord and update local provenance for its binding
+
+run_end
+  finish commands referenced by input, finish the RunRecord, set output from
+  primary-local provenance, and cancel any remaining pending CommandRecords
 ```
+
+The sink maintains projection-only provenance for each run's local names:
+
+```text
+start input         `_` -> InputRef(cmd=0)
+successful binding  name -> OutputRef(step=step_path)
+discarded binding   no change
+```
+
+This state is not executor `Local` data and is not visible to flow semantics.
+
+
+## Projection Timestamps
+
+Record timestamps come from the event that establishes the corresponding
+fact:
+
+```text
+event                         projected timestamp
+run_waiting / run_starting    RunRecord.created_at, CommandRecord.created_at
+run_begin                     RunRecord.started_at
+step_begin                    StepRecord.created_at and started_at
+step_end                      StepRecord.finished_at
+run_end                       RunRecord.finished_at
+```
+
+When an event input first consumes a command, that event's lifecycle timestamp
+becomes `CommandRecord.finished_at`:
+
+```text
+run_begin.started_at   start command
+step_begin.started_at  steer command
+run_end.finished_at    stop command
+```
+
+Commands canceled by `run_end` also use `run_end.finished_at`. Replayed or
+duplicate events must not replace an already established timestamp.
+
+
+## Causal Order
+
+Events for a direct start appear in this order:
+
+```text
+[run_waiting]
+run_starting
+run_begin input={cmd: 0}
+...
+run_end
+```
+
+A steer command appears before the first step that observes it:
+
+```text
+run_steering run=run_abc123 cmd=1
+step_begin step=run_abc123/2 input=[{cmd: 1}, ...]
+```
+
+Applying steer without such a step input is invalid. A runtime that cannot
+reach an applicable checkpoint leaves the command pending; `run_end` then
+cancels it.
+
+A stop command appears as:
+
+```text
+run_stopping
+terminal child step and run events
+run_end[canceled] input={cmd: 2}
+```
+
+Terminal child steps and child runs must be emitted before the parent
+`run_end[canceled]`.
+
+A waiting run may be canceled before it begins:
+
+```text
+run_waiting run=run_abc123 cmd=0
+run_stopping run=run_abc123 cmd=1
+run_end[canceled] input={cmd: 1}
+```
+
+The stop command becomes `finished`; the unapplied start command becomes
+`canceled`.
 
 
 ## Child Runs
 
-A child run is linked by `RunRecord.parent`.
+A child run is linked through its start event and resulting `RunRecord.parent`:
 
 ```text
-step_begin[run] step=run_a/1/1
-run_begin run=run_b parent=run_a/1/1
+step_begin[run] step=run_abc123/0/0
+run_starting run=run_def456 cmd=0 parent=run_abc123/0/0
+run_begin run=run_def456 input={cmd: 0}
 ...
-run_end run=run_b
-step_end[run] step=run_a/1/1 status=finished
+run_end run=run_def456 status=finished
+step_end[run] step=run_abc123/0/0 status=finished
 ```
 
-Child run input is stored as a normal start command:
+The child uses the same record shape as a top-level run:
 
 ```text
-CommandRecord(run=run_b, index=0, kind=start, ...)
-RunRecord(id=run_b, input={cmd: 0}, parent=run_a/1/1, ...)
+RunRecord(id=run_def456, parent=run_abc123/0/0, input={cmd: 0}, ...)
+CommandRecord(run=run_def456, index=0, kind=start, ...)
 ```
 
 
 ## Streaming Projection
 
-Durable records store the complete tree. Streaming is a linear projection of
-that tree.
+Durable records keep the complete tree. A public stream is a linear projection
+of that tree.
 
-Default UI streams include only the subscribed root run's events. The parent
-run still includes `step_begin[run]` and `step_end[run]` call steps, but child
-run lifecycle and child internal steps are hidden by default.
-
-Optional stream scopes may include:
-
-- child run lifecycle events
-- child run internal step events
-- descendant runs up to a chosen depth
+The default UI stream includes the subscribed root run. Parent `run` or `agent`
+steps remain visible, while child lifecycle and child internal steps may be
+hidden. Optional scopes may include child lifecycle, child steps, and
+descendants up to a selected depth.

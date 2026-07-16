@@ -51,7 +51,6 @@ from toolang.execution.events import (
     RunEnd,
     RunBegin,
     RunStarting,
-    RunStopping,
     RunWaiting,
     StepEnd,
     StepBegin,
@@ -84,6 +83,7 @@ from toolang.caps import (
 from toolang.config.plugins import ChannelBinding
 from toolang.config.log_spec import PY_LOG_ENV_VAR
 from toolang.execution import execute as run_execute_module
+from toolang.execution import executor as run_executor_module
 from toolang.execution.input import RunInput, bind_run_request
 from toolang.execution.runner import (
     DEFAULT_GROUP_LIMITS,
@@ -140,7 +140,7 @@ def test_runner_queue_is_fifo() -> None:
     asyncio.run(run_test())
 
 
-def test_runner_enqueue_emits_waiting_trace_event_to_response() -> None:
+def test_runner_enqueue_emits_waiting_trace_event_to_response(tmp_path: Path) -> None:
     class CaptureResponse:
         wants_stream = True
 
@@ -153,7 +153,15 @@ def test_runner_enqueue_emits_waiting_trace_event_to_response() -> None:
         def on_queue_event(self, event_type: str, payload: dict[str, Any]) -> None:
             raise AssertionError(f"unexpected queue event: {event_type} {payload}")
 
-    runner = QueueRunner(delay_sec=0.0)
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("inspect",),
+        runner=QueueRunner(delay_sec=0.0),
+    )
+    runner = context.runner
     response = CaptureResponse()
     request = RunRequest(
         group="chat",
@@ -165,34 +173,18 @@ def test_runner_enqueue_emits_waiting_trace_event_to_response() -> None:
     )
 
     assert runner.enqueue(request, response=response) == 1
-    assert len(response.events) == 2
-    assert isinstance(response.events[0], RunStarting)
-    waiting = response.events[1]
+    assert len(response.events) == 1
+    waiting = response.events[0]
     assert isinstance(waiting, RunWaiting)
     assert waiting.run == "run_queuedtest"
-    assert waiting.context == {
-        "origin": "chat",
-        "group": "chat",
-        "thread": "term_queue",
-        "request_id": "req_queue",
-        "executable": {"kind": "flow", "name": "research"},
-    }
+    assert waiting.cmd == 0
+    assert waiting.thread == "term_queue"
+    assert waiting.context["origin"] == "chat"
+    assert waiting.context["request_id"] == "req_queue"
+    assert waiting.context["executable"] == {"kind": "flow", "name": "research"}
 
 
-def test_runner_control_command_notifies_response_and_events(tmp_path: Path) -> None:
-    class CaptureResponse:
-        wants_stream = True
-
-        def __init__(self) -> None:
-            self.queue_events: list[tuple[str, dict[str, Any]]] = []
-            self.events: list[object] = []
-
-        def on_event(self, event: object) -> None:
-            self.events.append(event)
-
-        def on_queue_event(self, event_type: str, payload: dict[str, Any]) -> None:
-            self.queue_events.append((event_type, payload))
-
+def test_runner_stop_command_projects_events_and_records(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
@@ -200,59 +192,44 @@ def test_runner_control_command_notifies_response_and_events(tmp_path: Path) -> 
         agent_name="alice",
         enabled_features=("inspect",),
     )
-    run = context.store.start_run(
-        run_id="run-1",
-        thread_id="thread-1",
-        origin="chat",
-        input=Message.user("hello"),
-        created_at="2026-01-01T00:00:00Z",
-        started_at="2026-01-01T00:00:00Z",
+    context.events.publish_trace(
+        RunStarting(
+            run="run-1",
+            cmd=0,
+            parent=None,
+            thread="thread-1",
+            input=Message.user("hello"),
+            context={"origin": "chat"},
+            created_at="2026-01-01T00:00:00Z",
+        )
     )
-    command = context.store.append_command(
-        run_id=run.run_id, kind="stop", mode="now"
+    context.events.publish_trace(
+        RunBegin(
+            run="run-1",
+            input=InputRef(cmd=0),
+            context={"origin": "chat"},
+            started_at="2026-01-01T00:00:00Z",
+        )
     )
-    payload = {
-        "run_id": run.run_id,
-        "thread_id": run.thread_id,
-        "ref": {"kind": "command", "index": command.index},
-        "kind": command.kind,
-        "mode": command.mode,
-        "created_at": command.created_at,
-    }
-    response = CaptureResponse()
-    context.runner.enqueue(
-        RunRequest(
-            group="chat", origin="chat", run_id=run.run_id, thread_id=run.thread_id
-        ),
-        response=response,
-    )
+    command, canceled = asyncio.run(context.runner.stop_run(run_id="run-1"))
 
-    context.runner.notify_run_control(run_id=run.run_id, payload=payload)
-    canceled = context.runner.cancel_run(run_id=run.run_id)
-
+    assert (command.kind, command.status) == ("stop", "finished")
     assert canceled.status == "canceled"
-    assert response.queue_events == []
-    assert len(response.events) == 4
-    assert isinstance(response.events[0], RunStarting)
-    assert isinstance(response.events[1], RunWaiting)
-    assert isinstance(response.events[2], RunStopping)
-    assert isinstance(response.events[3], RunEnd)
-    assert response.events[3].status == "canceled"
     assert [
         item.type
-        for item in context.store.list_events(domain="run", domain_id=run.run_id)
+        for item in context.store.list_events(domain="run", domain_id="run-1")
     ] == [
         "run_starting",
-        "run_waiting",
+        "run_begin",
         "run_stopping",
         "run_end",
     ]
     assert [
         item.type
-        for item in context.store.list_events(domain="thread", domain_id=run.thread_id)
+        for item in context.store.list_events(domain="thread", domain_id="thread-1")
     ] == [
         "run_starting",
-        "run_waiting",
+        "run_begin",
         "run_stopping",
         "run_end",
     ]
@@ -269,13 +246,12 @@ def test_runner_cancel_releases_thread_lock_for_next_run(tmp_path: Path) -> None
             assert context is not None
             request = submission.request
             if request.run_id == "run-1":
-                context.store.start_run(
-                    run_id="run-1",
-                    thread_id="thread-1",
-                    origin="chat",
-                    input=Message.user("first"),
-                    created_at="2026-01-01T00:00:00Z",
-                    started_at="2026-01-01T00:00:00Z",
+                context.events.publish_trace(
+                    RunBegin(
+                        run="run-1",
+                        input=InputRef(cmd=0),
+                        started_at="2026-01-01T00:00:00Z",
+                    )
                 )
                 self.first_started.set()
                 await self.release_first.wait()
@@ -313,7 +289,7 @@ def test_runner_cancel_releases_thread_lock_for_next_run(tmp_path: Path) -> None
         drain_task = asyncio.create_task(runner.drain(context))
 
         await asyncio.wait_for(runner.first_started.wait(), timeout=1)
-        runner.cancel_run(run_id="run-1")
+        await runner.stop_run(run_id="run-1")
         runner.enqueue(
             RunRequest(
                 group="chat", origin="chat", run_id="run-2", thread_id="thread-1"
@@ -334,13 +310,14 @@ def test_sse_response_sink_streams_canceled_run_end() -> None:
     async def run_test() -> None:
         response = SseResponseSink(thread_id="thread-1")
         response.on_event(
-            RunBegin(
+            RunStarting(
                 run="run-1",
+                cmd=0,
                 parent=None,
                 thread="thread-1",
                 input=Message.user("hello"),
                 context={"origin": "chat"},
-                started_at="2026-01-01T00:00:00Z",
+                created_at="2026-01-01T00:00:00Z",
             )
         )
         response.on_event(
@@ -411,14 +388,10 @@ def test_runner_submission_exception_fails_response_without_stopping_drain() -> 
 
         assert [outcome.status for outcome in outcomes] == ["failed", "failed"]
         assert [outcome.run_id for outcome in outcomes] == ["run_fail_1", "run_fail_2"]
-        assert len(first_response.events) == 3
-        assert len(second_response.events) == 3
-        assert isinstance(first_response.events[0], RunStarting)
-        assert isinstance(second_response.events[0], RunStarting)
-        assert isinstance(first_response.events[1], RunWaiting)
-        assert isinstance(second_response.events[1], RunWaiting)
-        assert getattr(first_response.events[2], "status") == "failed"
-        assert getattr(second_response.events[2], "status") == "failed"
+        assert len(first_response.events) == 1
+        assert len(second_response.events) == 1
+        assert getattr(first_response.events[0], "status") == "failed"
+        assert getattr(second_response.events[0], "status") == "failed"
 
     asyncio.run(run_test())
 
@@ -465,11 +438,16 @@ def test_runner_pending_requests_include_group_waiters(tmp_path: Path) -> None:
             context.runner.enqueue(active)
             context.runner.enqueue(waiting)
             for _ in range(50):
-                if waiting in context.runner.pending_requests():
+                if any(
+                    item.thunk == waiting.thunk
+                    for item in context.runner.pending_requests()
+                ):
                     break
                 await asyncio.sleep(0.005)
 
-            assert waiting in context.runner.pending_requests()
+            assert any(
+                item.thunk == waiting.thunk for item in context.runner.pending_requests()
+            )
             assert len(context.runner) >= 1
 
             context.runner.close()
@@ -908,13 +886,21 @@ def test_agent_events_include_thread_updates_for_run_lifecycle(tmp_path: Path) -
     )
 
     context.events.publish_trace(
-        RunBegin(
+        RunStarting(
             run="run-1",
+            cmd=0,
             parent=None,
             thread="thread-1",
             input=Message.user("hello"),
             context={"origin": "chat"},
             created_at="2026-01-01T00:00:00Z",
+        )
+    )
+    context.events.publish_trace(
+        RunBegin(
+            run="run-1",
+            input=InputRef(cmd=0),
+            context={"origin": "chat"},
             started_at="2026-01-01T00:00:00Z",
         )
     )
@@ -952,18 +938,19 @@ def test_run_starting_trace_precedes_run_begin(tmp_path: Path) -> None:
     context.events.publish_trace(
         RunStarting(
             run="run-1",
-            input=Message.user("hello"),
-            context={"origin": "chat", "thread": "thread-1", "request_id": "req-start"},
-        )
-    )
-    context.events.publish_trace(
-        RunBegin(
-            run="run-1",
+            cmd=0,
             parent=None,
             thread="thread-1",
             input=Message.user("hello"),
             context={"origin": "chat", "request_id": "req-start"},
             created_at="2026-01-01T00:00:00Z",
+        )
+    )
+    context.events.publish_trace(
+        RunBegin(
+            run="run-1",
+            input=InputRef(cmd=0),
+            context={"origin": "chat", "request_id": "req-start"},
             started_at="2026-01-01T00:00:00Z",
         )
     )
@@ -974,8 +961,12 @@ def test_run_starting_trace_precedes_run_begin(tmp_path: Path) -> None:
     assert [item.seq for item in events] == [1, 2]
     assert events[0].payload == {
         "run": "run-1",
+        "cmd": 0,
+        "parent": None,
+        "thread": "thread-1",
         "input": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
-        "context": {"origin": "chat", "thread": "thread-1", "request_id": "req-start"},
+        "context": {"origin": "chat", "request_id": "req-start"},
+        "created_at": "2026-01-01T00:00:00Z",
     }
 
 
@@ -1011,11 +1002,14 @@ def test_steer_run_appends_run_steering_event(tmp_path: Path) -> None:
         ).json()
         events = client.get("/api/v1/runs/run-1/events").json()["items"]
 
-    assert response["input"]["ref"] == {"kind": "command", "index": 1}
+    assert response["input"]["run"] == "run-1"
+    assert response["input"]["type"] == "run_steering"
+    assert response["input"]["cmd"] == 1
     assert response["input"]["kind"] == "steer"
-    assert response["input"]["request_id"] == "req-steer"
+    assert response["input"]["apply"] == "next_step"
+    assert response["input"]["context"]["request_id"] == "req-steer"
     assert [item["type"] for item in events] == ["run_steering"]
-    assert events[0]["payload"]["context"]["cmd"] == 1
+    assert events[0]["payload"]["cmd"] == 1
     assert events[0]["payload"]["context"]["request_id"] == "req-steer"
     assert events[0]["payload"]["input"]["parts"] == [
         {"type": "text", "text": "focus on events"}
@@ -1065,7 +1059,7 @@ def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
 
     assert [item["type"] for item in events] == ["run_steering", "step_begin"]
     assert [item["cursor"] for item in events] == [1, 2]
-    assert events[0]["payload"]["context"]["cmd"] == 1
+    assert events[0]["payload"]["cmd"] == 1
     assert events[1]["payload"]["input"] == [
         {"step": "run-1/1"},
         {"cmd": 1},
@@ -1175,32 +1169,33 @@ def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
         agent_name="alice",
         enabled_features=("inspect",),
     )
-    persist = run_execute_module.PersistSink(context.store)
-
-    run_execute_module._emit_event(
-        context,
-        persist,
-        None,
-        RunBegin(
+    context.events.publish_trace(
+        RunStarting(
             run="run-1",
+            cmd=0,
             parent=None,
             thread="thread-1",
             input=Message.user("hello"),
             context={"origin": "chat"},
             created_at="2026-01-01T00:00:00Z",
+        )
+    )
+    context.events.publish_trace(
+        RunBegin(
+            run="run-1",
+            input=InputRef(cmd=0),
+            context={"origin": "chat"},
             started_at="2026-01-01T00:00:00Z",
-        ),
+        )
     )
     context.store.cancel_run(run_id="run-1", error="User stopped the run.")
     run_execute_module._emit_event(
         context,
-        persist,
         None,
         _started(1, run_id="run-1", thread_id="thread-1", kind="model"),
     )
     run_execute_module._emit_event(
         context,
-        persist,
         None,
         _completed(
             1,
@@ -1212,7 +1207,6 @@ def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
     )
     run_execute_module._emit_event(
         context,
-        persist,
         None,
         RunEnd(
             run="run-1",
@@ -1226,7 +1220,7 @@ def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
     assert [
         item.type
         for item in context.store.list_events(domain="thread", domain_id="thread-1")
-    ] == ["run_begin"]
+    ] == ["run_starting", "run_begin"]
 
 
 def test_runtime_start_restores_ignored_termination_signals(monkeypatch) -> None:
@@ -1993,15 +1987,16 @@ def test_chat_returns_failed_run_as_assistant_message(tmp_path: Path) -> None:
     assert runs[0]["summary"] == "model boom"
     assert runs[0]["failure"] == {
         "reason": "model boom",
-        "step_index": 1,
+        "step_index": 0,
         "step_kind": "system",
         "step_error": "model boom",
     }
     assert run_detail["output"]["steps"] == [
         {
             "record": {
-                "run_id": runs[0]["id"],
-                "step_index": 1,
+                "parent": runs[0]["id"],
+                "index": 0,
+                "path": f"{runs[0]['id']}/0",
                 "kind": "system",
                 "status": "failed",
                 "input": [],
@@ -2081,8 +2076,9 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
     }
     assert detail["output"]["steps"][-1] == {
         "record": {
-            "run_id": "run-loop",
-            "step_index": 2,
+            "parent": "run-loop",
+            "index": 2,
+            "path": "run-loop/2",
             "kind": "system",
             "status": "failed",
             "input": [],
@@ -2286,11 +2282,11 @@ flow research(in: Text):
 
     kind, executable = run_execute_module._select_executable(bound)
 
-    assert kind == "thunk"
+    assert kind == "agic"
     assert executable.name == "default"
 
 
-def test_chat_stream_reports_new_flow_executor_requirement(tmp_path: Path) -> None:
+def test_chat_stream_executes_flow_runnable(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -2326,8 +2322,8 @@ flow research(in: Text):
 
     assert stream_text.count('"type":"start"') == 1
     assert stream_text.count('"type":"message-metadata"') == 1
-    assert '"type":"error"' in stream_text
-    assert "Flow execution requires the new step executor." in stream_text
+    assert '"type":"error"' not in stream_text
+    assert '"type":"run_starting"' in stream_text
     assert '"type":"finish"' in stream_text
     assert "data: [DONE]" in stream_text
 
@@ -7407,7 +7403,7 @@ def test_execute_run_rejects_thunk_model_outside_activation_allowlist(
     assert "toolang model list --models <selector>" in outcome.error
 
 
-def test_execute_run_pre_start_failure_does_not_emit_persist_sink_error(
+def test_execute_run_pre_start_failure_persists_failed_accepted_run(
     tmp_path: Path, caplog
 ) -> None:
     toolang_root = tmp_path / "toolang"
@@ -7440,7 +7436,13 @@ def test_execute_run_pre_start_failure_does_not_emit_persist_sink_error(
     assert outcome.error is not None
     assert "No available models." in outcome.error
     assert "toolang model providers" in outcome.error
-    assert context.store.list_runs() == []
+    runs = context.store.list_runs()
+    assert len(runs) == 1
+    assert runs[0].status == "failed"
+    assert runs[0].error == outcome.error
+    assert [(step.index, step.kind, step.status) for step in context.store.list_steps(run_id=runs[0].id)] == [
+        (0, "system", "failed")
+    ]
     assert "persist sink event handling failed" not in caplog.text
 
 
@@ -7499,7 +7501,7 @@ def test_script_loop_cancel_does_not_wait_for_worker_thread() -> None:
 
     async def run_test() -> None:
         task = asyncio.create_task(
-            run_execute_module._run_script_loop(
+            run_executor_module._run_loop(
                 blocking_run,
                 cast(Any, object()),
                 run_id="run_test",
@@ -8431,10 +8433,10 @@ def _patched_run_input_assembly(fake_assemble):
 
     with (
         patch.object(
-            run_execute_module.RunInput, "from_binding", side_effect=fake_assemble
+            run_executor_module.RunInput, "from_binding", side_effect=fake_assemble
         ),
         patch.object(
-            run_execute_module.RunInput, "from_thunk", side_effect=fake_from_thunk
+            run_executor_module.RunInput, "from_thunk", side_effect=fake_from_thunk
         ),
     ):
         yield

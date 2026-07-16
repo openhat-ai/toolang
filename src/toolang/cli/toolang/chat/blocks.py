@@ -38,8 +38,7 @@ from toolang.execution.events import (
     StepEnd,
     TraceEvent,
 )
-from toolang.execution.labels import child_call_summary, flow_op_summary
-from toolang.execution.records import trace_index, trace_run
+from toolang.execution.records import StepPath
 
 from .base import as_text, friendly_error
 from .rendering import (
@@ -144,8 +143,6 @@ class RunStartBlock(MutableBlock):
             self.waiting_position = None
         elif event.type == "run_begin":
             begin = cast(RunBegin, event)
-            if message := _message_text(begin.input):
-                self.message = message
             self.run_id = begin.run or self.run_id
             self.waiting = False
             self.waiting_reason = ""
@@ -195,7 +192,7 @@ class RunSteerBlock(MutableBlock):
     @classmethod
     def create(cls, event: RunSteering) -> "RunSteerBlock":
         return cls(
-            index=int(event.context.get("cmd", 0) or 0),
+            index=event.cmd,
             message=_message_text(event.input),
             run_id=event.run,
         )
@@ -206,8 +203,12 @@ class RunSteerBlock(MutableBlock):
         ):
             self.message = message
         self.pending = event.type == "run_steering"
-        if run_id := _event_run_id(event):
-            self.run_id = run_id
+        if event.type == "run_steering":
+            self.run_id = cast(RunSteering, event).run
+        elif event.type == "step_begin":
+            self.run_id = cast(StepBegin, event).step.split("/", 1)[0]
+        else:
+            self.run_id = cast(RunEnd, event).run
 
     def render(self) -> RenderableType:
         footer = "  pending for next step" if self.pending else ""
@@ -335,8 +336,7 @@ class RunStopBlock(MutableBlock):
 class DefaultStepBlock(MutableBlock):
     """Fallback step block for step kinds that do not have a dedicated block yet."""
 
-    run_id: str
-    index: int
+    step: StepPath
     step_kind: str
     label: str = ""
     status: str = "running"
@@ -349,36 +349,25 @@ class DefaultStepBlock(MutableBlock):
         step_kind = event.kind
         payload = event.context
         return cls(
-            run_id=trace_run(event.step),
-            index=trace_index(event.step) or 0,
+            step=event.step,
             step_kind=step_kind,
             label=cls._initial_label(step_kind, payload),
         )
 
     @staticmethod
     def _initial_label(step_kind: str, payload: Mapping[str, Any]) -> str:
-        if step_kind == "run":
-            target_kind = as_text(payload.get("target_kind")) or "run"
-            target = as_text(payload.get("target"))
-            return (
-                f"running {target_kind} {target}"
-                if target
-                else f"running {target_kind}"
-            )
-        if step_kind in {"seq", "par", "unfold", "map", "filter", "sort", "fold"}:
-            return f"running {as_text(payload.get('op')) or 'flow'}"
         if step_kind == "system":
             return (
                 as_text(payload.get("message"))
-                or as_text(payload.get("op"))
+                or as_text(payload.get("statement"))
                 or step_kind
             )
-        return "running"
+        return f"running {step_kind}"
 
     def update(
         self, event: StepBegin | PartBegin | PartDelta | PartEnd | StepEnd
     ) -> None:
-        self.run_id = _event_run_id(event) or self.run_id
+        self.step = event.step
         if event.type == "part_delta":
             part_delta = cast(PartDelta, event)
             delta = part_delta.delta
@@ -407,7 +396,6 @@ class DefaultStepBlock(MutableBlock):
         kind = self.step_kind
         marker = self._marker()
         running = self.status != "completed"
-        final_label = self.final_label or self.label.removeprefix("running ")
 
         if running:
             text_delta = self._text_delta()
@@ -419,12 +407,6 @@ class DefaultStepBlock(MutableBlock):
             line = progress_tail(f"{marker} {self.label}")
             style = "cyan" if kind == "model" else "dim"
             return Text.from_markup(f"[{style}]{escape(line)}[/]")
-
-        if kind == "run":
-            return Text.from_markup(f"[dim]{escape(f'{marker} ran {final_label}')}[/]")
-
-        if kind in {"seq", "par", "unfold", "map", "filter", "sort", "fold"}:
-            return Text.from_markup(f"[dim]{escape(f'{marker} ran {final_label}')}[/]")
 
         if kind in {"system", "error"}:
             message = self.error or self.final_label or self.label or "runtime event"
@@ -439,14 +421,8 @@ class DefaultStepBlock(MutableBlock):
             return "•"
         if self.step_kind == "tool":
             return "›"
-        if self.step_kind == "run":
-            return "›"
-        if self.step_kind == "seq":
-            return "-"
         if self.step_kind == "par":
             return "..."
-        if self.step_kind in {"unfold", "map", "filter", "sort", "fold"}:
-            return "->"
         if self.step_kind == "system":
             return "◇"
         if self.step_kind == "error":
@@ -454,14 +430,9 @@ class DefaultStepBlock(MutableBlock):
         return "·"
 
     def _final_label(self, payload: Mapping[str, Any]) -> str:
-        if self.step_kind == "run":
-            target_kind = as_text(payload.get("target_kind")) or "run"
-            target_name = as_text(payload.get("target"))
-            return f"{target_kind} {target_name}" if target_name else target_kind
         return (
             as_text(payload.get("message"))
-            or as_text(payload.get("op"))
-            or as_text(payload.get("status"))
+            or as_text(payload.get("statement"))
             or self.label.removeprefix("running ")
         )
 
@@ -470,8 +441,7 @@ class DefaultStepBlock(MutableBlock):
 class FlowStepBlock(MutableBlock):
     """Flow operation step block."""
 
-    run_id: str
-    index: int
+    step: StepPath
     step_kind: str
     summary: str
     status: str = "running"
@@ -481,14 +451,13 @@ class FlowStepBlock(MutableBlock):
     def create(cls, event: StepBegin) -> "FlowStepBlock":
         summary = cls._summary(event.kind, event.context)
         return cls(
-            run_id=trace_run(event.step),
-            index=trace_index(event.step) or 0,
+            step=event.step,
             step_kind=event.kind,
             summary=summary,
         )
 
     def update(self, event: StepBegin | PartBegin | PartDelta | PartEnd | StepEnd) -> None:
-        self.run_id = _event_run_id(event) or self.run_id
+        self.step = event.step
         if event.type != "step_end":
             return
         step_end = cast(StepEnd, event)
@@ -517,60 +486,52 @@ class FlowStepBlock(MutableBlock):
     def _marker(self) -> str:
         if self.step_kind == "par":
             return "..."
-        if self.step_kind in {"unfold", "map", "filter", "sort", "fold"}:
-            return "->"
-        return "-"
+        if self.step_kind == "loop":
+            return "-"
+        return "·"
 
     @staticmethod
     def _fallback_summary(step_kind: str, payload: Mapping[str, Any]) -> str:
-        source = payload.get("source")
-        if isinstance(source, Mapping):
-            payload = {**dict(source), **dict(payload)}
-        return (
-            as_text(payload.get("stage_label"))
-            or as_text(payload.get("op"))
-            or step_kind
-            or "flow step"
-        )
+        return as_text(payload.get("statement")) or step_kind or "flow step"
 
     @classmethod
     def _summary(cls, step_kind: str, payload: Mapping[str, Any]) -> str:
-        source = payload.get("source")
-        if isinstance(source, Mapping):
-            payload = {**dict(source), **dict(payload)}
-        if "output_preview" not in payload and "preview" in payload:
-            payload = {**dict(payload), "output_preview": payload["preview"]}
-        return flow_op_summary(payload) or cls._fallback_summary(step_kind, payload)
+        statement = cls._fallback_summary(step_kind, payload)
+        target = (
+            as_text(payload.get("runnable"))
+            or as_text(payload.get("predicate"))
+            or as_text(payload.get("scorer"))
+            or as_text(payload.get("agent"))
+        )
+        count = payload.get("count")
+        suffix = f" {count}" if isinstance(count, int) else ""
+        return f"{statement}{suffix}{f' {target}' if target else ''}"
 
 
 @dataclass(slots=True)
 class ChildRunStepBlock(MutableBlock):
     """Child thunk or flow call step block."""
 
-    run_id: str
-    index: int
+    step: StepPath
     summary: str
     status: str = "running"
     error: str = ""
 
     @classmethod
     def create(cls, event: StepBegin) -> "ChildRunStepBlock":
-        payload = _child_summary_payload(event.context)
         return cls(
-            run_id=trace_run(event.step),
-            index=trace_index(event.step) or 0,
-            summary=child_call_summary(payload) or cls._fallback_summary(payload),
+            step=event.step,
+            summary=cls._summary(event.context),
         )
 
     def update(self, event: StepBegin | PartBegin | PartDelta | PartEnd | StepEnd) -> None:
-        self.run_id = _event_run_id(event) or self.run_id
+        self.step = event.step
         if event.type != "step_end":
             return
         step_end = cast(StepEnd, event)
         self.status = step_end.status
         self.error = step_end.error or ""
-        payload = _child_summary_payload(step_end.detail)
-        self.summary = child_call_summary(payload) or self._fallback_summary(payload)
+        self.summary = self._summary(step_end.detail)
 
     def render(self) -> RenderableType:
         summary = self.summary or "child run"
@@ -587,18 +548,20 @@ class ChildRunStepBlock(MutableBlock):
         return Text.from_markup(f"[dim]{escape(f'• ran {summary}')}[/]")
 
     @staticmethod
-    def _fallback_summary(payload: Mapping[str, Any]) -> str:
-        target_kind = as_text(payload.get("target_kind")) or "run"
-        target = as_text(payload.get("target"))
-        return f"{target_kind}:{target}" if target else target_kind
+    def _summary(payload: Mapping[str, Any]) -> str:
+        statement = as_text(payload.get("statement")) or "run"
+        runnable = as_text(payload.get("runnable"))
+        placement = payload.get("placement")
+        item = placement.get("item") if isinstance(placement, Mapping) else None
+        suffix = f" item {item + 1}" if isinstance(item, int) else ""
+        return f"{statement}{f' {runnable}' if runnable else ''}{suffix}"
 
 
 @dataclass(slots=True)
 class ModelStepBlock(MutableBlock):
     """Model step block."""
 
-    run_id: str
-    index: int
+    step: StepPath
     status: str = "thinking"
     message: str = ""
     output: str = ""
@@ -609,8 +572,7 @@ class ModelStepBlock(MutableBlock):
     def create(cls, event: StepBegin) -> "ModelStepBlock":
         payload = event.context
         return cls(
-            run_id=trace_run(event.step),
-            index=trace_index(event.step) or 0,
+            step=event.step,
             model=as_text(payload.get("model_ref"))
             or as_text(payload.get("model"))
             or "",
@@ -619,7 +581,7 @@ class ModelStepBlock(MutableBlock):
     def update(
         self, event: StepBegin | PartBegin | PartDelta | PartEnd | StepEnd
     ) -> None:
-        self.run_id = _event_run_id(event) or self.run_id
+        self.step = event.step
         if event.type == "part_delta":
             delta = cast(PartDelta, event).delta
             if isinstance(delta, TextDelta):
@@ -715,8 +677,7 @@ class ModelStepBlock(MutableBlock):
 class ToolStepBlock(MutableBlock):
     """Tool step block."""
 
-    run_id: str
-    index: int
+    step: StepPath
     detail: str
     status: str = "running"
     error: str = ""
@@ -725,15 +686,14 @@ class ToolStepBlock(MutableBlock):
     @classmethod
     def create(cls, event: StepBegin) -> "ToolStepBlock":
         return cls(
-            run_id=trace_run(event.step),
-            index=trace_index(event.step) or 0,
+            step=event.step,
             detail="tool",
         )
 
     def update(
         self, event: StepBegin | PartBegin | PartDelta | PartEnd | StepEnd
     ) -> None:
-        self.run_id = _event_run_id(event) or self.run_id
+        self.step = event.step
         if event.type != "step_end":
             return
         step_end = cast(StepEnd, event)
@@ -926,30 +886,6 @@ def _tool_call_display_from_parts(parts: Sequence[Part]) -> str:
     return "tool"
 
 
-def _child_summary_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
-    data = dict(payload)
-    source = data.get("source")
-    if isinstance(source, Mapping):
-        data = {**dict(source), **data, "metadata": dict(source)}
-    target = data.get("target")
-    if isinstance(target, Mapping):
-        data.setdefault("target_kind", target.get("kind"))
-        data.setdefault("target", target.get("name"))
-    child_runs = data.get("child_runs")
-    if isinstance(child_runs, Sequence) and not isinstance(child_runs, str):
-        data.setdefault("child_run_ids", list(child_runs))
-    lane = data.get("lane")
-    if isinstance(lane, Mapping):
-        data.setdefault("lane_index", lane.get("index"))
-        data.setdefault("parallelism", lane.get("count"))
-    item = data.get("item")
-    if isinstance(item, Mapping):
-        data.setdefault("item_index", item.get("index"))
-    if "item_indexes" not in data and data.get("item_index") is not None:
-        data["item_indexes"] = [data["item_index"]]
-    return data
-
-
 def _tool_call_display(name: str, tool_input: dict[str, Any]) -> str:
     if not tool_input:
         return name
@@ -966,14 +902,6 @@ def _tool_call_display(name: str, tool_input: dict[str, Any]) -> str:
 
 def _message_text(message: Message) -> str:
     return message_text(message.parts).strip()
-
-
-def _event_run_id(event: TraceEvent) -> str | None:
-    if isinstance(event, (RunStarting, RunWaiting, RunSteering, RunStopping, RunBegin, RunEnd)):
-        return event.run
-    if isinstance(event, (StepBegin, PartBegin, PartDelta, PartEnd, StepEnd)):
-        return trace_run(event.step)
-    return None
 
 
 def _parts_text(parts: Sequence[Part]) -> str:

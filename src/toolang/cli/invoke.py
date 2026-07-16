@@ -25,7 +25,7 @@ from .. import up as agent_up
 from ..base.error import ToolangError
 from ..config.env import load_runtime_environ
 from ..config.log_spec import PY_LOG_ENV_VAR
-from ..execution.events import RunBegin, RunEnd, StepBegin, StepEnd, TraceEvent
+from ..execution.events import RunEnd, RunStarting, StepBegin, StepEnd, TraceEvent
 from ..execution.labels import executable_label
 from ..execution.records import trace_index, trace_run
 from ..execution.runner import RunOutcome
@@ -104,7 +104,9 @@ class _RoamingInvokeHelpGroup(TyperGroup):
             *super().get_params(ctx),
         ]
 
-    def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+    def format_commands(
+        self, ctx: click.Context, formatter: click.HelpFormatter
+    ) -> None:
         rows: list[tuple[str, str]] = []
         for subcommand in self.list_commands(ctx):
             cmd = self.get_command(ctx, subcommand)
@@ -134,7 +136,9 @@ class _RoamingThunkHelpCommand(TyperCommand):
         )
 
     def format_usage(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
-        parent_path = ctx.parent.command_path if ctx.parent is not None else ctx.command_path
+        parent_path = (
+            ctx.parent.command_path if ctx.parent is not None else ctx.command_path
+        )
         command_path = f"{parent_path} TARGET".rstrip()
         formatter.write_usage(command_path, self.usage_tail)
 
@@ -165,7 +169,9 @@ def roaming_source_path(token: str) -> Path | None:
     return resolved
 
 
-def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name: str) -> int:
+def handle_roaming_invoke(
+    global_args: list[str], body: list[str], *, prog_name: str
+) -> int:
     if _unsupported_roaming_global_args(global_args):
         typer.echo(
             "toolang error: too <path>.too does not support global CLI options",
@@ -178,7 +184,14 @@ def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name:
         return 1
     source_label = body[0]
     remaining = body[1:]
-    quiet, verbosity, leading_models, leading_tools, leading_caps, normalized_remaining = _consume_roaming_control_options(remaining)
+    (
+        quiet,
+        verbosity,
+        leading_models,
+        leading_tools,
+        leading_caps,
+        normalized_remaining,
+    ) = _consume_roaming_control_options(remaining)
     prepare_progress = _prepare_progress(quiet=quiet, argv=remaining)
     script_progress: _ScriptProgressSink | None = None
     request: RoamingInvokeRequest | None = None
@@ -193,17 +206,30 @@ def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name:
         if prepare_progress is not None:
             prepare_progress.finish(details=False)
         if normalized_remaining and normalized_remaining[0] in HELP_FLAGS:
-            _show_roaming_help(source_label, program, target_name=None, prog_name=prog_name)
+            _show_roaming_help(
+                source_label, program, target_name=None, prog_name=prog_name
+            )
             return 0
         if not remaining:
-            _show_roaming_help(source_label, program, target_name=None, prog_name=prog_name)
+            _show_roaming_help(
+                source_label, program, target_name=None, prog_name=prog_name
+            )
             return 0
         if not normalized_remaining:
-            _show_roaming_help(source_label, program, target_name=None, prog_name=prog_name)
+            _show_roaming_help(
+                source_label, program, target_name=None, prog_name=prog_name
+            )
             return 0
-        executable_kind, executable, remainder = _select_roaming_executable(program, normalized_remaining)
+        executable_kind, executable, remainder = _select_roaming_executable(
+            program, normalized_remaining
+        )
         if any(token in HELP_FLAGS for token in remainder):
-            _show_roaming_help(source_label, program, target_name=_executable_name(executable), prog_name=prog_name)
+            _show_roaming_help(
+                source_label,
+                program,
+                target_name=_executable_name(executable),
+                prog_name=prog_name,
+            )
             return 0
         try:
             request = _parse_roaming_invoke_request(
@@ -216,9 +242,16 @@ def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name:
                 leading_caps=leading_caps,
             )
         except _MissingInvokeInput:
-            _show_roaming_help(source_label, program, target_name=_executable_name(executable), prog_name=prog_name)
+            _show_roaming_help(
+                source_label,
+                program,
+                target_name=_executable_name(executable),
+                prog_name=prog_name,
+            )
             return 0
-        runtime_environ = load_runtime_environ(toolang_root, agent_name, base_environ=os.environ)
+        runtime_environ = load_runtime_environ(
+            toolang_root, agent_name, base_environ=os.environ
+        )
         script_progress = _script_progress_sink(
             thunk_name=request.thunk_name,
             quiet=quiet or request.quiet,
@@ -295,7 +328,13 @@ def handle_roaming_invoke(global_args: list[str], body: list[str], *, prog_name:
             environ=runtime_environ,
         )
         return 130
-    except (FileExistsError, FileNotFoundError, ValueError, ToolangError, click.ClickException) as exc:
+    except (
+        FileExistsError,
+        FileNotFoundError,
+        ValueError,
+        ToolangError,
+        click.ClickException,
+    ) as exc:
         if prepare_progress is not None:
             prepare_progress.finish(details=False)
         message = exc.message if isinstance(exc, click.ClickException) else str(exc)
@@ -373,7 +412,14 @@ def _consume_roaming_control_options(
                 continue
         remaining.append(token)
         index += 1
-    return quiet, verbosity, tuple(models), split_tool_selectors(tuple(tools)), split_cap_selectors(tuple(caps)), remaining
+    return (
+        quiet,
+        verbosity,
+        tuple(models),
+        split_tool_selectors(tuple(tools)),
+        split_cap_selectors(tuple(caps)),
+        remaining,
+    )
 
 
 def _prepare_progress(*, quiet: bool, argv: list[str]) -> "CliProgress | None":
@@ -388,7 +434,9 @@ def _load_roaming_live_program(
     progress=None,
 ) -> tuple[Path, str, PreparedState, LiveProgram]:
     toolang_root, agent_name = agents.materialize_roaming_program(source_path)
-    prepared = agent_up.prepare_agent(toolang_root=toolang_root, agent_name=agent_name, progress=progress)
+    prepared = agent_up.prepare_agent(
+        toolang_root=toolang_root, agent_name=agent_name, progress=progress
+    )
     return toolang_root, agent_name, prepared, load_live_program(prepared.program)
 
 
@@ -502,7 +550,11 @@ def _parse_roaming_invoke_request(
             continue
         parts.append(token)
         index += 1
-    missing = [param.name for param in executable_params if not param.optional and param.name not in invoke_params]
+    missing = [
+        param.name
+        for param in executable_params
+        if not param.optional and param.name not in invoke_params
+    ]
     if missing:
         joined = ", ".join(f"{name}=..." for name in missing)
         raise click.ClickException(f"missing required invoke parameters: {joined}")
@@ -575,7 +627,7 @@ def _render_roaming_input(parts: list[str]) -> tuple[str, list[dict[str, str]]]:
 
 
 def _emit_invoke_outcome(outcome: RunOutcome) -> int:
-    if outcome.status == "failed":
+    if outcome.status != "finished":
         error = outcome.error or "invoke failed"
         typer.echo(f"toolang error: {error}", err=True)
         if _is_model_selection_error(error):
@@ -593,7 +645,9 @@ def _is_model_selection_error(error: str) -> bool:
     return error in {NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSAGE}
 
 
-def _script_progress_sink(*, thunk_name: str | None, quiet: bool, verbosity: int) -> "_ScriptProgressSink":
+def _script_progress_sink(
+    *, thunk_name: str | None, quiet: bool, verbosity: int
+) -> "_ScriptProgressSink":
     return _ScriptProgressSink(
         thunk_name=thunk_name or "default",
         render=not quiet and sys.stderr.isatty(),
@@ -627,7 +681,6 @@ def _emit_interrupt_message(
 class _StageProgress:
     key: str
     index: int | None = None
-    total: int | None = None
     kind: str = "stage"
     title: str = "stage"
     status: str = "running"
@@ -664,7 +717,6 @@ class _ScriptProgressSink:
         self._run_id: str | None = None
         self._title = ""
         self._finished = False
-        self._run_labels: dict[str, str] = {}
         self._stage_order: list[str] = []
         self._stages: dict[str, _StageProgress] = {}
         self._calls: dict[str, _CallProgress] = {}
@@ -677,21 +729,22 @@ class _ScriptProgressSink:
         return self._run_id
 
     def on_event(self, event: TraceEvent) -> None:
-        if isinstance(event, RunBegin):
+        if event.type == "run_starting":
+            event = cast(RunStarting, event)
             executable = self._mapping(event.context.get("executable"))
             label = executable_label(
                 self._text(executable.get("kind")) or "run",
                 self._text(executable.get("name")),
-                metadata=event.context,
             )
-            self._run_labels[event.run] = label
             if event.parent is None:
                 self._run_id = event.run
                 self._title = f"Running {label}: {event.run}"
                 self._render()
                 return
-            if event.context.get("call") == "stage":
-                stage = self._ensure_stage(event.context)
+            if event.parent is not None and trace_run(event.parent) == self._run_id:
+                stage = self._ensure_stage(
+                    {**dict(event.context), "_step": event.parent}
+                )
                 call = self._ensure_call(
                     run_id=event.run,
                     stage=stage,
@@ -701,18 +754,23 @@ class _ScriptProgressSink:
                 call.status = "running"
                 self._render()
             return
-        if isinstance(event, StepBegin):
-            if event.kind not in {"seq", "par", "unfold", "map", "filter", "sort", "fold", "run"}:
+        if event.type == "step_begin":
+            event = cast(StepBegin, event)
+            if trace_run(event.step) == self._run_id and event.context.get("statement"):
+                self._ensure_stage({**event.context, "_step": event.step})
+                self._render()
+            else:
                 self._update_call_step(
                     trace_run(event.step),
                     trace_index(event.step) or 0,
                     f"{event.kind} running",
                 )
             return
-        if isinstance(event, StepEnd):
-            self._update_step(event)
+        if event.type == "step_end":
+            self._update_step(cast(StepEnd, event))
             return
-        if isinstance(event, RunEnd):
+        if event.type == "run_end":
+            event = cast(RunEnd, event)
             if event.run == self._run_id:
                 self._finished = True
                 self._render()
@@ -734,39 +792,23 @@ class _ScriptProgressSink:
 
     def _update_step(self, event: StepEnd) -> None:
         payload = event.detail
-        if event.kind in {"seq", "par", "unfold", "map", "filter", "sort", "fold", "system"}:
-            stage = self._ensure_stage(payload)
-            op = str(payload.get("op", ""))
-            source = self._mapping(payload.get("source"))
-            if input_preview := payload.get("input_preview") or source.get("input_preview"):
-                stage.input_shape = self._shape_label(input_preview)
-            if preview := payload.get("output_preview") or payload.get("preview"):
-                if op.startswith("prepare_"):
-                    stage.item_total = self._preview_count(preview) or stage.item_total
-                if op in {"set_current", "fold", "unfold", "filter", "sort", "map"}:
-                    stage.output_shape = self._shape_label(preview)
-                    stage.status = "done"
-                elif stage.status != "done":
-                    stage.status = "running"
-            self._render()
-            return
-        if event.kind == "run":
-            stage = self._ensure_stage(payload)
-            for run_id in self._child_run_ids(payload, event):
-                call = self._ensure_call(
-                    run_id=run_id,
-                    stage=stage,
-                    target_label=executable_label(
-                        self._text(payload.get("target_kind"))
-                        or self._text(self._mapping(payload.get("target")).get("kind"))
-                        or "run",
-                        self._text(payload.get("target_name"))
-                        or self._text(self._mapping(payload.get("target")).get("name")),
-                        metadata=self._metadata(payload),
-                    ),
-                    payload=payload,
+        root, _, indexes = event.step.partition("/")
+        first_index = indexes.split("/", 1)[0] if indexes else ""
+        stage_key = f"{root}/{first_index}" if first_index else event.step
+        if trace_run(event.step) == self._run_id and stage_key in self._stages:
+            stage = self._ensure_stage({**payload, "_step": event.step})
+            stage.status = self._status_word(event.status)
+            items = self._int_payload(payload.get("items"))
+            shape = self._text(payload.get("shape"))
+            if shape == "list":
+                stage.output_shape = (
+                    self._shape_label({"count": items}) if items is not None else "list"
                 )
-                call.status = self._status_word(event.status)
+                stage.item_total = items
+            elif shape == "item":
+                stage.output_shape = "1 item"
+            elif shape == "none":
+                stage.output_shape = "unset"
             self._render()
             return
         self._update_call_step(
@@ -777,21 +819,42 @@ class _ScriptProgressSink:
 
     def _ensure_stage(self, payload: Mapping[str, object]) -> _StageProgress:
         ctx = self._context(payload)
-        key = f"stage:{ctx.get('stage_index')}" if ctx.get("stage_index") is not None else "stage"
+        step = self._text(ctx.get("_step")) or ""
+        root, _, indexes = step.partition("/")
+        first_index = indexes.split("/", 1)[0] if indexes else ""
+        key = f"{root}/{first_index}" if first_index else step or "stage"
         stage = self._stages.get(key)
         if stage is None:
             stage = _StageProgress(key=key)
             self._stages[key] = stage
             self._stage_order.append(key)
-        stage.index = self._int_payload(ctx.get("stage_index")) if ctx.get("stage_index") is not None else stage.index
-        stage.total = self._int_payload(ctx.get("stage_total")) or stage.total
-        stage.kind = str(ctx.get("stage_kind") or stage.kind)
-        title = self._clean_stage_title(
-            str(ctx.get("stage_title") or ctx.get("stage_doc") or ctx.get("stage_target") or ctx.get("stage_label") or stage.title).strip()
+        stage.index = self._int_payload(first_index) if first_index else stage.index
+        stage.kind = str(ctx.get("statement") or stage.kind)
+        target = next(
+            (
+                self._text(ctx.get(name))
+                for name in ("runnable", "predicate", "scorer", "agent")
+                if self._text(ctx.get(name))
+            ),
+            None,
+        )
+        count = self._int_payload(ctx.get("count"))
+        title = " ".join(
+            item
+            for item in (
+                stage.kind,
+                str(count) if count is not None else "",
+                target or "",
+            )
+            if item
         )
         if title:
             stage.title = title
-        stage.parallelism = self._int_payload(ctx.get("parallelism")) or stage.parallelism
+        stage.parallelism = (
+            self._int_payload(ctx.get("par"))
+            or self._int_payload(ctx.get("parallelism"))
+            or stage.parallelism
+        )
         if input_preview := ctx.get("input_preview"):
             stage.input_shape = self._shape_label(input_preview)
         if item_count := self._int_payload(ctx.get("item_count")):
@@ -820,9 +883,17 @@ class _ScriptProgressSink:
             self._run_call_keys[run_id] = call_key
             if call_key not in stage.calls:
                 stage.calls.append(call_key)
-        call.item_index = self._int_payload(ctx.get("item_index")) if ctx.get("item_index") is not None else call.item_index
+        call.item_index = (
+            self._int_payload(ctx.get("item_index"))
+            if ctx.get("item_index") is not None
+            else call.item_index
+        )
         call.item_count = self._int_payload(ctx.get("item_count")) or call.item_count
-        call.lane_index = self._int_payload(ctx.get("lane_index")) if ctx.get("lane_index") is not None else call.lane_index
+        call.lane_index = (
+            self._int_payload(ctx.get("lane_index"))
+            if ctx.get("lane_index") is not None
+            else call.lane_index
+        )
         call.parallelism = self._int_payload(ctx.get("parallelism")) or call.parallelism
         if call.parallelism is not None:
             stage.parallelism = call.parallelism
@@ -842,34 +913,14 @@ class _ScriptProgressSink:
         return self._calls.get(key) if key is not None else None
 
     def _context(self, payload: Mapping[str, object]) -> dict[str, object]:
-        metadata = self._metadata(payload)
-        source = self._mapping(payload.get("source"))
-        child = payload.get("child")
-        if isinstance(child, Mapping):
-            child = cast(Mapping[str, object], child)
-        else:
-            child = metadata.get("child") or source.get("child")
-            child = cast(Mapping[str, object], child) if isinstance(child, Mapping) else {}
-        ctx: dict[str, object] = dict(child)
-        ctx.update(source)
-        ctx.update(metadata)
-        ctx.update({key: value for key, value in payload.items() if key != "metadata"})
-        lane = self._mapping(payload.get("lane"))
-        if lane:
-            ctx.setdefault("lane_index", lane.get("index"))
-            ctx.setdefault("parallelism", lane.get("count"))
-        item = self._mapping(payload.get("item"))
-        if item:
-            ctx.setdefault("item_index", item.get("index"))
-        if "item_index" not in ctx:
-            item_indexes = payload.get("item_indexes")
-            if isinstance(item_indexes, (list, tuple)) and item_indexes:
-                ctx["item_index"] = item_indexes[0]
+        ctx = dict(payload)
+        placement = self._mapping(payload.get("placement"))
+        if placement:
+            ctx.setdefault("item_index", placement.get("item"))
+            ctx.setdefault("item_count", placement.get("items"))
+            ctx.setdefault("lane_index", placement.get("lane"))
+            ctx.setdefault("parallelism", placement.get("lanes"))
         return ctx
-
-    def _metadata(self, payload: Mapping[str, object]) -> Mapping[str, object]:
-        metadata = payload.get("metadata")
-        return cast(Mapping[str, object], metadata) if isinstance(metadata, Mapping) else {}
 
     def _mapping(self, value: object) -> Mapping[str, object]:
         return cast(Mapping[str, object], value) if isinstance(value, Mapping) else {}
@@ -880,33 +931,21 @@ class _ScriptProgressSink:
         text = str(value).strip()
         return text or None
 
-    def _child_run_ids(self, payload: Mapping[str, object], event: StepEnd) -> tuple[str, ...]:
-        ids: list[object] = []
-        for key in ("child_run_ids", "child_runs"):
-            value = payload.get(key)
-            if isinstance(value, (list, tuple)):
-                ids.extend(value)
-        child_ids = tuple(str(item) for item in ids if item is not None)
-        if child_ids:
-            return child_ids
-        return (event.step,)
-
     def _call_label(self, target_label: str, ctx: Mapping[str, object]) -> str:
         item_index = self._int_payload(ctx.get("item_index"))
         item_count = self._int_payload(ctx.get("item_count"))
         target = target_label.replace(":", " ", 1)
         if item_index is not None:
-            item = f"item {item_index + 1}/{item_count}" if item_count else f"item {item_index + 1}"
+            item = (
+                f"item {item_index + 1}/{item_count}"
+                if item_count
+                else f"item {item_index + 1}"
+            )
             return f"{item} · {target}"
         return target
 
     def _status_word(self, status: str) -> str:
         return "done" if status == "finished" else status
-
-    def _clean_stage_title(self, title: str) -> str:
-        if ": " in title:
-            return title.split(": ", 1)[1]
-        return title
 
     def _stage_label(self, stage: _StageProgress) -> str:
         index = "?"
@@ -916,7 +955,11 @@ class _ScriptProgressSink:
         return f"[{index}] {title}"
 
     def _stage_tail(self, stage: _StageProgress) -> str:
-        lanes = f"{stage.parallelism} lanes" if stage.parallelism and stage.parallelism > 1 else ""
+        lanes = (
+            f"{stage.parallelism} lanes"
+            if stage.parallelism and stage.parallelism > 1
+            else ""
+        )
         if stage.status == "done" and (stage.input_shape or stage.output_shape):
             shape = f"{stage.input_shape or '?'} -> {stage.output_shape or '?'}"
             return " · ".join(item for item in (shape, lanes) if item)
@@ -932,14 +975,25 @@ class _ScriptProgressSink:
         return "running"
 
     def _stage_done_count(self, stage: _StageProgress) -> int:
-        return sum(1 for call in self._stage_calls(stage) if call.status in {"done", "failed", "canceled"})
+        return sum(
+            1
+            for call in self._stage_calls(stage)
+            if call.status in {"done", "failed", "canceled"}
+        )
 
     def _stage_failed_count(self, stage: _StageProgress) -> int:
         return sum(1 for call in self._stage_calls(stage) if call.status == "failed")
 
     def _stage_calls(self, stage: _StageProgress) -> list[_CallProgress]:
         calls = [self._calls[key] for key in stage.calls if key in self._calls]
-        return sorted(calls, key=lambda call: (call.lane_index if call.lane_index is not None else 999_999, call.item_index if call.item_index is not None else 999_999, call.run_id))
+        return sorted(
+            calls,
+            key=lambda call: (
+                call.lane_index if call.lane_index is not None else 999_999,
+                call.item_index if call.item_index is not None else 999_999,
+                call.run_id,
+            ),
+        )
 
     def _lane_calls(self, stage: _StageProgress) -> dict[int, list[_CallProgress]]:
         lanes: dict[int, list[_CallProgress]] = {}
@@ -963,22 +1017,42 @@ class _ScriptProgressSink:
                 lanes = self._lane_calls(stage)
                 for lane_index in range(stage.parallelism):
                     calls = lanes.get(lane_index, [])
-                    lane_done = sum(1 for call in calls if call.status in {"done", "failed", "canceled"})
-                    lines.append(f"  lane {lane_index + 1}/{stage.parallelism:<3} {lane_done}/{len(calls)} calls")
+                    lane_done = sum(
+                        1
+                        for call in calls
+                        if call.status in {"done", "failed", "canceled"}
+                    )
+                    lines.append(
+                        f"  lane {lane_index + 1}/{stage.parallelism:<3} {lane_done}/{len(calls)} calls"
+                    )
                     if self._verbosity <= 1:
                         continue
                     for call in calls:
-                        lines.extend(self._render_call(call, indent="    ", include_steps=self._verbosity >= 3))
+                        lines.extend(
+                            self._render_call(
+                                call, indent="    ", include_steps=self._verbosity >= 3
+                            )
+                        )
                 continue
             for call in self._stage_calls(stage):
-                lines.extend(self._render_call(call, indent="  ", include_steps=self._verbosity >= 2))
+                lines.extend(
+                    self._render_call(
+                        call, indent="  ", include_steps=self._verbosity >= 2
+                    )
+                )
         if self._finished:
             failed = sum(1 for call in self._calls.values() if call.status == "failed")
-            lines.append(f"Done · {len(self._stage_order)} stages · {len(self._calls)} calls · {failed} failed")
+            lines.append(
+                f"Done · {len(self._stage_order)} stages · {len(self._calls)} calls · {failed} failed"
+            )
         return lines
 
-    def _render_call(self, call: _CallProgress, *, indent: str, include_steps: bool) -> list[str]:
-        prefix = "✓" if call.status == "done" else "✗" if call.status == "failed" else "…"
+    def _render_call(
+        self, call: _CallProgress, *, indent: str, include_steps: bool
+    ) -> list[str]:
+        prefix = (
+            "✓" if call.status == "done" else "✗" if call.status == "failed" else "…"
+        )
         lines = [f"{indent}{prefix} {call.label} · {call.run_id} {call.status}"]
         if include_steps:
             for _index, text in sorted(call.steps.items()):
@@ -1000,12 +1074,6 @@ class _ScriptProgressSink:
         if preview is None:
             return "unset"
         return "1 item"
-
-    def _preview_count(self, preview: object) -> int | None:
-        if isinstance(preview, Mapping):
-            preview = cast(Mapping[str, object], preview)
-            return self._int_payload(preview.get("count"))
-        return None
 
     def _int_payload(self, value: object) -> int | None:
         if isinstance(value, int):
@@ -1119,14 +1187,22 @@ def _build_roaming_help_app(source_label: str, program: LiveProgram) -> typer.Ty
     return app
 
 
-def _roaming_executable_help_text(source_label: str, executable: AgicDecl | FlowDecl) -> str:
+def _roaming_executable_help_text(
+    source_label: str, executable: AgicDecl | FlowDecl
+) -> str:
     summary = _executable_summary(executable)
-    intro = "Invoke an agic or flow from a Toolang script." if summary == "-" else summary
+    intro = (
+        "Invoke an agic or flow from a Toolang script." if summary == "-" else summary
+    )
     label = "Agic" if isinstance(executable, AgicDecl) else "Flow"
-    return f"{intro}\n\nScript: {source_label}\n{label}:  {_executable_name(executable)}"
+    return (
+        f"{intro}\n\nScript: {source_label}\n{label}:  {_executable_name(executable)}"
+    )
 
 
-def _make_roaming_executable_help_command_class(executable: AgicDecl | FlowDecl) -> type[_RoamingThunkHelpCommand]:
+def _make_roaming_executable_help_command_class(
+    executable: AgicDecl | FlowDecl,
+) -> type[_RoamingThunkHelpCommand]:
     class _ConfiguredRoamingThunkHelpCommand(_RoamingThunkHelpCommand):
         usage_tail = _roaming_executable_usage_tail(executable)
         show_params = bool(executable.params)
@@ -1190,7 +1266,9 @@ def _param_assignment_label(param: Parameter) -> str:
 
 def _executable_summary(executable: AgicDecl | FlowDecl) -> str:
     if isinstance(executable, AgicDecl):
-        for line in "\n\n".join(item.content for item in executable.messages).splitlines():
+        for line in "\n\n".join(
+            item.content for item in executable.messages
+        ).splitlines():
             text = line.strip()
             if text:
                 return text
@@ -1333,7 +1411,11 @@ def _rich_format_roaming_help(
     )
 
     if show_commands and isinstance(obj, click.Group):
-        commands = [command for name in obj.list_commands(ctx) if (command := obj.get_command(ctx, name)) and not command.hidden]
+        commands = [
+            command
+            for name in obj.list_commands(ctx)
+            if (command := obj.get_command(ctx, name)) and not command.hidden
+        ]
         max_cmd_len = max((len(command.name or "") for command in commands), default=0)
         rich_utils._print_commands_panel(
             name="Targets",
@@ -1361,7 +1443,9 @@ def _rich_format_roaming_help(
     if obj.epilog:
         lines = obj.epilog.split("\n\n")
         epilogue = "\n".join([line.replace("\n", " ").strip() for line in lines])
-        epilogue_text = rich_utils._make_rich_text(text=epilogue, markup_mode=markup_mode)
+        epilogue_text = rich_utils._make_rich_text(
+            text=epilogue, markup_mode=markup_mode
+        )
         console.print(rich_utils.Padding(rich_utils.Align(epilogue_text, pad=False), 1))
 
 
@@ -1392,7 +1476,9 @@ def _print_argument_examples_panel(
     for param in params:
         table.add_row(
             rich_utils.metavar_highlighter(param.make_metavar(ctx=ctx)),
-            rich_utils._get_parameter_help(param=param, ctx=ctx, markup_mode=markup_mode),
+            rich_utils._get_parameter_help(
+                param=param, ctx=ctx, markup_mode=markup_mode
+            ),
         )
     console.print(
         rich_utils.Panel(

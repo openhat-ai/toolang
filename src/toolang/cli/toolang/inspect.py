@@ -21,8 +21,7 @@ from ... import agents
 from ...base.types.message import parts_to_data
 from ...execution.db import ExecutionStore, execution_db_path
 from ...execution.detail import run_detail_from_record, thread_info_from_record, thread_info_from_runs
-from ...execution.labels import child_call_summary, executable_label, flow_op_summary
-from ...execution.projection import child_run_ids
+from ...execution.labels import executable_label
 from ...execution.records import step_input_items_to_data
 from ..utils import (
     _context_root,
@@ -135,10 +134,7 @@ def _parse_inspect_step_path(raw_path: str) -> tuple[int, ...]:
     for piece in raw_path.split("."):
         if not piece.isdecimal():
             raise click.ClickException(f"invalid step path: {raw_path}")
-        value = int(piece)
-        if value < 1:
-            raise click.ClickException(f"invalid step path: {raw_path}")
-        path.append(value)
+        path.append(int(piece))
     return tuple(path)
 
 
@@ -291,8 +287,9 @@ def _run_detail_json(store: ExecutionStore, run: Any) -> dict[str, Any]:
 
 def _step_record_json(step: Any) -> dict[str, Any]:
     return {
-        "run_id": step.run_id,
-        "step_index": step.step_index,
+        "parent": step.parent,
+        "index": step.index,
+        "path": step.path,
         "kind": step.kind,
         "status": step.status,
         "input": step_input_items_to_data(step.input),
@@ -346,7 +343,6 @@ def _preprocess_thread_run(run: Mapping[str, Any]) -> InspectData:
     target = executable_label(
         _text(info.get("executable_kind")) or "run",
         _text(info.get("executable_name")),
-        metadata=_mapping(info.get("metadata")),
     )
     return {
         "id": _text(info.get("id")) or "-",
@@ -367,7 +363,6 @@ def _preprocess_run(run: Mapping[str, Any]) -> InspectData:
     target = executable_label(
         _text(info.get("executable_kind")) or "run",
         _text(info.get("executable_name")),
-        metadata=_mapping(info.get("metadata")),
     )
     return {
         "id": _text(info.get("id")) or "-",
@@ -396,9 +391,25 @@ def _preprocess_step(
     status = _display_run_status(record.get("status"))
     run_id = _text(_mapping(run.get("info")).get("id")) or "-"
     children: list[StepData] = []
-    step_index = _int_or_none(record.get("step_index"))
+    step_index = _int_or_none(record.get("index"))
+    if step_index is None:
+        step_index = _int_or_none(record.get("step_index"))
     if step_index is not None:
-        for child_run in _child_runs_for_step(run_id, step_index, step=step, run_by_id=run_by_id):
+        step_path = _text(record.get("path")) or f"{run_id}/{step_index}"
+        if record.get("path") is not None:
+            children.extend(
+                _step_tree(
+                    run,
+                    run_by_id=run_by_id,
+                    path_prefix=path,
+                    focus_path=focus_path,
+                    parent=step_path,
+                )
+            )
+        for child_run in _child_runs_for_step(
+            step_path,
+            run_by_id=run_by_id,
+        ):
             children.extend(_step_tree(child_run, run_by_id=run_by_id, path_prefix=path, focus_path=focus_path))
     summary, summary_head, summary_payload = _step_summary(record, message, run=run)
     data: StepData = {
@@ -548,11 +559,18 @@ def _step_tree(
     run_by_id: Mapping[str, Mapping[str, Any]],
     path_prefix: tuple[int, ...] = (),
     focus_path: tuple[int, ...] | None,
+    parent: str | None = None,
 ) -> list[StepData]:
     nodes: list[StepData] = []
+    run_id = _text(_mapping(run.get("info")).get("id")) or "-"
+    expected_parent = parent or run_id
     for step in _run_steps(run):
         record = _mapping(step.get("record"))
-        step_index = _int_or_none(record.get("step_index"))
+        if record.get("parent") is not None and _text(record.get("parent")) != expected_parent:
+            continue
+        step_index = _int_or_none(record.get("index"))
+        if step_index is None:
+            step_index = _int_or_none(record.get("step_index"))
         if step_index is None:
             continue
         path = (*path_prefix, step_index)
@@ -561,32 +579,17 @@ def _step_tree(
 
 
 def _child_runs_for_step(
-    run_id: str,
-    step_index: int,
+    step_path: str,
     *,
-    step: Mapping[str, Any],
     run_by_id: Mapping[str, Mapping[str, Any]],
 ) -> list[Mapping[str, Any]]:
     child_runs: list[Mapping[str, Any]] = []
-    seen: set[str] = set()
-    record = _mapping(step.get("record"))
-    payload = _step_detail(record)
-    for child_id in child_run_ids(payload, record):
-        child = run_by_id.get(child_id)
-        if child is not None and child_id not in seen:
-            child_runs.append(child)
-            seen.add(child_id)
     for child in run_by_id.values():
         info = _mapping(child.get("info"))
-        child_id = _text(info.get("id"))
-        if child_id is None or child_id in seen:
-            continue
-        if _text(info.get("parent_run_id")) != run_id:
-            continue
-        if _int_or_none(info.get("parent_step_index")) != step_index:
+        parent = _text(info.get("parent"))
+        if parent != step_path:
             continue
         child_runs.append(child)
-        seen.add(child_id)
     return child_runs
 
 
@@ -1068,7 +1071,7 @@ def _inspect_thread_run_map(thread: Mapping[str, Any], *, fallback: Mapping[str,
 
 
 def _top_level_runs(runs: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
-    roots = [run for run in runs if _text(_mapping(run.get("info")).get("parent_run_id")) is None]
+    roots = [run for run in runs if _text(_mapping(run.get("info")).get("parent")) is None]
     return roots or list(runs)
 
 
@@ -1122,7 +1125,7 @@ def _last_text_part(parts: object) -> str:
 
 
 def _step_summary(record: Mapping[str, Any], message: Mapping[str, Any], *, run: Mapping[str, Any]) -> tuple[str, str | None, str | None]:
-    payload = _step_detail(record)
+    payload = {**dict(_mapping(record.get("context"))), **dict(_step_detail(record))}
     kind = _text(record.get("kind"))
     if kind == "model":
         text = _message_summary(message) or _parts_summary(record.get("output"))
@@ -1135,16 +1138,47 @@ def _step_summary(record: Mapping[str, Any], message: Mapping[str, Any], *, run:
         return summary, None, None
     if kind == "tool":
         return _tool_result_summary(record, run=run)
-    if kind == "run":
-        return child_call_summary(payload), None, None
-    if kind in {"seq", "par", "unfold", "map", "filter", "sort", "fold", "system"}:
-        summary = flow_op_summary(payload)
+    if payload.get("statement"):
+        summary = _flow_statement_summary(payload)
         if summary:
             return summary, None, None
-        text = _parts_summary(record.get("output"))
-        return text or _text(record.get("error")) or "-", None, None
     text = _parts_summary(record.get("output"))
     return text or _text(record.get("error")) or "-", None, None
+
+
+def _flow_statement_summary(payload: Mapping[str, Any]) -> str:
+    statement = _text(payload.get("statement")) or "step"
+    count = _int_or_none(payload.get("count"))
+    target = next(
+        (
+            _text(payload.get(name))
+            for name in ("runnable", "predicate", "scorer", "agent")
+            if _text(payload.get(name))
+        ),
+        None,
+    )
+    placement = _mapping(payload.get("placement"))
+    item = _int_or_none(placement.get("item"))
+    items = _int_or_none(placement.get("items"))
+    prefix = (
+        f"item {item + 1}/{items}"
+        if item is not None and items is not None
+        else f"item {item + 1}"
+        if item is not None
+        else ""
+    )
+    parts = [prefix, statement]
+    if statement in {"scatter", "storm"} and count is not None:
+        parts.append(str(count))
+    if target:
+        parts.append(target)
+    if statement in {"keep", "drop"} and (position := _text(payload.get("position"))):
+        parts.extend((position, str(count or 0)))
+    if statement == "rank" and (limit := _text(payload.get("limit"))):
+        parts.extend((limit, str(count or 0)))
+    if (parallelism := _int_or_none(payload.get("par"))) is not None:
+        parts.extend(("par", str(parallelism)))
+    return " ".join(value for value in parts if value)
 
 
 def _tool_request_summaries(record: Mapping[str, Any]) -> list[tuple[str, str, str]]:

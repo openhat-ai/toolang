@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from dataclasses import asdict
 import json
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from toolang.base.types.message import TextDelta, ToolCallDelta, parts_to_data
 
@@ -26,9 +26,7 @@ from .events import (
     TraceEvent,
 )
 from .records import EventDomain, EventRecord, trace_run
-
-if TYPE_CHECKING:
-    from .db import ExecutionStore
+from .db import ExecutionStore, PersistSink
 
 
 class RuntimeEventBus:
@@ -36,8 +34,10 @@ class RuntimeEventBus:
 
     def __init__(self, store: "ExecutionStore", *, agent_id: str | None = None) -> None:
         self._store = store
+        self._persist = PersistSink(store)
         self._agent_id = agent_id
         self._lock = threading.Lock()
+        self._trace_lock = threading.Lock()
         self._subscribers: dict[tuple[EventDomain, str], list[_Subscription]] = {}
 
     def publish(
@@ -66,6 +66,11 @@ class RuntimeEventBus:
     def publish_trace(self, event: TraceEvent) -> None:
         """Publish the public event projection for one execution trace event."""
 
+        with self._trace_lock:
+            self._publish_trace(event)
+
+    def _publish_trace(self, event: TraceEvent) -> None:
+        self._persist.on_event(event)
         payload = _trace_event_payload(event)
         run_id = payload.get("run")
         if not isinstance(run_id, str):
@@ -183,7 +188,8 @@ def _trace_event_payload(event: TraceEvent) -> dict[str, Any]:
     elif isinstance(event, RunSteering):
         payload["input"] = event.input.to_data()
     elif isinstance(event, RunStopping):
-        pass
+        if event.input is not None:
+            payload["input"] = event.input.to_data()
     elif isinstance(event, RunBegin):
         payload["input"] = event.input.to_data()
     elif isinstance(event, StepBegin):
@@ -201,6 +207,8 @@ def _trace_event_payload(event: TraceEvent) -> dict[str, Any]:
     elif isinstance(event, StepEnd):
         payload["output"] = parts_to_data(event.output)
     elif isinstance(event, RunEnd):
+        if event.input is not None:
+            payload["input"] = event.input.to_data()
         if hasattr(event.output, "to_data"):
             payload["output"] = event.output.to_data()
     return payload
