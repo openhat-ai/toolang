@@ -701,8 +701,10 @@ def _step_kind(statement: FlowStmt) -> StepKind:
         return "agent"
     if isinstance(statement, AskStmt):
         return "human"
-    if isinstance(statement, StormStmt | MapStmt | KeepStmt | DropStmt | RankStmt):
+    if isinstance(statement, StormStmt | MapStmt | RankStmt):
         return "par"
+    if isinstance(statement, KeepStmt | DropStmt):
+        return "par" if statement.predicate is not None else "system"
     if isinstance(statement, SettleStmt | RepeatStmt):
         return "loop"
     if isinstance(statement, LetStmt):

@@ -265,6 +265,32 @@ def test_executor_map_preserves_input_order(tmp_path) -> None:
     assert step_end.kind == "par"
 
 
+def test_executor_positional_filters_use_system_steps(tmp_path) -> None:
+    flow = FlowDecl(
+        name="select_values",
+        params_explicit=True,
+        stmts=(
+            KeepStmt(position="first", count=3, span=Span(line=2)),
+            DropStmt(position="last", count=1, span=Span(line=3)),
+        ),
+        span=Span(line=1),
+    )
+    context, binding = _executor_fixture(tmp_path, flow)
+    events: list[TraceEvent] = []
+    executor = Executor(context, emit=events.append)
+
+    result = asyncio.run(
+        executor.run(binding, flow, locals={"_": Local([1, 2, 3, 4], "list")})
+    )
+
+    assert result == Local([1, 2], "list")
+    assert [event.kind for event in events if isinstance(event, StepBegin)] == [
+        "system",
+        "system",
+    ]
+    assert not any(isinstance(event, RunStarting) for event in events)
+
+
 def test_parallel_failure_ends_children_before_parent_step(tmp_path) -> None:
     invalid_child = FlowDecl(
         name="invalid_child",
