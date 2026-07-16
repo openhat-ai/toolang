@@ -93,7 +93,7 @@ class RunInput:
         )
         params = invoke_params(run)
         if thunk.input is not None and input_text:
-            params = {thunk.input.name: input_text, **params}
+            params = {**params, thunk.input.name: input_text}
             params.setdefault("_", input_text)
         sets = effective_run_sets(context, run=run, thunk=thunk)
         model_math = sets.set_math.get("models")
@@ -177,8 +177,8 @@ class RunInput:
     def messages(self) -> tuple[Message, ...]:
         """Return the ordered input message history for one model call."""
 
-        if self.run.origin == "script":
-            return _script_messages(
+        if self.run.origin == "script" or self.run.metadata.get("call") == "run":
+            return _authored_messages(
                 rendered_messages=self.rendered_messages(),
                 context_text=self.context_text,
                 fallback=self.message,
@@ -331,7 +331,7 @@ def _log_model_call_assembly(
     )
 
 
-def _script_messages(
+def _authored_messages(
     *,
     rendered_messages: tuple[AstMessage, ...],
     context_text: str,

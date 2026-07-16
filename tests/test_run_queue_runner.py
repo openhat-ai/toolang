@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager, contextmanager, suppress
+from dataclasses import replace
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -6606,6 +6607,60 @@ def test_assemble_file_run_input_includes_authored_file_thunk_message(
     text = message_text(bundle.message.parts)
     assert "Write one short text summary to outbox/index.md." in text
     assert "file body" in text
+
+
+def test_child_run_input_uses_authored_agic_message_and_current_input(
+    tmp_path: Path,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        (
+            "agent alice\n\n"
+            "agic draft(in: Text) -> Text:\n"
+            "  user: Draft {{in}}.\n\n"
+            "flow pipeline(in: Text) -> Text:\n"
+            "  run draft\n"
+        ),
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat",),
+    )
+    root = bind_run_request(
+        context,
+        RunRequest(
+            group="chat",
+            origin="chat",
+            thunk_name="pipeline",
+            thunk="original input",
+            metadata={"executable_kind": "flow"},
+        ),
+    )
+    child = replace(
+        root,
+        run_id="run_child",
+        thunk_name="draft",
+        input_text="current input",
+        message=Message.user("current input"),
+        metadata={
+            "executable_kind": "agic",
+            "root": root.run_id,
+            "call": "run",
+            "invoke_params": {"in": "stale input"},
+        },
+    )
+
+    bundle = RunInput.from_thunk(
+        context,
+        child,
+        context.live.program.get_thunk("draft"),
+    )
+    text = message_text(bundle.messages()[0].parts)
+
+    assert text.endswith("Draft current input.")
+    assert "stale input" not in text
 
 
 def test_assemble_run_input_hides_tools_when_activation_has_no_tools(

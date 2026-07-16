@@ -796,6 +796,7 @@ def _child_binding(
         {
             "executable_kind": executable.kind,
             "root": parent.metadata.get("root") or parent.run_id,
+            "call": "run",
             "invoke_params": {
                 name: local.value for name, local in locals.items() if name != "_"
             },
