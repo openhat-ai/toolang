@@ -6663,6 +6663,47 @@ def test_child_run_input_uses_authored_agic_message_and_current_input(
     assert "stale input" not in text
 
 
+def test_top_level_chat_agic_uses_its_authored_message(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        (
+            "agent alice\n\n"
+            "agic probe(in: Text) -> Text:\n"
+            "  user: CHAT_OK: {{in}}\n"
+        ),
+    )
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        enabled_features=("chat",),
+    )
+    context.store.start_run(
+        run_id="run-current",
+        thread_id="thread-current",
+        origin="chat",
+        input=Message.user("current input"),
+        executable_name="probe",
+    )
+    bound = bind_run_request(
+        context,
+        RunRequest(
+            group="chat",
+            origin="chat",
+            run_id="run-current",
+            thread_id="thread-current",
+            thunk_name="probe",
+            thunk="current input",
+        ),
+    )
+
+    bundle = RunInput.from_binding(context, bound)
+
+    messages = bundle.messages()
+    assert len(messages) == 1
+    assert message_text(messages[0].parts).endswith("CHAT_OK: current input")
+
+
 def test_assemble_run_input_hides_tools_when_activation_has_no_tools(
     tmp_path: Path,
 ) -> None:
@@ -7177,7 +7218,8 @@ def test_run_input_debug_logs_computed_prompt_bundle(tmp_path: Path, caplog) -> 
     assert any(
         message.startswith("prompt.messages thread=")
         and '"role": "user"' in message
-        and "hi" in message
+        and '"text": "<context>' in message
+        and "hello" in message
         for message in messages
     )
 

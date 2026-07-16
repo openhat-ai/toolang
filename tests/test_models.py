@@ -2219,7 +2219,14 @@ def _run_input() -> RunInput:
         thunk=AgicDecl(
             name="main",
             input=Parameter(name="_", span=Span(1)),
-            messages=(AstMessage(role="user", content="Reply directly.", span=Span(1)),),
+            messages=(
+                AstMessage(
+                    role="user",
+                    content="Reply directly.",
+                    explicit=False,
+                    span=Span(1),
+                ),
+            ),
             span=Span(1),
         ),
         input_text="hello",

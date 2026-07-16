@@ -609,6 +609,40 @@ def test_persist_sink_replays_the_same_trace_idempotently(tmp_path) -> None:
     store.close()
 
 
+def test_persist_sink_preserves_null_run_context_values(tmp_path) -> None:
+    store = ExecutionStore(tmp_path / "runs.db")
+    sink = PersistSink(store)
+    context = {
+        "root": "run_abc123",
+        "invoke_params": {"accumulator": None},
+    }
+
+    sink.on_event(
+        RunStarting(
+            run="run_abc123",
+            cmd=0,
+            parent=None,
+            thread="term_abc123",
+            input=Message.user("hello"),
+            context=context,
+            created_at="2026-01-01T00:00:00Z",
+        )
+    )
+    sink.on_event(
+        RunBegin(
+            run="run_abc123",
+            input=InputRef(cmd=0),
+            context=context,
+            started_at="2026-01-01T00:00:01Z",
+        )
+    )
+
+    run = store.get_run(run_id="run_abc123")
+    assert run is not None
+    assert run.context["invoke_params"] == {"accumulator": None}
+    store.close()
+
+
 def test_persist_sink_rejects_conflicting_start_replay(tmp_path) -> None:
     store = ExecutionStore(tmp_path / "runs.db")
     sink = PersistSink(store)

@@ -86,6 +86,7 @@ class RunInput:
                 context.store.recent_conversation_messages(
                     thread_id=run.thread_id,
                     limit=_TEXT_HISTORY_MESSAGE_LIMIT,
+                    exclude_run_id=run.run_id,
                 )
             )
             if recalls_history(thunk)
@@ -177,13 +178,12 @@ class RunInput:
     def messages(self) -> tuple[Message, ...]:
         """Return the ordered input message history for one model call."""
 
-        if self.run.origin == "script" or self.run.metadata.get("call") == "run":
-            return _authored_messages(
-                rendered_messages=self.rendered_messages(),
-                context_text=self.context_text,
-                fallback=self.message,
-            )
-        return (*self.history, self.message)
+        authored = _authored_messages(
+            rendered_messages=self.rendered_messages(),
+            context_text=self.context_text,
+            fallback=self.message,
+        )
+        return (*self.history, *authored)
 
     def input_message(self) -> Message:
         """Return the caller-facing input message without runtime context."""

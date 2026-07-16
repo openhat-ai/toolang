@@ -337,15 +337,25 @@ class ExecutionStore:
         """Project run execution beginning."""
 
         with self._lock:
+            existing = self._conn.execute(
+                "SELECT context FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if existing is None:
+                raise ValueError(f"run not found: {run_id}")
+            stored = _load_json(str(existing["context"]))
+            merged = {
+                **(dict(stored) if isinstance(stored, Mapping) else {}),
+                **dict(context or {}),
+            }
             self._conn.execute(
                 """
                 UPDATE runs
                 SET status = 'running',
-                    context = json_patch(context, ?),
+                    context = ?,
                     started_at = COALESCE(started_at, ?)
                 WHERE id = ? AND status IN ('pending', 'running')
                 """,
-                (_dump_json(dict(context or {})), started_at, run_id),
+                (_dump_json(merged), started_at, run_id),
             )
             row = self._conn.execute(
                 "SELECT * FROM runs WHERE id = ?", (run_id,)
@@ -1091,9 +1101,19 @@ class ExecutionStore:
         return str(row["body"])
 
     def recent_conversation_messages(
-        self, *, thread_id: str, limit: int = 20
+        self,
+        *,
+        thread_id: str,
+        limit: int = 20,
+        exclude_run_id: str | None = None,
     ) -> list[Message]:
-        runs = self._conversation_runs(thread_id=thread_id, limit=max(limit, 20))
+        runs = self._conversation_runs(
+            thread_id=thread_id,
+            limit=max(limit + (1 if exclude_run_id else 0), 20),
+        )
+        if exclude_run_id is not None:
+            runs = [run for run in runs if run.run_id != exclude_run_id]
+            runs = runs[-limit:]
         steps_by_run = self.list_steps_for_runs(
             run_ids=tuple(run.run_id for run in runs)
         )
