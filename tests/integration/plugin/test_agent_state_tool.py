@@ -7,7 +7,7 @@ import pytest
 from toolang.catalog import cap as caps
 from toolang.catalog.job import JobCatalog
 from toolang.base.types.tool import ToolContext
-from toolang.plugin.tools.agent_state import create_tool_set as create_agent_state_tool
+from toolang.agent.tools.agent_state import create_tool_set as create_agent_state_tool
 
 
 def _tool_context(toolang_root: Path, agent_name: str = "alice") -> ToolContext:

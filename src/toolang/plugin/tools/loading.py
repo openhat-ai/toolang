@@ -4,23 +4,35 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
 import shlex
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.tool import ToolContext, ToolDefinition
 
-from toolang.plugin.config import load_tool_plugin_config
 from toolang.plugin.loading import load_plugins
-from toolang.state.agent import AgentState
-from toolang.state.prepared import PreparedEntry
 from .registry import (
     ToolRef,
     parse_tool_registration_key,
     selected_tool_names,
     tool_ref_for_model_tool,
 )
+
+
+class RuntimeCapEntry(Protocol):
+    """Cap data needed to derive built-in tool configuration."""
+
+    @property
+    def kind(self) -> str:
+        """Return the cap kind."""
+
+    @property
+    def name(self) -> str:
+        """Return the authored cap name."""
+
+    @property
+    def meta(self) -> Mapping[str, object]:
+        """Return immutable cap metadata."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,18 +96,14 @@ def load_tool_plugins(
 
 def load_runtime_tools(
     *,
-    root: Path,
-    name: str,
-    state: AgentState,
-    environ: Mapping[str, str],
+    plugin_config: Mapping[str, Mapping[str, Any]],
+    entries: Sequence[RuntimeCapEntry],
     selectors: Sequence[str] | None = None,
 ) -> dict[str, AgentTool]:
     tools = load_tool_plugins(
         config=runtime_tool_config(
-            root=root,
-            name=name,
-            state=state,
-            environ=environ,
+            plugin_config=plugin_config,
+            entries=entries,
         )
     )
     return select_tools(tools, selectors)
@@ -103,15 +111,13 @@ def load_runtime_tools(
 
 def runtime_tool_config(
     *,
-    root: Path,
-    name: str,
-    state: AgentState,
-    environ: Mapping[str, str],
+    plugin_config: Mapping[str, Mapping[str, Any]],
+    entries: Sequence[RuntimeCapEntry],
 ) -> dict[str, dict[str, object]]:
-    config = load_tool_plugin_config(root, name, environ=environ)
+    config = {name: dict(payload) for name, payload in plugin_config.items()}
     visible_services = [
         service
-        for entry in state.caps
+        for entry in entries
         if entry.kind == "service"
         if (service := _service_config(entry)) is not None
     ]
@@ -154,7 +160,7 @@ def validate_tool_selectors(
         raise ValueError(f"tool selector matched no tools: {', '.join(missing)}")
 
 
-def _service_config(entry: PreparedEntry) -> dict[str, object] | None:
+def _service_config(entry: RuntimeCapEntry) -> dict[str, object] | None:
     transport = _text(entry.meta.get("transport"))
     target = _text(entry.meta.get("target"))
     if transport not in {"http", "stdio"} or target is None:

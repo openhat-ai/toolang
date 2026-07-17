@@ -11,7 +11,7 @@ import shlex
 import subprocess
 from typing import Any
 
-from toolang.common.error import ToolangError
+from toolang.base.error import ToolangError
 from toolang.base.protocols.sandbox import AgentSandbox
 from toolang.base.types.sandbox import (
     SandboxMount,
@@ -22,9 +22,6 @@ from toolang.base.types.sandbox import (
     SandboxStartResult,
     SandboxState,
 )
-
-_ROOT_MOUNT_DIR_NAMES = ("psyches", "skills", "services", "prompts")
-
 
 @dataclass(slots=True)
 class DockerSandbox:
@@ -130,7 +127,7 @@ class DockerSandbox:
             runtime_state_path=request.sandbox_home / ".runtime" / "status.json",
         )
 
-        mounts = _root_mounts(request)
+        mounts = list(request.mounts)
         mounts.append(SandboxMount(local_path=request.local_home, sandbox_path=request.sandbox_home))
         mounts.append(SandboxMount(local_path=stage_dir, sandbox_path=runtime_sandbox_dir))
         mounts.extend(extra_mounts)
@@ -318,40 +315,6 @@ def _path_is_within(path: Path, root: Path) -> bool:
 def _translate_to_sandbox_path(path: Path, *, local_root: Path, sandbox_root: Path) -> Path:
     relative = path.resolve().relative_to(local_root.resolve())
     return sandbox_root / relative
-
-
-def _root_mounts(request: SandboxStartRequest) -> list[SandboxMount]:
-    mounts: list[SandboxMount] = []
-
-    config_path = request.local_root / "config.toml"
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.touch(exist_ok=True)
-    mounts.append(
-        SandboxMount(
-            local_path=config_path,
-            sandbox_path=request.sandbox_root / "config.toml",
-        )
-    )
-
-    prepared_dir = request.local_root / ".caps"
-    prepared_dir.mkdir(parents=True, exist_ok=True)
-    mounts.append(
-        SandboxMount(
-            local_path=prepared_dir,
-            sandbox_path=request.sandbox_root / ".caps",
-        )
-    )
-
-    for directory_name in _ROOT_MOUNT_DIR_NAMES:
-        source_dir = request.local_root / directory_name
-        source_dir.mkdir(parents=True, exist_ok=True)
-        mounts.append(
-            SandboxMount(
-                local_path=source_dir,
-                sandbox_path=request.sandbox_root / directory_name,
-            )
-        )
-    return mounts
 
 
 def docker_container_running(container_name: str) -> bool:

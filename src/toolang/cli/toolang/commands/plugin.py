@@ -14,6 +14,7 @@ from ...common.output import echo_table
 from toolang.plugin.models.loading import load_model_providers
 from toolang.plugin.loading import list_plugin_infos
 from toolang.plugin.tools.loading import load_tool_plugins
+
 model_app = typer.Typer(
     help="Inspect available models.",
     add_completion=False,
@@ -165,12 +166,18 @@ def model_rows(
     model_selectors: Sequence[str] = (),
     refresh: bool = False,
 ) -> list[tuple[str, str, str]]:
-    from toolang.plugin.models.config import load_model_aliases
+    from toolang.config.files import load_config_layers
+    from toolang.plugin.models.config import (
+        parse_model_aliases,
+        parse_model_provider_configs,
+    )
     from toolang.plugin.models.views import model_list_rows
 
+    config_layers = load_config_layers(root, agent_name)
+    provider_configs = parse_model_provider_configs(config_layers)
     return model_list_rows(
-        providers=load_model_providers(root, agent_name),
-        aliases=load_model_aliases(root, agent_name),
+        providers=load_model_providers(provider_configs),
+        aliases=parse_model_aliases(config_layers),
         environ=environ,
         selectors=model_selectors,
         cache_dir=root / ".runtime" / "model-cache",
@@ -182,13 +189,19 @@ def model_provider_rows(
     root: Path,
     environ: dict[str, str],
 ) -> list[tuple[str, str, str]]:
-    from toolang.plugin.models.config import load_model_aliases, load_model_provider_configs
+    from toolang.config.files import load_config_layers
+    from toolang.plugin.models.config import (
+        parse_model_aliases,
+        parse_model_provider_configs,
+    )
     from toolang.plugin.models.views import model_provider_rows as build_rows
 
+    config_layers = load_config_layers(root, "")
+    provider_configs = parse_model_provider_configs(config_layers)
     return build_rows(
-        providers=load_model_providers(root, ""),
-        aliases=load_model_aliases(root, ""),
-        provider_configs=load_model_provider_configs(root, ""),
+        providers=load_model_providers(provider_configs),
+        aliases=parse_model_aliases(config_layers),
+        provider_configs=provider_configs,
         environ=environ,
         cache_dir=root / ".runtime" / "model-cache",
     )
@@ -201,10 +214,15 @@ def tool_rows(
     agent_name: str = "",
     tool_selectors: Sequence[str] = (),
 ) -> list[tuple[str, str, str]]:
-    from toolang.plugin.config import load_tool_plugin_config
+    from toolang.config.files import load_named_config
     from toolang.plugin.tools.views import tool_list_rows
 
-    config = load_tool_plugin_config(root, agent_name, environ=environ)
+    config = load_named_config(
+        root,
+        agent_name,
+        section="tools",
+        environ=environ,
+    )
     return tool_list_rows(
         tools=load_tool_plugins(config=config),
         plugin_sources=plugin_sources("toolang.tool"),

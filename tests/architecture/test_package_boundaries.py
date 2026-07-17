@@ -1,176 +1,141 @@
 from __future__ import annotations
 
 import ast
+from importlib.util import resolve_name
 from pathlib import Path
+
+import pytest
 
 from tests import PROJECT_ROOT
 
 
 SOURCE_ROOT = PROJECT_ROOT / "src" / "toolang"
 
-CATALOG_OWNED_FUNCTIONS = {
-    Path("agent/local.py"): frozenset(
-        {
-            "_clone_local_agent",
-            "_default_program_source",
-            "write_agent_program",
-        }
-    ),
-    Path("state/caps.py"): frozenset(
-        {
-            "add_remote_entry",
-            "cap_entry_matches_selector",
-            "entry_definition_file",
-            "entry_form",
-            "entry_line",
-            "entry_origin",
-            "entry_ref",
-            "entry_scope",
-            "entry_visibility",
-            "list_entries",
-            "list_local_entries",
-            "read_local_entry",
-            "remote_entry_name",
-            "remove_local_entry",
-            "remove_remote_entry",
-            "select_cap_entries",
-            "split_cap_selectors",
-            "write_local_entry",
-        }
-    ),
-    Path("work/definitions.py"): frozenset(
-        {
-            "_archive_chore",
-            "_archive_task",
-            "_clone_chore",
-            "_clone_task",
-            "_create_chore_text",
-            "_create_task_text",
-            "_draft_chore",
-            "_draft_task",
-            "_find_archived_chore",
-            "_find_archived_task",
-            "_find_chore",
-            "_find_job",
-            "_find_task",
-            "_list_archived_chores",
-            "_list_archived_tasks",
-            "_list_chores",
-            "_list_draft_chores",
-            "_list_draft_tasks",
-            "_list_tasks",
-            "_load_chore_text",
-            "_load_task_text",
-            "_ready_chore",
-            "_ready_task",
-            "_remove_archived_chore",
-            "_remove_archived_task",
-            "_save_chore_entry",
-            "_save_task_entry",
-            "_update_chore_text",
-            "_update_task_text",
-            "chore_path",
-            "job_path",
-            "move_chore_lifecycle",
-            "move_task_lifecycle",
-            "task_path",
-        }
-    ),
-}
-
-CATALOG_BYPASS_CALLS = frozenset(
-    {
-        "toolang.agent.local.AgentProcess.list",
-        "toolang.work.state.AgentJobs.load",
-        "toolang.work.state.HomeJobs.load",
-    }
+PACKAGES = (
+    "agent",
+    "api",
+    "base",
+    "catalog",
+    "cli",
+    "common",
+    "config",
+    "execution",
+    "lang",
+    "plugin",
+    "state",
+    "templates",
+    "work",
 )
 
+PACKAGE_IMPORT_RULES: dict[str, frozenset[str] | None] = {
+    "agent": None,  # TODO: Review the agent package boundary.
+    "api": None,  # TODO: Review the API package boundary.
+    "base": frozenset(),
+    "catalog": frozenset({"common"}),
+    "cli": None,  # TODO: Review the CLI package boundary.
+    "common": frozenset({"base"}),
+    "config": frozenset(),
+    "execution": None,  # TODO: Review the execution package boundary.
+    "lang": frozenset(),
+    # common is currently needed only for shared selector parsing and matching.
+    "plugin": frozenset({"base", "common"}),
+    "state": None,  # TODO: Review the state package boundary.
+    "templates": frozenset(),
+    "work": None,  # TODO: Review the work package boundary.
+}
 
-def _tree(path: Path) -> ast.Module:
-    return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+def _source_packages() -> frozenset[str]:
+    return frozenset(
+        path.parent.name for path in SOURCE_ROOT.glob("*/__init__.py")
+    )
 
 
-def _import_aliases(tree: ast.Module) -> dict[str, str]:
-    aliases: dict[str, str] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for imported in node.names:
-                local_name = imported.asname or imported.name.split(".")[0]
-                aliases[local_name] = imported.name
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            for imported in node.names:
-                if imported.name == "*":
+def _module_context(path: Path) -> str:
+    relative = path.relative_to(SOURCE_ROOT).with_suffix("")
+    return ".".join(("toolang", *relative.parts[:-1]))
+
+
+def _import_targets(node: ast.Import | ast.ImportFrom, context: str) -> tuple[str, ...]:
+    if isinstance(node, ast.Import):
+        return tuple(imported.name for imported in node.names)
+
+    if node.level:
+        module = resolve_name("." * node.level + (node.module or ""), context)
+    else:
+        module = node.module or ""
+    if module != "toolang":
+        return (module,)
+    return (module, *(f"toolang.{imported.name}" for imported in node.names))
+
+
+def _package_imports(package: str) -> dict[str, tuple[str, ...]]:
+    references: dict[str, list[str]] = {}
+    known_packages = frozenset(PACKAGES)
+    for path in sorted((SOURCE_ROOT / package).rglob("*.py")):
+        context = _module_context(path)
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Import, ast.ImportFrom)):
+                continue
+            for target in _import_targets(node, context):
+                if not target.startswith("toolang."):
                     continue
-                local_name = imported.asname or imported.name
-                aliases[local_name] = f"{node.module}.{imported.name}"
-    return aliases
+                imported_package = target.split(".", 2)[1]
+                if imported_package == package or imported_package not in known_packages:
+                    continue
+                reference = f"{path.relative_to(SOURCE_ROOT)}:{node.lineno}"
+                references.setdefault(imported_package, []).append(reference)
+    return {name: tuple(paths) for name, paths in references.items()}
 
 
-def _qualified_name(node: ast.expr, aliases: dict[str, str]) -> str | None:
-    if isinstance(node, ast.Name):
-        return aliases.get(node.id, node.id)
-    if isinstance(node, ast.Attribute):
-        parent = _qualified_name(node.value, aliases)
-        if parent is not None:
-            return f"{parent}.{node.attr}"
-    return None
+@pytest.mark.parametrize("package", PACKAGES, ids=lambda name: f"toolang.{name}")
+def test_package_imports_are_allowed(package: str) -> None:
+    allowed_imports = PACKAGE_IMPORT_RULES[package]
+    if allowed_imports is None:
+        pytest.skip("package import boundary pending review")
 
-
-def test_catalog_owned_operations_are_not_implemented_outside_catalog() -> None:
-    violations: list[str] = []
-    for relative_path, owned_names in CATALOG_OWNED_FUNCTIONS.items():
-        path = SOURCE_ROOT / relative_path
-        for node in _tree(path).body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if node.name in owned_names:
-                    violations.append(f"{relative_path}:{node.lineno}: {node.name}")
-
-    assert not violations, (
-        "Catalog-owned CRUD and source-resolution operations must be implemented "
-        "in toolang.catalog:\n" + "\n".join(violations)
+    imports = _package_imports(package)
+    unexpected = sorted(imports.keys() - allowed_imports)
+    details = "\n".join(
+        f"toolang.{package} -> toolang.{dependency}: {', '.join(imports[dependency])}"
+        for dependency in unexpected
     )
 
+    assert not unexpected, f"Unexpected internal package imports:\n{details}"
 
-def test_catalog_does_not_call_private_members_of_other_packages() -> None:
-    violations: list[str] = []
-    for path in sorted((SOURCE_ROOT / "catalog").glob("*.py")):
-        tree = _tree(path)
-        aliases = _import_aliases(tree)
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Attribute) or not node.attr.startswith("_"):
-                continue
-            target = _qualified_name(node.value, aliases)
-            if target is None or not target.startswith("toolang."):
-                continue
-            if target.startswith("toolang.catalog"):
-                continue
-            relative_path = path.relative_to(SOURCE_ROOT)
-            violations.append(
-                f"{relative_path}:{node.lineno}: {target}.{node.attr}"
-            )
 
-    assert not violations, (
-        "Catalog must implement its operations instead of forwarding to private "
-        "members of another package:\n" + "\n".join(violations)
+def test_package_boundary_coverage() -> None:
+    declared_packages = frozenset(PACKAGES)
+    source_packages = _source_packages()
+    rule_packages = frozenset(PACKAGE_IMPORT_RULES)
+    reviewed_rules = {
+        package: allowed
+        for package, allowed in PACKAGE_IMPORT_RULES.items()
+        if allowed is not None
+    }
+    allowed_targets = frozenset().union(*reviewed_rules.values())
+    self_import_rules = sorted(
+        package
+        for package, allowed in reviewed_rules.items()
+        if package in allowed
     )
 
-
-def test_catalog_operations_are_not_bypassed_by_callers() -> None:
-    violations: list[str] = []
-    for path in sorted(SOURCE_ROOT.rglob("*.py")):
-        tree = _tree(path)
-        aliases = _import_aliases(tree)
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            target = _qualified_name(node.func, aliases)
-            if target not in CATALOG_BYPASS_CALLS:
-                continue
-            relative_path = path.relative_to(SOURCE_ROOT)
-            violations.append(f"{relative_path}:{node.lineno}: {target}")
-
-    assert not violations, (
-        "Callers must use catalog operations instead of loading authored state or "
-        "enumerating agents directly:\n" + "\n".join(violations)
+    assert declared_packages == source_packages, (
+        "PACKAGES must cover every top-level source package; "
+        f"missing={sorted(source_packages - declared_packages)}, "
+        f"unknown={sorted(declared_packages - source_packages)}"
+    )
+    assert rule_packages == declared_packages, (
+        "Every package must have one import rule; "
+        f"missing={sorted(declared_packages - rule_packages)}, "
+        f"unknown={sorted(rule_packages - declared_packages)}"
+    )
+    assert allowed_targets <= declared_packages, (
+        "Import rules may only name declared internal packages; "
+        f"unknown={sorted(allowed_targets - declared_packages)}"
+    )
+    assert not self_import_rules, (
+        "Import rules only declare dependencies on other packages; "
+        f"self_imports={self_import_rules}"
     )

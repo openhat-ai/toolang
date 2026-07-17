@@ -1,7 +1,8 @@
-"""Shared Toolang error types."""
+"""Compatibility exports for shared Toolang error types."""
 
 from __future__ import annotations
 
+from toolang.base.error import ToolangError
 
-class ToolangError(Exception):
-    """Raised when Toolang input, configuration, or runtime behavior is invalid."""
+
+__all__ = ["ToolangError"]

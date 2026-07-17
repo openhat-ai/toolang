@@ -21,6 +21,7 @@ from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage, ToolCall
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.common.error import ToolangError
+from toolang.config.files import load_config_layers
 from toolang.execution.context import RunContext, RunSnapshot, SnapshotAgent, SnapshotProgram, SnapshotRun
 from toolang.execution.assembly import RunInput
 from toolang.execution.binding import _Run
@@ -39,7 +40,7 @@ from toolang.plugin.models.adapters import responses as responses_models
 from toolang.plugin.models.adapters.responses import encode_message, response_payload
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
 from toolang.plugin.loading import load_loop, load_loops
-from toolang.plugin.models.config import load_default_models, load_model_aliases
+from toolang.plugin.models.config import parse_default_models, parse_model_aliases
 
 
 class _FakeTool(AgentTool):
@@ -132,8 +133,8 @@ def test_model_resolution_resolves_named_route(tmp_path: Path) -> None:
     )
     context = SimpleNamespace(
         model_providers={"openai": provider},
-        model_aliases=load_model_aliases(toolang_root, "alice"),
-        default_models=load_default_models(toolang_root, "alice"),
+        model_aliases=parse_model_aliases(load_config_layers(toolang_root, "alice")),
+        default_models=parse_default_models(load_config_layers(toolang_root, "alice")),
         model_environ={"OPENAI_API_KEY": "secret"},
     )
 
@@ -799,7 +800,7 @@ def test_model_route_can_override_provider_defaults(tmp_path: Path) -> None:
     )
     context = SimpleNamespace(
         model_providers={"openai": provider},
-        model_aliases=load_model_aliases(toolang_root, "alice"),
+        model_aliases=parse_model_aliases(load_config_layers(toolang_root, "alice")),
         default_models=(),
         model_environ={"GATEWAY_API_KEY": "secret"},
     )
@@ -832,7 +833,7 @@ def test_model_alias_uses_provider_default_key_env(tmp_path: Path) -> None:
     )
     context = SimpleNamespace(
         model_providers={"openrouter": provider},
-        model_aliases=load_model_aliases(toolang_root, "alice"),
+        model_aliases=parse_model_aliases(load_config_layers(toolang_root, "alice")),
         default_models=(),
         model_environ={"OPENROUTER_API_KEY": "secret"},
     )
@@ -866,7 +867,7 @@ def test_model_alias_reports_missing_key_env(tmp_path: Path) -> None:
     )
     context = SimpleNamespace(
         model_providers={"openai": provider},
-        model_aliases=load_model_aliases(toolang_root, "alice"),
+        model_aliases=parse_model_aliases(load_config_layers(toolang_root, "alice")),
         default_models=(),
         model_environ={},
     )

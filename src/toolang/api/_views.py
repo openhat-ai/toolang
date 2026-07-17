@@ -34,7 +34,7 @@ from toolang.agent.features import (
     component_group,
     normalize_component_names,
 )
-from toolang.plugin.channels.runtime import channel_context
+from toolang.agent.channel_runtime import channel_context
 from ._streaming import ShutdownAwareStreamingResponse
 
 if TYPE_CHECKING:

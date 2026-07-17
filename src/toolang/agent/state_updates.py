@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import cast
 
 from toolang.config.runtime import RuntimeConfig
+from toolang.config.files import load_named_config
 from toolang.execution.executor import Executor
 from toolang.execution.records import UpdateKind
 from toolang.execution.store import RunStore
@@ -89,10 +90,13 @@ def _apply_state(
     config: RuntimeConfig,
 ) -> None:
     tools = load_runtime_tools(
-        root=root,
-        name=name,
-        state=state,
-        environ=executor.model_environ,
+        plugin_config=load_named_config(
+            root,
+            name,
+            section="tools",
+            environ=executor.model_environ,
+        ),
+        entries=state.caps,
         selectors=_tool_allowed_selectors(config),
     )
     logger.debug(

@@ -3,29 +3,25 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any, cast
 
 from toolang.base.protocols.model import ModelAdapter, ModelProvider
 
 from toolang.plugin.loading import load_plugins
-from .config import load_model_provider_configs
+from .config import ModelProviderConfig
 
 
 def load_model_providers(
-    root: Path | None = None,
-    name: str | None = None,
+    configs: Mapping[str, ModelProviderConfig] | None = None,
 ) -> dict[str, ModelProvider]:
-    configs = (
-        load_model_provider_configs(root, name)
-        if root is not None and name is not None
-        else {}
-    )
     return cast(
         dict[str, ModelProvider],
         load_plugins(
             group="toolang.model_provider",
-            config={key: _provider_config(value) for key, value in configs.items()},
+            config={
+                key: _provider_config(value)
+                for key, value in (configs or {}).items()
+            },
         ),
     )
 

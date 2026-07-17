@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, cast
 
-from toolang.common.error import ToolangError
+from toolang.base.error import ToolangError
 from toolang.base.types.model import ModelAlias
-from toolang.config.toml import load_optional_toml
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,11 +23,13 @@ class ModelProviderConfig:
     details: str | None = None
 
 
-def load_model_aliases(toolang_root: Path, agent_name: str) -> dict[str, ModelAlias]:
-    """Load named model aliases for one uptime."""
+def parse_model_aliases(
+    config_layers: Sequence[Mapping[str, object]],
+) -> dict[str, ModelAlias]:
+    """Parse named model aliases from resolved config layers."""
 
     aliases: dict[str, ModelAlias] = {}
-    for payload in model_config_payloads(toolang_root, agent_name):
+    for payload in config_layers:
         models_table = _models_table(payload)
         raw_aliases = models_table.get("aliases")
         if not isinstance(raw_aliases, dict):
@@ -41,14 +41,13 @@ def load_model_aliases(toolang_root: Path, agent_name: str) -> dict[str, ModelAl
     return aliases
 
 
-def load_model_provider_configs(
-    toolang_root: Path,
-    agent_name: str,
+def parse_model_provider_configs(
+    config_layers: Sequence[Mapping[str, object]],
 ) -> dict[str, ModelProviderConfig]:
-    """Load local model provider configuration overrides."""
+    """Parse model provider configuration overrides."""
 
     configs: dict[str, ModelProviderConfig] = {}
-    for payload in model_config_payloads(toolang_root, agent_name):
+    for payload in config_layers:
         models_table = _models_table(payload)
         raw_providers = models_table.get("providers")
         if not isinstance(raw_providers, dict):
@@ -60,11 +59,13 @@ def load_model_provider_configs(
     return configs
 
 
-def load_default_models(toolang_root: Path, agent_name: str) -> tuple[str, ...]:
-    """Load default model selectors for one uptime."""
+def parse_default_models(
+    config_layers: Sequence[Mapping[str, object]],
+) -> tuple[str, ...]:
+    """Parse default model selectors from resolved config layers."""
 
     defaults: tuple[str, ...] = ()
-    for payload in model_config_payloads(toolang_root, agent_name):
+    for payload in config_layers:
         models_table = _models_table(payload)
         raw_default = models_table.get("default")
         if isinstance(raw_default, str):
@@ -130,15 +131,6 @@ def parse_model_provider_config(name: str, payload: dict[str, object]) -> ModelP
         scope=_optional_model_config_str(payload.get("scope")),
         options=options,
         details=_optional_model_config_str(payload.get("details")),
-    )
-
-
-def model_config_payloads(toolang_root: Path, agent_name: str) -> tuple[dict[str, object], dict[str, object]]:
-    """Return root and agent config payloads in override order."""
-
-    return (
-        load_optional_toml(toolang_root / "config.toml"),
-        load_optional_toml(toolang_root / "agents" / agent_name / "config.toml"),
     )
 
 

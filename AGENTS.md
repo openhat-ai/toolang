@@ -91,14 +91,16 @@
   runtime.
 - `toolang.base` owns the shared plugin-facing protocols, value types, and
   helper utilities used across tool, loop, channel, sandbox, model provider,
-  and model adapter plugins.
-- `toolang.common` owns package-neutral errors, immutable-container helpers,
-  progress events, selectors, Toolang-owned id allocation, and shared GitHub
-  source-reference parsing and rendering.
+  and model adapter plugins, including the shared Toolang error type.
+- `toolang.common` owns package-neutral immutable-container helpers, progress
+  events, selectors, Toolang-owned id allocation, and shared GitHub
+  source-reference parsing and rendering. `toolang.common.error` is a
+  compatibility export of the error type owned by `toolang.base`.
 - `toolang.lang` owns `.too` parsing, authored source semantics, and source
   editing.
 - `toolang.agent` owns local agent identity, layout, runtime-state files,
-  managed processes, and process assembly.
+  managed processes, sandbox filesystem assembly, process assembly,
+  agent-specific built-in tools, and channel execution orchestration.
 - `toolang.catalog` owns authored agent, cap, and job CRUD plus cap source
   resolution.
 - `toolang.work` owns task and chore documents, job scheduling state, file
@@ -111,11 +113,14 @@
   runs, threads, steps, failures, and caller-facing messages. API code only
   serializes these projections; CLI code reads them through the shared
   remote-or-local execution adapter and only renders them.
-- `toolang.plugin` owns generic entry point discovery, plugin configuration,
-  and built-in tool, loop, channel, sandbox, model-provider, and model-adapter
-  implementations.
+- `toolang.plugin` owns generic entry point discovery, pure plugin configuration
+  parsing, and independently reusable built-in tool, loop, channel, sandbox,
+  model-provider, and model-adapter implementations. It does not locate or read
+  runtime config files and may depend only on `toolang.base` and
+  `toolang.common` among internal packages.
 - `toolang.api` owns FastAPI application assembly and HTTP route mapping.
-- `toolang.config` owns runtime config resolution helpers.
+- `toolang.config` owns runtime config file loading, root/agent layer merging,
+  environment-reference resolution, and runtime config resolution helpers.
 - `toolang.cli` owns CLI orchestration and environment resolution.
 
 

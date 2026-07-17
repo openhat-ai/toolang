@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from toolang.base.protocols.channel import AgentChannel
 from toolang.base.types.channel import (
     ChannelContext,
@@ -11,10 +9,7 @@ from toolang.base.types.channel import (
     OutboundMessage,
     ReplyTarget,
 )
-from toolang.plugin.config import (
-    load_channel_bindings,
-    load_tool_plugin_config,
-)
+from toolang.plugin.config import parse_channel_bindings
 from toolang.plugin.channels.loading import create_channel_plugin
 
 
@@ -143,72 +138,19 @@ def test_telegram_channel_typing_and_edit(monkeypatch) -> None:
     assert calls[2][1]["text"] == "hello world"
 
 
-def test_plugin_config_loads_root_and_agent_sections(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    del monkeypatch
-    toolang_root = tmp_path / "toolang"
-    toolang_root.mkdir(parents=True, exist_ok=True)
-    (toolang_root / "config.toml").write_text(
-        """
-[tools.working_tree]
-root = "/global"
-
-[channels.telegram]
-plugin = "telegram"
-token_env = "TELEGRAM_BOT_TOKEN"
-owner_chat_id = "100"
-""".strip()
-        + "\n",
-        encoding="utf-8",
-    )
-    (toolang_root / "agents" / "alice" / "config.toml").parent.mkdir(parents=True, exist_ok=True)
-    (toolang_root / "agents" / "alice" / "config.toml").write_text(
-        """
-[tools.working_tree]
-root = "/agent"
-
-[channels.telegram]
-owner_chat_id = "123"
-""".strip()
-        + "\n",
-        encoding="utf-8",
+def test_parse_channel_bindings_builds_plugin_specific_config() -> None:
+    bindings = parse_channel_bindings(
+        {
+            "telegram": {
+                "plugin": "telegram",
+                "token": "secret",
+                "owner_chat_id": "123",
+            }
+        }
     )
 
-    tools = load_tool_plugin_config(
-        toolang_root,
-        "alice",
-        environ={"TELEGRAM_BOT_TOKEN": "secret"},
-    )
-    bindings = load_channel_bindings(
-        toolang_root,
-        "alice",
-        environ={"TELEGRAM_BOT_TOKEN": "secret"},
-    )
-
-    assert tools == {"working_tree": {"root": "/agent"}}
     assert bindings["telegram"].plugin == "telegram"
     assert bindings["telegram"].config == {
         "token": "secret",
         "owner_chat_id": "123",
     }
-
-
-def test_plugin_config_missing_env_error_names_config_key(tmp_path: Path) -> None:
-    toolang_root = tmp_path / "toolang"
-    toolang_root.mkdir(parents=True, exist_ok=True)
-    (toolang_root / "config.toml").write_text(
-        """
-[channels.telegram]
-plugin = "telegram"
-token_env = "TELEGRAM_BOT_TOKEN"
-owner_chat_id = "100"
-""".strip()
-        + "\n",
-        encoding="utf-8",
-    )
-    (toolang_root / "agents" / "alice").mkdir(parents=True, exist_ok=True)
-
-    with pytest.raises(ValueError, match="channels.telegram.token_env.*TELEGRAM_BOT_TOKEN"):
-        load_channel_bindings(toolang_root, "alice", environ={})

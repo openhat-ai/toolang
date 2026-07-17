@@ -10,7 +10,7 @@ from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.tool import ToolContext
 from toolang.execution.store import RunStore, run_store_path
 from toolang.execution.records import ThreadPeer
-from toolang.plugin.tools.agent_chat import create_tool_set as create_agent_chat_tool
+from toolang.agent.tools.agent_chat import create_tool_set as create_agent_chat_tool
 from toolang.plugin.tools.filesystem import create_tool_set as create_filesystem_tool
 from toolang.plugin.tools.service_use import create_tool_set as create_service_use_tool
 from toolang.plugin.tools.shell import create_tool_set as create_shell_tool
@@ -156,7 +156,7 @@ def test_agent_chat_tool_creates_child_thread_and_sends_peer_request(monkeypatch
         calls.append({"url": url, "json": json, "timeout": timeout})
         return FakeResponse()
 
-    monkeypatch.setattr("toolang.plugin.tools.agent_chat.httpx.post", fake_post)
+    monkeypatch.setattr("toolang.agent.tools.agent_chat.httpx.post", fake_post)
     tool = create_agent_chat_tool(
         {"peers": [{"name": "bob", "endpoint": "http://127.0.0.1:7002"}]}
     ).tools()["send"]
@@ -235,7 +235,7 @@ def test_agent_chat_tool_accepts_direct_peer_object_without_config(monkeypatch, 
         calls.append({"url": url, "json": json, "timeout": timeout})
         return FakeResponse()
 
-    monkeypatch.setattr("toolang.plugin.tools.agent_chat.httpx.post", fake_post)
+    monkeypatch.setattr("toolang.agent.tools.agent_chat.httpx.post", fake_post)
     tool = create_agent_chat_tool({}).tools()["send"]
 
     try:
@@ -310,7 +310,7 @@ def test_agent_chat_tool_can_call_streaming_peer_chat(monkeypatch, tmp_path: Pat
         calls.append({"method": method, "url": url, "json": json, "timeout": timeout})
         return FakeStream()
 
-    monkeypatch.setattr("toolang.plugin.tools.agent_chat.httpx.stream", fake_stream)
+    monkeypatch.setattr("toolang.agent.tools.agent_chat.httpx.stream", fake_stream)
     tool = create_agent_chat_tool({}).tools()["send"]
 
     try:

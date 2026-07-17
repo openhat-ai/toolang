@@ -22,6 +22,7 @@ import uvicorn
 from uvicorn.main import STARTUP_FAILURE
 
 from toolang.agent import local as agents
+from toolang.agent.sandbox import prepare_root_mounts
 from toolang.catalog import cap as cap_store
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.protocols.sandbox import AgentSandbox
@@ -39,7 +40,12 @@ from toolang.config.log import (
     configure_logging_plan,
     resolve_agent_logging,
 )
-from toolang.plugin.config import load_channel_bindings, load_sandbox_binding
+from toolang.config.files import (
+    load_config_layers,
+    load_named_config,
+    load_sandbox_config,
+)
+from toolang.plugin.config import parse_channel_bindings, parse_sandbox_binding
 from toolang.config.log_spec import PY_LOG_ENV_VAR
 from toolang.config.web import resolve_cors_allowed_origins, resolve_ui_base_url
 from toolang.execution.executor import Executor
@@ -66,13 +72,17 @@ from toolang.agent.features import (
 from toolang.api.context import ApiContext
 from toolang.config.runtime import RuntimeConfig
 from toolang.work import inbox as files
-from toolang.plugin.channels import runtime as poll
+from toolang.agent import channel_runtime as poll
 from toolang.agent import state_updates as watch
 from toolang.common.progress import ProgressSink
 from toolang.state.durable import scan_durable_state
 from toolang.state.agent import AgentState, load_agent_state
 from toolang.state import watcher as state_watcher
-from toolang.plugin.models.config import load_default_models, load_model_aliases
+from toolang.plugin.models.config import (
+    parse_default_models,
+    parse_model_aliases,
+    parse_model_provider_configs,
+)
 from toolang.plugin.models.loading import load_model_adapters, load_model_providers
 from toolang.plugin.models.resolution import split_model_selectors
 from toolang.plugin.channels.loading import create_channel_plugin
@@ -366,10 +376,12 @@ def resolve_startup(
         agent_name=agent_name,
         temporary=temporary_port,
     )
-    sandbox_binding = load_sandbox_binding(
-        toolang_root,
-        agent_name,
-        environ=environ,
+    sandbox_binding = parse_sandbox_binding(
+        load_sandbox_config(
+            toolang_root,
+            agent_name,
+            environ=environ,
+        )
     )
     if sandbox is not None:
         value = sandbox.strip()
@@ -476,6 +488,29 @@ def _validate_file_agic(*, toolang_root: Path, agent_name: str) -> None:
         raise ValueError(f"file agic cannot have required parameters: {joined}")
 
 
+def load_model_aliases(
+    toolang_root: Path,
+    agent_name: str,
+) -> dict[str, ModelAlias]:
+    """Load model aliases at the agent composition boundary."""
+
+    return parse_model_aliases(load_config_layers(toolang_root, agent_name))
+
+
+def load_default_models(toolang_root: Path, agent_name: str) -> tuple[str, ...]:
+    """Load default model selectors at the agent composition boundary."""
+
+    return parse_default_models(load_config_layers(toolang_root, agent_name))
+
+
+def _load_model_providers(
+    toolang_root: Path,
+    agent_name: str,
+) -> dict[str, ModelProvider]:
+    config_layers = load_config_layers(toolang_root, agent_name)
+    return load_model_providers(parse_model_provider_configs(config_layers))
+
+
 def _validate_startup_models(
     *,
     toolang_root: Path,
@@ -484,7 +519,7 @@ def _validate_startup_models(
     environ: Mapping[str, str],
 ) -> None:
     context = _StartupModelSelection(
-        model_providers=load_model_providers(toolang_root, agent_name),
+        model_providers=_load_model_providers(toolang_root, agent_name),
         model_aliases=load_model_aliases(toolang_root, agent_name),
         default_models=load_default_models(toolang_root, agent_name),
         model_environ=environ,
@@ -625,10 +660,13 @@ def _up_local(
     )
     endpoint = f"http://{endpoint_host}:{port}"
     shutdown_signal = threading.Event()
-    channel_bindings = load_channel_bindings(
-        toolang_root,
-        agent_name,
-        environ=environ,
+    channel_bindings = parse_channel_bindings(
+        load_named_config(
+            toolang_root,
+            agent_name,
+            section="channels",
+            environ=environ,
+        )
     )
     context = ApiContext(
         root=toolang_root,
@@ -987,7 +1025,7 @@ def assemble_execution(
     normalized_model_selectors = _normalize_model_selectors(model_selectors)
     normalized_tool_selectors = _normalize_tool_selectors(tool_selectors)
     normalized_cap_selectors = _normalize_cap_selectors(cap_selectors)
-    model_providers = load_model_providers(toolang_root, agent_name)
+    model_providers = _load_model_providers(toolang_root, agent_name)
     model_aliases = load_model_aliases(toolang_root, agent_name)
     default_models = load_default_models(toolang_root, agent_name)
     if (
@@ -1039,10 +1077,13 @@ def assemble_execution(
     )
     store = RunStore(run_store_path(toolang_root, agent_name))
     tools = load_runtime_tools(
-        root=toolang_root,
-        name=agent_name,
-        state=state,
-        environ=environ,
+        plugin_config=load_named_config(
+            toolang_root,
+            agent_name,
+            section="tools",
+            environ=environ,
+        ),
+        entries=state.caps,
     )
     selected_tools = select_tools(tools, normalized_tool_selectors)
     validate_tool_selectors(tools, normalized_tool_selectors)
@@ -1203,6 +1244,7 @@ def _up_managed_sandbox(
             ),
         ),
         env_vars=dict(environ),
+        mounts=prepare_root_mounts(toolang_root, sandbox_root),
         local_dev_artifact=dev_artifact,
     )
     plan = None

@@ -105,7 +105,7 @@ from toolang.api import chat as chat_loop
 from toolang.api._streaming import ShutdownAwareStreamingResponse
 from toolang.agent.features import normalize_component_names
 from toolang.work import inbox as files
-from toolang.plugin.channels import runtime as poll
+from toolang.agent import channel_runtime as poll
 from toolang.agent import state_updates as watch
 from toolang.plugin.tools.loading import load_runtime_tools, runtime_tool_config
 from toolang.work import files as file_requests
@@ -122,13 +122,14 @@ from toolang.plugin.models.loading import load_model_adapters, load_model_provid
 from toolang.agent import runtime as up_module
 from toolang.api.context import ApiContext
 from toolang.config.runtime import RuntimeConfig
-from toolang.plugin.channels.runtime import start_delivery
+from toolang.agent.channel_runtime import start_delivery
 from toolang.agent.runtime import (
     load_default_models,
     up as run_experiments_up,
 )
 from toolang.api.app import create_app
-from toolang.plugin.models.config import load_model_aliases
+from toolang.config.files import load_config_layers, load_named_config
+from toolang.plugin.models.config import parse_model_aliases
 from tests.support.execution import (
     emit_event,
     project_command,
@@ -3633,6 +3634,10 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(
     assert request.endpoint_host == "localhost"
     assert request.endpoint == "http://localhost:8765"
     assert request.env_vars["OPENAI_API_KEY"] == "secret"
+    assert {
+        mount.sandbox_path.relative_to(request.sandbox_root).as_posix()
+        for mount in request.mounts
+    } == {"config.toml", ".caps", "psyches", "skills", "services", "prompts"}
     assert request.run_command[:7] == (
         "toolang",
         "--root",
@@ -4335,10 +4340,13 @@ def test_runtime_tool_plugin_config_maps_service_caps_to_service_use(
     state = load_agent_state(prepared)
 
     config = runtime_tool_config(
-        root=toolang_root,
-        name="alice",
-        state=state,
-        environ={},
+        plugin_config=load_named_config(
+            toolang_root,
+            "alice",
+            section="tools",
+            environ={},
+        ),
+        entries=state.caps,
     )
 
     assert config["service_use"]["visible_services"] == [
@@ -8061,10 +8069,13 @@ def _build_context(
     store = RunStore(run_store_path(toolang_root, agent_name))
     setup = AgentSetup(
         tools=load_runtime_tools(
-            root=toolang_root,
-            name=agent_name,
-            state=state,
-            environ={},
+            plugin_config=load_named_config(
+                toolang_root,
+                agent_name,
+                section="tools",
+                environ={},
+            ),
+            entries=state.caps,
             selectors=tool_selectors,
         ),
         model_providers={
@@ -8090,7 +8101,9 @@ def _build_context(
             "runtime.sandbox": "none",
         }
     )
-    model_aliases = load_model_aliases(toolang_root, agent_name)
+    model_aliases = parse_model_aliases(
+        load_config_layers(toolang_root, agent_name)
+    )
     default_models = load_default_models(toolang_root, agent_name)
     model_environ = {"OPENAI_API_KEY": "secret"}
     executor = Executor(

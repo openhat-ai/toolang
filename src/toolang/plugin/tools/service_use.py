@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from toolang.common.error import ToolangError
+from toolang.base.error import ToolangError
 from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.tool import ToolContext, ToolDefinition
 

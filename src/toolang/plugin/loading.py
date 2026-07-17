@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from importlib.metadata import entry_points
 from typing import Any, Literal, TypeVar, cast
 
-from toolang.common.error import ToolangError
+from toolang.base.error import ToolangError
 from toolang.base.protocols.loop import AgentLoop
 
 PluginSource = Literal["built-in", "external"]
