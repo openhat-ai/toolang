@@ -7,11 +7,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
-from pathlib import Path
-import tomllib
 from typing import cast
 
 from toolang.catalog.cap import effective_cap_entries
+from toolang.config.toml import load_optional_toml
 from ..common.immutable import freeze_mapping
 from ..lang.ast import Program, to_data
 from toolang.state.prepared import PreparedEntry, PreparedLocks
@@ -79,8 +78,8 @@ def load_agent_state(
 ) -> AgentState:
     """Build effective agent state from one pair of prepared locks."""
 
-    root_config = _load_config(locks.toolang_root / "config.toml")
-    home_config = _load_config(
+    root_config = load_optional_toml(locks.toolang_root / "config.toml")
+    home_config = load_optional_toml(
         locks.toolang_root / "agents" / locks.agent_name / "config.toml"
     )
     root = RootState(
@@ -114,12 +113,6 @@ def load_agent_state(
         program=home.program,
         caps=effective_cap_entries(locks.shared_lock, locks.private_lock),
     )
-
-
-def _load_config(path: Path) -> dict[str, object]:
-    if not path.is_file():
-        return {}
-    return cast(dict[str, object], tomllib.loads(path.read_text(encoding="utf-8")))
 
 
 def _cap_entries(entries: tuple[PreparedEntry, ...]) -> tuple[PreparedEntry, ...]:

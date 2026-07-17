@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 import json
 import shutil
 from typing import Any, Literal, cast
@@ -14,16 +14,8 @@ import json5
 import typer
 from wcwidth import wcswidth
 
-from ....base.types.message import parts_to_data
-from ....execution.store import RunStore, run_store_path
-from ....execution.detail import (
-    run_detail_from_record,
-    thread_info_from_record,
-    thread_info_from_runs,
-)
-from ....execution.records import step_input_items_to_data
 from ...common.client import runtime_get
-from ...common.context import context_root, require_prefix_agent
+from ...common.execution import execution_get
 from ...common.output import executable_label, parse_utc_timestamp
 
 
@@ -147,156 +139,17 @@ def _inspect_detail(ctx: typer.Context, target: str, *, limit: int, include_thre
 
 
 def _inspect_run_detail(ctx: typer.Context, run_id: str) -> dict[str, Any]:
-    return _runtime_json_or_offline(
-        ctx,
-        f"/api/v1/runs/{run_id}",
-        lambda: _offline_run_detail_json(ctx, run_id),
+    return execution_get(
+        ctx, f"/api/v1/runs/{run_id}", remote_get=runtime_get
     )
 
 
 def _inspect_thread_detail(ctx: typer.Context, thread_id: str, *, limit: int) -> dict[str, Any]:
-    return _runtime_json_or_offline(
+    return execution_get(
         ctx,
         f"/api/v1/threads/{thread_id}?{urlencode({'limit': str(limit)})}",
-        lambda: _offline_thread_detail_json(ctx, thread_id, limit=limit),
+        remote_get=runtime_get,
     )
-
-
-def _runtime_json_or_offline(
-    ctx: typer.Context,
-    path: str,
-    offline: Callable[[], dict[str, Any] | None],
-) -> dict[str, Any]:
-    try:
-        return runtime_get(ctx, path)
-    except click.ClickException as exc:
-        result = offline()
-        if result is None:
-            raise exc
-        return result
-
-
-def _open_offline_execution_store(ctx: typer.Context) -> RunStore | None:
-    agent_name = require_prefix_agent(ctx)
-    path = run_store_path(context_root(ctx), agent_name)
-    if not path.exists():
-        return None
-    return RunStore(path)
-
-
-def _offline_run_detail_json(ctx: typer.Context, run_id: str) -> dict[str, Any] | None:
-    store = _open_offline_execution_store(ctx)
-    if store is None:
-        return None
-    try:
-        run = store.get_run(run_id=run_id)
-        if run is None:
-            raise click.ClickException(f"run not found: {run_id}")
-        return _run_detail_json(store, run)
-    finally:
-        store.close()
-
-
-def _offline_thread_detail_json(ctx: typer.Context, thread_id: str, *, limit: int) -> dict[str, Any] | None:
-    store = _open_offline_execution_store(ctx)
-    if store is None:
-        return None
-    try:
-        runs = store.list_thread_runs_chronological(thread_id=thread_id, limit=limit)
-        thread_record = store.get_thread(thread_id=thread_id)
-        if not runs and thread_record is None:
-            raise click.ClickException(f"thread not found: {thread_id}")
-        if runs:
-            all_runs = store.list_thread_runs_chronological(thread_id=thread_id, limit=None)
-            steps_by_run = store.list_steps_for_runs(run_ids=tuple(item.run_id for item in all_runs))
-            commands_by_run = {run.run_id: store.list_commands(run_id=run.run_id) for run in all_runs}
-            info = thread_info_from_runs(
-                thread_id,
-                all_runs,
-                commands_by_run=commands_by_run,
-                steps_by_run=steps_by_run,
-                thread=thread_record,
-            )
-        else:
-            info = thread_info_from_record(cast(Any, thread_record))
-        return {
-            "info": asdict(info),
-            "runs": [_run_detail_json(store, run) for run in runs],
-            "event_cursor": store.latest_event_cursor(domain="thread", domain_id=thread_id),
-        }
-    finally:
-        store.close()
-
-
-def _run_detail_json(store: RunStore, run: Any) -> dict[str, Any]:
-    detail = run_detail_from_record(
-        run,
-        inputs=store.list_commands(run_id=run.run_id),
-        steps=store.list_steps(run_id=run.run_id),
-    )
-    data = {
-        "info": asdict(detail.info),
-        "input": detail.input.to_data() if detail.input is not None else None,
-        "inputs": [
-            {
-                "record": asdict(item.record),
-                "message": item.message.to_data() if item.message is not None else None,
-            }
-            for item in detail.inputs
-        ],
-        "output": {
-            "status": detail.output.status,
-            "error": detail.output.error,
-            "steps": [
-                {
-                    "record": _step_record_json(item.record),
-                    "message": item.message.to_data() if item.message is not None else None,
-                }
-                for item in detail.output.steps
-            ],
-        },
-    }
-    prompts = _run_prompt_bodies(store, data)
-    if prompts:
-        data["prompts"] = prompts
-    return data
-
-
-def _step_record_json(step: Any) -> dict[str, Any]:
-    return {
-        "parent": step.parent,
-        "index": step.index,
-        "path": step.path,
-        "kind": step.kind,
-        "status": step.status,
-        "input": step_input_items_to_data(step.input),
-        "output": parts_to_data(step.output),
-        "context": dict(step.context),
-        "detail": dict(step.detail),
-        "error": step.error,
-        "started_at": step.started_at,
-        "finished_at": step.finished_at,
-    }
-
-
-def _run_prompt_bodies(store: RunStore, run: Mapping[str, Any]) -> dict[str, str]:
-    prompts: dict[str, str] = {}
-    for prompt_hash in _run_prompt_hashes(run):
-        body = store.get_prompt(prompt_hash=prompt_hash)
-        if body is not None:
-            prompts[prompt_hash] = body
-    return prompts
-
-
-def _run_prompt_hashes(run: Mapping[str, Any]) -> tuple[str, ...]:
-    hashes: list[str] = []
-    for step in _run_steps(run):
-        payload = _step_detail(_mapping(step.get("record")))
-        for key in ("instruct", "context"):
-            value = _text(payload.get(key))
-            if value is not None and value not in hashes:
-                hashes.append(value)
-    return tuple(hashes)
 
 
 def _preprocess_thread(thread: Mapping[str, Any]) -> InspectData:

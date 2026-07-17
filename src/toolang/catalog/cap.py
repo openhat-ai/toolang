@@ -15,10 +15,9 @@ from pathlib import Path
 import re
 import shutil
 import tarfile
-import tomllib
 from typing import Literal, cast
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlparse, urlsplit
+from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 import frontmatter
@@ -51,6 +50,8 @@ from toolang.common.selectors import (
     split_selector_list,
     selector_identity_matches,
 )
+from toolang.common.github import GitHubRef, github_raw_url, parse_github_ref, parse_github_url
+from toolang.config.toml import load_optional_toml
 
 CAP_DIR_NAMES = ("psyches", "skills", "services", "prompts")
 CAP_KINDS: tuple[EntryKind, ...] = ("psyche", "skill", "service", "prompt")
@@ -85,17 +86,6 @@ CONFIG_SECTION_ORDER = {
     "prompts": 3,
 }
 REMOTE_CAP_MATERIALIZE_WORKERS = 4
-
-
-@dataclass(frozen=True, slots=True)
-class _GitHubRemoteRef:
-    owner: str
-    repo: str
-    path: str
-    rev: str
-
-    def render(self) -> str:
-        return f"github://{self.owner}/{self.repo}/{self.path}@{self.rev}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,7 +310,7 @@ def add_remote_entry(
         ref=canonical_ref,
     )
     config_path = _config_path(toolang_root, agent_name, visibility=visibility)
-    data = _load_config_data(config_path)
+    data = load_optional_toml(config_path)
     key = DIR_NAME_BY_KIND[kind]
     table = data.get(key)
     if isinstance(table, dict):
@@ -1377,7 +1367,7 @@ def _configured_remote_name_refs(
 ) -> tuple[tuple[str, str], ...]:
     if kind not in CAP_KINDS:
         return ()
-    data = _load_config_data(
+    data = load_optional_toml(
         _config_path(toolang_root, agent_name, visibility=visibility)
     )
     table = _config_kind_table_optional(data, kind)
@@ -1501,7 +1491,7 @@ def _collect_remote_entry_requests(
         config_path = _config_path(toolang_root, agent_name, visibility=item_visibility)
         if not config_path.is_file():
             continue
-        data = _load_config_data(config_path)
+        data = load_optional_toml(config_path)
         relative_config_path = config_path.relative_to(toolang_root)
         for kind_name in DIR_NAME_BY_KIND:
             kind = kind_name
@@ -2023,7 +2013,7 @@ def _remote_materialized_files(
     del name
     if not ref.startswith("github://"):
         raise ValueError(f"unsupported remote {kind} ref: {ref}")
-    github_ref = _parse_github_remote_ref(ref)
+    github_ref = parse_github_ref(ref)
     emit_progress(
         progress,
         id=f"cap.fetch:{kind}:{ref}",
@@ -2160,10 +2150,10 @@ def _resolve_remote_ref(
 def _canonicalize_remote_ref(kind: EntryKind, ref: str) -> str:
     text = ref.strip()
     if "://" in text:
-        github_ref = _github_remote_ref_from_url(text)
+        github_ref = parse_github_url(text)
         if github_ref is not None:
             if kind == "skill" and Path(github_ref.path).name == "SKILL.md":
-                github_ref = _GitHubRemoteRef(
+                github_ref = GitHubRef(
                     owner=github_ref.owner,
                     repo=github_ref.repo,
                     path=str(Path(github_ref.path).parent),
@@ -2171,9 +2161,9 @@ def _canonicalize_remote_ref(kind: EntryKind, ref: str) -> str:
                 )
             return github_ref.render()
         if text.startswith("github://"):
-            github_ref = _parse_github_remote_ref(text)
+            github_ref = parse_github_ref(text)
             if kind == "skill" and Path(github_ref.path).name == "SKILL.md":
-                github_ref = _GitHubRemoteRef(
+                github_ref = GitHubRef(
                     owner=github_ref.owner,
                     repo=github_ref.repo,
                     path=str(Path(github_ref.path).parent),
@@ -2280,83 +2270,20 @@ def _github_remote_ref_with_default_branch(
         rev = _github_repo_default_branch(owner, repo)
     except ValueError:
         rev = "main"
-    return _GitHubRemoteRef(owner=owner, repo=repo, path=path, rev=rev).render()
+    return GitHubRef(owner=owner, repo=repo, path=path, rev=rev).render()
 
 
 def _github_remote_exists(kind: EntryKind, ref: str) -> bool:
-    github_ref = _parse_github_remote_ref(ref)
+    github_ref = parse_github_ref(ref)
     probe_ref = github_ref
     if kind == "skill":
-        probe_ref = _GitHubRemoteRef(
+        probe_ref = GitHubRef(
             owner=github_ref.owner,
             repo=github_ref.repo,
             path=str(Path(github_ref.path) / "SKILL.md"),
             rev=github_ref.rev,
         )
     return _github_raw_file_exists(probe_ref)
-
-
-def _parse_github_remote_ref(text: str) -> _GitHubRemoteRef:
-    parsed = urlsplit(text)
-    if parsed.scheme != "github":
-        raise ValueError(f"unsupported remote ref: {text}")
-    owner = parsed.netloc.strip()
-    path_text = parsed.path.strip("/")
-    if not owner or not path_text or "/" not in path_text:
-        raise ValueError(f"invalid GitHub remote ref: {text}")
-    repo, _, repo_path = path_text.partition("/")
-    if not repo or not repo_path:
-        raise ValueError(f"invalid GitHub remote ref: {text}")
-    path = repo_path
-    rev: str | None = None
-    if "@" in repo_path:
-        path, _, rev = repo_path.rpartition("@")
-        if not path or not rev:
-            raise ValueError(f"invalid GitHub remote ref: {text}")
-    if rev is None:
-        raise ValueError(f"GitHub remote ref must include @rev: {text}")
-    return _GitHubRemoteRef(owner=owner, repo=repo, path=path, rev=rev)
-
-
-def _github_remote_ref_from_url(text: str) -> _GitHubRemoteRef | None:
-    parsed = urlsplit(text)
-    if parsed.scheme not in {"http", "https"}:
-        return None
-    if parsed.netloc == "github.com":
-        return _github_remote_ref_from_web_url(parsed.path, text)
-    if parsed.netloc == "raw.githubusercontent.com":
-        return _github_remote_ref_from_raw_url(parsed.path, text)
-    return None
-
-
-def _github_remote_ref_from_web_url(path_text: str, original: str) -> _GitHubRemoteRef:
-    parts = [part for part in path_text.strip("/").split("/") if part]
-    if len(parts) < 5 or parts[2] not in {"tree", "blob"}:
-        raise ValueError(f"invalid GitHub remote ref: {original}")
-    owner, repo = parts[:2]
-    rev, path = _split_github_url_rev_and_path(parts[3:], original)
-    if not owner or not repo or not rev or not path:
-        raise ValueError(f"invalid GitHub remote ref: {original}")
-    return _GitHubRemoteRef(owner=owner, repo=repo, path=path, rev=rev)
-
-
-def _github_remote_ref_from_raw_url(path_text: str, original: str) -> _GitHubRemoteRef:
-    parts = [part for part in path_text.strip("/").split("/") if part]
-    if len(parts) < 4:
-        raise ValueError(f"invalid GitHub remote ref: {original}")
-    owner, repo = parts[:2]
-    rev, path = _split_github_url_rev_and_path(parts[2:], original)
-    if not owner or not repo or not rev or not path:
-        raise ValueError(f"invalid GitHub remote ref: {original}")
-    return _GitHubRemoteRef(owner=owner, repo=repo, path=path, rev=rev)
-
-
-def _split_github_url_rev_and_path(parts: list[str], original: str) -> tuple[str, str]:
-    if len(parts) >= 4 and parts[0] == "refs" and parts[1] in {"heads", "tags"}:
-        return "/".join(parts[:3]), "/".join(parts[3:])
-    if len(parts) >= 2:
-        return parts[0], "/".join(parts[1:])
-    raise ValueError(f"invalid GitHub remote ref: {original}")
 
 
 @lru_cache
@@ -2374,7 +2301,7 @@ def _github_repo_default_branch(owner: str, repo: str) -> str:
     return default_branch
 
 
-def _fetch_github_directory(ref: _GitHubRemoteRef) -> dict[str, bytes]:
+def _fetch_github_directory(ref: GitHubRef) -> dict[str, bytes]:
     root = ref.path.strip("/")
     prefix = f"{root}/"
     archive_url = (
@@ -2401,9 +2328,9 @@ def _fetch_github_directory(ref: _GitHubRemoteRef) -> dict[str, bytes]:
     return files
 
 
-def _github_raw_file_exists(ref: _GitHubRemoteRef) -> bool:
+def _github_raw_file_exists(ref: GitHubRef) -> bool:
     request = Request(
-        _github_raw_url(ref), method="HEAD", headers={"User-Agent": "toolang/0.1"}
+        github_raw_url(ref), method="HEAD", headers={"User-Agent": "toolang/0.1"}
     )
     try:
         with urlopen(request, timeout=30):
@@ -2412,17 +2339,11 @@ def _github_raw_file_exists(ref: _GitHubRemoteRef) -> bool:
         return False
 
 
-def _github_raw_url(ref: _GitHubRemoteRef) -> str:
-    rev = quote(ref.rev, safe="/")
-    path = quote(ref.path.lstrip("/"), safe="/")
-    return f"https://raw.githubusercontent.com/{ref.owner}/{ref.repo}/{rev}/{path}"
+def _fetch_github_file(ref: GitHubRef) -> bytes:
+    return _fetch_url_bytes(github_raw_url(ref))
 
 
-def _fetch_github_file(ref: _GitHubRemoteRef) -> bytes:
-    return _fetch_url_bytes(_github_raw_url(ref))
-
-
-def _fetch_github_file_from_api(ref: _GitHubRemoteRef) -> bytes:
+def _fetch_github_file_from_api(ref: GitHubRef) -> bytes:
     data = _github_contents_json(ref)
     if isinstance(data, list) or data.get("type") != "file":
         raise ValueError(f"remote ref is not a file: {ref.render()}")
@@ -2437,7 +2358,7 @@ def _fetch_github_file_from_api(ref: _GitHubRemoteRef) -> bytes:
 
 
 def _github_contents_json(
-    ref: _GitHubRemoteRef,
+    ref: GitHubRef,
 ) -> dict[str, object] | list[dict[str, object]]:
     path = quote(ref.path.lstrip("/"), safe="/")
     api_url = f"https://api.github.com/repos/{ref.owner}/{ref.repo}/contents/{path}"
@@ -2448,7 +2369,7 @@ def _github_contents_json(
     raise ValueError(f"unexpected GitHub response for {ref.render()}")
 
 
-def _github_tree_json(ref: _GitHubRemoteRef) -> dict[str, object]:
+def _github_tree_json(ref: GitHubRef) -> dict[str, object]:
     branch = quote(ref.rev, safe="")
     api_url = f"https://api.github.com/repos/{ref.owner}/{ref.repo}/git/trees/{branch}?recursive=1"
     data = _fetch_json(api_url)
@@ -2477,7 +2398,7 @@ def _fetch_url_bytes(url: str) -> bytes:
         raise ValueError(f"could not fetch remote content: {url}") from exc
 
 
-def _legacy_fetch_github_directory(ref: _GitHubRemoteRef) -> dict[str, bytes]:
+def _legacy_fetch_github_directory(ref: GitHubRef) -> dict[str, bytes]:
     tree = _github_tree_json(ref)
     root = ref.path.strip("/")
     prefix = f"{root}/"
@@ -2492,7 +2413,7 @@ def _legacy_fetch_github_directory(ref: _GitHubRemoteRef) -> dict[str, bytes]:
         if not relative_path:
             continue
         files[relative_path] = _fetch_github_file_from_api(
-            _GitHubRemoteRef(
+            GitHubRef(
                 owner=ref.owner,
                 repo=ref.repo,
                 path=path,
@@ -2506,7 +2427,7 @@ def _legacy_fetch_github_directory(ref: _GitHubRemoteRef) -> dict[str, bytes]:
 
 def _remote_name(kind: EntryKind, ref: str) -> str:
     if ref.startswith("github://"):
-        path = _parse_github_remote_ref(ref).path.rstrip("/")
+        path = parse_github_ref(ref).path.rstrip("/")
         if not path:
             raise ValueError(f"invalid remote ref: {ref}")
         if kind == "skill":
@@ -2530,12 +2451,6 @@ def _config_path(
     if visibility == "shared":
         return toolang_root / "config.toml"
     return toolang_root / "agents" / agent_name / "config.toml"
-
-
-def _load_config_data(path: Path) -> dict[str, object]:
-    if not path.is_file():
-        return {}
-    return cast(dict[str, object], tomllib.loads(path.read_text(encoding="utf-8")))
 
 
 def _write_config_data(path: Path, data: Mapping[str, object]) -> None:
@@ -2622,7 +2537,7 @@ def _remove_remote_entries_by_name(
     config_path = _config_path(toolang_root, agent_name, visibility=visibility)
     if not config_path.is_file():
         return False
-    data = _load_config_data(config_path)
+    data = load_optional_toml(config_path)
     key = DIR_NAME_BY_KIND[kind]
     kind_table = _config_kind_table_optional(data, kind)
     if kind_table is None or name not in kind_table:

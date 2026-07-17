@@ -22,6 +22,12 @@ from typing import Iterator, Literal
 
 from toolang.base.protocols.sandbox import AgentSandbox
 from toolang.base.types.sandbox import SandboxState
+from toolang.common.github import (
+    GitHubRef,
+    github_raw_url,
+    parse_github_file_url,
+    parse_github_ref,
+)
 from ..common.progress import ProgressSink, emit_progress
 
 
@@ -241,23 +247,7 @@ class HttpAgentRef:
         return Path(path).stem
 
 
-@dataclass(frozen=True, slots=True)
-class GitHubAgentRef:
-    """One canonical GitHub agent program ref."""
-
-    owner: str
-    repo: str
-    path: str
-    rev: str
-
-    def render(self) -> str:
-        return f"github://{self.owner}/{self.repo}/{self.path}@{self.rev}"
-
-    def default_name(self) -> str:
-        return Path(self.path).stem
-
-
-AgentRef = HttpAgentRef | GitHubAgentRef
+AgentRef = HttpAgentRef | GitHubRef
 
 
 @dataclass(frozen=True, slots=True)
@@ -436,7 +426,7 @@ def fetch_agent_ref(ref: AgentRef, *, progress: ProgressSink | None = None) -> s
 
     label = "Fetch agent"
     detail = ref.render()
-    fetch_url = ref.url if isinstance(ref, HttpAgentRef) else _github_raw_agent_url(ref)
+    fetch_url = ref.url if isinstance(ref, HttpAgentRef) else github_raw_url(ref)
     emit_progress(
         progress,
         id=f"agent.fetch:{detail}",
@@ -730,84 +720,23 @@ def _clone_local_agent(toolang_root: Path, source_name: str, target_name: str) -
 
 def _parse_agent_ref(text: str) -> AgentRef:
     if text.startswith(("http://", "https://")):
-        github_ref = _github_agent_ref_from_url(text)
+        github_ref = parse_github_file_url(text)
         if github_ref is not None:
+            _require_too_path(github_ref.path, text)
             return github_ref
         ref = HttpAgentRef(url=text)
         _require_too_path(urlsplit(ref.url).path, text)
         return ref
     if text.startswith("github://"):
-        return _parse_github_agent_ref(text)
+        github_ref = parse_github_ref(text)
+        _require_too_path(github_ref.path, text)
+        return github_ref
     raise ValueError(f"unsupported agent ref: {text}")
-
-
-def _parse_github_agent_ref(text: str) -> GitHubAgentRef:
-    parsed = urlsplit(text)
-    owner = parsed.netloc.strip()
-    path_text = parsed.path.strip("/")
-    if not owner or not path_text or "/" not in path_text:
-        raise ValueError(f"invalid GitHub agent ref: {text}")
-    repo, _, repo_path = path_text.partition("/")
-    if not repo or not repo_path:
-        raise ValueError(f"invalid GitHub agent ref: {text}")
-    path = repo_path
-    rev: str | None = None
-    if "@" in repo_path:
-        path, _, rev = repo_path.rpartition("@")
-        if not path or not rev:
-            raise ValueError(f"invalid GitHub agent ref: {text}")
-    if rev is None:
-        raise ValueError(f"GitHub agent ref must include @rev: {text}")
-    _require_too_path(path, text)
-    return GitHubAgentRef(owner=owner, repo=repo, path=path, rev=rev)
-
-
-def _github_agent_ref_from_url(text: str) -> GitHubAgentRef | None:
-    parsed = urlsplit(text)
-    if parsed.scheme not in {"http", "https"}:
-        return None
-    if parsed.netloc == "github.com":
-        return _github_agent_ref_from_web_url(parsed.path, text)
-    if parsed.netloc == "raw.githubusercontent.com":
-        return _github_agent_ref_from_raw_url(parsed.path, text)
-    return None
-
-
-def _github_agent_ref_from_web_url(path_text: str, original: str) -> GitHubAgentRef:
-    parts = [part for part in path_text.strip("/").split("/") if part]
-    if len(parts) < 5 or parts[2] != "blob":
-        raise ValueError(f"invalid GitHub agent ref: {original}")
-    owner, repo = parts[:2]
-    rev, path = _split_github_url_rev_and_path(parts[3:], original)
-    if not owner or not repo or not rev or not path:
-        raise ValueError(f"invalid GitHub agent ref: {original}")
-    _require_too_path(path, original)
-    return GitHubAgentRef(owner=owner, repo=repo, path=path, rev=rev)
-
-
-def _github_agent_ref_from_raw_url(path_text: str, original: str) -> GitHubAgentRef:
-    parts = [part for part in path_text.strip("/").split("/") if part]
-    if len(parts) < 4:
-        raise ValueError(f"invalid GitHub agent ref: {original}")
-    owner, repo = parts[:2]
-    rev, path = _split_github_url_rev_and_path(parts[2:], original)
-    if not owner or not repo or not rev or not path:
-        raise ValueError(f"invalid GitHub agent ref: {original}")
-    _require_too_path(path, original)
-    return GitHubAgentRef(owner=owner, repo=repo, path=path, rev=rev)
-
-
-def _split_github_url_rev_and_path(parts: list[str], original: str) -> tuple[str, str]:
-    if len(parts) >= 4 and parts[0] == "refs" and parts[1] in {"heads", "tags"}:
-        return "/".join(parts[:3]), "/".join(parts[3:])
-    if len(parts) >= 2:
-        return parts[0], "/".join(parts[1:])
-    raise ValueError(f"invalid GitHub agent ref: {original}")
 
 
 def _resolve_github_agent_shorthand(
     owner: str, name: str, *, repo: str
-) -> GitHubAgentRef:
+) -> GitHubRef:
     for candidate in _github_agent_shorthand_candidates(owner, repo, name):
         if _github_agent_ref_exists(candidate):
             return candidate
@@ -818,14 +747,14 @@ def _resolve_github_agent_shorthand(
 
 def _github_agent_shorthand_candidates(
     owner: str, repo: str, name: str
-) -> tuple[GitHubAgentRef, ...]:
+) -> tuple[GitHubRef, ...]:
     try:
         rev = _github_repo_default_branch(owner, repo)
     except ValueError:
         rev = "main"
     return (
-        GitHubAgentRef(owner=owner, repo=repo, path=f"agents/{name}.too", rev=rev),
-        GitHubAgentRef(owner=owner, repo=repo, path=f"{name}.too", rev=rev),
+        GitHubRef(owner=owner, repo=repo, path=f"agents/{name}.too", rev=rev),
+        GitHubRef(owner=owner, repo=repo, path=f"{name}.too", rev=rev),
     )
 
 
@@ -835,21 +764,15 @@ def _agent_shorthand_label(owner: str, repo: str, name: str) -> str:
     return f"{owner}/{repo}/{name}"
 
 
-def _github_agent_ref_exists(ref: GitHubAgentRef) -> bool:
+def _github_agent_ref_exists(ref: GitHubRef) -> bool:
     request = Request(
-        _github_raw_agent_url(ref), method="HEAD", headers={"User-Agent": "toolang/0.1"}
+        github_raw_url(ref), method="HEAD", headers={"User-Agent": "toolang/0.1"}
     )
     try:
         with urlopen(request, timeout=30):
             return True
     except (HTTPError, URLError):
         return False
-
-
-def _github_raw_agent_url(ref: GitHubAgentRef) -> str:
-    rev = quote(ref.rev, safe="/")
-    path = quote(ref.path.lstrip("/"), safe="/")
-    return f"https://raw.githubusercontent.com/{ref.owner}/{ref.repo}/{rev}/{path}"
 
 
 @lru_cache
@@ -898,8 +821,8 @@ def _fetch_http_text(url: str) -> str:
         raise ValueError(f"could not fetch agent program: {url}") from exc
 
 
-def _fetch_github_text(ref: GitHubAgentRef) -> str:
-    return _fetch_http_text(_github_raw_agent_url(ref))
+def _fetch_github_text(ref: GitHubRef) -> str:
+    return _fetch_http_text(github_raw_url(ref))
 
 
 def write_runtime_state(

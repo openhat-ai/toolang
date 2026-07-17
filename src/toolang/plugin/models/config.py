@@ -6,10 +6,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
-import tomllib
 
 from toolang.common.error import ToolangError
 from toolang.base.types.model import ModelAlias
+from toolang.config.toml import load_optional_toml
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,8 +137,8 @@ def model_config_payloads(toolang_root: Path, agent_name: str) -> tuple[dict[str
     """Return root and agent config payloads in override order."""
 
     return (
-        _load_toml(toolang_root / "config.toml"),
-        _load_toml(toolang_root / "agents" / agent_name / "config.toml"),
+        load_optional_toml(toolang_root / "config.toml"),
+        load_optional_toml(toolang_root / "agents" / agent_name / "config.toml"),
     )
 
 
@@ -147,12 +147,6 @@ def _models_table(payload: Mapping[str, object]) -> dict[str, object]:
     if not isinstance(raw_models, dict):
         return {}
     return cast(dict[str, object], raw_models)
-
-
-def _load_toml(path: Path) -> dict[str, object]:
-    if not path.is_file():
-        return {}
-    return cast(dict[str, object], tomllib.loads(path.read_text(encoding="utf-8")))
 
 
 def _required_model_config_str(

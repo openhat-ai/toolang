@@ -1,4 +1,4 @@
-"""Execution trace events and full-message projections."""
+"""Execution trace event types and serialization."""
 
 from __future__ import annotations
 
@@ -10,79 +10,26 @@ from typing import Any, cast
 from toolang.base.types.message import (
     Delta,
     Message,
-    MessageRole,
     Part,
     PartType,
     TextDelta,
     ToolCallDelta,
     part_from_data,
     parts_from_data,
-    parts_to_data,
 )
 from .records import (
     CommandApply,
-    CommandRecord,
     InputRef,
     OutputRef,
-    RunRecord,
     RunStatus,
     StepInputItem,
     StepKind,
     StepPath,
-    StepRecord,
     StepStatus,
     input_ref_from_data,
     output_ref_from_data,
     step_input_items_from_data,
-    trace_index,
-    trace_run,
 )
-
-
-@dataclass(frozen=True, slots=True)
-class MessageData:
-    """One full caller-facing message payload."""
-
-    id: str
-    thread_id: str
-    run_id: str
-    step_index: int
-    role: MessageRole
-    parts: list[Part] = field(default_factory=list)
-    created_at: str = ""
-    meta: dict[str, Any] = field(default_factory=dict)
-
-    @classmethod
-    def from_data(cls, payload: Mapping[str, Any]) -> "MessageData":
-        parts_payload = payload.get("parts")
-        serialized_parts = (
-            [item for item in parts_payload if isinstance(item, Mapping)]
-            if isinstance(parts_payload, Sequence)
-            else []
-        )
-        meta = payload.get("meta")
-        return cls(
-            id=str(payload.get("id", "")),
-            thread_id=str(payload.get("thread_id", "")),
-            run_id=str(payload.get("run_id", "")),
-            step_index=int(payload.get("step_index", 0)),
-            role=_message_role(payload.get("role")),
-            parts=list(parts_from_data(serialized_parts)),
-            created_at=str(payload.get("created_at", "")),
-            meta=dict(meta) if isinstance(meta, Mapping) else {},
-        )
-
-    def to_data(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "thread_id": self.thread_id,
-            "run_id": self.run_id,
-            "step_index": self.step_index,
-            "role": self.role,
-            "parts": parts_to_data(self.parts),
-            "created_at": self.created_at,
-            "meta": dict(self.meta),
-        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -379,122 +326,6 @@ def trace_event_from_data(data: Mapping[str, Any]) -> TraceEvent:
     raise ValueError(f"unknown trace event type: {event_type or '<empty>'}")
 
 
-def run_input_message_data(run: RunRecord, input: CommandRecord) -> MessageData:
-    """Return one durable run input message."""
-
-    if input.input is None:
-        raise ValueError(f"run input has no message: {run.id}:{input.index}")
-    message = input.input
-    meta = dict(message.meta)
-    meta.update({"kind": input.kind, "command_index": input.index})
-    meta.update(dict(input.context))
-    return MessageData(
-        id=f"{run.id}:command:{input.index}",
-        thread_id=run.thread,
-        run_id=run.id,
-        step_index=input.index,
-        role=message.role,
-        parts=list(message.parts),
-        created_at=input.created_at,
-        meta=meta,
-    )
-
-
-def run_input_record_message_data(
-    run: RunRecord, input: CommandRecord
-) -> MessageData | None:
-    """Return the caller-facing message for one run input."""
-
-    if input.input is None:
-        return None
-    return run_input_message_data(run, input)
-
-
-def step_message_data(run: RunRecord, step: StepRecord) -> MessageData | None:
-    """Build one caller-facing message from one durable step."""
-
-    return message_data_for_step(
-        step=step.path,
-        thread=run.thread,
-        kind=step.kind,
-        output=step.output,
-        created_at=step.finished_at or step.started_at,
-        error=step.error,
-    )
-
-
-def run_output_message_data(
-    *, run: RunRecord, steps: Sequence[StepRecord]
-) -> MessageData | None:
-    """Return the final assistant message for one run when present."""
-
-    for step in reversed(steps):
-        if step.kind == "model":
-            return step_message_data(run, step)
-    return None
-
-
-def run_message_data(
-    run: RunRecord,
-    *,
-    inputs: Sequence[CommandRecord],
-    steps: Sequence[StepRecord],
-) -> list[MessageData]:
-    """Return the derived run transcript view."""
-
-    messages = [
-        message
-        for input in inputs
-        if (message := run_input_record_message_data(run, input)) is not None
-    ]
-    for step in steps:
-        message = step_message_data(run, step)
-        if message is not None:
-            messages.append(message)
-    return sorted(messages, key=lambda item: item.created_at)
-
-
-def replay_message(message: MessageData) -> Message:
-    """Return one model-history message reconstructed from one full message payload."""
-
-    return Message(
-        role=message.role,
-        parts=tuple(message.parts),
-        meta=dict(message.meta),
-    )
-
-
-def message_data_for_step(
-    *,
-    step: StepPath,
-    thread: str,
-    kind: StepKind,
-    output: Sequence[Part],
-    created_at: str,
-    error: str | None = None,
-) -> MessageData | None:
-    """Build one caller-facing message from one step output."""
-
-    if not output:
-        return None
-    role = _role_for_step(kind)
-    if role is None:
-        return None
-    meta: dict[str, Any] = {}
-    if error is not None:
-        meta["error"] = error
-    return MessageData(
-        id=f"{step}:message",
-        thread_id=thread,
-        run_id=trace_run(step),
-        step_index=trace_index(step) or 0,
-        role=role,
-        parts=list(output),
-        created_at=created_at,
-        meta=meta,
-    )
-
-
 def provider_metadata(name: str) -> dict[str, Any]:
     """Return one provider metadata mapping for one tool name."""
 
@@ -575,18 +406,3 @@ def _part_type(value: object) -> PartType:
     if text in {"text", "image", "audio", "file", "tool_call", "tool_result"}:
         return cast(PartType, text)
     return "text"
-
-
-def _role_for_step(kind: StepKind) -> MessageRole | None:
-    if kind == "model":
-        return "assistant"
-    if kind == "tool":
-        return "tool"
-    return None
-
-
-def _message_role(value: object) -> MessageRole:
-    text = str(value or "user").strip()
-    if text not in {"user", "assistant", "tool"}:
-        raise ValueError(f"unsupported message role: {text or '<empty>'}")
-    return cast(MessageRole, text)

@@ -14,6 +14,7 @@ from typer.core import TyperGroup
 
 from ... import templates
 from ...common.error import ToolangError
+from ...common.github import parse_github_ref
 from toolang.catalog import cap as cap_store
 from ...state import watcher as state_watcher
 from ..common.updates import append_agent_update
@@ -571,18 +572,14 @@ def _entry_source(entry: PreparedEntry, *, agent_name: str) -> str:
 def _external_source_url(ref: str, *, entry: PreparedEntry) -> str:
     if not ref.startswith("github://"):
         return ref
-    body = ref.removeprefix("github://")
     try:
-        repo_ref, rev = body.rsplit("@", 1)
-        owner, repo, path = repo_ref.split("/", 2)
+        github = parse_github_ref(ref)
     except ValueError:
-        return ref
-    if not owner or not repo or not path or not rev:
         return ref
     view = "blob" if entry.shape == "file" else "tree"
     return (
-        f"https://github.com/{quote(owner, safe='')}/{quote(repo, safe='')}"
-        f"/{view}/{quote(rev, safe='/')}/{quote(path, safe='/')}"
+        f"https://github.com/{quote(github.owner, safe='')}/{quote(github.repo, safe='')}"
+        f"/{view}/{quote(github.rev, safe='/')}/{quote(github.path, safe='/')}"
     )
 
 

@@ -126,6 +126,13 @@ from toolang.agent.runtime import (
 )
 from toolang.api.app import create_app
 from toolang.plugin.models.config import load_model_aliases
+from support_execution import (
+    emit_event,
+    project_command,
+    project_run_end,
+    project_run_start,
+    project_step,
+)
 
 
 def _put_cap(
@@ -155,11 +162,7 @@ def bind_run_request(context, request, *, state=None):
 
 
 def _emit_trace(context: ComponentState, event) -> None:
-    sink = context.__dict__.setdefault(
-        "_test_persist_sink",
-        PersistSink(context.store, agent_id=context.name),
-    )
-    sink.on_event(event)
+    emit_event(context.store, event, agent_id=context.name)
 
 
 def test_executor_stop_projects_command_and_canceled_run(tmp_path: Path) -> None:
@@ -168,7 +171,7 @@ def test_executor_stop_projects_command_and_canceled_run(tmp_path: Path) -> None
         agent_name="alice",
         enabled_features=("chat",),
     )
-    context.store.start_run(
+    project_run_start(context.store,
         run_id="run-1",
         thread_id="thread-1",
         origin="chat",
@@ -186,7 +189,7 @@ def test_executor_stop_projects_command_and_canceled_run(tmp_path: Path) -> None
 def test_store_reserves_command_indexes_across_connections(tmp_path: Path) -> None:
     path = tmp_path / "runs.db"
     stores = (RunStore(path), RunStore(path))
-    stores[0].start_run(
+    project_run_start(stores[0],
         run_id="run-1",
         thread_id="thread-1",
         origin="chat",
@@ -487,7 +490,7 @@ def test_threads_api_reports_full_run_count_independent_of_recent_run_limit(
         agent_name="alice",
         enabled_features=("inspect",),
     )
-    context.store.start_run(
+    project_run_start(context.store,
         run_id="run-old",
         thread_id="thread-1",
         origin="chat",
@@ -495,12 +498,12 @@ def test_threads_api_reports_full_run_count_independent_of_recent_run_limit(
         created_at="2026-01-01T00:00:00Z",
         started_at="2026-01-01T00:00:00Z",
     )
-    context.store.finish_run(
+    project_run_end(context.store,
         run_id="run-old",
         status="finished",
         finished_at="2026-01-01T00:00:01Z",
     )
-    context.store.start_run(
+    project_run_start(context.store,
         run_id="run-new",
         thread_id="thread-1",
         origin="chat",
@@ -508,7 +511,7 @@ def test_threads_api_reports_full_run_count_independent_of_recent_run_limit(
         created_at="2026-01-01T00:01:00Z",
         started_at="2026-01-01T00:01:00Z",
     )
-    context.store.finish_run(
+    project_run_end(context.store,
         run_id="run-new",
         status="failed",
         error="boom",
@@ -548,7 +551,7 @@ def test_threads_api_reports_active_run(tmp_path: Path) -> None:
         agent_name="alice",
         enabled_features=("inspect",),
     )
-    context.store.start_run(
+    project_run_start(context.store,
         run_id="run-active",
         thread_id="thread-1",
         origin="chat",
@@ -575,7 +578,7 @@ def test_threads_api_reports_active_run(tmp_path: Path) -> None:
     assert thread["channel"] == "terminal"
     assert thread["status"] == "running"
     assert detail["info"]["active_run"] == thread["active_run"]
-    assert detail["event_cursor"] == 0
+    assert detail["event_cursor"] == 2
 
 
 def test_run_events_api_returns_resource_scoped_events(tmp_path: Path) -> None:
@@ -586,19 +589,7 @@ def test_run_events_api_returns_resource_scoped_events(tmp_path: Path) -> None:
         agent_name="alice",
         enabled_features=("inspect",),
     )
-    context.store.append_event(
-        domain="run",
-        domain_id="run-1",
-        type="run_begin",
-        payload={"run_id": "run-1", "thread_id": "thread-1"},
-    )
-    context.store.append_event(
-        domain="run",
-        domain_id="run-1",
-        type="part_end",
-        payload={"run_id": "run-1", "thread_id": "thread-1", "step_index": 1},
-    )
-    context.store.start_run(
+    project_run_start(context.store,
         run_id="run-1",
         thread_id="thread-1",
         origin="chat",
@@ -606,14 +597,20 @@ def test_run_events_api_returns_resource_scoped_events(tmp_path: Path) -> None:
         created_at="2026-01-01T00:00:00Z",
         started_at="2026-01-01T00:00:00Z",
     )
+    context.store.append_event(
+        domain="run",
+        domain_id="run-1",
+        type="part_end",
+        payload={"run_id": "run-1", "thread_id": "thread-1", "step_index": 1},
+    )
     app = _create_test_app(context)
 
     with TestClient(app) as client:
-        response = client.get("/api/v1/runs/run-1/events?after=1").json()
+        response = client.get("/api/v1/runs/run-1/events?after=2").json()
 
-    assert response["cursor"] == 2
+    assert response["cursor"] == 3
     assert [item["type"] for item in response["items"]] == ["part_end"]
-    assert response["items"][0]["cursor"] == 2
+    assert response["items"][0]["cursor"] == 3
 
 
 def test_persist_sink_projects_run_truth_and_events(tmp_path: Path) -> None:
@@ -746,7 +743,7 @@ def test_steer_run_appends_run_steering_event(tmp_path: Path) -> None:
         agent_name="alice",
         enabled_features=("inspect",),
     )
-    context.store.start_run(
+    project_run_start(context.store,
         run_id="run-1",
         thread_id="thread-1",
         origin="chat",
@@ -776,10 +773,14 @@ def test_steer_run_appends_run_steering_event(tmp_path: Path) -> None:
     assert response["input"]["kind"] == "steer"
     assert response["input"]["apply"] == "next_step"
     assert response["input"]["context"]["request_id"] == "req-steer"
-    assert [item["type"] for item in events] == ["run_steering"]
-    assert events[0]["payload"]["cmd"] == 1
-    assert events[0]["payload"]["context"]["request_id"] == "req-steer"
-    assert events[0]["payload"]["input"]["parts"] == [
+    assert [item["type"] for item in events] == [
+        "run_starting",
+        "run_begin",
+        "run_steering",
+    ]
+    assert events[2]["payload"]["cmd"] == 1
+    assert events[2]["payload"]["context"]["request_id"] == "req-steer"
+    assert events[2]["payload"]["input"]["parts"] == [
         {"type": "text", "text": "focus on events"}
     ]
 
@@ -792,7 +793,7 @@ def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
         agent_name="alice",
         enabled_features=("inspect",),
     )
-    context.store.start_run(
+    project_run_start(context.store,
         run_id="run-1",
         thread_id="thread-1",
         origin="chat",
@@ -826,14 +827,19 @@ def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
         )
         events = client.get("/api/v1/threads/thread-1/events").json()["items"]
 
-    assert [item["type"] for item in events] == ["run_steering", "step_begin"]
-    assert [item["cursor"] for item in events] == [1, 2]
-    assert events[0]["payload"]["cmd"] == 1
-    assert events[1]["payload"]["input"] == [
+    assert [item["type"] for item in events] == [
+        "run_starting",
+        "run_begin",
+        "run_steering",
+        "step_begin",
+    ]
+    assert [item["cursor"] for item in events] == [1, 2, 3, 4]
+    assert events[2]["payload"]["cmd"] == 1
+    assert events[3]["payload"]["input"] == [
         {"step": "run-1/1"},
         {"cmd": 1},
     ]
-    assert events[1]["payload"]["context"] == {
+    assert events[3]["payload"]["context"] == {
         "instruct": "call prompt",
         "prompt_context": "call context",
     }
@@ -847,7 +853,7 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
         agent_name="alice",
         enabled_features=("inspect",),
     )
-    context.store.start_run(
+    project_run_start(context.store,
         run_id="run-1",
         thread_id="thread-1",
         origin="chat",
@@ -855,17 +861,17 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
         created_at="2026-01-01T00:00:00Z",
         started_at="2026-01-01T00:00:00Z",
     )
-    context.store.append_command(
+    project_command(context.store,
         run_id="run-1",
         kind="steer",
-        mode="next_step",
+        apply="next_step",
         request_id="req-steer",
-        message=Message.user("focus on events"),
+        input=Message.user("focus on events"),
         created_at="2026-01-01T00:00:01Z",
     )
     instruct_hash = context.store.put_prompt(body="model instructions")
     context_hash = context.store.put_prompt(body="model context")
-    context.store.append_step(
+    project_step(context.store,
         run_id="run-1",
         step_index=2,
         kind="model",
@@ -889,6 +895,10 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
     assert detail["output"]["steps"][0]["record"]["context"] == {
         "instruct": instruct_hash,
         "prompt_context": context_hash,
+    }
+    assert detail["prompts"] == {
+        instruct_hash: "model instructions",
+        context_hash: "model context",
     }
 
 
@@ -959,7 +969,12 @@ def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
             started_at="2026-01-01T00:00:00Z",
         ),
     )
-    context.store.cancel_run(run_id="run-1", error="User stopped the run.")
+    project_run_end(
+        context.store,
+        run_id="run-1",
+        status="canceled",
+        error="User stopped the run.",
+    )
     executor = run_executor_module.Executor(
         root=context.root,
         name=context.name,
@@ -996,7 +1011,7 @@ def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
     assert [
         item.type
         for item in context.store.list_events(domain="thread", domain_id="thread-1")
-    ] == ["run_starting", "run_begin"]
+    ] == ["run_starting", "run_begin", "run_end"]
 
 
 def test_runtime_start_restores_ignored_termination_signals(monkeypatch) -> None:
@@ -1214,7 +1229,7 @@ def test_chat_rewind_cancels_running_run_before_superseding(tmp_path: Path) -> N
         agent_name="alice",
         enabled_features=("chat", "inspect"),
     )
-    context.store.start_run(
+    project_run_start(context.store,
         run_id="run_running",
         thread_id="term_running",
         origin="chat",
@@ -1623,13 +1638,13 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
         ).to_data(),
     )
 
-    term_run = store.start_run(
+    term_run = project_run_start(store,
         run_id="run-chat",
         thread_id="thread-chat",
         origin="chat",
         input=Message.user("list tools"),
     )
-    store.append_step(
+    project_step(store,
         run_id=term_run.run_id,
         step_index=1,
         kind="model",
@@ -1647,7 +1662,7 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
-    store.append_step(
+    project_step(store,
         run_id=term_run.run_id,
         step_index=2,
         kind="tool",
@@ -1665,7 +1680,7 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
         started_at="2026-01-01T00:00:03Z",
         finished_at="2026-01-01T00:00:04Z",
     )
-    store.append_step(
+    project_step(store,
         run_id=term_run.run_id,
         step_index=3,
         kind="model",
@@ -1676,23 +1691,23 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
         started_at="2026-01-01T00:00:05Z",
         finished_at="2026-01-01T00:00:06Z",
     )
-    store.finish_run(run_id=term_run.run_id)
+    project_run_end(store, run_id=term_run.run_id)
 
-    task_run = store.start_run(
+    task_run = project_run_start(store,
         run_id="run-task",
         thread_id="task_task-1",
         origin="task",
         input=Message.user("do the task"),
     )
-    store.finish_run(run_id=task_run.run_id)
+    project_run_end(store, run_id=task_run.run_id)
 
-    chore_run = store.start_run(
+    chore_run = project_run_start(store,
         run_id="run-chore",
         thread_id="chore_daily-sync",
         origin="chore",
         input=Message.user("run the chore"),
     )
-    store.finish_run(run_id=chore_run.run_id)
+    project_run_end(store, run_id=chore_run.run_id)
 
     with TestClient(app) as client:
         profile = client.get("/api/v1/profile")
@@ -1789,13 +1804,13 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
         agent_name="alice",
         enabled_features=("inspect",),
     )
-    context.store.start_run(
+    project_run_start(context.store,
         run_id="run-loop",
         thread_id="chore_sync",
         origin="chore",
         input=Message.user("sync remote tasks"),
     )
-    context.store.append_step(
+    project_step(context.store,
         run_id="run-loop",
         step_index=1,
         kind="tool",
@@ -1814,7 +1829,7 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
-    context.store.finish_run(
+    project_run_end(context.store,
         run_id="run-loop",
         status="failed",
         error="Model tool loop exceeded the maximum number of rounds.",
@@ -1831,7 +1846,10 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
         run_item["summary"] == "Model tool loop exceeded the maximum number of rounds."
     )
     assert run_item["failure"] == {
-        "reason": "Model tool loop exceeded the maximum number of rounds."
+        "reason": "Model tool loop exceeded the maximum number of rounds.",
+        "step_index": 2,
+        "step_kind": "system",
+        "step_error": "Model tool loop exceeded the maximum number of rounds.",
     }
     assert (
         detail["output"]["error"]
@@ -1858,15 +1876,12 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
                 }
             ],
             "context": {},
-            "detail": {
-                "message": "Model tool loop exceeded the maximum number of rounds."
-            },
+            "detail": {},
             "started_at": "2026-01-01T00:00:03Z",
             "finished_at": "2026-01-01T00:00:03Z",
             "error": "Model tool loop exceeded the maximum number of rounds.",
         },
         "message": None,
-        "virtual": True,
     }
 
 
@@ -5837,7 +5852,7 @@ def test_jobs_api_projects_active_run_tasks_as_running(tmp_path: Path) -> None:
         enabled_features=("inspect", "manage"),
     )
     task = JobCatalog(toolang_root, "alice").list(kind="task")[0].document
-    context.store.start_run(
+    project_run_start(context.store,
         run_id="run-active-task",
         thread_id=task.thread_id(),
         origin="task",
@@ -6154,13 +6169,13 @@ def test_pulse_marks_finished_task_job_done(tmp_path: Path) -> None:
     )
     assert claimed is not None
     run_id = claimed.run_id
-    context.store.start_run(
+    project_run_start(context.store,
         run_id=run_id,
         thread_id=claimed.job.thread_id,
         origin="task",
         input=Message.user(claimed.definition.input),
     )
-    context.store.finish_run(
+    project_run_end(context.store,
         run_id=run_id, status="finished", finished_at="2026-01-01T00:00:07Z"
     )
 
@@ -6196,13 +6211,13 @@ def test_pulse_marks_failed_task_job_failed(tmp_path: Path) -> None:
         now=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
     assert claimed is not None
-    context.store.start_run(
+    project_run_start(context.store,
         run_id=claimed.run_id,
         thread_id=claimed.job.thread_id,
         origin="task",
         input=Message.user(claimed.definition.input),
     )
-    context.store.finish_run(
+    project_run_end(context.store,
         run_id=claimed.run_id, status="failed", finished_at="2026-01-01T00:00:07Z"
     )
 
@@ -6435,7 +6450,7 @@ def test_top_level_chat_agic_uses_its_authored_message(tmp_path: Path) -> None:
         agent_name="alice",
         enabled_features=("chat",),
     )
-    context.store.start_run(
+    project_run_start(context.store,
         run_id="run-current",
         thread_id="thread-current",
         origin="chat",
@@ -6749,13 +6764,13 @@ def test_script_run_can_simulate_history_with_explicit_message_blocks(
         agent_name="alice",
         enabled_features=(),
     )
-    previous = context.store.start_run(
+    previous = project_run_start(context.store,
         run_id="run-previous",
         thread_id="thread-1",
         origin="chat",
         input=Message.user("stored history should not appear"),
     )
-    context.store.append_step(
+    project_step(context.store,
         run_id=previous.run_id,
         step_index=1,
         kind="model",
@@ -6766,7 +6781,7 @@ def test_script_run_can_simulate_history_with_explicit_message_blocks(
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
-    context.store.finish_run(run_id=previous.run_id, finished_at="2026-01-01T00:00:03Z")
+    project_run_end(context.store, run_id=previous.run_id, finished_at="2026-01-01T00:00:03Z")
     bound = bind_run_request(
         context,
         RunRequest(
@@ -7368,13 +7383,13 @@ def test_execution_store_records_runs_steps_and_messages(tmp_path: Path) -> None
             kind="created",
             payload={"path": str(toolang_root / "agents" / "alice" / "agent.too")},
         )
-        run = store.start_run(
+        run = project_run_start(store,
             run_id="run-1",
             thread_id="thread-1",
             origin="chat",
             input=Message.user("hello"),
         )
-        store.append_step(
+        project_step(store,
             run_id=run.run_id,
             step_index=1,
             kind="model",
@@ -7385,7 +7400,7 @@ def test_execution_store_records_runs_steps_and_messages(tmp_path: Path) -> None
             started_at="2026-01-01T00:00:01Z",
             finished_at="2026-01-01T00:00:02Z",
         )
-        finished = store.finish_run(run_id=run.run_id)
+        finished = project_run_end(store, run_id=run.run_id)
 
         assert finished.status == "finished"
         assert [item.kind for item in store.list_steps(run_id=run.run_id)] == ["model"]
@@ -7466,13 +7481,13 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
     toolang_root = tmp_path / "toolang"
     store = RunStore(run_store_path(toolang_root, "alice"))
     try:
-        run = store.start_run(
+        run = project_run_start(store,
             run_id="run-1",
             thread_id="thread-1",
             origin="chat",
             input=Message.user("sum 7 and 8"),
         )
-        store.append_step(
+        project_step(store,
             run_id=run.run_id,
             step_index=1,
             kind="model",
@@ -7490,7 +7505,7 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
             started_at="2026-01-01T00:00:01Z",
             finished_at="2026-01-01T00:00:02Z",
         )
-        store.append_step(
+        project_step(store,
             run_id=run.run_id,
             step_index=2,
             kind="tool",
@@ -7508,7 +7523,7 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
             started_at="2026-01-01T00:00:03Z",
             finished_at="2026-01-01T00:00:04Z",
         )
-        store.append_step(
+        project_step(store,
             run_id=run.run_id,
             step_index=3,
             kind="model",
@@ -7567,13 +7582,13 @@ def test_execution_store_does_not_return_orphan_tool_history_when_limited(
     toolang_root = tmp_path / "toolang"
     store = RunStore(run_store_path(toolang_root, "alice"))
     try:
-        run = store.start_run(
+        run = project_run_start(store,
             run_id="run-1",
             thread_id="thread-1",
             origin="chat",
             input=Message.user("sum 7 and 8"),
         )
-        store.append_step(
+        project_step(store,
             run_id=run.run_id,
             step_index=1,
             kind="model",
@@ -7591,7 +7606,7 @@ def test_execution_store_does_not_return_orphan_tool_history_when_limited(
             started_at="2026-01-01T00:00:01Z",
             finished_at="2026-01-01T00:00:02Z",
         )
-        store.append_step(
+        project_step(store,
             run_id=run.run_id,
             step_index=2,
             kind="tool",
@@ -7609,7 +7624,7 @@ def test_execution_store_does_not_return_orphan_tool_history_when_limited(
             started_at="2026-01-01T00:00:03Z",
             finished_at="2026-01-01T00:00:04Z",
         )
-        store.append_step(
+        project_step(store,
             run_id=run.run_id,
             step_index=3,
             kind="model",
@@ -7634,13 +7649,13 @@ def test_execution_store_replays_model_reasoning_content(tmp_path: Path) -> None
     toolang_root = tmp_path / "toolang"
     store = RunStore(run_store_path(toolang_root, "alice"))
     try:
-        run = store.start_run(
+        run = project_run_start(store,
             run_id="run-1",
             thread_id="thread-1",
             origin="chat",
             input=Message.user("list files"),
         )
-        store.append_step(
+        project_step(store,
             run_id=run.run_id,
             step_index=1,
             kind="model",
@@ -7675,13 +7690,13 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         agent_name="alice",
         enabled_features=("chat",),
     )
-    previous = context.store.start_run(
+    previous = project_run_start(context.store,
         run_id="run-previous",
         thread_id="thread-1",
         origin="chat",
         input=Message.user("create a Linear issue"),
     )
-    context.store.append_step(
+    project_step(context.store,
         run_id=previous.run_id,
         step_index=1,
         kind="model",
@@ -7700,7 +7715,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
-    context.store.append_step(
+    project_step(context.store,
         run_id=previous.run_id,
         step_index=2,
         kind="tool",
@@ -7745,7 +7760,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         started_at="2026-01-01T00:00:03Z",
         finished_at="2026-01-01T00:00:04Z",
     )
-    context.store.append_step(
+    project_step(context.store,
         run_id=previous.run_id,
         step_index=3,
         kind="model",
@@ -7764,7 +7779,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         started_at="2026-01-01T00:00:05Z",
         finished_at="2026-01-01T00:00:06Z",
     )
-    context.store.append_step(
+    project_step(context.store,
         run_id=previous.run_id,
         step_index=4,
         kind="tool",
@@ -7798,7 +7813,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         started_at="2026-01-01T00:00:07Z",
         finished_at="2026-01-01T00:00:08Z",
     )
-    context.store.append_step(
+    project_step(context.store,
         run_id=previous.run_id,
         step_index=5,
         kind="model",
@@ -7809,7 +7824,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         started_at="2026-01-01T00:00:09Z",
         finished_at="2026-01-01T00:00:10Z",
     )
-    context.store.finish_run(run_id=previous.run_id, finished_at="2026-01-01T00:00:11Z")
+    project_run_end(context.store, run_id=previous.run_id, finished_at="2026-01-01T00:00:11Z")
 
     bound = bind_run_request(
         context,
@@ -7855,13 +7870,13 @@ def test_run_input_recall_none_disables_thread_history_and_tool_context(
         agent_name="alice",
         enabled_features=("chat",),
     )
-    previous = context.store.start_run(
+    previous = project_run_start(context.store,
         run_id="run-previous",
         thread_id="thread-1",
         origin="chat",
         input=Message.user("previous"),
     )
-    context.store.append_step(
+    project_step(context.store,
         run_id=previous.run_id,
         step_index=1,
         kind="model",
@@ -7872,7 +7887,7 @@ def test_run_input_recall_none_disables_thread_history_and_tool_context(
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
-    context.store.finish_run(run_id=previous.run_id, finished_at="2026-01-01T00:00:03Z")
+    project_run_end(context.store, run_id=previous.run_id, finished_at="2026-01-01T00:00:03Z")
 
     bound = bind_run_request(
         context,
@@ -8242,7 +8257,7 @@ def _completed(
 def test_model_step_detail_preserves_target_metadata(tmp_path: Path) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
-        store.start_run(
+        project_run_start(store,
             run_id="run-1",
             thread_id="thread-1",
             origin="chat",
@@ -8266,7 +8281,7 @@ def test_model_step_detail_preserves_target_metadata(tmp_path: Path) -> None:
                 "state": {"thread": "state"},
             },
         }
-        store.append_step(
+        project_step(store,
             run_id="run-1",
             step_index=1,
             kind="model",

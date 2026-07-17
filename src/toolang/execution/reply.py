@@ -12,7 +12,8 @@ from typing import Any, Protocol
 from toolang.base.protocols.channel import AgentChannel
 from toolang.base.types.channel import ChannelContext, OutboundMessage, ReplyTarget
 from toolang.base.types.message import TextDelta, TextPart, ToolCallDelta, ToolCallPart, ToolResultPart, message_text
-from .events import RunEnd, RunBegin, RunStarting, StepEnd, StepBegin, PartBegin, PartDelta, PartEnd, TraceEvent, message_data_for_step
+from .detail import message_data_for_step
+from .events import RunEnd, RunBegin, RunStarting, StepEnd, StepBegin, PartBegin, PartDelta, PartEnd, TraceEvent
 from .records import trace_index, trace_run
 from .stream import trace_event_data
 

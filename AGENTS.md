@@ -93,7 +93,8 @@
   helper utilities used across tool, loop, channel, sandbox, model provider,
   and model adapter plugins.
 - `toolang.common` owns package-neutral errors, immutable-container helpers,
-  progress events, selectors, and Toolang-owned id allocation.
+  progress events, selectors, Toolang-owned id allocation, and shared GitHub
+  source-reference parsing and rendering.
 - `toolang.lang` owns `.too` parsing, authored source semantics, and source
   editing.
 - `toolang.agent` owns local agent identity, layout, runtime-state files,
@@ -106,6 +107,10 @@
   root/home/agent state, and source-state watching.
 - `toolang.execution` owns run binding, execution trace, durable run truth,
   response projection, and execution storage.
+- `toolang.execution.detail` is the canonical typed projection boundary for
+  runs, threads, steps, failures, and caller-facing messages. API code only
+  serializes these projections; CLI code reads them through the shared
+  remote-or-local execution adapter and only renders them.
 - `toolang.plugin` owns generic entry point discovery, plugin configuration,
   and built-in tool, loop, channel, sandbox, model-provider, and model-adapter
   implementations.
@@ -144,6 +149,10 @@
 - Keep runtime execution logic separate from file parsing and path resolution.
 - `runs.db` owns runtime transcript messages as well as activation,
   thread, run, and step truth. Do not add a separate durable chat-store layer.
+- Persist run, command, and step truth by sending trace events through
+  `PersistSink`. Keep `RunStore` mutation methods limited to the event
+  projection primitives used by that sink; tests should construct trace events
+  instead of adding direct-write convenience APIs.
 - Synced state should be reusable without reparsing unchanged source files.
 
 

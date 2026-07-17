@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from toolang.agent import local as agents
 from toolang.common.ids import LOCAL_ID_FAMILY, allocate_id
+from toolang.execution.detail import ExecutionProjector
 from toolang.execution.records import RunStatus
 from toolang.execution.request import RunRequest
 from toolang.execution.stream import event_data, stream_events
@@ -28,36 +29,18 @@ def create_router() -> APIRouter:
         status: RunStatus | None = None,
     ) -> dict[str, object]:
         context = request.app.state
-        runs = context.store.list_runs(limit=limit, thread_id=thread_id, status=status)
-        steps_by_run = context.store.list_steps_for_runs(
-            run_ids=tuple(item.run_id for item in runs)
+        items = ExecutionProjector(context.store).list_runs(
+            limit=limit, thread_id=thread_id, status=status
         )
-        commands_by_run = {
-            run.run_id: context.store.list_commands(run_id=run.run_id) for run in runs
-        }
-        items = [
-            _views._run_item(
-                item,
-                inputs=commands_by_run.get(item.run_id, ()),
-                steps=steps_by_run.get(item.run_id, ()),
-            )
-            for item in runs
-        ]
-        return {"items": items}
+        return {"items": [item.to_data() for item in items]}
 
     @router.get("/runs/{run_id}", tags=["activity"], summary="Get Run")
     async def run_detail(request: Request, run_id: str) -> dict[str, object]:
         context = request.app.state
-        run = context.store.get_run(run_id=run_id)
-        if run is None:
+        detail = ExecutionProjector(context.store).run_detail(run_id)
+        if detail is None:
             raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
-        detail = _views._run_detail_data(_views._run_detail(context, run))
-        return {
-            **_views._with_run_prompt_bodies(context.store, detail),
-            "event_cursor": context.store.latest_event_cursor(
-                domain="run", domain_id=run_id
-            ),
-        }
+        return detail.to_data()
 
     @router.get("/runs/{run_id}/events", tags=["activity"], summary="List Run Events")
     async def run_events(
@@ -105,11 +88,7 @@ def create_router() -> APIRouter:
         if payload is not None and payload.reason is not None:
             input_payload["reason"] = payload.reason
         return {
-            "run": _views._run_item(
-                run,
-                inputs=context.store.list_commands(run_id=run.run_id),
-                steps=context.store.list_steps(run_id=run.run_id),
-            ),
+            "run": ExecutionProjector(context.store).run_summary(run).to_data(),
             "input": input_payload,
         }
 
@@ -314,42 +293,27 @@ def create_router() -> APIRouter:
         status: str | None = None,
     ) -> dict[str, object]:
         context = request.app.state
-        items = _views._thread_items(context)
-        if origin is not None:
-            items = [item for item in items if item.origin == origin]
-        if channel is not None:
-            items = [item for item in items if item.channel == channel]
-        if status is not None:
-            items = [item for item in items if item.status == status]
-        return {"items": [asdict(item) for item in items[:limit]]}
+        items = ExecutionProjector(context.store).list_threads(
+            limit=limit,
+            origin=origin,
+            channel=channel,
+            status=status,
+        )
+        return {"items": [item.to_data() for item in items]}
 
     @router.get("/threads/{thread_id}", tags=["activity"], summary="Get Thread")
     async def thread_detail(
         request: Request, thread_id: str, limit: int = Query(default=50)
     ) -> dict[str, object]:
         context = request.app.state
-        items = _views._thread_items(context)
-        info = next((item for item in items if item.id == thread_id), None)
-        if info is None:
+        detail = ExecutionProjector(context.store).thread_detail(
+            thread_id, limit=limit
+        )
+        if detail is None:
             raise HTTPException(
                 status_code=404, detail=f"thread not found: {thread_id}"
             )
-        thread_runs = context.store.list_thread_runs_chronological(thread_id=thread_id)
-        if limit is not None:
-            thread_runs = thread_runs[-limit:]
-        runs = [_views._run_detail(context, item) for item in thread_runs]
-        return {
-            "info": asdict(info),
-            "runs": [
-                _views._with_run_prompt_bodies(
-                    context.store, _views._run_detail_data(item)
-                )
-                for item in runs
-            ],
-            "event_cursor": context.store.latest_event_cursor(
-                domain="thread", domain_id=thread_id
-            ),
-        }
+        return detail.to_data()
 
     @router.get(
         "/threads/{thread_id}/events", tags=["activity"], summary="List Thread Events"

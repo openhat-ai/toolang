@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -12,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from toolang.common.error import ToolangError
 from toolang.base.types.message import Message
-from toolang.execution.detail import run_detail_from_record, thread_info_from_record, thread_info_from_runs
+from toolang.execution.detail import ExecutionProjector, ThreadInfo
 from toolang.execution.binding import allocate_run_id, allocate_thread_id
 from toolang.execution.effective import effective_origin_model_selectors, select_origin_agic
 from toolang.plugin.models.resolution import selectable_model_targets, split_model_selectors
@@ -84,7 +83,7 @@ def create_router() -> APIRouter:
         )
         return {
             "thread_id": thread_id,
-            "thread": asdict(_thread_info(context, thread_id)),
+            "thread": _thread_info(context, thread_id).to_data(),
         }
 
     @router.post("/chat", summary="Submit Chat")
@@ -92,16 +91,11 @@ def create_router() -> APIRouter:
         context = request.app.state
         thread_id = _chat_thread_id_or_404(context, payload)
         result, reply = await _submit_chat_run(context, payload, thread_id=thread_id)
-        run = context.store.get_run(run_id=result.run_id)
-        if run is None:
+        detail = ExecutionProjector(context.store).run_detail(result.run_id)
+        if detail is None:
             if result.status == "failed" and result.error:
                 raise HTTPException(status_code=500, detail=result.error)
             raise HTTPException(status_code=500, detail=f"run not found after completion: {result.run_id}")
-        detail = run_detail_from_record(
-            run,
-            steps=context.store.list_steps(run_id=result.run_id),
-            inputs=context.store.list_commands(run_id=result.run_id),
-        )
         if detail.input is None:
             raise HTTPException(status_code=500, detail=f"missing chat input for run {result.run_id}")
         user_message = detail.input.to_data()
@@ -124,7 +118,7 @@ def create_router() -> APIRouter:
             raise HTTPException(status_code=500, detail=f"missing chat thread for run {result.run_id}")
         return {
             "thread_id": result.thread_id,
-            "thread": asdict(_thread_info(context, result.thread_id)),
+            "thread": _thread_info(context, result.thread_id).to_data(),
             "run_id": result.run_id,
             "message": user_message,
             "assistant": assistant_message,
@@ -366,22 +360,14 @@ def _cap_selectors(payload: ChatRequest) -> tuple[str, ...]:
     return tuple(dict.fromkeys(split_cap_selectors(tuple(payload.caps))))
 
 
-def _thread_info(context: ComponentState, thread_id: str):
-    runs = context.store.list_thread_runs_chronological(thread_id=thread_id)
-    thread = context.store.get_thread(thread_id=thread_id)
-    if not runs:
-        if thread is None:
-            raise HTTPException(status_code=500, detail=f"thread not found after completion: {thread_id}")
-        return thread_info_from_record(thread)
-    steps_by_run = context.store.list_steps_for_runs(run_ids=tuple(run.run_id for run in runs))
-    commands_by_run = {run.run_id: context.store.list_commands(run_id=run.run_id) for run in runs}
-    return thread_info_from_runs(
-        thread_id,
-        runs,
-        commands_by_run=commands_by_run,
-        steps_by_run=steps_by_run,
-        thread=thread,
-    )
+def _thread_info(context: ComponentState, thread_id: str) -> ThreadInfo:
+    info = ExecutionProjector(context.store).thread_info(thread_id)
+    if info is None:
+        raise HTTPException(
+            status_code=500,
+            detail=f"thread not found after completion: {thread_id}",
+        )
+    return info
 
 
 def _new_thread_id(context: ComponentState, client: str) -> str:

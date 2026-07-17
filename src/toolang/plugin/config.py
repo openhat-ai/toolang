@@ -5,10 +5,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-import tomllib
 from typing import cast
 
 from toolang.base.types.sandbox import SandboxSelector
+from toolang.config.toml import load_optional_toml
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,15 +137,9 @@ def _load_plugin_table(
 
 def _config_payloads(toolang_root: Path, agent_name: str) -> tuple[dict[str, object], dict[str, object]]:
     return (
-        _load_toml(toolang_root / "config.toml"),
-        _load_toml(toolang_root / "agents" / agent_name / "config.toml"),
+        load_optional_toml(toolang_root / "config.toml"),
+        load_optional_toml(toolang_root / "agents" / agent_name / "config.toml"),
     )
-
-
-def _load_toml(path: Path) -> dict[str, object]:
-    if not path.is_file():
-        return {}
-    return cast(dict[str, object], tomllib.loads(path.read_text(encoding="utf-8")))
 
 
 def _resolve_env_refs(

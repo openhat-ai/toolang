@@ -19,6 +19,7 @@ from toolang.catalog import cap as caps
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.model import ModelInfo
 from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.common.github import GitHubRef
 import toolang.cli.app.main as cli
 import toolang.cli.app.routing as app_routing
 import toolang.cli.app.commands.agent as agent_commands
@@ -44,6 +45,7 @@ from toolang.plugin.loading import PluginInfo
 from toolang.catalog.job import JobCatalog
 from toolang.execution.store import RunStore, run_store_path
 from toolang.agent import runtime as agent_up
+from support_execution import project_run_end, project_run_start, project_step
 from wcwidth import wcswidth
 
 runner = CliRunner()
@@ -72,13 +74,13 @@ def _fake_invoke_record(
 ) -> RunRecord:
     store = RunStore(run_store_path(toolang_root, agent_name))
     try:
-        run = store.start_run(
+        run = project_run_start(store,
             run_id="run_test",
             thread_id="script_test",
             origin="script",
             input=Message.user("test"),
         )
-        store.append_step(
+        project_step(store,
             run_id=run.id,
             step_index=0,
             kind="model",
@@ -88,7 +90,7 @@ def _fake_invoke_record(
             started_at=run.started_at,
             finished_at=run.started_at,
         )
-        return store.finish_run(
+        return project_run_end(store,
             run_id=run.id,
             output=OutputRef(step=f"{run.id}/0"),
         )
@@ -354,7 +356,7 @@ def test_cli_main_roaming_threads_can_read_offline_materialized_store(
     toolang_root, agent_name = agents.materialize_roaming_program(program_path)
     store = RunStore(run_store_path(toolang_root, agent_name))
     try:
-        run = store.start_run(
+        run = project_run_start(store,
             run_id="run_first",
             thread_id="script_main",
             origin="script",
@@ -362,7 +364,7 @@ def test_cli_main_roaming_threads_can_read_offline_materialized_store(
             created_at="2026-06-06T01:00:00Z",
             started_at="2026-06-06T01:00:00Z",
         )
-        store.finish_run(run_id=run.run_id, finished_at="2026-06-06T01:01:00Z")
+        project_run_end(store, run_id=run.run_id, finished_at="2026-06-06T01:01:00Z")
     finally:
         store.close()
 
@@ -689,7 +691,7 @@ def test_cli_clone_remote_shorthand_defaults_target_name(
         assert ref.render() == "github://brice/agents/agents/alice.too@main"
         return "agent source-name\n"
 
-    def fake_exists(ref: agents.GitHubAgentRef) -> bool:
+    def fake_exists(ref: GitHubRef) -> bool:
         probes.append(ref.render())
         return ref.path == "agents/alice.too"
 
@@ -724,7 +726,7 @@ def test_cli_clone_remote_repo_shorthand_uses_named_repo(
         assert ref.render() == "github://brice/project/alice.too@trunk"
         return "agent source-name\n"
 
-    def fake_exists(ref: agents.GitHubAgentRef) -> bool:
+    def fake_exists(ref: GitHubRef) -> bool:
         probes.append(ref.render())
         return ref.path == "alice.too"
 
@@ -759,7 +761,7 @@ def test_agent_shorthand_falls_back_to_main_when_default_branch_probe_fails(
         del owner, repo
         raise ValueError("rate limited")
 
-    def fake_exists(ref: agents.GitHubAgentRef) -> bool:
+    def fake_exists(ref: GitHubRef) -> bool:
         probes.append(ref.render())
         return ref.path == "dev.too"
 
@@ -800,7 +802,7 @@ def test_github_agent_fetch_uses_raw_url(monkeypatch) -> None:
     monkeypatch.setattr(agents, "_fetch_http_text", fake_fetch)
 
     text = agents._fetch_github_text(
-        agents.GitHubAgentRef(
+        GitHubRef(
             owner="briceyan", repo="agents", path="dev.too", rev="main"
         )
     )
@@ -7402,7 +7404,7 @@ def test_cli_threads_lists_offline_runs_when_agent_is_not_running(
     toolang_root = tmp_path / "toolang"
     store = RunStore(run_store_path(toolang_root, "alice"))
     try:
-        run = store.start_run(
+        run = project_run_start(store,
             run_id="run_first",
             thread_id="script_main",
             origin="script",
@@ -7410,7 +7412,7 @@ def test_cli_threads_lists_offline_runs_when_agent_is_not_running(
             created_at="2026-06-06T01:00:00Z",
             started_at="2026-06-06T01:00:00Z",
         )
-        store.finish_run(run_id=run.run_id, finished_at="2026-06-06T01:01:00Z")
+        project_run_end(store, run_id=run.run_id, finished_at="2026-06-06T01:01:00Z")
     finally:
         store.close()
 
@@ -7465,7 +7467,7 @@ def test_cli_runs_falls_back_to_offline_store_when_api_is_unavailable(
     toolang_root = tmp_path / "toolang"
     store = RunStore(run_store_path(toolang_root, "alice"))
     try:
-        run = store.start_run(
+        run = project_run_start(store,
             run_id="run_first",
             thread_id="script_abc123",
             origin="file",
@@ -7473,7 +7475,7 @@ def test_cli_runs_falls_back_to_offline_store_when_api_is_unavailable(
             created_at="2026-06-06T01:00:00Z",
             started_at="2026-06-06T01:00:00Z",
         )
-        store.finish_run(run_id=run.run_id, finished_at="2026-06-06T01:01:00Z")
+        project_run_end(store, run_id=run.run_id, finished_at="2026-06-06T01:01:00Z")
     finally:
         store.close()
 

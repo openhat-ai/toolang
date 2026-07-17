@@ -14,6 +14,7 @@ from uuid import uuid4
 
 import frontmatter
 
+from ..common.github import parse_github_ref
 from ..common.immutable import freeze_mapping, mutable_data
 from ..lang.source import ProgramSource
 
@@ -575,23 +576,16 @@ def _origin_manifest(entry: PreparedEntry) -> dict[str, object]:
     if entry.source.form in {"wired", "ref"}:
         data["ref"] = entry.ref
         if entry.ref.startswith("github://"):
-            github = _parse_github_ref(entry.ref)
-            data.update(github)
+            github = parse_github_ref(entry.ref)
+            data.update(
+                {
+                    "provider": "github",
+                    "repo": f"{github.owner}/{github.repo}",
+                    "path": github.path,
+                    "commit": github.rev,
+                }
+            )
     return data
-
-
-def _parse_github_ref(ref: str) -> dict[str, object]:
-    body = ref.removeprefix("github://")
-    target, _, rev = body.partition("@")
-    parts = target.split("/")
-    if len(parts) < 3:
-        return {"provider": "github", "commit": rev}
-    return {
-        "provider": "github",
-        "repo": f"{parts[0]}/{parts[1]}",
-        "path": "/".join(parts[2:]),
-        "commit": rev,
-    }
 
 
 def _object_manifest(entry: PreparedEntry, *, toolang_root: Path) -> dict[str, object]:

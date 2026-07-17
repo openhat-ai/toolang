@@ -15,6 +15,7 @@ from toolang.plugin.tools.filesystem import create_tool_set as create_filesystem
 from toolang.plugin.tools.service_use import create_tool_set as create_service_use_tool
 from toolang.plugin.tools.shell import create_tool_set as create_shell_tool
 from toolang.plugin.tools.web_search import create_tool_set as create_web_search_tool
+from support_execution import project_run_start
 
 
 def _tool_context(home: Path, plugin_name: str) -> ToolContext:
@@ -127,7 +128,7 @@ def test_agent_chat_tool_creates_child_thread_and_sends_peer_request(monkeypatch
     home = root / "agents" / "alice"
     home.mkdir(parents=True)
     store = RunStore(run_store_path(root, "alice"))
-    store.start_run(
+    project_run_start(store,
         run_id="run-1",
         thread_id="term_user",
         origin="chat",
@@ -206,7 +207,7 @@ def test_agent_chat_tool_accepts_direct_peer_object_without_config(monkeypatch, 
     home = root / "agents" / "eve"
     home.mkdir(parents=True)
     store = RunStore(run_store_path(root, "eve"))
-    store.start_run(
+    project_run_start(store,
         run_id="run-1",
         thread_id="term_user",
         origin="chat",
@@ -279,7 +280,7 @@ def test_agent_chat_tool_can_call_streaming_peer_chat(monkeypatch, tmp_path: Pat
     home = root / "agents" / "eve"
     home.mkdir(parents=True)
     store = RunStore(run_store_path(root, "eve"))
-    store.start_run(
+    project_run_start(store,
         run_id="run-1",
         thread_id="term_user",
         origin="chat",

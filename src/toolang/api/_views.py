@@ -12,22 +12,13 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from toolang.base.types.message import Message, TextPart, message_summary, parts_to_data
-from toolang.execution.detail import (
-    RunDetail,
-    ThreadInfo,
-    run_detail_from_record,
-    thread_info_from_runs,
-    thread_info_from_record,
-)
-from toolang.execution.events import MessageData, run_message_data
+from toolang.base.types.message import Message
+from toolang.execution.detail import ExecutionProjector, ThreadInfo, run_message_data
 from toolang.execution.binding import allocate_run_id
 from toolang.execution.records import (
     CommandApply,
     CommandRecord,
     RunRecord,
-    StepRecord,
-    step_input_items_to_data,
 )
 from toolang import templates
 from toolang.catalog import cap as caps
@@ -204,7 +195,7 @@ def snapshot_context(
             ],
             "recent_runs": [asdict(item) for item in recent_runs],
             "recent_messages": [
-                asdict(item)
+                item.to_data()
                 for run in sorted(recent_runs, key=lambda item: item.created_at)
                 for item in run_message_data(
                     run,
@@ -679,203 +670,8 @@ def _state_entry_by_name(
     raise HTTPException(status_code=404, detail=f"{kind} not found: {name}")
 
 
-def _run_item(
-    run: RunRecord, *, inputs: Sequence[CommandRecord], steps: Sequence
-) -> dict[str, object]:
-    detail = run_detail_from_record(run, inputs=inputs, steps=steps)
-    input_text = message_summary(detail.input.parts) if detail.input is not None else ""
-    last_step_message = next(
-        (
-            item.message
-            for item in reversed(detail.output.steps)
-            if item.message is not None
-        ),
-        None,
-    )
-    summary = (
-        message_summary(last_step_message.parts)
-        if last_step_message is not None
-        else input_text
-    )
-    if run.status == "failed" and run.error and (not summary or summary == input_text):
-        summary = run.error
-    return {
-        "id": run.run_id,
-        "origin": run.origin,
-        "thread_id": run.thread_id,
-        "input_text": input_text,
-        "summary": summary,
-        "status": run.status,
-        "type": "run",
-        "error": run.error,
-        "superseded": run.superseded,
-        "failure": _run_failure_data(status=run.status, error=run.error, steps=steps),
-        "created_at": run.created_at,
-        "started_at": run.started_at,
-        "finished_at": run.finished_at,
-        "updated_at": run.finished_at or run.started_at,
-    }
-
-
-def _run_detail_data(run_detail: RunDetail) -> dict[str, object]:
-    output_steps: list[dict[str, object]] = []
-    step_records = [item.record for item in run_detail.output.steps]
-    input_items: list[dict[str, object]] = []
-    for item in run_detail.inputs:
-        payload = asdict(item)
-        if item.message is not None:
-            payload["message"] = item.message.to_data()
-        input_items.append(payload)
-    for item in run_detail.output.steps:
-        payload: dict[str, object] = {
-            "record": _step_record_data(item.record),
-            "message": item.message.to_data() if item.message is not None else None,
-        }
-        output_steps.append(payload)
-    virtual_failure_step = _virtual_runtime_failure_step(run_detail, steps=step_records)
-    if virtual_failure_step is not None:
-        step_records.append(virtual_failure_step)
-        output_steps.append(
-            {
-                "record": _step_record_data(virtual_failure_step),
-                "message": None,
-                "virtual": True,
-            }
-        )
-    return {
-        "info": asdict(run_detail.info),
-        "input": run_detail.input.to_data() if run_detail.input is not None else None,
-        "inputs": input_items,
-        "output": {
-            "status": run_detail.output.status,
-            "error": run_detail.output.error,
-            "failure": _run_failure_data(
-                status=run_detail.output.status,
-                error=run_detail.output.error,
-                steps=step_records,
-            ),
-            "steps": output_steps,
-        },
-    }
-
-
-def _with_run_prompt_bodies(store: Any, run: dict[str, object]) -> dict[str, object]:
-    prompt_hashes = _run_prompt_hashes(run)
-    if not prompt_hashes:
-        return run
-    prompts: dict[str, str] = {}
-    for prompt_hash in prompt_hashes:
-        body = store.get_prompt(prompt_hash=prompt_hash)
-        if body is not None:
-            prompts[prompt_hash] = body
-    if prompts:
-        run = {**run, "prompts": prompts}
-    return run
-
-
-def _run_prompt_hashes(run: Mapping[str, object]) -> tuple[str, ...]:
-    output = run.get("output")
-    if not isinstance(output, Mapping):
-        return ()
-    output = cast(Mapping[str, object], output)
-    hashes: list[str] = []
-    step_items = output.get("steps")
-    if not isinstance(step_items, Sequence) or isinstance(
-        step_items, (str, bytes, bytearray)
-    ):
-        return ()
-    for item in step_items:
-        if not isinstance(item, Mapping):
-            continue
-        item = cast(Mapping[str, object], item)
-        record = item.get("record")
-        if not isinstance(record, Mapping):
-            continue
-        record = cast(Mapping[str, object], record)
-        payload = record.get("payload")
-        if not isinstance(payload, Mapping):
-            continue
-        payload = cast(Mapping[str, object], payload)
-        for key in ("instruct", "context"):
-            value = payload.get(key)
-            if isinstance(value, str) and value and value not in hashes:
-                hashes.append(value)
-    return tuple(hashes)
-
-
-def _virtual_runtime_failure_step(
-    run_detail: RunDetail,
-    *,
-    steps: Sequence[StepRecord],
-) -> StepRecord | None:
-    error = run_detail.output.error
-    if run_detail.output.status != "failed" or error is None:
-        return None
-    if any(
-        item.kind == "system" and item.status == "failed" and item.error == error
-        for item in steps
-    ):
-        return None
-    step_index = max((item.step_index for item in steps), default=0) + 1
-    timestamp = run_detail.info.finished_at or run_detail.info.updated_at
-    return StepRecord(
-        parent=run_detail.info.id,
-        index=step_index,
-        kind="system",
-        status="failed",
-        input=(),
-        output=(TextPart(text=error),),
-        started_at=timestamp,
-        finished_at=timestamp,
-        detail={"message": error},
-        error=error,
-    )
-
-
-def _step_record_data(step: StepRecord) -> dict[str, object]:
-    return {
-        "parent": step.parent,
-        "index": step.index,
-        "path": step.path,
-        "kind": step.kind,
-        "status": step.status,
-        "input": step_input_items_to_data(step.input),
-        "output": parts_to_data(step.output),
-        "context": dict(step.context),
-        "detail": dict(step.detail),
-        "error": step.error,
-        "started_at": step.started_at,
-        "finished_at": step.finished_at,
-    }
-
-
-def _run_failure_data(
-    *,
-    status: str,
-    error: str | None,
-    steps: Sequence,
-) -> dict[str, object] | None:
-    if status != "failed" and error is None:
-        return None
-    failed_step = next(
-        (item for item in reversed(steps) if getattr(item, "status", None) == "failed"),
-        None,
-    )
-    step_error = (
-        getattr(failed_step, "error", None) if failed_step is not None else None
-    )
-    reason = error or step_error or "Run failed."
-    payload: dict[str, object] = {"reason": reason}
-    if failed_step is not None:
-        payload["step_index"] = failed_step.step_index
-        payload["step_kind"] = failed_step.kind
-        if step_error is not None:
-            payload["step_error"] = step_error
-    return payload
-
-
 def _profile_metrics(context: ComponentState) -> dict[str, object]:
-    threads = _thread_items(context)
+    threads = ExecutionProjector(context.store).list_threads(limit=None)
     runs = context.store.list_runs(limit=None)
     steps_by_run = context.store.list_steps_for_runs(
         run_ids=tuple(item.run_id for item in runs)
@@ -934,60 +730,6 @@ def _profile_environment(
         "home": str(context.home),
         "endpoint": _runtime_endpoint(context, runtime_state=runtime_state),
     }
-
-
-def _run_detail(context: ComponentState, run: RunRecord):
-    raw_steps = context.store.list_steps(run_id=run.run_id)
-    inputs = context.store.list_commands(run_id=run.run_id)
-    return run_detail_from_record(run, steps=raw_steps, inputs=inputs)
-
-
-def _run_messages(
-    context: ComponentState,
-    *,
-    run: RunRecord,
-    raw_steps: Sequence,
-) -> list[MessageData]:
-    return run_message_data(
-        run,
-        inputs=context.store.list_commands(run_id=run.run_id),
-        steps=raw_steps,
-    )
-
-
-def _thread_items(context: ComponentState) -> list[ThreadInfo]:
-    recent_runs = context.store.list_runs(limit=None)
-    thread_ids = sorted({run.thread_id for run in recent_runs})
-    runs = [
-        run
-        for thread_id in thread_ids
-        for run in context.store.list_thread_runs_chronological(thread_id=thread_id)
-    ]
-    steps_by_run = context.store.list_steps_for_runs(
-        run_ids=tuple(item.run_id for item in runs)
-    )
-    commands_by_run = {
-        run.run_id: context.store.list_commands(run_id=run.run_id) for run in runs
-    }
-    grouped_runs: dict[str, list[RunRecord]] = {}
-    for run in runs:
-        grouped_runs.setdefault(run.thread_id, []).append(run)
-    thread_records = {item.thread_id: item for item in context.store.list_threads()}
-    items: list[ThreadInfo] = []
-    for thread_id, runs in grouped_runs.items():
-        items.append(
-            thread_info_from_runs(
-                thread_id,
-                runs,
-                commands_by_run=commands_by_run,
-                steps_by_run=steps_by_run,
-                thread=thread_records.get(thread_id),
-            )
-        )
-    for thread_id, thread in thread_records.items():
-        if thread_id not in grouped_runs:
-            items.append(thread_info_from_record(thread))
-    return sorted(items, key=lambda item: item.updated_at, reverse=True)
 
 
 def _run_or_404(context: ComponentState, run_id: str):
