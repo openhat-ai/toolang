@@ -18,11 +18,11 @@ from toolang.catalog.cap import split_cap_selectors
 from ....config.env import load_runtime_environ
 from toolang.plugin.models.resolution import split_model_selectors
 from toolang.plugin.tools.registry import split_tool_selectors
-from ...chat import slashes as chat_slashes
-from ...chat.base import friendly_error as chat_friendly_error
-from ...chat.history import ChatInputHistoryStore
-from ...chat.client import LocalChatClient
-from ...chat.tui import ChatTuiApp
+from ...impl.chat import slashes as chat_slashes
+from ...impl.chat.base import friendly_error as chat_friendly_error
+from ...impl.chat.history import ChatInputHistoryStore
+from ...impl.chat.client import LocalChatClient
+from ...impl.chat.tui import ChatTuiApp
 from ...common.client import (
     RuntimeClientError,
     message_payload,

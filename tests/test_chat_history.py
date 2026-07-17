@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from toolang.cli.chat.history import ChatInputHistoryStore
+from toolang.cli.impl.chat.history import ChatInputHistoryStore
 
 
 def test_chat_history_round_trips_recent_inputs_and_skips_bad_records(

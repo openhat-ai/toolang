@@ -266,30 +266,32 @@ concurrency, rate, token use, or cost according to the constrained resource.
 
 ## CLI
 
-The CLI has five first-level areas with one-way dependencies:
+The CLI has four first-level areas with one-way dependencies:
 
 ```text
 toolang/cli/
-├── app/                    # too/toolang command assembly
-│   ├── main.py
+├── toolang/                # too/toolang CLI
+│   ├── cli.py
+│   ├── __main__.py         # thin python -m adapter
 │   └── commands/
 │       ├── agent.py
-│       ├── serve.py
-│       ├── run.py
+│       ├── runtime.py
 │       ├── chat.py
 │       ├── thread.py
 │       ├── job.py
 │       ├── plugin.py
 │       └── program.py
-├── invoke/                 # non-interactive agic/flow invocation
-│   ├── main.py
-│   ├── request.py
-│   ├── help.py
-│   └── rendering.py
-├── chat/                   # prompt-toolkit TUI
 ├── caps/                   # reusable cap commands and standalone caps CLI
-│   ├── main.py
+│   ├── cli.py
+│   ├── __main__.py         # thin python -m adapter
 │   └── commands.py
+├── impl/                   # command implementations, never CLI entry points
+│   ├── invoke/
+│   │   ├── runner.py
+│   │   ├── request.py
+│   │   ├── help.py
+│   │   └── rendering.py
+│   └── chat/               # prompt-toolkit TUI
 └── common/                 # infrastructure shared by two or more CLI areas
     ├── context.py
     ├── routing.py
@@ -300,12 +302,14 @@ toolang/cli/
 
 Responsibilities are:
 
-- `app`: root Typer setup, global options, explicit command registration, and
-  final CLI error handling
-- `app.commands`: Typer parameters, calls to concept objects, and presentation
-- `invoke`: local script invocation, executable argument coercion, generated
-  help, and trace progress
-- `chat`: interactive TUI state, mutable blocks, widgets, and slash commands
+- `toolang`: root Typer setup, global options, explicit command registration,
+  and final CLI error handling
+- `toolang.commands`: Typer parameters, calls to concept objects, and
+  presentation
+- `impl.invoke`: local script invocation, executable argument coercion,
+  generated help, and trace progress
+- `impl.chat`: interactive TUI state, mutable blocks, widgets, and slash
+  commands
 - `caps`: one cap command implementation reused by `too` and the standalone
   `caps` entry point
 - `common`: only code used by at least two first-level CLI areas
@@ -321,26 +325,26 @@ They must not own source-file formats, SQL, state merging, or execution rules.
 The entry points become:
 
 ```toml
-toolang = "toolang.cli.app.main:main"
-too = "toolang.cli.app.main:main"
-caps = "toolang.cli.caps.main:main"
+toolang = "toolang.cli.toolang.cli:main"
+too = "toolang.cli.toolang.cli:main"
+caps = "toolang.cli.caps.cli:main"
 ```
 
 The CLI dependency direction is:
 
 ```text
-cli.common <- cli.invoke
-cli.common <- cli.chat
+cli.common <- cli.impl.invoke
+cli.common <- cli.impl.chat
 cli.common <- cli.caps
-cli.common <- cli.app
+cli.common <- cli.toolang
 
-cli.app.commands.run  -> cli.invoke
-cli.app.commands.chat -> cli.chat
-cli.app               -> cli.caps.commands
+cli.toolang.commands.runtime -> cli.impl.invoke
+cli.toolang.commands.chat    -> cli.impl.chat
+cli.toolang                  -> cli.caps.commands
 ```
 
-`invoke`, `chat`, `caps`, and `common` never import `app`. The existing generic
-CLI `utils.py` is removed as its routing, output, context, and owner-specific
+`impl`, `caps`, and `common` never import `toolang`. The existing generic CLI
+`utils.py` is removed as its routing, output, context, and owner-specific
 functions move to their named modules.
 
 
@@ -397,7 +401,8 @@ concepts:
 - jobs leave general agent state and become `HomeJobs` plus `AgentJobs`
 - `toolang.lang` becomes the canonical language package and the
   `toolang.program` facade is removed
-- the nested `toolang.cli.toolang` package is replaced by `toolang.cli.app`
+- `toolang.cli.toolang` and `toolang.cli.caps` are the two executable CLI
+  packages; chat and invoke live under `toolang.cli.impl`
 - duplicate cap command registration and forwarding modules are removed
 
 No compatibility wrappers should remain once all in-repository callers use the

@@ -5,7 +5,7 @@ from pathlib import Path
 import click
 import pytest
 
-from toolang.cli.invoke.request import consume_control_options, parse_request
+from toolang.cli.impl.invoke.request import consume_control_options, parse_request
 from toolang.lang.ast import AgicDecl, Parameter, Span
 
 

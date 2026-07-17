@@ -18,8 +18,8 @@ from prompt_toolkit.styles import Style
 from toolang.execution.events import TraceEvent
 from toolang.common.error import ToolangError
 
-from ..common.client import RuntimeClientError
-from ..common.version import toolang_version
+from toolang.cli.common.client import RuntimeClientError
+from toolang.cli.common.version import toolang_version
 from . import blocks
 from . import events
 from . import rendering

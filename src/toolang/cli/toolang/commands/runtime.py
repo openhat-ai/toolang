@@ -408,7 +408,7 @@ def start(
     command = [
         sys.executable,
         "-m",
-        "toolang.cli.app",
+        "toolang.cli.toolang",
         *up.build_run_argv(launch.startup),
     ]
     try:

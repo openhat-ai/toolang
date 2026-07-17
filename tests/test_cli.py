@@ -21,17 +21,17 @@ from toolang.base.types.message import Message, TextPart
 from toolang.base.types.model import ModelInfo
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.common.github import GitHubRef
-import toolang.cli.app.main as cli
-import toolang.cli.app.routing as app_routing
-import toolang.cli.app.commands.agent as agent_commands
-import toolang.cli.app.commands.chat as chat_commands
-import toolang.cli.app.commands.plugin as plugin_commands
-import toolang.cli.app.commands.runtime as runtime_commands
-import toolang.cli.app.commands.thread as inspect_cli
-import toolang.cli.invoke.main as cli_invoke
-import toolang.cli.invoke.rendering as invoke_rendering
+import toolang.cli.toolang.cli as cli
+import toolang.cli.toolang.routing as app_routing
+import toolang.cli.toolang.commands.agent as agent_commands
+import toolang.cli.toolang.commands.chat as chat_commands
+import toolang.cli.toolang.commands.plugin as plugin_commands
+import toolang.cli.toolang.commands.runtime as runtime_commands
+import toolang.cli.toolang.commands.thread as inspect_cli
+import toolang.cli.impl.invoke.runner as cli_invoke
+import toolang.cli.impl.invoke.rendering as invoke_rendering
 import toolang.cli.common.version as cli_version
-import toolang.cli.caps.main as caps_cli
+import toolang.cli.caps.cli as caps_cli
 import toolang.cli.caps.commands as caps_commands
 from toolang.cli.common.context import CliContext
 import toolang.cli.common.output as cli_output
@@ -4771,7 +4771,7 @@ def test_cli_start_spawns_background_run_and_reports_status(
     assert captured["command"] == [
         cli.sys.executable,
         "-m",
-        "toolang.cli.app",
+        "toolang.cli.toolang",
         "--root",
         str(toolang_root),
         "run",
@@ -4859,7 +4859,7 @@ def test_cli_start_propagates_py_log_to_agent_process(
     assert command[0:5] == [
         cli.sys.executable,
         "-m",
-        "toolang.cli.app",
+        "toolang.cli.toolang",
         "--root",
         str(toolang_root),
     ]

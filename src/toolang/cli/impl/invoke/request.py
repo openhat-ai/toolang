@@ -9,8 +9,8 @@ import click
 
 from toolang.work import files as file_requests
 from toolang.catalog.cap import split_cap_selectors
-from ...execution.request import ExecutableKind
-from ...lang.ast import AgicDecl, FlowDecl, Parameter
+from toolang.execution.request import ExecutableKind
+from toolang.lang.ast import AgicDecl, FlowDecl, Parameter
 from toolang.plugin.models.resolution import split_model_selectors
 from toolang.plugin.tools.registry import split_tool_selectors
 

@@ -13,7 +13,7 @@ from typer.core import HAS_RICH
 from typer.core import TyperArgument, TyperCommand, TyperGroup
 from typer.main import get_command
 
-from ...lang.ast import AgicDecl, FlowDecl, Parameter, Program
+from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program
 from .request import default_agic_name, executable_name
 
 MarkupMode = Literal["markdown", "rich"]

@@ -1,8 +1,6 @@
-"""Run the standalone caps CLI package."""
+"""Module entry point for ``python -m toolang.cli.caps``."""
 
-from __future__ import annotations
-
-from .main import main
+from .cli import main
 
 
 raise SystemExit(main())

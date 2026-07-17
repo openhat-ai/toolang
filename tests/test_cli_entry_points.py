@@ -7,8 +7,41 @@ import sys
 import tomllib
 from typing import Any
 
+import click
+import pytest
+import typer
+from typer.testing import CliRunner
+
+from toolang.cli.caps.cli import app as caps_app
+from toolang.cli.toolang.cli import app as toolang_app
+
 
 PROJECT_ROOT = Path(__file__).parents[1]
+
+
+def _command_paths(app: typer.Typer) -> tuple[tuple[str, ...], ...]:
+    paths: list[tuple[str, ...]] = []
+
+    def collect(command: click.Command, prefix: tuple[str, ...]) -> None:
+        if not isinstance(command, click.Group):
+            return
+        for name, child in command.commands.items():
+            path = (*prefix, name)
+            paths.append(path)
+            collect(child, path)
+
+    collect(typer.main.get_command(app), ())
+    return tuple(paths)
+
+
+CLI_COMMANDS = tuple(
+    (name, app, path)
+    for name, app in (
+        ("toolang", toolang_app),
+        ("caps", caps_app),
+    )
+    for path in _command_paths(app)
+)
 
 
 def _project_scripts() -> dict[str, str]:
@@ -43,9 +76,35 @@ def test_installed_console_scripts_match_project() -> None:
     assert installed == _project_scripts()
 
 
-def test_cli_package_is_executable_as_a_module() -> None:
+@pytest.mark.parametrize(
+    ("script", "prefix"),
+    [("toolang", "toolang "), ("too", "toolang "), ("caps", "caps ")],
+)
+def test_installed_console_scripts_execute(script: str, prefix: str) -> None:
+    executable = Path(sys.executable).with_name(script)
     completed = subprocess.run(
-        [sys.executable, "-m", "toolang.cli.app", "--version"],
+        [executable, "--version"],
+        cwd=PROJECT_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.startswith(prefix)
+
+
+@pytest.mark.parametrize(
+    ("module", "prefix"),
+    [
+        ("toolang.cli.toolang", "toolang "),
+        ("toolang.cli.caps", "caps "),
+    ],
+)
+def test_cli_package_is_executable_as_a_module(module: str, prefix: str) -> None:
+    completed = subprocess.run(
+        [sys.executable, "-m", module, "--version"],
         cwd=PROJECT_ROOT,
         check=False,
         capture_output=True,
@@ -53,4 +112,18 @@ def test_cli_package_is_executable_as_a_module() -> None:
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.startswith("toolang ")
+    assert completed.stdout.startswith(prefix)
+
+
+@pytest.mark.parametrize(
+    ("name", "app", "path"),
+    CLI_COMMANDS,
+    ids=[f"{name} {' '.join(path)}" for name, _app, path in CLI_COMMANDS],
+)
+def test_every_cli_command_renders_help(
+    name: str, app: typer.Typer, path: tuple[str, ...]
+) -> None:
+    result = CliRunner().invoke(app, [*path, "--help"], prog_name=name)
+
+    assert result.exit_code == 0, result.output
+    assert "Usage:" in result.output

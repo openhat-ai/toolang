@@ -11,12 +11,12 @@ import typer
 
 from toolang.agent import local as agents
 from toolang.agent import runtime as agent_up
-from ...common.error import ToolangError
-from ...config.env import load_runtime_environ
-from ...execution.request import ExecutableKind
-from ...lang.ast import AgicDecl, FlowDecl, Program
-from ...state.agent import AgentState
-from ..common.progress import CliProgress, as_progress_sink, make_cli_progress
+from toolang.common.error import ToolangError
+from toolang.config.env import load_runtime_environ
+from toolang.execution.request import ExecutableKind
+from toolang.lang.ast import AgicDecl, FlowDecl, Program
+from toolang.state.agent import AgentState
+from toolang.cli.common.progress import CliProgress, as_progress_sink, make_cli_progress
 from .help import show_help
 from .rendering import ScriptProgressSink, emit_interrupt, emit_outcome, progress_sink
 from .request import (

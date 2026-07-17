@@ -119,7 +119,7 @@ def dispatch_roaming(
             return _unsupported_global_options()
         return runtime.run_roaming_file(source, body[1:])
 
-    from ..invoke import main as invoke
+    from ..impl.invoke import runner as invoke
 
     return invoke.handle_roaming_invoke(global_args, body, prog_name=prog_name)
 
