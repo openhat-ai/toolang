@@ -18,7 +18,6 @@ from toolang.base.types.message import Message, Part, TextPart, message_text
 from toolang.base.types.model import ModelAlias
 from toolang.base.types.run import RunResult
 
-from toolang.agent import local as agents
 from ..lang.ast import (
     AgicDecl,
     AskStmt,
@@ -107,6 +106,8 @@ class Executor:
         *,
         root: Path,
         name: str,
+        home: Path,
+        id_state_path: Path,
         setup: AgentSetup,
         store: RunStore,
         model_aliases: Mapping[str, ModelAlias],
@@ -118,7 +119,8 @@ class Executor:
     ) -> None:
         self.root = root
         self.name = name
-        self.home = agents.agent_home(root, name)
+        self.home = home
+        self.id_state_path = id_state_path
         self.setup = setup
         self.store = store
         self.model_aliases = dict(model_aliases)
@@ -157,7 +159,7 @@ class Executor:
     def allocate_run_id(self) -> str:
         """Allocate one process-safe run id for a request submitted later."""
 
-        return allocate_run_id(self.root, self.name)
+        return allocate_run_id(self.id_state_path)
 
     async def close(self) -> None:
         """Cancel and await runs owned by this process."""
@@ -182,8 +184,7 @@ class Executor:
 
         bound = _bind_run_request(
             request,
-            root=self.root,
-            name=self.name,
+            id_state_path=self.id_state_path,
             state=state,
             setup=self.setup,
             store=self.store,
@@ -1167,7 +1168,7 @@ def _child_binding(
     )
     text = _value_text(primary.value) if primary.shape != "none" else ""
     return _Run(
-        run_id=allocate_run_id(context.root, context.name),
+        run_id=allocate_run_id(context.id_state_path),
         group=parent.group,
         origin=parent.origin,
         thread_id=parent.thread_id,

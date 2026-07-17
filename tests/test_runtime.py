@@ -85,10 +85,11 @@ from toolang.base.types.sandbox import (
 )
 from toolang.catalog.cap import (
     add_remote_entry,
-    build_visibility_lock,
     list_entries,
     remove_remote_entry,
 )
+from toolang.state.caps import build_visibility_lock
+from toolang.state import caps as cap_state
 from toolang.plugin.config import ChannelBinding
 from toolang.config.log_spec import PY_LOG_ENV_VAR
 from toolang.execution import executor as run_executor_module
@@ -119,7 +120,9 @@ from toolang.state.prepared import (
 from toolang.plugin.loops.basic import BasicLoop
 from toolang.plugin.models.loading import load_model_adapters, load_model_providers
 from toolang.agent import runtime as up_module
-from toolang.agent.context import ComponentState, RuntimeConfig, start_delivery
+from toolang.api.context import ApiContext
+from toolang.config.runtime import RuntimeConfig
+from toolang.plugin.channels.runtime import start_delivery
 from toolang.agent.runtime import (
     load_default_models,
     up as run_experiments_up,
@@ -153,15 +156,14 @@ def _put_cap(
 def bind_run_request(context, request, *, state=None):
     return _bind_run_request(
         request,
-        root=context.root,
-        name=context.name,
+        id_state_path=context.executor.id_state_path,
         state=state or context.get_agent_state(),
         setup=context.executor.setup,
         store=context.store,
     )
 
 
-def _emit_trace(context: ComponentState, event) -> None:
+def _emit_trace(context: ApiContext, event) -> None:
     emit_event(context.store, event, agent_id=context.name)
 
 
@@ -347,8 +349,12 @@ def test_collect_file_submissions_scans_existing_inbox_files_once(
     context.config.set("components.trigger.file.stable_ms", 0.0)
     store = file_requests.open_file_request_store(toolang_root, "alice")
     try:
-        first = files.collect_file_submissions(context, store)
-        second = files.collect_file_submissions(context, store)
+        first = files.collect_file_submissions(
+            context.executor, store, inboxes=(inbox,), stable_ms=0.0
+        )
+        second = files.collect_file_submissions(
+            context.executor, store, inboxes=(inbox,), stable_ms=0.0
+        )
         rows = store.list()
     finally:
         store.close()
@@ -978,6 +984,8 @@ def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
     executor = run_executor_module.Executor(
         root=context.root,
         name=context.name,
+        home=context.home,
+        id_state_path=context.executor.id_state_path,
         setup=context.executor.setup,
         store=context.store,
         model_aliases=context.executor.model_aliases,
@@ -2234,7 +2242,7 @@ def test_create_app_is_pure_route_assembly(tmp_path: Path) -> None:
     app = create_app(context)
 
     assert app.router.lifespan_context is not None
-    assert app.state is context
+    assert app.state.context is context
     context.store.close()
 
 
@@ -2394,7 +2402,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
         reply_target=ReplyTarget(channel="telegram", address="chat:123"),
     )
 
-    def fake_assemble(_context: ComponentState, bound):
+    def fake_assemble(_context: ApiContext, bound):
         return _fake_run_input(bound)
 
     def fake_execute_stream(_bound, _model, *, on_event) -> RunResult:
@@ -2557,7 +2565,7 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
         reply_target=ReplyTarget(channel="telegram", address="chat:123"),
     )
 
-    def fake_assemble(_context: ComponentState, bound):
+    def fake_assemble(_context: ApiContext, bound):
         return _fake_run_input(bound)
 
     def fake_execute_stream(_bound, _model, *, on_event) -> RunResult:
@@ -2637,8 +2645,8 @@ def test_control_routes_update_durable_only_without_prepare_reload(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
@@ -2881,7 +2889,7 @@ def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
 
     monkeypatch.setattr("toolang.agent.runtime._run_uvicorn_app", fake_run_uvicorn_app)
     monkeypatch.setattr(
-        caps,
+        cap_state,
         "_fetch_github_directory",
         lambda _ref: {"SKILL.md": b"---\ndescription: PDF work\n---\n# PDF\n"},
     )
@@ -2986,8 +2994,8 @@ def test_local_runtime_configures_logging_before_state_loaded(
         captured["spec"] = spec
         captured["environ"] = environ
 
-    def fake_log_state_loaded(context: ComponentState) -> None:
-        del context
+    def fake_log_state_loaded(executor, config, state) -> None:
+        del executor, config, state
         order.append("state")
 
     def fake_run_uvicorn_app(*args, **kwargs) -> None:
@@ -3028,7 +3036,9 @@ def test_state_loaded_log_counts_selectable_models(tmp_path: Path, caplog) -> No
     )
 
     caplog.set_level(logging.INFO, logger="toolang.state")
-    up_module._log_state_loaded(context)
+    up_module._log_state_loaded(
+        context.executor, context.config, context.get_agent_state()
+    )
 
     messages = [
         record.getMessage()
@@ -3038,25 +3048,26 @@ def test_state_loaded_log_counts_selectable_models(tmp_path: Path, caplog) -> No
     assert messages == [
         (
             f"Agent loaded state={context.get_agent_state().fingerprint[:12]} "
-            f"models={up_module._model_count(context)} tools={len(context.executor.setup.tools)} "
+            f"models={up_module._model_count(context.executor, context.config)} "
+            f"tools={len(context.executor.setup.tools)} "
             "psyches=0 skills=0 services=0"
         )
     ]
-    assert up_module._model_count(context) > 0
-    unrestricted_count = up_module._model_count(context)
+    assert up_module._model_count(context.executor, context.config) > 0
+    unrestricted_count = up_module._model_count(context.executor, context.config)
     context.config.set("models.allowed_selectors", ("openai/gpt-5[openai]",))
-    assert up_module._model_count(context) == 1
-    assert up_module._model_count(context) < unrestricted_count
+    assert up_module._model_count(context.executor, context.config) == 1
+    assert up_module._model_count(context.executor, context.config) < unrestricted_count
 
 
-def test_assemble_components_rejects_unmatched_tool_selector(tmp_path: Path) -> None:
+def test_assemble_execution_rejects_unmatched_tool_selector(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     AgentCatalog(toolang_root).create("alice")
 
     with pytest.raises(
         ValueError, match="tool selector matched no tools: missing/none"
     ):
-        up_module.assemble_components(
+        up_module.assemble_execution(
             toolang_root=toolang_root,
             agent_name="alice",
             enabled_components=("runner.chat",),
@@ -3065,12 +3076,12 @@ def test_assemble_components_rejects_unmatched_tool_selector(tmp_path: Path) -> 
         )
 
 
-def test_assemble_components_rejects_unmatched_cap_selector(tmp_path: Path) -> None:
+def test_assemble_execution_rejects_unmatched_cap_selector(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     AgentCatalog(toolang_root).create("alice")
 
     with pytest.raises(ValueError, match="cap selector matched no caps: skill/missing"):
-        up_module.assemble_components(
+        up_module.assemble_execution(
             toolang_root=toolang_root,
             agent_name="alice",
             enabled_components=("runner.chat",),
@@ -3079,7 +3090,7 @@ def test_assemble_components_rejects_unmatched_cap_selector(tmp_path: Path) -> N
         )
 
 
-def test_assemble_components_applies_tool_and_cap_selectors(tmp_path: Path) -> None:
+def test_assemble_execution_applies_tool_and_cap_selectors(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     AgentCatalog(toolang_root).create("alice")
     _put_cap(
@@ -3099,7 +3110,7 @@ def test_assemble_components_applies_tool_and_cap_selectors(tmp_path: Path) -> N
         text="---\ndescription: Extra\n---\n# Extra\n",
     )
 
-    context = up_module.assemble_components(
+    executor, watcher, _ = up_module.assemble_execution(
         toolang_root=toolang_root,
         agent_name="alice",
         enabled_components=("runner.chat",),
@@ -3108,8 +3119,8 @@ def test_assemble_components_applies_tool_and_cap_selectors(tmp_path: Path) -> N
         cap_selectors=("skill/local-reviewer",),
     )
 
-    assert tuple(context.executor.setup.tools) == ("shell__execute",)
-    assert [(entry.kind, entry.name) for entry in context.get_agent_state().caps] == [
+    assert tuple(executor.setup.tools) == ("shell__execute",)
+    assert [(entry.kind, entry.name) for entry in watcher.current().caps] == [
         ("skill", "local-reviewer")
     ]
 
@@ -3125,7 +3136,7 @@ def test_watch_reload_preserves_tool_and_cap_selectors(tmp_path: Path) -> None:
         name="local-reviewer",
         text="---\ndescription: Review local changes\n---\n# Local Reviewer\n",
     )
-    context = up_module.assemble_components(
+    executor, watcher, config = up_module.assemble_execution(
         toolang_root=toolang_root,
         agent_name="alice",
         enabled_components=("trigger.watch", "runner.chat"),
@@ -3133,13 +3144,16 @@ def test_watch_reload_preserves_tool_and_cap_selectors(tmp_path: Path) -> None:
         tool_selectors=("shell/*",),
         cap_selectors=("skill/local-reviewer",),
     )
-    context.config.set("components.trigger.watch.debounce_ms", 1)
-    binding = bind_run_request(
-        context,
+    config.set("components.trigger.watch.debounce_ms", 1)
+    binding = _bind_run_request(
         RunRequest(group="chat", origin="chat", input="hello"),
+        id_state_path=executor.id_state_path,
+        state=watcher.current(),
+        setup=executor.setup,
+        store=executor.store,
     )
     accepted_setup = binding.setup
-    before = context.get_agent_state().fingerprint
+    before = watcher.current().fingerprint
     _put_cap(
         toolang_root,
         "alice",
@@ -3148,18 +3162,25 @@ def test_watch_reload_preserves_tool_and_cap_selectors(tmp_path: Path) -> None:
         name="extra-skill",
         text="---\ndescription: Extra\n---\n# Extra\n",
     )
-    refreshed_state = context.state_watcher.refresh()
+    refreshed_state = watcher.refresh()
     expected_fingerprint = refreshed_state.fingerprint
     assert expected_fingerprint != before
 
-    watch._apply_state(context, refreshed_state)
+    watch._apply_state(
+        root=toolang_root,
+        name="alice",
+        previous=watcher.current(),
+        state=refreshed_state,
+        executor=executor,
+        config=config,
+    )
 
-    assert context.get_agent_state().fingerprint == expected_fingerprint
-    assert context.executor.setup is not accepted_setup
+    assert watcher.current().fingerprint == expected_fingerprint
+    assert executor.setup is not accepted_setup
     assert binding.setup is accepted_setup
     assert tuple(binding.setup.tools) == ("shell__execute",)
-    assert tuple(context.executor.setup.tools) == ("shell__execute",)
-    assert [(entry.kind, entry.name) for entry in context.get_agent_state().caps] == [
+    assert tuple(executor.setup.tools) == ("shell__execute",)
+    assert [(entry.kind, entry.name) for entry in watcher.current().caps] == [
         ("skill", "local-reviewer")
     ]
 
@@ -4442,8 +4463,8 @@ def test_prepare_materializes_remote_entries_from_config(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_materialized_files(*, relative_entry_path, kind, name, ref):
         del kind, name, ref
@@ -4453,7 +4474,9 @@ def test_prepare_materializes_remote_entries_from_config(
             ): b"---\ndescription: Rewrite\n---\nRewrite prompt.\n"
         }
 
-    monkeypatch.setattr(caps, "_remote_materialized_files", fake_materialized_files)
+    monkeypatch.setattr(
+        cap_state, "_remote_materialized_files", fake_materialized_files
+    )
 
     config_path = add_remote_entry(
         toolang_root,
@@ -4490,8 +4513,8 @@ def test_remote_skill_shorthand_probes_agent_skills_and_skills_repos(
         probes.append(ref)
         return ref == "github://anthropics/skills/skills/pdf@main"
 
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", fake_exists)
+    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(cap_state, "_github_remote_exists", fake_exists)
 
     add_remote_entry(
         toolang_root,
@@ -4526,9 +4549,9 @@ def test_remote_cap_repo_shorthand_uses_named_repo_path_probes(
         return ref == "github://anthropics/project/pdf@trunk"
 
     monkeypatch.setattr(
-        caps, "_github_repo_default_branch", lambda owner, repo: "trunk"
+        cap_state, "_github_repo_default_branch", lambda owner, repo: "trunk"
     )
-    monkeypatch.setattr(caps, "_github_remote_exists", fake_exists)
+    monkeypatch.setattr(cap_state, "_github_remote_exists", fake_exists)
 
     add_remote_entry(
         toolang_root,
@@ -4554,9 +4577,9 @@ def test_remote_skill_add_canonicalizes_github_tree_url(
 ) -> None:
     toolang_root = tmp_path / "toolang"
 
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
-        caps,
+        cap_state,
         "_fetch_github_directory",
         lambda ref: {
             "SKILL.md": f"---\ndescription: {ref.render()}\n---\n# Answers\n".encode()
@@ -4602,9 +4625,9 @@ def test_remote_skill_add_canonicalizes_github_skill_file_url(
 ) -> None:
     toolang_root = tmp_path / "toolang"
 
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
-        caps,
+        cap_state,
         "_fetch_github_directory",
         lambda ref: {
             "SKILL.md": f"---\ndescription: {ref.render()}\n---\n# Agent Browser\n".encode()
@@ -4635,9 +4658,9 @@ def test_remote_skill_add_canonicalizes_raw_refs_heads_skill_file_url(
 ) -> None:
     toolang_root = tmp_path / "toolang"
 
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
-        caps,
+        cap_state,
         "_fetch_github_directory",
         lambda ref: {
             "SKILL.md": f"---\ndescription: {ref.render()}\n---\n# Agent Browser\n".encode()
@@ -4669,10 +4692,10 @@ def test_state_watcher_refresh_records_remote_cap_updates(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
-        caps,
+        cap_state,
         "_fetch_github_directory",
         lambda ref: {
             "SKILL.md": f"---\ndescription: {ref.render()}\n---\n# Skill\n".encode()
@@ -4703,15 +4726,10 @@ def test_state_watcher_refresh_records_remote_cap_updates(
             del created_at
             updates.append((kind, dict(payload or {})))
 
-    class Context:
-        root = toolang_root
-        name = "alice"
-        store = Store()
-
     watcher = state_watcher.StateWatcher(toolang_root, "alice", state)
     next_state = watcher.refresh()
     watch._append_entry_change_updates(
-        cast(ComponentState, Context()), watcher.previous_locks, watcher.locks
+        cast(RunStore, Store()), watcher.previous_locks, watcher.locks
     )
 
     assert ("skill_changed", {"name": "review", "visibility": "private"}) in updates
@@ -4767,14 +4785,14 @@ def test_prepare_reuses_remote_caps_when_visibility_inputs_and_outputs_match(
     toolang_root = tmp_path / "toolang"
     fetches: list[str] = []
 
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         fetches.append(ref.render())
         return {"SKILL.md": b"---\ndescription: PDF\n---\n# PDF\n"}
 
-    monkeypatch.setattr(caps, "_fetch_github_directory", fake_fetch)
+    monkeypatch.setattr(cap_state, "_fetch_github_directory", fake_fetch)
     add_remote_entry(
         toolang_root,
         "alice",
@@ -4785,7 +4803,7 @@ def test_prepare_reuses_remote_caps_when_visibility_inputs_and_outputs_match(
 
     first = state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
     monkeypatch.setattr(
-        caps,
+        cap_state,
         "_fetch_github_directory",
         lambda ref: pytest.fail(f"unexpected remote fetch: {ref.render()}"),
     )
@@ -4843,7 +4861,7 @@ def test_prepare_rebuilds_stale_lock_schema_as_cache_miss(
     )
 
     monkeypatch.setattr(
-        caps,
+        cap_state,
         "_fetch_github_directory",
         lambda ref: {"SKILL.md": b"---\ndescription: PDF\n---\n# PDF\n"},
     )
@@ -4861,14 +4879,14 @@ def test_prepare_reuses_private_remote_caps_when_shared_inputs_change(
     toolang_root = tmp_path / "toolang"
     fetches: list[str] = []
 
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         fetches.append(ref.render())
         return {"SKILL.md": b"---\ndescription: PDF\n---\n# PDF\n"}
 
-    monkeypatch.setattr(caps, "_fetch_github_directory", fake_fetch)
+    monkeypatch.setattr(cap_state, "_fetch_github_directory", fake_fetch)
     add_remote_entry(
         toolang_root,
         "alice",
@@ -4898,14 +4916,14 @@ def test_prepare_reuses_private_remote_caps_when_local_cap_changes(
     toolang_root = tmp_path / "toolang"
     fetches: list[str] = []
 
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         fetches.append(ref.render())
         return {"SKILL.md": b"---\ndescription: PDF\n---\n# PDF\n"}
 
-    monkeypatch.setattr(caps, "_fetch_github_directory", fake_fetch)
+    monkeypatch.setattr(cap_state, "_fetch_github_directory", fake_fetch)
     add_remote_entry(
         toolang_root,
         "alice",
@@ -4916,7 +4934,7 @@ def test_prepare_reuses_private_remote_caps_when_local_cap_changes(
     state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
 
     monkeypatch.setattr(
-        caps,
+        cap_state,
         "_fetch_github_directory",
         lambda ref: pytest.fail(f"unexpected remote fetch: {ref.render()}"),
     )
@@ -4945,8 +4963,8 @@ def test_concurrent_agent_prepare_reuses_shared_lock_after_another_agent_updates
     fetches: list[str] = []
     fetch_lock = threading.Lock()
 
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     AgentCatalog(toolang_root).create("alice")
     AgentCatalog(toolang_root).create("bob")
@@ -4975,7 +4993,7 @@ def test_concurrent_agent_prepare_reuses_shared_lock_after_another_agent_updates
             ready.wait(timeout=2.0)
         return prepared
 
-    monkeypatch.setattr(caps, "_fetch_github_file", fake_fetch)
+    monkeypatch.setattr(cap_state, "_fetch_github_file", fake_fetch)
     monkeypatch.setattr(
         state_watcher, "_load_prepared_optional", delayed_load_prepared_optional
     )
@@ -5018,13 +5036,13 @@ def test_prepare_reuses_program_ref_caps_when_inline_program_changes(
     toolang_root = tmp_path / "toolang"
     fetches: list[str] = []
 
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         fetches.append(ref.render())
         return b"Remote psyche body.\n"
 
-    monkeypatch.setattr(caps, "_fetch_github_file", fake_fetch)
+    monkeypatch.setattr(cap_state, "_fetch_github_file", fake_fetch)
     AgentCatalog(toolang_root).create("alice")
     program_path = toolang_root / "agents" / "alice" / "agent.too"
     program_path.write_text(
@@ -5051,13 +5069,13 @@ def test_prepare_fetches_only_changed_program_ref_cap(
     toolang_root = tmp_path / "toolang"
     fetches: list[str] = []
 
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         fetches.append(ref.render())
         return b"Remote psyche body.\n"
 
-    monkeypatch.setattr(caps, "_fetch_github_file", fake_fetch)
+    monkeypatch.setattr(cap_state, "_fetch_github_file", fake_fetch)
     AgentCatalog(toolang_root).create("alice")
     program_path = toolang_root / "agents" / "alice" / "agent.too"
     program_path.write_text(
@@ -5091,10 +5109,10 @@ def test_list_entries_reuses_prepared_program_ref_resolution(
 ) -> None:
     toolang_root = tmp_path / "toolang"
 
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
-        caps, "_fetch_github_file", lambda ref: b"Remote psyche body.\n"
+        cap_state, "_fetch_github_file", lambda ref: b"Remote psyche body.\n"
     )
     AgentCatalog(toolang_root).create("alice")
     program_path = toolang_root / "agents" / "alice" / "agent.too"
@@ -5105,7 +5123,7 @@ def test_list_entries_reuses_prepared_program_ref_resolution(
     state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
 
     monkeypatch.setattr(
-        caps,
+        cap_state,
         "_github_repo_default_branch",
         lambda owner, repo: pytest.fail(
             f"unexpected remote branch lookup: {owner}/{repo}"
@@ -5127,8 +5145,8 @@ def test_prepare_refetches_remote_caps_when_prepared_output_does_not_match_lock(
     toolang_root = tmp_path / "toolang"
     fetch_count = 0
 
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         nonlocal fetch_count
@@ -5137,7 +5155,7 @@ def test_prepare_refetches_remote_caps_when_prepared_output_does_not_match_lock(
             "SKILL.md": f"---\ndescription: PDF {fetch_count}\n---\n# PDF\n".encode()
         }
 
-    monkeypatch.setattr(caps, "_fetch_github_directory", fake_fetch)
+    monkeypatch.setattr(cap_state, "_fetch_github_directory", fake_fetch)
     add_remote_entry(
         toolang_root,
         "alice",
@@ -5170,7 +5188,7 @@ def test_remote_skill_add_rejects_missing_github_tree_url(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: False)
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: False)
 
     with pytest.raises(
         ValueError, match="remote skill not found or missing entry file"
@@ -5204,7 +5222,7 @@ def test_prepare_materializes_remote_skill_directory(
             "REFERENCE.md": b"# Reference\n",
         }
 
-    monkeypatch.setattr(caps, "_fetch_github_directory", fake_directory)
+    monkeypatch.setattr(cap_state, "_fetch_github_directory", fake_directory)
 
     durable = scan_durable_state(toolang_root, "alice")
     prepared = state_watcher.prepare_locks(durable)
@@ -5242,9 +5260,9 @@ def test_prepare_materializes_remote_skill_from_program_use(
         "agent alice\n\nwith skill https://github.com/coinbase/agentic-wallet-skills/tree/main/skills/fund\n",
     )
 
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
-        caps,
+        cap_state,
         "_fetch_github_directory",
         lambda ref: {
             "SKILL.md": f"---\ndescription: {ref.render()}\n---\n# Fund\n".encode()
@@ -5582,7 +5600,7 @@ def test_prepare_fetches_remote_caps_with_bounded_concurrency(
             active -= 1
         return f"---\ndescription: {ref.path}\n---\nBody\n".encode("utf-8")
 
-    monkeypatch.setattr(caps, "_fetch_github_file", fake_fetch)
+    monkeypatch.setattr(cap_state, "_fetch_github_file", fake_fetch)
 
     durable = scan_durable_state(toolang_root, "alice")
     lock_record, files = build_visibility_lock(durable, visibility="shared")
@@ -5599,12 +5617,12 @@ def test_remote_shorthand_falls_back_to_main_when_default_branch_lookup_fails(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        caps,
+        cap_state,
         "_github_repo_default_branch",
         lambda owner, repo: (_ for _ in ()).throw(ValueError("rate limited")),
     )
     monkeypatch.setattr(
-        caps,
+        cap_state,
         "_github_remote_exists",
         lambda kind, ref: (
             kind == "psyche"
@@ -5613,15 +5631,15 @@ def test_remote_shorthand_falls_back_to_main_when_default_branch_lookup_fails(
     )
 
     assert (
-        caps._resolve_remote_ref("psyche", "briceyan/senior-engineer")
+        cap_state._resolve_remote_ref("psyche", "briceyan/senior-engineer")
         == "github://briceyan/agents/psyches/senior-engineer.md@main"
     )
 
 
 def test_caps_list_and_remove_remote_entries(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     add_remote_entry(
         toolang_root,
@@ -7907,7 +7925,7 @@ def test_run_input_recall_none_disables_thread_history_and_tool_context(
 
 @asynccontextmanager
 async def _running_context(
-    context: ComponentState,
+    context: ApiContext,
     *,
     enabled_features: tuple[str, ...],
     loop_intervals_ms: dict[str, float] | None = None,
@@ -7947,12 +7965,58 @@ async def _running_context(
                 ]
             )
         if "trigger.poll" in enabled_components:
-            background_tasks.append(poll.spawn(context, stop_signal=stop_signal))
+            interval = context.config.require("components.trigger.poll.interval_ms")
+            assert isinstance(interval, int | float)
+            background_tasks.append(
+                poll.spawn(
+                    name=context.name,
+                    home=context.home,
+                    bindings=context.channel_bindings,
+                    plugins=context.channel_plugins,
+                    executor=context.executor,
+                    get_agent_state=context.get_agent_state,
+                    enabled_components=enabled_components,
+                    interval_ms=float(interval),
+                    stop_signal=stop_signal,
+                )
+            )
         if "trigger.watch" in enabled_components:
             context.config.set("components.trigger.watch.debounce_ms", 10.0)
-            background_tasks.append(watch.spawn(context, stop_signal=stop_signal))
+            watcher = state_watcher.StateWatcher(
+                context.root, context.name, context.get_agent_state()
+            )
+            context.get_agent_state = watcher.current
+            background_tasks.append(
+                watch.spawn(
+                    root=context.root,
+                    name=context.name,
+                    watcher=watcher,
+                    executor=context.executor,
+                    store=context.store,
+                    config=context.config,
+                    stop_signal=stop_signal,
+                )
+            )
         if "trigger.file" in enabled_components:
-            background_tasks.append(files.spawn(context, stop_signal=stop_signal))
+            interval = context.config.require("components.trigger.file.interval_ms")
+            stable = context.config.require("components.trigger.file.stable_ms")
+            inboxes = context.config.require("components.trigger.file.inboxes")
+            assert isinstance(interval, int | float)
+            assert isinstance(stable, int | float)
+            assert isinstance(inboxes, tuple)
+            assert all(isinstance(inbox, Path) for inbox in inboxes)
+            background_tasks.append(
+                files.spawn(
+                    root=context.root,
+                    name=context.name,
+                    executor=context.executor,
+                    get_agent_state=context.get_agent_state,
+                    inboxes=cast(tuple[Path, ...], inboxes),
+                    interval_ms=float(interval),
+                    stable_ms=float(stable),
+                    stop_signal=stop_signal,
+                )
+            )
         try:
             await asyncio.sleep(0)
             yield
@@ -7970,7 +8034,7 @@ async def _running_context(
         yield context
 
 
-def _create_test_app(context: ComponentState) -> FastAPI:
+def _create_test_app(context: ApiContext) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         enabled_features = cast(
@@ -7990,7 +8054,7 @@ def _build_context(
     channel_bindings: dict[str, ChannelBinding] | None = None,
     channel_plugins: dict[str, AgentChannel] | None = None,
     tool_selectors: tuple[str, ...] | None = None,
-) -> ComponentState:
+) -> ApiContext:
     durable = scan_durable_state(toolang_root, agent_name)
     prepared = state_watcher.prepare_locks(durable)
     state = load_agent_state(prepared)
@@ -8032,6 +8096,8 @@ def _build_context(
     executor = Executor(
         root=toolang_root,
         name=agent_name,
+        home=agents.agent_home(toolang_root, agent_name),
+        id_state_path=agents.agent_id_state_path(toolang_root, agent_name),
         setup=setup,
         store=store,
         model_aliases=model_aliases,
@@ -8040,19 +8106,19 @@ def _build_context(
         config=config,
     )
     watcher = state_watcher.StateWatcher(toolang_root, agent_name, state)
-    context = ComponentState()
-    context.root = toolang_root
-    context.name = agent_name
-    context.home = agents.agent_home(toolang_root, agent_name)
-    context.room = agents.agent_room(toolang_root, agent_name)
-    context.state_watcher = watcher
-    context.get_agent_state = watcher.current
-    context.channel_bindings = channel_bindings or {}
-    context.channel_plugins = channel_plugins or {}
-    context.executor = executor
-    context.store = store
-    context.config = config
-    return context
+    return ApiContext(
+        root=toolang_root,
+        name=agent_name,
+        home=agents.agent_home(toolang_root, agent_name),
+        room=agents.agent_room(toolang_root, agent_name),
+        get_agent_state=watcher.current,
+        channel_bindings=channel_bindings or {},
+        channel_plugins=channel_plugins or {},
+        executor=executor,
+        store=store,
+        config=config,
+        enabled_components=normalize_component_names(enabled_features),
+    )
 
 
 def _wait_for_completed_runs(client: TestClient) -> dict[str, object]:
@@ -8065,15 +8131,23 @@ def _wait_for_completed_runs(client: TestClient) -> dict[str, object]:
 
 
 async def _run_delivery(
-    context: ComponentState,
+    context: ApiContext,
     binding_name: str,
     delivery: InboundDelivery,
 ) -> RunRecord:
-    return await start_delivery(context, "poll", binding_name, delivery)
+    return await start_delivery(
+        executor=context.executor,
+        get_agent_state=context.get_agent_state,
+        plugins=context.channel_plugins,
+        home=context.home,
+        component_name="poll",
+        binding_name=binding_name,
+        delivery=delivery,
+    )
 
 
 async def _record_pulse_result(
-    context: ComponentState,
+    context: ApiContext,
     store: JobStore,
     run: RunRecord,
 ) -> None:
@@ -8086,7 +8160,7 @@ async def _record_pulse_result(
 
 
 async def _wait_for_fingerprint_change(
-    context: ComponentState, fingerprint: str
+    context: ApiContext, fingerprint: str
 ) -> bool:
     for _ in range(200):
         if context.get_agent_state().fingerprint != fingerprint:
@@ -8095,7 +8169,7 @@ async def _wait_for_fingerprint_change(
     return False
 
 
-async def _wait_for_active_run(context: ComponentState) -> None:
+async def _wait_for_active_run(context: ApiContext) -> None:
     for _ in range(100):
         state = cast(
             dict[str, object],
@@ -8112,7 +8186,7 @@ async def _wait_for_active_run(context: ComponentState) -> None:
     raise AssertionError("expected active run")
 
 
-async def _wait_for_completed_count(context: ComponentState, count: int) -> None:
+async def _wait_for_completed_count(context: ApiContext, count: int) -> None:
     for _ in range(200):
         runs = context.store.list_runs(limit=None)
         if (
@@ -8352,7 +8426,7 @@ def _model_detail(
 
 @contextmanager
 def _patched_run_input_assembly(fake_assemble):
-    def fake_from_agic(context: ComponentState, bound, _agic):
+    def fake_from_agic(context: ApiContext, bound, _agic):
         return fake_assemble(context, bound)
 
     with (
@@ -8370,7 +8444,7 @@ def _patched_run_input_assembly(fake_assemble):
 def _patched_executor_execution():
     current: dict[str, str] = {}
 
-    def fake_assemble(_context: ComponentState, bound):
+    def fake_assemble(_context: ApiContext, bound):
         current["run_id"] = bound.run_id
         current["thread_id"] = bound.thread_id
         current["input_text"] = bound.input_text
@@ -8418,7 +8492,7 @@ def _patched_executor_execution():
 def _patched_executor_execution_with_tools(*, output_text: str):
     current: dict[str, str] = {}
 
-    def fake_assemble(_context: ComponentState, bound):
+    def fake_assemble(_context: ApiContext, bound):
         current["run_id"] = bound.run_id
         current["thread_id"] = bound.thread_id
         return _fake_run_input(bound)
@@ -8624,7 +8698,7 @@ def _patched_executor_execution_with_tools(*, output_text: str):
 
 @contextmanager
 def _patched_executor_failure(message: str):
-    def fake_assemble(_context: ComponentState, bound):
+    def fake_assemble(_context: ApiContext, bound):
         return _fake_run_input(bound)
 
     def fake_run(_context):
@@ -8647,7 +8721,7 @@ def _patched_executor_failure(message: str):
 def _patched_executor_streaming_text(release: threading.Event):
     current: dict[str, str] = {}
 
-    def fake_assemble(_context: ComponentState, bound):
+    def fake_assemble(_context: ApiContext, bound):
         current["run_id"] = bound.run_id
         current["thread_id"] = bound.thread_id
         return _fake_run_input(bound)

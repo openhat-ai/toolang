@@ -44,6 +44,7 @@ def test_local_chat_client_runs_stop_and_steer_on_one_event_loop(
             self.reply: Any = None
             self.release: asyncio.Event | None = None
             self.request: Any = None
+            self.store: Any = None
 
         def allocate_run_id(self) -> str:
             return "run_local"
@@ -78,14 +79,13 @@ def test_local_chat_client_runs_stop_and_steer_on_one_event_loop(
             operations.append(("store_close", 0))
 
     executor = FakeExecutor()
-    components = SimpleNamespace(
-        root=tmp_path,
-        name="alice",
-        executor=executor,
-        store=FakeStore(),
-        state_watcher=SimpleNamespace(refresh=lambda: object()),
+    executor.store = FakeStore()
+    watcher = SimpleNamespace(refresh=lambda: object())
+    monkeypatch.setattr(
+        client.up,
+        "assemble_execution",
+        lambda **_kwargs: (executor, watcher, SimpleNamespace()),
     )
-    monkeypatch.setattr(client.up, "assemble_components", lambda **_kwargs: components)
     chat_client = client.LocalChatClient(tmp_path, "alice", environ={})
     received: list[str] = []
     errors: list[str] = []

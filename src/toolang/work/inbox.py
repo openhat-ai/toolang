@@ -7,15 +7,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from collections.abc import Callable
 
-from toolang.execution.binding import allocate_run_id
+from toolang.execution.executor import Executor
 from toolang.execution.records import RunRecord
 from toolang.execution.request import RunRequest
+from toolang.state.agent import AgentState
 from toolang.work import files
-
-if TYPE_CHECKING:
-    from toolang.agent.context import ComponentState
 
 DEFAULT_INTERVAL_MS = 1_000.0
 DEFAULT_STABLE_MS = 500.0
@@ -33,36 +31,55 @@ class FileSubmission:
 
 
 def spawn(
-    context: ComponentState,
     *,
+    root: Path,
+    name: str,
+    executor: Executor,
+    get_agent_state: Callable[[], AgentState],
+    inboxes: tuple[Path, ...],
+    interval_ms: float,
+    stable_ms: float,
     stop_signal: asyncio.Event,
 ) -> asyncio.Task[None]:
     """Spawn the file request trigger in one background task."""
 
-    return asyncio.create_task(run(context, stop_signal=stop_signal))
+    return asyncio.create_task(
+        run(
+            root=root,
+            name=name,
+            executor=executor,
+            get_agent_state=get_agent_state,
+            inboxes=inboxes,
+            interval_ms=interval_ms,
+            stable_ms=stable_ms,
+            stop_signal=stop_signal,
+        )
+    )
 
 
 async def run(
-    context: ComponentState,
     *,
+    root: Path,
+    name: str,
+    executor: Executor,
+    get_agent_state: Callable[[], AgentState],
+    inboxes: tuple[Path, ...],
+    interval_ms: float,
+    stable_ms: float,
     stop_signal: asyncio.Event,
 ) -> None:
     """Scan inbox directories and start unseen file requests."""
 
-    interval_value = context.config.require("components.trigger.file.interval_ms")
-    if not isinstance(interval_value, int | float):
-        raise TypeError("invalid config: components.trigger.file.interval_ms")
-    interval_timeout = float(interval_value) / 1000
-    inboxes = _configured_inboxes(context)
+    interval_timeout = interval_ms / 1000
     logger.debug(
         "files.started root=%s agent=%s interval_ms=%s inboxes=%s",
-        context.root,
-        context.name,
-        int(float(interval_value)),
+        root,
+        name,
+        int(interval_ms),
         ",".join(str(path) for path in inboxes) or "-",
     )
     active: dict[str, asyncio.Task[RunRecord]] = {}
-    store = files.open_file_request_store(context.root, context.name)
+    store = files.open_file_request_store(root, name)
     try:
         while True:
             now = datetime.now(timezone.utc)
@@ -71,8 +88,10 @@ async def run(
                 active,
                 now=now,
             )
-            for submission in collect_file_submissions(context, store, now=now):
-                active[submission.run_id] = context.executor.start(
+            for submission in collect_file_submissions(
+                executor, store, inboxes=inboxes, stable_ms=stable_ms, now=now
+            ):
+                active[submission.run_id] = executor.start(
                     RunRequest(
                         group="file",
                         origin="file",
@@ -93,7 +112,7 @@ async def run(
                             },
                         },
                     ),
-                    context.get_agent_state(),
+                    get_agent_state(),
                 )
             try:
                 await asyncio.wait_for(stop_signal.wait(), timeout=interval_timeout)
@@ -109,24 +128,25 @@ async def run(
 
 
 def collect_file_submissions(
-    context: ComponentState,
+    executor: Executor,
     store: files.FileRequestStore,
     *,
+    inboxes: tuple[Path, ...],
+    stable_ms: float,
     now: datetime | None = None,
 ) -> list[FileSubmission]:
     """Return unseen stable files claimed for processing."""
 
     current = now or datetime.now(timezone.utc)
-    stable_ms = _stable_ms(context)
     submissions: list[FileSubmission] = []
-    for inbox in _configured_inboxes(context):
+    for inbox in inboxes:
         for snapshot in _scan_inbox(inbox, now=current, stable_ms=stable_ms):
             try:
                 text, parts = files.render_file_input(Path(snapshot.absolute_path))
             except (OSError, UnicodeDecodeError) as exc:
                 logger.debug("files.input_skipped path=%s error=%s", snapshot.absolute_path, exc)
                 continue
-            run_id = allocate_run_id(context.root, context.name)
+            run_id = executor.allocate_run_id()
             thread_id = files.file_thread_id(snapshot.absolute_path)
             record = store.claim(snapshot, run_id=run_id, thread_id=thread_id, now=current)
             if record is None:
@@ -184,29 +204,6 @@ def _scan_inbox(
             )
         )
     return tuple(snapshots)
-
-
-def _stable_ms(context: ComponentState) -> float:
-    value = context.config.require("components.trigger.file.stable_ms")
-    if not isinstance(value, int | float):
-        raise TypeError("invalid config: components.trigger.file.stable_ms")
-    return float(value)
-
-
-def _configured_inboxes(context: ComponentState) -> tuple[Path, ...]:
-    value = context.config.require("components.trigger.file.inboxes")
-    if not isinstance(value, tuple):
-        raise TypeError("invalid config: components.trigger.file.inboxes")
-    inboxes: list[Path] = []
-    for item in value:
-        if isinstance(item, Path):
-            inboxes.append(item)
-            continue
-        if isinstance(item, str):
-            inboxes.append(Path(item))
-            continue
-        raise TypeError("invalid config: components.trigger.file.inboxes")
-    return tuple(inboxes)
 
 
 def _record_completed_runs(

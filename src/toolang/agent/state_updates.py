@@ -5,65 +5,107 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 import logging
-from typing import TYPE_CHECKING, cast
+from pathlib import Path
+from typing import cast
 
+from toolang.config.runtime import RuntimeConfig
+from toolang.execution.executor import Executor
 from toolang.execution.records import UpdateKind
+from toolang.execution.store import RunStore
 from toolang.plugin.models.resolution import select_model_selectors
 from toolang.state.agent import AgentState
 from toolang.state.prepared import PreparedLocks, PreparedVisibility
 from toolang.plugin.tools.loading import load_runtime_tools
-
-if TYPE_CHECKING:
-    from .context import ComponentState
+from toolang.state.watcher import StateWatcher
 
 logger = logging.getLogger("toolang.watch")
 state_logger = logging.getLogger("toolang.state")
 
 
 def spawn(
-    context: ComponentState,
     *,
+    root: Path,
+    name: str,
+    watcher: StateWatcher,
+    executor: Executor,
+    store: RunStore,
+    config: RuntimeConfig,
     stop_signal: asyncio.Event,
 ) -> asyncio.Task[None]:
     """Spawn the state watcher in one background task."""
 
-    return asyncio.create_task(run(context, stop_signal=stop_signal))
+    return asyncio.create_task(
+        run(
+            root=root,
+            name=name,
+            watcher=watcher,
+            executor=executor,
+            store=store,
+            config=config,
+            stop_signal=stop_signal,
+        )
+    )
 
 
-async def run(context: ComponentState, *, stop_signal: asyncio.Event) -> None:
+async def run(
+    *,
+    root: Path,
+    name: str,
+    watcher: StateWatcher,
+    executor: Executor,
+    store: RunStore,
+    config: RuntimeConfig,
+    stop_signal: asyncio.Event,
+) -> None:
     """Apply new agent state versions to one running uptime."""
 
-    interval_ms = _config_number(context, "components.trigger.watch.interval_ms")
-    debounce_ms = _config_number(context, "components.trigger.watch.debounce_ms")
-    watcher = context.state_watcher
+    interval_ms = _config_number(config, "components.trigger.watch.interval_ms")
+    debounce_ms = _config_number(config, "components.trigger.watch.debounce_ms")
+    previous = watcher.current()
     async for state in watcher.updates(
         stop_signal=stop_signal,
         interval_ms=interval_ms,
         debounce_ms=debounce_ms,
     ):
-        _append_entry_change_updates(context, watcher.previous_locks, watcher.locks)
-        _apply_state(context, state)
+        _append_entry_change_updates(store, watcher.previous_locks, watcher.locks)
+        _apply_state(
+            root=root,
+            name=name,
+            previous=previous,
+            state=state,
+            executor=executor,
+            config=config,
+        )
+        previous = state
 
 
-def _apply_state(context: ComponentState, state: AgentState) -> None:
+def _apply_state(
+    *,
+    root: Path,
+    name: str,
+    previous: AgentState,
+    state: AgentState,
+    executor: Executor,
+    config: RuntimeConfig,
+) -> None:
     tools = load_runtime_tools(
-        root=context.root,
-        name=context.name,
+        root=root,
+        name=name,
         state=state,
-        environ=context.executor.model_environ,
-        selectors=_tool_allowed_selectors(context),
+        environ=executor.model_environ,
+        selectors=_tool_allowed_selectors(config),
     )
     logger.debug(
         "watch.applied agent=%s state=%s->%s",
-        context.name,
-        _short_fingerprint(context.get_agent_state().fingerprint),
+        name,
+        _short_fingerprint(previous.fingerprint),
         _short_fingerprint(state.fingerprint),
     )
-    context.executor.setup = replace(context.executor.setup, tools=tools)
+    executor.setup = replace(executor.setup, tools=tools)
     state_logger.info(
         "Agent reloaded state=%s models=%s tools=%s psyches=%s skills=%s services=%s",
         _short_fingerprint(state.fingerprint),
-        _model_count(context),
+        _model_count(executor, config),
         len(tools),
         _cap_count(state, "psyche"),
         _cap_count(state, "skill"),
@@ -72,7 +114,7 @@ def _apply_state(context: ComponentState, state: AgentState) -> None:
 
 
 def _append_entry_change_updates(
-    context: ComponentState,
+    store: RunStore,
     before: PreparedLocks | None,
     after: PreparedLocks | None,
 ) -> None:
@@ -83,7 +125,7 @@ def _append_entry_change_updates(
         for key in before_entries.keys() | after_entries.keys()
         if before_entries.get(key) != after_entries.get(key)
     ):
-        context.store.append_update(
+        store.append_update(
             kind=cast(UpdateKind, f"{kind}_changed"),
             payload={"name": name, "visibility": visibility},
         )
@@ -108,40 +150,40 @@ def _entry_change_snapshot(
     return snapshot
 
 
-def _config_number(context: ComponentState, key: str) -> float:
-    value = context.config.require(key)
+def _config_number(config: RuntimeConfig, key: str) -> float:
+    value = config.require(key)
     if not isinstance(value, int | float):
         raise TypeError(f"invalid config: {key}")
     return float(value)
 
 
-def _model_count(context: ComponentState) -> int:
+def _model_count(executor: Executor, config: RuntimeConfig) -> int:
     try:
-        selectors = _model_allowed_selectors(context)
+        selectors = _model_allowed_selectors(config)
         if selectors:
             return len(
                 select_model_selectors(
-                    context.executor, activation_selectors=selectors
+                    executor, activation_selectors=selectors
                 )
             )
-        return len(select_model_selectors(context.executor))
+        return len(select_model_selectors(executor))
     except Exception:
-        return len(_model_allowed_selectors(context))
+        return len(_model_allowed_selectors(config))
 
 
-def _model_allowed_selectors(context: ComponentState) -> tuple[str, ...]:
-    return _config_strings(context, "models.allowed_selectors")
+def _model_allowed_selectors(config: RuntimeConfig) -> tuple[str, ...]:
+    return _config_strings(config, "models.allowed_selectors")
 
 
-def _tool_allowed_selectors(context: ComponentState) -> tuple[str, ...] | None:
-    value = context.config.get("tools.allowed_selectors")
+def _tool_allowed_selectors(config: RuntimeConfig) -> tuple[str, ...] | None:
+    value = config.get("tools.allowed_selectors")
     if value is None:
         return None
-    return _config_strings(context, "tools.allowed_selectors")
+    return _config_strings(config, "tools.allowed_selectors")
 
 
-def _config_strings(context: ComponentState, key: str) -> tuple[str, ...]:
-    value = context.config.get(key)
+def _config_strings(config: RuntimeConfig, key: str) -> tuple[str, ...]:
+    value = config.get(key)
     if not isinstance(value, tuple | list):
         return ()
     return tuple(item for item in value if isinstance(item, str) and item.strip())

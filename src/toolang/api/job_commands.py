@@ -24,7 +24,7 @@ def create_router() -> APIRouter:
         job_id: str,
         payload: _views.JobPatchRequest,
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         kind, entry = _views._find_archived_job_or_404(context, job_id)
         return _views._update_job(context, kind=kind, entry=entry, payload=payload)
 
@@ -32,7 +32,7 @@ def create_router() -> APIRouter:
         "/jobs/archived/{job_id}", tags=["jobs"], summary="Delete Archived Job"
     )
     async def delete_archived_job(request: Request, job_id: str) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         kind, entry = _views._find_archived_job_or_404(context, job_id)
         removed = JobCatalog(context.root, context.name).remove(kind, job_id)
         if not removed:
@@ -51,7 +51,7 @@ def create_router() -> APIRouter:
         job_id: str,
         payload: _views.JobPatchRequest,
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         kind, entry = _views._find_job_or_404(context, job_id)
         return _views._update_job(context, kind=kind, entry=entry, payload=payload)
 
@@ -60,7 +60,7 @@ def create_router() -> APIRouter:
         request: Request,
         payload: _views.TaskCreateRequest,
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         document = _views._task_document_from_create(context, payload)
         path = JobCatalog(context.root, context.name).create_document(document)
         _reconcile_jobs(context, kind="task")
@@ -82,7 +82,7 @@ def create_router() -> APIRouter:
         task_id: str,
         payload: _views.TaskPatchRequest,
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         entry = _views._find_archived_task_or_404(context, task_id)
         return _views._update_task(context, entry=entry, payload=payload)
 
@@ -90,7 +90,7 @@ def create_router() -> APIRouter:
         "/tasks/archived/{task_id}", tags=["jobs"], summary="Delete Archived Task"
     )
     async def delete_archived_task(request: Request, task_id: str) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         entry = _views._find_archived_task_or_404(context, task_id)
         if not JobCatalog(context.root, context.name).remove("task", task_id):
             raise HTTPException(
@@ -108,13 +108,13 @@ def create_router() -> APIRouter:
         task_id: str,
         payload: _views.TaskPatchRequest,
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         entry = _views._find_task_or_404(context, task_id)
         return _views._update_task(context, entry=entry, payload=payload)
 
     @router.post("/tasks/{task_id}/draft", tags=["jobs"], summary="Draft Task")
     async def draft_task(request: Request, task_id: str) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         catalog = JobCatalog(context.root, context.name)
         path = catalog.draft("task", task_id)
         if path is None:
@@ -132,7 +132,7 @@ def create_router() -> APIRouter:
 
     @router.post("/tasks/{task_id}/ready", tags=["jobs"], summary="Ready Task")
     async def ready_task(request: Request, task_id: str) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         path = JobCatalog(context.root, context.name).ready("task", task_id)
         if path is None:
             raise HTTPException(status_code=404, detail=f"task not found: {task_id}")
@@ -145,7 +145,7 @@ def create_router() -> APIRouter:
 
     @router.post("/tasks/{task_id}/archive", tags=["jobs"], summary="Archive Task")
     async def archive_task(request: Request, task_id: str) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         path = JobCatalog(context.root, context.name).archive("task", task_id)
         if path is None:
             raise HTTPException(status_code=404, detail=f"task not found: {task_id}")
@@ -158,7 +158,7 @@ def create_router() -> APIRouter:
 
     @router.post("/tasks/{task_id}/reopen", tags=["jobs"], summary="Reopen Task")
     async def reopen_task(request: Request, task_id: str) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         store = open_job_store(context.root, context.name)
         try:
             record = store.reopen_task(
@@ -177,7 +177,7 @@ def create_router() -> APIRouter:
 
     @router.post("/tasks/{task_id}/cancel", tags=["jobs"], summary="Cancel Task")
     async def cancel_task(request: Request, task_id: str) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         store = open_job_store(context.root, context.name)
         try:
             store.reconcile(
@@ -208,7 +208,7 @@ def create_router() -> APIRouter:
         request: Request,
         payload: _views.ChoreCreateRequest,
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         document = _views._chore_document_from_create(context, payload)
         path = JobCatalog(context.root, context.name).create_document(document)
         _reconcile_jobs(context, kind="chore")
@@ -224,7 +224,7 @@ def create_router() -> APIRouter:
 
     @router.post("/chores/{chore_id}/run", tags=["jobs"], summary="Run Chore")
     async def run_chore(request: Request, chore_id: str) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         store = open_job_store(context.root, context.name)
         try:
             claimed = store.claim_chore_manual(
@@ -232,7 +232,7 @@ def create_router() -> APIRouter:
                     context.root, context.name, context.get_agent_state().program
                 ),
                 chore_id=chore_id,
-                run_id=_views.allocate_run_id(context.root, context.name),
+                run_id=context.executor.allocate_run_id(),
             )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -258,7 +258,7 @@ def create_router() -> APIRouter:
 
     @router.post("/chores/{chore_id}/cancel", tags=["jobs"], summary="Cancel Chore")
     async def cancel_chore(request: Request, chore_id: str) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         store = open_job_store(context.root, context.name)
         try:
             store.reconcile(
@@ -290,7 +290,7 @@ def create_router() -> APIRouter:
         chore_id: str,
         payload: _views.ChorePatchRequest,
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         entry = _views._find_archived_chore_or_404(context, chore_id)
         return _views._update_chore(context, entry=entry, payload=payload)
 
@@ -300,7 +300,7 @@ def create_router() -> APIRouter:
     async def delete_archived_chore(
         request: Request, chore_id: str
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         entry = _views._find_archived_chore_or_404(context, chore_id)
         if not JobCatalog(context.root, context.name).remove("chore", chore_id):
             raise HTTPException(
@@ -318,13 +318,13 @@ def create_router() -> APIRouter:
         chore_id: str,
         payload: _views.ChorePatchRequest,
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         entry = _views._find_chore_or_404(context, chore_id)
         return _views._update_chore(context, entry=entry, payload=payload)
 
     @router.post("/chores/{chore_id}/draft", tags=["jobs"], summary="Draft Chore")
     async def draft_chore(request: Request, chore_id: str) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         catalog = JobCatalog(context.root, context.name)
         path = catalog.draft("chore", chore_id)
         if path is None:
@@ -342,7 +342,7 @@ def create_router() -> APIRouter:
 
     @router.post("/chores/{chore_id}/ready", tags=["jobs"], summary="Ready Chore")
     async def ready_chore(request: Request, chore_id: str) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         path = JobCatalog(context.root, context.name).ready("chore", chore_id)
         if path is None:
             raise HTTPException(status_code=404, detail=f"chore not found: {chore_id}")
@@ -355,7 +355,7 @@ def create_router() -> APIRouter:
 
     @router.post("/chores/{chore_id}/archive", tags=["jobs"], summary="Archive Chore")
     async def archive_chore(request: Request, chore_id: str) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         path = JobCatalog(context.root, context.name).archive("chore", chore_id)
         if path is None:
             raise HTTPException(status_code=404, detail=f"chore not found: {chore_id}")

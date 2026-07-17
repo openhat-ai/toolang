@@ -14,7 +14,7 @@ import typer
 from toolang.catalog.job import JobCatalog
 from toolang.catalog.agent import AgentCatalog
 from toolang.agent import local as agents
-from toolang.catalog import cap as caps
+from toolang.state.caps import effective_cap_entries
 from toolang.state.prepared import PreparedEntry
 from ...common.updates import append_agent_update
 from ...common.context import (
@@ -202,7 +202,7 @@ def _prepared_cap_counts(root: Path, agent: str) -> dict[str, int] | None:
         private_lock = load_private_lock(root, agent)
     except (FileNotFoundError, OSError, TypeError, ValueError, KeyError):
         return None
-    return _cap_counts(caps.effective_cap_entries(shared_lock, private_lock))
+    return _cap_counts(effective_cap_entries(shared_lock, private_lock))
 
 
 def _cap_counts(entries: Sequence[PreparedEntry]) -> dict[str, int]:

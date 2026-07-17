@@ -37,7 +37,7 @@ class LocalChatClient:
     """Run TUI requests directly through a process-local executor."""
 
     def __init__(self, root: Path, name: str, *, environ: Mapping[str, str]) -> None:
-        self.components = up.assemble_components(
+        self.executor, self.state_watcher, _ = up.assemble_execution(
             toolang_root=root,
             agent_name=name,
             enabled_components=(),
@@ -51,10 +51,10 @@ class LocalChatClient:
         self._ready.wait()
 
     def list_models(self) -> Mapping[str, Any]:
-        executor = self.components.executor
+        executor = self.executor
         selectors = effective_origin_model_selectors(
             executor,
-            state=self.components.get_agent_state(),
+            state=self.state_watcher.current(),
             origin="chat",
         )
         targets = selectable_model_targets(
@@ -83,7 +83,7 @@ class LocalChatClient:
         }
 
     def list_executables(self, kind: str) -> Mapping[str, Any]:
-        program = self.components.get_agent_state().program
+        program = self.state_watcher.current().program
         if kind == "agic":
             try:
                 default = select_origin_agic(program, origin="chat").name
@@ -102,9 +102,9 @@ class LocalChatClient:
 
     def create_thread(self) -> str:
         thread_id = allocate_thread_id(
-            self.components.root, self.components.name, "tui"
+            self.executor.id_state_path, "tui"
         )
-        self.components.store.ensure_thread(thread_id=thread_id, origin="chat")
+        self.executor.store.ensure_thread(thread_id=thread_id, origin="chat")
         return thread_id
 
     def start_run(
@@ -129,7 +129,7 @@ class LocalChatClient:
         del on_event
         try:
             self._submit(
-                self.components.executor.stop(
+                self.executor.stop(
                     run_id=run_id,
                     request_id=f"req_{uuid4().hex}",
                 )
@@ -154,8 +154,8 @@ class LocalChatClient:
         if self._closed:
             return
         self._closed = True
-        self._submit(self.components.executor.close(), allow_closed=True).result()
-        self.components.store.close()
+        self._submit(self.executor.close(), allow_closed=True).result()
+        self.executor.store.close()
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join()
 
@@ -166,13 +166,13 @@ class LocalChatClient:
         selects: Mapping[str, object],
         on_event: Callable[[TraceEvent], None],
     ) -> None:
-        state = self.components.state_watcher.refresh()
+        state = self.state_watcher.refresh()
         executable_kind, executable_name = _executable(selects)
-        await self.components.executor.run(
+        await self.executor.run(
             RunRequest(
                 group="chat",
                 origin="chat",
-                run_id=self.components.executor.allocate_run_id(),
+                run_id=self.executor.allocate_run_id(),
                 thread_id=thread_id,
                 thread_kind="tui",
                 executable_kind=executable_kind,
@@ -188,7 +188,7 @@ class LocalChatClient:
         )
 
     async def _steer(self, run_id: str, message: str) -> None:
-        self.components.executor.steer(
+        self.executor.steer(
             run_id=run_id,
             message=Message.user(message),
             apply="next_step",

@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 from toolang.agent import local as agents
 from toolang.catalog.agent import AgentCatalog
 from toolang.catalog import cap as caps
+from toolang.state import caps as cap_state
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.model import ModelInfo
 from toolang.base.types.tool import ToolContext, ToolDefinition
@@ -3451,9 +3452,9 @@ def test_cli_info_reads_cap_counts_from_prepared_locks(
             "---\n"
         ),
     )
-    durable = caps.scan_durable_state(toolang_root, "alice")
-    shared_lock, shared_files = caps.build_visibility_lock(durable, visibility="shared")
-    private_lock, private_files = caps.build_visibility_lock(
+    durable = cap_state.scan_durable_state(toolang_root, "alice")
+    shared_lock, shared_files = cap_state.build_visibility_lock(durable, visibility="shared")
+    private_lock, private_files = cap_state.build_visibility_lock(
         durable, visibility="private"
     )
     write_prepared_lock(toolang_root, shared_lock, files=shared_files)
@@ -5426,10 +5427,10 @@ def test_cli_stop_stops_sandboxed_agent(tmp_path: Path, monkeypatch) -> None:
 
 def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
-        caps,
+        cap_state,
         "_remote_materialized_files",
         lambda *, relative_entry_path, kind, name, ref, progress=None: {
             str(
@@ -5536,9 +5537,9 @@ def test_cli_cap_remote_list_shows_accessible_source_url(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
-        caps,
+        cap_state,
         "_remote_materialized_files",
         lambda *, relative_entry_path, kind, name, ref, progress=None: {
             str(
@@ -5575,9 +5576,9 @@ def test_cli_cap_remote_file_list_uses_github_blob_url(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
-        caps,
+        cap_state,
         "_remote_materialized_files",
         lambda *, relative_entry_path, kind, name, ref, progress=None: {
             str(relative_entry_path): b"Prefer concise answers.\n"
@@ -5711,14 +5712,14 @@ def test_cli_cap_local_new_reuses_existing_remote_cap_outputs(
     toolang_root = tmp_path / "toolang"
     fetches: list[str] = []
 
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         fetches.append(ref.render())
         return {"SKILL.md": b"---\ndescription: PDF\n---\n# PDF\n"}
 
-    monkeypatch.setattr(caps, "_fetch_github_directory", fake_fetch)
+    monkeypatch.setattr(cap_state, "_fetch_github_directory", fake_fetch)
     add_result = _invoke_caps_app(
         ["skill", "add", "acme/pdf"],
         env={"TOOLANG_ROOT": str(toolang_root)},
@@ -5728,7 +5729,7 @@ def test_cli_cap_local_new_reuses_existing_remote_cap_outputs(
     assert fetches == ["github://acme/agents/skills/pdf@main"]
 
     monkeypatch.setattr(
-        caps,
+        cap_state,
         "_fetch_github_directory",
         lambda ref: pytest.fail(f"unexpected remote fetch: {ref.render()}"),
     )
@@ -5751,8 +5752,8 @@ def test_cli_cap_local_new_reuses_existing_remote_cap_outputs(
 
 def test_cli_cap_remote_add_reports_not_found(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: False)
+    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: False)
 
     result = _invoke_caps_app(
         ["skill", "add", "acme/missing"],
@@ -5768,8 +5769,8 @@ def test_cli_cap_add_preserves_unrelated_config_sections(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     config_path = toolang_root / "config.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
@@ -5804,13 +5805,13 @@ def test_cli_remote_cap_add_remove_reuses_existing_wired_outputs(
     AgentCatalog(toolang_root).create("alice")
     fetches: list[str] = []
 
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         fetches.append(ref.render())
         return b"Remote psyche body.\n"
 
-    monkeypatch.setattr(caps, "_fetch_github_file", fake_fetch)
+    monkeypatch.setattr(cap_state, "_fetch_github_file", fake_fetch)
     caps.add_remote_entry(
         toolang_root,
         "alice",
@@ -5900,7 +5901,7 @@ def test_cli_cap_new_cancel_does_not_resolve_program_remote_uses(
     )
     monkeypatch.setattr(cli.click, "edit", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        caps,
+        cap_state,
         "_github_repo_default_branch",
         lambda owner, repo: pytest.fail(
             f"unexpected remote branch lookup: {owner}/{repo}"
@@ -5927,18 +5928,18 @@ def test_cli_cap_new_save_does_not_resolve_program_remote_uses(
         "agent alice\n\nwith skill briceyan/pdf-processing\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
-        caps,
+        cap_state,
         "_fetch_github_directory",
         lambda ref: {"SKILL.md": b"---\ndescription: PDF\n---\n# PDF\n"},
     )
-    state_watcher.prepare_locks(caps.scan_durable_state(toolang_root, "alice"))
+    state_watcher.prepare_locks(cap_state.scan_durable_state(toolang_root, "alice"))
 
     monkeypatch.setattr(cli.click, "edit", lambda *_args, **_kwargs: "Saved psyche.\n")
     monkeypatch.setattr(
-        caps,
+        cap_state,
         "_github_repo_default_branch",
         lambda owner, repo: pytest.fail(
             f"unexpected remote branch lookup: {owner}/{repo}"
@@ -7037,8 +7038,8 @@ def test_cli_cap_list_global_filters_results(tmp_path: Path, monkeypatch) -> Non
 
 def test_cli_cap_list_concept_filters_results(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     _create_cap(
         toolang_root,
@@ -9527,7 +9528,7 @@ def test_standalone_cap_kind_list_summarizes_updated_remote_caps(
         }
 
     monkeypatch.setattr(
-        caps, "_remote_materialized_files", fake_remote_materialized_files
+        cap_state, "_remote_materialized_files", fake_remote_materialized_files
     )
 
     result = _invoke_caps_app(

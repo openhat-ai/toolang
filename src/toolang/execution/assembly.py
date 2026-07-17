@@ -58,6 +58,7 @@ class SupportsRunAssembly(Protocol):
     root: Path
     name: str
     home: Path
+    id_state_path: Path
     store: RunStore
     model_providers: Mapping[str, ModelProvider]
     model_aliases: Mapping[str, ModelAlias]

@@ -14,7 +14,7 @@ import shutil
 
 from watchfiles import Change, awatch
 
-from toolang.catalog.cap import (
+from toolang.state.caps import (
     build_visibility_lock,
     remote_entry_cache,
     visibility_input_fingerprint,

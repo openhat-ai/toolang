@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from toolang.common.error import ToolangError
 from toolang.base.types.message import Message
 from toolang.execution.detail import ExecutionProjector, ThreadInfo
-from toolang.execution.binding import allocate_run_id, allocate_thread_id
+from toolang.execution.binding import allocate_thread_id
 from toolang.execution.effective import effective_origin_model_selectors, select_origin_agic
 from toolang.plugin.models.resolution import selectable_model_targets, split_model_selectors
 from toolang.plugin.tools.registry import split_tool_selectors
@@ -24,7 +24,7 @@ from toolang.execution.request import RunRequest
 from ._streaming import ShutdownAwareStreamingResponse
 
 if TYPE_CHECKING:
-    from toolang.agent.context import ComponentState
+    from toolang.api.context import ApiContext
 
 
 class ChatMessagePayload(BaseModel):
@@ -73,7 +73,7 @@ def create_router() -> APIRouter:
 
     @router.post("/threads", summary="Create Chat Thread")
     async def create_thread(request: Request, payload: ThreadCreateRequest) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         thread_id = _new_thread_id(context, payload.client)
         peer = _peer_payload(payload.peer)
         context.store.ensure_thread(
@@ -88,7 +88,7 @@ def create_router() -> APIRouter:
 
     @router.post("/chat", summary="Submit Chat")
     async def submit_chat(request: Request, payload: ChatRequest) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         thread_id = _chat_thread_id_or_404(context, payload)
         result, reply = await _submit_chat_run(context, payload, thread_id=thread_id)
         detail = ExecutionProjector(context.store).run_detail(result.run_id)
@@ -126,7 +126,7 @@ def create_router() -> APIRouter:
 
     @router.get("/chat/models", summary="List Chat Models")
     async def chat_models(request: Request) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         try:
             selectors = effective_origin_model_selectors(
                 context.executor,
@@ -157,7 +157,7 @@ def create_router() -> APIRouter:
 
     @router.get("/chat/agics", summary="List Chat Agics")
     async def chat_agics(request: Request) -> dict[str, object]:
-        program = request.app.state.get_agent_state().program
+        program = request.app.state.context.get_agent_state().program
         return {
             "default": _default_agic_name(program, origin="chat"),
             "items": [{"name": agic.name} for agic in program.available_agics],
@@ -165,7 +165,7 @@ def create_router() -> APIRouter:
 
     @router.get("/chat/flows", summary="List Chat Flows")
     async def chat_flows(request: Request) -> dict[str, object]:
-        program = request.app.state.get_agent_state().program
+        program = request.app.state.context.get_agent_state().program
         return {
             "default": None,
             "items": [{"name": flow.name} for flow in program.flows],
@@ -176,11 +176,11 @@ def create_router() -> APIRouter:
         request: Request,
         payload: ChatRequest,
     ) -> ShutdownAwareStreamingResponse:
-        context = request.app.state
+        context = request.app.state.context
         thread_id = _chat_thread_id_or_404(context, payload)
         return ShutdownAwareStreamingResponse(
             _guarded_stream(_stream_chat_run(context, payload, thread_id=thread_id)),
-            shutdown_signal=getattr(request.app.state, "shutdown_signal", None),
+            shutdown_signal=getattr(request.app.state.context, "shutdown_signal", None),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -194,14 +194,14 @@ def create_router() -> APIRouter:
 
 
 async def _submit_chat_run(
-    context: ComponentState,
+    context: ApiContext,
     payload: ChatRequest,
     *,
     thread_id: str | None,
 ) -> tuple[RunRecord, BufferedReplySink]:
     _require_chat_runner(context)
     reply = BufferedReplySink()
-    run_id = allocate_run_id(context.root, context.name)
+    run_id = context.executor.allocate_run_id()
 
     record = await context.executor.run(
         _chat_run_request(payload, thread_id=thread_id, run_id=run_id),
@@ -212,14 +212,14 @@ async def _submit_chat_run(
 
 
 async def _stream_chat_run(
-    context: ComponentState,
+    context: ApiContext,
     payload: ChatRequest,
     *,
     thread_id: str | None,
 ):
     _require_chat_runner(context)
     reply = TraceReplySink() if payload.client == "tui" else SseReplySink(thread_id=thread_id)
-    run_id = allocate_run_id(context.root, context.name)
+    run_id = context.executor.allocate_run_id()
     context.executor.start(
         _chat_run_request(payload, thread_id=thread_id, run_id=run_id),
         context.get_agent_state(),
@@ -252,7 +252,7 @@ def _chat_run_request(
     )
 
 
-def _require_chat_runner(context: ComponentState) -> None:
+def _require_chat_runner(context: ApiContext) -> None:
     enabled_components = context.config.require("components.enabled")
     if not isinstance(enabled_components, tuple) or "runner.chat" not in enabled_components:
         raise HTTPException(status_code=403, detail="component is not enabled: runner.chat")
@@ -272,7 +272,7 @@ async def _guarded_stream(
             await cast(Any, aclose)()
 
 
-def _chat_thread_id_or_404(context: ComponentState, payload: ChatRequest) -> str | None:
+def _chat_thread_id_or_404(context: ApiContext, payload: ChatRequest) -> str | None:
     if payload.thread is None:
         return None
     runs = context.store.list_runs(thread_id=payload.thread, limit=1)
@@ -360,7 +360,7 @@ def _cap_selectors(payload: ChatRequest) -> tuple[str, ...]:
     return tuple(dict.fromkeys(split_cap_selectors(tuple(payload.caps))))
 
 
-def _thread_info(context: ComponentState, thread_id: str) -> ThreadInfo:
+def _thread_info(context: ApiContext, thread_id: str) -> ThreadInfo:
     info = ExecutionProjector(context.store).thread_info(thread_id)
     if info is None:
         raise HTTPException(
@@ -370,8 +370,8 @@ def _thread_info(context: ComponentState, thread_id: str) -> ThreadInfo:
     return info
 
 
-def _new_thread_id(context: ComponentState, client: str) -> str:
-    return allocate_thread_id(context.root, context.name, client)
+def _new_thread_id(context: ApiContext, client: str) -> str:
+    return allocate_thread_id(context.executor.id_state_path, client)
 
 
 def _chat_model_item(*, selector: str, target: Any) -> dict[str, object]:

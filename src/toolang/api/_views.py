@@ -14,7 +14,6 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from toolang.base.types.message import Message
 from toolang.execution.detail import ExecutionProjector, ThreadInfo, run_message_data
-from toolang.execution.binding import allocate_run_id
 from toolang.execution.records import (
     CommandApply,
     CommandRecord,
@@ -35,11 +34,11 @@ from toolang.agent.features import (
     component_group,
     normalize_component_names,
 )
-from toolang.agent.context import channel_context
+from toolang.plugin.channels.runtime import channel_context
 from ._streaming import ShutdownAwareStreamingResponse
 
 if TYPE_CHECKING:
-    from toolang.agent.context import ComponentState
+    from toolang.api.context import ApiContext
 
 CapKind = Literal["psyche", "skill", "service", "prompt"]
 JobKind = Literal["task", "chore"]
@@ -119,7 +118,7 @@ class ChorePatchRequest(_ApiModel):
 
 
 def snapshot_context(
-    context: ComponentState,
+    context: ApiContext,
     *,
     enabled_components: Sequence[str] | None = None,
     enabled_features: Sequence[str] | None = None,
@@ -208,7 +207,7 @@ def snapshot_context(
 
 
 def _cap_collection(
-    context: ComponentState, *, kind: CapKind
+    context: ApiContext, *, kind: CapKind
 ) -> list[dict[str, object]]:
     return [
         _cap_summary_item(context, entry)
@@ -218,7 +217,7 @@ def _cap_collection(
 
 
 def _job_collection(
-    context: ComponentState, *, archived: bool
+    context: ApiContext, *, archived: bool
 ) -> list[dict[str, object]]:
     return [
         *_task_collection(context, archived=archived),
@@ -227,7 +226,7 @@ def _job_collection(
 
 
 def _task_collection(
-    context: ComponentState, *, archived: bool
+    context: ApiContext, *, archived: bool
 ) -> list[dict[str, object]]:
     entries = JobCatalog(context.root, context.name).list(
         kind="task", lifecycle="archived" if archived else "ready"
@@ -236,7 +235,7 @@ def _task_collection(
 
 
 def _chore_collection(
-    context: ComponentState, *, archived: bool
+    context: ApiContext, *, archived: bool
 ) -> list[dict[str, object]]:
     entries = JobCatalog(context.root, context.name).list(
         kind="chore", lifecycle="archived" if archived else "ready"
@@ -245,7 +244,7 @@ def _chore_collection(
 
 
 def _task_item(
-    context: ComponentState, entry: job_definitions.TaskEntry
+    context: ApiContext, entry: job_definitions.TaskEntry
 ) -> dict[str, object]:
     document = entry.document
     job = _job_record(
@@ -266,7 +265,7 @@ def _task_item(
 
 
 def _task_detail_item(
-    context: ComponentState, entry: job_definitions.TaskEntry
+    context: ApiContext, entry: job_definitions.TaskEntry
 ) -> dict[str, object]:
     return {
         **_task_item(context, entry),
@@ -275,7 +274,7 @@ def _task_detail_item(
 
 
 def _chore_item(
-    context: ComponentState, entry: job_definitions.ChoreEntry
+    context: ApiContext, entry: job_definitions.ChoreEntry
 ) -> dict[str, object]:
     document = entry.document
     job = _job_record(
@@ -295,7 +294,7 @@ def _chore_item(
 
 
 def _chore_detail_item(
-    context: ComponentState, entry: job_definitions.ChoreEntry
+    context: ApiContext, entry: job_definitions.ChoreEntry
 ) -> dict[str, object]:
     return {
         **_chore_item(context, entry),
@@ -304,7 +303,7 @@ def _chore_detail_item(
 
 
 def _job_detail_item(
-    context: ComponentState,
+    context: ApiContext,
     *,
     kind: JobKind,
     entry: job_definitions.TaskEntry | job_definitions.ChoreEntry,
@@ -315,7 +314,7 @@ def _job_detail_item(
 
 
 def _find_job_or_404(
-    context: ComponentState, job_id: str
+    context: ApiContext, job_id: str
 ) -> tuple[JobKind, job_definitions.TaskEntry | job_definitions.ChoreEntry]:
     catalog = JobCatalog(context.root, context.name)
     task = catalog.get("task", job_id)
@@ -328,7 +327,7 @@ def _find_job_or_404(
 
 
 def _find_archived_job_or_404(
-    context: ComponentState, job_id: str
+    context: ApiContext, job_id: str
 ) -> tuple[JobKind, job_definitions.TaskEntry | job_definitions.ChoreEntry]:
     catalog = JobCatalog(context.root, context.name)
     task = catalog.get("task", job_id, lifecycle="archived")
@@ -341,7 +340,7 @@ def _find_archived_job_or_404(
 
 
 def _find_task_or_404(
-    context: ComponentState,
+    context: ApiContext,
     task_id: str,
 ) -> job_definitions.TaskEntry:
     entry = JobCatalog(context.root, context.name).get("task", task_id)
@@ -351,7 +350,7 @@ def _find_task_or_404(
 
 
 def _find_archived_task_or_404(
-    context: ComponentState, task_id: str
+    context: ApiContext, task_id: str
 ) -> job_definitions.TaskEntry:
     entry = JobCatalog(context.root, context.name).get(
         "task", task_id, lifecycle="archived"
@@ -364,7 +363,7 @@ def _find_archived_task_or_404(
 
 
 def _find_chore_or_404(
-    context: ComponentState,
+    context: ApiContext,
     chore_id: str,
 ) -> job_definitions.ChoreEntry:
     entry = JobCatalog(context.root, context.name).get("chore", chore_id)
@@ -374,7 +373,7 @@ def _find_chore_or_404(
 
 
 def _find_archived_chore_or_404(
-    context: ComponentState, chore_id: str
+    context: ApiContext, chore_id: str
 ) -> job_definitions.ChoreEntry:
     entry = JobCatalog(context.root, context.name).get(
         "chore", chore_id, lifecycle="archived"
@@ -387,7 +386,7 @@ def _find_archived_chore_or_404(
 
 
 def _task_document_from_create(
-    context: ComponentState, payload: TaskCreateRequest
+    context: ApiContext, payload: TaskCreateRequest
 ) -> job_definitions.TaskFile:
     try:
         return job_definitions.TaskFile(
@@ -400,7 +399,7 @@ def _task_document_from_create(
 
 
 def _chore_document_from_create(
-    context: ComponentState, payload: ChoreCreateRequest
+    context: ApiContext, payload: ChoreCreateRequest
 ) -> job_definitions.ChoreFile:
     try:
         return job_definitions.ChoreFile(
@@ -414,7 +413,7 @@ def _chore_document_from_create(
 
 
 def _update_job(
-    context: ComponentState,
+    context: ApiContext,
     *,
     kind: JobKind,
     entry: job_definitions.TaskEntry | job_definitions.ChoreEntry,
@@ -430,7 +429,7 @@ def _update_job(
 
 
 def _update_task(
-    context: ComponentState,
+    context: ApiContext,
     *,
     entry: job_definitions.TaskEntry,
     payload: TaskPatchRequest | JobPatchRequest,
@@ -452,7 +451,7 @@ def _update_task(
 
 
 def _update_chore(
-    context: ComponentState,
+    context: ApiContext,
     *,
     entry: job_definitions.ChoreEntry,
     payload: ChorePatchRequest | JobPatchRequest,
@@ -509,7 +508,7 @@ def _patch_chore_document(
 
 
 def _append_job_update(
-    context: ComponentState,
+    context: ApiContext,
     *,
     kind: JobKind,
     item_id: str,
@@ -539,7 +538,7 @@ def _append_job_update(
 
 
 def _job_runtime(
-    context: ComponentState,
+    context: ApiContext,
     *,
     thread_id: str,
     job: JobRecord | None = None,
@@ -568,7 +567,7 @@ def _last_run_item(run: RunRecord) -> dict[str, object]:
 
 
 def _job_record(
-    context: ComponentState,
+    context: ApiContext,
     *,
     kind: job_definitions.JobKind,
     job_id: str,
@@ -587,7 +586,7 @@ def _job_record(
         store.close()
 
 
-def _agent_relative_path(context: ComponentState, path: Path) -> str:
+def _agent_relative_path(context: ApiContext, path: Path) -> str:
     try:
         return str(path.relative_to(context.home))
     except ValueError:
@@ -601,7 +600,7 @@ def _path_updated_at(path: Path) -> str:
 
 
 def _cap_summary_item(
-    context: ComponentState, entry: PreparedEntry
+    context: ApiContext, entry: PreparedEntry
 ) -> dict[str, object]:
     item: dict[str, object] = {
         "name": entry.name,
@@ -622,7 +621,7 @@ def _cap_summary_item(
 
 
 def _cap_detail_item(
-    context: ComponentState, entry: PreparedEntry
+    context: ApiContext, entry: PreparedEntry
 ) -> dict[str, object]:
     item = _cap_summary_item(context, entry)
     content_path = context.root / entry.path
@@ -662,7 +661,7 @@ def _template_detail(template: templates.TemplateSpec) -> dict[str, object]:
 
 
 def _state_entry_by_name(
-    context: ComponentState, *, kind: CapKind, name: str
+    context: ApiContext, *, kind: CapKind, name: str
 ) -> PreparedEntry:
     for entry in context.get_agent_state().caps:
         if entry.kind == kind and entry.name == name:
@@ -670,7 +669,7 @@ def _state_entry_by_name(
     raise HTTPException(status_code=404, detail=f"{kind} not found: {name}")
 
 
-def _profile_metrics(context: ComponentState) -> dict[str, object]:
+def _profile_metrics(context: ApiContext) -> dict[str, object]:
     threads = ExecutionProjector(context.store).list_threads(limit=None)
     runs = context.store.list_runs(limit=None)
     steps_by_run = context.store.list_steps_for_runs(
@@ -721,7 +720,7 @@ def _profile_metrics(context: ComponentState) -> dict[str, object]:
 
 
 def _profile_environment(
-    context: ComponentState,
+    context: ApiContext,
     *,
     runtime_state: dict[str, object],
 ) -> dict[str, object]:
@@ -732,14 +731,14 @@ def _profile_environment(
     }
 
 
-def _run_or_404(context: ComponentState, run_id: str):
+def _run_or_404(context: ApiContext, run_id: str):
     run = context.store.get_run(run_id=run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
     return run
 
 
-def _thread_or_404(context: ComponentState, thread_id: str) -> None:
+def _thread_or_404(context: ApiContext, thread_id: str) -> None:
     if context.store.get_thread(thread_id=thread_id) is not None:
         return
     if context.store.list_runs(thread_id=thread_id, limit=1):
@@ -807,7 +806,7 @@ def _event_stream_response(
 ) -> ShutdownAwareStreamingResponse:
     return ShutdownAwareStreamingResponse(
         _guarded_stream(stream),
-        shutdown_signal=getattr(request.app.state, "shutdown_signal", None),
+        shutdown_signal=getattr(request.app.state.context, "shutdown_signal", None),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -826,7 +825,7 @@ def _thread_metric_kind(thread: ThreadInfo) -> Literal["chat", "chore", "task"]:
 
 
 def _copy_fork_history(
-    context: ComponentState,
+    context: ApiContext,
     *,
     source_run: RunRecord,
     target_thread_id: str,
@@ -836,7 +835,7 @@ def _copy_fork_history(
     if include_anchor:
         source_runs = (*source_runs, source_run)
     target_run_ids = tuple(
-        allocate_run_id(context.root, context.name) for _ in source_runs
+        context.executor.allocate_run_id() for _ in source_runs
     )
     return context.store.copy_runs_to_thread(
         source_run_ids=tuple(run.run_id for run in source_runs),
@@ -846,7 +845,7 @@ def _copy_fork_history(
 
 
 def _runtime_endpoint(
-    context: ComponentState,
+    context: ApiContext,
     *,
     runtime_state: dict[str, object] | None = None,
 ) -> str | None:
@@ -877,12 +876,12 @@ def _runtime_sandbox_spec(runtime_state: dict[str, object]) -> str:
     return "none"
 
 
-def _channel_items(context: ComponentState) -> list[dict[str, object]]:
+def _channel_items(context: ApiContext) -> list[dict[str, object]]:
     items: list[dict[str, object]] = []
     for name in sorted(context.channel_bindings):
         binding = context.channel_bindings[name]
         plugin = context.channel_plugins.get(name)
-        bound_context = channel_context(context, name)
+        bound_context = channel_context(context.home, name)
         state_path = bound_context.room / "state.json"
         health = (
             plugin.health(bound_context).to_data()
@@ -929,7 +928,7 @@ def _collection_kind(collection: str) -> CapKind:
 
 
 def _authored_entries(
-    context: ComponentState, *, visibility: str
+    context: ApiContext, *, visibility: str
 ) -> tuple[PreparedEntry, ...]:
     return caps.list_entries(
         context.root,

@@ -10,7 +10,7 @@ from typing import Any, cast
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from toolang.agent.context import ComponentState
+from toolang.api.context import ApiContext
 from toolang.api import agent, cap_commands, caps, chat, job_commands, jobs, runs
 
 DEFAULT_CORS_ORIGINS = [
@@ -29,15 +29,15 @@ OPENAPI_TAGS = [
 
 
 def create_app(
-    components: ComponentState,
+    context: ApiContext,
     *,
     lifespan: Callable[[FastAPI], AbstractAsyncContextManager[None]] | None = None,
     shutdown_signal: threading.Event | None = None,
 ) -> FastAPI:
     """Create one FastAPI app for an existing runtime context."""
 
-    enabled = cast(tuple[str, ...], components.config.require("components.enabled"))
-    raw_origins = components.config.get("web.cors_allowed_origins")
+    enabled = context.enabled_components
+    raw_origins = context.config.get("web.cors_allowed_origins")
     origins = (
         [item for item in raw_origins if isinstance(item, str) and item.strip()]
         if isinstance(raw_origins, list)
@@ -48,9 +48,8 @@ def create_app(
         lifespan=lifespan,
         openapi_tags=OPENAPI_TAGS,
     )
-    app.state = components
-    app.state.enabled_components = enabled
-    app.state.shutdown_signal = shutdown_signal
+    context.shutdown_signal = shutdown_signal
+    app.state.context = context
     if origins:
         app.add_middleware(
             cast(Any, CORSMiddleware),

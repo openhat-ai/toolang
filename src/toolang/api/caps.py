@@ -14,7 +14,7 @@ def create_router() -> APIRouter:
 
     @router.get("/caps", tags=["caps"], summary="Get Caps Summary")
     async def caps_summary(request: Request) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         collections = {
             "psyches": _views._cap_collection(context, kind="psyche"),
             "skills": _views._cap_collection(context, kind="skill"),
@@ -32,7 +32,7 @@ def create_router() -> APIRouter:
     @router.get("/services", tags=["caps"], summary="List Services")
     @router.get("/prompts", tags=["caps"], summary="List Prompts")
     async def cap_list(request: Request) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         kind = _views._collection_kind(str(request.url.path).rsplit("/", 1)[-1])
         return {"items": _views._cap_collection(context, kind=kind)}
 
@@ -63,7 +63,7 @@ def create_router() -> APIRouter:
     @router.get("/services/{name}", tags=["caps"], summary="Get Service")
     @router.get("/prompts/{name}", tags=["caps"], summary="Get Prompt")
     async def cap_detail(request: Request, name: str) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         collection = str(request.url.path).split("/")[3]
         kind = _views._collection_kind(collection)
         entry = _views._state_entry_by_name(context, kind=kind, name=name)

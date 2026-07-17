@@ -10,7 +10,6 @@ from typing import Any, cast
 
 from toolang.base.types.message import Message, message_text
 
-from toolang.agent import local as agents
 from toolang.plugin.loading import normalize_run_loop_name
 from ..state.agent import AgentState
 from ..common.ids import LOCAL_ID_FAMILY, RUN_ID_FAMILY, allocate_id
@@ -49,15 +48,14 @@ class _Run:
 def _bind_run_request(
     request: RunRequest,
     *,
-    root: Path,
-    name: str,
+    id_state_path: Path,
     state: AgentState,
     setup: AgentSetup,
     store: RunStore,
 ) -> _Run:
     """Bind one run request to immutable runtime inputs."""
 
-    thread_id = request.thread_id or _request_thread_id(root, name, request)
+    thread_id = request.thread_id or _request_thread_id(id_state_path, request)
     thread_peer = _request_thread_peer(request.metadata)
     existing_thread = store.get_thread(thread_id=thread_id)
     store.ensure_thread(
@@ -74,7 +72,7 @@ def _bind_run_request(
         )
     run_loop = normalize_run_loop_name(request.run_loop)
     return _Run(
-        run_id=request.run_id or allocate_run_id(root, name),
+        run_id=request.run_id or allocate_run_id(id_state_path),
         group=request.group,
         origin=request.origin,
         thread_id=thread_id,
@@ -94,9 +92,9 @@ def _bind_run_request(
     )
 
 
-def allocate_run_id(root: Path, name: str) -> str:
+def allocate_run_id(id_state_path: Path) -> str:
     value = allocate_id(
-        agents.agent_id_state_path(root, name),
+        id_state_path,
         family=RUN_ID_FAMILY,
     ).value
     return f"run_{value}"
@@ -138,20 +136,20 @@ def run_job_context(run: _Run) -> dict[str, object] | None:
     return {str(key): item for key, item in value.items()}
 
 
-def allocate_thread_id(root: Path, name: str, kind: str) -> str:
+def allocate_thread_id(id_state_path: Path, kind: str) -> str:
     """Allocate one process-safe thread id for a caller-facing surface."""
 
     value = allocate_id(
-        agents.agent_id_state_path(root, name),
+        id_state_path,
         family=LOCAL_ID_FAMILY,
     ).value
     return f"{_thread_id_kind(kind)}_{value}"
 
 
-def _request_thread_id(root: Path, name: str, request: RunRequest) -> str:
+def _request_thread_id(id_state_path: Path, request: RunRequest) -> str:
     if request.origin == "script":
-        return allocate_thread_id(root, name, "script")
-    return allocate_thread_id(root, name, request.thread_kind or request.origin)
+        return allocate_thread_id(id_state_path, "script")
+    return allocate_thread_id(id_state_path, request.thread_kind or request.origin)
 
 
 def _thread_id_kind(origin: str) -> str:

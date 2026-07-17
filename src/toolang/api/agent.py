@@ -15,7 +15,7 @@ def create_router() -> APIRouter:
 
     @router.get("/profile", tags=["agent"], summary="Get Profile")
     async def profile(request: Request) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         runtime_state = agents.AgentProcess(context.root, context.name).state() or {}
         return {
             "agent": context.name,

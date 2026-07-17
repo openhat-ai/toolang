@@ -42,7 +42,6 @@ from toolang.config.log import (
 from toolang.plugin.config import load_channel_bindings, load_sandbox_binding
 from toolang.config.log_spec import PY_LOG_ENV_VAR
 from toolang.config.web import resolve_cors_allowed_origins, resolve_ui_base_url
-from toolang.execution.binding import allocate_run_id
 from toolang.execution.executor import Executor
 from toolang.execution.reply import ReplySink
 from toolang.execution.records import RunRecord
@@ -64,7 +63,8 @@ from toolang.agent.features import (
     format_component_group,
     normalize_component_names,
 )
-from toolang.agent.context import ComponentState, RuntimeConfig
+from toolang.api.context import ApiContext
+from toolang.config.runtime import RuntimeConfig
 from toolang.work import inbox as files
 from toolang.plugin.channels import runtime as poll
 from toolang.agent import state_updates as watch
@@ -263,7 +263,7 @@ def invoke(
     state = agent_state or prepare_agent(
         toolang_root=toolang_root, agent_name=agent_name
     )
-    components = assemble_components(
+    executor, watcher, _ = assemble_execution(
         toolang_root=toolang_root,
         agent_name=agent_name,
         enabled_components=(),
@@ -273,7 +273,7 @@ def invoke(
         cap_selectors=_normalize_cap_selectors(caps),
         agent_state=state,
     )
-    run_id = allocate_run_id(components.root, components.name)
+    run_id = executor.allocate_run_id()
     log_plan = resolve_agent_logging(
         mode="invoke",
         environ=invoke_environ,
@@ -290,7 +290,7 @@ def invoke(
             log_plan.path.touch(exist_ok=True)
     try:
         return asyncio.run(
-            components.executor.run(
+            executor.run(
                 RunRequest(
                     group="script",
                     origin="script",
@@ -300,12 +300,12 @@ def invoke(
                     input=input_text or "",
                     metadata=dict(metadata or {}),
                 ),
-                components.get_agent_state(),
+                watcher.current(),
                 reply=reply,
             )
         )
     finally:
-        components.store.close()
+        executor.store.close()
 
 
 def prepare_agent(
@@ -587,7 +587,7 @@ def _up_local(
         environ=environ,
     )
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    components = assemble_components(
+    executor, watcher, config = assemble_execution(
         toolang_root=toolang_root,
         agent_name=agent_name,
         enabled_components=enabled_components,
@@ -602,9 +602,9 @@ def _up_local(
         progress=progress,
         agent_state=agent_state,
     )
-    state = components.get_agent_state()
-    _log_state_loaded(components)
-    components.store.append_update(
+    state = watcher.current()
+    _log_state_loaded(executor, config, state)
+    executor.store.append_update(
         kind="started",
         payload={
             "components": list(enabled_components),
@@ -612,12 +612,12 @@ def _up_local(
         },
         created_at=started_at,
     )
-    components.store.append_event(
+    executor.store.append_event(
         domain="agent",
-        domain_id=components.name,
+        domain_id=agent_name,
         type="agent_start",
         payload={
-            "agent": components.name,
+            "agent": agent_name,
             "components": list(enabled_components),
             "state_fingerprint": state.fingerprint,
             "started_at": started_at,
@@ -625,6 +625,27 @@ def _up_local(
     )
     endpoint = f"http://{endpoint_host}:{port}"
     shutdown_signal = threading.Event()
+    channel_bindings = load_channel_bindings(
+        toolang_root,
+        agent_name,
+        environ=environ,
+    )
+    context = ApiContext(
+        root=toolang_root,
+        name=agent_name,
+        home=executor.home,
+        room=agents.agent_room(toolang_root, agent_name),
+        get_agent_state=watcher.current,
+        channel_bindings=channel_bindings,
+        channel_plugins={
+            name: create_channel_plugin(binding.plugin, config=binding.config)
+            for name, binding in channel_bindings.items()
+        },
+        executor=executor,
+        store=executor.store,
+        config=config,
+        enabled_components=enabled_components,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -643,20 +664,20 @@ def _up_local(
             bg_tasks: list[asyncio.Task[None]] = []
             job_store = None
             if "trigger.pulse" in enabled_components:
-                interval_value = components.config.require(
+                interval_value = config.require(
                     "components.trigger.pulse.interval_ms"
                 )
                 if not isinstance(interval_value, int | float):
                     raise TypeError(
                         "invalid config: components.trigger.pulse.interval_ms"
                     )
-                job_store = open_job_store(components.root, components.name)
-                job_watcher = JobWatcher(components.root, components.name)
+                job_store = open_job_store(toolang_root, agent_name)
+                job_watcher = JobWatcher(toolang_root, agent_name)
                 scheduler = Scheduler(
                     job_store=job_store,
-                    executor=components.executor,
+                    executor=executor,
                     get_home_jobs=job_watcher.current,
-                    get_agent_state=components.get_agent_state,
+                    get_agent_state=watcher.current,
                     kinds=tuple(
                         kind
                         for kind in ("task", "chore")
@@ -671,11 +692,44 @@ def _up_local(
                     ]
                 )
             if "trigger.poll" in enabled_components:
-                bg_tasks.append(poll.spawn(components, stop_signal=stop_signal))
+                bg_tasks.append(
+                    poll.spawn(
+                        name=agent_name,
+                        home=executor.home,
+                        bindings=channel_bindings,
+                        plugins=context.channel_plugins,
+                        executor=executor,
+                        get_agent_state=watcher.current,
+                        enabled_components=enabled_components,
+                        interval_ms=DEFAULT_TRIGGER_INTERVAL_MS["poll"],
+                        stop_signal=stop_signal,
+                    )
+                )
             if "trigger.watch" in enabled_components:
-                bg_tasks.append(watch.spawn(components, stop_signal=stop_signal))
+                bg_tasks.append(
+                    watch.spawn(
+                        root=toolang_root,
+                        name=agent_name,
+                        watcher=watcher,
+                        executor=executor,
+                        store=executor.store,
+                        config=config,
+                        stop_signal=stop_signal,
+                    )
+                )
             if "trigger.file" in enabled_components:
-                bg_tasks.append(files.spawn(components, stop_signal=stop_signal))
+                bg_tasks.append(
+                    files.spawn(
+                        root=toolang_root,
+                        name=agent_name,
+                        executor=executor,
+                        get_agent_state=watcher.current,
+                        inboxes=file_inboxes,
+                        interval_ms=DEFAULT_TRIGGER_INTERVAL_MS["file"],
+                        stable_ms=DEFAULT_FILE_STABLE_MS,
+                        stop_signal=stop_signal,
+                    )
+                )
 
             yield
         finally:
@@ -687,26 +741,26 @@ def _up_local(
                     expected_started_at=started_at,
                 )
             stop_signal.set()
-            await components.executor.close()
+            await executor.close()
             shutdown_tasks: list[asyncio.Task[Any]] = [*bg_tasks]
             await _finish_runtime_tasks(shutdown_tasks)
             if job_store is not None:
                 job_store.close()
-            components.store.append_update(
+            executor.store.append_update(
                 kind="stopped",
                 payload={
                     "outcome": "stopped",
                 },
             )
-            components.store.append_event(
+            executor.store.append_event(
                 domain="agent",
-                domain_id=components.name,
+                domain_id=agent_name,
                 type="agent_stop",
-                payload={"agent": components.name, "outcome": "stopped"},
+                payload={"agent": agent_name, "outcome": "stopped"},
             )
-            components.store.close()
+            executor.store.close()
 
-    app = create_app(components, lifespan=lifespan, shutdown_signal=shutdown_signal)
+    app = create_app(context, lifespan=lifespan, shutdown_signal=shutdown_signal)
     webui_url = _runtime_webui_url(endpoint, toolang_root=toolang_root, environ=environ)
     _run_uvicorn_app(
         app,
@@ -753,31 +807,32 @@ def _runtime_log_spec_value(
     return env_spec or None
 
 
-def _log_state_loaded(context: ComponentState) -> None:
-    state = context.get_agent_state()
+def _log_state_loaded(
+    executor: Executor, config: RuntimeConfig, state: AgentState
+) -> None:
     state_logger.info(
         "Agent loaded state=%s models=%s tools=%s psyches=%s skills=%s services=%s",
         _short_fingerprint(state.fingerprint),
-        _model_count(context),
-        len(context.executor.setup.tools),
+        _model_count(executor, config),
+        len(executor.setup.tools),
         _cap_count(state, "psyche"),
         _cap_count(state, "skill"),
         _cap_count(state, "service"),
     )
 
 
-def _model_count(context: ComponentState) -> int:
+def _model_count(executor: Executor, config: RuntimeConfig) -> int:
     try:
-        selectors = _model_allowed_selectors(context)
+        selectors = _model_allowed_selectors(config)
         if selectors:
             return len(
                 select_model_selectors(
-                    context.executor, activation_selectors=selectors
+                    executor, activation_selectors=selectors
                 )
             )
-        return len(select_model_selectors(context.executor))
+        return len(select_model_selectors(executor))
     except Exception:
-        selectors = context.config.get("models.allowed_selectors")
+        selectors = config.get("models.allowed_selectors")
         if isinstance(selectors, tuple):
             return len(selectors)
         if isinstance(selectors, list):
@@ -785,8 +840,8 @@ def _model_count(context: ComponentState) -> int:
         return 0
 
 
-def _model_allowed_selectors(context: ComponentState) -> tuple[str, ...]:
-    selectors = context.config.get("models.allowed_selectors")
+def _model_allowed_selectors(config: RuntimeConfig) -> tuple[str, ...]:
+    selectors = config.get("models.allowed_selectors")
     if isinstance(selectors, tuple):
         return tuple(
             item for item in selectors if isinstance(item, str) and item.strip()
@@ -906,7 +961,7 @@ async def _finish_runtime_tasks(
             logger.warning("runtime task failed during shutdown", exc_info=True)
 
 
-def assemble_components(
+def assemble_execution(
     *,
     toolang_root: Path,
     agent_name: str,
@@ -921,14 +976,8 @@ def assemble_components(
     file_inboxes: Sequence[Path] = (),
     progress: ProgressSink | None = None,
     agent_state: AgentState | None = None,
-) -> ComponentState:
-    """Assemble execution and optional runtime components for one process."""
-
-    channel_bindings = load_channel_bindings(
-        toolang_root,
-        agent_name,
-        environ=environ,
-    )
+) -> tuple[Executor, state_watcher.StateWatcher, RuntimeConfig]:
+    """Assemble one executor and its versioned agent state."""
     runtime_state = agents.AgentProcess(toolang_root, agent_name).state() or {}
     if agent_state is None:
         agent_state = prepare_agent(
@@ -1005,6 +1054,8 @@ def assemble_components(
     executor = Executor(
         root=toolang_root,
         name=agent_name,
+        home=agents.agent_home(toolang_root, agent_name),
+        id_state_path=agents.agent_id_state_path(toolang_root, agent_name),
         setup=setup,
         store=store,
         model_aliases=model_aliases,
@@ -1020,22 +1071,7 @@ def assemble_components(
             value, normalized_cap_selectors, agent_name=agent_name
         ),
     )
-    components = ComponentState()
-    components.root = toolang_root
-    components.name = agent_name
-    components.home = agents.agent_home(toolang_root, agent_name)
-    components.room = agents.agent_room(toolang_root, agent_name)
-    components.state_watcher = watcher
-    components.get_agent_state = watcher.current
-    components.channel_bindings = dict(channel_bindings)
-    components.channel_plugins = {
-        name: create_channel_plugin(binding.plugin, config=binding.config)
-        for name, binding in channel_bindings.items()
-    }
-    components.executor = executor
-    components.store = store
-    components.config = config
-    return components
+    return executor, watcher, config
 
 
 def _runtime_endpoint_value(

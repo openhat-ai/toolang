@@ -9,7 +9,7 @@ from hashlib import sha256
 import json
 from typing import cast
 
-from toolang.catalog.cap import effective_cap_entries
+from toolang.state.caps import effective_cap_entries
 from toolang.config.toml import load_optional_toml
 from ..common.immutable import freeze_mapping
 from ..lang.ast import Program, to_data

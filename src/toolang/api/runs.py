@@ -28,7 +28,7 @@ def create_router() -> APIRouter:
         thread_id: str | None = None,
         status: RunStatus | None = None,
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         items = ExecutionProjector(context.store).list_runs(
             limit=limit, thread_id=thread_id, status=status
         )
@@ -36,7 +36,7 @@ def create_router() -> APIRouter:
 
     @router.get("/runs/{run_id}", tags=["activity"], summary="Get Run")
     async def run_detail(request: Request, run_id: str) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         detail = ExecutionProjector(context.store).run_detail(run_id)
         if detail is None:
             raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
@@ -49,7 +49,7 @@ def create_router() -> APIRouter:
         after: int | None = None,
         limit: int = Query(default=100),
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         _views._run_or_404(context, run_id)
         events = context.store.list_events(
             domain="run", domain_id=run_id, after=after, limit=limit
@@ -63,7 +63,7 @@ def create_router() -> APIRouter:
     async def run_stream(
         request: Request, run_id: str, after: int | None = None
     ) -> _views.ShutdownAwareStreamingResponse:
-        context = request.app.state
+        context = request.app.state.context
         _views._run_or_404(context, run_id)
         return _views._event_stream_response(
             request,
@@ -74,7 +74,7 @@ def create_router() -> APIRouter:
     async def cancel_run(
         request: Request, run_id: str, payload: _views.RunCancelRequest | None = None
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         run = _views._run_or_404(context, run_id)
         if run.status != "running":
             raise HTTPException(status_code=409, detail=f"run is not running: {run_id}")
@@ -96,7 +96,7 @@ def create_router() -> APIRouter:
     async def rewind_thread(
         request: Request, run_id: str, payload: _views.RunRestartRequest
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         run = _views._run_or_404(context, run_id)
         _require_branchable_thread(context, run)
         message = (
@@ -105,7 +105,7 @@ def create_router() -> APIRouter:
             else None
         )
         new_run_id = (
-            _views.allocate_run_id(context.root, context.name)
+            context.executor.allocate_run_id()
             if message is not None
             else None
         )
@@ -161,7 +161,7 @@ def create_router() -> APIRouter:
     async def fork_thread(
         request: Request, run_id: str, payload: _views.RunRestartRequest
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         run = _views._run_or_404(context, run_id)
         _require_branchable_thread(context, run)
         message = (
@@ -170,7 +170,7 @@ def create_router() -> APIRouter:
             else None
         )
         new_run_id = (
-            _views.allocate_run_id(context.root, context.name)
+            context.executor.allocate_run_id()
             if message is not None
             else None
         )
@@ -246,7 +246,7 @@ def create_router() -> APIRouter:
     async def steer_run(
         request: Request, run_id: str, payload: _views.RunSteerRequest
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         run = _views._run_or_404(context, run_id)
         if run.status != "running":
             raise HTTPException(status_code=409, detail=f"run is not running: {run_id}")
@@ -264,7 +264,7 @@ def create_router() -> APIRouter:
         "/instruct/{prompt_hash}", tags=["activity"], summary="Get Instruct Prompt"
     )
     async def instruct_prompt(request: Request, prompt_hash: str) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         body = context.store.get_prompt(prompt_hash=prompt_hash)
         if body is None:
             raise HTTPException(
@@ -276,7 +276,7 @@ def create_router() -> APIRouter:
         "/context/{prompt_hash}", tags=["activity"], summary="Get Context Prompt"
     )
     async def context_prompt(request: Request, prompt_hash: str) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         body = context.store.get_prompt(prompt_hash=prompt_hash)
         if body is None:
             raise HTTPException(
@@ -292,7 +292,7 @@ def create_router() -> APIRouter:
         channel: str | None = None,
         status: str | None = None,
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         items = ExecutionProjector(context.store).list_threads(
             limit=limit,
             origin=origin,
@@ -305,7 +305,7 @@ def create_router() -> APIRouter:
     async def thread_detail(
         request: Request, thread_id: str, limit: int = Query(default=50)
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         detail = ExecutionProjector(context.store).thread_detail(
             thread_id, limit=limit
         )
@@ -324,7 +324,7 @@ def create_router() -> APIRouter:
         after: int | None = None,
         limit: int = Query(default=100),
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         _views._thread_or_404(context, thread_id)
         events = context.store.list_events(
             domain="thread", domain_id=thread_id, after=after, limit=limit
@@ -342,7 +342,7 @@ def create_router() -> APIRouter:
     async def thread_stream(
         request: Request, thread_id: str, after: int | None = None
     ) -> _views.ShutdownAwareStreamingResponse:
-        context = request.app.state
+        context = request.app.state.context
         _views._thread_or_404(context, thread_id)
         return _views._event_stream_response(
             request,
@@ -358,7 +358,7 @@ def create_router() -> APIRouter:
     async def events(
         request: Request, limit: int = Query(default=100)
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         return {
             "items": [asdict(item) for item in context.store.list_updates(limit=limit)]
         }
@@ -367,7 +367,7 @@ def create_router() -> APIRouter:
     async def events_stream(request: Request) -> _views.ShutdownAwareStreamingResponse:
         return _views.ShutdownAwareStreamingResponse(
             _views._guarded_stream(_views._events_stream()),
-            shutdown_signal=getattr(request.app.state, "shutdown_signal", None),
+            shutdown_signal=getattr(request.app.state.context, "shutdown_signal", None),
             media_type="text/event-stream",
         )
 
@@ -375,7 +375,7 @@ def create_router() -> APIRouter:
     async def agent_events(
         request: Request, after: int | None = None, limit: int = Query(default=100)
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         events = context.store.list_events(
             domain="agent", domain_id=context.name, after=after, limit=limit
         )
@@ -390,7 +390,7 @@ def create_router() -> APIRouter:
     async def agent_stream(
         request: Request, after: int | None = None
     ) -> _views.ShutdownAwareStreamingResponse:
-        context = request.app.state
+        context = request.app.state.context
         return _views._event_stream_response(
             request,
             stream_events(

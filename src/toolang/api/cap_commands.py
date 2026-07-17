@@ -53,7 +53,7 @@ def create_router() -> APIRouter:
         name: str,
         payload: PutCapRequest,
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         kind = _collection_kind(_collection_from_path(str(request.url.path)))
         visibility = payload.visibility
         if payload.content is None:
@@ -75,7 +75,7 @@ def create_router() -> APIRouter:
         name: str,
         payload: WiredCapRequest,
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         kind = _collection_kind(_collection_from_path(str(request.url.path)))
         visibility = payload.visibility
         if caps.remote_entry_name(kind, payload.ref) != name:
@@ -104,7 +104,7 @@ def create_router() -> APIRouter:
         name: str,
         visibility: ApiVisibility = Query(default="private"),
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         kind = _collection_kind(_collection_from_path(str(request.url.path)))
         requested_visibility = visibility
         removed = _wrap_user_error(
@@ -128,7 +128,7 @@ def create_router() -> APIRouter:
         name: str,
         visibility: ApiVisibility = Query(default="private"),
     ) -> dict[str, object]:
-        context = request.app.state
+        context = request.app.state.context
         kind = _collection_kind(_collection_from_path(str(request.url.path)))
         requested_visibility = visibility
         removed = _wrap_user_error(

@@ -142,6 +142,8 @@ def test_public_executor_runs_explicit_agent_state(tmp_path) -> None:
     executor = Executor(
         root=tmp_path,
         name="alice",
+        home=tmp_path / "agents" / "alice",
+        id_state_path=tmp_path / "ids.json",
         setup=setup,
         store=store,
         model_aliases={},
@@ -751,7 +753,14 @@ def test_persist_sink_rejects_conflicting_start_replay(tmp_path) -> None:
 def _executor_fixture(tmp_path, selected: FlowDecl, *runnables: FlowDecl):
     program = Program(span=Span(line=1), flows=(selected, *runnables))
     state = SimpleNamespace(program=program, fingerprint="state-test")
-    context = cast(Any, SimpleNamespace(root=tmp_path, name="alice"))
+    context = cast(
+        Any,
+        SimpleNamespace(
+            root=tmp_path,
+            name="alice",
+            id_state_path=tmp_path / "ids.json",
+        ),
+    )
     binding = _Run(
         run_id="run_abc123",
         group="chat",

@@ -3,51 +3,86 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Mapping
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-from toolang.base.types.channel import ChannelState
-from toolang.agent.context import channel_context, start_delivery
-
-if TYPE_CHECKING:
-    from toolang.agent.context import ComponentState
+from toolang.base.protocols.channel import AgentChannel
+from toolang.base.types.channel import ChannelContext, ChannelState, InboundDelivery
+from toolang.base.utils.channels import bind_delivery
+from toolang.execution.executor import Executor
+from toolang.execution.records import RunRecord
+from toolang.execution.reply import build_channel_reply_sink
+from toolang.execution.request import RunRequest
+from toolang.plugin.config import ChannelBinding
+from toolang.state.agent import AgentState
 
 DEFAULT_INTERVAL_MS = 300.0
 logger = logging.getLogger("toolang.poll")
 
 
 def spawn(
-    context: ComponentState,
     *,
+    name: str,
+    home: Path,
+    bindings: Mapping[str, ChannelBinding],
+    plugins: Mapping[str, AgentChannel],
+    executor: Executor,
+    get_agent_state: Callable[[], AgentState],
+    enabled_components: tuple[str, ...],
+    interval_ms: float,
     stop_signal: asyncio.Event,
 ) -> asyncio.Task[None]:
     """Spawn the poll loop in one background task."""
 
-    return asyncio.create_task(run(context, stop_signal=stop_signal))
+    return asyncio.create_task(
+        run(
+            name=name,
+            home=home,
+            bindings=bindings,
+            plugins=plugins,
+            executor=executor,
+            get_agent_state=get_agent_state,
+            enabled_components=enabled_components,
+            interval_ms=interval_ms,
+            stop_signal=stop_signal,
+        )
+    )
 
 
 async def run(
-    context: ComponentState,
     *,
+    name: str,
+    home: Path,
+    bindings: Mapping[str, ChannelBinding],
+    plugins: Mapping[str, AgentChannel],
+    executor: Executor,
+    get_agent_state: Callable[[], AgentState],
+    enabled_components: tuple[str, ...],
+    interval_ms: float,
     stop_signal: asyncio.Event,
 ) -> None:
     """Start poll runs until the runtime stops."""
-    interval_value = context.config.require("components.trigger.poll.interval_ms")
-    if not isinstance(interval_value, int | float):
-        raise TypeError("invalid config: components.trigger.poll.interval_ms")
-    interval_timeout = float(interval_value) / 1000
+    interval_timeout = interval_ms / 1000
     logger.debug(
         "poll.started root=%s agent=%s interval_ms=%s bindings=%s",
-        context.root,
-        context.name,
-        int(float(interval_value)),
-        ",".join(sorted(context.channel_bindings)) or "-",
+        home.parent.parent,
+        name,
+        int(interval_ms),
+        ",".join(sorted(bindings)) or "-",
     )
     while True:
-        for binding_name in sorted(context.channel_bindings):
-            await _poll_binding(context, binding_name)
+        for binding_name in sorted(bindings):
+            await _poll_binding(
+                name=name,
+                home=home,
+                binding_name=binding_name,
+                plugins=plugins,
+                executor=executor,
+                get_agent_state=get_agent_state,
+                enabled_components=enabled_components,
+            )
         try:
             await asyncio.wait_for(stop_signal.wait(), timeout=interval_timeout)
         except TimeoutError:
@@ -56,11 +91,20 @@ async def run(
             return
 
 
-async def _poll_binding(context: ComponentState, binding_name: str) -> None:
-    plugin = context.channel_plugins.get(binding_name)
+async def _poll_binding(
+    *,
+    name: str,
+    home: Path,
+    binding_name: str,
+    plugins: Mapping[str, AgentChannel],
+    executor: Executor,
+    get_agent_state: Callable[[], AgentState],
+    enabled_components: tuple[str, ...],
+) -> None:
+    plugin = plugins.get(binding_name)
     if plugin is None:
         return
-    bound_context = channel_context(context, binding_name)
+    bound_context = channel_context(home, binding_name)
     state_path = bound_context.room / "state.json"
     state = _load_state(state_path)
     try:
@@ -68,7 +112,7 @@ async def _poll_binding(context: ComponentState, binding_name: str) -> None:
     except Exception as exc:
         logger.warning(
             "poll failed agent=%s binding=%s error=%s",
-            context.name,
+            name,
             binding_name,
             exc,
         )
@@ -76,17 +120,25 @@ async def _poll_binding(context: ComponentState, binding_name: str) -> None:
     _write_state(state_path, result.next_state)
     if not result.deliveries:
         return
-    if not _chat_runner_enabled(context):
+    if "runner.chat" not in enabled_components:
         return
     logger.debug(
         "poll.received agent=%s binding=%s deliveries=%s cursor=%s",
-        context.name,
+        name,
         binding_name,
         len(result.deliveries),
         result.next_state.cursor or "-",
     )
     for delivery in result.deliveries:
-        start_delivery(context, "chat", binding_name, delivery)
+        start_delivery(
+            executor=executor,
+            get_agent_state=get_agent_state,
+            plugins=plugins,
+            home=home,
+            component_name="chat",
+            binding_name=binding_name,
+            delivery=delivery,
+        )
 
 
 def _load_state(path: Path) -> ChannelState:
@@ -98,9 +150,41 @@ def _load_state(path: Path) -> ChannelState:
     return ChannelState.from_data(payload)
 
 
-def _chat_runner_enabled(context: ComponentState) -> bool:
-    enabled_components = context.config.require("components.enabled")
-    return isinstance(enabled_components, tuple) and "runner.chat" in enabled_components
+def channel_context(home: Path, binding_name: str) -> ChannelContext:
+    return ChannelContext(
+        home=home,
+        room=home / ".runtime" / "channels" / binding_name,
+    )
+
+
+def start_delivery(
+    *,
+    executor: Executor,
+    get_agent_state: Callable[[], AgentState],
+    plugins: Mapping[str, AgentChannel],
+    home: Path,
+    component_name: str,
+    binding_name: str,
+    delivery: InboundDelivery,
+) -> asyncio.Task[RunRecord]:
+    bound = bind_delivery(binding_name, delivery)
+    metadata = {**bound.meta, "channel": binding_name, "sender": bound.sender}
+    return executor.start(
+        RunRequest(
+            group=component_name,
+            origin=bound.origin,
+            thread_id=bound.thread_id,
+            input=bound.text,
+            metadata=metadata,
+        ),
+        get_agent_state(),
+        reply=build_channel_reply_sink(
+            plugin=plugins.get(binding_name),
+            channel_context=channel_context(home, binding_name),
+            binding_name=binding_name,
+            target=bound.reply_target,
+        ),
+    )
 
 
 def _write_state(path: Path, state: ChannelState) -> None:

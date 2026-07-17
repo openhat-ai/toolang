@@ -10,7 +10,6 @@ from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Any
 
-from toolang.agent import local as agents
 from ..lang.ast import AgicDecl
 from toolang.common.error import ToolangError
 from toolang.base.protocols.model import ModelAdapter
@@ -744,12 +743,9 @@ def _tool_context(
         raise ToolangError("run snapshot has no agent root")
     if not snapshot.agent.name:
         raise ToolangError("run snapshot has no agent name")
-    root = Path(snapshot.agent.root)
-    home = (
-        Path(snapshot.agent.home)
-        if snapshot.agent.home
-        else agents.agent_home(root, snapshot.agent.name)
-    )
+    home = Path(snapshot.agent.home)
+    if not snapshot.agent.home:
+        raise ToolangError("run snapshot has no agent home")
     tool = tools.get(tool_name)
     plugin_name = getattr(tool, "plugin_name", None)
     if not isinstance(plugin_name, str) or not plugin_name:
@@ -757,7 +753,7 @@ def _tool_context(
     return ToolContext(
         run_id=run_id,
         home=home,
-        room=agents.tool_room(root, snapshot.agent.name, plugin_name),
+        room=home / ".runtime" / "tools" / plugin_name,
         wd=home,
     )
 
