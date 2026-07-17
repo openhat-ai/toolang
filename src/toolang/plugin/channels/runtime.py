@@ -1,0 +1,111 @@
+"""Poll loop producer."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from toolang.base.types.channel import ChannelState
+from toolang.agent.context import channel_context, start_delivery
+
+if TYPE_CHECKING:
+    from toolang.agent.context import ComponentState
+
+DEFAULT_INTERVAL_MS = 300.0
+logger = logging.getLogger("toolang.poll")
+
+
+def spawn(
+    context: ComponentState,
+    *,
+    stop_signal: asyncio.Event,
+) -> asyncio.Task[None]:
+    """Spawn the poll loop in one background task."""
+
+    return asyncio.create_task(run(context, stop_signal=stop_signal))
+
+
+async def run(
+    context: ComponentState,
+    *,
+    stop_signal: asyncio.Event,
+) -> None:
+    """Start poll runs until the runtime stops."""
+    interval_value = context.config.require("components.trigger.poll.interval_ms")
+    if not isinstance(interval_value, int | float):
+        raise TypeError("invalid config: components.trigger.poll.interval_ms")
+    interval_timeout = float(interval_value) / 1000
+    logger.debug(
+        "poll.started root=%s agent=%s interval_ms=%s bindings=%s",
+        context.root,
+        context.name,
+        int(float(interval_value)),
+        ",".join(sorted(context.channel_bindings)) or "-",
+    )
+    while True:
+        for binding_name in sorted(context.channel_bindings):
+            await _poll_binding(context, binding_name)
+        try:
+            await asyncio.wait_for(stop_signal.wait(), timeout=interval_timeout)
+        except TimeoutError:
+            continue
+        else:
+            return
+
+
+async def _poll_binding(context: ComponentState, binding_name: str) -> None:
+    plugin = context.channel_plugins.get(binding_name)
+    if plugin is None:
+        return
+    bound_context = channel_context(context, binding_name)
+    state_path = bound_context.room / "state.json"
+    state = _load_state(state_path)
+    try:
+        result = await asyncio.to_thread(plugin.poll, state, bound_context)
+    except Exception as exc:
+        logger.warning(
+            "poll failed agent=%s binding=%s error=%s",
+            context.name,
+            binding_name,
+            exc,
+        )
+        return
+    _write_state(state_path, result.next_state)
+    if not result.deliveries:
+        return
+    if not _chat_runner_enabled(context):
+        return
+    logger.debug(
+        "poll.received agent=%s binding=%s deliveries=%s cursor=%s",
+        context.name,
+        binding_name,
+        len(result.deliveries),
+        result.next_state.cursor or "-",
+    )
+    for delivery in result.deliveries:
+        start_delivery(context, "chat", binding_name, delivery)
+
+
+def _load_state(path: Path) -> ChannelState:
+    if not path.is_file():
+        return ChannelState()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        return ChannelState()
+    return ChannelState.from_data(payload)
+
+
+def _chat_runner_enabled(context: ComponentState) -> bool:
+    enabled_components = context.config.require("components.enabled")
+    return isinstance(enabled_components, tuple) and "runner.chat" in enabled_components
+
+
+def _write_state(path: Path, state: ChannelState) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(state.to_data(), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )

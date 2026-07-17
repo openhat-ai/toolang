@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields, is_dataclass
+from collections.abc import Mapping
 from typing import Any, ClassVar, Literal
 
+from toolang.base.error import ToolangError
+from toolang.common.immutable import freeze_mapping
+
 CapKind = Literal["psyche", "skill", "service", "prompt"]
-WorkKind = Literal["task", "chore"]
+JobKind = Literal["task", "chore"]
 Role = Literal["user", "assistant", "tool"]
 Position = Literal["first", "last"]
 Limit = Literal["top", "bottom"]
@@ -48,16 +52,22 @@ class CapDecl(Node):
     name: str
     body: str
     language: str | None = None
-    meta: dict[str, Any] = field(default_factory=dict)
+    meta: Mapping[str, Any] = field(default_factory=dict)
     params: tuple[Parameter, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "meta", freeze_mapping(self.meta))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class WorkDecl(Node):
-    kind: WorkKind
+class JobDecl(Node):
+    kind: JobKind
     name: str
     body: str
-    meta: dict[str, Any] = field(default_factory=dict)
+    meta: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "meta", freeze_mapping(self.meta))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -284,12 +294,50 @@ class Program(Node):
 
     withs: tuple[WithDecl, ...] = ()
     caps: tuple[CapDecl, ...] = ()
-    works: tuple[WorkDecl, ...] = ()
+    jobs: tuple[JobDecl, ...] = ()
     structs: tuple[StructDecl, ...] = ()
     contexts: tuple[ContextDecl, ...] = ()
     instructs: tuple[InstructDecl, ...] = ()
     agics: tuple[AgicDecl, ...] = ()
     flows: tuple[FlowDecl, ...] = ()
+
+    @property
+    def available_agics(self) -> tuple[AgicDecl, ...]:
+        if any(agic.name == "default" for agic in self.agics):
+            return self.agics
+        return (*self.agics, _default_agic())
+
+    def get_agic(self, name: str | None) -> AgicDecl:
+        if name is not None:
+            for agic in self.available_agics:
+                if agic.name == name:
+                    return agic
+            raise ToolangError(f"Agic not found: {name}")
+        for agic in self.available_agics:
+            if agic.name == "default":
+                return agic
+        if len(self.available_agics) == 1:
+            return self.available_agics[0]
+        raise ToolangError("No default agic found in program.")
+
+    def get_flow(self, name: str | None) -> FlowDecl:
+        if name is not None:
+            for flow in self.flows:
+                if flow.name == name:
+                    return flow
+            raise ToolangError(f"Flow not found: {name}")
+        for flow in self.flows:
+            if flow.name == "main":
+                return flow
+        raise ToolangError("No default flow found in program.")
+
+    def get_instruct(self, name: str | None) -> InstructDecl | None:
+        selected = "default" if name is None else name
+        return next((item for item in self.instructs if item.name == selected), None)
+
+    def get_context(self, name: str | None) -> ContextDecl | None:
+        selected = "default" if name is None else name
+        return next((item for item in self.contexts if item.name == selected), None)
 
     @classmethod
     def from_source(cls, source: str) -> Program:
@@ -302,16 +350,21 @@ class Program(Node):
         return program
 
 
+def _default_agic() -> AgicDecl:
+    return AgicDecl(
+        name="default",
+        input=Parameter(name="in", type_name="Pack", span=Span(line=1)),
+        span=Span(line=1),
+    )
+
+
 def to_data(value: object) -> object:
     """Return a JSON-compatible representation of an AST value."""
 
     if isinstance(value, Node):
         return {
             "kind": value.kind,
-            **{
-                item.name: to_data(getattr(value, item.name))
-                for item in fields(value)
-            },
+            **{item.name: to_data(getattr(value, item.name)) for item in fields(value)},
         }
     if isinstance(value, Span):
         return {"line": value.line}
@@ -319,6 +372,6 @@ def to_data(value: object) -> object:
         return {item.name: to_data(getattr(value, item.name)) for item in fields(value)}
     if isinstance(value, tuple | list):
         return [to_data(item) for item in value]
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return {str(key): to_data(item) for key, item in value.items()}
     return value

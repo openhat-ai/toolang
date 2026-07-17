@@ -44,6 +44,13 @@ Use this directory for:
 | [api.md](./api.md) | Control surfaces, including the CLI and local agent HTTP API |
 
 
+## Implementation Targets
+
+| Document | Scope |
+| --- | --- |
+| [refactor-target.md](./refactor-target.md) | Target package structure, core classes, dependency direction, CLI split, and migration order |
+
+
 ## Generated Reference
 
 Use `reference/` for generated package and module reference derived directly

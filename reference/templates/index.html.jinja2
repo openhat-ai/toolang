@@ -13,16 +13,21 @@
     "toolang",
     "toolang.base",
     "toolang.cli",
-    "toolang.agents",
-    "toolang.caps",
+    "toolang.agent",
+    "toolang.agent.local",
+    "toolang.api",
+    "toolang.catalog",
+    "toolang.catalog.cap",
+    "toolang.state",
     "toolang.work",
+    "toolang.work.definitions",
     "toolang.execution",
-    "toolang.models",
-    "toolang.strategies",
-    "toolang.tools",
-    "toolang.channels",
-    "toolang.sandboxes",
-    "toolang.up",
+    "toolang.plugin",
+    "toolang.plugin.models",
+    "toolang.plugin.tools",
+    "toolang.plugin.channels",
+    "toolang.plugin.sandboxes",
+    "toolang.agent.runtime",
 ] %}
 {% block title %}Toolang Reference{% endblock %}
 {% block style %}
@@ -223,21 +228,21 @@
                         <p>CLI entry points and command wiring for agent lifecycle, runtime control, caps, and jobs.</p>
                     </article>
                 {% endif %}
-                {% if "toolang.agents" in all_modules %}
+                {% if "toolang.agent.local" in all_modules %}
                     <article class="reference-card">
-                        <h3><a href="toolang/agents.html"><code>toolang.agents</code></a></h3>
+                        <h3><a href="toolang/agent/local.html"><code>toolang.agent.local</code></a></h3>
                         <p>Local agent paths, runtime-state files, and managed lifecycle helpers.</p>
                     </article>
                 {% endif %}
-                {% if "toolang.caps" in all_modules %}
+                {% if "toolang.catalog.cap" in all_modules %}
                     <article class="reference-card">
-                        <h3><a href="toolang/caps.html"><code>toolang.caps</code></a></h3>
+                        <h3><a href="toolang/catalog/cap.html"><code>toolang.catalog.cap</code></a></h3>
                         <p>Cap definitions, local cap files, remote cap refs, and effective cap views.</p>
                     </article>
                 {% endif %}
-                {% if "toolang.work" in all_modules %}
+                {% if "toolang.work.definitions" in all_modules %}
                     <article class="reference-card">
-                        <h3><a href="toolang/work.html"><code>toolang.work</code></a></h3>
+                        <h3><a href="toolang/work/definitions.html"><code>toolang.work.definitions</code></a></h3>
                         <p>Task and chore document models, scheduling fields, and local work-file helpers.</p>
                     </article>
                 {% endif %}
@@ -247,22 +252,22 @@
                         <p>Run execution, durable records, trace events, response projection, and execution storage.</p>
                     </article>
                 {% endif %}
-                {% if "toolang.models" in all_modules %}
+                {% if "toolang.plugin.models" in all_modules %}
                     <article class="reference-card">
-                        <h3><a href="toolang/models.html"><code>toolang.models</code></a></h3>
+                        <h3><a href="toolang/plugin/models.html"><code>toolang.plugin.models</code></a></h3>
                         <p>Built-in model integrations and compatibility helpers for model-call execution.</p>
                     </article>
                 {% endif %}
-                {% if "toolang.tools" in all_modules %}
+                {% if "toolang.plugin.tools" in all_modules %}
                     <article class="reference-card">
-                        <h3><a href="toolang/tools.html"><code>toolang.tools</code></a></h3>
+                        <h3><a href="toolang/plugin/tools.html"><code>toolang.plugin.tools</code></a></h3>
                         <p>Built-in tool families and tool plugin implementations.</p>
                     </article>
                 {% endif %}
-                {% if "toolang.up" in all_modules %}
+                {% if "toolang.agent.runtime" in all_modules %}
                     <article class="reference-card">
-                        <h3><a href="toolang/up.html"><code>toolang.up</code></a></h3>
-                        <p>FastAPI app assembly, loop wiring, plugin loading, and runtime startup.</p>
+                        <h3><a href="toolang/agent/runtime.html"><code>toolang.agent.runtime</code></a></h3>
+                        <p>Runtime startup, executor assembly, and process lifecycle.</p>
                     </article>
                 {% endif %}
             </div>

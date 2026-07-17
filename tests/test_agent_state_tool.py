@@ -4,9 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from toolang import caps, work
+from toolang.catalog import cap as caps
+from toolang.catalog.job import JobCatalog
 from toolang.base.types.tool import ToolContext
-from toolang.tools.agent_state import create_tool_set as create_agent_state_tool
+from toolang.plugin.tools.agent_state import create_tool_set as create_agent_state_tool
 
 
 def _tool_context(toolang_root: Path, agent_name: str = "alice") -> ToolContext:
@@ -48,7 +49,7 @@ def test_agent_state_tool_creates_lists_gets_and_updates_tasks(tmp_path: Path) -
     assert loaded["task"]["title"] == "Review plan"
     assert updated["task"]["lifecycle"] == "ready"
     assert updated["task"]["body"] == "Review the merged implementation."
-    task = work.find_task(toolang_root, "alice", task_id)
+    task = JobCatalog(toolang_root, "alice").get("task", task_id)
     assert task is not None
     assert task.lifecycle == "ready"
 
@@ -81,12 +82,14 @@ def test_agent_state_tool_creates_and_updates_chores(tmp_path: Path) -> None:
     assert listed["chores"][0]["id"] == chore_id
     assert updated["chore"]["schedule"] == "FREQ=DAILY;INTERVAL=1"
     assert updated["chore"]["body"] == "Report stale pull requests and blockers."
-    chore = work.find_chore(toolang_root, "alice", chore_id)
+    chore = JobCatalog(toolang_root, "alice").get("chore", chore_id)
     assert chore is not None
     assert chore.document.schedule == "FREQ=DAILY;INTERVAL=1"
 
 
-def test_agent_state_tool_creates_updates_gets_and_deletes_skill(tmp_path: Path) -> None:
+def test_agent_state_tool_creates_updates_gets_and_deletes_skill(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     context = _tool_context(toolang_root)
     tools = create_agent_state_tool({}).tools()
@@ -169,13 +172,12 @@ def test_agent_state_tool_creates_psyche_and_prompt(tmp_path: Path) -> None:
 
     assert psyche["psyche"]["content"] == "Prefer direct answers.\n"
     assert prompt["prompt"]["content"] == "Summarize: {{input}}\n"
-    assert caps.load_local_entry_text(
-        toolang_root,
-        "alice",
-        visibility="private",
-        kind="psyche",
-        name="direct",
-    ) == "Prefer direct answers.\n"
+    assert (
+        caps.CapCatalog(toolang_root, "alice", visibility="private").read(
+            "psyche", "direct"
+        )
+        == "Prefer direct answers.\n"
+    )
 
 
 def test_agent_state_tool_rejects_non_agent_home(tmp_path: Path) -> None:

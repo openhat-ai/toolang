@@ -1,6 +1,6 @@
 #!/usr/bin/env toolang
 
-# Manual checks for CLI ordering against one thunk that allows multiple refs.
+# Manual checks for CLI ordering against one agic that allows multiple refs.
 #
 # Prefer Claude first:
 #   toolang examples/invoke.priority.too rewrite "Rewrite this sentence." \

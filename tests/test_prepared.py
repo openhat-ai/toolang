@@ -61,9 +61,7 @@ def test_load_shared_lock_reads_form_source_entries(tmp_path: Path) -> None:
                             "artifact": 0,
                             "object": {"meta": {"remote": True}, "content": ""},
                         }
-                    ],
-                    "tasks": [],
-                    "chores": [],
+                    ]
                 },
             }
         ),

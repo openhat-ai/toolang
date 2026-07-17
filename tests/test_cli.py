@@ -13,30 +13,87 @@ from uuid import uuid4
 import pytest
 from typer.testing import CliRunner
 
-from toolang import agents
-from toolang import caps
-from toolang.base.types.message import Message
+from toolang.agent import local as agents
+from toolang.catalog.agent import AgentCatalog
+from toolang.catalog import cap as caps
+from toolang.base.types.message import Message, TextPart
 from toolang.base.types.model import ModelInfo
 from toolang.base.types.tool import ToolContext, ToolDefinition
-import toolang.cli.toolang.app as cli
-import toolang.cli.toolang.inspect as inspect_cli
-import toolang.cli.invoke as cli_invoke
-import toolang.cli.caps.app as caps_cli
+import toolang.cli.app.main as cli
+import toolang.cli.app.routing as app_routing
+import toolang.cli.app.commands.agent as agent_commands
+import toolang.cli.app.commands.chat as chat_commands
+import toolang.cli.app.commands.plugin as plugin_commands
+import toolang.cli.app.commands.runtime as runtime_commands
+import toolang.cli.app.commands.thread as inspect_cli
+import toolang.cli.invoke.main as cli_invoke
+import toolang.cli.invoke.rendering as invoke_rendering
+import toolang.cli.common.version as cli_version
+import toolang.cli.caps.main as caps_cli
 import toolang.cli.caps.commands as caps_commands
-import toolang.cli.logo as cli_logo
-import toolang.cli.utils as cli_utils
-from toolang.cli.progress import CliProgress
-from toolang.components.trigger import watch
+from toolang.cli.common.context import CliContext
+import toolang.cli.common.output as cli_output
+from toolang.cli.common.progress import CliProgress
+from toolang.state import watcher as state_watcher
 from toolang.config.log import DEFAULT_AGENT_LOG_SPEC
 from toolang.config.log_spec import PY_LOG_ENV_VAR
 from toolang.execution.events import RunEnd, RunStarting, StepEnd, StepBegin
+from toolang.execution.records import InputRef, OutputRef, RunRecord
 from toolang.common.progress import ProgressEvent
-from toolang import work
-from toolang.execution.db import ExecutionStore, execution_db_path
+from toolang.plugin.loading import PluginInfo
+from toolang.catalog.job import JobCatalog
+from toolang.execution.store import RunStore, run_store_path
+from toolang.agent import runtime as agent_up
 from wcwidth import wcswidth
 
 runner = CliRunner()
 DEFAULT_AGENT_SOURCE = "# Customize this agent here.\n# Docs: https://toolang.ai/docs\n"
+
+
+def _create_cap(
+    root: Path,
+    agent: str,
+    *,
+    visibility: caps.PreparedVisibility,
+    kind: caps.EntryKind,
+    name: str,
+    text: str,
+) -> Path:
+    return caps.CapCatalog(root, agent, visibility=visibility).create(kind, name, text)
+
+
+def _jobs(root: Path, agent: str = "alice") -> JobCatalog:
+    return JobCatalog(root, agent)
+
+
+def _fake_invoke_record(
+    toolang_root: Path,
+    agent_name: str,
+) -> RunRecord:
+    store = RunStore(run_store_path(toolang_root, agent_name))
+    try:
+        run = store.start_run(
+            run_id="run_test",
+            thread_id="script_test",
+            origin="script",
+            input=Message.user("test"),
+        )
+        store.append_step(
+            run_id=run.id,
+            step_index=0,
+            kind="model",
+            status="finished",
+            input=(InputRef(cmd=0),),
+            output=(TextPart(text="done"),),
+            started_at=run.started_at,
+            finished_at=run.started_at,
+        )
+        return store.finish_run(
+            run_id=run.id,
+            output=OutputRef(step=f"{run.id}/0"),
+        )
+    finally:
+        store.close()
 
 
 def _invoke_app(
@@ -213,7 +270,7 @@ def test_cli_main_intercepts_local_too_program_before_typer(
         captured["prog_name"] = prog_name
         return 0
 
-    monkeypatch.setattr(cli.cli_invoke, "handle_roaming_invoke", fake_handle)
+    monkeypatch.setattr(cli_invoke, "handle_roaming_invoke", fake_handle)
     monkeypatch.setattr(cli.sys, "argv", ["toolang"])
 
     result = cli.main([str(program_path), "--help"])
@@ -235,19 +292,19 @@ def test_cli_main_runs_roaming_file_runtime_for_script_inbox(
     inbox.mkdir()
     captured: dict[str, object] = {}
 
-    def fake_file_runtime(global_args: list[str], body: list[str]) -> int:
-        captured["global_args"] = list(global_args)
-        captured["body"] = list(body)
+    def fake_file_runtime(source: Path, args: list[str]) -> int:
+        captured["source"] = source
+        captured["args"] = list(args)
         return 0
 
-    monkeypatch.setattr(cli, "_run_roaming_file_runtime", fake_file_runtime)
+    monkeypatch.setattr(runtime_commands, "run_roaming_file", fake_file_runtime)
     monkeypatch.setattr(cli.sys, "argv", ["toolang"])
 
     result = cli.main([str(program_path), "--inbox", str(inbox)])
 
     assert result == 0
-    assert captured["global_args"] == []
-    assert captured["body"] == [str(program_path), "--inbox", str(inbox)]
+    assert captured["source"] == program_path.resolve()
+    assert captured["args"] == ["--inbox", str(inbox)]
 
 
 def test_cli_main_routes_roaming_thread_commands_to_materialized_agent(
@@ -269,7 +326,9 @@ def test_cli_main_routes_roaming_thread_commands_to_materialized_agent(
         captured["standalone_mode"] = standalone_mode
         captured["prefix_agent"] = cli._CLI_PREFIX_AGENT
 
-    monkeypatch.setattr(cli.agents, "materialize_roaming_program", fake_materialize)
+    monkeypatch.setattr(
+        app_routing.agents, "materialize_roaming_program", fake_materialize
+    )
     monkeypatch.setattr(cli, "app", cast(object, fake_app))
     monkeypatch.setattr(cli.sys, "argv", ["toolang"])
 
@@ -295,7 +354,7 @@ def test_cli_main_roaming_threads_can_read_offline_materialized_store(
         tmp_path, "agic:\n  Reply directly.\n", name="demo"
     )
     toolang_root, agent_name = agents.materialize_roaming_program(program_path)
-    store = ExecutionStore(execution_db_path(toolang_root, agent_name))
+    store = RunStore(run_store_path(toolang_root, agent_name))
     try:
         run = store.start_run(
             run_id="run_first",
@@ -319,7 +378,7 @@ def test_cli_main_roaming_threads_can_read_offline_materialized_store(
     assert "roaming input" in output.out
 
 
-def test_cli_main_keeps_roaming_thunk_invoke_when_thunk_is_present(
+def test_cli_main_keeps_roaming_agic_invoke_when_agic_is_present(
     monkeypatch, tmp_path: Path
 ) -> None:
     program_path = tmp_path / "demo.too"
@@ -336,12 +395,12 @@ def test_cli_main_keeps_roaming_thunk_invoke_when_thunk_is_present(
         captured["prog_name"] = prog_name
         return 0
 
-    def fail_file_runtime(global_args: list[str], body: list[str]) -> int:
-        del global_args, body
+    def fail_file_runtime(source: Path, args: list[str]) -> int:
+        del source, args
         raise AssertionError("file runtime should not be used")
 
-    monkeypatch.setattr(cli, "_run_roaming_file_runtime", fail_file_runtime)
-    monkeypatch.setattr(cli.cli_invoke, "handle_roaming_invoke", fake_handle)
+    monkeypatch.setattr(runtime_commands, "run_roaming_file", fail_file_runtime)
+    monkeypatch.setattr(cli_invoke, "handle_roaming_invoke", fake_handle)
     monkeypatch.setattr(cli.sys, "argv", ["toolang"])
 
     result = cli.main([str(program_path), "file", "--inbox", str(inbox)])
@@ -369,8 +428,8 @@ def test_cli_main_does_not_preconfigure_roaming_invoke_from_py_log(
         captured["prog_name"] = prog_name
         return 0
 
-    monkeypatch.setattr(cli, "configure_logging", fake_configure_logging)
-    monkeypatch.setattr(cli.cli_invoke, "handle_roaming_invoke", fake_handle)
+    monkeypatch.setattr(app_routing, "configure_logging", fake_configure_logging)
+    monkeypatch.setattr(cli_invoke, "handle_roaming_invoke", fake_handle)
     monkeypatch.setattr(cli.sys, "argv", ["toolang"])
     monkeypatch.setenv(PY_LOG_ENV_VAR, "toolang.run=debug")
 
@@ -780,7 +839,7 @@ def test_cli_clone_remote_url_supports_explicit_target(
 
 def test_cli_clone_local_source_requires_target_name(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
 
     result = runner.invoke(
         cli.app,
@@ -1150,7 +1209,7 @@ def test_cli_progress_summarizes_zero_caps_when_prepare_runs() -> None:
     assert stream.getvalue().splitlines() == ["Prepared 0 caps in 200ms"]
 
 
-def test_cli_progress_skips_output_when_prepared_state_is_cached() -> None:
+def test_cli_progress_skips_output_when_agent_state_is_cached() -> None:
     stream = io.StringIO()
     progress = CliProgress(stream=stream)
 
@@ -1196,7 +1255,7 @@ def test_cli_progress_skips_output_when_prepared_state_is_cached() -> None:
     assert stream.getvalue() == ""
 
 
-def test_cli_progress_can_show_cached_prepared_state() -> None:
+def test_cli_progress_can_show_cached_agent_state() -> None:
     stream = io.StringIO()
     progress = CliProgress(stream=stream, show_cached_prepare=True)
     progress._started_at -= 0.1
@@ -1449,14 +1508,14 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
         return "agent remote-source\n"
 
     def fake_start_runtime(
-        startup: cli.agent_up.StartupSpec,
+        startup: agent_up.StartupSpec,
         *,
         environ: dict[str, str],
         sandbox_child: bool,
         progress=None,
-        prepared_state=None,
+        agent_state=None,
     ) -> int:
-        del environ, sandbox_child, progress, prepared_state
+        del environ, sandbox_child, progress, agent_state
         captured["toolang_root"] = startup.toolang_root
         captured["agent_name"] = startup.agent_name
         captured["port"] = startup.port
@@ -1474,9 +1533,9 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
         agents, "_github_agent_ref_exists", lambda ref: ref.path == "agents/alice.too"
     )
     monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
-    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
-    monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
-    monkeypatch.setattr(cli.agent_up, "resolve_runtime_port", lambda **_kwargs: 45123)
+    monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
+    monkeypatch.setattr(agent_up, "resolve_runtime_port", lambda **_kwargs: 45123)
 
     result = runner.invoke(
         cli.app,
@@ -1506,23 +1565,23 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
         return "agent researcher\n"
 
     def fake_start_runtime(
-        startup: cli.agent_up.StartupSpec,
+        startup: agent_up.StartupSpec,
         *,
         environ: dict[str, str],
         sandbox_child: bool,
         progress=None,
-        prepared_state=None,
+        agent_state=None,
     ) -> int:
-        del environ, sandbox_child, progress, prepared_state
+        del environ, sandbox_child, progress, agent_state
         captured["toolang_root"] = startup.toolang_root
         captured["agent_name"] = startup.agent_name
         captured["port"] = startup.port
         return 0
 
     monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
-    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
-    monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
-    monkeypatch.setattr(cli.agent_up, "resolve_runtime_port", lambda **_kwargs: 45124)
+    monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
+    monkeypatch.setattr(agent_up, "resolve_runtime_port", lambda **_kwargs: 45124)
 
     result = runner.invoke(
         cli.app,
@@ -1541,7 +1600,7 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
 
 def test_cli_run_rejects_active_resident_agent(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -1550,7 +1609,7 @@ def test_cli_run_rejects_active_resident_agent(tmp_path: Path, monkeypatch) -> N
         pid=os.getpid(),
     )
     monkeypatch.setattr(
-        cli.agent_up,
+        agent_up,
         "prepare_agent",
         lambda **_kwargs: pytest.fail(
             "active agents should be rejected before prepare"
@@ -1572,7 +1631,7 @@ def test_cli_run_rejects_active_resident_agent(tmp_path: Path, monkeypatch) -> N
 def test_cli_run_rejects_missing_resident_agent(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(
-        cli.agent_up,
+        agent_up,
         "prepare_agent",
         lambda **_kwargs: pytest.fail(
             "missing agents should be rejected before prepare"
@@ -1592,7 +1651,7 @@ def test_cli_run_rejects_missing_resident_agent(tmp_path: Path, monkeypatch) -> 
 
 def test_cli_run_interrupts_prepare_once(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
 
     def interrupt_prepare(*, progress, **_kwargs) -> None:
         progress(
@@ -1606,7 +1665,7 @@ def test_cli_run_interrupts_prepare_once(tmp_path: Path, monkeypatch) -> None:
         )
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(cli.agent_up, "prepare_agent", interrupt_prepare)
+    monkeypatch.setattr(agent_up, "prepare_agent", interrupt_prepare)
 
     result = runner.invoke(
         cli.app,
@@ -1634,7 +1693,7 @@ def test_cli_run_rejects_active_visiting_agent(tmp_path: Path, monkeypatch) -> N
         agents, "fetch_agent_ref", lambda *_args, **_kwargs: "agent researcher\n"
     )
     monkeypatch.setattr(
-        cli.agent_up,
+        agent_up,
         "prepare_agent",
         lambda **_kwargs: pytest.fail(
             "active visiting agents should be rejected before prepare"
@@ -1671,8 +1730,8 @@ def test_active_run_error_omits_urls_for_transient_states() -> None:
         sandbox=None,
     )
 
-    assert cli._active_run_error(preparing) == "Agent alice already preparing"
-    assert cli._active_run_error(starting) == "Agent alice already starting"
+    assert cli_output.active_agent_error(preparing) == "Agent alice already preparing"
+    assert cli_output.active_agent_error(starting) == "Agent alice already starting"
 
 
 def test_visiting_run_target_reuses_stable_root_and_program(
@@ -1896,7 +1955,7 @@ flow review(in: Text):
     )
 
 
-def test_cli_roaming_thunk_help_is_dynamic(capsys, tmp_path: Path) -> None:
+def test_cli_roaming_agic_help_is_dynamic(capsys, tmp_path: Path) -> None:
     program_path = _write_roaming_program(
         tmp_path,
         """
@@ -1947,7 +2006,7 @@ agic summarize(in: Part[], style?, audience?):
     assert "@PATH.png" not in captured.out
     assert "@PATH.mp3" not in captured.out
     assert "Modality is inferred from the extension." in captured.out
-    assert "Thunks" not in captured.out
+    assert "Agics" not in captured.out
     assert (
         captured.out.index("Options")
         < captured.out.index("Params")
@@ -1955,7 +2014,7 @@ agic summarize(in: Part[], style?, audience?):
     )
 
 
-def test_cli_roaming_invoke_passes_default_thunk_params_and_parts(
+def test_cli_roaming_invoke_passes_default_agic_params_and_parts(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     program_path = _write_roaming_program(
@@ -1973,35 +2032,32 @@ agic(in: Part[], tone?, retries?: Number, dry_run?: Boolean):
         *,
         toolang_root: Path,
         agent_name: str,
-        thunk_name: str | None,
+        executable_kind: str,
+        executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
         metadata: dict[str, object] | None,
         environ: dict[str, str],
-        response,
+        reply,
         log_spec: str | None = None,
-        prepared_state=None,
+        agent_state=None,
+        **selectors,
     ):
-        del environ, response
+        outcome = _fake_invoke_record(toolang_root, agent_name)
+        del environ, reply
         captured["toolang_root"] = toolang_root
         captured["agent_name"] = agent_name
-        captured["thunk_name"] = thunk_name
+        captured["executable_name"] = executable_name
+        captured["executable_kind"] = executable_kind
         captured["input_text"] = input_text
         captured["models"] = models
         captured["metadata"] = dict(metadata or {})
         captured["log_spec"] = log_spec
-        captured["prepared_state"] = prepared_state
+        captured["agent_state"] = agent_state
 
-        class _Outcome:
-            run_id = "run_test"
-            status = "finished"
-            output_text = "done"
-            error = None
-            log_path = None
+        return outcome
 
-        return _Outcome()
-
-    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
 
     result = cli.main(
         [
@@ -2024,10 +2080,10 @@ agic(in: Part[], tone?, retries?: Number, dry_run?: Boolean):
     assert output.out.strip() == "done"
     assert captured["agent_name"] == "demo"
     assert captured["toolang_root"] == program_path.parent / ".toolang"
-    assert captured["thunk_name"] == "default"
+    assert captured["executable_name"] == "default"
     assert captured["models"] == ("gpt-5", "o3")
     assert captured["log_spec"] is None
-    assert captured["prepared_state"] is not None
+    assert captured["agent_state"] is not None
     assert "rewrite this" in cast(str, captured["input_text"])
     assert str(attachment.resolve()) in cast(str, captured["input_text"])
     assert captured["metadata"] == {
@@ -2059,30 +2115,26 @@ agic(in: Part[]):
         *,
         toolang_root: Path,
         agent_name: str,
-        thunk_name: str | None,
+        executable_kind: str,
+        executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
         tools: tuple[str, ...],
         metadata: dict[str, object] | None,
         environ: dict[str, str],
-        response,
+        reply,
         log_spec: str | None = None,
-        prepared_state=None,
+        agent_state=None,
+        **selectors,
     ):
-        del toolang_root, agent_name, thunk_name, input_text, models
-        del metadata, environ, response, log_spec, prepared_state
+        outcome = _fake_invoke_record(toolang_root, agent_name)
+        del toolang_root, agent_name, executable_name, input_text, models
+        del metadata, environ, reply, log_spec, agent_state
         captured["tools"] = tools
 
-        class _Outcome:
-            run_id = "run_test"
-            status = "finished"
-            output_text = "done"
-            error = None
-            log_path = None
+        return outcome
 
-        return _Outcome()
-
-    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
 
     result = cli.main(
         [
@@ -2118,30 +2170,25 @@ agic(in: Part[]):
         *,
         toolang_root: Path,
         agent_name: str,
-        thunk_name: str | None,
+        executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
         caps: tuple[str, ...],
         metadata: dict[str, object] | None,
         environ: dict[str, str],
-        response,
+        reply,
         log_spec: str | None = None,
-        prepared_state=None,
+        agent_state=None,
+        **selectors,
     ):
-        del toolang_root, agent_name, thunk_name, input_text, models
-        del metadata, environ, response, log_spec, prepared_state
+        outcome = _fake_invoke_record(toolang_root, agent_name)
+        del toolang_root, agent_name, executable_name, input_text, models
+        del metadata, environ, reply, log_spec, agent_state
         captured["caps"] = caps
 
-        class _Outcome:
-            run_id = "run_test"
-            status = "finished"
-            output_text = "done"
-            error = None
-            log_path = None
+        return outcome
 
-        return _Outcome()
-
-    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
 
     result = cli.main(
         [
@@ -2161,7 +2208,7 @@ agic(in: Part[]):
     assert captured["caps"] == ("skill/reviewer", "service/*[home]", "[here]")
 
 
-def test_cli_roaming_invoke_quiet_after_thunk_suppresses_progress_output(
+def test_cli_roaming_invoke_quiet_after_agic_suppresses_progress_output(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     program_path = _write_roaming_program(
@@ -2177,39 +2224,34 @@ agic:
         *,
         toolang_root: Path,
         agent_name: str,
-        thunk_name: str | None,
+        executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
         metadata: dict[str, object] | None,
         environ: dict[str, str],
-        response,
+        reply,
         log_spec: str | None = None,
-        prepared_state=None,
+        agent_state=None,
+        **selectors,
     ):
+        outcome = _fake_invoke_record(toolang_root, agent_name)
         del (
             toolang_root,
             agent_name,
-            thunk_name,
+            executable_name,
             input_text,
             models,
             metadata,
             environ,
             log_spec,
-            prepared_state,
+            agent_state,
         )
-        captured["response"] = response
+        captured["reply"] = reply
 
-        class _Outcome:
-            run_id = "run_test"
-            status = "finished"
-            output_text = "done"
-            error = None
-            log_path = None
+        return outcome
 
-        return _Outcome()
-
-    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
-    monkeypatch.setattr(cli.cli_invoke.sys.stderr, "isatty", lambda: True)
+    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
+    monkeypatch.setattr(cli_invoke.sys.stderr, "isatty", lambda: True)
 
     result = cli.main([str(program_path), "default", "--quiet", "hello"])
     output = capsys.readouterr()
@@ -2217,7 +2259,7 @@ agic:
     assert result == 0
     assert output.out.strip() == "done"
     assert output.err == ""
-    assert captured["response"] is not None
+    assert captured["reply"] is not None
 
 
 def test_cli_roaming_invoke_uses_progress_sink_for_tty_stderr(
@@ -2236,46 +2278,41 @@ agic:
         *,
         toolang_root: Path,
         agent_name: str,
-        thunk_name: str | None,
+        executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
         metadata: dict[str, object] | None,
         environ: dict[str, str],
-        response,
+        reply,
         log_spec: str | None = None,
-        prepared_state=None,
+        agent_state=None,
+        **selectors,
     ):
+        outcome = _fake_invoke_record(toolang_root, agent_name)
         del (
             toolang_root,
             agent_name,
-            thunk_name,
+            executable_name,
             input_text,
             models,
             metadata,
             environ,
             log_spec,
-            prepared_state,
+            agent_state,
         )
-        captured["response"] = response
+        captured["reply"] = reply
 
-        class _Outcome:
-            run_id = "run_test"
-            status = "finished"
-            output_text = "done"
-            error = None
-            log_path = None
+        return outcome
 
-        return _Outcome()
-
-    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
-    monkeypatch.setattr(cli.cli_invoke.sys.stderr, "isatty", lambda: True)
+    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
+    monkeypatch.setattr(cli_invoke.sys.stderr, "isatty", lambda: True)
 
     result = cli.main([str(program_path), "default", "hello"])
     output = capsys.readouterr()
 
     assert result == 0
     assert output.out.strip() == "done"
-    assert captured["response"] is not None
+    assert captured["reply"] is not None
 
 
 def test_cli_roaming_invoke_passes_prepare_progress_for_tty_stderr(
@@ -2289,7 +2326,7 @@ agic:
 """.strip(),
     )
     captured: dict[str, object] = {}
-    real_prepare_agent = cli.cli_invoke.agent_up.prepare_agent
+    real_prepare_agent = cli_invoke.agent_up.prepare_agent
 
     def fake_prepare_agent(*, toolang_root: Path, agent_name: str, progress=None):
         captured["prepare_progress"] = progress
@@ -2303,40 +2340,35 @@ agic:
         *,
         toolang_root: Path,
         agent_name: str,
-        thunk_name: str | None,
+        executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
         metadata: dict[str, object] | None,
         environ: dict[str, str],
-        response,
+        reply,
         log_spec: str | None = None,
-        prepared_state=None,
+        agent_state=None,
+        **selectors,
     ):
+        outcome = _fake_invoke_record(toolang_root, agent_name)
         del (
             toolang_root,
             agent_name,
-            thunk_name,
+            executable_name,
             input_text,
             models,
             metadata,
             environ,
-            response,
+            reply,
             log_spec,
-            prepared_state,
+            agent_state,
         )
 
-        class _Outcome:
-            run_id = "run_test"
-            status = "finished"
-            output_text = "done"
-            error = None
-            log_path = None
+        return outcome
 
-        return _Outcome()
-
-    monkeypatch.setattr(cli.cli_invoke.agent_up, "prepare_agent", fake_prepare_agent)
-    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
-    monkeypatch.setattr(cli.cli_invoke.sys.stderr, "isatty", lambda: True)
+    monkeypatch.setattr(cli_invoke.agent_up, "prepare_agent", fake_prepare_agent)
+    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
+    monkeypatch.setattr(cli_invoke.sys.stderr, "isatty", lambda: True)
 
     result = cli.main([str(program_path), "default", "hello"])
     output = capsys.readouterr()
@@ -2357,7 +2389,7 @@ agic:
 """.strip(),
     )
     captured: dict[str, object] = {}
-    real_prepare_agent = cli.cli_invoke.agent_up.prepare_agent
+    real_prepare_agent = cli_invoke.agent_up.prepare_agent
 
     def fake_prepare_agent(*, toolang_root: Path, agent_name: str, progress=None):
         captured["prepare_progress"] = progress
@@ -2371,40 +2403,35 @@ agic:
         *,
         toolang_root: Path,
         agent_name: str,
-        thunk_name: str | None,
+        executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
         metadata: dict[str, object] | None,
         environ: dict[str, str],
-        response,
+        reply,
         log_spec: str | None = None,
-        prepared_state=None,
+        agent_state=None,
+        **selectors,
     ):
+        outcome = _fake_invoke_record(toolang_root, agent_name)
         del (
             toolang_root,
             agent_name,
-            thunk_name,
+            executable_name,
             input_text,
             models,
             metadata,
             environ,
-            response,
+            reply,
             log_spec,
-            prepared_state,
+            agent_state,
         )
 
-        class _Outcome:
-            run_id = "run_test"
-            status = "finished"
-            output_text = "done"
-            error = None
-            log_path = None
+        return outcome
 
-        return _Outcome()
-
-    monkeypatch.setattr(cli.cli_invoke.agent_up, "prepare_agent", fake_prepare_agent)
-    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
-    monkeypatch.setattr(cli.cli_invoke.sys.stderr, "isatty", lambda: True)
+    monkeypatch.setattr(cli_invoke.agent_up, "prepare_agent", fake_prepare_agent)
+    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
+    monkeypatch.setattr(cli_invoke.sys.stderr, "isatty", lambda: True)
 
     result = cli.main([str(program_path), "default", "hello", "-q"])
     output = capsys.readouterr()
@@ -2430,27 +2457,28 @@ agic:
         *,
         toolang_root: Path,
         agent_name: str,
-        thunk_name: str | None,
+        executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
         metadata: dict[str, object] | None,
         environ: dict[str, str],
-        response,
+        reply,
         log_spec: str | None = None,
-        prepared_state=None,
+        agent_state=None,
+        **selectors,
     ):
         del (
             toolang_root,
             agent_name,
-            thunk_name,
+            executable_name,
             input_text,
             models,
             metadata,
             environ,
             log_spec,
-            prepared_state,
+            agent_state,
         )
-        response.on_event(
+        reply.on_event(
             RunStarting(
                 run="run_test",
                 cmd=0,
@@ -2463,7 +2491,7 @@ agic:
         )
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
     monkeypatch.setenv(PY_LOG_ENV_VAR, "toolang.run=debug")
 
     result = cli.main([str(program_path), "default", "hello"])
@@ -2473,7 +2501,7 @@ agic:
     assert output.err.splitlines() == [
         "toolang interrupted",
         "Run: run_test",
-        f"Log: {agents.agent_script_run_log_path(program_path.parent / '.toolang', 'demo', thunk_name='default', run_id='run_test')}",
+        f"Log: {agents.agent_script_run_log_path(program_path.parent / '.toolang', 'demo', executable_name='default', run_id='run_test')}",
     ]
     assert "Traceback" not in output.err
 
@@ -2577,45 +2605,43 @@ flow review(in: Text):
         *,
         toolang_root: Path,
         agent_name: str,
-        thunk_name: str | None,
+        executable_kind: str,
+        executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
         metadata: dict[str, object] | None,
         environ: dict[str, str],
-        response,
+        reply,
         log_spec: str | None = None,
-        prepared_state=None,
+        agent_state=None,
+        **selectors,
     ):
+        outcome = _fake_invoke_record(toolang_root, agent_name)
         del (
             toolang_root,
             agent_name,
             models,
             environ,
-            response,
+            reply,
             log_spec,
-            prepared_state,
+            agent_state,
         )
-        captured["thunk_name"] = thunk_name
+        captured["executable_kind"] = executable_kind
+        captured["executable_name"] = executable_name
         captured["input_text"] = input_text
         captured["metadata"] = dict(metadata or {})
 
-        class _Outcome:
-            run_id = "run_test"
-            status = "finished"
-            output_text = "done"
-            error = None
-            log_path = None
+        return outcome
 
-        return _Outcome()
-
-    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
 
     result = cli.main([str(program_path), "review", "one", "two"])
     output = capsys.readouterr()
 
     assert result == 0
     assert output.out.strip() == "done"
-    assert captured["thunk_name"] == "review"
+    assert captured["executable_name"] == "review"
+    assert captured["executable_kind"] == "flow"
     assert captured["input_text"] == "one\n\ntwo"
     assert captured["metadata"] == {
         "invoke_params": {},
@@ -2623,7 +2649,6 @@ flow review(in: Text):
             {"type": "text", "text": "one"},
             {"type": "text", "text": "two"},
         ],
-        "executable_kind": "flow",
     }
 
 
@@ -2643,38 +2668,33 @@ agic:
         *,
         toolang_root: Path,
         agent_name: str,
-        thunk_name: str | None,
+        executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
         metadata: dict[str, object] | None,
         environ: dict[str, str],
-        response,
+        reply,
         log_spec: str | None = None,
-        prepared_state=None,
+        agent_state=None,
+        **selectors,
     ):
+        outcome = _fake_invoke_record(toolang_root, agent_name)
         del (
             toolang_root,
             agent_name,
-            thunk_name,
+            executable_name,
             models,
             environ,
-            response,
+            reply,
             log_spec,
-            prepared_state,
+            agent_state,
         )
         captured["input_text"] = input_text
         captured["metadata"] = dict(metadata or {})
 
-        class _Outcome:
-            run_id = "run_test"
-            status = "finished"
-            output_text = "done"
-            error = None
-            log_path = None
+        return outcome
 
-        return _Outcome()
-
-    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
 
     result = cli.main(
         [
@@ -2715,38 +2735,33 @@ agic(in: Part[], tone?):
         *,
         toolang_root: Path,
         agent_name: str,
-        thunk_name: str | None,
+        executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
         metadata: dict[str, object] | None,
         environ: dict[str, str],
-        response,
+        reply,
         log_spec: str | None = None,
-        prepared_state=None,
+        agent_state=None,
+        **selectors,
     ):
+        outcome = _fake_invoke_record(toolang_root, agent_name)
         del (
             toolang_root,
             agent_name,
-            thunk_name,
+            executable_name,
             models,
             environ,
-            response,
+            reply,
             log_spec,
-            prepared_state,
+            agent_state,
         )
         captured["input_text"] = input_text
         captured["metadata"] = dict(metadata or {})
 
-        class _Outcome:
-            run_id = "run_test"
-            status = "finished"
-            output_text = "done"
-            error = None
-            log_path = None
+        return outcome
 
-        return _Outcome()
-
-    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
 
     result = cli.main([str(program_path), "default", "style=concise", "tone=direct"])
     output = capsys.readouterr()
@@ -2782,38 +2797,33 @@ agic(in: Part[]):
         *,
         toolang_root: Path,
         agent_name: str,
-        thunk_name: str | None,
+        executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
         metadata: dict[str, object] | None,
         environ: dict[str, str],
-        response,
+        reply,
         log_spec: str | None = None,
-        prepared_state=None,
+        agent_state=None,
+        **selectors,
     ):
+        outcome = _fake_invoke_record(toolang_root, agent_name)
         del (
             toolang_root,
             agent_name,
-            thunk_name,
+            executable_name,
             models,
             environ,
-            response,
+            reply,
             log_spec,
-            prepared_state,
+            agent_state,
         )
         captured["input_text"] = input_text
         captured["metadata"] = dict(metadata or {})
 
-        class _Outcome:
-            run_id = "run_test"
-            status = "finished"
-            output_text = "done"
-            error = None
-            log_path = None
+        return outcome
 
-        return _Outcome()
-
-    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
 
     result = cli.main([str(program_path), "default", f"@{note}"])
     output = capsys.readouterr()
@@ -2851,38 +2861,33 @@ agic(in: Part[]):
         *,
         toolang_root: Path,
         agent_name: str,
-        thunk_name: str | None,
+        executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
         metadata: dict[str, object] | None,
         environ: dict[str, str],
-        response,
+        reply,
         log_spec: str | None = None,
-        prepared_state=None,
+        agent_state=None,
+        **selectors,
     ):
+        outcome = _fake_invoke_record(toolang_root, agent_name)
         del (
             toolang_root,
             agent_name,
-            thunk_name,
+            executable_name,
             models,
             environ,
-            response,
+            reply,
             log_spec,
-            prepared_state,
+            agent_state,
         )
         captured["input_text"] = input_text
         captured["metadata"] = dict(metadata or {})
 
-        class _Outcome:
-            run_id = "run_test"
-            status = "finished"
-            output_text = "done"
-            error = None
-            log_path = None
+        return outcome
 
-        return _Outcome()
-
-    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
 
     result = cli.main([str(program_path), "default", f"@{note}"])
     output = capsys.readouterr()
@@ -2917,38 +2922,33 @@ agic(in: Part[]):
         *,
         toolang_root: Path,
         agent_name: str,
-        thunk_name: str | None,
+        executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
         metadata: dict[str, object] | None,
         environ: dict[str, str],
-        response,
+        reply,
         log_spec: str | None = None,
-        prepared_state=None,
+        agent_state=None,
+        **selectors,
     ):
+        outcome = _fake_invoke_record(toolang_root, agent_name)
         del (
             toolang_root,
             agent_name,
-            thunk_name,
+            executable_name,
             models,
             environ,
-            response,
+            reply,
             log_spec,
-            prepared_state,
+            agent_state,
         )
         captured["input_text"] = input_text
         captured["metadata"] = dict(metadata or {})
 
-        class _Outcome:
-            run_id = "run_test"
-            status = "finished"
-            output_text = "done"
-            error = None
-            log_path = None
+        return outcome
 
-        return _Outcome()
-
-    monkeypatch.setattr(cli.cli_invoke.agent_up, "invoke", fake_invoke)
+    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
 
     result = cli.main([str(program_path), "default", f"@{video}"])
     output = capsys.readouterr()
@@ -2983,7 +2983,7 @@ def test_cli_start_rejects_remote_selector(tmp_path: Path) -> None:
 def test_cli_start_rejects_missing_agent(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(
-        cli.agent_up,
+        agent_up,
         "resolve_startup",
         lambda **_kwargs: pytest.fail(
             "missing agents should be rejected before startup resolution"
@@ -3003,7 +3003,7 @@ def test_cli_start_rejects_missing_agent(tmp_path: Path, monkeypatch) -> None:
 
 def test_cli_remove_deletes_stopped_agent(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
 
     result = runner.invoke(
         cli.app,
@@ -3018,7 +3018,7 @@ def test_cli_remove_deletes_stopped_agent(tmp_path: Path) -> None:
 
 def test_cli_remove_rejects_active_agent(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -3039,8 +3039,8 @@ def test_cli_remove_rejects_active_agent(tmp_path: Path) -> None:
 
 def test_cli_remove_rejects_orphan_runtime_process(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
-    monkeypatch.setattr(agents, "agent_runtime_process_pids", lambda *_args: (12345,))
+    AgentCatalog(toolang_root).create("alice")
+    monkeypatch.setattr(agents, "_agent_runtime_process_pids", lambda *_args: (12345,))
 
     result = runner.invoke(
         cli.app,
@@ -3057,9 +3057,9 @@ def test_cli_stop_stops_orphan_runtime_process_without_state(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     stopped: list[tuple[int, bool]] = []
-    monkeypatch.setattr(agents, "agent_runtime_process_pids", lambda *_args: (12345,))
+    monkeypatch.setattr(agents, "_agent_runtime_process_pids", lambda *_args: (12345,))
     monkeypatch.setattr(
         agents,
         "_stop_pid",
@@ -3079,8 +3079,8 @@ def test_cli_stop_stops_orphan_runtime_process_without_state(
 
 def test_cli_list_shows_agent_status_and_webui_url(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
-    agents.create_agent(toolang_root, "bob")
+    AgentCatalog(toolang_root).create("alice")
+    AgentCatalog(toolang_root).create("bob")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -3118,7 +3118,7 @@ def test_cli_list_shows_agent_status_and_webui_url(tmp_path: Path) -> None:
 
 def test_cli_list_shows_managed_sandbox_selector(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -3150,7 +3150,7 @@ def test_cli_list_shows_managed_sandbox_selector(tmp_path: Path) -> None:
 
 def test_cli_list_uses_ui_base_url_from_root_config(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -3177,7 +3177,7 @@ def test_cli_list_reads_web_config_without_validating_experiments_caps(
     tmp_path: Path,
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -3206,18 +3206,18 @@ def test_cli_list_reads_web_config_without_validating_experiments_caps(
 
 def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     (toolang_root / "agents" / "alice" / "config.toml").write_text(
         '[models]\ndefault = ["o3", "gpt-5"]\n',
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        cli,
+        agent_commands,
         "_utc_now",
         lambda: datetime(2026, 4, 8, 12, 0, 0, tzinfo=timezone.utc),
     )
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "load_model_providers",
         lambda *_args: {
             "openai": _FakeModelProvider(
@@ -3244,7 +3244,7 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
         },
     )
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "load_tool_plugins",
         lambda *, config=None: {
             "filesystem__read_text": _FakeLoadedTool(
@@ -3260,14 +3260,14 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
         },
     )
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "list_plugin_infos",
         lambda *, group: [
-            cli.agent_up.PluginInfo(name="filesystem", source="built-in"),
-            cli.agent_up.PluginInfo(name="shell", source="external"),
+            PluginInfo(name="filesystem", source="built-in"),
+            PluginInfo(name="shell", source="external"),
         ],
     )
-    caps.put_local_entry_text(
+    _create_cap(
         toolang_root,
         "alice",
         visibility="shared",
@@ -3275,7 +3275,7 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
         name="hello",
         text="---\ndescription: Say hello.\n---\n# Hello\n",
     )
-    caps.put_local_entry_text(
+    _create_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -3289,14 +3289,12 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
             "---\n"
         ),
     )
-    work.create_task_text(
-        toolang_root,
-        "alice",
+    _jobs(toolang_root).create(
+        "task",
         "---\ntitle: Review\n---\n\nReview this change.\n",
     )
-    work.create_chore_text(
-        toolang_root,
-        "alice",
+    _jobs(toolang_root).create(
+        "chore",
         "---\ntitle: Sync\nschedule: FREQ=HOURLY;INTERVAL=1\n---\n\nSync the service.\n",
     )
     agents.write_runtime_state(
@@ -3372,29 +3370,29 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
 def test_cli_info_console_uses_terminal_width(monkeypatch) -> None:
     monkeypatch.setenv("COLUMNS", "72")
 
-    assert cli_utils._INFO_CONSOLE.width == 72
+    assert cli_output._INFO_CONSOLE.width == 72
 
 
 def test_cli_info_narrow_layout_separates_avatar_from_table(monkeypatch) -> None:
     output = io.StringIO()
-    console = cli_utils.Console(
+    console = cli_output.Console(
         file=output, width=80, highlight=False, color_system=None
     )
-    monkeypatch.setattr(cli_utils, "_INFO_CONSOLE", console)
+    monkeypatch.setattr(cli_output, "_INFO_CONSOLE", console)
 
-    cli_utils._echo_pairs_table([("Home", "x")], avatar="AA\nBB", title="DEV")
+    cli_output.echo_pairs_table([("Home", "x")], avatar="AA\nBB", title="DEV")
 
     assert output.getvalue().startswith("AA\nBB\n\nDEV\n---\nHome x")
 
 
 def test_cli_info_wide_layout_aligns_avatar_with_table(monkeypatch) -> None:
     output = io.StringIO()
-    console = cli_utils.Console(
+    console = cli_output.Console(
         file=output, width=120, highlight=False, color_system=None
     )
-    monkeypatch.setattr(cli_utils, "_INFO_CONSOLE", console)
+    monkeypatch.setattr(cli_output, "_INFO_CONSOLE", console)
 
-    cli_utils._echo_pairs_table(
+    cli_output.echo_pairs_table(
         [("Home", "x"), ("Caps", "y")], avatar="AA\nBB", title="DEV"
     )
 
@@ -3402,7 +3400,7 @@ def test_cli_info_wide_layout_aligns_avatar_with_table(monkeypatch) -> None:
 
 
 def test_cli_info_avatar_uses_rainbow_style() -> None:
-    avatar = cli_logo._rainbow_text(" A\nB ")
+    avatar = cli_output._rainbow_text(" A\nB ")
 
     assert avatar.plain == " A\nB "
     assert avatar.style == ""
@@ -3413,7 +3411,7 @@ def test_cli_info_avatar_uses_rainbow_style() -> None:
 
 
 def test_cli_info_avatar_matches_logo_proportions() -> None:
-    avatar = cli_utils._agent_avatar().plain
+    avatar = cli_output.agent_avatar().plain
     lines = avatar.splitlines()
 
     assert len(lines) == 7
@@ -3430,8 +3428,8 @@ def test_cli_info_reads_cap_counts_from_prepared_locks(
     from toolang.state.prepared import write_prepared_lock
 
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
-    caps.put_local_entry_text(
+    AgentCatalog(toolang_root).create("alice")
+    _create_cap(
         toolang_root,
         "alice",
         visibility="shared",
@@ -3439,7 +3437,7 @@ def test_cli_info_reads_cap_counts_from_prepared_locks(
         name="hello",
         text="---\ndescription: Say hello.\n---\n# Hello\n",
     )
-    caps.put_local_entry_text(
+    _create_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -3481,10 +3479,11 @@ def test_cli_info_reads_cap_counts_from_prepared_locks(
 
 def test_cli_info_rebuilds_missing_prepared_lock(tmp_path: Path, monkeypatch) -> None:
     import shutil
+    from toolang.state.prepared import private_lock_path
 
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
-    caps.put_local_entry_text(
+    AgentCatalog(toolang_root).create("alice")
+    _create_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -3492,10 +3491,10 @@ def test_cli_info_rebuilds_missing_prepared_lock(tmp_path: Path, monkeypatch) ->
         name="hello",
         text="---\ndescription: Say hello.\n---\n# Hello\n",
     )
-    prepared = cli.agent_up.prepare_agent(toolang_root=toolang_root, agent_name="alice")
-    private_lock_path = prepared.private_lock.lock_path
-    assert private_lock_path.is_file()
-    shutil.rmtree(private_lock_path.parent)
+    agent_up.prepare_agent(toolang_root=toolang_root, agent_name="alice")
+    lock_path = private_lock_path(toolang_root, "alice")
+    assert lock_path.is_file()
+    shutil.rmtree(lock_path.parent)
 
     def fail_list_entries(*_args: object, **_kwargs: object) -> None:
         raise AssertionError(
@@ -3512,13 +3511,13 @@ def test_cli_info_rebuilds_missing_prepared_lock(tmp_path: Path, monkeypatch) ->
 
     assert result.exit_code == 0
     assert "1 skill" in result.stdout
-    assert private_lock_path.is_file()
+    assert lock_path.is_file()
     assert "Prepared 1 cap" in result.stderr
 
 
 def test_cli_info_for_stopped_agent_shows_created_only(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -3556,7 +3555,7 @@ def test_cli_info_for_running_docker_sandbox_shows_container_pid(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     monkeypatch.setattr(agents, "docker_container_running", lambda _name: True)
     monkeypatch.setattr(
         agents,
@@ -3598,13 +3597,13 @@ def test_cli_info_prefers_runtime_models_for_active_agent(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     (toolang_root / "agents" / "alice" / "config.toml").write_text(
         '[models]\ndefault = ["o3", "gpt-5"]\n',
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "load_model_providers",
         lambda *_args: {
             "anthropic": _FakeModelProvider(
@@ -3635,7 +3634,7 @@ def test_cli_info_prefers_runtime_models_for_active_agent(
             ),
         },
     )
-    monkeypatch.setattr(cli.agent_up, "load_tool_plugins", lambda *, config=None: {})
+    monkeypatch.setattr(plugin_commands, "load_tool_plugins", lambda *, config=None: {})
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -3659,11 +3658,11 @@ def test_cli_info_prefers_runtime_models_for_active_agent(
 
 
 def test_cli_channel_list_shows_installed_channels(monkeypatch) -> None:
-    def fake_list_plugin_infos(*, group: str) -> list[cli.agent_up.PluginInfo]:
+    def fake_list_plugin_infos(*, group: str) -> list[PluginInfo]:
         assert group == "toolang.channel"
-        return [cli.agent_up.PluginInfo(name="telegram", source="external")]
+        return [PluginInfo(name="telegram", source="external")]
 
-    monkeypatch.setattr(cli.agent_up, "list_plugin_infos", fake_list_plugin_infos)
+    monkeypatch.setattr(plugin_commands, "list_plugin_infos", fake_list_plugin_infos)
 
     result = runner.invoke(cli.app, ["channel", "list"])
 
@@ -3675,14 +3674,14 @@ def test_cli_channel_list_shows_installed_channels(monkeypatch) -> None:
 
 
 def test_cli_sandbox_list_shows_installed_sandboxes(monkeypatch) -> None:
-    def fake_list_plugin_infos(*, group: str) -> list[cli.agent_up.PluginInfo]:
+    def fake_list_plugin_infos(*, group: str) -> list[PluginInfo]:
         assert group == "toolang.sandbox"
         return [
-            cli.agent_up.PluginInfo(name="docker", source="external"),
-            cli.agent_up.PluginInfo(name="none", source="built-in"),
+            PluginInfo(name="docker", source="external"),
+            PluginInfo(name="none", source="built-in"),
         ]
 
-    monkeypatch.setattr(cli.agent_up, "list_plugin_infos", fake_list_plugin_infos)
+    monkeypatch.setattr(plugin_commands, "list_plugin_infos", fake_list_plugin_infos)
 
     result = runner.invoke(cli.app, ["sandbox", "list"])
 
@@ -3697,7 +3696,7 @@ def test_cli_sandbox_list_shows_installed_sandboxes(monkeypatch) -> None:
 
 def test_cli_tool_list_shows_installed_tool_plugin_tools(monkeypatch) -> None:
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "load_tool_plugins",
         lambda *, config=None: {
             "filesystem__read_text": _FakeLoadedTool(
@@ -3713,14 +3712,14 @@ def test_cli_tool_list_shows_installed_tool_plugin_tools(monkeypatch) -> None:
         },
     )
 
-    def fake_list_plugin_infos(*, group: str) -> list[cli.agent_up.PluginInfo]:
+    def fake_list_plugin_infos(*, group: str) -> list[PluginInfo]:
         assert group == "toolang.tool"
         return [
-            cli.agent_up.PluginInfo(name="filesystem", source="built-in"),
-            cli.agent_up.PluginInfo(name="shell", source="external"),
+            PluginInfo(name="filesystem", source="built-in"),
+            PluginInfo(name="shell", source="external"),
         ]
 
-    monkeypatch.setattr(cli.agent_up, "list_plugin_infos", fake_list_plugin_infos)
+    monkeypatch.setattr(plugin_commands, "list_plugin_infos", fake_list_plugin_infos)
 
     result = runner.invoke(cli.app, ["tool", "list"])
 
@@ -3741,7 +3740,7 @@ def test_cli_tool_list_shows_installed_tool_plugin_tools(monkeypatch) -> None:
 
 def test_cli_tool_list_filters_by_tool_selector(monkeypatch) -> None:
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "load_tool_plugins",
         lambda *, config=None: {
             "filesystem__read_text": _FakeLoadedTool(
@@ -3757,11 +3756,11 @@ def test_cli_tool_list_filters_by_tool_selector(monkeypatch) -> None:
         },
     )
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "list_plugin_infos",
         lambda *, group: [
-            cli.agent_up.PluginInfo(name="filesystem", source="built-in"),
-            cli.agent_up.PluginInfo(name="shell", source="external"),
+            PluginInfo(name="filesystem", source="built-in"),
+            PluginInfo(name="shell", source="external"),
         ],
     )
 
@@ -3777,7 +3776,7 @@ def test_cli_tool_list_filters_by_tool_selector(monkeypatch) -> None:
 
 def test_cli_tool_list_filters_by_cross_namespace_tool_selector(monkeypatch) -> None:
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "load_tool_plugins",
         lambda *, config=None: {
             "filesystem__read_text": _FakeLoadedTool(
@@ -3793,11 +3792,11 @@ def test_cli_tool_list_filters_by_cross_namespace_tool_selector(monkeypatch) -> 
         },
     )
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "list_plugin_infos",
         lambda *, group: [
-            cli.agent_up.PluginInfo(name="filesystem", source="built-in"),
-            cli.agent_up.PluginInfo(name="shell", source="external"),
+            PluginInfo(name="filesystem", source="built-in"),
+            PluginInfo(name="shell", source="external"),
         ],
     )
 
@@ -3813,7 +3812,7 @@ def test_cli_tool_list_filters_by_cross_namespace_tool_selector(monkeypatch) -> 
 
 def test_cli_tool_list_bare_pattern_matches_tool_name_not_toolset(monkeypatch) -> None:
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "load_tool_plugins",
         lambda *, config=None: {
             "filesystem__read_text": _FakeLoadedTool(
@@ -3829,11 +3828,11 @@ def test_cli_tool_list_bare_pattern_matches_tool_name_not_toolset(monkeypatch) -
         },
     )
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "list_plugin_infos",
         lambda *, group: [
-            cli.agent_up.PluginInfo(name="filesystem", source="built-in"),
-            cli.agent_up.PluginInfo(name="shell", source="external"),
+            PluginInfo(name="filesystem", source="built-in"),
+            PluginInfo(name="shell", source="external"),
         ],
     )
 
@@ -3850,7 +3849,7 @@ def test_cli_tool_list_bare_pattern_matches_tool_name_not_toolset(monkeypatch) -
 
 def test_cli_tool_list_filters_by_plugin_filter(monkeypatch) -> None:
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "load_tool_plugins",
         lambda *, config=None: {
             "issues__search": _FakeLoadedTool(
@@ -3866,11 +3865,11 @@ def test_cli_tool_list_filters_by_plugin_filter(monkeypatch) -> None:
         },
     )
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "list_plugin_infos",
         lambda *, group: [
-            cli.agent_up.PluginInfo(name="tracker", source="external"),
-            cli.agent_up.PluginInfo(name="shell", source="external"),
+            PluginInfo(name="tracker", source="external"),
+            PluginInfo(name="shell", source="external"),
         ],
     )
 
@@ -3885,7 +3884,7 @@ def test_cli_tool_list_filters_by_plugin_filter(monkeypatch) -> None:
 
 def test_cli_tool_list_supports_filter_short_option(monkeypatch) -> None:
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "load_tool_plugins",
         lambda *, config=None: {
             "filesystem__read_text": _FakeLoadedTool(
@@ -3901,11 +3900,11 @@ def test_cli_tool_list_supports_filter_short_option(monkeypatch) -> None:
         },
     )
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "list_plugin_infos",
         lambda *, group: [
-            cli.agent_up.PluginInfo(name="filesystem", source="built-in"),
-            cli.agent_up.PluginInfo(name="shell", source="external"),
+            PluginInfo(name="filesystem", source="built-in"),
+            PluginInfo(name="shell", source="external"),
         ],
     )
 
@@ -3919,7 +3918,7 @@ def test_cli_tool_list_supports_filter_short_option(monkeypatch) -> None:
 
 def test_cli_tool_list_reports_no_matched_tools_for_empty_filter(monkeypatch) -> None:
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "load_tool_plugins",
         lambda *, config=None: {
             "filesystem__read_text": _FakeLoadedTool(
@@ -3930,11 +3929,9 @@ def test_cli_tool_list_reports_no_matched_tools_for_empty_filter(monkeypatch) ->
         },
     )
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "list_plugin_infos",
-        lambda *, group: [
-            cli.agent_up.PluginInfo(name="filesystem", source="built-in")
-        ],
+        lambda *, group: [PluginInfo(name="filesystem", source="built-in")],
     )
 
     result = runner.invoke(cli.app, ["tool", "list", "--select", "shell/*"])
@@ -3946,7 +3943,7 @@ def test_cli_tool_list_reports_no_matched_tools_for_empty_filter(monkeypatch) ->
 
 def test_cli_model_list_shows_discovered_models(monkeypatch) -> None:
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "load_model_providers",
         lambda *_args: {
             "openai": _FakeModelProvider(
@@ -4009,7 +4006,7 @@ def test_cli_model_list_shows_discovered_models(monkeypatch) -> None:
 
 def test_cli_model_providers_orders_config_fields(monkeypatch) -> None:
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "load_model_providers",
         lambda *_args: {
             "openai": _FakeModelProvider(
@@ -4045,7 +4042,7 @@ def test_cli_model_providers_orders_config_fields(monkeypatch) -> None:
 
 def test_cli_model_providers_marks_missing_env_and_offline_url(monkeypatch) -> None:
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "load_model_providers",
         lambda *_args: {
             "google": _FakeModelProvider(
@@ -4076,7 +4073,7 @@ def test_cli_model_providers_marks_missing_env_and_offline_url(monkeypatch) -> N
 
 def test_cli_model_list_filters_by_model_selector(monkeypatch) -> None:
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "load_model_providers",
         lambda *_args: {
             "openai": _FakeModelProvider(
@@ -4123,7 +4120,7 @@ def test_cli_model_list_filters_by_model_selector(monkeypatch) -> None:
 
 def test_cli_model_list_reports_no_matched_models_for_empty_filter(monkeypatch) -> None:
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "load_model_providers",
         lambda *_args: {
             "openai": _FakeModelProvider(
@@ -4156,7 +4153,7 @@ def test_cli_model_list_reports_no_matched_models_for_empty_filter(monkeypatch) 
 
 def test_cli_model_list_filters_by_capability_selector(monkeypatch) -> None:
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "load_model_providers",
         lambda *_args: {
             "openrouter": _FakeModelProvider(
@@ -4201,7 +4198,7 @@ def test_cli_model_list_filters_by_capability_selector(monkeypatch) -> None:
 
 def test_cli_model_list_supports_filter_short_option(monkeypatch) -> None:
     monkeypatch.setattr(
-        cli.agent_up,
+        plugin_commands,
         "load_model_providers",
         lambda *_args: {
             "openrouter": _FakeModelProvider(
@@ -4246,18 +4243,18 @@ def test_cli_model_list_supports_filter_short_option(monkeypatch) -> None:
 
 def test_cli_run_hands_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     captured: dict[str, object] = {}
 
     def fake_start_runtime(
-        startup: cli.agent_up.StartupSpec,
+        startup: agent_up.StartupSpec,
         *,
         environ: dict[str, str],
         sandbox_child: bool = False,
         progress=None,
-        prepared_state=None,
+        agent_state=None,
     ) -> int:
-        del progress, prepared_state
+        del progress, agent_state
         captured["toolang_root"] = startup.toolang_root
         captured["agent_name"] = startup.agent_name
         captured["host"] = startup.host
@@ -4273,8 +4270,8 @@ def test_cli_run_hands_to_agent_up(tmp_path: Path, monkeypatch) -> None:
         captured["environ"] = environ
         return 0
 
-    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
-    monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
+    monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -4319,34 +4316,34 @@ def test_cli_run_hands_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     )
 
 
-def test_cli_run_reuses_prepared_state_for_foreground_runtime(
+def test_cli_run_reuses_agent_state_for_foreground_runtime(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
-    prepared_state = object()
+    AgentCatalog(toolang_root).create("alice")
+    agent_state = object()
     captured: dict[str, object] = {}
     prepare_calls = 0
 
     def fake_prepare_agent(**_kwargs):
         nonlocal prepare_calls
         prepare_calls += 1
-        return prepared_state
+        return agent_state
 
     def fake_start_runtime(
-        startup: cli.agent_up.StartupSpec,
+        startup: agent_up.StartupSpec,
         *,
         environ: dict[str, str],
         sandbox_child: bool = False,
         progress=None,
-        prepared_state=None,
+        agent_state=None,
     ) -> int:
         del startup, environ, sandbox_child, progress
-        captured["prepared_state"] = prepared_state
+        captured["agent_state"] = agent_state
         return 0
 
-    monkeypatch.setattr(cli.agent_up, "prepare_agent", fake_prepare_agent)
-    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(agent_up, "prepare_agent", fake_prepare_agent)
+    monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
 
     result = runner.invoke(
         cli.app,
@@ -4356,24 +4353,24 @@ def test_cli_run_reuses_prepared_state_for_foreground_runtime(
 
     assert result.exit_code == 0
     assert prepare_calls == 1
-    assert captured["prepared_state"] is prepared_state
+    assert captured["agent_state"] is agent_state
 
 
 def test_cli_run_resolves_port_when_unspecified(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     captured: dict[str, object] = {}
-    monkeypatch.setattr(cli.agent_up, "resolve_runtime_port", lambda **_kwargs: 8765)
+    monkeypatch.setattr(agent_up, "resolve_runtime_port", lambda **_kwargs: 8765)
 
     def fake_start_runtime(
-        startup: cli.agent_up.StartupSpec,
+        startup: agent_up.StartupSpec,
         *,
         environ: dict[str, str],
         sandbox_child: bool = False,
         progress=None,
-        prepared_state=None,
+        agent_state=None,
     ) -> int:
-        del progress, prepared_state
+        del progress, agent_state
         captured["toolang_root"] = startup.toolang_root
         captured["agent_name"] = startup.agent_name
         captured["host"] = startup.host
@@ -4388,8 +4385,8 @@ def test_cli_run_resolves_port_when_unspecified(tmp_path: Path, monkeypatch) -> 
         captured["environ"] = environ
         return 0
 
-    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
-    monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
+    monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -4416,23 +4413,23 @@ def test_cli_run_resolves_port_when_unspecified(tmp_path: Path, monkeypatch) -> 
 
 def test_cli_run_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     captured: dict[str, object] = {}
 
     def fake_start_runtime(
-        startup: cli.agent_up.StartupSpec,
+        startup: agent_up.StartupSpec,
         *,
         environ: dict[str, str],
         sandbox_child: bool = False,
         progress=None,
-        prepared_state=None,
+        agent_state=None,
     ) -> int:
-        del environ, sandbox_child, progress, prepared_state
+        del environ, sandbox_child, progress, agent_state
         captured["component_names"] = startup.enabled_components
         return 0
 
-    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
-    monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
+    monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -4453,23 +4450,23 @@ def test_cli_run_passes_model_selectors_to_agent_up(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     captured: dict[str, object] = {}
 
     def fake_start_runtime(
-        startup: cli.agent_up.StartupSpec,
+        startup: agent_up.StartupSpec,
         *,
         environ: dict[str, str],
         sandbox_child: bool = False,
         progress=None,
-        prepared_state=None,
+        agent_state=None,
     ) -> int:
-        del environ, sandbox_child, progress, prepared_state
+        del environ, sandbox_child, progress, agent_state
         captured["models"] = startup.model_selectors
         return 0
 
-    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
-    monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
+    monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -4485,23 +4482,23 @@ def test_cli_run_accepts_glob_model_selector_as_available_model_filter(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     captured: dict[str, object] = {}
 
     def fake_start_runtime(
-        startup: cli.agent_up.StartupSpec,
+        startup: agent_up.StartupSpec,
         *,
         environ: dict[str, str],
         sandbox_child: bool = False,
         progress=None,
-        prepared_state=None,
+        agent_state=None,
     ) -> int:
-        del environ, sandbox_child, progress, prepared_state
+        del environ, sandbox_child, progress, agent_state
         captured["models"] = startup.model_selectors
         return 0
 
-    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
-    monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
+    monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -4515,23 +4512,23 @@ def test_cli_run_accepts_glob_model_selector_as_available_model_filter(
 
 def test_cli_run_passes_tool_selectors_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     captured: dict[str, object] = {}
 
     def fake_start_runtime(
-        startup: cli.agent_up.StartupSpec,
+        startup: agent_up.StartupSpec,
         *,
         environ: dict[str, str],
         sandbox_child: bool = False,
         progress=None,
-        prepared_state=None,
+        agent_state=None,
     ) -> int:
-        del environ, sandbox_child, progress, prepared_state
+        del environ, sandbox_child, progress, agent_state
         captured["tools"] = startup.tool_selectors
         return 0
 
-    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
-    monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
+    monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -4545,23 +4542,23 @@ def test_cli_run_passes_tool_selectors_to_agent_up(tmp_path: Path, monkeypatch) 
 
 def test_cli_run_passes_cap_selectors_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     captured: dict[str, object] = {}
 
     def fake_start_runtime(
-        startup: cli.agent_up.StartupSpec,
+        startup: agent_up.StartupSpec,
         *,
         environ: dict[str, str],
         sandbox_child: bool = False,
         progress=None,
-        prepared_state=None,
+        agent_state=None,
     ) -> int:
-        del environ, sandbox_child, progress, prepared_state
+        del environ, sandbox_child, progress, agent_state
         captured["caps"] = startup.cap_selectors
         return 0
 
-    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
-    monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
+    monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -4582,9 +4579,9 @@ def test_cli_run_passes_cap_selectors_to_agent_up(tmp_path: Path, monkeypatch) -
 
 def test_cli_run_rejects_missing_default_model_env(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     monkeypatch.setattr(
-        cli.agent_up,
+        agent_up,
         "start_runtime",
         lambda *_args, **_kwargs: pytest.fail("runtime should exit before launching"),
     )
@@ -4608,24 +4605,24 @@ def test_cli_run_rejects_missing_default_model_env(tmp_path: Path, monkeypatch) 
 
 def test_cli_run_uses_py_log_spec(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     captured: dict[str, object] = {}
 
     def fake_start_runtime(
-        startup: cli.agent_up.StartupSpec,
+        startup: agent_up.StartupSpec,
         *,
         environ: dict[str, str],
         sandbox_child: bool = False,
         progress=None,
-        prepared_state=None,
+        agent_state=None,
     ) -> int:
-        del sandbox_child, progress, prepared_state
+        del sandbox_child, progress, agent_state
         captured["environ"] = environ
         captured["log_spec"] = startup.log_spec
         return 0
 
-    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
-    monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
+    monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -4672,14 +4669,14 @@ def test_cli_run_loads_root_and_agent_env_with_agent_override(
     captured: dict[str, object] = {}
 
     def fake_start_runtime(
-        startup: cli.agent_up.StartupSpec,
+        startup: agent_up.StartupSpec,
         *,
         environ: dict[str, str],
         sandbox_child: bool = False,
         progress=None,
-        prepared_state=None,
+        agent_state=None,
     ) -> int:
-        del progress, prepared_state
+        del progress, agent_state
         captured["environ"] = environ
         captured["endpoint_host"] = startup.endpoint_host
         captured["sandbox"] = startup.selector.render()
@@ -4689,8 +4686,8 @@ def test_cli_run_loads_root_and_agent_env_with_agent_override(
         captured["log_spec"] = startup.log_spec
         return 0
 
-    monkeypatch.setattr(cli.agent_up, "start_runtime", fake_start_runtime)
-    monkeypatch.setattr(cli.agent_up, "prepare_agent", lambda **_kwargs: None)
+    monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
+    monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -4715,9 +4712,9 @@ def test_cli_start_spawns_background_run_and_reports_status(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     captured: dict[str, object] = {}
-    monkeypatch.setattr(cli.agent_up, "resolve_runtime_port", lambda **_kwargs: 8765)
+    monkeypatch.setattr(agent_up, "resolve_runtime_port", lambda **_kwargs: 8765)
 
     class FakeProcess:
         def poll(self) -> None:
@@ -4751,7 +4748,7 @@ def test_cli_start_spawns_background_run_and_reports_status(
         )
         return FakeProcess()
 
-    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(agents.subprocess, "Popen", fake_popen)
 
     result = runner.invoke(
         cli.app,
@@ -4773,7 +4770,7 @@ def test_cli_start_spawns_background_run_and_reports_status(
     assert captured["command"] == [
         cli.sys.executable,
         "-m",
-        "toolang.cli.toolang",
+        "toolang.cli.app",
         "--root",
         str(toolang_root),
         "run",
@@ -4806,7 +4803,7 @@ def test_cli_start_propagates_py_log_to_agent_process(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     captured: dict[str, object] = {}
 
     class FakeProcess:
@@ -4841,7 +4838,7 @@ def test_cli_start_propagates_py_log_to_agent_process(
         )
         return FakeProcess()
 
-    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(agents.subprocess, "Popen", fake_popen)
 
     result = runner.invoke(
         cli.app,
@@ -4861,7 +4858,7 @@ def test_cli_start_propagates_py_log_to_agent_process(
     assert command[0:5] == [
         cli.sys.executable,
         "-m",
-        "toolang.cli.toolang",
+        "toolang.cli.app",
         "--root",
         str(toolang_root),
     ]
@@ -4873,7 +4870,7 @@ def test_cli_start_propagates_py_log_to_agent_process(
 
 def test_cli_start_rejects_active_agent(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -4898,7 +4895,7 @@ def test_cli_start_allows_restart_after_stale_preparing_state(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -4943,7 +4940,7 @@ def test_cli_start_allows_restart_after_stale_preparing_state(
         )
         return FakeProcess()
 
-    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(agents.subprocess, "Popen", fake_popen)
 
     result = runner.invoke(
         cli.app,
@@ -4957,9 +4954,9 @@ def test_cli_start_allows_restart_after_stale_preparing_state(
 
 def test_cli_start_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     captured: dict[str, object] = {}
-    monkeypatch.setattr(cli.agent_up, "resolve_runtime_port", lambda **_kwargs: 8765)
+    monkeypatch.setattr(agent_up, "resolve_runtime_port", lambda **_kwargs: 8765)
 
     class FakeProcess:
         def poll(self) -> None:
@@ -4987,7 +4984,7 @@ def test_cli_start_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None
         )
         return FakeProcess()
 
-    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(agents.subprocess, "Popen", fake_popen)
 
     result = runner.invoke(
         cli.app,
@@ -5013,9 +5010,9 @@ def test_cli_start_includes_model_selectors_in_background_command(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     captured: dict[str, object] = {}
-    monkeypatch.setattr(cli.agent_up, "resolve_runtime_port", lambda **_kwargs: 8765)
+    monkeypatch.setattr(agent_up, "resolve_runtime_port", lambda **_kwargs: 8765)
 
     class FakeProcess:
         def poll(self) -> None:
@@ -5043,7 +5040,7 @@ def test_cli_start_includes_model_selectors_in_background_command(
         )
         return FakeProcess()
 
-    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(agents.subprocess, "Popen", fake_popen)
 
     result = runner.invoke(
         cli.app,
@@ -5072,9 +5069,9 @@ def test_cli_start_includes_tool_selectors_in_background_command(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     captured: dict[str, object] = {}
-    monkeypatch.setattr(cli.agent_up, "resolve_runtime_port", lambda **_kwargs: 8765)
+    monkeypatch.setattr(agent_up, "resolve_runtime_port", lambda **_kwargs: 8765)
 
     class FakeProcess:
         def poll(self) -> None:
@@ -5102,7 +5099,7 @@ def test_cli_start_includes_tool_selectors_in_background_command(
         )
         return FakeProcess()
 
-    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(agents.subprocess, "Popen", fake_popen)
 
     result = runner.invoke(
         cli.app,
@@ -5133,7 +5130,7 @@ def test_cli_start_rejects_unconfigured_model_selector(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     (toolang_root / "config.toml").write_text(
         "[models.aliases.gateway]\n"
         'ref = "openai/gpt-5"\n'
@@ -5143,7 +5140,7 @@ def test_cli_start_rejects_unconfigured_model_selector(
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        cli.subprocess,
+        agents.subprocess,
         "Popen",
         lambda *_args, **_kwargs: pytest.fail("startup should exit before launching"),
     )
@@ -5162,9 +5159,9 @@ def test_cli_start_rejects_missing_default_model_env(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     monkeypatch.setattr(
-        cli.subprocess,
+        agents.subprocess,
         "Popen",
         lambda *_args, **_kwargs: pytest.fail("startup should exit before launching"),
     )
@@ -5192,7 +5189,7 @@ def test_cli_start_preserves_host_endpoint_host_and_sandbox_in_background_comman
     monkeypatch,
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     captured: dict[str, object] = {}
 
     class FakeProcess:
@@ -5221,7 +5218,7 @@ def test_cli_start_preserves_host_endpoint_host_and_sandbox_in_background_comman
         )
         return FakeProcess()
 
-    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(agents.subprocess, "Popen", fake_popen)
 
     result = runner.invoke(
         cli.app,
@@ -5256,7 +5253,7 @@ def test_cli_start_preserves_host_endpoint_host_and_sandbox_in_background_comman
 
 def test_cli_start_reuses_preferred_runtime_port(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -5266,7 +5263,9 @@ def test_cli_start_reuses_preferred_runtime_port(tmp_path: Path, monkeypatch) ->
         status="stopped",
     )
     captured: dict[str, object] = {}
-    monkeypatch.setattr("toolang.agents.agent_runtime_process_pids", lambda *_args: ())
+    monkeypatch.setattr(
+        "toolang.agent.local._agent_runtime_process_pids", lambda *_args: ()
+    )
 
     class FakeProcess:
         def poll(self) -> None:
@@ -5295,7 +5294,7 @@ def test_cli_start_reuses_preferred_runtime_port(tmp_path: Path, monkeypatch) ->
         )
         return FakeProcess()
 
-    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(agents.subprocess, "Popen", fake_popen)
 
     result = runner.invoke(
         cli.app,
@@ -5329,7 +5328,7 @@ def test_cli_start_reports_failed_when_process_exits_before_state(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
 
     class FakeProcess:
         def poll(self) -> int:
@@ -5351,7 +5350,7 @@ def test_cli_start_reports_failed_when_process_exits_before_state(
         stdout.flush()
         return FakeProcess()
 
-    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(agents.subprocess, "Popen", fake_popen)
 
     result = runner.invoke(
         cli.app,
@@ -5381,7 +5380,7 @@ def test_cli_start_requires_agent(tmp_path: Path) -> None:
 
 def test_cli_stop_stops_sandboxed_agent(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -5408,7 +5407,9 @@ def test_cli_stop_stops_sandboxed_agent(tmp_path: Path, monkeypatch) -> None:
             captured["force"] = force
 
     monkeypatch.setattr(
-        cli.agent_up, "create_sandbox_plugin", lambda name, config=None: FakeSandbox()
+        runtime_commands,
+        "create_sandbox_plugin",
+        lambda name, config=None: FakeSandbox(),
     )
 
     result = runner.invoke(
@@ -5800,7 +5801,7 @@ def test_cli_remote_cap_add_remove_reuses_existing_wired_outputs(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     fetches: list[str] = []
 
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
@@ -5933,7 +5934,7 @@ def test_cli_cap_new_save_does_not_resolve_program_remote_uses(
         "_fetch_github_directory",
         lambda ref: {"SKILL.md": b"---\ndescription: PDF\n---\n# PDF\n"},
     )
-    watch.build_prepared_state(caps.scan_durable_state(toolang_root, "alice"))
+    state_watcher.prepare_locks(caps.scan_durable_state(toolang_root, "alice"))
 
     monkeypatch.setattr(cli.click, "edit", lambda *_args, **_kwargs: "Saved psyche.\n")
     monkeypatch.setattr(
@@ -5992,7 +5993,7 @@ def test_cli_task_new_persists_id(tmp_path: Path, monkeypatch) -> None:
     )
 
     assert result.exit_code == 0
-    task = work.list_tasks(toolang_root, "alice")[0]
+    task = _jobs(toolang_root).list(kind="task")[0]
     saved = task.path.read_text(encoding="utf-8")
     assert (
         task.path
@@ -6086,14 +6087,16 @@ def test_cli_task_clone_creates_ready_copy(tmp_path: Path, monkeypatch) -> None:
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    task_id = work.list_draft_tasks(toolang_root, "alice")[0].document.task_id()
+    task_id = _jobs(toolang_root).list(kind="task", lifecycle="draft")[
+        0
+    ].document.task_id()
 
     result = _invoke_app(
         ["task", "clone", task_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    cloned = work.list_tasks(toolang_root, "alice")[0]
+    cloned = _jobs(toolang_root).list(kind="task")[0]
 
     assert result.exit_code == 0
     assert f"task {cloned.document.task_id()} cloned" in result.stdout
@@ -6109,7 +6112,7 @@ def test_cli_task_delete_requires_archived_task(tmp_path: Path, monkeypatch) -> 
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    task_id = work.list_tasks(toolang_root, "alice")[0].document.task_id()
+    task_id = _jobs(toolang_root).list(kind="task")[0].document.task_id()
 
     active_delete = _invoke_app(
         ["task", "delete", task_id],
@@ -6122,7 +6125,7 @@ def test_cli_task_delete_requires_archived_task(tmp_path: Path, monkeypatch) -> 
         f"task is not archived: {task_id}; archive it before deleting"
         in active_delete.output
     )
-    assert work.find_task(toolang_root, "alice", task_id) is not None
+    assert _jobs(toolang_root).get("task", task_id) is not None
 
     archive_result = _invoke_app(
         ["task", "archive", task_id],
@@ -6138,7 +6141,7 @@ def test_cli_task_delete_requires_archived_task(tmp_path: Path, monkeypatch) -> 
     assert archive_result.exit_code == 0
     assert delete_result.exit_code == 0
     assert delete_result.stdout.strip() == f"task {task_id} deleted"
-    assert work.find_archived_task(toolang_root, "alice", task_id) is None
+    assert _jobs(toolang_root).get("task", task_id, lifecycle="archived") is None
 
 
 def test_cli_task_draft_and_ready_move_lifecycle(tmp_path: Path, monkeypatch) -> None:
@@ -6149,20 +6152,20 @@ def test_cli_task_draft_and_ready_move_lifecycle(tmp_path: Path, monkeypatch) ->
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    task_id = work.list_tasks(toolang_root, "alice")[0].document.task_id()
+    task_id = _jobs(toolang_root).list(kind="task")[0].document.task_id()
 
     draft_result = _invoke_app(
         ["task", "draft", task_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    drafted = work.find_task(toolang_root, "alice", task_id, lifecycle="draft")
+    drafted = _jobs(toolang_root).get("task", task_id, lifecycle="draft")
     ready_result = _invoke_app(
         ["task", "ready", task_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    readied = work.find_task(toolang_root, "alice", task_id)
+    readied = _jobs(toolang_root).get("task", task_id)
 
     assert draft_result.exit_code == 0
     assert f"task {task_id} drafted" in draft_result.stdout
@@ -6180,7 +6183,7 @@ def test_cli_task_ready_moves_archived_task_back(tmp_path: Path, monkeypatch) ->
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    task_id = work.list_tasks(toolang_root, "alice")[0].document.task_id()
+    task_id = _jobs(toolang_root).list(kind="task")[0].document.task_id()
     _invoke_app(
         ["task", "archive", task_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
@@ -6195,8 +6198,8 @@ def test_cli_task_ready_moves_archived_task_back(tmp_path: Path, monkeypatch) ->
 
     assert result.exit_code == 0
     assert f"task {task_id} ready" in result.stdout
-    assert work.find_task(toolang_root, "alice", task_id) is not None
-    assert work.find_archived_task(toolang_root, "alice", task_id) is None
+    assert _jobs(toolang_root).get("task", task_id) is not None
+    assert _jobs(toolang_root).get("task", task_id, lifecycle="archived") is None
 
 
 def test_cli_chore_new_and_list_show_schedule(tmp_path: Path, monkeypatch) -> None:
@@ -6230,14 +6233,16 @@ def test_cli_chore_clone_creates_ready_copy(tmp_path: Path, monkeypatch) -> None
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    chore_id = work.list_draft_chores(toolang_root, "alice")[0].document.chore_id()
+    chore_id = _jobs(toolang_root).list(kind="chore", lifecycle="draft")[
+        0
+    ].document.chore_id()
 
     result = _invoke_app(
         ["chore", "clone", chore_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    cloned = work.list_chores(toolang_root, "alice")[0]
+    cloned = _jobs(toolang_root).list(kind="chore")[0]
 
     assert result.exit_code == 0
     assert f"chore {cloned.document.chore_id()} cloned" in result.stdout
@@ -6254,20 +6259,20 @@ def test_cli_chore_draft_and_ready_move_lifecycle(tmp_path: Path, monkeypatch) -
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    chore_id = work.list_chores(toolang_root, "alice")[0].document.chore_id()
+    chore_id = _jobs(toolang_root).list(kind="chore")[0].document.chore_id()
 
     draft_result = _invoke_app(
         ["chore", "draft", chore_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    drafted = work.find_chore(toolang_root, "alice", chore_id, lifecycle="draft")
+    drafted = _jobs(toolang_root).get("chore", chore_id, lifecycle="draft")
     ready_result = _invoke_app(
         ["chore", "ready", chore_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    readied = work.find_chore(toolang_root, "alice", chore_id)
+    readied = _jobs(toolang_root).get("chore", chore_id)
 
     assert draft_result.exit_code == 0
     assert f"chore {chore_id} drafted" in draft_result.stdout
@@ -6285,7 +6290,7 @@ def test_cli_chore_ready_moves_archived_chore_back(tmp_path: Path, monkeypatch) 
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    chore_id = work.list_chores(toolang_root, "alice")[0].document.chore_id()
+    chore_id = _jobs(toolang_root).list(kind="chore")[0].document.chore_id()
     _invoke_app(
         ["chore", "archive", chore_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
@@ -6299,9 +6304,9 @@ def test_cli_chore_ready_moves_archived_chore_back(tmp_path: Path, monkeypatch) 
     )
 
     assert result.exit_code == 0
-    chore = work.find_chore(toolang_root, "alice", chore_id)
+    chore = _jobs(toolang_root).get("chore", chore_id)
     assert chore is not None
-    assert work.find_archived_chore(toolang_root, "alice", chore_id) is None
+    assert _jobs(toolang_root).get("chore", chore_id, lifecycle="archived") is None
 
 
 def test_cli_task_new_records_task_changed_update(tmp_path: Path, monkeypatch) -> None:
@@ -6315,7 +6320,7 @@ def test_cli_task_new_records_task_changed_update(tmp_path: Path, monkeypatch) -
     )
 
     assert result.exit_code == 0
-    store = ExecutionStore(execution_db_path(toolang_root, "alice"))
+    store = RunStore(run_store_path(toolang_root, "alice"))
     try:
         updates = store.list_updates(limit=10)
     finally:
@@ -6343,7 +6348,7 @@ def test_cli_global_cap_change_does_not_create_agent_local_update_store(
     )
 
     assert result.exit_code == 0
-    assert not execution_db_path(toolang_root, "default").exists()
+    assert not run_store_path(toolang_root, "default").exists()
 
 
 def test_cli_task_requires_agent_prefix(tmp_path: Path) -> None:
@@ -6640,7 +6645,7 @@ def test_cli_fmt_rejects_dash_with_other_file_args(tmp_path: Path) -> None:
 
 def test_cli_caps_alias_lists_caps(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    caps.put_local_entry_text(
+    _create_cap(
         toolang_root,
         "alice",
         visibility="shared",
@@ -6665,7 +6670,7 @@ def test_cli_caps_alias_lists_caps(tmp_path: Path) -> None:
 
 def test_cli_cap_kind_alias_lists_agent_caps(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    caps.put_local_entry_text(
+    _create_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -7035,7 +7040,7 @@ def test_cli_cap_list_concept_filters_results(tmp_path: Path, monkeypatch) -> No
     monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
     monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
 
-    caps.put_local_entry_text(
+    _create_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -7081,7 +7086,7 @@ def test_cli_cap_list_concept_filters_results(tmp_path: Path, monkeypatch) -> No
 
 def test_cli_cap_list_bare_pattern_matches_cap_name_not_kind(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    caps.put_local_entry_text(
+    _create_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -7089,7 +7094,7 @@ def test_cli_cap_list_bare_pattern_matches_cap_name_not_kind(tmp_path: Path) -> 
         name="local-reviewer",
         text="---\ndescription: Review local changes\n---\n# Local Reviewer\n",
     )
-    caps.put_local_entry_text(
+    _create_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -7111,7 +7116,7 @@ def test_cli_cap_list_bare_pattern_matches_cap_name_not_kind(tmp_path: Path) -> 
 
 def test_cli_cap_list_supports_filter_short_option(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    caps.put_local_entry_text(
+    _create_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -7119,7 +7124,7 @@ def test_cli_cap_list_supports_filter_short_option(tmp_path: Path) -> None:
         name="local-reviewer",
         text="---\ndescription: Review local changes\n---\n# Local Reviewer\n",
     )
-    caps.put_local_entry_text(
+    _create_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -7163,7 +7168,7 @@ def test_cli_cap_list_rejects_empty_filter_list(tmp_path: Path) -> None:
 
 def test_standalone_caps_command_lists_all_cap_kinds(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    caps.put_local_entry_text(
+    _create_cap(
         toolang_root,
         "alice",
         visibility="shared",
@@ -7171,7 +7176,7 @@ def test_standalone_caps_command_lists_all_cap_kinds(tmp_path: Path) -> None:
         name="style",
         text="Prefer concise answers.\n",
     )
-    caps.put_local_entry_text(
+    _create_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -7229,8 +7234,8 @@ def test_standalone_caps_all_kind_list_prepares_agent_once_with_progress(
     tmp_path: Path,
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
-    caps.put_local_entry_text(
+    AgentCatalog(toolang_root).create("alice")
+    _create_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -7253,7 +7258,7 @@ def test_standalone_caps_all_kind_list_prepares_agent_once_with_progress(
 
 def test_standalone_caps_command_supports_concept_filters(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    caps.put_local_entry_text(
+    _create_cap(
         toolang_root,
         "alice",
         visibility="shared",
@@ -7261,7 +7266,7 @@ def test_standalone_caps_command_supports_concept_filters(tmp_path: Path) -> Non
         name="style",
         text="Prefer concise answers.\n",
     )
-    caps.put_local_entry_text(
+    _create_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -7287,7 +7292,7 @@ def test_standalone_caps_command_supports_concept_filters(tmp_path: Path) -> Non
 
 def test_standalone_caps_command_treats_here_caps_as_not_root(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     (toolang_root / "agents" / "alice" / "agent.too").write_text(
         ("agent alice\n\npsyche reviewer:\n  Prefer concrete findings.\n"),
         encoding="utf-8",
@@ -7343,11 +7348,11 @@ def test_cli_main_thread_commands_support_agent_prefix_shortcut(
     captured: dict[str, object] = {}
 
     def fake_runtime_json(ctx: Any, request_path: str) -> dict[str, object]:
-        captured["agent"] = cast(dict[str, object], ctx.obj).get("agent")
+        captured["agent"] = cast(CliContext, ctx.obj).agent
         captured["path"] = request_path
         return {"items": []}
 
-    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(chat_commands, "runtime_get", fake_runtime_json)
     monkeypatch.setattr(cli.sys, "argv", ["too"])
 
     with pytest.raises(SystemExit) as exc:
@@ -7377,7 +7382,7 @@ def test_cli_threads_lists_title_and_run_count(monkeypatch) -> None:
             ]
         }
 
-    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(chat_commands, "runtime_get", fake_runtime_json)
 
     result = _invoke_app(["threads", "dev"])
 
@@ -7397,7 +7402,7 @@ def test_cli_threads_lists_offline_runs_when_agent_is_not_running(
     tmp_path: Path,
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    store = ExecutionStore(execution_db_path(toolang_root, "alice"))
+    store = RunStore(run_store_path(toolang_root, "alice"))
     try:
         run = store.start_run(
             run_id="run_first",
@@ -7439,7 +7444,7 @@ def test_cli_runs_lists_title(monkeypatch) -> None:
             ]
         }
 
-    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(chat_commands, "runtime_get", fake_runtime_json)
 
     result = _invoke_app(["runs", "dev"])
 
@@ -7460,7 +7465,7 @@ def test_cli_runs_falls_back_to_offline_store_when_api_is_unavailable(
     monkeypatch,
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    store = ExecutionStore(execution_db_path(toolang_root, "alice"))
+    store = RunStore(run_store_path(toolang_root, "alice"))
     try:
         run = store.start_run(
             run_id="run_first",
@@ -7475,8 +7480,8 @@ def test_cli_runs_falls_back_to_offline_store_when_api_is_unavailable(
         store.close()
 
     monkeypatch.setattr(
-        cli,
-        "_runtime_json",
+        chat_commands,
+        "runtime_get",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             cli.click.ClickException("runtime request failed")
         ),
@@ -7508,7 +7513,7 @@ def test_cli_runs_hides_thread_column_when_filtered_by_thread(monkeypatch) -> No
             ]
         }
 
-    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(chat_commands, "runtime_get", fake_runtime_json)
 
     result = _invoke_app(["runs", "dev", "--thread", "term_bzrh67se"])
 
@@ -7529,7 +7534,7 @@ def test_cli_send_uses_terminal_client_and_streams(monkeypatch) -> None:
         captured["path"] = request_path
         captured["payload"] = payload
 
-    monkeypatch.setattr(cli, "_runtime_stream", fake_runtime_stream)
+    monkeypatch.setattr(chat_commands, "_runtime_stream", fake_runtime_stream)
 
     result = _invoke_app(["send", "dev", "term_thread", "review this repo"])
 
@@ -7557,7 +7562,7 @@ def test_cli_chat_passes_model_tool_cap_and_executable_selectors(monkeypatch) ->
         captured["thread_id"] = thread_id
         captured["selector_payload"] = selector_payload
 
-    monkeypatch.setattr(cli, "_chat_interactive", fake_chat_interactive)
+    monkeypatch.setattr(chat_commands, "_chat_interactive", fake_chat_interactive)
 
     result = _invoke_app(
         [
@@ -7575,7 +7580,7 @@ def test_cli_chat_passes_model_tool_cap_and_executable_selectors(monkeypatch) ->
             "skill/reviewer,service/*[home]",
             "--caps",
             "[here]",
-            "--thunk",
+            "--agic",
             "summarize",
         ]
     )
@@ -7586,7 +7591,7 @@ def test_cli_chat_passes_model_tool_cap_and_executable_selectors(monkeypatch) ->
     assert payload["models"] == ["openai/gpt-5", "openai/o3"]
     assert payload["tools"] == ["filesystem", "shell", "service_use"]
     assert payload["caps"] == ["skill/reviewer", "service/*[home]", "[here]"]
-    assert payload["thunk"] == "summarize"
+    assert payload["agic"] == "summarize"
 
 
 def test_cli_chat_without_agent_shows_help_without_opening_ui(monkeypatch) -> None:
@@ -7602,7 +7607,7 @@ def test_cli_chat_without_agent_shows_help_without_opening_ui(monkeypatch) -> No
         nonlocal opened
         opened = True
 
-    monkeypatch.setattr(cli, "_chat_interactive", fake_chat_interactive)
+    monkeypatch.setattr(chat_commands, "_chat_interactive", fake_chat_interactive)
 
     result = _invoke_app(["chat"])
 
@@ -7623,9 +7628,11 @@ def test_cli_required_agent_thread_commands_without_agent_exit_after_help(
         runtime_calls.append(request_path)
         return {"items": []}
 
-    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(chat_commands, "runtime_get", fake_runtime_json)
     monkeypatch.setattr(
-        cli, "_chat_interactive", lambda *_args, **_kwargs: runtime_calls.append("chat")
+        chat_commands,
+        "_chat_interactive",
+        lambda *_args, **_kwargs: runtime_calls.append("chat"),
     )
 
     result = _invoke_app([command])
@@ -7647,11 +7654,11 @@ def test_cli_chat_without_args_does_not_create_thread_until_first_message(
         calls.append((request_path, payload))
         return {"thread_id": "term_new"}
 
-    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(chat_commands, "runtime_post", fake_runtime_post)
     monkeypatch.setattr(
-        cli.agents,
-        "get_agent_status",
-        lambda *_args, **_kwargs: cli.agents.AgentStatus(
+        agents.AgentProcess,
+        "status",
+        lambda *_args, **_kwargs: agents.AgentStatus(
             name="dev",
             status="stopped",
             endpoint=None,
@@ -7677,11 +7684,11 @@ def test_cli_chat_scripted_help_command_does_not_create_thread(monkeypatch) -> N
         posts.append((request_path, payload))
         return {"thread_id": "term_new"}
 
-    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(chat_commands, "runtime_post", fake_runtime_post)
     monkeypatch.setattr(
-        cli.agents,
-        "get_agent_status",
-        lambda *_args, **_kwargs: cli.agents.AgentStatus(
+        agents.AgentProcess,
+        "status",
+        lambda *_args, **_kwargs: agents.AgentStatus(
             name="dev",
             status="stopped",
             endpoint=None,
@@ -7734,15 +7741,17 @@ def test_cli_chat_without_thread_creates_thread_for_first_scripted_message(
         del event_handler
         streams.append((request_path, payload))
 
-    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(chat_commands, "runtime_post", fake_runtime_post)
     monkeypatch.setattr(
-        cli, "_start_thread_event_listener", fake_start_thread_event_listener
+        chat_commands, "_start_thread_event_listener", fake_start_thread_event_listener
     )
-    monkeypatch.setattr(cli, "_runtime_consume_stream", fake_runtime_consume_stream)
     monkeypatch.setattr(
-        cli.agents,
-        "get_agent_status",
-        lambda *_args, **_kwargs: cli.agents.AgentStatus(
+        chat_commands, "_runtime_consume_stream", fake_runtime_consume_stream
+    )
+    monkeypatch.setattr(
+        agents.AgentProcess,
+        "status",
+        lambda *_args, **_kwargs: agents.AgentStatus(
             name="dev",
             status="stopped",
             endpoint=None,
@@ -7788,9 +7797,11 @@ def test_cli_chat_thread_without_message_sends_interactive_lines(monkeypatch) ->
         calls.append((request_path, payload))
 
     monkeypatch.setattr(
-        cli, "_start_thread_event_listener", fake_start_thread_event_listener
+        chat_commands, "_start_thread_event_listener", fake_start_thread_event_listener
     )
-    monkeypatch.setattr(cli, "_runtime_consume_stream", fake_runtime_consume_stream)
+    monkeypatch.setattr(
+        chat_commands, "_runtime_consume_stream", fake_runtime_consume_stream
+    )
 
     result = _invoke_app(["chat", "dev", "term_existing"], input="hello\n/exit\n")
 
@@ -7826,9 +7837,11 @@ def test_cli_chat_interactive_tty_uses_prompt_toolkit(monkeypatch) -> None:
         captured["thread_id"] = thread_id
         captured["selector_payload"] = selector_payload
 
-    monkeypatch.setattr(cli, "_chat_interactive_prompt_toolkit", fake_prompt_toolkit)
+    monkeypatch.setattr(
+        chat_commands, "_chat_interactive_prompt_toolkit", fake_prompt_toolkit
+    )
 
-    cli._chat_interactive(
+    chat_commands._chat_interactive(
         cast(Any, object()),
         thread_id="term_existing",
         selector_payload={"models": ["openai/gpt-5"]},
@@ -7863,17 +7876,61 @@ def test_cli_chat_interactive_tty_accepts_missing_thread_without_creating_thread
         captured["thread_id"] = thread_id
         captured["selector_payload"] = selector_payload
 
-    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
-    monkeypatch.setattr(cli, "_chat_interactive_prompt_toolkit", fake_prompt_toolkit)
-    cli._chat_interactive(cast(Any, object()), thread_id=None, selector_payload={})
+    monkeypatch.setattr(chat_commands, "runtime_post", fake_runtime_post)
+    monkeypatch.setattr(
+        chat_commands, "_chat_interactive_prompt_toolkit", fake_prompt_toolkit
+    )
+    chat_commands._chat_interactive(
+        cast(Any, object()), thread_id=None, selector_payload={}
+    )
 
     assert posts == []
     assert captured["thread_id"] is None
     assert captured["selector_payload"] == {}
 
 
+def test_cli_chat_tui_uses_local_executor_when_runtime_is_stopped(
+    tmp_path: Path, monkeypatch
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeLocalClient:
+        def __init__(self, root: Path, name: str, *, environ: Mapping[str, str]) -> None:
+            captured.update(root=root, name=name, environ=dict(environ), client=self)
+
+        def close(self) -> None:
+            captured["closed"] = True
+
+    monkeypatch.setattr(chat_commands, "running_runtime_client", lambda _ctx: None)
+    monkeypatch.setattr(chat_commands, "context_root", lambda _ctx: tmp_path)
+    monkeypatch.setattr(chat_commands, "require_prefix_agent", lambda _ctx: "alice")
+    monkeypatch.setattr(
+        chat_commands,
+        "load_runtime_environ",
+        lambda *_args, **_kwargs: {"MODEL_KEY": "secret"},
+    )
+    monkeypatch.setattr(chat_commands, "LocalChatClient", FakeLocalClient)
+    monkeypatch.setattr(
+        chat_commands.ChatTuiApp,
+        "run",
+        lambda **kwargs: captured.update(run=kwargs),
+    )
+
+    chat_commands._chat_interactive_prompt_toolkit(
+        cast(Any, object()),
+        thread_id=None,
+        selector_payload={"agic": "chat"},
+    )
+
+    assert captured["root"] == tmp_path
+    assert captured["name"] == "alice"
+    assert captured["environ"] == {"MODEL_KEY": "secret"}
+    assert cast(dict[str, object], captured["run"])["client"] is captured["client"]
+    assert captured["closed"] is True
+
+
 def test_cli_thread_event_renderer_prints_thread_messages(capsys) -> None:
-    renderer = cli._ThreadEventRenderer()
+    renderer = chat_commands._ThreadEventRenderer()
 
     renderer.render(
         {
@@ -7898,7 +7955,7 @@ def test_cli_thread_event_renderer_prints_thread_messages(capsys) -> None:
 
 
 def test_cli_thread_event_renderer_redraws_prompt_for_remote_run(capsys) -> None:
-    renderer = cli._ThreadEventRenderer(redraw_prompt=True)
+    renderer = chat_commands._ThreadEventRenderer(redraw_prompt=True)
 
     renderer.render(
         {
@@ -7914,9 +7971,9 @@ def test_cli_thread_event_renderer_redraws_prompt_for_remote_run(capsys) -> None
 
 
 def test_cli_thread_event_renderer_skips_prompt_during_local_stream(capsys) -> None:
-    local_streaming = cli.threading.Event()
+    local_streaming = chat_commands.threading.Event()
     local_streaming.set()
-    renderer = cli._ThreadEventRenderer(
+    renderer = chat_commands._ThreadEventRenderer(
         redraw_prompt=True, local_streaming=local_streaming
     )
 
@@ -7935,7 +7992,7 @@ def test_cli_thread_event_renderer_skips_prompt_during_local_stream(capsys) -> N
 
 def test_cli_thread_event_renderer_skips_prompt_for_local_request(capsys) -> None:
     local_request_ids = {"term_req"}
-    renderer = cli._ThreadEventRenderer(
+    renderer = chat_commands._ThreadEventRenderer(
         redraw_prompt=True, local_request_ids=local_request_ids
     )
 
@@ -7965,7 +8022,7 @@ def test_cli_thread_event_renderer_skips_prompt_for_local_request(capsys) -> Non
 def test_cli_thread_event_renderer_prints_step_end_without_streaming_delta(
     capsys,
 ) -> None:
-    renderer = cli._ThreadEventRenderer()
+    renderer = chat_commands._ThreadEventRenderer()
 
     renderer.render(
         {
@@ -8001,7 +8058,7 @@ def test_cli_chat_help_uses_thread_option() -> None:
     assert "--models" in result.stdout
     assert "--tools" in result.stdout
     assert "--caps" in result.stdout
-    assert "--thunk" in result.stdout
+    assert "--agic" in result.stdout
     assert "--flow" in result.stdout
     assert "--model         " not in result.stdout
     assert "thread      [THREAD]" in result.stdout
@@ -8140,7 +8197,7 @@ def test_cli_inspect_run_tree_uses_run_graph(monkeypatch) -> None:
             }
         raise AssertionError(request_path)
 
-    monkeypatch.setattr(inspect_cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(inspect_cli, "runtime_get", fake_runtime_json)
 
     result = _invoke_app(["inspect", "dev", "run_parent"])
 
@@ -8243,7 +8300,7 @@ def test_cli_inspect_nests_steps_by_parent_path() -> None:
     assert document["steps"][0]["children"][0]["path"] == "0.0"
 
 
-def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> None:
+def test_cli_inspect_child_agic_run_focuses_failure_details(monkeypatch) -> None:
     calls: list[str] = []
 
     child = _inspect_run_detail(
@@ -8251,7 +8308,7 @@ def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> Non
         thread_id="term_thread",
         root_run_id="run_parent",
         parent="run_parent/2",
-        executable_kind="thunk",
+        executable_kind="agic",
         executable_name="expand_queries",
         call_kind="stage",
         steps=[
@@ -8329,7 +8386,7 @@ def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> Non
             }
         raise AssertionError(request_path)
 
-    monkeypatch.setattr(inspect_cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(inspect_cli, "runtime_get", fake_runtime_json)
 
     result = _invoke_app(["inspect", "dev", "run_child"])
 
@@ -8337,7 +8394,7 @@ def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> Non
     assert calls == ["/api/v1/runs/run_child", "/api/v1/threads/term_thread?limit=100"]
     assert "# run" in result.stdout
     assert (
-        "run run_child  failed  thunk=expand_queries  thread=term_thread"
+        "run run_child  failed  agic=expand_queries  thread=term_thread"
         in result.stdout
     )
     assert "# output" in result.stdout
@@ -8356,12 +8413,12 @@ def test_cli_inspect_child_thunk_run_focuses_failure_details(monkeypatch) -> Non
     assert "- run_parent flow:research" not in result.stdout
 
 
-def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
+def test_cli_inspect_agic_run_uses_chat_style_step_output(monkeypatch) -> None:
     calls: list[str] = []
     run = _inspect_run_detail(
-        "run_thunk",
+        "run_agic",
         thread_id="term_thread",
-        executable_kind="thunk",
+        executable_kind="agic",
         executable_name="summarize",
         steps=[
             {
@@ -8430,21 +8487,21 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
 
     def fake_runtime_json(_ctx: Any, request_path: str) -> dict[str, object]:
         calls.append(request_path)
-        if request_path == "/api/v1/runs/run_thunk":
+        if request_path == "/api/v1/runs/run_agic":
             return run
         if request_path == "/api/v1/threads/term_thread?limit=100":
             return {"info": {"id": "term_thread"}, "runs": [run]}
         raise AssertionError(request_path)
 
-    monkeypatch.setattr(inspect_cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(inspect_cli, "runtime_get", fake_runtime_json)
 
-    result = _invoke_app(["inspect", "dev", "run_thunk"])
+    result = _invoke_app(["inspect", "dev", "run_agic"])
 
     assert result.exit_code == 0
-    assert calls == ["/api/v1/runs/run_thunk", "/api/v1/threads/term_thread?limit=100"]
+    assert calls == ["/api/v1/runs/run_agic", "/api/v1/threads/term_thread?limit=100"]
     assert "# run" in result.stdout
     assert (
-        "run run_thunk  succeeded  thunk=summarize  thread=term_thread" in result.stdout
+        "run run_agic  succeeded  agic=summarize  thread=term_thread" in result.stdout
     )
     assert "# input\nquery" in result.stdout
     assert "# output\nSummary complete." in result.stdout
@@ -8454,11 +8511,11 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
     assert '\n✓ 2   tool    filesystem__read_text result "task body"' in result.stdout
     assert "\n✓ 3   model   Summary complete." in result.stdout
 
-    focus_result = _invoke_app(["inspect", "dev", "run_thunk:1"])
+    focus_result = _invoke_app(["inspect", "dev", "run_agic:1"])
 
     assert focus_result.exit_code == 0
     assert "# step" in focus_result.stdout
-    assert "step run_thunk:1  succeeded  kind=model" in focus_result.stdout
+    assert "step run_agic:1  succeeded  kind=model" in focus_result.stdout
     assert "# api" in focus_result.stdout
     assert "model     deepseek/deepseek-chat-v3" in focus_result.stdout
     assert "# input" in focus_result.stdout
@@ -8486,7 +8543,7 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
     )
     assert "# request" not in focus_result.stdout
 
-    history_focus_result = _invoke_app(["inspect", "dev", "run_thunk:3"])
+    history_focus_result = _invoke_app(["inspect", "dev", "run_agic:3"])
 
     assert history_focus_result.exit_code == 0
     assert "· user:       query" in history_focus_result.stdout
@@ -8499,10 +8556,10 @@ def test_cli_inspect_thunk_run_uses_chat_style_step_output(monkeypatch) -> None:
         in history_focus_result.stdout
     )
 
-    tool_focus_result = _invoke_app(["inspect", "dev", "run_thunk:2"])
+    tool_focus_result = _invoke_app(["inspect", "dev", "run_agic:2"])
 
     assert tool_focus_result.exit_code == 0
-    assert "step run_thunk:2  succeeded  kind=tool" in tool_focus_result.stdout
+    assert "step run_agic:2  succeeded  kind=tool" in tool_focus_result.stdout
     assert "# tool_calls" not in tool_focus_result.stdout
     assert "tool_call 1" not in tool_focus_result.stdout
     assert "# input_refs" not in tool_focus_result.stdout
@@ -8520,7 +8577,7 @@ def test_cli_inspect_structured_views_render_preprocessed_document(monkeypatch) 
     run = _inspect_run_detail(
         "run_struct",
         thread_id="term_thread",
-        executable_kind="thunk",
+        executable_kind="agic",
         executable_name="summarize",
         steps=[
             {
@@ -8579,7 +8636,7 @@ def test_cli_inspect_structured_views_render_preprocessed_document(monkeypatch) 
             return {"info": {"id": "term_thread"}, "runs": [run]}
         raise AssertionError(request_path)
 
-    monkeypatch.setattr(inspect_cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(inspect_cli, "runtime_get", fake_runtime_json)
 
     json_result = _invoke_app(["inspect", "dev", "run_struct:1", "--json"])
 
@@ -8691,7 +8748,7 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
         thread_id="term_thread",
         root_run_id="run_parent",
         parent="run_parent/2",
-        executable_kind="thunk",
+        executable_kind="agic",
         executable_name="expand_queries",
         call_kind="stage",
     )
@@ -8699,7 +8756,7 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
         "run_success",
         thread_id="term_thread",
         root_run_id="run_success",
-        executable_kind="thunk",
+        executable_kind="agic",
         executable_name="summarize",
         steps=[
             {
@@ -8743,7 +8800,7 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
             }
         raise AssertionError(request_path)
 
-    monkeypatch.setattr(inspect_cli, "_runtime_json", fake_runtime_json)
+    monkeypatch.setattr(inspect_cli, "runtime_get", fake_runtime_json)
 
     result = _invoke_app(["inspect", "dev", "term_thread"])
 
@@ -8781,13 +8838,13 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
     assert 110 <= wcswidth(success_output_line) <= 120
     assert success_output_line.endswith("...")
     assert "\n# run\n" not in result.stdout
-    assert "run_child thunk:expand_queries" not in result.stdout
+    assert "run_child agic:expand_queries" not in result.stdout
     assert "\n✓ 1" not in result.stdout
     assert "\nsteps:" not in result.stdout
 
 
 def test_script_progress_defaults_to_stage_summary() -> None:
-    sink = cli_invoke._ScriptProgressSink(thunk_name="research", render=False)
+    sink = invoke_rendering.ScriptProgressSink(executable_name="research", render=False)
 
     sink.on_event(
         RunStarting(
@@ -8878,8 +8935,8 @@ def test_script_progress_defaults_to_stage_summary() -> None:
 
 
 def test_script_progress_expands_lanes_with_verbosity() -> None:
-    sink = cli_invoke._ScriptProgressSink(
-        thunk_name="research", render=False, verbosity=2
+    sink = invoke_rendering.ScriptProgressSink(
+        executable_name="research", render=False, verbosity=2
     )
     sink.on_event(
         RunStarting(
@@ -8957,8 +9014,8 @@ def test_script_progress_keeps_final_frame_visible(monkeypatch) -> None:
         def stop(self) -> None:
             pass
 
-    monkeypatch.setattr(cli_invoke, "Live", FakeLive)
-    sink = cli_invoke._ScriptProgressSink(thunk_name="research", render=True)
+    monkeypatch.setattr(invoke_rendering, "Live", FakeLive)
+    sink = invoke_rendering.ScriptProgressSink(executable_name="research", render=True)
 
     sink.on_event(
         RunStarting(
@@ -9058,7 +9115,7 @@ def test_cli_chat_term_without_message_exits_without_creating_thread(
         posts.append((request_path, payload))
         return {"thread_id": "term_new"}
 
-    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(chat_commands, "runtime_post", fake_runtime_post)
 
     result = _invoke_app(["chat", "dev"], input="/exit\n")
 
@@ -9092,8 +9149,8 @@ def test_cli_rewind_accepts_thread_target(monkeypatch) -> None:
         calls.append(("post", (request_path, payload)))
         return {"thread_id": "term_thread", "run_id": None}
 
-    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
-    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(chat_commands, "runtime_get", fake_runtime_json)
+    monkeypatch.setattr(chat_commands, "runtime_post", fake_runtime_post)
 
     result = _invoke_app(["rewind", "dev", "term_thread"])
 
@@ -9123,8 +9180,8 @@ def test_cli_rewind_without_message_does_not_send_empty_message(monkeypatch) -> 
         calls.append(("post", (request_path, payload)))
         return {"thread_id": "term_thread", "run_id": None}
 
-    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
-    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(chat_commands, "runtime_get", fake_runtime_json)
+    monkeypatch.setattr(chat_commands, "runtime_post", fake_runtime_post)
 
     result = _invoke_app(["rewind", "dev", "term_thread"])
 
@@ -9157,9 +9214,9 @@ def test_cli_rewind_chat_opens_rewound_thread(monkeypatch) -> None:
         del selector_payload
         calls.append(("chat", thread_id))
 
-    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
-    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
-    monkeypatch.setattr(cli, "_chat_interactive", fake_chat_interactive)
+    monkeypatch.setattr(chat_commands, "runtime_get", fake_runtime_json)
+    monkeypatch.setattr(chat_commands, "runtime_post", fake_runtime_post)
+    monkeypatch.setattr(chat_commands, "_chat_interactive", fake_chat_interactive)
 
     result = _invoke_app(["rewind", "dev", "term_thread", "--chat"])
 
@@ -9184,8 +9241,8 @@ def test_cli_fork_thread_target_copies_through_latest_run(monkeypatch) -> None:
         calls.append(("post", (request_path, payload)))
         return {"thread_id": "term_fork", "run_id": None}
 
-    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
-    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
+    monkeypatch.setattr(chat_commands, "runtime_get", fake_runtime_json)
+    monkeypatch.setattr(chat_commands, "runtime_post", fake_runtime_post)
 
     result = _invoke_app(["fork", "dev", "term_thread"])
 
@@ -9225,9 +9282,9 @@ def test_cli_fork_chat_opens_forked_thread(monkeypatch) -> None:
         del selector_payload
         calls.append(("chat", thread_id))
 
-    monkeypatch.setattr(cli, "_runtime_json", fake_runtime_json)
-    monkeypatch.setattr(cli, "_runtime_post", fake_runtime_post)
-    monkeypatch.setattr(cli, "_chat_interactive", fake_chat_interactive)
+    monkeypatch.setattr(chat_commands, "runtime_get", fake_runtime_json)
+    monkeypatch.setattr(chat_commands, "runtime_post", fake_runtime_post)
+    monkeypatch.setattr(chat_commands, "_chat_interactive", fake_chat_interactive)
 
     result = _invoke_app(["fork", "dev", "term_thread", "--chat"])
 
@@ -9241,7 +9298,7 @@ def test_cli_fork_chat_opens_forked_thread(monkeypatch) -> None:
 
 def test_standalone_caps_list_supports_agent_prefix(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    caps.put_local_entry_text(
+    _create_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -9362,8 +9419,8 @@ def test_standalone_caps_list_prepares_agent_once_with_progress(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
-    caps.put_local_entry_text(
+    AgentCatalog(toolang_root).create("alice")
+    _create_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -9372,17 +9429,17 @@ def test_standalone_caps_list_prepares_agent_once_with_progress(
         text="---\ndescription: Review changes\n---\n# Reviewer\n",
     )
     calls = 0
-    original_build_prepared_state = caps_commands.watch_feature.build_prepared_state
+    original_prepare_locks = caps_commands.state_watcher.prepare_locks
 
-    def counted_build_prepared_state(*args, **kwargs):
+    def counted_prepare_locks(*args, **kwargs):
         nonlocal calls
         calls += 1
-        return original_build_prepared_state(*args, **kwargs)
+        return original_prepare_locks(*args, **kwargs)
 
     monkeypatch.setattr(
-        caps_commands.watch_feature,
-        "build_prepared_state",
-        counted_build_prepared_state,
+        caps_commands.state_watcher,
+        "prepare_locks",
+        counted_prepare_locks,
     )
 
     result = _invoke_caps_app(
@@ -9402,8 +9459,8 @@ def test_standalone_cap_kind_list_prepares_agent_once_with_progress(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
-    caps.put_local_entry_text(
+    AgentCatalog(toolang_root).create("alice")
+    _create_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -9412,17 +9469,17 @@ def test_standalone_cap_kind_list_prepares_agent_once_with_progress(
         text="---\ndescription: Review changes\n---\n# Reviewer\n",
     )
     calls = 0
-    original_build_prepared_state = caps_commands.watch_feature.build_prepared_state
+    original_prepare_locks = caps_commands.state_watcher.prepare_locks
 
-    def counted_build_prepared_state(*args, **kwargs):
+    def counted_prepare_locks(*args, **kwargs):
         nonlocal calls
         calls += 1
-        return original_build_prepared_state(*args, **kwargs)
+        return original_prepare_locks(*args, **kwargs)
 
     monkeypatch.setattr(
-        caps_commands.watch_feature,
-        "build_prepared_state",
-        counted_build_prepared_state,
+        caps_commands.state_watcher,
+        "prepare_locks",
+        counted_prepare_locks,
     )
 
     result = _invoke_caps_app(
@@ -9442,7 +9499,7 @@ def test_standalone_cap_kind_list_summarizes_updated_remote_caps(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
+    AgentCatalog(toolang_root).create("alice")
     config_path = toolang_root / "agents" / "alice" / "config.toml"
     config_path.write_text(
         '[skills]\nreview = { ref = "github://acme/agents/skills/review@main" }\n',
@@ -9488,8 +9545,8 @@ def test_standalone_cap_kind_list_summarizes_updated_remote_caps(
 
 def test_standalone_cap_kind_list_hides_cached_prepare_progress(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    agents.create_agent(toolang_root, "alice")
-    caps.put_local_entry_text(
+    AgentCatalog(toolang_root).create("alice")
+    _create_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -9529,8 +9586,8 @@ def test_cli_cap_list_rejects_invalid_filter(tmp_path: Path) -> None:
 
 
 def test_cli_version_option_exits_before_other_parsing(monkeypatch) -> None:
-    monkeypatch.setattr(cli, "package_version", lambda _name: "0.1.2")
-    monkeypatch.setattr(cli, "_source_state_suffix", lambda: "")
+    monkeypatch.setattr(cli_version, "package_version", lambda _name: "0.1.2")
+    monkeypatch.setattr(cli_version, "source_state_suffix", lambda: "")
 
     result = runner.invoke(cli.app, ["--version", "list"])
     short_result = runner.invoke(cli.app, ["-V", "list"])
@@ -9542,8 +9599,8 @@ def test_cli_version_option_exits_before_other_parsing(monkeypatch) -> None:
 
 
 def test_cli_version_includes_source_revision_suffix(monkeypatch) -> None:
-    monkeypatch.setattr(cli, "package_version", lambda _name: "0.1.2")
-    monkeypatch.setattr(cli, "_source_state_suffix", lambda: "+abc1234*")
+    monkeypatch.setattr(cli_version, "package_version", lambda _name: "0.1.2")
+    monkeypatch.setattr(cli_version, "source_state_suffix", lambda: "+abc1234*")
 
     result = runner.invoke(cli.app, ["--version"])
 

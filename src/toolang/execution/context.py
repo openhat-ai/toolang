@@ -10,7 +10,7 @@ from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Any
 
-from .. import agents, work
+from toolang.agent import local as agents
 from ..lang.ast import AgicDecl
 from toolang.base.error import ToolangError
 from toolang.base.protocols.model import ModelAdapter
@@ -54,11 +54,10 @@ from .records import (
     StepInputItem,
     trace_child_path,
 )
-from .binding import RunBinding, invoke_params, invoke_parts
+from .binding import _Run, invoke_params, invoke_parts, run_job_context
 
 if TYPE_CHECKING:
-    from ..up import UptimeContext
-    from .input import RunInput
+    from .assembly import RunInput, SupportsRunAssembly
 
 _RUN_LOGGER = logging.getLogger("toolang.run")
 _MODEL_LOGGER = logging.getLogger("toolang.model")
@@ -84,7 +83,7 @@ class SnapshotRun:
     origin: str
     thread_id: str
     run_loop: str
-    live_fingerprint: str
+    state_fingerprint: str
     invoke_params: dict[str, Any] = field(default_factory=dict)
     invoke_parts: tuple[dict[str, Any], ...] = field(default_factory=tuple)
 
@@ -94,7 +93,7 @@ class SnapshotProgram:
     """Program section of one assembled run snapshot."""
 
     source_path: str
-    thunk: dict[str, Any] = field(default_factory=dict)
+    agic: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,15 +141,15 @@ class RunSnapshot:
 
 
 def build_run_snapshot(
-    context: UptimeContext,
-    run: RunBinding,
-    thunk: AgicDecl,
+    context: SupportsRunAssembly,
+    run: _Run,
+    agic: AgicDecl,
     *,
     tools: dict[str, AgentTool],
 ) -> RunSnapshot:
     """Build the stable runtime view carried by one run context."""
 
-    task_snapshot = _task_snapshot(context, run)
+    task_snapshot = _task_snapshot(run)
     return RunSnapshot(
         agent=SnapshotAgent(
             name=context.name,
@@ -163,18 +162,23 @@ def build_run_snapshot(
             origin=run.origin,
             thread_id=run.thread_id,
             run_loop=run.run_loop,
-            live_fingerprint=run.live.fingerprint,
+            state_fingerprint=run.state.fingerprint,
             invoke_params=invoke_params(run),
             invoke_parts=invoke_parts(run),
         ),
         program=SnapshotProgram(
-            source_path=run.live.program.source_path,
-            thunk=_thunk_to_data(thunk),
+            source_path=str(
+                context.home.joinpath("agent.too").relative_to(context.root)
+            ),
+            agic=_agic_to_data(agic),
         ),
-        caps=tuple(SnapshotEntry(payload=entry.to_snapshot()) for entry in run.live.cap_entries),
-        jobs=tuple(SnapshotEntry(payload=entry.to_snapshot()) for entry in run.live.job_entries),
+        caps=tuple(
+            SnapshotEntry(payload=entry.to_snapshot()) for entry in run.state.caps
+        ),
+        jobs=(),
         tools=tuple(
-            tool.definition().name for tool in sorted(tools.values(), key=lambda item: item.name)
+            tool.definition().name
+            for tool in sorted(tools.values(), key=lambda item: item.name)
         ),
         task=task_snapshot[0] if task_snapshot is not None else None,
         task_services=task_snapshot[1] if task_snapshot is not None else None,
@@ -215,10 +219,16 @@ class RunContext:
         self._tool_part_indexes: dict[str, int] = {}
         self._started_part_indexes: set[int] = set()
         self._tool_call_sources: dict[str, tuple[int, int]] = {}
-        self._tool_definitions = tuple(
-            tool.definition()
-            for tool in sorted(run_input.tools().values(), key=lambda item: item.name)
-        ) if model.tools else ()
+        self._tool_definitions = (
+            tuple(
+                tool.definition()
+                for tool in sorted(
+                    run_input.tools().values(), key=lambda item: item.name
+                )
+            )
+            if model.tools
+            else ()
+        )
 
     @property
     def model(self) -> ModelTarget:
@@ -249,7 +259,10 @@ class RunContext:
         step_started = time.perf_counter()
         started_at = _utc_now()
         consumed_inputs = self._consume_pending_inputs()
-        step_input = (*self._model_step_input(), *(InputRef(cmd=item.index) for item in consumed_inputs))
+        step_input = (
+            *self._model_step_input(),
+            *(InputRef(cmd=item.index) for item in consumed_inputs),
+        )
         self._start_model_step(step_index)
         _RUN_LOGGER.info(
             "Step started thread=%s run=%s step=%s kind=model",
@@ -327,10 +340,17 @@ class RunContext:
         step_input: tuple[StepInputItem, ...]
         if source is not None:
             step_input = (
-                OutputRef(step=trace_child_path(self._input.run.run_id, source[0]), part=source[1]),
+                OutputRef(
+                    step=trace_child_path(self._input.run.run_id, source[0]),
+                    part=source[1],
+                ),
             )
         elif self._last_step_index is not None:
-            step_input = (OutputRef(step=trace_child_path(self._input.run.run_id, self._last_step_index)),)
+            step_input = (
+                OutputRef(
+                    step=trace_child_path(self._input.run.run_id, self._last_step_index)
+                ),
+            )
         else:
             step_input = (InputRef(),)
         _RUN_LOGGER.info(
@@ -446,7 +466,9 @@ class RunContext:
         duration_ms: int,
     ) -> ModelCallResult:
         parsed_calls = tuple(current.tool_calls)
-        current_text = message_text(current.message.parts) if current.message is not None else ""
+        current_text = (
+            message_text(current.message.parts) if current.message is not None else ""
+        )
         self._output_text = current_text
         _log_model_result(
             current,
@@ -454,9 +476,13 @@ class RunContext:
             run_id=self._input.run.run_id,
             step_index=step_index,
         )
-        output_parts = self._model_output_parts(current=current, tool_calls=parsed_calls)
+        output_parts = self._model_output_parts(
+            current=current, tool_calls=parsed_calls
+        )
         for part_index, part in output_parts:
-            self._emit_part_begin(step_index=step_index, part_index=part_index, kind=part.type)
+            self._emit_part_begin(
+                step_index=step_index, part_index=part_index, kind=part.type
+            )
             self._emit(
                 PartEnd(
                     step=trace_child_path(self._input.run.run_id, step_index),
@@ -466,7 +492,9 @@ class RunContext:
             )
             if isinstance(part, ToolCallPart):
                 self._tool_call_sources[part.tool_call_id] = (step_index, part_index)
-        output = tuple(part for _, part in sorted(output_parts, key=lambda item: item[0]))
+        output = tuple(
+            part for _, part in sorted(output_parts, key=lambda item: item[0])
+        )
         if current.message is not None:
             self._messages.append(current.message)
         self._state = current.state
@@ -480,8 +508,12 @@ class RunContext:
                 detail={
                     "model_ref": self._model.ref,
                     "usage": {
-                        "input_tokens": current.usage.input_tokens if current.usage is not None else 0,
-                        "output_tokens": current.usage.output_tokens if current.usage is not None else 0,
+                        "input_tokens": current.usage.input_tokens
+                        if current.usage is not None
+                        else 0,
+                        "output_tokens": current.usage.output_tokens
+                        if current.usage is not None
+                        else 0,
                     },
                     "provider": self._model.provider,
                     "model": self._model.model,
@@ -524,7 +556,9 @@ class RunContext:
         if isinstance(event, ModelPartDeltaEvent):
             if isinstance(event.delta, TextDelta):
                 part_index = self._ensure_text_part_index()
-                self._emit_part_begin(step_index=step_index, part_index=part_index, kind="text")
+                self._emit_part_begin(
+                    step_index=step_index, part_index=part_index, kind="text"
+                )
                 if event.delta.text:
                     self._emit(
                         PartDelta(
@@ -599,7 +633,11 @@ class RunContext:
     def _model_step_input(self) -> tuple[StepInputItem, ...]:
         if self._last_step_index is None:
             return (InputRef(),)
-        return (OutputRef(step=trace_child_path(self._input.run.run_id, self._last_step_index)),)
+        return (
+            OutputRef(
+                step=trace_child_path(self._input.run.run_id, self._last_step_index)
+            ),
+        )
 
     def _consume_pending_inputs(self) -> tuple[CommandRecord, ...]:
         inputs = self._pending_inputs()
@@ -635,7 +673,9 @@ class RunContext:
             self._tool_part_indexes[tool_call_id] = part_index
         return part_index
 
-    def _emit_part_begin(self, *, step_index: int, part_index: int, kind: PartType) -> None:
+    def _emit_part_begin(
+        self, *, step_index: int, part_index: int, kind: PartType
+    ) -> None:
         if part_index in self._started_part_indexes:
             return
         self._started_part_indexes.add(part_index)
@@ -722,46 +762,44 @@ def _tool_context(
     )
 
 
-def _task_snapshot(
-    context: UptimeContext, run: RunBinding
-) -> tuple[SnapshotTask, SnapshotTaskServices] | None:
+def _task_snapshot(run: _Run) -> tuple[SnapshotTask, SnapshotTaskServices] | None:
     if run.origin != "task":
         return None
-    task_id = work.task_id_from_thread_id(run.thread_id)
-    if task_id is None:
+    job = run_job_context(run)
+    if job is None or job.get("kind") != "task":
         return None
-    task = work.find_task(context.root, context.name, task_id)
-    if task is None:
-        return None
+    path = job.get("path")
+    path_text = path if isinstance(path, str) else ""
+    thread_id = str(job.get("thread_id") or run.thread_id)
     return (
         SnapshotTask(
-            provider="local",
-            ref=task.document.thread_id(),
-            name=task.name.rsplit("/", 1)[-1],
-            body=task.document.body,
-            thread_id=task.document.thread_id(),
-            path=str(task.path),
+            provider=str(job.get("provider") or "local"),
+            ref=thread_id,
+            name=str(job.get("name") or job.get("id") or "task"),
+            body=str(job.get("body") or ""),
+            thread_id=thread_id,
+            path=path_text,
         ),
         SnapshotTaskServices(
-            provider="local",
-            read=True,
-            write=True,
-            comment=False,
-            path=str(task.path),
+            provider=str(job.get("provider") or "local"),
+            read=job.get("readable") is True,
+            write=job.get("writable") is True,
+            comment=job.get("commentable") is True,
+            path=path_text or None,
         ),
     )
 
 
-def _thunk_to_data(thunk: AgicDecl) -> dict[str, object]:
+def _agic_to_data(agic: AgicDecl) -> dict[str, object]:
     return {
-        "name": thunk.name,
+        "name": agic.name,
         "input": (
             {
                 "name": param.name,
                 "optional": param.optional,
                 "type_name": param.type_name,
             }
-            if (param := thunk.input) is not None
+            if (param := agic.input) is not None
             else None
         ),
         "params": [
@@ -770,9 +808,9 @@ def _thunk_to_data(thunk: AgicDecl) -> dict[str, object]:
                 "optional": item.optional,
                 "type_name": item.type_name,
             }
-            for item in thunk.params
+            for item in agic.params
         ],
-        "output": thunk.output,
+        "output": agic.output,
         "directives": [
             {
                 "name": item.name,
@@ -780,7 +818,7 @@ def _thunk_to_data(thunk: AgicDecl) -> dict[str, object]:
                 "values": list(item.values),
                 "line": item.span.line,
             }
-            for item in thunk.directives
+            for item in agic.directives
         ],
         "messages": [
             {
@@ -789,12 +827,14 @@ def _thunk_to_data(thunk: AgicDecl) -> dict[str, object]:
                 "explicit": item.explicit,
                 "line": item.span.line,
             }
-            for item in thunk.messages
+            for item in agic.messages
         ],
     }
 
 
-def _log_model_target(model: ModelTarget, *, thread_id: str, run_id: str, step_index: int) -> None:
+def _log_model_target(
+    model: ModelTarget, *, thread_id: str, run_id: str, step_index: int
+) -> None:
     if not _MODEL_LOGGER.isEnabledFor(logging.DEBUG):
         return
     _MODEL_LOGGER.debug(
@@ -810,7 +850,9 @@ def _log_model_target(model: ModelTarget, *, thread_id: str, run_id: str, step_i
     )
 
 
-def _log_model_request(request: ModelCall, *, thread_id: str, run_id: str, step_index: int) -> None:
+def _log_model_request(
+    request: ModelCall, *, thread_id: str, run_id: str, step_index: int
+) -> None:
     if not _MODEL_LOGGER.isEnabledFor(logging.DEBUG):
         return
     _MODEL_LOGGER.debug(
@@ -841,7 +883,9 @@ def _model_call_request_data(request: ModelCall) -> dict[str, Any]:
     }
 
 
-def _log_model_result(result: ModelCallResult, *, thread_id: str, run_id: str, step_index: int) -> None:
+def _log_model_result(
+    result: ModelCallResult, *, thread_id: str, run_id: str, step_index: int
+) -> None:
     if not _MODEL_LOGGER.isEnabledFor(logging.DEBUG):
         return
     usage = None

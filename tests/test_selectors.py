@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from toolang.base.error import ToolangError
-from toolang.selectors import Selector, parse_selector, selector_identity_matches, split_selector_list
+from toolang.common.selectors import Selector, parse_selector, selector_identity_matches, split_selector_list
 
 
 def test_split_selector_list_treats_top_level_csv_as_union() -> None:

@@ -49,7 +49,7 @@
   Do not add serializer wrapper modules unless they add real meaning.
 - Let the package that owns a source format own its parsing and source-editing
   semantics. For example, `.too` parsing and authored source edits belong to
-  `toolang.program`, not to adjacent packages that merely consume programs.
+  `toolang.lang`, not to adjacent packages that merely consume programs.
 - Prefer APIs built around concept objects over loose primitive bundles. If a
   runtime operation naturally works on `SandboxSpec`, `SandboxState`,
   `AgentRef`, or similar constructs, expose that object directly instead of
@@ -92,23 +92,23 @@
 - `toolang.base` owns the shared plugin-facing protocols, value types, and
   helper utilities used across tool, loop, channel, sandbox, model provider,
   and model adapter plugins.
-- `toolang.program` owns `.too` parsing, authored source semantics, and source
+- `toolang.lang` owns `.too` parsing, authored source semantics, and source
   editing.
-- `toolang.agents` owns local agent home layout, runtime-state files, and
-  managed agent process helpers.
-- `toolang.caps` owns cap refs, authored cap files, local cap config, and
-  prepared cap views.
-- `toolang.work` owns task and chore document semantics.
-- `toolang.state` owns durable, prepared, live, and pulse state models.
+- `toolang.agent` owns local agent identity, layout, runtime-state files,
+  managed processes, and process assembly.
+- `toolang.catalog` owns authored agent, cap, and job CRUD plus cap source
+  resolution.
+- `toolang.work` owns task and chore documents, job scheduling state, file
+  inbox requests, their independent stores, and scheduling loops.
+- `toolang.state` owns durable/prepared source snapshots, immutable
+  root/home/agent state, and source-state watching.
 - `toolang.execution` owns run binding, execution trace, durable run truth,
   response projection, and execution storage.
-- `toolang.tools`, `toolang.loops`, `toolang.channels`, `toolang.sandboxes`,
-  `toolang.models.providers`, and `toolang.models.adapters` own the built-in
-  plugin-family implementations.
-- `toolang.plugin` owns generic entry point discovery and plugin
-  loading.
+- `toolang.plugin` owns generic entry point discovery, plugin configuration,
+  and built-in tool, loop, channel, sandbox, model-provider, and model-adapter
+  implementations.
+- `toolang.api` owns FastAPI application assembly and HTTP route mapping.
 - `toolang.config` owns runtime config resolution helpers.
-- `toolang.up` owns agent startup and FastAPI app assembly.
 - `toolang.cli` owns CLI orchestration and environment resolution.
 
 

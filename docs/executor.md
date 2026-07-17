@@ -18,16 +18,19 @@ It must not introduce parallel `Plan`, `Runnable`, `Agic`, or `Flow` models.
 Named and generated inline agics already live in `Program.agics`; generated
 names such as `<agic:12>` are resolved exactly like authored names.
 
-The runtime keeps these existing boundaries:
+The runtime uses these boundaries:
 
 ```text
-UptimeContext  stable activation services and stores
-RunBinding     accepted run identity, command input, selectors, and snapshot
-LiveState      immutable prepared program and cap snapshot
+AgentSetup     installed tool, model-provider, and model-adapter implementations
+AgentState     immutable effective program, config, and cap snapshot
+RunRequest     external executable input and selection
+Executor       request acceptance plus agic, flow, and step execution
+RunStore       durable trace projection
 ```
 
-`RunBinding.live` is fixed when the run is accepted. Child runs inherit that
-same object and never read a newer `UptimeContext.live` value.
+`AgentSetup` is fixed when the executor is constructed. `Executor.run()`
+receives one explicit `AgentState`, and all child runs retain that same object.
+Process assembly, watchers, channels, CLI, and HTTP are outside the executor.
 
 
 ## Runtime Values
@@ -97,28 +100,31 @@ never observe sibling updates.
 
 ## Snapshot Rule
 
-External requests capture `LiveState` when accepted. Queued requests retain
-that snapshot until they run.
+Each call to `Executor.run()` captures its explicit `AgentState` and the
+executor's `AgentSetup` before emitting `run_starting`.
 
 Child runs are accepted immediately with their parent's snapshot:
 
 ```python
-child = bind_run_request(context, request, live=parent.live)
+child = accept_child(parent, run_id=new_run_id())
 ```
 
-A live update therefore affects only requests accepted later. It cannot
-change a running run, an accepted queued run, or any descendant of either.
+A state or effective-tool update therefore affects only requests accepted
+later. It cannot change a running run or any descendant of that run.
 
 
 ## Ownership
 
-Request handling allocates ids and emits command events. It does not write
-execution records.
+The executor accepts start requests and command requests. It allocates ids and
+emits command events without writing execution records directly.
 
 ```text
-external queue  run_waiting, run_starting, run_steering, run_stopping
-executor        child run_starting, run_begin, step/part events, run_end
+Executor  run_starting, run_steering, run_stopping,
+          run_begin, child run_starting, step/part events, run_end
 ```
+
+`run_waiting` is reserved for a resource-specific scheduler that delays an
+accepted request. A general top-level run queue is not part of execution.
 
 The executor emits each trace fact once. Sinks consume that stream:
 
@@ -142,57 +148,64 @@ Executor -> TraceEventHandler -> PersistSink
 class Executor:
     def __init__(
         self,
-        context: UptimeContext,
         *,
-        emit: TraceEventHandler,
-        consume_commands: Callable[[str, CommandKind], Sequence[CommandRecord]],
-        load_loop: Callable[[str], AgentLoop],
-        stream: bool,
+        root: Path,
+        name: str,
+        setup: AgentSetup,
+        store: RunStore,
+        model_aliases: Mapping[str, ModelAlias],
+        default_models: Sequence[str],
+        model_environ: Mapping[str, str],
+        config: ConfigView,
+        trace: TraceEventHandler | None = None,
     ) -> None: ...
 
     async def run(
         self,
-        binding: RunBinding,
-        executable: AgicDecl | FlowDecl,
+        request: RunRequest,
+        state: AgentState,
         *,
-        parent: StepPath | None = None,
-    ) -> Local: ...
+        reply: ReplySink | None = None,
+    ) -> RunRecord: ...
 
-    async def _execute_agic(
+    def start(
         self,
-        binding: RunBinding,
-        agic: AgicDecl,
-        locals: dict[str, Local],
-    ) -> Local: ...
-
-    async def _execute_flow(
-        self,
-        binding: RunBinding,
-        flow: FlowDecl,
-        locals: dict[str, Local],
-    ) -> Local: ...
-
-    async def _execute_stmt(
-        self,
-        binding: RunBinding,
-        locals: dict[str, Local],
+        request: RunRequest,
+        state: AgentState,
         *,
-        parent: StepPath,
-        index: int,
-        stmt: FlowStmt,
-        placement: Mapping[str, object] | None = None,
-    ) -> Local: ...
+        reply: ReplySink | None = None,
+    ) -> asyncio.Task[RunRecord]: ...
+
+    def allocate_run_id(self) -> str: ...
+    def steer(...) -> CommandRecord: ...
+    async def stop(...) -> tuple[CommandRecord, RunRecord]: ...
+    async def close() -> None: ...
 ```
 
-`execute_run()` remains the outer orchestration entry point. It resolves the
-accepted executable, creates sinks and `Executor`, calls `Executor.run()`, and
-converts the returned `Local` into the caller-facing outcome.
+`run()` combines `PersistSink`, the optional process trace projection, and the
+optional per-run `ReplySink` before accepting the request. The returned
+`RunRecord` is the terminal durable projection. Per-run mutable execution state
+is private and is never shared by concurrent top-level runs.
+
+`start()` only retains an asyncio task for callers that need background
+execution; it does not queue or limit runs. `steer()` and `stop()` reserve a
+command index atomically through `RunStore`, emit the corresponding trace
+event, and forward it to the active reply when the run is local. An immediate
+stop cancels a local task and marks a non-local durable run canceled. `close()`
+cancels and awaits tasks owned by the current process.
+
+Command-index reservation is coordination state, not an execution record.
+Commands themselves are still created only when `PersistSink` consumes the
+accepted command event.
 
 
 ## Run Execution
 
 ```text
-Executor.run(binding, executable, parent=None)
+Executor.run(request, state)
+  accept request and capture state + setup
+  emit run_starting
+  resolve executable from state.program
   locals = {"_": Local()}
   initialize `_` and named locals from the accepted command
   emit run_begin input=InputRef(cmd=0)
@@ -367,7 +380,7 @@ Runnable statements share one helper:
 ```python
 async def _run_runnable(
     self,
-    parent: RunBinding,
+    parent,
     locals: Mapping[str, Local],
     step: StepPath,
     runnable: str,
@@ -375,10 +388,11 @@ async def _run_runnable(
 ) -> Local: ...
 ```
 
-It resolves the runnable from `parent.live.program`, allocates a child run id,
-emits `run_starting` with `parent=step`, builds a child `RunBinding` with
-`live=parent.live`, and calls `Executor.run()` recursively. The event stream,
-not this helper, causes the child records to be persisted.
+It resolves the runnable from the captured `AgentState.program`, allocates a
+child run id, emits `run_starting` with `parent=step`, and enters the private
+child-run execution path with the same state and setup. Child runs never call
+the public `Executor.run()` entry point. The event stream, not this helper,
+causes child records to be persisted.
 
 The child owns a new locals dictionary. Its `_` is initialized from the call
 input, and matching named parameters are copied as values. Child updates never

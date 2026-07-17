@@ -11,25 +11,24 @@ from toolang.base.protocols.tool import AgentTool
 from toolang.base.error import ToolangError
 from toolang.base.types.model import ModelTarget
 
-from .. import caps as cap_store
-from ..lang.ast import AgicDecl, Directive
-from ..state.live import LiveState
-from ..state.prepared import PreparedEntry
-from ..tools.registry import selected_tool_names, tool_ref_for_model_tool
-from .model import resolve_model, select_model_selectors
+from toolang.catalog import cap as cap_store
+from ..lang.ast import AgicDecl, Directive, Program
+from ..state.agent import AgentState
+from toolang.state.prepared import PreparedEntry
+from toolang.plugin.tools.registry import selected_tool_names, tool_ref_for_model_tool
+from toolang.plugin.models.resolution import resolve_model, select_model_selectors
 
 if TYPE_CHECKING:
-    from ..state.program import LiveProgram
-    from ..up import UptimeContext
-    from .binding import RunBinding
+    from .assembly import SupportsRunAssembly
+    from .binding import _Run
 
 _LOGGER = logging.getLogger("toolang.run")
-_THREAD_THUNK_NAMES = frozenset({"chat", "task", "chore", "file"})
+_THREAD_AGIC_NAMES = frozenset({"chat", "task", "chore", "file"})
 
 
 @dataclass(frozen=True, slots=True)
 class EffectiveRunSets:
-    """Effective runtime resources selected for one thunk invocation."""
+    """Effective runtime resources selected for one agic invocation."""
 
     models_base: tuple[str, ...]
     tools_base: dict[str, AgentTool]
@@ -45,49 +44,50 @@ class EffectiveRunSets:
     set_math: dict[str, object]
 
 
-def select_origin_thunk(
-    program: LiveProgram,
+def select_origin_agic(
+    program: Program,
     *,
     origin: str,
-    thunk_name: str | None = None,
+    agic_name: str | None = None,
 ) -> AgicDecl:
-    """Return the effective thunk for one run origin."""
+    """Return the effective agic for one run origin."""
 
-    if thunk_name is not None:
-        return program.get_thunk(thunk_name)
-    if origin in _THREAD_THUNK_NAMES:
-        thunk = _find_named_thunk(program.thunks, origin)
-        if thunk is not None:
-            return thunk
-        return program.get_thunk(None)
-    return program.get_thunk(None)
+    if agic_name is not None:
+        return program.get_agic(agic_name)
+    if origin in _THREAD_AGIC_NAMES:
+        agic = _find_named_agic(program.available_agics, origin)
+        if agic is not None:
+            return agic
+        return program.get_agic(None)
+    return program.get_agic(None)
 
 
 def effective_origin_model_selectors(
-    context: UptimeContext,
+    context: SupportsRunAssembly,
     *,
+    state: AgentState,
     origin: str,
-    thunk_name: str | None = None,
+    agic_name: str | None = None,
 ) -> tuple[str, ...]:
     """Return effective model selectors for one run origin before per-run selection."""
 
-    thunk = select_origin_thunk(
-        context.live.program,
+    agic = select_origin_agic(
+        state.program,
         origin=origin,
-        thunk_name=thunk_name,
+        agic_name=agic_name,
     )
     return effective_model_selectors(
         context,
-        thunk=thunk,
+        agic=agic,
         models_base=activation_allowed_model_selectors(context),
     )
 
 
 def effective_run_sets(
-    context: UptimeContext,
+    context: SupportsRunAssembly,
     *,
-    run: RunBinding,
-    thunk: AgicDecl,
+    run: _Run,
+    agic: AgicDecl,
 ) -> EffectiveRunSets:
     models_base = run_allowed_model_selectors(context, run=run)
     tools_base = run_tools_base(context, run=run)
@@ -97,24 +97,24 @@ def effective_run_sets(
     services_base = cap_entries(selected_cap_entries, kind="service")
     effective_tools, tool_math = select_tools_with_trace(
         tools_base,
-        directives_for(thunk, "tool"),
+        directives_for(agic, "tool"),
     )
     effective_models, model_math = model_set_math(
         context,
-        thunk=thunk,
+        agic=agic,
         models_base=models_base,
     )
     effective_psyches, psyche_math = select_entries_with_trace(
         psyches_base,
-        directives_for(thunk, "psyche"),
+        directives_for(agic, "psyche"),
     )
     effective_skills, skill_math = select_entries_with_trace(
         skills_base,
-        directives_for(thunk, "skill"),
+        directives_for(agic, "skill"),
     )
     effective_services, service_math = select_entries_with_trace(
         services_base,
-        directives_for(thunk, "service"),
+        directives_for(agic, "service"),
     )
     set_math: dict[str, object] = {
         "models": model_math,
@@ -139,7 +139,7 @@ def effective_run_sets(
     )
 
 
-def activation_default_model_selector(context: UptimeContext) -> str | None:
+def activation_default_model_selector(context: SupportsRunAssembly) -> str | None:
     value = context.config.get("models.default_selector")
     if not isinstance(value, str):
         return None
@@ -147,7 +147,9 @@ def activation_default_model_selector(context: UptimeContext) -> str | None:
     return selector or None
 
 
-def activation_allowed_model_selectors(context: UptimeContext) -> tuple[str, ...]:
+def activation_allowed_model_selectors(
+    context: SupportsRunAssembly,
+) -> tuple[str, ...]:
     value = context.config.get("models.allowed_selectors")
     if isinstance(value, tuple):
         return tuple(item for item in value if isinstance(item, str) and item.strip())
@@ -156,14 +158,16 @@ def activation_allowed_model_selectors(context: UptimeContext) -> tuple[str, ...
     return ()
 
 
-def run_allowed_model_selectors(context: UptimeContext, *, run: RunBinding) -> tuple[str, ...]:
+def run_allowed_model_selectors(
+    context: SupportsRunAssembly, *, run: _Run
+) -> tuple[str, ...]:
     activation_selectors = activation_allowed_model_selectors(context)
     if not run.model_selectors:
         return activation_selectors
     if activation_selectors:
         return select_model_selectors(
             context,
-            thunk_selectors=run.model_selectors,
+            agic_selectors=run.model_selectors,
             activation_selectors=activation_selectors,
             default_selector=activation_default_model_selector(context),
         )
@@ -174,8 +178,10 @@ def run_allowed_model_selectors(context: UptimeContext, *, run: RunBinding) -> t
     )
 
 
-def run_tools_base(context: UptimeContext, *, run: RunBinding) -> dict[str, AgentTool]:
-    tools = dict(context.tools)
+def run_tools_base(
+    context: SupportsRunAssembly, *, run: _Run
+) -> dict[str, AgentTool]:
+    tools = dict(run.setup.tools)
     selectors = run.tool_selectors
     if selectors is None:
         return tools
@@ -200,8 +206,10 @@ def run_tools_base(context: UptimeContext, *, run: RunBinding) -> dict[str, Agen
     }
 
 
-def run_cap_entries(context: UptimeContext, *, run: RunBinding) -> tuple[PreparedEntry, ...]:
-    entries = tuple(run.live.cap_entries)
+def run_cap_entries(
+    context: SupportsRunAssembly, *, run: _Run
+) -> tuple[PreparedEntry, ...]:
+    entries = tuple(run.state.caps)
     selectors = run.cap_selectors
     if not selectors:
         return entries
@@ -224,32 +232,32 @@ def run_cap_entries(context: UptimeContext, *, run: RunBinding) -> tuple[Prepare
 
 
 def effective_model_selectors(
-    context: UptimeContext,
+    context: SupportsRunAssembly,
     *,
-    thunk: AgicDecl,
+    agic: AgicDecl,
     models_base: tuple[str, ...],
 ) -> tuple[str, ...]:
     effective, _math = model_set_math(
         context,
-        thunk=thunk,
+        agic=agic,
         models_base=models_base,
     )
     return effective
 
 
 def model_set_math(
-    context: UptimeContext,
+    context: SupportsRunAssembly,
     *,
-    thunk: AgicDecl,
+    agic: AgicDecl,
     models_base: tuple[str, ...],
 ) -> tuple[tuple[str, ...], dict[str, object]]:
-    thunk_selectors, thunk_steps = _apply_string_directives_with_trace(
+    agic_selectors, agic_steps = _apply_string_directives_with_trace(
         (),
-        directives_for(thunk, "model"),
+        directives_for(agic, "model"),
     )
     effective = select_model_selectors(
         context,
-        thunk_selectors=thunk_selectors,
+        agic_selectors=agic_selectors,
         activation_selectors=models_base,
         default_selector=activation_default_model_selector(context),
     )
@@ -259,16 +267,16 @@ def model_set_math(
             "activation_ceiling": list(models_base),
             "activation_default": activation_default_model_selector(context),
             "requested": None,
-            "thunk_directive_base": [],
-            "thunk_directive_steps": thunk_steps,
-            "thunk_selectors": list(thunk_selectors),
+            "agic_directive_base": [],
+            "agic_directive_steps": agic_steps,
+            "agic_selectors": list(agic_selectors),
             "effective": list(effective),
         },
     )
 
 
-def thunk_model_refs(thunk: AgicDecl) -> tuple[str, ...]:
-    return _apply_string_directives((), directives_for(thunk, "model"))
+def agic_model_refs(agic: AgicDecl) -> tuple[str, ...]:
+    return _apply_string_directives((), directives_for(agic, "model"))
 
 
 def select_tools(
@@ -322,13 +330,13 @@ def select_entries_with_trace(
     )
 
 
-def cap_entries(entries: LiveState | tuple[PreparedEntry, ...], *, kind: str) -> tuple[PreparedEntry, ...]:
-    cap_entries = entries.cap_entries if isinstance(entries, LiveState) else entries
+def cap_entries(entries: AgentState | tuple[PreparedEntry, ...], *, kind: str) -> tuple[PreparedEntry, ...]:
+    cap_entries = entries.caps if isinstance(entries, AgentState) else entries
     return tuple(entry for entry in cap_entries if entry.kind == kind)
 
 
 def resolve_runtime_models(
-    context: UptimeContext,
+    context: SupportsRunAssembly,
     selectors: tuple[str, ...],
 ) -> tuple[ModelTarget, ...]:
     return tuple(
@@ -340,23 +348,23 @@ def resolve_runtime_models(
     )
 
 
-def log_set_math(*, run: RunBinding, thunk: AgicDecl, set_math: dict[str, object]) -> None:
+def log_set_math(*, run: _Run, agic: AgicDecl, set_math: dict[str, object]) -> None:
     if not _LOGGER.isEnabledFor(logging.DEBUG):
         return
     _LOGGER.debug(
-        "run.activation thread=%s run=%s thunk=%s summary=%s math=%s",
+        "run.activation thread=%s run=%s agic=%s summary=%s math=%s",
         run.thread_id,
         run.run_id,
-        thunk.name,
+        agic.name,
         _set_math_summary(set_math),
         json.dumps(set_math, ensure_ascii=False, sort_keys=True),
     )
 
 
-def _find_named_thunk(thunks: tuple[AgicDecl, ...], name: str) -> AgicDecl | None:
-    for thunk in thunks:
-        if thunk.name == name:
-            return thunk
+def _find_named_agic(agics: tuple[AgicDecl, ...], name: str) -> AgicDecl | None:
+    for agic in agics:
+        if agic.name == name:
+            return agic
     return None
 
 
@@ -558,7 +566,7 @@ def _domain_set_math_summary(domain: str, value: dict[str, object]) -> str:
     effective = value.get("effective")
     base_count = len(base) if isinstance(base, list) else 0
     effective_count = len(effective) if isinstance(effective, list) else 0
-    steps = value.get("thunk_directive_steps")
+    steps = value.get("agic_directive_steps")
     if not isinstance(steps, list):
         steps = value.get("directive_steps")
     expression = _set_math_expression(cast(list[object], steps) if isinstance(steps, list) else [])

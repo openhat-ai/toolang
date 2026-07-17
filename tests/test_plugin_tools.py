@@ -10,10 +10,11 @@ from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.model import ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult, RunResult
 from toolang.base.utils.function_tools import create_function_tool, tool
-from toolang.plugin import load_loops
-from toolang.up import load_model_adapters
-from toolang.tools.registry import ToolRef
-from toolang.up import PluginInfo, list_plugin_infos, list_plugin_names, load_plugin_factory, load_tool_plugins
+from toolang.plugin.loading import load_loops
+from toolang.plugin.models.loading import load_model_adapters
+from toolang.plugin.tools.registry import ToolRef
+from toolang.plugin.loading import PluginInfo, list_plugin_infos, list_plugin_names, load_plugin_factory
+from toolang.plugin.tools.loading import load_tool_plugins
 
 
 class _FakeEntryPoint:
@@ -29,12 +30,12 @@ class _FakeEntryPoint:
 def _patch_tool_entry_points(monkeypatch) -> None:
     from toolang.base.examples.tools import create_echo_tool_set
     from toolang.base.examples.tools import create_math_add_tool_set
-    from toolang.tools.agent_chat import create_tool_set as create_agent_chat_tool
-    from toolang.tools.filesystem import create_tool_set as create_filesystem_tool
-    from toolang.tools.service_use import create_tool_set as create_service_use_tool
-    from toolang.tools.shell import create_tool_set as create_shell_tool
-    from toolang.tools.web_search import create_tool_set as create_web_search_tool
-    from toolang.tools.agent_state import create_tool_set as create_agent_state_tool
+    from toolang.plugin.tools.agent_chat import create_tool_set as create_agent_chat_tool
+    from toolang.plugin.tools.filesystem import create_tool_set as create_filesystem_tool
+    from toolang.plugin.tools.service_use import create_tool_set as create_service_use_tool
+    from toolang.plugin.tools.shell import create_tool_set as create_shell_tool
+    from toolang.plugin.tools.web_search import create_tool_set as create_web_search_tool
+    from toolang.plugin.tools.agent_state import create_tool_set as create_agent_state_tool
     from toolang.base.examples.tools import create_working_tree_tool_set
 
     entries = [
@@ -49,7 +50,7 @@ def _patch_tool_entry_points(monkeypatch) -> None:
         _FakeEntryPoint("working_tree", create_working_tree_tool_set),
     ]
     monkeypatch.setattr(
-        "toolang.plugin.entry_points",
+        "toolang.plugin.loading.entry_points",
         lambda *, group: entries if group == "toolang.tool" else [],
     )
 
@@ -72,18 +73,18 @@ def test_tool_plugins_load_from_entry_points(monkeypatch) -> None:
 
 def test_plugin_infos_include_source(monkeypatch) -> None:
     from toolang.base.examples.tools import create_echo_tool_set
-    from toolang.tools.filesystem import create_tool_set as create_filesystem_tool
+    from toolang.plugin.tools.filesystem import create_tool_set as create_filesystem_tool
 
     entries = [
         _FakeEntryPoint("echo", create_echo_tool_set, value="demo.tools:create_echo_tool_set"),
         _FakeEntryPoint(
             "filesystem",
             create_filesystem_tool,
-            value="toolang.tools.filesystem:create_tool_set",
+            value="toolang.plugin.tools.filesystem:create_tool_set",
         ),
     ]
     monkeypatch.setattr(
-        "toolang.plugin.entry_points",
+        "toolang.plugin.loading.entry_points",
         lambda *, group: entries if group == "toolang.tool" else [],
     )
 
@@ -148,7 +149,7 @@ def test_load_tool_plugins_accepts_namespaced_plugin_keys(monkeypatch) -> None:
         return Plugin()
 
     monkeypatch.setattr(
-        "toolang.plugin.entry_points",
+        "toolang.plugin.loading.entry_points",
         lambda *, group: [_FakeEntryPoint("tracker", create_tool_set)] if group == "toolang.tool" else [],
     )
 
@@ -226,7 +227,7 @@ def test_one_python_package_can_define_multiple_toolang_plugins(monkeypatch) -> 
         ],
     }
     monkeypatch.setattr(
-        "toolang.plugin.entry_points",
+        "toolang.plugin.loading.entry_points",
         lambda *, group: entry_points_by_group.get(group, []),
     )
     tools = load_tool_plugins()

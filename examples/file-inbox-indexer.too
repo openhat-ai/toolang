@@ -6,8 +6,8 @@
 # mkdir -p inbox
 # toolang examples/file-inbox-indexer.too --inbox ./inbox
 #
-# Drop files into ./inbox. Each discovered file is sent to the `file` thunk.
-# The thunk appends a short text summary to the roaming agent home file:
+# Drop files into ./inbox. Each discovered file is sent to the `file` agic.
+# The agic appends a short text summary to the roaming agent home file:
 #
 # examples/.toolang/agents/file-inbox-indexer/outbox/index.md
 

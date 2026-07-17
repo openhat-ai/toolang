@@ -9,8 +9,8 @@ import pytest
 from toolang.base.error import ToolangError
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import RunResult
-from toolang.execution.binding import RunBinding
-from toolang.execution.db import ExecutionStore, PersistSink
+from toolang.execution.binding import _Run
+from toolang.execution.store import RunStore, PersistSink
 from toolang.execution.events import (
     RunBegin,
     RunEnd,
@@ -21,8 +21,10 @@ from toolang.execution.events import (
     StepEnd,
     TraceEvent,
 )
-from toolang.execution.executor import Executor, Local, _decode_agic_output
+from toolang.execution.executor import Executor, Local, _RunExecution, _decode_agic_output
+from toolang.execution.request import RunRequest
 from toolang.execution.records import InputRef, OutputRef
+from toolang.execution.setup import AgentSetup
 from toolang.lang.ast import (
     AskStmt,
     DropStmt,
@@ -126,6 +128,54 @@ def test_flow_statements_lower_to_specific_nodes() -> None:
     )
 
 
+def test_public_executor_runs_explicit_agent_state(tmp_path) -> None:
+    flow = FlowDecl(
+        name="pipeline",
+        stmts=(LetStmt(value="done", span=Span(line=2)),),
+        span=Span(line=1),
+    )
+    program = Program(span=Span(line=1), flows=(flow,))
+    state = cast(Any, SimpleNamespace(program=program, fingerprint="state-test"))
+    setup = AgentSetup(tools={}, model_providers={}, model_adapters={})
+    store = RunStore(tmp_path / "runs.db")
+    events: list[TraceEvent] = []
+    executor = Executor(
+        root=tmp_path,
+        name="alice",
+        setup=setup,
+        store=store,
+        model_aliases={},
+        default_models=(),
+        model_environ={},
+        config=cast(Any, {}),
+        trace=events.append,
+    )
+
+    record = asyncio.run(
+        executor.run(
+            RunRequest(
+                group="script",
+                origin="script",
+                executable_kind="flow",
+                executable_name="pipeline",
+            ),
+            state,
+        )
+    )
+
+    assert record.status == "finished"
+    assert record.context["executable"] == {"kind": "flow", "name": "pipeline"}
+    assert store.run_output_text(run_id=record.id) == "done"
+    assert [event.type for event in events] == [
+        "run_starting",
+        "run_begin",
+        "step_begin",
+        "step_end",
+        "run_end",
+    ]
+    store.close()
+
+
 def test_inline_runnables_are_generated_once_and_referenced_by_name() -> None:
     program = Program.from_source(FLOW_SOURCE)
     flow = program.flows[0]
@@ -210,11 +260,11 @@ def test_executor_persists_parent_and_child_run_hierarchy(tmp_path) -> None:
         span=Span(line=4),
     )
     context, binding = _executor_fixture(tmp_path, parent, child)
-    store = ExecutionStore(tmp_path / "runs.db")
+    store = RunStore(tmp_path / "runs.db")
     sink = PersistSink(store)
     sink.on_event(_starting(binding, parent))
 
-    result = asyncio.run(Executor(context, emit=sink.on_event).run(binding, parent))
+    result = asyncio.run(_RunExecution(context, emit=sink.on_event).run(binding, parent))
 
     assert result == Local("done", "item")
     runs = store.list_runs(limit=None, include_superseded=True)
@@ -251,7 +301,7 @@ def test_executor_map_preserves_input_order(tmp_path) -> None:
     )
     context, binding = _executor_fixture(tmp_path, flow, identity)
     events: list[TraceEvent] = []
-    executor = Executor(context, emit=events.append)
+    executor = _RunExecution(context, emit=events.append)
 
     result = asyncio.run(
         executor.run(binding, flow, locals={"_": Local([3, 1, 2], "list")})
@@ -277,7 +327,7 @@ def test_executor_positional_filters_use_system_steps(tmp_path) -> None:
     )
     context, binding = _executor_fixture(tmp_path, flow)
     events: list[TraceEvent] = []
-    executor = Executor(context, emit=events.append)
+    executor = _RunExecution(context, emit=events.append)
 
     result = asyncio.run(
         executor.run(binding, flow, locals={"_": Local([1, 2, 3, 4], "list")})
@@ -309,7 +359,7 @@ def test_parallel_failure_ends_children_before_parent_step(tmp_path) -> None:
 
     with pytest.raises(ToolangError, match="gather requires current shape list"):
         asyncio.run(
-            Executor(context, emit=events.append).run(
+            _RunExecution(context, emit=events.append).run(
                 binding,
                 flow,
                 locals={"_": Local([1, 2, 3], "list")},
@@ -350,11 +400,11 @@ def test_executor_repeat_uses_unique_nested_step_paths(tmp_path) -> None:
         span=Span(line=1),
     )
     context, binding = _executor_fixture(tmp_path, flow)
-    store = ExecutionStore(tmp_path / "runs.db")
+    store = RunStore(tmp_path / "runs.db")
     sink = PersistSink(store)
     sink.on_event(_starting(binding, flow))
 
-    result = asyncio.run(Executor(context, emit=sink.on_event).run(binding, flow))
+    result = asyncio.run(_RunExecution(context, emit=sink.on_event).run(binding, flow))
 
     assert result == Local("again", "item")
     assert [
@@ -382,11 +432,11 @@ def test_nested_first_step_inherits_parent_basis_without_cycle(tmp_path) -> None
         span=Span(line=1),
     )
     context, binding = _executor_fixture(tmp_path, flow)
-    store = ExecutionStore(tmp_path / "runs.db")
+    store = RunStore(tmp_path / "runs.db")
     sink = PersistSink(store)
     sink.on_event(_starting(binding, flow))
 
-    asyncio.run(Executor(context, emit=sink.on_event).run(binding, flow))
+    asyncio.run(_RunExecution(context, emit=sink.on_event).run(binding, flow))
 
     steps = {step.path: step for step in store.list_steps(run_id=binding.run_id)}
     assert steps[f"{binding.run_id}/1"].input == (
@@ -410,11 +460,11 @@ def test_run_output_tracks_primary_binding_not_last_step(tmp_path) -> None:
         span=Span(line=1),
     )
     context, binding = _executor_fixture(tmp_path, flow)
-    store = ExecutionStore(tmp_path / "runs.db")
+    store = RunStore(tmp_path / "runs.db")
     sink = PersistSink(store)
     sink.on_event(_starting(binding, flow))
 
-    result = asyncio.run(Executor(context, emit=sink.on_event).run(binding, flow))
+    result = asyncio.run(_RunExecution(context, emit=sink.on_event).run(binding, flow))
 
     run = store.get_run(run_id=binding.run_id)
     assert result == Local("primary", "item")
@@ -435,7 +485,7 @@ def test_flow_validates_its_declared_output(tmp_path) -> None:
     events: list[TraceEvent] = []
 
     with pytest.raises(ToolangError, match="output is not Number"):
-        asyncio.run(Executor(context, emit=events.append).run(binding, flow))
+        asyncio.run(_RunExecution(context, emit=events.append).run(binding, flow))
 
     assert isinstance(events[-1], RunEnd)
     assert events[-1].status == "failed"
@@ -483,7 +533,7 @@ def test_next_call_steer_waits_for_a_calling_statement(tmp_path) -> None:
         span=Span(line=2),
     )
     context, binding = _executor_fixture(tmp_path, flow, child)
-    store = ExecutionStore(tmp_path / "runs.db")
+    store = RunStore(tmp_path / "runs.db")
     sink = PersistSink(store)
     sink.on_event(_starting(binding, flow))
     sink.on_event(
@@ -495,7 +545,7 @@ def test_next_call_steer_waits_for_a_calling_statement(tmp_path) -> None:
             created_at="2026-01-01T00:00:01Z",
         )
     )
-    executor = Executor(
+    executor = _RunExecution(
         context,
         emit=sink.on_event,
         consume_commands=lambda run, kind: store.pending_commands(
@@ -526,7 +576,7 @@ def test_next_call_stop_cancels_before_the_calling_statement(tmp_path) -> None:
         span=Span(line=2),
     )
     context, binding = _executor_fixture(tmp_path, flow, child)
-    store = ExecutionStore(tmp_path / "runs.db")
+    store = RunStore(tmp_path / "runs.db")
     sink = PersistSink(store)
     sink.on_event(_starting(binding, flow))
     sink.on_event(
@@ -538,7 +588,7 @@ def test_next_call_stop_cancels_before_the_calling_statement(tmp_path) -> None:
             created_at="2026-01-01T00:00:01Z",
         )
     )
-    executor = Executor(
+    executor = _RunExecution(
         context,
         emit=sink.on_event,
         consume_commands=lambda run, kind: store.pending_commands(
@@ -569,14 +619,14 @@ def test_run_begin_uses_execution_time_not_acceptance_time(
         "toolang.execution.executor._utc_now", lambda: "2026-01-01T00:01:00Z"
     )
 
-    asyncio.run(Executor(context, emit=events.append).run(binding, flow))
+    asyncio.run(_RunExecution(context, emit=events.append).run(binding, flow))
 
     begin = next(event for event in events if isinstance(event, RunBegin))
     assert begin.started_at == "2026-01-01T00:01:00Z"
 
 
 def test_persist_sink_replays_the_same_trace_idempotently(tmp_path) -> None:
-    store = ExecutionStore(tmp_path / "runs.db")
+    store = RunStore(tmp_path / "runs.db")
     sink = PersistSink(store)
     trace: tuple[TraceEvent, ...] = (
         RunStarting(
@@ -636,7 +686,7 @@ def test_persist_sink_replays_the_same_trace_idempotently(tmp_path) -> None:
 
 
 def test_persist_sink_preserves_null_run_context_values(tmp_path) -> None:
-    store = ExecutionStore(tmp_path / "runs.db")
+    store = RunStore(tmp_path / "runs.db")
     sink = PersistSink(store)
     context = {
         "root": "run_abc123",
@@ -670,7 +720,7 @@ def test_persist_sink_preserves_null_run_context_values(tmp_path) -> None:
 
 
 def test_persist_sink_rejects_conflicting_start_replay(tmp_path) -> None:
-    store = ExecutionStore(tmp_path / "runs.db")
+    store = RunStore(tmp_path / "runs.db")
     sink = PersistSink(store)
     start = RunStarting(
         run="run_abc123",
@@ -699,15 +749,16 @@ def test_persist_sink_rejects_conflicting_start_replay(tmp_path) -> None:
 
 
 def _executor_fixture(tmp_path, selected: FlowDecl, *runnables: FlowDecl):
-    program = SimpleNamespace(thunks=(), flows=(selected, *runnables))
-    live = SimpleNamespace(program=program, fingerprint="live-test")
+    program = Program(span=Span(line=1), flows=(selected, *runnables))
+    state = SimpleNamespace(program=program, fingerprint="state-test")
     context = cast(Any, SimpleNamespace(root=tmp_path, name="alice"))
-    binding = RunBinding(
+    binding = _Run(
         run_id="run_abc123",
         group="chat",
         origin="chat",
         thread_id="term_abc123",
-        thunk_name=selected.name,
+        executable_kind="flow",
+        executable_name=selected.name,
         input_text="",
         message=Message.user(""),
         model_selector=None,
@@ -715,14 +766,15 @@ def _executor_fixture(tmp_path, selected: FlowDecl, *runnables: FlowDecl):
         tool_selectors=None,
         cap_selectors=(),
         run_loop="basic",
-        metadata={"executable_kind": "flow"},
-        live=cast(Any, live),
+        metadata={},
+        state=cast(Any, state),
+        setup=AgentSetup(tools={}, model_providers={}, model_adapters={}),
         created_at="2026-01-01T00:00:00Z",
     )
     return context, binding
 
 
-def _starting(binding: RunBinding, flow: FlowDecl) -> RunStarting:
+def _starting(binding: _Run, flow: FlowDecl) -> RunStarting:
     return RunStarting(
         run=binding.run_id,
         cmd=0,

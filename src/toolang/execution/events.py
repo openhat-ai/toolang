@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+import threading
 from typing import Any, cast
 
 from toolang.base.types.message import (
@@ -234,6 +235,19 @@ TraceEvent = (
     | RunEnd
 )
 TraceEventHandler = Callable[[TraceEvent], None]
+
+
+def combine_trace_handlers(*handlers: TraceEventHandler) -> TraceEventHandler:
+    """Return one ordered, thread-safe handler over trace projections."""
+
+    lock = threading.Lock()
+
+    def handle(event: TraceEvent) -> None:
+        with lock:
+            for handler in handlers:
+                handler(event)
+
+    return handle
 
 
 def trace_event_from_data(data: Mapping[str, Any]) -> TraceEvent:

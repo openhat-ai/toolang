@@ -183,7 +183,7 @@ Streaming chat:
 returns an SSE stream for the same run.
 
 `GET /api/v1/chat/models` returns the current chat-selectable model selectors
-and the default selector after applying activation config and the `chat` thunk.
+and the default selector after applying activation config and the `chat` agic.
 
 
 ## Streaming Rule
@@ -197,7 +197,7 @@ execution protocol.
 
 UIs should keep exactly one active mutable block for the visible run. Finalized
 blocks can move into scrollback immediately instead of waiting for the whole run
-to finish. Parallel tool calls, thunk calls, or flow lanes are rendered inside
+to finish. Parallel tool calls, agic calls, or flow lanes are rendered inside
 the current mutable block.
 
 Thread and run detail endpoints are inspection surfaces used to:

@@ -32,7 +32,7 @@ class _Lowerer:
         self.cst = cst
         self.withs: list[ast.WithDecl] = []
         self.caps: list[ast.CapDecl] = []
-        self.works: list[ast.WorkDecl] = []
+        self.jobs: list[ast.JobDecl] = []
         self.structs: list[ast.StructDecl] = []
         self.contexts: list[ast.ContextDecl] = []
         self.instructs: list[ast.InstructDecl] = []
@@ -62,7 +62,7 @@ class _Lowerer:
             doc="\n".join(filter(None, program_doc)).strip() or None,
             withs=tuple(sorted(self.withs, key=_node_line)),
             caps=tuple(sorted(self.caps, key=_node_line)),
-            works=tuple(sorted(self.works, key=_node_line)),
+            jobs=tuple(sorted(self.jobs, key=_node_line)),
             structs=tuple(sorted(self.structs, key=_node_line)),
             contexts=tuple(sorted(self.contexts, key=_node_line)),
             instructs=tuple(sorted(self.instructs, key=_node_line)),
@@ -85,7 +85,7 @@ class _Lowerer:
             self.caps.append(self._lower_cap(node, doc=doc))
             return
         if node.type in {"task", "chore"}:
-            self.works.append(self._lower_work(node, doc=doc))
+            self.jobs.append(self._lower_job(node, doc=doc))
             return
         if node.type == "struct":
             self.structs.append(self._lower_struct(node, doc=doc))
@@ -122,10 +122,10 @@ class _Lowerer:
             doc=doc,
         )
 
-    def _lower_work(self, node: CstNode, *, doc: str | None) -> ast.WorkDecl:
+    def _lower_job(self, node: CstNode, *, doc: str | None) -> ast.JobDecl:
         body = self._required(node, "body")
-        return ast.WorkDecl(
-            kind=cast(ast.WorkKind, node.type),
+        return ast.JobDecl(
+            kind=cast(ast.JobKind, node.type),
             name=self._required_text(node, "name").strip(),
             body=self._content_text(body),
             meta=self._properties(body),

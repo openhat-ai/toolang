@@ -1,7 +1,7 @@
-#!/usr/bin/env toolang 
+#!/usr/bin/env toolang
 
 # This file is designed for `toolang invoke` experiments.
-# It keeps the capabilities minimal and focuses on different thunk shapes.
+# It keeps the capabilities minimal and focuses on different agic shapes.
 
 struct Summary:
   title: Text
@@ -10,16 +10,36 @@ struct Summary:
 struct BulletList:
   items: Text[]
 
-thunk summarize(in: Part[]) -> Summary:
-  Produce a compact summary with a short title and a short summary paragraph.
+# agic summarize(in: Part[]) -> Summary:
+#   Produce a compact summary with a short title and a short summary paragraph.
 
-thunk bullets(in: Part[]) -> BulletList:
-  Extract the main points into short bullet items.
+# agic bullets(in: Part[]) -> BulletList:
+#   Extract the main points into short bullet items.
 
-thunk rewrite(in: Part[], tone?, audience?):
-  Rewrite the input in the requested tone.
-  Adjust depth and wording for the requested audience when it is provided.
+# agic rewrite(in: Part[], tone?, audience?):
+#   Rewrite the input in the requested tone.
+#   Adjust depth and wording for the requested audience when it is provided.
 
-thunk slug(title) -> Text:
+
+agic slug(title) -> Text:
   Convert the provided title into a concise lowercase slug.
   Use hyphens between words and return only the slug text.
+
+flow a:
+    run: hello world
+
+    hello world
+
+    ## sdfsdf
+    women
+
+    scatter 8: sdfsdf
+    gather:
+        sdfsdf sdfsdf
+
+skill abc:
+    hello
+
+
+task heloo:
+    hello world

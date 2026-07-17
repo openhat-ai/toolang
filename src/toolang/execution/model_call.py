@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import json
 from typing import TYPE_CHECKING, Any
@@ -11,17 +12,18 @@ from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.model import ModelTarget
 
-from .. import caps as cap_store, work
-from ..lang.ast import AgicDecl, Message as AstMessage
-from ..state.prepared import PreparedEntry
+from toolang.catalog import cap as cap_store
+from ..common.immutable import mutable_data
+from ..lang.ast import AgicDecl, Message as AstMessage, Program
+from toolang.state.prepared import PreparedEntry
 from ..common.template import render_text_template
 from . import prompts
 from .effective import directives_for
+from .binding import run_job_context
 
 if TYPE_CHECKING:
-    from ..state.program import LiveProgram
-    from ..up import UptimeContext
-    from .binding import RunBinding
+    from .assembly import SupportsRunAssembly
+    from .binding import _Run
 
 _DEFAULT_INSTRUCT_TEMPLATE = prompts.load("instruct.default.md")
 _DEFAULT_CONTEXT_TEMPLATE = prompts.load("context.default.md")
@@ -40,10 +42,10 @@ class ModelCallAssembly:
 
 
 def build_model_call_assembly(
-    context: UptimeContext,
+    context: SupportsRunAssembly,
     *,
-    run: RunBinding,
-    thunk: AgicDecl,
+    run: _Run,
+    agic: AgicDecl,
     input_text: str,
     params: dict[str, Any],
     models: tuple[ModelTarget, ...],
@@ -55,13 +57,13 @@ def build_model_call_assembly(
     user_template_context = user_template_context_for_run(
         context,
         run=run,
-        thunk=thunk,
+        agic=agic,
         params=params,
     )
     system_template_context = system_template_context_for_run(
         context,
         run=run,
-        thunk=thunk,
+        agic=agic,
         params=params,
         models=models,
         tools=tools,
@@ -70,25 +72,25 @@ def build_model_call_assembly(
         services=services,
     )
     context_text = selected_context_text(
-        live_program=run.live.program,
-        thunk=thunk,
+        program=run.state.program,
+        agic=agic,
         system_context=system_template_context,
     )
-    rendered_messages = render_thunk_messages(
-        thunk.messages,
+    rendered_messages = render_agic_messages(
+        agic.messages,
         user_context=user_template_context,
         system_context=system_template_context,
     )
     message = run_message(
         run=run,
-        thunk=thunk,
+        agic=agic,
         input_text=input_text,
         rendered_messages=rendered_messages,
         context_text=context_text,
     )
     instructions = assembled_instructions(
-        live_program=run.live.program,
-        thunk=thunk,
+        program=run.state.program,
+        agic=agic,
         system_context=system_template_context,
     )
     return ModelCallAssembly(
@@ -103,14 +105,16 @@ def build_model_call_assembly(
 
 def run_message(
     *,
-    run: RunBinding,
-    thunk: AgicDecl,
+    run: _Run,
+    agic: AgicDecl,
     input_text: str,
     rendered_messages: tuple[AstMessage, ...],
     context_text: str,
 ) -> Message:
     if run.origin != "script" and run.message is not None:
-        return _expanded_run_message(run.message, input_text=input_text, context_text=context_text)
+        return _expanded_run_message(
+            run.message, input_text=input_text, context_text=context_text
+        )
     if run.origin == "file":
         text = _file_message_text(
             input_text=input_text,
@@ -121,7 +125,7 @@ def run_message(
     if run.origin != "script":
         return Message.user(_join_message_texts(context_text, input_text))
     text = _script_message_text(
-        thunk=thunk,
+        agic=agic,
         input_text=input_text,
         rendered_messages=rendered_messages,
         context_text=context_text,
@@ -130,27 +134,27 @@ def run_message(
 
 
 def user_template_context_for_run(
-    context: UptimeContext,
+    context: SupportsRunAssembly,
     *,
-    run: RunBinding,
-    thunk: AgicDecl,
+    run: _Run,
+    agic: AgicDecl,
     params: dict[str, Any],
 ) -> dict[str, object]:
     return _template_context(
-        params=_template_param_values(thunk, params),
+        params=_template_param_values(agic, params),
         runtime=_runtime_base(
             context,
             run=run,
-            thunk=thunk,
+            agic=agic,
         ),
     )
 
 
 def system_template_context_for_run(
-    context: UptimeContext,
+    context: SupportsRunAssembly,
     *,
-    run: RunBinding,
-    thunk: AgicDecl,
+    run: _Run,
+    agic: AgicDecl,
     params: dict[str, Any],
     models: tuple[ModelTarget, ...],
     tools: dict[str, AgentTool],
@@ -162,7 +166,7 @@ def system_template_context_for_run(
     runtime = _runtime_base(
         context,
         run=run,
-        thunk=thunk,
+        agic=agic,
     )
     runtime.update(
         {
@@ -171,17 +175,19 @@ def system_template_context_for_run(
             "has_psyches": bool(psyches),
             "skills": [_prepared_entry_to_context(context, item) for item in skills],
             "has_skills": bool(skills),
-            "services": [_prepared_entry_to_context(context, item) for item in services],
+            "services": [
+                _prepared_entry_to_context(context, item) for item in services
+            ],
             "has_services": bool(services),
         }
     )
     return _template_context(
-        params=_template_param_values(thunk, params),
+        params=_template_param_values(agic, params),
         runtime=runtime,
     )
 
 
-def render_thunk_messages(
+def render_agic_messages(
     blocks: tuple[AstMessage, ...],
     *,
     user_context: dict[str, object],
@@ -204,11 +210,11 @@ def render_thunk_messages(
 
 def assembled_instructions(
     *,
-    live_program: LiveProgram,
-    thunk: AgicDecl,
+    program: Program,
+    agic: AgicDecl,
     system_context: dict[str, object],
 ) -> str:
-    template = _selected_instruct_template(live_program=live_program, thunk=thunk)
+    template = _selected_instruct_template(program=program, agic=agic)
     if not template.strip():
         return ""
     return render_text_template(template, system_context).strip()
@@ -216,31 +222,33 @@ def assembled_instructions(
 
 def selected_context_text(
     *,
-    live_program: LiveProgram,
-    thunk: AgicDecl,
+    program: Program,
+    agic: AgicDecl,
     system_context: dict[str, object],
 ) -> str:
-    template = _selected_context_template(live_program=live_program, thunk=thunk)
+    template = _selected_context_template(program=program, agic=agic)
     if not template.strip():
         return ""
     return render_text_template(template, system_context).strip()
 
 
-def recalls_history(thunk: AgicDecl) -> bool:
-    values = recall_values(thunk)
+def recalls_history(agic: AgicDecl) -> bool:
+    values = recall_values(agic)
     if not values or "default" in values:
         return True
     return "history" in values
 
 
-def recall_values(thunk: AgicDecl) -> tuple[str, ...]:
-    directives = directives_for(thunk, "recall")
+def recall_values(agic: AgicDecl) -> tuple[str, ...]:
+    directives = directives_for(agic, "recall")
     if not directives:
         return ()
     return tuple(item for item in directives[0].values if item)
 
 
-def _expanded_run_message(message: Message, *, input_text: str, context_text: str) -> Message:
+def _expanded_run_message(
+    message: Message, *, input_text: str, context_text: str
+) -> Message:
     original_text = message_text(message.parts)
     if not input_text.strip() or input_text == original_text:
         input_text = original_text
@@ -256,22 +264,22 @@ def _expanded_run_message(message: Message, *, input_text: str, context_text: st
 
 def _selected_instruct_template(
     *,
-    live_program: LiveProgram,
-    thunk: AgicDecl,
+    program: Program,
+    agic: AgicDecl,
 ) -> str:
-    name = thunk.instruct
+    name = agic.instruct
     if name is None or name == "default":
-        return _default_program_instruct_template(live_program)
+        return _default_program_instruct_template(program)
     if name == "none":
         return ""
-    instruct = _program_instruct(live_program, name)
+    instruct = _program_instruct(program, name)
     if instruct is None:
         raise ToolangError(f"Instruct not found: {name}")
     return instruct.body
 
 
-def _default_program_instruct_template(live_program: LiveProgram) -> str:
-    instruct = _program_instruct(live_program, None)
+def _default_program_instruct_template(program: Program) -> str:
+    instruct = _program_instruct(program, None)
     if instruct is not None:
         return instruct.body
     return _DEFAULT_INSTRUCT_TEMPLATE
@@ -279,47 +287,43 @@ def _default_program_instruct_template(live_program: LiveProgram) -> str:
 
 def _selected_context_template(
     *,
-    live_program: LiveProgram,
-    thunk: AgicDecl,
+    program: Program,
+    agic: AgicDecl,
 ) -> str:
-    name = thunk.context
+    name = agic.context
     if name is None or name == "default":
-        return _default_program_context_template(live_program)
+        return _default_program_context_template(program)
     if name == "none":
         return ""
-    context = _program_context(live_program, name)
+    context = _program_context(program, name)
     if context is None:
         raise ToolangError(f"Context not found: {name}")
     return context.body
 
 
-def _default_program_context_template(live_program: LiveProgram) -> str:
-    context = _program_context(live_program, None)
+def _default_program_context_template(program: Program) -> str:
+    context = _program_context(program, None)
     if context is not None:
         return context.body
     return _DEFAULT_CONTEXT_TEMPLATE
 
 
-def _program_instruct(live_program: LiveProgram, name: str | None) -> Any | None:
-    get_instruct = getattr(live_program, "get_instruct", None)
-    if not callable(get_instruct):
-        return None
-    return get_instruct(name)
+def _program_instruct(program: Program, name: str | None) -> Any | None:
+    return program.get_instruct(name)
 
 
-def _program_context(live_program: LiveProgram, name: str | None) -> Any | None:
-    get_context = getattr(live_program, "get_context", None)
-    if not callable(get_context):
-        return None
-    return get_context(name)
+def _program_context(program: Program, name: str | None) -> Any | None:
+    return program.get_context(name)
 
 
-def _template_param_values(thunk: AgicDecl, params: dict[str, Any]) -> dict[str, object]:
+def _template_param_values(
+    agic: AgicDecl, params: dict[str, Any]
+) -> dict[str, object]:
     values: dict[str, object] = {}
-    if thunk.input is not None:
-        values[thunk.input.name] = params.get(thunk.input.name)
-        values["_"] = params.get("_", values[thunk.input.name])
-    for param in thunk.params:
+    if agic.input is not None:
+        values[agic.input.name] = params.get(agic.input.name)
+        values["_"] = params.get("_", values[agic.input.name])
+    for param in agic.params:
         values[param.name] = params.get(param.name)
     return values
 
@@ -336,10 +340,10 @@ def _template_context(
 
 
 def _runtime_base(
-    context: UptimeContext,
+    context: SupportsRunAssembly,
     *,
-    run: RunBinding,
-    thunk: AgicDecl,
+    run: _Run,
+    agic: AgicDecl,
 ) -> dict[str, object]:
     return {
         "origin": run.origin,
@@ -350,17 +354,19 @@ def _runtime_base(
         "sandbox": _runtime_sandbox(context),
         "run": {
             "thread_id": run.thread_id,
-            "program_source": run.live.program.source_path,
+            "program_source": str(
+                context.home.joinpath("agent.too").relative_to(context.root)
+            ),
         },
         "agent": {
             "name": context.name,
             "home": str(context.home),
         },
-        "thunk": {
-            "name": thunk.name,
-            "output": thunk.output,
+        "agic": {
+            "name": agic.name,
+            "output": agic.output,
         },
-        "job": _job_context(context, run),
+        "job": run_job_context(run),
     }
 
 
@@ -380,7 +386,7 @@ def _model_target_to_context(target: ModelTarget) -> dict[str, object]:
 
 
 def _prepared_entry_to_context(
-    context: UptimeContext,
+    context: SupportsRunAssembly,
     entry: PreparedEntry,
 ) -> dict[str, object]:
     content = entry.content.strip() if entry.kind == "psyche" else ""
@@ -392,7 +398,7 @@ def _prepared_entry_to_context(
         "ref": cap_store.entry_ref(entry, agent_name=context.name),
         "description": str(description) if description is not None else None,
         "content": content or None,
-        "metadata": dict(entry.meta),
+        "metadata": mutable_data(entry.meta),
         "metadata_items": _metadata_items(entry.meta),
         "scope": cap_store.entry_scope(entry, agent_name=context.name),
         "origin": cap_store.entry_origin(entry),
@@ -402,7 +408,7 @@ def _prepared_entry_to_context(
 
 def _script_message_text(
     *,
-    thunk: AgicDecl,
+    agic: AgicDecl,
     input_text: str,
     rendered_messages: tuple[AstMessage, ...],
     context_text: str,
@@ -410,8 +416,7 @@ def _script_message_text(
     user_messages = tuple(item for item in rendered_messages if item.role == "user")
     authored_text = _message_blocks_body(user_messages)
     if input_text.strip() and any(
-        item.role == "user" and not item.explicit
-        for item in thunk.messages
+        item.role == "user" and not item.explicit for item in agic.messages
     ):
         return _join_message_texts(context_text, authored_text, input_text)
     if authored_text:
@@ -436,79 +441,18 @@ def _join_message_texts(*parts: str) -> str:
 
 def _message_blocks_body(blocks: tuple[AstMessage, ...]) -> str:
     return "\n\n".join(
-        block.content.strip()
-        for block in blocks
-        if block.content.strip()
+        block.content.strip() for block in blocks if block.content.strip()
     ).strip()
 
 
-def _runtime_sandbox(context: UptimeContext) -> str:
+def _runtime_sandbox(context: SupportsRunAssembly) -> str:
     value = context.config.get("runtime.sandbox")
     if isinstance(value, str) and value.strip():
         return value.strip()
     return "none"
 
 
-def _job_context(
-    context: UptimeContext,
-    run: RunBinding,
-) -> dict[str, object] | None:
-    if run.origin == "task":
-        return _task_context(context, run)
-    if run.origin == "chore":
-        return _chore_context(context, run)
-    return None
-
-
-def _task_context(
-    context: UptimeContext,
-    run: RunBinding,
-) -> dict[str, object] | None:
-    task_id = work.task_id_from_thread_id(run.thread_id)
-    if task_id is None:
-        return None
-    task = work.find_task(context.root, context.name, task_id)
-    if task is None:
-        return None
-    return {
-        "kind": "task",
-        "provider": "local",
-        "name": task.name.rsplit("/", 1)[-1],
-        "body": task.document.body,
-        "thread_id": task.document.thread_id(),
-        "path": str(task.path),
-        "readable": True,
-        "writable": True,
-        "commentable": False,
-    }
-
-
-def _chore_context(
-    context: UptimeContext,
-    run: RunBinding,
-) -> dict[str, object] | None:
-    chore_id = work.chore_id_from_thread_id(run.thread_id)
-    if chore_id is None:
-        return None
-    chore = work.find_chore(context.root, context.name, chore_id)
-    if chore is None:
-        return None
-    return {
-        "kind": "chore",
-        "provider": "local",
-        "name": chore.name.rsplit("/", 1)[-1],
-        "title": (chore.document.title or "").strip() or None,
-        "body": chore.document.body,
-        "schedule": chore.document.schedule,
-        "thread_id": run.thread_id,
-        "path": str(chore.path),
-        "readable": True,
-        "writable": False,
-        "commentable": False,
-    }
-
-
-def _metadata_items(meta: dict[str, object]) -> list[dict[str, str]]:
+def _metadata_items(meta: Mapping[str, object]) -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     for key in sorted(meta):
         if key == "description":
@@ -530,4 +474,4 @@ def _metadata_value(value: object) -> str | None:
         return "true" if value else "false"
     if isinstance(value, int | float):
         return str(value)
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return json.dumps(mutable_data(value), ensure_ascii=False, sort_keys=True)

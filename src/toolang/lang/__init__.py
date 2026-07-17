@@ -32,7 +32,7 @@ from .ast import (
     StormStmt,
     StructDecl,
     WithDecl,
-    WorkDecl,
+    JobDecl,
     to_data,
 )
 from .format import ToolangFormatError, format_source
@@ -71,7 +71,7 @@ __all__ = [
     "StructDecl",
     "ToolangFormatError",
     "WithDecl",
-    "WorkDecl",
+    "JobDecl",
     "format_source",
     "to_data",
     "validate",

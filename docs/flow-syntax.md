@@ -206,7 +206,7 @@ flow research(topic: Text) -> Report:
 
 - `think` is reserved for a statically defined model step.
 - `use` is reserved for a statically defined tool step.
-- `thunk` is reserved for a future deferred or generated function construct.
+- `agic` is reserved for a future deferred or generated function construct.
 
 The syntax of these words remains undefined. Future `think` and `use`
 statements must emit the same model and tool steps as calls requested

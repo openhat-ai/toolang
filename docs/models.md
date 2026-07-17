@@ -69,7 +69,7 @@ Toolang uses model infos for:
 
 - `too model list`
 - richer `too model providers` output
-- route-neutral thunk ref expansion
+- route-neutral agic ref expansion
 - selector matching inside one provider
 
 
@@ -231,6 +231,6 @@ Resolution proceeds in this order:
 3. default model route or selector from root config
 4. built-in default selector
 
-When a thunk declares route-neutral refs through `model = ...` and the
+When an agic declares route-neutral refs through `model = ...` and the
 activation also provides `--models`, Toolang keeps only the intersection and
 preserves activation order.

@@ -22,23 +22,24 @@ from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage, ToolC
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.base.error import ToolangError
 from toolang.execution.context import RunContext, RunSnapshot, SnapshotAgent, SnapshotProgram, SnapshotRun
-from toolang.execution.input import RunBinding, RunInput
-from toolang.models.discovery import model_infos
-from toolang.models.resolution import resolve_model, select_model_selectors
-from toolang.models.views import model_target_profile
-from toolang.models.providers import deepseek as deepseek_models
-from toolang.models.providers import google as google_models
-from toolang.models.providers import ollama as ollama_models
-from toolang.models.providers import openai as openai_models
-from toolang.models.providers import openrouter as openrouter_models
-from toolang.up import load_model_adapters
-from toolang.up import load_model_providers
-from toolang.models.adapters import chat_completions as chat_completions_models
-from toolang.models.adapters import responses as responses_models
-from toolang.models.adapters.responses import encode_message, response_payload
-from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Span
-from toolang.plugin import load_loop, load_loops
-from toolang.models.config import load_default_models, load_model_aliases
+from toolang.execution.assembly import RunInput
+from toolang.execution.binding import _Run
+from toolang.execution.setup import AgentSetup
+from toolang.plugin.models.discovery import model_infos
+from toolang.plugin.models.resolution import resolve_model, select_model_selectors
+from toolang.plugin.models.views import model_target_profile
+from toolang.plugin.models.providers import deepseek as deepseek_models
+from toolang.plugin.models.providers import google as google_models
+from toolang.plugin.models.providers import ollama as ollama_models
+from toolang.plugin.models.providers import openai as openai_models
+from toolang.plugin.models.providers import openrouter as openrouter_models
+from toolang.plugin.models.loading import load_model_adapters, load_model_providers
+from toolang.plugin.models.adapters import chat_completions as chat_completions_models
+from toolang.plugin.models.adapters import responses as responses_models
+from toolang.plugin.models.adapters.responses import encode_message, response_payload
+from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
+from toolang.plugin.loading import load_loop, load_loops
+from toolang.plugin.models.config import load_default_models, load_model_aliases
 
 
 class _FakeTool(AgentTool):
@@ -410,7 +411,7 @@ def test_select_model_selectors_preserves_activation_order_for_intersection() ->
 
     selectors = select_model_selectors(
         context,
-        thunk_selectors=("openai/gpt-5", "openai/o3"),
+        agic_selectors=("openai/gpt-5", "openai/o3"),
         activation_selectors=("openai/o3[openrouter]", "openai/gpt-5[openrouter]"),
     )
 
@@ -442,7 +443,7 @@ def test_select_model_selectors_supports_name_glob_without_matching_family() -> 
         select_model_selectors(context, activation_selectors=("openai",))
 
 
-def test_select_model_selectors_expands_route_neutral_thunk_refs_from_discovery() -> None:
+def test_select_model_selectors_expands_route_neutral_agic_refs_from_discovery() -> None:
     openai = _FakeModelProvider(
         name="openai",
         models=(
@@ -468,7 +469,7 @@ def test_select_model_selectors_expands_route_neutral_thunk_refs_from_discovery(
 
     selectors = select_model_selectors(
         context,
-        thunk_selectors=("openai/o3", "openai/gpt-5"),
+        agic_selectors=("openai/o3", "openai/gpt-5"),
     )
 
     assert selectors == (
@@ -503,7 +504,7 @@ def test_select_model_selectors_skips_providers_missing_required_env() -> None:
 
     selectors = select_model_selectors(
         context,
-        thunk_selectors=("openai/gpt-5",),
+        agic_selectors=("openai/gpt-5",),
     )
 
     assert selectors == ("openai/gpt-5[openrouter]",)
@@ -541,7 +542,7 @@ def test_select_model_selectors_prefers_exact_ref_over_version_aliases() -> None
 
     selectors = select_model_selectors(
         context,
-        thunk_selectors=("openai/gpt-5",),
+        agic_selectors=("openai/gpt-5",),
     )
 
     assert selectors == ("openai/gpt-5[openrouter]",)
@@ -605,7 +606,7 @@ def test_model_info_discovery_is_cached_within_one_process() -> None:
 
     selectors = select_model_selectors(
         context,
-        thunk_selectors=("anthropic/claude-4.5-sonnet-20250929",),
+        agic_selectors=("anthropic/claude-4.5-sonnet-20250929",),
     )
     target = resolve_model(context, selector=selectors[0])
 
@@ -2191,20 +2192,18 @@ def test_responses_previous_response_id_replays_tool_output_without_item_id() ->
 
 def _run_input() -> RunInput:
     tool = _FakeTool()
-    live = SimpleNamespace(
-        program=SimpleNamespace(
-            source_text="agent alice\n\nthunk:\n  Reply directly.\n",
-            prepared=SimpleNamespace(agent_name="alice"),
-        ),
+    state = SimpleNamespace(
+        program=Program(span=Span(1)),
         fingerprint="live-1",
     )
     return RunInput(
-        run=RunBinding(
+        run=_Run(
             run_id="run-1",
             group="chat",
             origin="chat",
             thread_id="thread-1",
-            thunk_name=None,
+            executable_kind="agic",
+            executable_name=None,
             input_text="hello",
             message=Message.user("hello"),
             model_selector=None,
@@ -2213,10 +2212,11 @@ def _run_input() -> RunInput:
             cap_selectors=(),
             run_loop="basic",
             metadata={},
-            live=cast(Any, live),
+            state=cast(Any, state),
+            setup=AgentSetup(tools={}, model_providers={}, model_adapters={}),
             created_at="2026-04-10T00:00:00Z",
         ),
-        thunk=AgicDecl(
+        agic=AgicDecl(
             name="main",
             input=Parameter(name="_", span=Span(1)),
             messages=(
@@ -2246,9 +2246,9 @@ def _run_input() -> RunInput:
                 origin="chat",
                 thread_id="thread-1",
                 run_loop="basic",
-                live_fingerprint="",
+                state_fingerprint="",
             ),
-            program=SnapshotProgram(source_path="", thunk={}),
+            program=SnapshotProgram(source_path="", agic={}),
         ),
         debug={},
     )

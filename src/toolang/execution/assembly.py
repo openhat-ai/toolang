@@ -1,19 +1,23 @@
-"""Assemble semantic run input from a bound run and live state."""
+"""Assemble semantic run input from a bound run and state state."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol
 
+from toolang.base.protocols.model import ModelProvider
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import Message, TextPart, message_summary, message_text
-from toolang.base.types.model import ModelTarget
+from toolang.base.types.model import ModelAlias, ModelTarget
 
 from ..lang.ast import AgicDecl, Message as AstMessage
-from ..state.prepared import PreparedEntry
-from .binding import RunBinding, invoke_params, run_selected_model_selector
+from toolang.state.prepared import PreparedEntry
+from ..lang.source import expand_program_input
+from .binding import _Run, invoke_params, run_selected_model_selector
 from .context import RunSnapshot, build_run_snapshot
 from .effective import (
     activation_default_model_selector,
@@ -22,32 +26,54 @@ from .effective import (
     directives_for,
     log_set_math,
     select_entries,
-    select_origin_thunk,
+    select_origin_agic,
     select_tools,
-    thunk_model_refs,
+    agic_model_refs,
 )
-from .model import resolve_model
+from toolang.plugin.models.resolution import resolve_model
 from .model_call import (
     assembled_instructions,
     build_model_call_assembly,
     recall_values,
     recalls_history,
-    render_thunk_messages,
+    render_agic_messages,
 )
 
 if TYPE_CHECKING:
-    from ..up import UptimeContext
+    from .store import RunStore
 
 _TEXT_HISTORY_MESSAGE_LIMIT = 32
 _LOGGER = logging.getLogger("toolang.run")
+
+
+class ConfigView(Protocol):
+    """Read-only activation config used by run assembly."""
+
+    def get(self, key: str, default: object | None = None) -> object | None: ...
+
+
+class SupportsRunAssembly(Protocol):
+    """Runtime resources needed to assemble one immutable run input."""
+
+    root: Path
+    name: str
+    home: Path
+    store: RunStore
+    model_providers: Mapping[str, ModelProvider]
+    model_aliases: Mapping[str, ModelAlias]
+    default_models: tuple[str, ...]
+    model_environ: Mapping[str, str]
+    model_cache_dir: Path
+    model_cache_refresh: bool
+    config: ConfigView
 
 
 @dataclass(frozen=True, slots=True)
 class RunInput:
     """One assembled semantic input for one run."""
 
-    run: RunBinding
-    thunk: AgicDecl
+    run: _Run
+    agic: AgicDecl
     input_text: str
     message: Message
     context_text: str
@@ -64,23 +90,30 @@ class RunInput:
     debug: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_binding(cls, context: UptimeContext, run: RunBinding) -> RunInput:
+    def from_binding(cls, context: SupportsRunAssembly, run: _Run) -> RunInput:
         """Build one semantic run input from one bound run."""
 
-        program = run.live.program
-        thunk = select_origin_thunk(
+        program = run.state.program
+        agic = select_origin_agic(
             program,
             origin=run.origin,
-            thunk_name=run.thunk_name,
+            agic_name=run.executable_name,
         )
-        return cls.from_thunk(context, run, thunk)
+        return cls.from_agic(context, run, agic)
 
     @classmethod
-    def from_thunk(cls, context: UptimeContext, run: RunBinding, thunk: AgicDecl) -> RunInput:
-        """Build one semantic run input from a resolved thunk object."""
+    def from_agic(
+        cls,
+        context: SupportsRunAssembly,
+        run: _Run,
+        agic: AgicDecl,
+    ) -> RunInput:
+        """Build one semantic run input from a resolved agic object."""
 
-        program = run.live.program
-        input_text = program.expand_input(run.input_text) if run.input_text else ""
+        program = run.state.program
+        input_text = (
+            expand_program_input(program, run.input_text) if run.input_text else ""
+        )
         history = (
             tuple(
                 context.store.recent_conversation_messages(
@@ -89,14 +122,14 @@ class RunInput:
                     exclude_run_id=run.run_id,
                 )
             )
-            if recalls_history(thunk)
+            if recalls_history(agic)
             else ()
         )
         params = invoke_params(run)
-        if thunk.input is not None and input_text:
-            params = {**params, thunk.input.name: input_text}
+        if agic.input is not None and input_text:
+            params = {**params, agic.input.name: input_text}
             params.setdefault("_", input_text)
-        sets = effective_run_sets(context, run=run, thunk=thunk)
+        sets = effective_run_sets(context, run=run, agic=agic)
         model_math = sets.set_math.get("models")
         if isinstance(model_math, dict):
             model_math = dict(model_math)
@@ -108,11 +141,11 @@ class RunInput:
             model_selectors=sets.model_selectors,
             models=sets.models,
         )
-        log_set_math(run=run, thunk=thunk, set_math=sets.set_math)
+        log_set_math(run=run, agic=agic, set_math=sets.set_math)
         call = build_model_call_assembly(
             context,
             run=run,
-            thunk=thunk,
+            agic=agic,
             input_text=input_text,
             params=params,
             models=model_context_targets,
@@ -123,7 +156,7 @@ class RunInput:
         )
         bundle = cls(
             run=run,
-            thunk=thunk,
+            agic=agic,
             input_text=input_text,
             message=call.message,
             context_text=call.context_text,
@@ -139,13 +172,13 @@ class RunInput:
             snapshot=build_run_snapshot(
                 context,
                 run,
-                thunk,
+                agic,
                 tools=sets.tools,
             ),
             debug={
                 "run_id": run.run_id,
                 "thread_id": run.thread_id,
-                "thunk_name": thunk.name,
+                "agic_name": agic.name,
                 "input_text": input_text,
                 "params": dict(params),
                 "message_text": message_summary(call.message.parts),
@@ -154,11 +187,11 @@ class RunInput:
                     for item in call.rendered_messages
                 ],
                 "context_text": call.context_text,
-                "recall": list(recall_values(thunk)),
+                "recall": list(recall_values(agic)),
                 "models_base": sets.models_base,
                 "activation_default_model": activation_default_model_selector(context),
                 "requested_model_selector": run_selected_model_selector(run),
-                "thunk_model_refs": thunk_model_refs(thunk),
+                "agic_model_refs": agic_model_refs(agic),
                 "effective_model_selectors": sets.model_selectors,
                 "tool_names": sorted(sets.tools),
                 "psyche_names": [entry.name for entry in sets.psyches],
@@ -192,7 +225,7 @@ class RunInput:
             return self.run.message
         return Message.user(self.input_text)
 
-    def model_selector(self, context: UptimeContext) -> str | None:
+    def model_selector(self, context: SupportsRunAssembly) -> str | None:
         """Return the primary effective model selector for this run."""
 
         allowed = self.effective_model_selectors(context)
@@ -206,40 +239,42 @@ class RunInput:
             return selector
         return allowed[0] if allowed else None
 
-    def effective_model_selectors(self, context: UptimeContext) -> tuple[str, ...]:
+    def effective_model_selectors(
+        self, context: SupportsRunAssembly
+    ) -> tuple[str, ...]:
         """Return the ordered effective model selectors for this run."""
 
         return effective_model_selectors(
             context,
-            thunk=self.thunk,
+            agic=self.agic,
             models_base=self.models_base,
         )
 
     def tools(self) -> dict[str, AgentTool]:
         """Return the effective tool mapping for this run."""
 
-        return select_tools(self.tools_base, directives_for(self.thunk, "tool"))
+        return select_tools(self.tools_base, directives_for(self.agic, "tool"))
 
     def psyches(self) -> tuple[PreparedEntry, ...]:
         """Return the effective psyche entries for this run."""
 
-        return select_entries(self.psyches_base, directives_for(self.thunk, "psyche"))
+        return select_entries(self.psyches_base, directives_for(self.agic, "psyche"))
 
     def skills(self) -> tuple[PreparedEntry, ...]:
         """Return the effective skill entries for this run."""
 
-        return select_entries(self.skills_base, directives_for(self.thunk, "skill"))
+        return select_entries(self.skills_base, directives_for(self.agic, "skill"))
 
     def services(self) -> tuple[PreparedEntry, ...]:
         """Return the effective service entries for this run."""
 
-        return select_entries(self.services_base, directives_for(self.thunk, "service"))
+        return select_entries(self.services_base, directives_for(self.agic, "service"))
 
     def rendered_messages(self) -> tuple[AstMessage, ...]:
-        """Return authored thunk messages rendered with the current params."""
+        """Return authored agic messages rendered with the current params."""
 
-        return render_thunk_messages(
-            self.thunk.messages,
+        return render_agic_messages(
+            self.agic.messages,
             user_context=self.user_template_context,
             system_context=self.system_template_context,
         )
@@ -248,8 +283,8 @@ class RunInput:
         """Return the assembled instruction text for this run."""
 
         return assembled_instructions(
-            live_program=self.run.live.program,
-            thunk=self.thunk,
+            program=self.run.state.program,
+            agic=self.agic,
             system_context=self.system_template_context,
         )
 
@@ -260,16 +295,18 @@ class RunInput:
 
 
 def _model_context_targets(
-    context: UptimeContext,
+    context: SupportsRunAssembly,
     *,
-    run: RunBinding,
+    run: _Run,
     model_selectors: tuple[str, ...],
     models: tuple[ModelTarget, ...],
 ) -> tuple[ModelTarget, ...]:
     selector = run_selected_model_selector(run)
     if selector is None:
         return models
-    selected = resolve_model(context, selector=selector, allowed_selectors=model_selectors)
+    selected = resolve_model(
+        context, selector=selector, allowed_selectors=model_selectors
+    )
     selected_identity = _model_context_identity(selected)
     return (
         selected,
@@ -300,11 +337,11 @@ def _log_model_call_assembly(
         return
     run = bundle.run
     _LOGGER.debug(
-        "prompt.assembled thread=%s run=%s origin=%s thunk=%s",
+        "prompt.assembled thread=%s run=%s origin=%s agic=%s",
         run.thread_id,
         run.run_id,
         run.origin,
-        bundle.thunk.name,
+        bundle.agic.name,
     )
     _LOGGER.debug(
         "prompt.tools thread=%s run=%s tools=%s",
@@ -312,8 +349,18 @@ def _log_model_call_assembly(
         run.run_id,
         json.dumps(sorted(bundle.tools()), ensure_ascii=False),
     )
-    _LOGGER.debug("prompt.instructions thread=%s run=%s text=%s", run.thread_id, run.run_id, instructions)
-    _LOGGER.debug("prompt.context thread=%s run=%s text=%s", run.thread_id, run.run_id, context_text)
+    _LOGGER.debug(
+        "prompt.instructions thread=%s run=%s text=%s",
+        run.thread_id,
+        run.run_id,
+        instructions,
+    )
+    _LOGGER.debug(
+        "prompt.context thread=%s run=%s text=%s",
+        run.thread_id,
+        run.run_id,
+        context_text,
+    )
     _LOGGER.debug(
         "prompt.messages thread=%s run=%s messages=%s",
         run.thread_id,

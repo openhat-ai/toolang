@@ -111,7 +111,7 @@ agic followup:
     )
 
 
-def test_format_source_normalizes_thunk_blank_lines_by_section() -> None:
+def test_format_source_normalizes_agic_blank_lines_by_section() -> None:
     source = """
 agic review(input: Message):
 
@@ -345,7 +345,7 @@ agic split:
     )
 
 
-def test_format_source_keeps_comment_separators_between_thunk_sections() -> None:
+def test_format_source_keeps_comment_separators_between_agic_sections() -> None:
     source = """
 agic split:
   models = gpt-5

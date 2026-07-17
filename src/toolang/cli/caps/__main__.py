@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .app import main
+from .main import main
 
 
 raise SystemExit(main())

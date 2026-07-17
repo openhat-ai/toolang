@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
 from toolang.base.error import ToolangError
-from toolang.program import Program, to_data
+from toolang.lang import Program, to_data
 from toolang.state.durable import scan_durable_state
-from toolang.state.program import build_prepared_program, load_live_program
+from toolang.lang.source import expand_program_input
 
 
 def test_program_lowers_declarations_to_static_nodes() -> None:
@@ -55,6 +55,8 @@ flow main:
     service, prompt = program.caps
     assert service.kind == "service"
     assert service.meta["target"] == "https://mcp.github.com/mcp"
+    with pytest.raises(TypeError):
+        cast(Any, service.meta)["target"] = "https://example.com"
     assert [(item.name, item.optional) for item in prompt.params] == [
         ("path", False),
         ("focus", True),
@@ -165,7 +167,7 @@ flow same:
         )
 
 
-def test_prepared_program_strips_header_and_adds_runtime_default_agic(
+def test_program_source_strips_header_and_adds_runtime_default_agic(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "toolang"
@@ -176,16 +178,16 @@ def test_prepared_program_strips_header_and_adds_runtime_default_agic(
         encoding="utf-8",
     )
 
-    prepared = build_prepared_program(scan_durable_state(root, "alice"))
-    live = load_live_program(prepared)
+    prepared = scan_durable_state(root, "alice").load_program()
+    program = prepared.parse()
 
     assert prepared.body_text == ""
-    assert live.thunks[0].name == "default"
-    assert live.thunks[0].input is not None
-    assert live.thunks[0].input.type_name == "Pack"
+    assert program.available_agics[0].name == "default"
+    assert program.available_agics[0].input is not None
+    assert program.available_agics[0].input.type_name == "Pack"
 
 
-def test_prepared_program_preserves_explicit_default_agic(tmp_path: Path) -> None:
+def test_program_source_preserves_explicit_default_agic(tmp_path: Path) -> None:
     root = _write_program(
         tmp_path,
         """
@@ -194,16 +196,14 @@ agic:
 """.strip(),
     )
 
-    live = load_live_program(
-        build_prepared_program(scan_durable_state(root, "alice"))
-    )
+    program = scan_durable_state(root, "alice").load_program().parse()
 
-    assert len(live.thunks) == 1
-    assert live.thunks[0].name == "default"
-    assert live.thunks[0].messages[0].content == "Reply directly."
+    assert len(program.available_agics) == 1
+    assert program.available_agics[0].name == "default"
+    assert program.available_agics[0].messages[0].content == "Reply directly."
 
 
-def test_live_program_expands_prompt_calls(tmp_path: Path) -> None:
+def test_program_expands_prompt_calls(tmp_path: Path) -> None:
     root = _write_program(
         tmp_path,
         """
@@ -217,18 +217,14 @@ agic:
   Respond directly.
 """.strip(),
     )
-    live = load_live_program(
-        build_prepared_program(scan_durable_state(root, "alice"))
-    )
+    program = scan_durable_state(root, "alice").load_program().parse()
 
-    expanded = live.expand_input(
-        '/review src/app.py "only errors"\n\nAlso inspect tests.'
+    expanded = expand_program_input(
+        program, '/review src/app.py "only errors"\n\nAlso inspect tests.'
     )
 
     assert expanded == (
-        "Review src/app.py carefully.\n"
-        "only errors\n\n"
-        "Also inspect tests."
+        "Review src/app.py carefully.\nonly errors\n\nAlso inspect tests."
     )
 
 

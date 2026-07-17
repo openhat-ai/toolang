@@ -1,7 +1,7 @@
 # Selector Syntax
 
 This document defines the shared selector syntax used by list filters, runtime
-activation flags, and thunk directives.
+activation flags, and agic directives.
 
 
 ## Grammar
@@ -325,7 +325,7 @@ List filters use the same selector list grammar.
 
 ## Directive Set Math
 
-At thunk start, each directive set starts from the activation ceiling:
+At agic start, each directive set starts from the activation ceiling:
 
 ```text
 current = activation ceiling
@@ -354,7 +354,7 @@ tool, or cap outside the activation ceiling.
 Examples:
 
 ```toolang
-thunk review(input):
+agic review(input):
   models = openai/gpt-5[provider:openrouter]
   tools = shell/*, filesystem/read
   skills = reviewer[here], patch[file]

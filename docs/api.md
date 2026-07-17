@@ -137,8 +137,8 @@ Foreground runtime port selection depends on the agent mode:
 | --- | --- | --- |
 | Resident | Local managed name such as `alice` | Reuse the agent's last port when available, otherwise choose from `7001-7999` |
 | Visiting | Remote selector such as `brice/alice` or `https://toolang.ai/alice.too` | Reuse the visiting root's last port when available, otherwise choose an OS temporary port |
-| Roaming invoke | Local `.too` path with a thunk name | No HTTP runtime port; the thunk is invoked directly |
-| Roaming file runtime | Local `.too` path with `--inbox` and no thunk name | Choose an OS temporary port |
+| Roaming invoke | Local `.too` path with an agic name | No HTTP runtime port; the agic is invoked directly |
+| Roaming file runtime | Local `.too` path with `--inbox` and no agic name | Choose an OS temporary port |
 
 
 ## Invoke Surface
@@ -146,29 +146,29 @@ Foreground runtime port selection depends on the agent mode:
 Roaming invoke uses one local `.too` source path directly:
 
 ```bash
-toolang SCRIPT THUNK [OPTIONS] [PARAMS] [INPUT]...
+toolang SCRIPT AGIC [OPTIONS] [PARAMS] [INPUT]...
 ```
 
 Arguments:
 
 - `SCRIPT` is the local Toolang script or agent file
-- `THUNK` is the thunk to invoke
-- `PARAMS` are named thunk parameters, written as `NAME=VALUE`
+- `AGIC` is the agic to invoke
+- `PARAMS` are named agic parameters, written as `NAME=VALUE`
 - `INPUT` values are assembled into one multimodal message
 
 Behavior:
 
 - one local `.too` path enters roaming invoke mode
-- stdout is reserved for the final thunk result
+- stdout is reserved for the final agic result
 - progress messages are written to stderr only when stderr is a TTY
 - `-q` or `--quiet` suppresses progress messages
-- `PY_LOG=toolang.run=info toolang a.too thunk ...` writes runtime logs under `.toolang/agents/<agent>/.runtime/logs/<thunk>/<run_id>.log`
-- `PY_LOG=debug toolang a.too thunk ...` also writes lower-level provider and HTTP logs to that run log file
-- `toolang a.too --help` lists invokable thunks
-- `toolang a.too thunk --help` prints thunk-specific dynamic usage
-- `toolang a.too` shows usage instead of invoking a default thunk
-- roaming invoke exposes the agent's effective tools, subject to thunk tool directives
-- `NAME=VALUE` sets one thunk named param when `NAME` matches the thunk signature
+- `PY_LOG=toolang.run=info toolang a.too agic ...` writes runtime logs under `.toolang/agents/<agent>/.runtime/logs/<agic>/<run_id>.log`
+- `PY_LOG=debug toolang a.too agic ...` also writes lower-level provider and HTTP logs to that run log file
+- `toolang a.too --help` lists invokable agics
+- `toolang a.too agic --help` prints agic-specific dynamic usage
+- `toolang a.too` shows usage instead of invoking a default agic
+- roaming invoke exposes the agent's effective tools, subject to agic tool directives
+- `NAME=VALUE` sets one agic named param when `NAME` matches the agic signature
 - `INPUT` rules:
   - `TEXT` adds one text part; use `@@TEXT` for literal text beginning with `@`
   - `@PATH` adds one path-based part; text-like paths become text parts
@@ -185,7 +185,7 @@ Behavior:
 ## File Request Runtime
 
 Roaming scripts can also start a foreground file request runtime without naming
-a thunk:
+an agic:
 
 ```bash
 toolang SCRIPT --inbox PATH [--inbox PATH...]
@@ -196,15 +196,15 @@ Behavior:
 - `SCRIPT` is materialized into its sibling `.toolang` roaming root.
 - Each `--inbox` value must name an existing directory.
 - Startup enables `runner.file`, `trigger.file`, and `trigger.watch`.
-- Startup requires a thunk named `file` that accepts message input and has no
+- Startup requires an agic named `file` that accepts message input and has no
   required parameters.
 - Files already present in an inbox at startup are eligible for processing.
-- Newly discovered stable files are passed to the `file` thunk using the same
+- Newly discovered stable files are passed to the `file` agic using the same
   file input part rules as `@PATH`.
 - File request progress is stored in `.runtime/files.db`.
 - Finished, failed, and canceled file fingerprints are not automatically retried.
-- When a thunk name is present, such as `toolang SCRIPT file ...`, Toolang uses
-  normal one-shot thunk invocation.
+- When an agic name is present, such as `toolang SCRIPT file ...`, Toolang uses
+  normal one-shot agic invocation.
 
 
 ## Runtime Commands
@@ -394,11 +394,13 @@ agent's authored caps. Read payloads expose runtime `form`, `scope`, and
 ## Chat Endpoints
 
 - `GET /api/v1/chat/models`
+- `GET /api/v1/chat/agics`
+- `GET /api/v1/chat/flows`
 - `POST /api/v1/chat`
 - `POST /api/v1/chat/stream`
 
 `GET /api/v1/chat/models` returns the effective selectable model selectors for
-chat runs after applying the current activation config and the `chat` thunk's
+chat runs after applying the current activation config and the `chat` agic's
 `models` directive. The response includes:
 
 - `default`
@@ -425,6 +427,8 @@ Chat request body uses:
   - `role`
   - `parts`
 - `model` optional selected model selector for this run
+- `agic` optional agic name for this run
+- `flow` optional flow name for this run; `agic` and `flow` are mutually exclusive
 
 `message.parts` accepts canonical message parts such as:
 
@@ -451,11 +455,13 @@ For multipart payload details:
 message stream subset. This endpoint is an adapter for chat UI clients. The
 canonical progress protocol is exposed through the activity event streams.
 
-The CLI command for chat-style input is `toolang <agent> chat [message]`.
-Without `--thread`, the CLI creates a terminal chat thread. With `--thread`, it
-continues or opens that thread. Job thread ids are inspectable and controllable
-through thread and run commands, but `chat` does not implicitly reopen tasks or
-create manual chore runs.
+The CLI command for interactive chat is `toolang <agent> chat [thread]`.
+Without a thread id, the TUI creates a terminal chat thread on first input. With
+a thread id, it continues that thread. When the agent HTTP runtime is running,
+the TUI uses it; otherwise the TUI assembles the same executor locally and runs
+without a daemon. Job thread ids are inspectable and controllable through thread
+and run commands, but `chat` does not implicitly reopen tasks or create manual
+chore runs.
 
 
 ## Job Endpoints

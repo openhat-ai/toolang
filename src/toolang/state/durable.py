@@ -7,9 +7,9 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 
+from ..lang.source import ProgramSource
+
 CAP_DIR_NAMES = ("psyches", "skills", "services", "prompts")
-JOB_DIR_NAMES = ("chores", "tasks")
-COLD_JOB_DIR_NAMES = ("archive", "drafts")
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,21 +36,38 @@ class DurableState:
     scanned_at: str
 
     @property
-    def program_source(self) -> str | None:
+    def program_path(self) -> str | None:
         for item in self.files:
             if item.category == "program":
                 return item.relative_path
         return None
 
+    def load_program(self) -> ProgramSource:
+        """Load the program captured by this authored-file snapshot."""
+
+        source_path = self.program_path or f"agents/{self.agent_name}/agent.too"
+        return ProgramSource.load(
+            self.toolang_root / source_path,
+            agent_name=self.agent_name,
+            source_path=source_path,
+        )
+
     @property
     def config_paths(self) -> tuple[str, ...]:
-        return tuple(item.relative_path for item in self.files if item.category == "config")
+        return tuple(
+            item.relative_path for item in self.files if item.category == "config"
+        )
 
 
 def scan_durable_state(toolang_root: Path, agent_name: str) -> DurableState:
     """Scan durable authored files for one agent."""
 
-    files = tuple(sorted(_durable_files(toolang_root, agent_name), key=lambda item: item.relative_path))
+    files = tuple(
+        sorted(
+            _durable_files(toolang_root, agent_name),
+            key=lambda item: item.relative_path,
+        )
+    )
     return DurableState(
         toolang_root=toolang_root,
         agent_name=agent_name,
@@ -77,16 +94,31 @@ def is_durable_path(toolang_root: Path, agent_name: str, path: Path) -> bool:
         return True
     if not agent_relative.parts:
         return False
-    return agent_relative.parts[0] in CAP_DIR_NAMES + JOB_DIR_NAMES + COLD_JOB_DIR_NAMES and len(agent_relative.parts) >= 2
+    return agent_relative.parts[0] in CAP_DIR_NAMES and len(agent_relative.parts) >= 2
 
 
 def _durable_files(toolang_root: Path, agent_name: str) -> list[DurableFile]:
     agent_dir = toolang_root / "agents" / agent_name
     files: list[DurableFile] = []
-    files.extend(_collect_file(toolang_root, toolang_root / "config.toml", category="config", origin="root"))
+    files.extend(
+        _collect_file(
+            toolang_root, toolang_root / "config.toml", category="config", origin="root"
+        )
+    )
     for directory_name in CAP_DIR_NAMES:
-        files.extend(_collect_directory(toolang_root, toolang_root / directory_name, category="cap", origin="root"))
-    files.extend(_collect_file(toolang_root, agent_dir / "config.toml", category="config", origin="agent"))
+        files.extend(
+            _collect_directory(
+                toolang_root,
+                toolang_root / directory_name,
+                category="cap",
+                origin="root",
+            )
+        )
+    files.extend(
+        _collect_file(
+            toolang_root, agent_dir / "config.toml", category="config", origin="agent"
+        )
+    )
     files.extend(
         _collect_file(
             toolang_root,
@@ -96,11 +128,11 @@ def _durable_files(toolang_root: Path, agent_name: str) -> list[DurableFile]:
         )
     )
     for directory_name in CAP_DIR_NAMES:
-        files.extend(_collect_directory(toolang_root, agent_dir / directory_name, category="cap", origin="agent"))
-    for directory_name in JOB_DIR_NAMES:
-        files.extend(_collect_directory(toolang_root, agent_dir / directory_name, category="job", origin="agent"))
-    for directory_name in COLD_JOB_DIR_NAMES:
-        files.extend(_collect_directory(toolang_root, agent_dir / directory_name, category="job", origin="agent"))
+        files.extend(
+            _collect_directory(
+                toolang_root, agent_dir / directory_name, category="cap", origin="agent"
+            )
+        )
     return files
 
 
@@ -138,7 +170,9 @@ def _collect_directory(
         return []
     files: list[DurableFile] = []
     for path in sorted(item for item in directory.rglob("*") if item.is_file()):
-        files.extend(_collect_file(toolang_root, path, category=category, origin=origin))
+        files.extend(
+            _collect_file(toolang_root, path, category=category, origin=origin)
+        )
     return files
 
 
@@ -154,6 +188,8 @@ def _fingerprint(files: tuple[DurableFile, ...]) -> str:
 
 def _relative_to_root(toolang_root: Path, path: Path) -> Path | None:
     try:
-        return path.resolve(strict=False).relative_to(toolang_root.resolve(strict=False))
+        return path.resolve(strict=False).relative_to(
+            toolang_root.resolve(strict=False)
+        )
     except ValueError:
         return None

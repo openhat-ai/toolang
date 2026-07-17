@@ -7,8 +7,8 @@ import pytest
 
 from toolang.base.protocols.sandbox import AgentSandbox
 from toolang.base.types.sandbox import SandboxSelector, SandboxStartRequest
-from toolang.config.plugins import load_sandbox_binding
-from toolang.up import create_sandbox_plugin
+from toolang.plugin.config import load_sandbox_binding
+from toolang.plugin.sandboxes.loading import create_sandbox_plugin
 
 
 def test_create_none_sandbox_plugin_prepares_direct_plan(tmp_path: Path) -> None:
@@ -51,9 +51,9 @@ def test_create_docker_sandbox_plugin_prepares_and_starts(monkeypatch, tmp_path:
         calls["run"] = kwargs
         return "container-123"
 
-    monkeypatch.setattr("toolang.sandboxes.docker.docker_remove_container", fake_remove)
-    monkeypatch.setattr("toolang.sandboxes.docker.docker_run_detached", fake_run_detached)
-    monkeypatch.setattr("toolang.sandboxes.docker.docker_container_running", lambda name: name == "toolang-alice")
+    monkeypatch.setattr("toolang.plugin.sandboxes.docker.docker_remove_container", fake_remove)
+    monkeypatch.setattr("toolang.plugin.sandboxes.docker.docker_run_detached", fake_run_detached)
+    monkeypatch.setattr("toolang.plugin.sandboxes.docker.docker_container_running", lambda name: name == "toolang-alice")
 
     root = tmp_path / "root"
     home = root / "agents" / "alice"

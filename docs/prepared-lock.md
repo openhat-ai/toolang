@@ -187,7 +187,7 @@ A root lock uses `config.toml` and `skills/pdf/SKILL.md`.
         {
           "name": null,
           "line": 30,
-          "content": "You are running {{thunk.name}}."
+          "content": "You are running {{agic.name}}."
         }
       ],
       "caps": [
@@ -198,7 +198,7 @@ A root lock uses `config.toml` and `skills/pdf/SKILL.md`.
           "cap": 1
         }
       ],
-      "thunks": [
+      "agics": [
         {
           "name": "review",
           "line": 40,
@@ -466,7 +466,7 @@ Program fields are:
 | `contexts` | Top-level `context` items |
 | `instructs` | Top-level `instruct` items |
 | `caps` | Program `psyche`, `skill`, `service`, and `prompt` items |
-| `thunks` | Program `thunk` items |
+| `agics` | Program `agic` items |
 
 Program cap items use `caps`, not `declarations` or `definitions`, because the
 collection specifically describes program-level cap items. Each item may point
@@ -476,14 +476,14 @@ to the corresponding runtime cap with `cap`, an index into
 Program `use` items may also point to the ref prepared cap with `cap`,
 an index into `prepared.caps`.
 
-Thunk fields follow grammar names:
+Agic fields follow grammar names:
 
 | Field | Meaning |
 | --- | --- |
-| `params` | Thunk `params`, preserving source order |
-| `output` | Thunk output type |
-| `directives` | Thunk `directive` items |
-| `blocks` | Thunk `block` items |
+| `params` | Agic `params`, preserving source order |
+| `output` | Agic output type |
+| `directives` | Agic `directive` items |
+| `blocks` | Agic `block` items |
 
 Use `directives` and `blocks` in the lock format. Those names match
 `tree-sitter-toolang`; directive and message concepts are runtime projections.

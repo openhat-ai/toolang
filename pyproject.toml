@@ -56,39 +56,39 @@ Repository = "https://github.com/openhat-ai/toolang"
 Issues = "https://github.com/openhat-ai/toolang/issues"
 
 [project.scripts]
-toolang = "toolang.cli.toolang.app:main"
-too = "toolang.cli.toolang.app:main"
-caps = "toolang.cli.caps.app:main"
+toolang = "toolang.cli.app.main:main"
+too = "toolang.cli.app.main:main"
+caps = "toolang.cli.caps.main:main"
 
 [project.entry-points."toolang.tool"]
-agent_chat = "toolang.tools.agent_chat:create_tool_set"
-filesystem = "toolang.tools.filesystem:create_tool_set"
-service_use = "toolang.tools.service_use:create_tool_set"
-shell = "toolang.tools.shell:create_tool_set"
-web_search = "toolang.tools.web_search:create_tool_set"
-agent_state = "toolang.tools.agent_state:create_tool_set"
+agent_chat = "toolang.plugin.tools.agent_chat:create_tool_set"
+filesystem = "toolang.plugin.tools.filesystem:create_tool_set"
+service_use = "toolang.plugin.tools.service_use:create_tool_set"
+shell = "toolang.plugin.tools.shell:create_tool_set"
+web_search = "toolang.plugin.tools.web_search:create_tool_set"
+agent_state = "toolang.plugin.tools.agent_state:create_tool_set"
 
 [project.entry-points."toolang.model_provider"]
-custom = "toolang.models.providers.custom:create_model_provider"
-deepseek = "toolang.models.providers.deepseek:create_model_provider"
-google = "toolang.models.providers.google:create_model_provider"
-openai = "toolang.models.providers.openai:create_model_provider"
-openrouter = "toolang.models.providers.openrouter:create_model_provider"
-ollama = "toolang.models.providers.ollama:create_model_provider"
+custom = "toolang.plugin.models.providers.custom:create_model_provider"
+deepseek = "toolang.plugin.models.providers.deepseek:create_model_provider"
+google = "toolang.plugin.models.providers.google:create_model_provider"
+openai = "toolang.plugin.models.providers.openai:create_model_provider"
+openrouter = "toolang.plugin.models.providers.openrouter:create_model_provider"
+ollama = "toolang.plugin.models.providers.ollama:create_model_provider"
 
 [project.entry-points."toolang.model_adapter"]
-chat_completions = "toolang.models.adapters.chat_completions:create_model_adapter"
-responses = "toolang.models.adapters.responses:create_model_adapter"
+chat_completions = "toolang.plugin.models.adapters.chat_completions:create_model_adapter"
+responses = "toolang.plugin.models.adapters.responses:create_model_adapter"
 
 [project.entry-points."toolang.loop"]
-basic = "toolang.loops.basic:create_loop"
+basic = "toolang.plugin.loops.basic:create_loop"
 
 [project.entry-points."toolang.channel"]
-telegram = "toolang.channels.telegram:create_channel"
+telegram = "toolang.plugin.channels.telegram:create_channel"
 
 [project.entry-points."toolang.sandbox"]
-none = "toolang.sandboxes.none:create_sandbox"
-docker = "toolang.sandboxes.docker:create_sandbox"
+none = "toolang.plugin.sandboxes.none:create_sandbox"
+docker = "toolang.plugin.sandboxes.docker:create_sandbox"
 
 [dependency-groups]
 dev = [

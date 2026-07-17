@@ -1,0 +1,1129 @@
+"""Chat, thread, and run commands."""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import asdict
+import os
+import sys
+import threading
+from typing import Annotated, Any, cast
+from urllib.parse import urlencode
+from uuid import uuid4
+
+import click
+import typer
+
+from toolang.agent import local as agents
+from ....base.types.message import message_summary
+from toolang.catalog.cap import split_cap_selectors
+from ....execution.store import RunStore, run_store_path
+from ....execution.detail import (
+    run_detail_from_record,
+    thread_info_from_record,
+    thread_info_from_runs,
+)
+from ....execution.records import RunStatus
+from ....config.env import load_runtime_environ
+from toolang.plugin.models.resolution import split_model_selectors
+from toolang.plugin.tools.registry import split_tool_selectors
+from ...chat import slashes as chat_slashes
+from ...chat.base import friendly_error as chat_friendly_error
+from ...chat.history import ChatInputHistoryStore
+from ...chat.client import LocalChatClient
+from ...chat.tui import ChatTuiApp
+from ...common.client import (
+    RuntimeClientError,
+    message_payload,
+    running_runtime_client,
+    runtime_client,
+    runtime_get,
+    runtime_post,
+)
+from ...common.context import (
+    context_agent,
+    context_root,
+    require_prefix_agent,
+)
+from ...common.output import echo_table
+from . import thread as _inspect_cli
+
+
+def chat_command(
+    ctx: typer.Context,
+    thread: Annotated[
+        str | None,
+        typer.Argument(
+            help="Thread id to continue. Run id also accepted. Omit to start a new one.",
+            metavar="THREAD",
+        ),
+    ] = None,
+    models: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--models",
+            help="Limit available models. Pass CSV or repeat.",
+        ),
+    ] = None,
+    tools: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--tools",
+            help="Allow selected tools. Pass CSV or repeat.",
+        ),
+    ] = None,
+    caps: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--caps",
+            help="Allow selected caps. Pass CSV or repeat.",
+        ),
+    ] = None,
+    agic: Annotated[
+        str | None, typer.Option("--agic", help="Use an agic for new runs.")
+    ] = None,
+    flow: Annotated[
+        str | None, typer.Option("--flow", help="Use a flow for new runs.")
+    ] = None,
+) -> None:
+    thread_id = _target_thread_id(ctx, thread) if thread is not None else None
+    selectors = _chat_selector_payload(
+        models=models, tools=tools, caps=caps, agic=agic, flow=flow
+    )
+    _chat_interactive(ctx, thread_id=thread_id, selector_payload=selectors)
+
+
+def send_command(
+    ctx: typer.Context,
+    thread: Annotated[str, typer.Argument(help="Thread id.")],
+    message: Annotated[str, typer.Argument(help="Message text.")],
+    model: Annotated[
+        str | None, typer.Option("--model", help="Model selector.")
+    ] = None,
+) -> None:
+    target = _target_thread_id(ctx, thread)
+    payload: dict[str, Any] = {
+        "thread": target,
+        "client": "tui",
+        "message": message_payload(message),
+    }
+    if model is not None:
+        payload["model"] = model
+    _runtime_stream(ctx, "/api/v1/chat/stream", payload=payload)
+
+
+def attach_command(
+    ctx: typer.Context,
+    thread: Annotated[str, typer.Argument(help="Thread id.")],
+) -> None:
+    _open_thread_ui(ctx, _target_thread_id(ctx, thread))
+
+
+def threads_command(
+    ctx: typer.Context,
+    origin: Annotated[
+        str | None, typer.Option("--origin", help="Filter by origin.")
+    ] = None,
+    channel: Annotated[
+        str | None, typer.Option("--channel", help="Filter by channel.")
+    ] = None,
+    status: Annotated[
+        str | None, typer.Option("--status", help="Filter by thread status.")
+    ] = None,
+) -> None:
+    query = _query_params(origin=origin, channel=channel, status=status)
+    path = "/api/v1/threads" if not query else f"/api/v1/threads?{query}"
+    result = _runtime_json_or_offline(
+        ctx,
+        path,
+        lambda: _offline_threads_json(
+            ctx, origin=origin, channel=channel, status=status
+        ),
+    )
+    rows = [
+        (
+            str(item.get("id", "")),
+            _truncate_table_text(item.get("title"), width=48),
+            str(item.get("run_count", "")),
+            str(item.get("status", "")),
+            str(item.get("updated_at", "")),
+        )
+        for item in result.get("items", [])
+        if isinstance(item, dict)
+    ]
+    echo_table(("THREAD", "TITLE", "RUNS", "STATUS", "UPDATED"), rows)
+
+
+def runs_command(
+    ctx: typer.Context,
+    thread: Annotated[
+        str | None, typer.Option("--thread", help="Filter by thread id.")
+    ] = None,
+    status: Annotated[
+        str | None, typer.Option("--status", help="Filter by run status.")
+    ] = None,
+) -> None:
+    query: list[tuple[str, str]] = []
+    if thread is not None:
+        query.append(("thread_id", thread))
+    if status is not None:
+        query.append(("status", _api_run_status(status)))
+    path = "/api/v1/runs" if not query else f"/api/v1/runs?{urlencode(query)}"
+    result = _runtime_json_or_offline(
+        ctx,
+        path,
+        lambda: _offline_runs_json(ctx, thread=thread, status=status),
+    )
+    if thread is not None:
+        rows = [
+            (
+                str(item.get("id", "")),
+                _truncate_table_text(
+                    item.get("summary") or item.get("input_text"), width=48
+                ),
+                _display_run_status(item.get("status")),
+                str(item.get("created_at", "")),
+            )
+            for item in result.get("items", [])
+            if isinstance(item, dict)
+        ]
+        echo_table(("RUN", "TITLE", "STATUS", "CREATED"), rows)
+    else:
+        rows = [
+            (
+                str(item.get("thread_id", "")),
+                str(item.get("id", "")),
+                _truncate_table_text(
+                    item.get("summary") or item.get("input_text"), width=48
+                ),
+                _display_run_status(item.get("status")),
+                str(item.get("created_at", "")),
+            )
+            for item in result.get("items", [])
+            if isinstance(item, dict)
+        ]
+        echo_table(("THREAD", "RUN", "TITLE", "STATUS", "CREATED"), rows)
+
+
+def inspect_command(
+    ctx: typer.Context,
+    target: Annotated[
+        str, typer.Argument(help="Thread id, run id, or run step path to inspect.")
+    ],
+    limit: Annotated[
+        int, typer.Option("--limit", help="Maximum thread runs to read.")
+    ] = 100,
+    json_view: Annotated[
+        bool, typer.Option("--json", help="Render preprocessed inspect data as JSON.")
+    ] = False,
+) -> None:
+    _inspect_cli.inspect_command(ctx, target, limit=limit, json_view=json_view)
+
+
+def steer_command(
+    ctx: typer.Context,
+    run: str = typer.Argument(
+        ..., help="Run id to steer. Thread id means its active run."
+    ),
+    message: str = typer.Argument(..., help="Instruction to steer the run."),
+) -> None:
+    run_id = _target_run_id(ctx, run)
+    runtime_post(
+        ctx,
+        f"/api/v1/runs/{run_id}/steer",
+        payload={"message": message_payload(message)},
+    )
+    typer.echo(f"steered {run_id}")
+
+
+def cancel_command(
+    ctx: typer.Context,
+    run: str = typer.Argument(
+        ..., help="Run id to cancel. Thread id means its active run."
+    ),
+) -> None:
+    run_id = _target_run_id(ctx, run)
+    runtime_post(ctx, f"/api/v1/runs/{run_id}/cancel", payload={})
+    typer.echo(f"canceled {run_id}")
+
+
+def rewind_command(
+    ctx: typer.Context,
+    point: str = typer.Argument(
+        ...,
+        help="Run id to rewind before. Thread id means rewind before its latest run.",
+    ),
+    chat: Annotated[
+        bool, typer.Option("--chat", help="Open chat on the rewound thread.")
+    ] = False,
+) -> None:
+    run_id = _target_latest_run_id(ctx, point)
+    result = runtime_post(ctx, f"/api/v1/runs/{run_id}/rewind", payload={})
+    typer.echo(f"rewound {result.get('thread_id')} before {run_id}")
+    if chat:
+        thread = result.get("thread_id")
+        _open_thread_ui(
+            ctx,
+            str(thread) if isinstance(thread, str) else _target_thread_id(ctx, point),
+        )
+
+
+def fork_command(
+    ctx: typer.Context,
+    point: str = typer.Argument(
+        ...,
+        help="Run id to fork before. Thread id means fork after its latest run.",
+    ),
+    chat: Annotated[
+        bool, typer.Option("--chat", help="Open chat on the forked thread.")
+    ] = False,
+) -> None:
+    run_id, include_anchor = _fork_anchor_run(ctx, point)
+    payload: dict[str, object] = {}
+    if include_anchor:
+        payload["include_anchor"] = True
+    result = runtime_post(ctx, f"/api/v1/runs/{run_id}/fork", payload=payload)
+    boundary = "through" if include_anchor else "before"
+    typer.echo(f"forked {result.get('thread_id')} {boundary} {run_id}")
+    if chat:
+        thread = result.get("thread_id")
+        if isinstance(thread, str):
+            _open_thread_ui(ctx, thread)
+
+
+def _truncate_table_text(value: object, *, width: int) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= width:
+        return text
+    if width <= 3:
+        return text[:width]
+    return f"{text[: width - 3].rstrip()}..."
+
+
+def _runtime_json_or_offline(
+    ctx: typer.Context,
+    path: str,
+    offline: Callable[[], dict[str, Any] | None],
+) -> dict[str, Any]:
+    try:
+        return runtime_get(ctx, path)
+    except click.ClickException as exc:
+        result = offline()
+        if result is None:
+            raise exc
+        return result
+
+
+def _offline_threads_json(
+    ctx: typer.Context,
+    *,
+    origin: str | None,
+    channel: str | None,
+    status: str | None,
+) -> dict[str, Any] | None:
+    store = _open_offline_execution_store(ctx)
+    if store is None:
+        return {"items": []}
+    try:
+        runs = store.list_runs(limit=None)
+        thread_ids = sorted({run.thread_id for run in runs})
+        ordered_runs = [
+            run
+            for thread_id in thread_ids
+            for run in store.list_thread_runs_chronological(thread_id=thread_id)
+        ]
+        steps_by_run = store.list_steps_for_runs(
+            run_ids=tuple(item.run_id for item in ordered_runs)
+        )
+        commands_by_run = {
+            run.run_id: store.list_commands(run_id=run.run_id) for run in ordered_runs
+        }
+        grouped_runs: dict[str, list[Any]] = {}
+        for run in ordered_runs:
+            grouped_runs.setdefault(run.thread_id, []).append(run)
+        thread_records = {item.thread_id: item for item in store.list_threads()}
+        items: list[dict[str, Any]] = []
+        for thread_id, thread_runs in grouped_runs.items():
+            info = thread_info_from_runs(
+                thread_id,
+                thread_runs,
+                commands_by_run=commands_by_run,
+                steps_by_run=steps_by_run,
+                thread=thread_records.get(thread_id),
+            )
+            items.append(asdict(info))
+        for thread_id, thread in thread_records.items():
+            if thread_id not in grouped_runs:
+                items.append(asdict(thread_info_from_record(thread)))
+        filtered = [
+            item
+            for item in items
+            if (origin is None or item.get("origin") == origin)
+            and (channel is None or item.get("channel") == channel)
+            and (status is None or item.get("status") == status)
+        ]
+        return {
+            "items": sorted(
+                filtered, key=lambda item: str(item.get("updated_at", "")), reverse=True
+            )
+        }
+    finally:
+        store.close()
+
+
+def _offline_runs_json(
+    ctx: typer.Context,
+    *,
+    thread: str | None,
+    status: str | None,
+) -> dict[str, Any] | None:
+    store = _open_offline_execution_store(ctx)
+    if store is None:
+        return {"items": []}
+    try:
+        run_status = _run_status_or_none(status)
+        runs = store.list_runs(limit=50, thread_id=thread, status=run_status)
+        steps_by_run = store.list_steps_for_runs(
+            run_ids=tuple(item.run_id for item in runs)
+        )
+        commands_by_run = {
+            run.run_id: store.list_commands(run_id=run.run_id) for run in runs
+        }
+        return {
+            "items": [
+                _offline_run_item(
+                    run,
+                    inputs=commands_by_run.get(run.run_id, ()),
+                    steps=steps_by_run.get(run.run_id, ()),
+                )
+                for run in runs
+            ]
+        }
+    finally:
+        store.close()
+
+
+def _offline_run_item(run, *, inputs: Sequence, steps: Sequence) -> dict[str, Any]:
+    detail = run_detail_from_record(run, inputs=inputs, steps=steps)
+    input_text = message_summary(detail.input.parts) if detail.input is not None else ""
+    last_step_message = next(
+        (
+            item.message
+            for item in reversed(detail.output.steps)
+            if item.message is not None
+        ),
+        None,
+    )
+    summary = (
+        message_summary(last_step_message.parts)
+        if last_step_message is not None
+        else input_text
+    )
+    if run.status == "failed" and run.error and (not summary or summary == input_text):
+        summary = run.error
+    return {
+        "id": run.run_id,
+        "origin": run.origin,
+        "thread_id": run.thread_id,
+        "input_text": input_text,
+        "summary": summary,
+        "status": run.status,
+        "error": run.error,
+        "created_at": run.created_at,
+        "started_at": run.started_at,
+        "finished_at": run.finished_at,
+        "updated_at": run.finished_at or run.started_at,
+    }
+
+
+def _message_summary(message: Mapping[str, Any]) -> str:
+    return _parts_summary(message.get("parts"))
+
+
+def _parts_summary(parts: object) -> str:
+    if not isinstance(parts, list):
+        return ""
+    texts: list[str] = []
+    for part in parts:
+        if not isinstance(part, Mapping):
+            continue
+        typed_part = cast(Mapping[str, object], part)
+        if typed_part.get("type") == "text":
+            texts.append(str(typed_part.get("text") or ""))
+    return _truncate_table_text("".join(texts).strip(), width=72)
+
+
+def _mapping(value: object) -> Mapping[str, Any]:
+    return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
+
+
+def _list(value: object) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    return text or None
+
+
+def _int_or_none(value: object) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    if value is None:
+        return None
+    return None
+
+
+def _open_offline_execution_store(ctx: typer.Context) -> RunStore | None:
+    agent_name = require_prefix_agent(ctx)
+    path = run_store_path(context_root(ctx), agent_name)
+    if not path.exists():
+        return None
+    return RunStore(path)
+
+
+def _run_status_or_none(status: str | None) -> RunStatus | None:
+    if status is None:
+        return None
+    normalized = _api_run_status(status)
+    if normalized in {"running", "finished", "failed", "canceled"}:
+        return cast(RunStatus, normalized)
+    raise click.ClickException(f"unknown run status: {status}")
+
+
+def _runtime_stream(ctx: typer.Context, path: str, *, payload: dict[str, Any]) -> None:
+    try:
+        for line in runtime_client(ctx).lines(path, payload=payload):
+            typer.echo(line)
+    except RuntimeClientError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+def _runtime_get_stream(ctx: typer.Context, path: str) -> None:
+    try:
+        for line in runtime_client(ctx).lines(path):
+            typer.echo(line)
+    except RuntimeClientError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+def _runtime_consume_stream(
+    ctx: typer.Context,
+    path: str,
+    *,
+    payload: dict[str, Any],
+    event_handler: Callable[[dict[str, Any]], None] | None = None,
+) -> None:
+    try:
+        runtime_client(ctx).consume(path, payload=payload, on_event=event_handler)
+    except RuntimeClientError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+def _stream_result_run(ctx: typer.Context, result: dict[str, Any]) -> None:
+    run_id = result.get("run_id")
+    if isinstance(run_id, str) and run_id:
+        _runtime_get_stream(ctx, f"/api/v1/runs/{run_id}/stream")
+
+
+def _chat_selector_payload(
+    *,
+    models: list[str] | None,
+    tools: list[str] | None,
+    caps: list[str] | None,
+    agic: str | None = None,
+    flow: str | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {}
+    if agic is not None and flow is not None:
+        raise click.ClickException("--agic and --flow cannot be used together")
+    model_selectors = tuple(dict.fromkeys(split_model_selectors(tuple(models or ()))))
+    if model_selectors:
+        payload["models"] = list(model_selectors)
+    if tools is not None:
+        tool_selectors = tuple(dict.fromkeys(split_tool_selectors(tuple(tools))))
+        payload["tools"] = list(tool_selectors)
+    cap_selectors = tuple(dict.fromkeys(split_cap_selectors(tuple(caps or ()))))
+    if cap_selectors:
+        payload["caps"] = list(cap_selectors)
+    if agic is not None:
+        payload["agic"] = agic
+    if flow is not None:
+        payload["flow"] = flow
+    return payload
+
+
+def _query_params(**items: str | None) -> str:
+    return urlencode(
+        [(key, value) for key, value in items.items() if value is not None]
+    )
+
+
+def _api_run_status(status: str) -> str:
+    return "finished" if status == "succeeded" else status
+
+
+def _display_run_status(status: object) -> str:
+    text = str(status or "")
+    return "succeeded" if text == "finished" else text
+
+
+def _open_thread_ui(
+    ctx: typer.Context,
+    thread_id: str | None,
+    *,
+    selector_payload: dict[str, object] | None = None,
+) -> None:
+    _chat_interactive(ctx, thread_id=thread_id, selector_payload=selector_payload)
+
+
+def _chat_interactive(
+    ctx: typer.Context,
+    *,
+    thread_id: str | None,
+    selector_payload: dict[str, object] | None = None,
+) -> None:
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        _chat_interactive_scripted(
+            ctx, thread_id=thread_id, selector_payload=selector_payload
+        )
+        return
+    _chat_interactive_prompt_toolkit(
+        ctx, thread_id=thread_id, selector_payload=selector_payload
+    )
+
+
+def _chat_input_history_store(ctx: typer.Context) -> ChatInputHistoryStore | None:
+    try:
+        agent = context_agent(ctx)
+        root = context_root(ctx)
+    except (AttributeError, KeyError, TypeError):
+        return None
+    if not agent:
+        return None
+    return ChatInputHistoryStore(
+        agents.agent_room(root, agent) / "chat-input-history.jsonl"
+    )
+
+
+def _chat_home_label(ctx: typer.Context) -> str:
+    try:
+        agent_name = context_agent(ctx)
+        if agent_name is None:
+            return "agent home"
+        return str(agents.agent_home(context_root(ctx), agent_name))
+    except Exception:
+        return "agent home"
+
+
+def _chat_interactive_prompt_toolkit(
+    ctx: typer.Context,
+    *,
+    thread_id: str | None,
+    selector_payload: dict[str, object] | None = None,
+) -> None:
+    client = running_runtime_client(ctx)
+    local = None
+    if client is None:
+        root = context_root(ctx)
+        name = require_prefix_agent(ctx)
+        local = LocalChatClient(
+            root,
+            name,
+            environ=load_runtime_environ(root, name, base_environ=os.environ),
+        )
+        client = local
+    try:
+        ChatTuiApp.run(
+            thread_id=thread_id,
+            selects=dict(selector_payload or {}),
+            home=_chat_home_label(ctx),
+            input_history=_chat_input_history_store(ctx),
+            client=client,
+        )
+    finally:
+        if local is not None:
+            local.close()
+
+
+def _chat_resolve_model_command_labels(
+    ctx: typer.Context, selectors: Sequence[str]
+) -> tuple[str, ...] | None:
+    try:
+        payload = runtime_get(ctx, "/api/v1/chat/models")
+    except click.ClickException:
+        return None
+    return chat_slashes._chat_resolve_model_command_labels(payload, selectors)
+
+
+def _chat_interactive_scripted(
+    ctx: typer.Context,
+    *,
+    thread_id: str | None,
+    selector_payload: dict[str, object] | None = None,
+) -> None:
+    selectors = dict(selector_payload or {})
+    local_streaming = threading.Event()
+    local_request_ids: set[str] = set()
+    listener: _ThreadEventListener | None = None
+
+    def ensure_thread_id() -> str:
+        nonlocal listener, thread_id
+        if thread_id is None:
+            result = runtime_post(ctx, "/api/v1/threads", payload={"client": "tui"})
+            created = result.get("thread_id")
+            if not isinstance(created, str):
+                raise click.ClickException("runtime did not return a thread id")
+            thread_id = created
+            typer.echo(f"thread {thread_id}")
+        if listener is None:
+            listener = _start_thread_event_listener(
+                ctx,
+                thread_id,
+                local_streaming=local_streaming,
+                local_request_ids=local_request_ids,
+            )
+        return thread_id
+
+    if thread_id is not None:
+        typer.echo(f"thread {thread_id}")
+        ensure_thread_id()
+    try:
+        while True:
+            try:
+                text = input("> ")
+            except EOFError:
+                return
+            except KeyboardInterrupt:
+                typer.echo()
+                return
+            if text.strip() in {"/exit", "/quit"}:
+                return
+            if not text.strip():
+                continue
+            if _chat_handle_scripted_command(ctx, text, selectors):
+                continue
+            active_thread_id = ensure_thread_id()
+            request_id = f"term_{uuid4().hex}"
+            local_request_ids.add(request_id)
+            payload: dict[str, Any] = {
+                "thread": active_thread_id,
+                "client": "tui",
+                "request_id": request_id,
+                "message": message_payload(text),
+                **selectors,
+            }
+            local_streaming.set()
+            try:
+                _runtime_consume_stream(ctx, "/api/v1/chat/stream", payload=payload)
+            finally:
+                local_streaming.clear()
+                local_request_ids.discard(request_id)
+    finally:
+        if listener is not None:
+            listener.stop()
+
+
+def _chat_handle_scripted_command(
+    ctx: typer.Context, message: str, selector_payload: dict[str, object]
+) -> bool:
+    parsed = chat_slashes._chat_local_command(message)
+    if parsed is None:
+        return False
+    command, argument = parsed
+    if command in {"help", "?"}:
+        for line in chat_slashes._chat_help_lines():
+            typer.echo(line)
+        return True
+    if command in {"agic", "flow"}:
+        return _chat_handle_scripted_executable_command(
+            ctx, command, argument, selector_payload
+        )
+    if command not in {"model", "models"}:
+        typer.echo(f"Unknown command: /{command}")
+        return True
+    if argument:
+        selectors = chat_slashes._chat_model_command_selectors(argument)
+        if not selectors:
+            typer.echo("/model requires a selector")
+            return True
+        labels = _chat_resolve_model_command_labels(ctx, selectors)
+        if labels is None:
+            typer.echo(f"Model selector matched no models: {', '.join(selectors)}")
+            return True
+        selector_payload["models"] = list(selectors)
+        typer.echo(f"model: {', '.join(labels)}")
+        return True
+    try:
+        payload = runtime_get(ctx, "/api/v1/chat/models")
+    except click.ClickException as exc:
+        typer.echo(chat_friendly_error(exc.message))
+        return True
+    typer.echo("available models")
+    for line in chat_slashes._chat_model_list_lines(payload):
+        typer.echo(line)
+    return True
+
+
+def _chat_handle_scripted_executable_command(
+    ctx: typer.Context,
+    command: str,
+    argument: str,
+    selector_payload: dict[str, object],
+) -> bool:
+    if argument:
+        chat_slashes._chat_set_executable_selector(
+            selector_payload, kind=command, name=argument
+        )
+        typer.echo(f"{command}: {argument}")
+        return True
+    try:
+        payload = runtime_get(ctx, f"/api/v1/chat/{command}s")
+    except click.ClickException as exc:
+        typer.echo(chat_friendly_error(exc.message))
+        return True
+    selected = _text(selector_payload.get(command))
+    typer.echo(f"available {command}s")
+    for line in chat_slashes._chat_executable_list_lines(payload, selected=selected):
+        typer.echo(line)
+    return True
+
+
+class _ThreadEventListener:
+    def __init__(self, stop_event: threading.Event) -> None:
+        self._stop_event = stop_event
+
+    def stop(self) -> None:
+        self._stop_event.set()
+
+
+def _start_thread_event_listener(
+    ctx: typer.Context,
+    thread_id: str,
+    *,
+    local_streaming: threading.Event | None = None,
+    local_request_ids: set[str] | None = None,
+    redraw_prompt: bool = True,
+    event_handler: Callable[[dict[str, Any]], None] | None = None,
+) -> _ThreadEventListener:
+    stop_event = threading.Event()
+    thread = threading.Thread(
+        target=_run_thread_event_listener_from_cursor,
+        args=(
+            ctx,
+            thread_id,
+            stop_event,
+            local_streaming,
+            local_request_ids,
+            redraw_prompt,
+            event_handler,
+        ),
+        daemon=True,
+    )
+    thread.start()
+    return _ThreadEventListener(stop_event)
+
+
+def _thread_event_cursor(ctx: typer.Context, thread_id: str) -> int | None:
+    detail = runtime_get(ctx, f"/api/v1/threads/{thread_id}")
+    cursor = detail.get("event_cursor")
+    if isinstance(cursor, int):
+        return cursor
+    return None
+
+
+def _run_thread_event_listener_from_cursor(
+    ctx: typer.Context,
+    thread_id: str,
+    stop_event: threading.Event,
+    local_streaming: threading.Event | None,
+    local_request_ids: set[str] | None,
+    redraw_prompt: bool,
+    event_handler: Callable[[dict[str, Any]], None] | None,
+) -> None:
+    try:
+        after = _thread_event_cursor(ctx, thread_id)
+    except click.ClickException:
+        return
+    if stop_event.is_set():
+        return
+    _run_thread_event_listener(
+        ctx,
+        thread_id,
+        after,
+        stop_event,
+        local_streaming,
+        local_request_ids,
+        redraw_prompt,
+        event_handler,
+    )
+
+
+def _run_thread_event_listener(
+    ctx: typer.Context,
+    thread_id: str,
+    after: int | None,
+    stop_event: threading.Event,
+    local_streaming: threading.Event | None,
+    local_request_ids: set[str] | None,
+    redraw_prompt: bool,
+    event_handler: Callable[[dict[str, Any]], None] | None,
+) -> None:
+    renderer = _ThreadEventRenderer(
+        redraw_prompt=redraw_prompt,
+        local_streaming=local_streaming,
+        local_request_ids=local_request_ids,
+    )
+    path = f"/api/v1/threads/{thread_id}/stream"
+    if after is not None:
+        path = f"{path}?{urlencode([('after', str(after))])}"
+    try:
+        for event in runtime_client(ctx).events(path, stop=stop_event):
+            if stop_event.is_set():
+                return
+            if event_handler is not None:
+                event_handler(event)
+            else:
+                renderer.render(event)
+    except Exception:
+        if not stop_event.is_set():
+            typer.echo("thread event stream closed", err=True)
+
+
+class _ThreadEventRenderer:
+    def __init__(
+        self,
+        *,
+        redraw_prompt: bool = False,
+        local_streaming: threading.Event | None = None,
+        local_request_ids: set[str] | None = None,
+    ) -> None:
+        self._assistant_open = False
+        self._redraw_prompt = redraw_prompt
+        self._local_streaming = local_streaming
+        self._local_request_ids = local_request_ids
+        self._local_run_ids: set[str] = set()
+        self._text_delta_runs: set[str] = set()
+
+    def render(self, event: dict[str, Any]) -> None:
+        event_type = str(event.get("type") or event.get("event_type") or "")
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            return
+        if event_type == "run_starting":
+            self._render_run_starting(payload)
+        elif event_type == "part_delta":
+            self._render_part_delta(payload)
+        elif event_type == "step_end":
+            self._render_step_end(payload)
+        elif event_type in {"part_end", "run_end"}:
+            self._close_assistant(
+                redraw_prompt=event_type == "run_end",
+                run_id=str(payload.get("run_id") or "") or None,
+            )
+
+    def _render_run_starting(self, payload: dict[str, Any]) -> None:
+        self._remember_local_run(payload)
+        text = _event_message_text(payload.get("input"))
+        if not text:
+            return
+        self._close_assistant(
+            redraw_prompt=False, run_id=str(payload.get("run_id") or "") or None
+        )
+        typer.echo(f"\nuser: {text}")
+
+    def _render_part_delta(self, payload: dict[str, Any]) -> None:
+        delta = payload.get("delta")
+        if not isinstance(delta, dict) or delta.get("type") != "text":
+            return
+        text = str(delta.get("text") or "")
+        if not text:
+            return
+        run_id = payload.get("run_id")
+        if isinstance(run_id, str):
+            self._text_delta_runs.add(run_id)
+        if not self._assistant_open:
+            typer.echo("assistant: ", nl=False)
+            self._assistant_open = True
+        typer.echo(text, nl=False)
+
+    def _render_step_end(self, payload: dict[str, Any]) -> None:
+        if payload.get("kind") != "model":
+            return
+        run_id = payload.get("run_id")
+        if isinstance(run_id, str) and run_id in self._text_delta_runs:
+            return
+        text = _event_parts_text(payload.get("output"))
+        if not text:
+            return
+        if not self._assistant_open:
+            typer.echo("assistant: ", nl=False)
+            self._assistant_open = True
+        typer.echo(text, nl=False)
+
+    def _close_assistant(self, *, redraw_prompt: bool, run_id: str | None) -> None:
+        if self._assistant_open:
+            typer.echo()
+            self._assistant_open = False
+        local_run = run_id is not None and run_id in self._local_run_ids
+        if (
+            redraw_prompt
+            and self._redraw_prompt
+            and not self._local_run_active(run_id=run_id)
+        ):
+            typer.echo("> ", nl=False)
+        if redraw_prompt and local_run and run_id is not None:
+            self._local_run_ids.discard(run_id)
+
+    def _remember_local_run(self, payload: dict[str, Any]) -> None:
+        request_id = payload.get("request_id")
+        run_id = payload.get("run_id")
+        if not isinstance(request_id, str) or not isinstance(run_id, str):
+            return
+        if (
+            self._local_request_ids is not None
+            and request_id in self._local_request_ids
+        ):
+            self._local_run_ids.add(run_id)
+
+    def _local_run_active(self, *, run_id: str | None) -> bool:
+        if run_id is not None and run_id in self._local_run_ids:
+            return True
+        if self._local_streaming is not None and self._local_streaming.is_set():
+            return True
+        return False
+
+
+def _event_message_text(message: object) -> str:
+    if not isinstance(message, Mapping):
+        return ""
+    typed_message = cast(Mapping[str, object], message)
+    parts = typed_message.get("parts")
+    if not isinstance(parts, list):
+        return ""
+    texts: list[str] = []
+    for part in parts:
+        if not isinstance(part, Mapping):
+            continue
+        typed_part = cast(Mapping[str, object], part)
+        if typed_part.get("type") == "text":
+            texts.append(str(typed_part.get("text") or ""))
+    return "".join(texts).strip()
+
+
+def _event_parts_text(parts: object) -> str:
+    if not isinstance(parts, list):
+        return ""
+    texts: list[str] = []
+    for part in parts:
+        if not isinstance(part, Mapping):
+            continue
+        typed_part = cast(Mapping[str, object], part)
+        if typed_part.get("type") == "text":
+            texts.append(str(typed_part.get("text") or ""))
+    return "".join(texts).strip()
+
+
+def _target_thread_id(ctx: typer.Context, target: str | None) -> str | None:
+    if target is None:
+        return None
+    if target.startswith("run_"):
+        try:
+            detail = runtime_get(ctx, f"/api/v1/runs/{target}")
+        except click.ClickException:
+            thread_id = _offline_thread_id_for_run(ctx, target)
+            if thread_id is not None:
+                return thread_id
+            raise
+        info = detail.get("info")
+        if isinstance(info, dict) and isinstance(info.get("thread_id"), str):
+            return str(info["thread_id"])
+        thread_id = detail.get("thread_id")
+        if isinstance(thread_id, str):
+            return thread_id
+        raise click.ClickException(f"run has no thread: {target}")
+    return target
+
+
+def _target_run_id(ctx: typer.Context, target: str) -> str:
+    if target.startswith("run_"):
+        return target
+    try:
+        detail = runtime_get(ctx, f"/api/v1/threads/{target}")
+    except click.ClickException:
+        run_id = _offline_active_run_id(ctx, target)
+        if run_id is not None:
+            return run_id
+        raise
+    info = detail.get("info")
+    if not isinstance(info, dict):
+        raise click.ClickException(f"thread not found: {target}")
+    active = info.get("active_run")
+    if not isinstance(active, dict) or not isinstance(active.get("id"), str):
+        raise click.ClickException(f"thread has no active run: {target}")
+    return str(active["id"])
+
+
+def _target_latest_run_id(ctx: typer.Context, target: str) -> str:
+    if target.startswith("run_"):
+        return target
+    try:
+        detail = runtime_get(ctx, f"/api/v1/threads/{target}")
+    except click.ClickException:
+        run_id = _offline_latest_run_id(ctx, target)
+        if run_id is not None:
+            return run_id
+        raise
+    info = detail.get("info")
+    if not isinstance(info, dict):
+        raise click.ClickException(f"thread not found: {target}")
+    latest = info.get("latest_run")
+    if not isinstance(latest, dict) or not isinstance(latest.get("id"), str):
+        raise click.ClickException(f"thread has no runs: {target}")
+    return str(latest["id"])
+
+
+def _fork_anchor_run(ctx: typer.Context, target: str) -> tuple[str, bool]:
+    if target.startswith("run_"):
+        return target, False
+    return _target_latest_run_id(ctx, target), True
+
+
+def _offline_thread_id_for_run(ctx: typer.Context, run_id: str) -> str | None:
+    store = _open_offline_execution_store(ctx)
+    if store is None:
+        return None
+    try:
+        run = store.get_run(run_id=run_id)
+        return run.thread_id if run is not None else None
+    finally:
+        store.close()
+
+
+def _offline_active_run_id(ctx: typer.Context, thread_id: str) -> str | None:
+    store = _open_offline_execution_store(ctx)
+    if store is None:
+        return None
+    try:
+        runs = store.list_runs(thread_id=thread_id, status="running", limit=1)
+        return runs[0].run_id if runs else None
+    finally:
+        store.close()
+
+
+def _offline_latest_run_id(ctx: typer.Context, thread_id: str) -> str | None:
+    store = _open_offline_execution_store(ctx)
+    if store is None:
+        return None
+    try:
+        runs = store.list_runs(thread_id=thread_id, limit=1)
+        return runs[0].run_id if runs else None
+    finally:
+        store.close()

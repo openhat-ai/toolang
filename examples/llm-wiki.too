@@ -7,7 +7,7 @@
 # toolang examples/llm-wiki.too --inbox ./wiki-inbox
 #
 # Drop documents, images, audio, video, or other files into ./wiki-inbox.
-# The `file` thunk turns each file into a concise wiki page in:
+# The `file` agic turns each file into a concise wiki page in:
 #
 # examples/.toolang/agents/llm-wiki/wiki/
 agic file(in: Part[]):
