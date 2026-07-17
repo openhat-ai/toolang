@@ -5,11 +5,92 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
+import json
 from pathlib import Path
+import re
 
-from ..lang.source import ProgramSource
+from ..lang.ast import Program, Span
 
 CAP_DIR_NAMES = ("psyches", "skills", "services", "prompts")
+_AGENT_HEADER_RE = re.compile(r"^agent\s+[A-Za-z_][\w-]*\s*$")
+
+
+@dataclass(frozen=True, slots=True)
+class ProgramSource:
+    """Authored program source captured in durable state."""
+
+    agent_name: str
+    source_path: str
+    source_text: str
+
+    @property
+    def body_text(self) -> str:
+        return _program_body(self.source_text)
+
+    @property
+    def body_line_offset(self) -> int:
+        body_lines = self.body_text.splitlines()
+        if not body_lines:
+            return 0
+        source_lines = self.source_text.splitlines()
+        body_len = len(body_lines)
+        for index in range(0, len(source_lines) - body_len + 1):
+            if source_lines[index : index + body_len] == body_lines:
+                return index
+        return 0
+
+    def parse(self) -> Program:
+        body = self.body_text
+        return Program.from_source(body) if body.strip() else Program(span=Span(line=1))
+
+    def fingerprint(self) -> str:
+        payload = json.dumps(
+            {
+                "agent_name": self.agent_name,
+                "source_path": self.source_path,
+                "source_text": self.source_text,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return sha256(payload.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def load(
+        cls,
+        path: Path,
+        *,
+        agent_name: str,
+        source_path: str,
+    ) -> "ProgramSource":
+        """Load and validate one explicitly located program source."""
+
+        source_text = (
+            path.read_text(encoding="utf-8")
+            if path.is_file()
+            else f"agent {agent_name}\n"
+        )
+        source = cls(
+            agent_name=agent_name,
+            source_path=source_path,
+            source_text=source_text,
+        )
+        source.parse()
+        return source
+
+
+def _program_body(source_text: str) -> str:
+    lines = source_text.splitlines()
+    if lines and lines[0].startswith("#!"):
+        lines = lines[1:]
+        while lines and not lines[0].strip():
+            lines = lines[1:]
+    if lines and _AGENT_HEADER_RE.match(lines[0].strip()):
+        return "\n".join(lines[1:]).lstrip("\n")
+    if source_text.startswith("#!"):
+        return "\n".join(lines).lstrip("\n")
+    return source_text
 
 
 @dataclass(frozen=True, slots=True)

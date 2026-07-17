@@ -309,11 +309,11 @@ def _default_program_context_template(program: Program) -> str:
 
 
 def _program_instruct(program: Program, name: str | None) -> Any | None:
-    return program.get_instruct(name)
+    return program.find_instruct(name or "default")
 
 
 def _program_context(program: Program, name: str | None) -> Any | None:
-    return program.get_context(name)
+    return program.find_context(name or "default")
 
 
 def _template_param_values(

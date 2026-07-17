@@ -2,25 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal
-
-from toolang.common.error import ToolangError
-
-from .ast import Span
-
-DiagnosticSeverity = Literal["error", "warning", "hint"]
-
-
-@dataclass(frozen=True, slots=True)
-class Diagnostic:
-    message: str
-    span: Span | None = None
-    severity: DiagnosticSeverity = "error"
+from toolang.base.error import ToolangError
 
 
 class ToolangSyntaxError(ToolangError):
-    """Raised for CST syntax errors from tree-sitter lowering."""
+    """Raised for syntax errors reported by tree-sitter."""
 
 
 class ToolangValidationError(ToolangError):

@@ -12,7 +12,7 @@ from toolang.common.error import ToolangError
 from toolang.base.types.model import ModelTarget
 
 from toolang.state import caps as cap_store
-from ..lang.ast import AgicDecl, Directive, Program
+from ..lang.ast import AgicDecl, Directive, Parameter, Program, Span
 from ..state.agent import AgentState
 from toolang.state.prepared import PreparedEntry
 from toolang.plugin.tools.registry import selected_tool_names, tool_ref_for_model_tool
@@ -24,6 +24,11 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger("toolang.run")
 _THREAD_AGIC_NAMES = frozenset({"chat", "task", "chore", "file"})
+_RUNTIME_DEFAULT_AGIC = AgicDecl(
+    name="default",
+    input=Parameter(name="in", type_name="Pack", span=Span(line=1)),
+    span=Span(line=1),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,13 +58,31 @@ def select_origin_agic(
     """Return the effective agic for one run origin."""
 
     if agic_name is not None:
-        return program.get_agic(agic_name)
+        return require_agic(program, agic_name)
     if origin in _THREAD_AGIC_NAMES:
-        agic = _find_named_agic(program.available_agics, origin)
+        agic = program.find_agic(origin)
         if agic is not None:
             return agic
-        return program.get_agic(None)
-    return program.get_agic(None)
+    return require_agic(program, "default")
+
+
+def effective_agics(program: Program) -> tuple[AgicDecl, ...]:
+    """Return authored agics with the runtime default when needed."""
+
+    if program.find_agic("default") is not None:
+        return program.agics
+    return (*program.agics, _RUNTIME_DEFAULT_AGIC)
+
+
+def require_agic(program: Program, name: str) -> AgicDecl:
+    """Return one effective agic or raise when it does not exist."""
+
+    agic = program.find_agic(name)
+    if agic is None and name == "default":
+        agic = _RUNTIME_DEFAULT_AGIC
+    if agic is None:
+        raise ToolangError(f"Agic not found: {name}")
+    return agic
 
 
 def effective_origin_model_selectors(
@@ -359,13 +382,6 @@ def log_set_math(*, run: _Run, agic: AgicDecl, set_math: dict[str, object]) -> N
         _set_math_summary(set_math),
         json.dumps(set_math, ensure_ascii=False, sort_keys=True),
     )
-
-
-def _find_named_agic(agics: tuple[AgicDecl, ...], name: str) -> AgicDecl | None:
-    for agic in agics:
-        if agic.name == name:
-            return agic
-    return None
 
 
 def directives_for(agic: AgicDecl, name: str) -> tuple[Directive, ...]:

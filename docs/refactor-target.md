@@ -68,7 +68,7 @@ The separate `toolang.program` facade is removed.
 ```text
 lang/
 ├── ast.py
-├── cst.py
+├── input.py
 ├── lower.py
 ├── validate.py
 └── format.py
@@ -79,7 +79,8 @@ agics, flows, contexts, instructs, and structs. AST declaration names should
 match the language vocabulary, including `JobDecl`, `AgicDecl`, `FlowDecl`, and
 the concrete flow statement nodes.
 
-Parsing, lowering, validation, and formatting remain separate operations.
+AST construction owns the single parser entry point. Lowering, validation,
+input expansion, and formatting remain separate operations.
 General program source-editing APIs are deferred; source files may continue to
 be edited directly until a concrete editing API is needed.
 

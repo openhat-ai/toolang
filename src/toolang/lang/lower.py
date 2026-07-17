@@ -9,7 +9,6 @@ from typing import TypeVar, cast
 from tree_sitter import Node as CstNode
 
 from . import ast
-from .cst import Cst
 
 _PROMPT_PARAM_RE = re.compile(r"^(?P<name>[A-Za-z_][\w-]*)(?P<optional>\?)?$")
 _DECL_REF_RE = re.compile(r"^[A-Za-z_][\w-]*$")
@@ -21,14 +20,14 @@ def _node_line(node: NodeT) -> int:
     return node.span.line
 
 
-def lower(cst: Cst) -> ast.Program:
+def lower(cst: ast._ParsedSource) -> ast.Program:
     """Lower a checked CST without applying semantic validation."""
 
     return _Lowerer(cst).lower()
 
 
 class _Lowerer:
-    def __init__(self, cst: Cst) -> None:
+    def __init__(self, cst: ast._ParsedSource) -> None:
         self.cst = cst
         self.withs: list[ast.WithDecl] = []
         self.caps: list[ast.CapDecl] = []
@@ -91,10 +90,10 @@ class _Lowerer:
             self.structs.append(self._lower_struct(node, doc=doc))
             return
         if node.type == "context":
-            self.contexts.append(self._lower_context(node, doc=doc, generated=False))
+            self.contexts.append(self._lower_context(node, doc=doc))
             return
         if node.type == "instruct":
-            self.instructs.append(self._lower_instruct(node, doc=doc, generated=False))
+            self.instructs.append(self._lower_instruct(node, doc=doc))
             return
         if node.type == "agic":
             self.agics.append(self._lower_agic(node, doc=doc))
@@ -168,14 +167,9 @@ class _Lowerer:
         node: CstNode,
         *,
         doc: str | None,
-        generated: bool,
     ) -> ast.ContextDecl:
         return ast.ContextDecl(
-            name=(
-                self._generated_name("context", node)
-                if generated
-                else self._optional_text(node.child_by_field_name("name")) or "default"
-            ),
+            name=self._optional_text(node.child_by_field_name("name")) or "default",
             body=self._block_text(self._required(node, "body")),
             span=self._span(node),
             doc=doc,
@@ -186,14 +180,9 @@ class _Lowerer:
         node: CstNode,
         *,
         doc: str | None,
-        generated: bool,
     ) -> ast.InstructDecl:
         return ast.InstructDecl(
-            name=(
-                self._generated_name("instruct", node)
-                if generated
-                else self._optional_text(node.child_by_field_name("name")) or "default"
-            ),
+            name=self._optional_text(node.child_by_field_name("name")) or "default",
             body=self._block_text(self._required(node, "body")),
             span=self._span(node),
             doc=doc,

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields, is_dataclass
+from dataclasses import dataclass, field, fields
 from collections.abc import Mapping
+from functools import lru_cache
 from typing import Any, ClassVar, Literal
 
-from toolang.common.error import ToolangError
+from tree_sitter import Language, Node as TreeSitterNode, Parser, Tree
+import tree_sitter_toolang
+
 from toolang.common.immutable import freeze_mapping
 
 CapKind = Literal["psyche", "skill", "service", "prompt"]
@@ -19,6 +22,12 @@ Limit = Literal["top", "bottom"]
 @dataclass(frozen=True, slots=True)
 class Span:
     line: int
+
+
+@dataclass(frozen=True, slots=True)
+class _ParsedSource:
+    tree: Tree
+    source: bytes
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -51,7 +60,6 @@ class CapDecl(Node):
     kind: CapKind
     name: str
     body: str
-    language: str | None = None
     meta: Mapping[str, Any] = field(default_factory=dict)
     params: tuple[Parameter, ...] = ()
 
@@ -76,7 +84,6 @@ class ContextDecl(Node):
 
     name: str
     body: str
-    language: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -85,7 +92,6 @@ class InstructDecl(Node):
 
     name: str
     body: str
-    language: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -301,61 +307,70 @@ class Program(Node):
     agics: tuple[AgicDecl, ...] = ()
     flows: tuple[FlowDecl, ...] = ()
 
-    @property
-    def available_agics(self) -> tuple[AgicDecl, ...]:
-        if any(agic.name == "default" for agic in self.agics):
-            return self.agics
-        return (*self.agics, _default_agic())
+    def find_agic(self, name: str) -> AgicDecl | None:
+        return next((item for item in self.agics if item.name == name), None)
 
-    def get_agic(self, name: str | None) -> AgicDecl:
-        if name is not None:
-            for agic in self.available_agics:
-                if agic.name == name:
-                    return agic
-            raise ToolangError(f"Agic not found: {name}")
-        for agic in self.available_agics:
-            if agic.name == "default":
-                return agic
-        if len(self.available_agics) == 1:
-            return self.available_agics[0]
-        raise ToolangError("No default agic found in program.")
+    def find_flow(self, name: str) -> FlowDecl | None:
+        return next((item for item in self.flows if item.name == name), None)
 
-    def get_flow(self, name: str | None) -> FlowDecl:
-        if name is not None:
-            for flow in self.flows:
-                if flow.name == name:
-                    return flow
-            raise ToolangError(f"Flow not found: {name}")
-        for flow in self.flows:
-            if flow.name == "main":
-                return flow
-        raise ToolangError("No default flow found in program.")
+    def find_instruct(self, name: str) -> InstructDecl | None:
+        return next((item for item in self.instructs if item.name == name), None)
 
-    def get_instruct(self, name: str | None) -> InstructDecl | None:
-        selected = "default" if name is None else name
-        return next((item for item in self.instructs if item.name == selected), None)
-
-    def get_context(self, name: str | None) -> ContextDecl | None:
-        selected = "default" if name is None else name
-        return next((item for item in self.contexts if item.name == selected), None)
+    def find_context(self, name: str) -> ContextDecl | None:
+        return next((item for item in self.contexts if item.name == name), None)
 
     @classmethod
     def from_source(cls, source: str) -> Program:
-        from . import cst
         from .lower import lower
         from .validate import validate
 
-        program = lower(cst.parse(source))
+        program = lower(_parse_source(source))
         validate(program)
         return program
 
 
-def _default_agic() -> AgicDecl:
-    return AgicDecl(
-        name="default",
-        input=Parameter(name="in", type_name="Pack", span=Span(line=1)),
-        span=Span(line=1),
+def _parse_source(source: str) -> _ParsedSource:
+    from .diagnostics import ToolangSyntaxError
+
+    normalized = _source_without_shebang(source)
+    syntax = (
+        normalized if not normalized or normalized.endswith("\n") else f"{normalized}\n"
     )
+    encoded = syntax.encode("utf-8")
+    tree = _parse_tree(encoded)
+    lines = normalized.splitlines()
+    if error := _first_syntax_error(tree.root_node):
+        line = error.start_point.row + 1
+        raw = lines[line - 1] if line <= len(lines) else ""
+        if raw.startswith((" ", "\t")) and raw.strip():
+            raise ToolangSyntaxError(f"Unexpected indentation at line {line}.")
+        raise ToolangSyntaxError(f"Syntax error at line {line}.")
+    return _ParsedSource(tree=tree, source=encoded)
+
+
+def _parse_tree(source: bytes) -> Tree:
+    return Parser(_language()).parse(source)
+
+
+def _first_syntax_error(node: TreeSitterNode) -> TreeSitterNode | None:
+    if node.is_error or node.is_missing or node.type.startswith("invalid_"):
+        return node
+    for child in node.children:
+        if error := _first_syntax_error(child):
+            return error
+    return None
+
+
+def _source_without_shebang(source: str) -> str:
+    if not source.startswith("#!"):
+        return source
+    _first, separator, rest = source.partition("\n")
+    return f"\n{rest}" if separator else ""
+
+
+@lru_cache(maxsize=1)
+def _language() -> Language:
+    return Language(tree_sitter_toolang.language())
 
 
 def to_data(value: object) -> object:
@@ -368,8 +383,6 @@ def to_data(value: object) -> object:
         }
     if isinstance(value, Span):
         return {"line": value.line}
-    if is_dataclass(value) and not isinstance(value, type):
-        return {item.name: to_data(getattr(value, item.name)) for item in fields(value)}
     if isinstance(value, tuple | list):
         return [to_data(item) for item in value]
     if isinstance(value, Mapping):

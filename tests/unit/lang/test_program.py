@@ -8,8 +8,8 @@ import pytest
 from tests import FIXTURES_ROOT, PROJECT_ROOT
 from toolang.common.error import ToolangError
 from toolang.lang import Program, to_data
+from toolang.lang.input import expand_program_input
 from toolang.state.durable import scan_durable_state
-from toolang.lang.source import expand_program_input
 
 
 def test_program_lowers_declarations_to_static_nodes() -> None:
@@ -168,7 +168,34 @@ flow same:
         )
 
 
-def test_program_source_strips_header_and_adds_runtime_default_agic(
+def test_program_find_methods_do_not_infer_defaults() -> None:
+    program = Program.from_source(
+        """
+context repo:
+  Repository context.
+
+instruct concise:
+  Be concise.
+
+agic review:
+  Review it.
+
+flow pipeline:
+  run review
+"""
+    )
+
+    assert program.find_agic("review") is program.agics[0]
+    assert program.find_flow("pipeline") is program.flows[0]
+    assert program.find_context("repo") is program.contexts[0]
+    assert program.find_instruct("concise") is program.instructs[0]
+    assert program.find_agic("default") is None
+    assert program.find_flow("main") is None
+    assert program.find_context("default") is None
+    assert program.find_instruct("default") is None
+
+
+def test_program_source_strips_header_without_adding_runtime_declarations(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "toolang"
@@ -183,9 +210,7 @@ def test_program_source_strips_header_and_adds_runtime_default_agic(
     program = prepared.parse()
 
     assert prepared.body_text == ""
-    assert program.available_agics[0].name == "default"
-    assert program.available_agics[0].input is not None
-    assert program.available_agics[0].input.type_name == "Pack"
+    assert program.agics == ()
 
 
 def test_program_source_preserves_explicit_default_agic(tmp_path: Path) -> None:
@@ -199,9 +224,9 @@ agic:
 
     program = scan_durable_state(root, "alice").load_program().parse()
 
-    assert len(program.available_agics) == 1
-    assert program.available_agics[0].name == "default"
-    assert program.available_agics[0].messages[0].content == "Reply directly."
+    assert len(program.agics) == 1
+    assert program.agics[0].name == "default"
+    assert program.agics[0].messages[0].content == "Reply directly."
 
 
 def test_program_expands_prompt_calls(tmp_path: Path) -> None:

@@ -16,7 +16,21 @@ import frontmatter
 
 from ..common.github import parse_github_ref
 from ..common.immutable import freeze_mapping, mutable_data
-from ..lang.source import ProgramSource
+from ..lang.ast import (
+    AgicDecl,
+    CapDecl,
+    ContextDecl,
+    Directive,
+    FlowDecl,
+    FlowStmt,
+    InstructDecl,
+    Message,
+    Parameter,
+    StructDecl,
+    WithDecl,
+    to_data,
+)
+from .durable import ProgramSource
 
 PreparedVisibility = Literal["shared", "private"]
 EntryKind = Literal["psyche", "skill", "service", "prompt"]
@@ -157,7 +171,7 @@ class PreparedLock:
             "entries": [entry.to_snapshot() for entry in self.entries],
         }
         if self.program_source is not None:
-            data["program"] = self.program_source.to_snapshot()
+            data["program"] = _program_snapshot(self.program_source)
         return data
 
 
@@ -177,7 +191,7 @@ class PreparedLocks:
         return {
             "fingerprint": self.fingerprint,
             "updated_at": self.updated_at,
-            "program": self.program_source.to_snapshot(),
+            "program": _program_snapshot(self.program_source),
             "shared": self.shared_lock.to_snapshot(),
             "private": self.private_lock.to_snapshot(),
         }
@@ -514,10 +528,255 @@ def _prepared_manifest(
         caps.append(item)
     data: dict[str, object] = {"caps": caps}
     if program_source is not None:
-        program_data = program_source.to_lock_data()
+        program_data = _program_lock_data(program_source)
         _attach_program_prepared_refs(program_data, cap_indexes)
         data["program"] = program_data
     return data
+
+
+def _program_snapshot(source: ProgramSource) -> dict[str, object]:
+    program = source.parse()
+    data: dict[str, object] = {
+        "agent_name": source.agent_name,
+        "source_path": source.source_path,
+        "agics": [_agic_to_data(item) for item in program.agics],
+    }
+    if program.flows:
+        data["flows"] = [_flow_to_data(item) for item in program.flows]
+    return data
+
+
+def _program_lock_data(source: ProgramSource) -> dict[str, object]:
+    program = source.parse()
+    line_offset = source.body_line_offset
+    data: dict[str, object] = {
+        "source": "program",
+        "source_text": source.source_text,
+        "uses": [
+            _with_to_lock_data(item, line_offset=line_offset) for item in program.withs
+        ],
+        "structs": [
+            _struct_to_lock_data(item, line_offset=line_offset)
+            for item in program.structs
+        ],
+        "contexts": [
+            _context_to_lock_data(item, line_offset=line_offset)
+            for item in program.contexts
+        ],
+        "instructs": [
+            _instruct_to_lock_data(item, line_offset=line_offset)
+            for item in program.instructs
+        ],
+        "caps": [
+            _cap_to_lock_data(item, line_offset=line_offset) for item in program.caps
+        ],
+        "agics": [
+            _agic_to_lock_data(item, line_offset=line_offset) for item in program.agics
+        ],
+    }
+    if program.flows:
+        data["flows"] = [
+            _flow_to_lock_data(item, line_offset=line_offset) for item in program.flows
+        ]
+    return data
+
+
+def _param_to_data(param: Parameter) -> dict[str, object]:
+    return {
+        "name": param.name,
+        "optional": param.optional,
+        "type_name": param.type_name,
+    }
+
+
+def _agic_to_data(agic: AgicDecl) -> dict[str, object]:
+    return {
+        **_executable_to_data(agic),
+        "context": agic.context,
+        "instruct": agic.instruct,
+        "messages": [_message_to_data(item) for item in agic.messages],
+    }
+
+
+def _flow_to_data(flow: FlowDecl) -> dict[str, object]:
+    return {
+        **_executable_to_data(flow),
+        "stmts": [_flow_stmt_to_data(item) for item in flow.stmts],
+    }
+
+
+def _executable_to_data(executable: AgicDecl | FlowDecl) -> dict[str, object]:
+    return {
+        "name": executable.name,
+        "input": (
+            _param_to_data(executable.input) if executable.input is not None else None
+        ),
+        "params": [_param_to_data(item) for item in executable.params],
+        "output": executable.output,
+        "directives": [_directive_to_data(item) for item in executable.directives],
+    }
+
+
+def _flow_stmt_to_data(stmt: FlowStmt) -> dict[str, object]:
+    return cast(dict[str, object], to_data(stmt))
+
+
+def _directive_to_data(directive: Directive) -> dict[str, object]:
+    return {
+        "name": directive.name,
+        "operator": directive.operator,
+        "values": list(directive.values),
+        "line": directive.span.line,
+    }
+
+
+def _message_to_data(message: Message) -> dict[str, object]:
+    return {
+        "role": message.role,
+        "content": message.content,
+        "explicit": message.explicit,
+        "line": message.span.line,
+    }
+
+
+def _with_to_lock_data(use: WithDecl, *, line_offset: int) -> dict[str, object]:
+    return {
+        "kind": use.cap_kind,
+        "ref": use.reference,
+        "line": use.span.line + line_offset,
+    }
+
+
+def _struct_to_lock_data(struct: StructDecl, *, line_offset: int) -> dict[str, object]:
+    return {
+        "name": struct.name,
+        "line": struct.span.line + line_offset,
+        "fields": [
+            {
+                "name": field.name,
+                "type": _source_type_name(field.type_name),
+                "optional": field.optional,
+                "line": field.span.line + line_offset,
+            }
+            for field in struct.fields
+        ],
+    }
+
+
+def _instruct_to_lock_data(
+    instruct: InstructDecl, *, line_offset: int
+) -> dict[str, object]:
+    return {
+        "name": instruct.name,
+        "line": instruct.span.line + line_offset,
+        "content": instruct.body,
+    }
+
+
+def _context_to_lock_data(
+    context: ContextDecl, *, line_offset: int
+) -> dict[str, object]:
+    return {
+        "name": context.name,
+        "line": context.span.line + line_offset,
+        "content": context.body,
+    }
+
+
+def _cap_to_lock_data(cap: CapDecl, *, line_offset: int) -> dict[str, object]:
+    return {
+        "kind": cap.kind,
+        "name": cap.name,
+        "line": cap.span.line + line_offset,
+    }
+
+
+def _agic_to_lock_data(agic: AgicDecl, *, line_offset: int) -> dict[str, object]:
+    data = _executable_to_lock_data(agic, line_offset=line_offset)
+    data.update(
+        {
+            "context": agic.context,
+            "instruct": agic.instruct,
+            "messages": [
+                _message_to_lock_data(item, line_offset=line_offset)
+                for item in agic.messages
+            ],
+        }
+    )
+    return data
+
+
+def _flow_to_lock_data(flow: FlowDecl, *, line_offset: int) -> dict[str, object]:
+    data = _executable_to_lock_data(flow, line_offset=line_offset)
+    data["stmts"] = [
+        _flow_stmt_to_lock_data(item, line_offset=line_offset) for item in flow.stmts
+    ]
+    return data
+
+
+def _executable_to_lock_data(
+    executable: AgicDecl | FlowDecl, *, line_offset: int
+) -> dict[str, object]:
+    data: dict[str, object] = {
+        "name": executable.name,
+        "line": executable.span.line + line_offset,
+        "params": _executable_params_to_lock_data(executable),
+        "directives": [
+            _directive_to_lock_data(item, line_offset=line_offset)
+            for item in executable.directives
+        ],
+    }
+    if executable.output is not None:
+        data["output"] = _source_type_name(executable.output)
+    return data
+
+
+def _executable_params_to_lock_data(
+    executable: AgicDecl | FlowDecl,
+) -> list[dict[str, object]]:
+    params: list[dict[str, object]] = []
+    if executable.input is not None:
+        params.append(_param_to_lock_data(executable.input))
+    params.extend(_param_to_lock_data(item) for item in executable.params)
+    return params
+
+
+def _flow_stmt_to_lock_data(stmt: FlowStmt, *, line_offset: int) -> dict[str, object]:
+    data = _flow_stmt_to_data(stmt)
+    data["span"] = {"line": stmt.span.line + line_offset}
+    return data
+
+
+def _param_to_lock_data(param: Parameter) -> dict[str, object]:
+    return {
+        "name": param.name,
+        "type": _source_type_name(param.type_name),
+        "optional": param.optional,
+    }
+
+
+def _directive_to_lock_data(
+    directive: Directive, *, line_offset: int
+) -> dict[str, object]:
+    return {
+        "key": directive.name,
+        "op": directive.operator,
+        "values": list(directive.values),
+        "line": directive.span.line + line_offset,
+    }
+
+
+def _message_to_lock_data(message: Message, *, line_offset: int) -> dict[str, object]:
+    return {
+        "role": message.role,
+        "content": message.content,
+        "explicit": message.explicit,
+        "line": message.span.line + line_offset,
+    }
+
+
+def _source_type_name(type_name: str | None) -> str:
+    return type_name or "Text"
 
 
 def _prepared_item_manifest(
@@ -796,7 +1055,6 @@ def _program_from_manifest(
         agent_name=agent_name,
         source_path=source_path,
         source_text=str(data.get("source_text", "")),
-        body_text=str(data.get("body_text", "")),
     )
 
 

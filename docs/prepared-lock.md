@@ -154,7 +154,6 @@ A root lock uses `config.toml` and `skills/pdf/SKILL.md`.
     "program": {
       "source": "program",
       "source_text": "agent alice\n\nuse skill github://coinbase/agentic-wallet-skills/skills/fund@<commit-sha>\n",
-      "body_text": "use skill github://coinbase/agentic-wallet-skills/skills/fund@<commit-sha>\n",
       "uses": [
         {
           "kind": "skill",
@@ -460,7 +459,6 @@ Program fields are:
 | --- | --- |
 | `source` | Always `program`, referring to `sources.program` |
 | `source_text` | Full prepared program source text |
-| `body_text` | Program body after the optional agent header and shebang are removed |
 | `uses` | Program `use` items |
 | `structs` | Program `struct` items |
 | `contexts` | Top-level `context` items |

@@ -571,8 +571,7 @@ def _cached_remote_entry(
         return None
     if (
         "://" in request.ref
-        and cap_catalog.canonicalize_remote_ref(request.kind, request.ref)
-        == cached.ref
+        and cap_catalog.canonicalize_remote_ref(request.kind, request.ref) == cached.ref
     ):
         return cached
     if request.form == "ref" and request.ref in {cached.ref, cached.authored_ref}:
@@ -1077,10 +1076,7 @@ def _collect_program_use_entries(
     program = program_source.parse()
     relative_program_path = Path(program_source.source_path)
     program_path = durable.toolang_root / relative_program_path
-    line_offset = _program_body_line_offset(
-        source_text=program_source.source_text,
-        body_text=program_source.body_text,
-    )
+    line_offset = program_source.body_line_offset
     requests: list[_RemoteEntryRequest] = []
     for use in program.withs:
         kind = use.cap_kind
@@ -1124,10 +1120,7 @@ def _collect_program_embedded_entries(
     program = program_source.parse()
     relative_program_path = Path(program_source.source_path)
     program_path = durable.toolang_root / relative_program_path
-    line_offset = _program_body_line_offset(
-        source_text=program_source.source_text,
-        body_text=program_source.body_text,
-    )
+    line_offset = program_source.body_line_offset
     entries: list[PreparedEntry] = []
     files: dict[str, bytes] = {}
     seen: dict[tuple[EntryKind, str], int] = {}
@@ -1222,18 +1215,6 @@ def _embedded_materialized_content(cap: CapDecl) -> bytes:
         return cap.body.encode("utf-8")
     post = frontmatter.Post(cap.body, **dict(cap.meta))
     return frontmatter.dumps(post).encode("utf-8")
-
-
-def _program_body_line_offset(*, source_text: str, body_text: str) -> int:
-    body_lines = body_text.splitlines()
-    if not body_lines:
-        return 0
-    source_lines = source_text.splitlines()
-    body_len = len(body_lines)
-    for index in range(0, len(source_lines) - body_len + 1):
-        if source_lines[index : index + body_len] == body_lines:
-            return index
-    return 0
 
 
 def _remote_entry_from_ref(

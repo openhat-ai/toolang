@@ -16,7 +16,7 @@ from toolang.base.types.model import ModelAlias, ModelTarget
 
 from ..lang.ast import AgicDecl, Message as AstMessage
 from toolang.state.prepared import PreparedEntry
-from ..lang.source import expand_program_input
+from ..lang.input import expand_program_input
 from .binding import _Run, invoke_params, run_selected_model_selector
 from .context import RunSnapshot, build_run_snapshot
 from .effective import (

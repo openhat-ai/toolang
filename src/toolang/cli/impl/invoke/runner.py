@@ -13,6 +13,7 @@ from toolang.agent import local as agents
 from toolang.agent import runtime as agent_up
 from toolang.common.error import ToolangError
 from toolang.config.env import load_runtime_environ
+from toolang.execution.effective import effective_agics
 from toolang.execution.request import ExecutableKind
 from toolang.lang.ast import AgicDecl, FlowDecl, Program
 from toolang.state.agent import AgentState
@@ -203,7 +204,7 @@ def _select_roaming_executable(
     program: Program,
     argv: list[str],
 ) -> tuple[ExecutableKind, AgicDecl | FlowDecl, list[str]]:
-    for agic in program.available_agics:
+    for agic in effective_agics(program):
         if executable_name(agic) == argv[0]:
             return "agic", agic, argv[1:]
     for flow in program.flows:

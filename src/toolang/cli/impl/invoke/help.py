@@ -13,6 +13,7 @@ from typer.core import HAS_RICH
 from typer.core import TyperArgument, TyperCommand, TyperGroup
 from typer.main import get_command
 
+from toolang.execution.effective import effective_agics
 from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program
 from .request import default_agic_name, executable_name
 
@@ -175,7 +176,7 @@ def _build_roaming_help_app(source_label: str, program: Program) -> typer.Typer:
         del model, tools, caps, quiet
         return None
 
-    for agic in program.available_agics:
+    for agic in effective_agics(program):
         app.command(
             default_agic_name(agic),
             help=_roaming_executable_help_text(source_label, agic),

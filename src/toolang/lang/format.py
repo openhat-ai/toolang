@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import lru_cache
 import re
 
-from tree_sitter import Language, Node, Parser
-import tree_sitter_toolang
+from tree_sitter import Node
 
+from .ast import _parse_tree, _source_without_shebang
 from .diagnostics import ToolangFormatError
 
 
@@ -173,7 +172,7 @@ def _format_source_lines(lines: list[str], *, tab_size: int) -> list[str]:
 def _validate_syntax(source: str) -> None:
     normalized_source = _source_without_shebang(source)
     syntax_source = _tree_sitter_source(normalized_source)
-    tree = Parser(_toolang_language()).parse(syntax_source.source.encode("utf-8"))
+    tree = _parse_tree(syntax_source.source.encode("utf-8"))
     error_node = _first_error_node(tree.root_node)
     if error_node is not None:
         _raise_syntax_error(normalized_source.splitlines(), syntax_source, error_node)
@@ -666,7 +665,7 @@ def _transform_non_agic_line(line: str) -> str:
         return (
             f"{field_match.group('indent')}{field_match.group('name')}"
             f"{field_match.group('optional') or ''}:"
-            f"{field_match.group('space')}{_tree_sitter_type_name(field_match.group('type'))}"
+            f"{field_match.group('space')}{field_match.group('type')}"
             f"{field_match.group('suffix')}"
         )
 
@@ -681,7 +680,7 @@ def _transform_agic_header(line: str) -> str:
     output = ""
     if "->" in rest:
         rest, raw_output = rest.rsplit("->", 1)
-        output = f" -> {_tree_sitter_type_name(raw_output.strip())}"
+        output = f" -> {raw_output.strip()}"
     name, params = _parse_agic_rest(rest)
     rendered_name = f" {name}" if name else ""
     rendered_params = "" if params is None else f"({_tree_sitter_params(params)})"
@@ -727,15 +726,9 @@ def _tree_sitter_params(raw: str) -> str:
             continue
         name = "in" if raw_name == "_" else raw_name
         optional = match.group("optional") or ""
-        type_name = _tree_sitter_type_name(raw_type or "Text")
+        type_name = raw_type or "Text"
         rendered.append(f"{name}{optional}: {type_name}")
     return ", ".join(rendered)
-
-
-def _tree_sitter_type_name(type_name: str | None) -> str:
-    if not type_name:
-        return ""
-    return type_name
 
 
 def _parse_agic_rest(rest: str) -> tuple[str | None, str | None]:
@@ -814,17 +807,3 @@ def _line_text(lines: list[str], row: int) -> str:
     if 0 <= row < len(lines):
         return lines[row]
     return ""
-
-
-def _source_without_shebang(source: str) -> str:
-    if not source.startswith("#!"):
-        return source
-    _first_line, separator, rest = source.partition("\n")
-    if not separator:
-        return ""
-    return f"\n{rest}"
-
-
-@lru_cache(maxsize=1)
-def _toolang_language() -> Language:
-    return Language(tree_sitter_toolang.language())

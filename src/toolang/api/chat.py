@@ -13,7 +13,11 @@ from toolang.common.error import ToolangError
 from toolang.base.types.message import Message
 from toolang.execution.detail import ExecutionProjector, ThreadInfo
 from toolang.execution.binding import allocate_thread_id
-from toolang.execution.effective import effective_origin_model_selectors, select_origin_agic
+from toolang.execution.effective import (
+    effective_agics,
+    effective_origin_model_selectors,
+    select_origin_agic,
+)
 from toolang.plugin.models.resolution import selectable_model_targets, split_model_selectors
 from toolang.plugin.tools.registry import split_tool_selectors
 from toolang.state.caps import split_cap_selectors
@@ -160,7 +164,7 @@ def create_router() -> APIRouter:
         program = request.app.state.context.get_agent_state().program
         return {
             "default": _default_agic_name(program, origin="chat"),
-            "items": [{"name": agic.name} for agic in program.available_agics],
+            "items": [{"name": agic.name} for agic in effective_agics(program)],
         }
 
     @router.get("/chat/flows", summary="List Chat Flows")

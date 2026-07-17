@@ -480,7 +480,9 @@ def _normalize_file_inboxes(file_inboxes: Sequence[Path] | None) -> tuple[Path, 
 
 def _validate_file_agic(*, toolang_root: Path, agent_name: str) -> None:
     program = scan_durable_state(toolang_root, agent_name).load_program().parse()
-    agic = program.get_agic("file")
+    agic = program.find_agic("file")
+    if agic is None:
+        raise ValueError("file agic not found")
     if agic.input is None:
         raise ValueError("file agic must accept message input")
     missing_params = [param.name for param in agic.params if not param.optional]

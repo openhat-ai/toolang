@@ -16,6 +16,7 @@ from toolang.common.error import ToolangError
 from toolang.base.types.message import Message
 from toolang.execution.binding import allocate_thread_id
 from toolang.execution.effective import (
+    effective_agics,
     effective_origin_model_selectors,
     select_origin_agic,
 )
@@ -91,7 +92,7 @@ class LocalChatClient:
                 default = None
             return {
                 "default": default,
-                "items": [{"name": agic.name} for agic in program.available_agics],
+                "items": [{"name": agic.name} for agic in effective_agics(program)],
             }
         if kind == "flow":
             return {

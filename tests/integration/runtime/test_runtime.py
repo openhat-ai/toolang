@@ -4653,7 +4653,7 @@ def test_state_watcher_reparses_changed_program(tmp_path: Path) -> None:
     next_state = watcher.refresh()
 
     assert next_state.program is not state.program
-    assert next_state.program.available_agics[0].messages[0].content == "Updated."
+    assert next_state.program.agics[0].messages[0].content == "Updated."
 
 
 def test_agent_state_config_is_deeply_immutable(tmp_path: Path) -> None:
@@ -5413,14 +5413,11 @@ def test_prepare_builds_program_into_private_lock(tmp_path: Path) -> None:
 
     assert prepared.program_source.agent_name == "alice"
     assert prepared.program_source.source_path == "agents/alice/agent.too"
-    program_snapshot = prepared.program_source.to_snapshot()
-    agics = cast(list[dict[str, object]], program_snapshot["agics"])
-    assert len(agics) == 1
-    assert agics[0]["name"] == "default"
     program_snapshot = cast(
         dict[str, object], prepared.private_lock.to_snapshot()["program"]
     )
     assert program_snapshot["agent_name"] == "alice"
+    assert program_snapshot["agics"] == []
     assert lock_data["schema"] == 1
     assert "visibility" not in lock_data
     assert "entries" not in lock_data
@@ -5430,7 +5427,6 @@ def test_prepare_builds_program_into_private_lock(tmp_path: Path) -> None:
     assert list(lock_program) == [
         "source",
         "source_text",
-        "body_text",
         "uses",
         "structs",
         "contexts",
@@ -5438,6 +5434,28 @@ def test_prepare_builds_program_into_private_lock(tmp_path: Path) -> None:
         "caps",
         "agics",
     ]
+
+
+def test_prepare_preserves_optional_struct_fields_in_lock(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(
+        toolang_root / "agents" / "alice" / "agent.too",
+        "agent alice\n\nstruct Result:\n  summary?: Text\n",
+    )
+
+    state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
+    lock_data = json.loads(
+        (toolang_root / "agents" / "alice" / ".caps" / "lock.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    program = cast(
+        dict[str, object], cast(dict[str, object], lock_data["prepared"])["program"]
+    )
+    structs = cast(list[dict[str, object]], program["structs"])
+    fields = cast(list[dict[str, object]], structs[0]["fields"])
+
+    assert fields[0]["optional"] is True
 
 
 def test_prepare_skips_shared_caps_dir_without_root_inputs(tmp_path: Path) -> None:
@@ -6325,11 +6343,9 @@ def test_child_run_input_uses_authored_agic_message_and_current_input(
         },
     )
 
-    bundle = RunInput.from_agic(
-        context.executor,
-        child,
-        context.get_agent_state().program.get_agic("draft"),
-    )
+    draft = context.get_agent_state().program.find_agic("draft")
+    assert draft is not None
+    bundle = RunInput.from_agic(context.executor, child, draft)
     text = message_text(bundle.messages()[0].parts)
 
     assert text.endswith("Draft current input.")

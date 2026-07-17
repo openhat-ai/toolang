@@ -54,7 +54,7 @@ from .events import (
     TraceEventHandler,
     combine_trace_handlers,
 )
-from .effective import select_origin_agic
+from .effective import effective_agics, require_agic, select_origin_agic
 from toolang.plugin.models.resolution import resolve_model
 from .reply import ReplySink
 from .request import ExecutableKind, RunRequest
@@ -1006,9 +1006,13 @@ def _initial_locals(binding: _Run, executable: AgicDecl | FlowDecl) -> dict[str,
 def _resolve_executable(binding: _Run) -> AgicDecl | FlowDecl:
     program = binding.state.program
     if binding.executable_kind == "flow":
-        return program.get_flow(binding.executable_name)
+        flow_name = binding.executable_name or "main"
+        flow = program.find_flow(flow_name)
+        if flow is None:
+            raise ToolangError(f"Flow not found: {flow_name}")
+        return flow
     if binding.executable_name is not None:
-        return program.get_agic(binding.executable_name)
+        return require_agic(program, binding.executable_name)
     return select_origin_agic(
         program,
         origin=binding.origin,
@@ -1134,7 +1138,7 @@ def _statement_context(statement: FlowStmt) -> dict[str, object]:
 
 def _resolve_runnable(binding: _Run, name: str) -> AgicDecl | FlowDecl:
     program = binding.state.program
-    for agic in program.available_agics:
+    for agic in effective_agics(program):
         if agic.name == name:
             return agic
     for flow in program.flows:
