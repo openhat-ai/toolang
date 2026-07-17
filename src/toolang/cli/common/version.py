@@ -17,7 +17,11 @@ def base_toolang_version() -> str:
     try:
         return package_version("toolang")
     except PackageNotFoundError:
-        pyproject_path = Path(__file__).resolve().parents[3] / "pyproject.toml"
+        pass
+    for parent in Path(__file__).resolve().parents:
+        pyproject_path = parent / "pyproject.toml"
+        if not pyproject_path.is_file():
+            continue
         try:
             data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
         except (OSError, tomllib.TOMLDecodeError):
@@ -27,6 +31,7 @@ def base_toolang_version() -> str:
             return "unknown"
         version = project.get("version")
         return version if isinstance(version, str) else "unknown"
+    return "unknown"
 
 
 def source_state_suffix() -> str:

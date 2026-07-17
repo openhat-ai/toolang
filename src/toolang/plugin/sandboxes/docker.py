@@ -11,7 +11,7 @@ import shlex
 import subprocess
 from typing import Any
 
-from toolang.base.error import ToolangError
+from toolang.common.error import ToolangError
 from toolang.base.protocols.sandbox import AgentSandbox
 from toolang.base.types.sandbox import (
     SandboxMount,

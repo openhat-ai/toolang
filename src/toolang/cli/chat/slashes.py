@@ -8,7 +8,9 @@ from typing import Any, cast
 
 import click
 
+from toolang.common.error import ToolangError
 from toolang.plugin.models.resolution import split_model_selectors
+from ..common.client import RuntimeClientError
 from .base import AppContext, as_text, friendly_error
 
 SlashOutput = str | Sequence[str] | None
@@ -48,6 +50,9 @@ def handle(app: AppContext, message: str) -> SlashResult:
 
     try:
         output = slash.run(app, command, argument)
+    except (RuntimeClientError, ToolangError, ValueError) as exc:
+        app.set_status_error(friendly_error(str(exc)))
+        return SlashResult(True)
     except click.ClickException as exc:
         app.set_status_error(friendly_error(exc.message))
         return SlashResult(True)

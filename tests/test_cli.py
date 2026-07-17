@@ -103,12 +103,11 @@ def _invoke_app(
     input: str | None = None,
     prefix_agent: str | None = None,
 ):
-    previous = cli._CLI_PREFIX_AGENT
-    cli._CLI_PREFIX_AGENT = prefix_agent
+    token = cli._PREFIX_AGENT.set(prefix_agent)
     try:
         return runner.invoke(cli.app, args, env=env, input=input)
     finally:
-        cli._CLI_PREFIX_AGENT = previous
+        cli._PREFIX_AGENT.reset(token)
 
 
 def _invoke_caps_app(
@@ -117,12 +116,11 @@ def _invoke_caps_app(
     env: dict[str, str] | None = None,
     prefix_agent: str | None = None,
 ):
-    previous = caps_cli._CLI_PREFIX_AGENT
-    caps_cli._CLI_PREFIX_AGENT = prefix_agent
+    token = caps_cli._PREFIX_AGENT.set(prefix_agent)
     try:
         return runner.invoke(caps_cli.app, args, env=env)
     finally:
-        caps_cli._CLI_PREFIX_AGENT = previous
+        caps_cli._PREFIX_AGENT.reset(token)
 
 
 def _indexes_in_order(text: str, tokens: tuple[str, ...]) -> bool:
@@ -324,7 +322,7 @@ def test_cli_main_routes_roaming_thread_commands_to_materialized_agent(
         captured["args"] = args
         captured["prog_name"] = prog_name
         captured["standalone_mode"] = standalone_mode
-        captured["prefix_agent"] = cli._CLI_PREFIX_AGENT
+        captured["prefix_agent"] = cli._PREFIX_AGENT.get()
 
     monkeypatch.setattr(
         app_routing.agents, "materialize_roaming_program", fake_materialize
@@ -342,7 +340,7 @@ def test_cli_main_routes_roaming_thread_commands_to_materialized_agent(
         "standalone_mode": True,
         "prefix_agent": "demo",
     }
-    assert cli._CLI_PREFIX_AGENT is None
+    assert cli._PREFIX_AGENT.get() is None
 
 
 def test_cli_main_roaming_threads_can_read_offline_materialized_store(
@@ -516,7 +514,7 @@ def test_cli_main_normalizes_agent_prefix_shortcut_for_task_commands(
 
     def fake_app(*, args, prog_name: str, standalone_mode: bool) -> None:
         captured["args"] = args
-        captured["prefix_agent"] = cli._CLI_PREFIX_AGENT
+        captured["prefix_agent"] = cli._PREFIX_AGENT.get()
 
     monkeypatch.setattr(cli, "app", cast(object, fake_app))
 
@@ -534,7 +532,7 @@ def test_cli_main_normalizes_agent_prefix_shortcut_for_cap_commands(
 
     def fake_app(*, args, prog_name: str, standalone_mode: bool) -> None:
         captured["args"] = args
-        captured["prefix_agent"] = cli._CLI_PREFIX_AGENT
+        captured["prefix_agent"] = cli._PREFIX_AGENT.get()
 
     monkeypatch.setattr(cli, "app", cast(object, fake_app))
 
@@ -7320,7 +7318,7 @@ def test_cli_main_normalizes_agent_prefix_shortcut_for_caps_command(
         captured["args"] = args
         captured["prog_name"] = prog_name
         captured["standalone_mode"] = standalone_mode
-        captured["prefix_agent"] = cli._CLI_PREFIX_AGENT
+        captured["prefix_agent"] = cli._PREFIX_AGENT.get()
 
     monkeypatch.setattr(cli, "app", cast(object, fake_app))
     monkeypatch.setattr(cli.sys, "argv", ["toolang"])
@@ -7330,7 +7328,7 @@ def test_cli_main_normalizes_agent_prefix_shortcut_for_caps_command(
     assert result == 0
     assert captured["args"] == ["caps"]
     assert captured["prefix_agent"] == "alice"
-    assert cli._CLI_PREFIX_AGENT is None
+    assert cli._PREFIX_AGENT.get() is None
 
 
 @pytest.mark.parametrize(
@@ -7360,7 +7358,7 @@ def test_cli_main_thread_commands_support_agent_prefix_shortcut(
 
     assert exc.value.code == 0
     assert captured == {"agent": "dev", "path": path}
-    assert cli._CLI_PREFIX_AGENT is None
+    assert cli._PREFIX_AGENT.get() is None
 
 
 def test_cli_threads_lists_title_and_run_count(monkeypatch) -> None:
@@ -9397,7 +9395,7 @@ def test_standalone_caps_main_supports_agent_prefix(monkeypatch) -> None:
 
     def fake_app(*, args, prog_name: str, standalone_mode: bool) -> None:
         del prog_name, standalone_mode
-        captured.append((args, caps_cli._CLI_PREFIX_AGENT))
+        captured.append((args, caps_cli._PREFIX_AGENT.get()))
 
     monkeypatch.setattr(caps_cli, "app", cast(object, fake_app))
     monkeypatch.setattr(caps_cli.sys, "argv", ["caps"])
@@ -9406,7 +9404,7 @@ def test_standalone_caps_main_supports_agent_prefix(monkeypatch) -> None:
 
     assert result == 0
     assert captured == [(["skill", "list"], "alice")]
-    assert caps_cli._CLI_PREFIX_AGENT is None
+    assert caps_cli._PREFIX_AGENT.get() is None
 
 
 def test_standalone_caps_main_rejects_removed_agent_option() -> None:

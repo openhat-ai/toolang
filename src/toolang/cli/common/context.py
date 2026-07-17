@@ -11,7 +11,7 @@ from typing import Any
 import click
 import typer
 
-from ...base.error import ToolangError
+from ...common.error import ToolangError
 
 
 @dataclass(slots=True)

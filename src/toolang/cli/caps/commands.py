@@ -13,10 +13,10 @@ import typer
 from typer.core import TyperGroup
 
 from ... import templates
-from ...base.error import ToolangError
+from ...common.error import ToolangError
 from toolang.catalog import cap as cap_store
 from ...state import watcher as state_watcher
-from ..common.client import append_agent_update
+from ..common.updates import append_agent_update
 from ..common.context import context_agent, context_root, user_call
 from ..common.output import echo_block, echo_table
 from ..common.routing import (

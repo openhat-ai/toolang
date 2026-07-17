@@ -8,7 +8,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Protocol
 
-from toolang.base.error import ToolangError
+from toolang.common.error import ToolangError
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.types.model import ModelAlias, ModelInfo, ModelTarget
 from toolang.plugin.models.discovery import (

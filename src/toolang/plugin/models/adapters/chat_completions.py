@@ -8,7 +8,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from toolang.base.error import ToolangError
+from toolang.common.error import ToolangError
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.message import (
     AudioPart,

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field, fields, is_dataclass
 from collections.abc import Mapping
 from typing import Any, ClassVar, Literal
 
-from toolang.base.error import ToolangError
+from toolang.common.error import ToolangError
 from toolang.common.immutable import freeze_mapping
 
 CapKind = Literal["psyche", "skill", "service", "prompt"]

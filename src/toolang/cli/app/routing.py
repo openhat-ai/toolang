@@ -10,6 +10,7 @@ import typer
 from toolang.agent import local as agents
 from ...config.log import configure_logging
 from ..caps.commands import CAP_KINDS
+from ..common.routing import extract_root_args
 from .commands import runtime
 
 TOP_LEVEL_COMMANDS = frozenset(
@@ -96,7 +97,7 @@ def dispatch_roaming(
     prog_name: str,
     run_app: Callable[[list[str], str | None], int],
 ) -> int | None:
-    global_args, body = _extract_global_args(argv)
+    global_args, body = extract_root_args(argv)
     if not body or (source := _source_path(body[0])) is None:
         return None
     try:
@@ -124,28 +125,9 @@ def dispatch_roaming(
 
 
 def normalize(argv: list[str]) -> tuple[list[str], str | None]:
-    global_args, body = _extract_global_args(argv)
+    global_args, body = extract_root_args(argv)
     rewritten_body, agent = _rewrite_agent_shortcuts(body)
     return [*global_args, *rewritten_body], agent
-
-
-def _extract_global_args(argv: list[str]) -> tuple[list[str], list[str]]:
-    global_args: list[str] = []
-    body: list[str] = []
-    index = 0
-    while index < len(argv):
-        token = argv[index]
-        if token == "--root":
-            step = 2 if index + 1 < len(argv) else 1
-            global_args.extend(argv[index : index + step])
-            index += step
-        elif token.startswith("--root="):
-            global_args.extend(("--root", token.removeprefix("--root=")))
-            index += 1
-        else:
-            body.append(token)
-            index += 1
-    return global_args, body
 
 
 def _rewrite_agent_shortcuts(body: list[str]) -> tuple[list[str], str | None]:

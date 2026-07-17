@@ -11,7 +11,7 @@ import typer
 
 from toolang.agent import local as agents
 from toolang.agent import runtime as agent_up
-from ...base.error import ToolangError
+from ...common.error import ToolangError
 from ...config.env import load_runtime_environ
 from ...execution.request import ExecutableKind
 from ...lang.ast import AgicDecl, FlowDecl, Program

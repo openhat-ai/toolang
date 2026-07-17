@@ -6,7 +6,7 @@ from typing import Any, cast
 
 import pytest
 
-from toolang.base.error import ToolangError
+from toolang.common.error import ToolangError
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import RunResult
 from toolang.execution.binding import _Run

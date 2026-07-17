@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
 
-from toolang.base.error import ToolangError
+from toolang.common.error import ToolangError
 from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.utils.function_tools import create_function_tool, tool
 

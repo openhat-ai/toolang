@@ -9,7 +9,7 @@ from typing import Any
 
 import httpx
 
-from toolang.base.error import ToolangError
+from toolang.common.error import ToolangError
 from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.tool import ToolContext

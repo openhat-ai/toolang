@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextvars import ContextVar
 from pathlib import Path
 import os
 import sys
-import tomllib
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version as package_version
 from typing import Annotated
 
 import click
@@ -16,10 +14,17 @@ import typer
 
 from ...config.log import configure_logging
 from ..common.context import CliContext, resolve_root
-from ..common.routing import OptionalPrefixAgentGroup, OptionalPrefixAgentListCommand
+from ..common.routing import (
+    OptionalPrefixAgentGroup,
+    OptionalPrefixAgentListCommand,
+    extract_root_args,
+)
+from ..common.version import toolang_version
 from . import commands
 
-_CLI_PREFIX_AGENT: str | None = None
+_PREFIX_AGENT: ContextVar[str | None] = ContextVar(
+    "toolang_caps_cli_prefix_agent", default=None
+)
 CAP_TOP_LEVEL_COMMANDS = frozenset({"list", *commands.CAP_KINDS})
 
 app = typer.Typer(
@@ -59,7 +64,7 @@ def callback(
         configure_logging(spec=None, environ=os.environ)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
-    ctx.obj = CliContext(root=resolve_root(toolang_root), agent=_CLI_PREFIX_AGENT)
+    ctx.obj = CliContext(root=resolve_root(toolang_root), agent=_PREFIX_AGENT.get())
 
 
 app.command(
@@ -75,12 +80,10 @@ app.add_typer(_cap_apps["prompt"], name="prompt", no_args_is_help=True)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    global _CLI_PREFIX_AGENT
     raw_args = list(argv) if argv is not None else sys.argv[1:]
-    global_args, body = _extract_global_args(raw_args)
+    global_args, body = extract_root_args(raw_args)
     rewritten_body, prefix_agent = _rewrite_agent_shortcuts(body)
-    previous_prefix_agent = _CLI_PREFIX_AGENT
-    _CLI_PREFIX_AGENT = prefix_agent
+    token = _PREFIX_AGENT.set(prefix_agent)
     try:
         app(
             args=[*global_args, *rewritten_body],
@@ -93,35 +96,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         typer.echo(f"caps error: {exc}", err=True)
         return 1
     finally:
-        _CLI_PREFIX_AGENT = previous_prefix_agent
+        _PREFIX_AGENT.reset(token)
     return 0
-
-
-def _extract_global_args(argv: list[str]) -> tuple[list[str], list[str]]:
-    global_args: list[str] = []
-    body: list[str] = []
-    index = 0
-    while index < len(argv):
-        token = argv[index]
-        consumed = _consume_global_arg(token, argv, index)
-        if consumed is None:
-            body.append(token)
-            index += 1
-            continue
-        extracted, step = consumed
-        global_args.extend(extracted)
-        index += step
-    return global_args, body
-
-
-def _consume_global_arg(token: str, argv: list[str], index: int) -> tuple[list[str], int] | None:
-    if token in {"--root", "-r"}:
-        if index + 1 >= len(argv):
-            return ([token], 1)
-        return ([token, argv[index + 1]], 2)
-    if token.startswith("--root="):
-        return (["--root", token.removeprefix("--root=")], 1)
-    return None
 
 
 def _rewrite_agent_shortcuts(body: list[str]) -> tuple[list[str], str | None]:
@@ -146,19 +122,7 @@ def _version_callback(value: bool) -> None:
 
 
 def _caps_version() -> str:
-    try:
-        return package_version("toolang")
-    except PackageNotFoundError:
-        pyproject_path = Path(__file__).resolve().parents[3] / "pyproject.toml"
-        try:
-            data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
-        except (OSError, tomllib.TOMLDecodeError):
-            return "unknown"
-        project = data.get("project")
-        if not isinstance(project, dict):
-            return "unknown"
-        version = project.get("version")
-        return version if isinstance(version, str) else "unknown"
+    return toolang_version()
 
 
 def _prog_name(argv0: str) -> str:

@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import operator
+from typing import Any, cast
+
 import pytest
 
-from toolang.base.error import ToolangError
-from toolang.common.selectors import Selector, parse_selector, selector_identity_matches, split_selector_list
+from toolang.common.error import ToolangError
+from toolang.common.selectors import (
+    Selector,
+    SelectorDomain,
+    filter_value_matches,
+    parse_selector,
+    selector_identity_matches,
+    split_selector_list,
+)
 
 
 def test_split_selector_list_treats_top_level_csv_as_union() -> None:
@@ -11,6 +21,16 @@ def test_split_selector_list_treats_top_level_csv_as_union() -> None:
         "gpt-5[provider:openai,tools]",
         "o3",
         "[scope:here]",
+    )
+
+
+def test_empty_selector_inputs_use_wildcard_defaults() -> None:
+    assert split_selector_list(None) == ()
+    assert parse_selector("  ", domain="tool") == Selector(raw="  ")
+    assert selector_identity_matches(
+        family="builtin",
+        name="shell",
+        selector=Selector(raw="*"),
     )
 
 
@@ -37,6 +57,26 @@ def test_parse_selector_normalizes_domain_scoped_shorthand() -> None:
         "scope": ("here",),
         "form": ("wired",),
     }
+    assert parse_selector("*[openai]", domain="model").filters == {
+        "provider": ("openai",)
+    }
+
+
+@pytest.mark.parametrize(
+    ("raw", "domain", "message"),
+    [
+        ("*[plugin:]", "tool", "invalid selector filter"),
+        ("*[unknown:value]", "tool", "unknown tool selector filter"),
+        ("*[unknown]", "tool", "unknown tool selector shorthand"),
+    ],
+)
+def test_parse_selector_rejects_unknown_or_incomplete_filters(
+    raw: str,
+    domain: SelectorDomain,
+    message: str,
+) -> None:
+    with pytest.raises(ToolangError, match=message):
+        parse_selector(raw, domain=domain)
 
 
 def test_parse_selector_rejects_identity_filters() -> None:
@@ -75,6 +115,46 @@ def test_bare_pattern_can_match_extra_domain_values() -> None:
     ) is True
 
 
+def test_filter_value_matches_exact_and_wildcard_values() -> None:
+    assert filter_value_matches("root", ("home", "r*")) is True
+    assert filter_value_matches("remote", ("home", "root")) is False
+
+
 def test_parse_selector_rejects_family_in_implicit_family_context() -> None:
     with pytest.raises(ToolangError, match="must not include a family"):
         parse_selector("skill/reviewer", domain="cap", implicit_family="skill")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "model]",
+        "model[provider:openai]]",
+        "model[[provider:openai]",
+        "model[provider:openai",
+    ],
+)
+def test_parse_selector_rejects_unbalanced_filter_brackets(raw: str) -> None:
+    with pytest.raises(ToolangError, match="invalid selector"):
+        parse_selector(raw, domain="model")
+
+
+@pytest.mark.parametrize("raw", ["model],other", "model[provider:openai,other"])
+def test_split_selector_list_rejects_unbalanced_filter_brackets(raw: str) -> None:
+    with pytest.raises(ToolangError, match="invalid selector list"):
+        split_selector_list((raw,))
+
+
+def test_parse_selector_rejects_invalid_boolean_filter() -> None:
+    with pytest.raises(ToolangError, match="invalid boolean selector filter"):
+        parse_selector("*[tools:maybe]", domain="model")
+
+
+def test_selector_copies_and_freezes_filters() -> None:
+    filters = {"scope": ("root",)}
+    selector = Selector(raw="*[root]", filters=filters)
+    filters.clear()
+
+    assert selector.filters == {"scope": ("root",)}
+    with pytest.raises(TypeError):
+        operator.setitem(cast(Any, selector.filters), "origin", ("remote",))

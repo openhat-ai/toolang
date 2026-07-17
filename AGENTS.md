@@ -92,6 +92,8 @@
 - `toolang.base` owns the shared plugin-facing protocols, value types, and
   helper utilities used across tool, loop, channel, sandbox, model provider,
   and model adapter plugins.
+- `toolang.common` owns package-neutral errors, immutable-container helpers,
+  progress events, selectors, and Toolang-owned id allocation.
 - `toolang.lang` owns `.too` parsing, authored source semantics, and source
   editing.
 - `toolang.agent` owns local agent identity, layout, runtime-state files,

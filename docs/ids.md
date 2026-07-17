@@ -154,6 +154,8 @@ Allocation steps:
 
 The allocator uses one POSIX file lock around the snapshot update so multiple
 CLI and runtime processes can share one allocator safely.
+Malformed snapshots are rejected instead of being treated as empty allocator
+state, which prevents silent sequence reuse after state corruption.
 
 
 ## Collision Handling

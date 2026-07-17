@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from toolang.base.error import ToolangError
+from toolang.common.error import ToolangError
 
 from .ast import Span
 

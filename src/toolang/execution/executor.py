@@ -12,7 +12,7 @@ import threading
 import time
 from typing import Any, Literal, cast
 
-from toolang.base.error import ToolangError
+from toolang.common.error import ToolangError
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.types.message import Message, Part, TextPart, message_text
 from toolang.base.types.model import ModelAlias

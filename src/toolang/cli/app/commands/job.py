@@ -19,7 +19,8 @@ from toolang.catalog.job import JobCatalog
 import toolang.work.definitions as job_definitions
 from toolang.work.state import AgentJobs
 from toolang.work.store import open_job_store
-from ...common.client import append_agent_update, runtime_post
+from ...common.client import runtime_post
+from ...common.updates import append_agent_update
 from ...common.context import context_root, require_prefix_agent, user_call
 from ...common.output import echo_table
 from ...common.routing import PrefixAgentJobGroup, RequiredPrefixAgentCommand

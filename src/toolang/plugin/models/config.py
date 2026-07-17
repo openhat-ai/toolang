@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, cast
 import tomllib
 
-from toolang.base.error import ToolangError
+from toolang.common.error import ToolangError
 from toolang.base.types.model import ModelAlias
 
 

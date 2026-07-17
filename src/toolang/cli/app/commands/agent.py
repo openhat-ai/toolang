@@ -16,7 +16,7 @@ from toolang.catalog.agent import AgentCatalog
 from toolang.agent import local as agents
 from toolang.catalog import cap as caps
 from toolang.state.prepared import PreparedEntry
-from ...common.client import append_agent_update
+from ...common.updates import append_agent_update
 from ...common.context import (
     context_root,
     require_runtime_agent,

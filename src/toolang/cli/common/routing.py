@@ -10,6 +10,31 @@ from typer.core import TyperArgument, TyperCommand, TyperGroup
 
 from .context import CliContext
 
+
+def extract_root_args(argv: Sequence[str]) -> tuple[list[str], list[str]]:
+    """Separate root options from command arguments without crossing `--`."""
+
+    root_args: list[str] = []
+    body: list[str] = []
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == "--":
+            body.extend(argv[index:])
+            break
+        if token in {"--root", "-r"}:
+            step = 2 if index + 1 < len(argv) else 1
+            root_args.extend(argv[index : index + step])
+            index += step
+            continue
+        if token.startswith("--root="):
+            root_args.extend(("--root", token.removeprefix("--root=")))
+            index += 1
+            continue
+        body.append(token)
+        index += 1
+    return root_args, body
+
 # Typer renders command help text dim by default. Normal weight keeps usage
 # notes readable across terminal themes.
 setattr(rich_utils, "STYLE_HELPTEXT", "")

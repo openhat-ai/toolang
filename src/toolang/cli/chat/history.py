@@ -18,6 +18,14 @@ class ChatInputHistoryStore:
     compact_limit: int = 2000
     compact_size_bytes: int = 1_000_000
 
+    def __post_init__(self) -> None:
+        if self.limit < 1:
+            raise ValueError("history limit must be positive")
+        if self.compact_limit < self.limit:
+            raise ValueError("history compact_limit must be at least limit")
+        if self.compact_size_bytes < 1:
+            raise ValueError("history compact_size_bytes must be positive")
+
     def load(self) -> list[str]:
         records = self._load_records()
         return [record["text"] for record in records[-self.limit :]]
@@ -26,8 +34,8 @@ class ChatInputHistoryStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {"created_at": _utc_now(), "text": text}
         with self.path.open("a", encoding="utf-8") as file:
-            file.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
-            file.write("\n")
+            line = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+            file.write(f"{line}\n")
         self._compact_if_needed()
 
     def _compact_if_needed(self) -> None:

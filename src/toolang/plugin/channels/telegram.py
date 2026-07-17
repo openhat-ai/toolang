@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from toolang.base.error import ToolangError
+from toolang.common.error import ToolangError
 from toolang.base.protocols.channel import AgentChannel
 from toolang.base.types.channel import (
     ChannelContext,

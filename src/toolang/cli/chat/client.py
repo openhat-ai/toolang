@@ -12,7 +12,7 @@ from typing import Any
 from uuid import uuid4
 
 from toolang.agent import runtime as up
-from toolang.base.error import ToolangError
+from toolang.common.error import ToolangError
 from toolang.base.types.message import Message
 from toolang.execution.binding import allocate_thread_id
 from toolang.execution.effective import (

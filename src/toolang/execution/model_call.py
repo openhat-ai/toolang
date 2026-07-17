@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import json
 from typing import TYPE_CHECKING, Any
 
-from toolang.base.error import ToolangError
+from toolang.common.error import ToolangError
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.model import ModelTarget
@@ -16,7 +16,7 @@ from toolang.catalog import cap as cap_store
 from ..common.immutable import mutable_data
 from ..lang.ast import AgicDecl, Message as AstMessage, Program
 from toolang.state.prepared import PreparedEntry
-from ..common.template import render_text_template
+from .template import render_text_template
 from . import prompts
 from .effective import directives_for
 from .binding import run_job_context

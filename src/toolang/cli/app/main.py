@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextvars import ContextVar
 from pathlib import Path
 import os
 import sys
 from typing import Annotated, Any
 
 import click
-from prompt_toolkit.key_binding import KeyBindings as KeyBindings
-from prompt_toolkit.styles import Style as Style
 import typer
 from typer import rich_utils
 from typer.core import TyperGroup
@@ -35,7 +34,9 @@ from .commands import program as program_commands
 from .commands import runtime as runtime_commands
 from .commands import job as job_commands
 
-_CLI_PREFIX_AGENT: str | None = None
+_PREFIX_AGENT: ContextVar[str | None] = ContextVar(
+    "toolang_cli_prefix_agent", default=None
+)
 AGENT_COMMAND_PANEL = "Agent Commands"
 THREAD_COMMAND_PANEL = "Thread Commands"
 RUNTIME_COMMAND_PANEL = "Runtime Commands"
@@ -149,7 +150,7 @@ def callback(
         configure_logging(spec=None, environ=os.environ)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
-    ctx.obj = CliContext(root=resolve_root(toolang_root), agent=_CLI_PREFIX_AGENT)
+    ctx.obj = CliContext(root=resolve_root(toolang_root), agent=_PREFIX_AGENT.get())
 
 
 @app.command("hidden", help="Show hidden commands.", hidden=True)
@@ -431,9 +432,7 @@ def _run_app(
     prog_name: str,
     catch_system_exit: bool = False,
 ) -> int:
-    global _CLI_PREFIX_AGENT
-    previous_prefix_agent = _CLI_PREFIX_AGENT
-    _CLI_PREFIX_AGENT = prefix_agent
+    token = _PREFIX_AGENT.set(prefix_agent)
     try:
         app(
             args=args,
@@ -450,7 +449,7 @@ def _run_app(
         typer.echo(f"toolang error: {exc}", err=True)
         return 1
     finally:
-        _CLI_PREFIX_AGENT = previous_prefix_agent
+        _PREFIX_AGENT.reset(token)
     return 0
 
 

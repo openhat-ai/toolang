@@ -16,7 +16,9 @@ from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
 from toolang.execution.events import TraceEvent
+from toolang.common.error import ToolangError
 
+from ..common.client import RuntimeClientError
 from ..common.version import toolang_version
 from . import blocks
 from . import events
@@ -214,7 +216,7 @@ class ChatTuiApp:
     def _header_model_label(self) -> str:
         try:
             return slashes.chat_model_label(self.client.list_models(), self.selects)
-        except click.ClickException:
+        except (click.ClickException, RuntimeClientError, ToolangError, ValueError):
             return chat_status_label(self.selects)
 
     def _status_label(self) -> str:
@@ -390,6 +392,9 @@ class ChatTuiApp:
             thread_id = self.app_context.ensure_thread_id()
         except click.ClickException as exc:
             self._handle_runtime_error(exc.message)
+            return
+        except (RuntimeClientError, ToolangError, ValueError) as exc:
+            self._handle_runtime_error(str(exc))
             return
 
         def consume() -> None:

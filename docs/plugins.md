@@ -6,6 +6,9 @@ Shared contracts and canonical value types live in:
 
 - `toolang.base`
 
+Plugins should raise `toolang.common.error.ToolangError` for invalid Toolang
+configuration, input, or runtime behavior that should be presented to users.
+
 
 ## Plugin Families
 

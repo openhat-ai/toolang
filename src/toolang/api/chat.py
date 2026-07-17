@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from toolang.base.error import ToolangError
+from toolang.common.error import ToolangError
 from toolang.base.types.message import Message
 from toolang.execution.detail import run_detail_from_record, thread_info_from_record, thread_info_from_runs
 from toolang.execution.binding import allocate_run_id, allocate_thread_id

@@ -26,7 +26,7 @@ from .ast import (
     WithDecl,
     to_data,
 )
-from toolang.base.error import ToolangError
+from toolang.common.error import ToolangError
 
 AGENT_HEADER_RE = re.compile(r"^agent\s+[A-Za-z_][\w-]*\s*$")
 PROMPT_CALL_RE = re.compile(r"^/([A-Za-z_][\w-]*)(?:\s+(.*))?$")

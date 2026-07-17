@@ -20,7 +20,7 @@ from toolang.base.types.message import (
 from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage, ToolCall
 from toolang.base.types.tool import ToolContext, ToolDefinition
-from toolang.base.error import ToolangError
+from toolang.common.error import ToolangError
 from toolang.execution.context import RunContext, RunSnapshot, SnapshotAgent, SnapshotProgram, SnapshotRun
 from toolang.execution.assembly import RunInput
 from toolang.execution.binding import _Run

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
 import json
 import shutil
 from typing import Any, Literal, cast
@@ -25,7 +24,7 @@ from ....execution.detail import (
 from ....execution.records import step_input_items_to_data
 from ...common.client import runtime_get
 from ...common.context import context_root, require_prefix_agent
-from ...common.output import executable_label
+from ...common.output import executable_label, parse_utc_timestamp
 
 
 InspectData = dict[str, Any]
@@ -1311,18 +1310,6 @@ def _elapsed(started_at: str | None, finished_at: str | None) -> str:
     if seconds < 10:
         return f"{seconds:.1f}s"
     return f"{seconds:.0f}s"
-
-
-def parse_utc_timestamp(value: str) -> datetime | None:
-    try:
-        if value.endswith("Z"):
-            return datetime.fromisoformat(value.removesuffix("Z") + "+00:00")
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
 
 
 def _truncate(value: object, *, width: int) -> str:

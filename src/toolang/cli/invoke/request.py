@@ -11,6 +11,7 @@ from toolang.work import files as file_requests
 from toolang.catalog.cap import split_cap_selectors
 from ...execution.request import ExecutableKind
 from ...lang.ast import AgicDecl, FlowDecl, Parameter
+from toolang.plugin.models.resolution import split_model_selectors
 from toolang.plugin.tools.registry import split_tool_selectors
 
 
@@ -55,8 +56,8 @@ def consume_control_options(
             verbosity += 1
             index += 1
             continue
-        if token.startswith("-v") and set(token) <= {"-", "v"}:
-            verbosity += len(token) - 1
+        if short_verbosity := _short_verbosity(token):
+            verbosity += short_verbosity
             index += 1
             continue
         if token.startswith("--models="):
@@ -100,7 +101,7 @@ def consume_control_options(
     return (
         quiet,
         verbosity,
-        tuple(models),
+        split_model_selectors(tuple(models)),
         split_tool_selectors(tuple(tools)),
         split_cap_selectors(tuple(caps)),
         remaining,
@@ -136,7 +137,7 @@ def parse_request(
             model = token.partition("=")[2].strip()
             if not model:
                 raise click.ClickException("--models requires a value")
-            models.append(model)
+            models.extend(split_model_selectors((model,)))
             index += 1
             continue
         if token == "--models":
@@ -145,7 +146,7 @@ def parse_request(
             model = argv[index + 1].strip()
             if not model:
                 raise click.ClickException("--models requires a value")
-            models.append(model)
+            models.extend(split_model_selectors((model,)))
             index += 2
             continue
         if token.startswith("--tools="):
@@ -188,8 +189,8 @@ def parse_request(
             verbosity += 1
             index += 1
             continue
-        if token.startswith("-v") and set(token) <= {"-", "v"}:
-            verbosity += len(token) - 1
+        if short_verbosity := _short_verbosity(token):
+            verbosity += short_verbosity
             index += 1
             continue
         if token.startswith("--"):
@@ -224,7 +225,7 @@ def parse_request(
         executable_kind=executable_kind,
         verbosity=verbosity,
         input_text=input_text,
-        models=tuple(models),
+        models=tuple(dict.fromkeys(models)),
         tools=tuple(dict.fromkeys(tools)),
         caps=tuple(dict.fromkeys(caps)),
         invoke_params=invoke_params,
@@ -240,6 +241,10 @@ def _parse_boolean_value(raw: str, *, option_name: str) -> bool:
     if value in {"0", "false", "no", "off"}:
         return False
     raise click.ClickException(f"{option_name} expects a boolean value")
+
+
+def _short_verbosity(token: str) -> int:
+    return len(token) - 1 if token.startswith("-") and set(token[1:]) == {"v"} else 0
 
 
 def _coerce_invoke_value(raw: str, *, param: Parameter) -> object:

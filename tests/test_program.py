@@ -5,7 +5,7 @@ from typing import Any, cast
 
 import pytest
 
-from toolang.base.error import ToolangError
+from toolang.common.error import ToolangError
 from toolang.lang import Program, to_data
 from toolang.state.durable import scan_durable_state
 from toolang.lang.source import expand_program_input

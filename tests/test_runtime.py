@@ -30,7 +30,7 @@ from toolang.work.scheduler import Scheduler
 from toolang.work.state import AgentJobs
 from toolang.work.store import JobStore, open_job_store
 from toolang.work.watcher import JobWatcher
-from toolang.base.error import ToolangError
+from toolang.common.error import ToolangError
 from toolang.base.protocols.channel import AgentChannel
 from toolang.base.protocols.sandbox import AgentSandbox
 from toolang.base.types.channel import (

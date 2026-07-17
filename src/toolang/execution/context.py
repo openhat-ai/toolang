@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from toolang.agent import local as agents
 from ..lang.ast import AgicDecl
-from toolang.base.error import ToolangError
+from toolang.common.error import ToolangError
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import (

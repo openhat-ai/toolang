@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
+from types import MappingProxyType
 from typing import Literal
 
-from toolang.base.error import ToolangError
+from .error import ToolangError
 
 SelectorDomain = Literal["model", "tool", "cap"]
 
@@ -42,7 +43,14 @@ class Selector:
 
     raw: str
     pattern: str = "*"
-    filters: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    filters: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "filters",
+            MappingProxyType({key: tuple(values) for key, values in self.filters.items()}),
+        )
 
 
 def split_selector_list(items: Sequence[str] | None) -> tuple[str, ...]:
@@ -55,20 +63,6 @@ def split_selector_list(items: Sequence[str] | None) -> tuple[str, ...]:
             if text:
                 values.append(text)
     return tuple(values)
-
-
-def parse_selector_list(
-    items: Sequence[str] | None,
-    *,
-    domain: SelectorDomain,
-    implicit_family: str | None = None,
-) -> tuple[Selector, ...]:
-    """Parse one repeated selector-list input sequence."""
-
-    return tuple(
-        parse_selector(raw, domain=domain, implicit_family=implicit_family)
-        for raw in split_selector_list(items)
-    )
 
 
 def parse_selector(
@@ -86,12 +80,14 @@ def parse_selector(
     filters_text = ""
     bracket_index = text.find("[")
     if bracket_index >= 0:
-        if not text.endswith("]") or text.find("[", bracket_index + 1) >= 0:
+        if text.count("[") != 1 or text.count("]") != 1 or not text.endswith("]"):
             raise ToolangError(f"invalid selector: {raw}")
         pattern = text[:bracket_index].strip() or "*"
         filters_text = text[bracket_index + 1 : -1].strip()
         if not filters_text:
             raise ToolangError(f"selector filter list cannot be empty: {raw}")
+    elif "]" in text:
+        raise ToolangError(f"invalid selector: {raw}")
     if implicit_family is not None and "/" in pattern.strip("* "):
         raise ToolangError(
             f"{domain} selector must not include a family in this context: {raw}"
@@ -139,12 +135,18 @@ def _split_selector_csv(text: str) -> tuple[str, ...]:
     depth = 0
     for index, char in enumerate(text):
         if char == "[":
+            if depth:
+                raise ToolangError(f"invalid selector list: {text}")
             depth += 1
-        elif char == "]" and depth:
+        elif char == "]":
+            if not depth:
+                raise ToolangError(f"invalid selector list: {text}")
             depth -= 1
         elif char == "," and depth == 0:
             parts.append(text[start:index])
             start = index + 1
+    if depth:
+        raise ToolangError(f"invalid selector list: {text}")
     parts.append(text[start:])
     return tuple(parts)
 
@@ -208,4 +210,4 @@ def _normalize_bool_filter(value: str) -> str:
         return "true"
     if text in {"0", "false", "no", "n", "off"}:
         return "false"
-    return text
+    raise ToolangError(f"invalid boolean selector filter: {value!r}")

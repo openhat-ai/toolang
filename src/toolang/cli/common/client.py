@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Mapping
 import json
-from pathlib import Path
 import threading
 from typing import Any, cast
 from urllib.error import HTTPError, URLError
@@ -15,9 +14,8 @@ import click
 import typer
 
 from toolang.agent import local as agents
-from ...execution.store import RunStore, run_store_path
+from toolang.base.types.message import Message
 from ...execution.events import TraceEvent, trace_event_from_data
-from ...execution.records import UpdateKind
 from .context import context_root, require_prefix_agent, ui_base_url
 
 
@@ -32,10 +30,7 @@ class RuntimeClient:
     def get(self, path: str, *, timeout: float | None = 30) -> dict[str, Any]:
         try:
             with urlopen(f"{self.endpoint}{path}", timeout=timeout) as response:
-                return cast(
-                    dict[str, Any],
-                    json.loads(response.read().decode("utf-8")),
-                )
+                return _json_object(response.read())
         except HTTPError as exc:
             raise _http_error(exc) from exc
         except URLError as exc:
@@ -51,10 +46,7 @@ class RuntimeClient:
         request = self._request(path, payload)
         try:
             with urlopen(request, timeout=timeout) as response:
-                return cast(
-                    dict[str, Any],
-                    json.loads(response.read().decode("utf-8")),
-                )
+                return _json_object(response.read())
         except HTTPError as exc:
             raise _http_error(exc) from exc
         except URLError as exc:
@@ -231,23 +223,7 @@ def runtime_post(
 
 
 def message_payload(text: str) -> dict[str, object]:
-    return {
-        "role": "user",
-        "parts": [{"type": "text", "text": text}],
-    }
-
-
-def append_agent_update(
-    root: Path,
-    agent: str,
-    kind: UpdateKind,
-    payload: dict[str, object] | None = None,
-) -> None:
-    store = RunStore(run_store_path(root, agent))
-    try:
-        store.append_update(kind=kind, payload=payload or {})
-    finally:
-        store.close()
+    return Message.user(text).to_data()
 
 
 def _sse_events(
@@ -260,17 +236,33 @@ def _sse_events(
         line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
         if line == "":
             if data_lines:
-                data = "\n".join(data_lines)
+                if event := _decode_sse_data(data_lines):
+                    yield event
                 data_lines = []
-                try:
-                    event = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(event, dict):
-                    yield cast(dict[str, Any], event)
             continue
         if line.startswith("data:"):
-            data_lines.append(line.removeprefix("data:").strip())
+            data_lines.append(line.removeprefix("data:").removeprefix(" "))
+    if data_lines and not stop.is_set():
+        if event := _decode_sse_data(data_lines):
+            yield event
+
+
+def _decode_sse_data(data_lines: list[str]) -> dict[str, Any] | None:
+    try:
+        event = json.loads("\n".join(data_lines))
+    except json.JSONDecodeError:
+        return None
+    return cast(dict[str, Any], event) if isinstance(event, dict) else None
+
+
+def _json_object(payload: bytes) -> dict[str, Any]:
+    try:
+        value = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeClientError("runtime returned invalid JSON") from exc
+    if not isinstance(value, dict):
+        raise RuntimeClientError("runtime returned a non-object JSON response")
+    return cast(dict[str, Any], value)
 
 
 def _command_trace_event(payload: object) -> TraceEvent | None:
@@ -284,7 +276,17 @@ def _command_trace_event(payload: object) -> TraceEvent | None:
 
 
 def _http_error(exc: HTTPError) -> RuntimeClientError:
-    detail = exc.read().decode("utf-8", errors="replace")
+    body = exc.read().decode("utf-8", errors="replace").strip()
+    detail = body or str(exc.reason)
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        pass
+    else:
+        if isinstance(payload, Mapping):
+            value = payload.get("detail")
+            if isinstance(value, str):
+                detail = value
     return RuntimeClientError(f"runtime request failed: {exc.code} {detail}")
 
 

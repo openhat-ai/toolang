@@ -8,7 +8,7 @@ import logging
 from typing import TYPE_CHECKING, cast
 
 from toolang.base.protocols.tool import AgentTool
-from toolang.base.error import ToolangError
+from toolang.common.error import ToolangError
 from toolang.base.types.model import ModelTarget
 
 from toolang.catalog import cap as cap_store

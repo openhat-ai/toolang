@@ -1,4 +1,4 @@
-"""Restricted Mustache-style template rendering for Toolang."""
+"""Restricted Mustache-style rendering for execution prompts."""
 
 from __future__ import annotations
 
@@ -6,20 +6,18 @@ from collections.abc import Mapping, Sequence
 import re
 from typing import Any
 
-from toolang.base.error import ToolangError
+import mstache
+
+from toolang.common.error import ToolangError
 
 _TAG_NAME_RE = re.compile(r"^(\.|[A-Za-z_][\w-]*(?:\.[A-Za-z_][\w-]*)*)$")
 
 
 def render_text_template(template: str, context: Mapping[str, object]) -> str:
-    """Render one restricted text template."""
+    """Render one restricted execution template."""
 
     _validate_template(template)
     _validate_context(context)
-    try:
-        import mstache
-    except ImportError as exc:  # pragma: no cover - dependency should exist at runtime
-        raise ToolangError("mstache is required to render Toolang templates.") from exc
     try:
         return str(
             mstache.render(
