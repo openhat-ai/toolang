@@ -5,6 +5,7 @@ from typing import Any, cast
 
 import pytest
 
+from tests import FIXTURES_ROOT, PROJECT_ROOT
 from toolang.common.error import ToolangError
 from toolang.lang import Program, to_data
 from toolang.state.durable import scan_durable_state
@@ -229,15 +230,13 @@ agic:
 
 
 def test_repo_program_fixtures_parse_cleanly() -> None:
-    fixtures_dir = Path(__file__).with_name("fixtures")
-    for source_path in sorted(fixtures_dir.glob("*.too")):
+    for source_path in sorted(FIXTURES_ROOT.glob("*.too")):
         program = Program.from_source(source_path.read_text(encoding="utf-8"))
         assert program.agics, source_path.name
 
 
 def test_example_programs_parse_cleanly() -> None:
-    examples_dir = Path(__file__).resolve().parents[1] / "examples"
-    for source_path in sorted(examples_dir.glob("*.too")):
+    for source_path in sorted((PROJECT_ROOT / "examples").glob("*.too")):
         if source_path.name == "invoke-playground.too":
             continue
         program = Program.from_source(source_path.read_text(encoding="utf-8"))

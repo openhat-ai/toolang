@@ -14,9 +14,7 @@ from typer.testing import CliRunner
 
 from toolang.cli.caps.cli import app as caps_app
 from toolang.cli.toolang.cli import app as toolang_app
-
-
-PROJECT_ROOT = Path(__file__).parents[1]
+from tests import PROJECT_ROOT
 
 
 def _command_paths(app: typer.Typer) -> tuple[tuple[str, ...], ...]:
