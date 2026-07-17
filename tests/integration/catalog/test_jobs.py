@@ -11,7 +11,7 @@ from toolang.work.state import AgentJobs, HomeJobs, JobDefinition
 from toolang.work.store import JobStore
 from toolang.work.watcher import JobWatcher
 from toolang.lang.ast import Program
-from toolang.work.definitions import TaskFile
+from toolang.catalog.job_files import TaskFile
 
 
 def test_job_watcher_current_returns_published_snapshot_without_rescanning(

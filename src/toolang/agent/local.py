@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-from functools import lru_cache
 import hashlib
 import json
 import os
@@ -14,20 +13,13 @@ import signal
 import shutil
 import subprocess
 import time
-from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlsplit
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
 from collections.abc import Mapping, Sequence
 from typing import Iterator, Literal
 
 from toolang.base.protocols.sandbox import AgentSandbox
 from toolang.base.types.sandbox import SandboxState
-from toolang.common.github import (
-    GitHubRef,
-    github_raw_url,
-    parse_github_file_url,
-    parse_github_ref,
-)
+from toolang.catalog import agent as agent_catalog
 from ..common.progress import ProgressSink, emit_progress
 
 
@@ -54,17 +46,6 @@ class AgentStatus:
             return None
 
 
-@dataclass(frozen=True, slots=True)
-class AgentLayout:
-    """Filesystem placement for one resident agent."""
-
-    root: Path
-    name: str
-    home: Path
-    program: Path
-    room: Path
-
-
 class AgentProcess:
     """Start, inspect, and stop one resident agent process."""
 
@@ -76,7 +57,7 @@ class AgentProcess:
         return _load_runtime_state(agent_runtime_state_path(self.root, self.name))
 
     def status(self, *, ui_base_url: str) -> AgentStatus | None:
-        home = agent_home(self.root, self.name)
+        home = agent_catalog.agent_home(self.root, self.name)
         if not home.is_dir():
             return None
         runtime_state = self.state()
@@ -226,50 +207,8 @@ class AgentProcess:
         return _agent_runtime_process_pids(self.root, self.name)
 
 
-AgentSelectorForm = Literal["name", "shorthand", "ref"]
 RunTargetKind = Literal["resident", "visiting"]
 VISITING_PROGRAM_CACHE_TTL_SEC = 3600
-
-
-@dataclass(frozen=True, slots=True)
-class HttpAgentRef:
-    """One canonical HTTP(S) agent program ref."""
-
-    url: str
-
-    def render(self) -> str:
-        return self.url
-
-    def default_name(self) -> str:
-        path = urlsplit(self.url).path.rstrip("/")
-        if not path:
-            raise ValueError(f"invalid agent ref: {self.url}")
-        return Path(path).stem
-
-
-AgentRef = HttpAgentRef | GitHubRef
-
-
-@dataclass(frozen=True, slots=True)
-class AgentSelector:
-    """One parsed agent selector."""
-
-    form: AgentSelectorForm
-    text: str
-    name: str | None = None
-    ref: AgentRef | None = None
-    github_owner: str | None = None
-    github_repo: str | None = None
-
-    def resolved_ref(self) -> AgentRef:
-        if self.ref is None:
-            raise ValueError(f"selector is not a remote ref: {self.text}")
-        return self.ref
-
-    def default_name(self) -> str:
-        if self.name is not None:
-            return self.name
-        return self.resolved_ref().default_name()
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,22 +220,10 @@ class MaterializedRunTarget:
     kind: RunTargetKind
 
 
-def agent_home(toolang_root: Path, agent_name: str) -> Path:
-    """Return one agent home path."""
-
-    return toolang_root / "agents" / agent_name
-
-
-def agent_program_path(toolang_root: Path, agent_name: str) -> Path:
-    """Return one agent program path."""
-
-    return agent_home(toolang_root, agent_name) / "agent.too"
-
-
 def agent_room(toolang_root: Path, agent_name: str) -> Path:
     """Return one agent room path."""
 
-    return agent_home(toolang_root, agent_name) / ".runtime"
+    return agent_catalog.agent_home(toolang_root, agent_name) / ".runtime"
 
 
 def agent_runtime_state_path(toolang_root: Path, agent_name: str) -> Path:
@@ -362,162 +289,12 @@ def _sandbox_stage_dir(toolang_root: Path, agent_name: str) -> Path:
     return toolang_root / ".sandbox" / agent_name
 
 
-def _default_program_source(agent_name: str, *, template_name: str) -> str:
-    from .. import templates
+def remove_sandbox_stage(toolang_root: Path, agent_name: str) -> None:
+    """Remove one agent's runtime-owned sandbox staging directory."""
 
-    return templates.render_template(
-        "agent", template_name, agent_name=agent_name, name=agent_name
-    )
-
-
-def _rewrite_program_source(source_text: str, agent_name: str) -> str:
-    lines = source_text.splitlines(keepends=True)
-    for index, line in enumerate(lines):
-        if line.strip().startswith("agent "):
-            suffix = "\n" if line.endswith("\n") else ""
-            lines[index] = f"agent {agent_name}{suffix}"
-            return "".join(lines)
-    return source_text
-
-
-def parse_agent_selector(text: str) -> AgentSelector:
-    """Parse one agent selector into a local name or one canonical remote ref."""
-
-    raw = text.strip()
-    if not raw:
-        raise ValueError("agent selector cannot be empty")
-    if "://" in raw:
-        return AgentSelector(form="ref", text=raw, ref=_parse_agent_ref(raw))
-    slash_count = raw.count("/")
-    if slash_count == 1:
-        left, right = raw.split("/", 1)
-        if not left or not right:
-            raise ValueError(f"invalid agent shorthand: {text}")
-        if "." in left:
-            return AgentSelector(
-                form="shorthand",
-                text=raw,
-                ref=HttpAgentRef(url=f"https://{left}/{right}.too"),
-            )
-        return AgentSelector(
-            form="shorthand",
-            text=raw,
-            name=right,
-            github_owner=left,
-        )
-    if slash_count == 2:
-        owner, repo, name = raw.split("/", 2)
-        if not owner or not repo or not name:
-            raise ValueError(f"invalid agent shorthand: {text}")
-        return AgentSelector(
-            form="shorthand",
-            text=raw,
-            name=name,
-            github_owner=owner,
-            github_repo=repo,
-        )
-    if slash_count > 2:
-        raise ValueError(f"invalid agent shorthand: {text}")
-    return AgentSelector(form="name", text=raw, name=raw)
-
-
-def fetch_agent_ref(ref: AgentRef, *, progress: ProgressSink | None = None) -> str:
-    """Fetch one remote agent program by canonical ref."""
-
-    label = "Fetch agent"
-    detail = ref.render()
-    fetch_url = ref.url if isinstance(ref, HttpAgentRef) else github_raw_url(ref)
-    emit_progress(
-        progress,
-        id=f"agent.fetch:{detail}",
-        phase="agent.fetch",
-        label=label,
-        status="running",
-        detail=fetch_url,
-    )
-    try:
-        if isinstance(ref, HttpAgentRef):
-            source = _fetch_http_text(ref.url)
-        else:
-            source = _fetch_github_text(ref)
-    except Exception as exc:
-        emit_progress(
-            progress,
-            id=f"agent.fetch:{detail}",
-            phase="agent.fetch",
-            label=label,
-            status="failed",
-            detail=str(exc),
-        )
-        raise
-    emit_progress(
-        progress,
-        id=f"agent.fetch:{detail}",
-        phase="agent.fetch",
-        label=label,
-        status="ok",
-    )
-    return source
-
-
-def resolve_agent_selector_ref(
-    selector: AgentSelector, *, progress: ProgressSink | None = None
-) -> AgentRef:
-    """Resolve one remote selector to one canonical ref."""
-
-    if selector.ref is not None:
-        return selector.ref
-    if selector.github_owner is not None and selector.name is not None:
-        label = "Resolve agent"
-        detail = selector.text
-        emit_progress(
-            progress,
-            id=f"agent.resolve:{detail}",
-            phase="agent.resolve",
-            label=label,
-            status="running",
-            detail=detail,
-        )
-        try:
-            ref = _resolve_github_agent_shorthand(
-                selector.github_owner,
-                selector.name,
-                repo=selector.github_repo or "agents",
-            )
-        except Exception as exc:
-            emit_progress(
-                progress,
-                id=f"agent.resolve:{detail}",
-                phase="agent.resolve",
-                label=label,
-                status="failed",
-                detail=str(exc),
-            )
-            raise
-        emit_progress(
-            progress,
-            id=f"agent.resolve:{detail}",
-            phase="agent.resolve",
-            label=label,
-            status="ok",
-            detail=ref.render(),
-        )
-        return ref
-    raise ValueError(f"selector is not a remote ref: {selector.text}")
-
-
-def write_agent_program(toolang_root: Path, agent_name: str, source_text: str) -> Path:
-    """Create one local managed agent from one source program."""
-
-    home = agent_home(toolang_root, agent_name)
-    if home.exists():
-        raise FileExistsError(f"agent already exists: {home}")
-    home.mkdir(parents=True, exist_ok=False)
-    program_path = agent_program_path(toolang_root, agent_name)
-    program_path.write_text(
-        _rewrite_program_source(source_text, agent_name), encoding="utf-8"
-    )
-    return program_path
+    stage_dir = _sandbox_stage_dir(toolang_root, agent_name)
+    if stage_dir.exists():
+        shutil.rmtree(stage_dir)
 
 
 def roaming_root(source_path: Path) -> Path:
@@ -526,7 +303,7 @@ def roaming_root(source_path: Path) -> Path:
     return source_path.resolve().parent / ".toolang"
 
 
-def visiting_root(toolang_root: Path, ref: AgentRef) -> Path:
+def visiting_root(toolang_root: Path, ref: agent_catalog.AgentRef) -> Path:
     """Return the stable local root for one visiting remote agent ref."""
 
     return visiting_source_root(
@@ -553,10 +330,10 @@ def materialize_roaming_program(source_path: Path) -> tuple[Path, str]:
         raise ValueError(f"agent program must point to a .too file: {resolved_source}")
     toolang_root = roaming_root(resolved_source)
     agent_name = resolved_source.stem
-    home = agent_home(toolang_root, agent_name)
+    home = agent_catalog.agent_home(toolang_root, agent_name)
     home.mkdir(parents=True, exist_ok=True)
     _replace_relative_symlink(
-        agent_program_path(toolang_root, agent_name),
+        agent_catalog.agent_program_path(toolang_root, agent_name),
         resolved_source,
     )
     _sync_roaming_config_link(home, resolved_source.parent / "toolang.toml")
@@ -597,7 +374,7 @@ def _safe_log_label(value: str) -> str:
 
 def materialize_visiting_program(
     toolang_root: Path,
-    ref: AgentRef,
+    ref: agent_catalog.AgentRef,
     source_text: str,
     *,
     source: str | None = None,
@@ -608,11 +385,12 @@ def materialize_visiting_program(
     root = visiting_source_root(
         toolang_root, source=source or ref.render(), agent_name=agent_name
     )
-    home = agent_home(root, agent_name)
+    home = agent_catalog.agent_home(root, agent_name)
     home.mkdir(parents=True, exist_ok=True)
-    program_path = agent_program_path(root, agent_name)
+    program_path = agent_catalog.agent_program_path(root, agent_name)
     program_path.write_text(
-        _rewrite_program_source(source_text, agent_name), encoding="utf-8"
+        agent_catalog.normalize_agent_source(source_text, agent_name),
+        encoding="utf-8",
     )
     return root, agent_name
 
@@ -626,7 +404,7 @@ def resolved_run_target(
 ) -> Iterator[MaterializedRunTarget]:
     """Yield one runnable local target for one selector."""
 
-    selector = parse_agent_selector(selector_text)
+    selector = agent_catalog.parse_agent_selector(selector_text)
     if selector.form == "name":
         yield MaterializedRunTarget(
             toolang_root=toolang_root,
@@ -639,15 +417,17 @@ def resolved_run_target(
     run_root = visiting_source_root(
         toolang_root, source=selector.text, agent_name=agent_name
     )
-    if _visiting_program_cache_fresh(agent_program_path(run_root, agent_name)):
+    if _visiting_program_cache_fresh(
+        agent_catalog.agent_program_path(run_root, agent_name)
+    ):
         yield MaterializedRunTarget(
             toolang_root=run_root,
             agent_name=agent_name,
             kind="visiting",
         )
         return
-    resolved_ref = resolve_agent_selector_ref(selector, progress=progress)
-    source_text = fetch_agent_ref(resolved_ref, progress=progress)
+    resolved_ref = agent_catalog.resolve_agent_selector_ref(selector, progress=progress)
+    source_text = agent_catalog.fetch_agent_ref(resolved_ref, progress=progress)
     emit_progress(
         progress,
         id=f"agent.materialize:{resolved_ref.render()}",
@@ -696,133 +476,11 @@ def materialized_run_target(
         yield target.toolang_root, target.agent_name
 
 
-def _clone_local_agent(toolang_root: Path, source_name: str, target_name: str) -> Path:
-    source_home = agent_home(toolang_root, source_name)
-    target_home = agent_home(toolang_root, target_name)
-    if not source_home.is_dir():
-        raise FileNotFoundError(f"source agent not found: {source_home}")
-    if target_home.exists():
-        raise FileExistsError(f"target agent already exists: {target_home}")
-
-    shutil.copytree(source_home, target_home, ignore=shutil.ignore_patterns(".caps"))
-
-    copied_source_program = target_home / "agent.too"
-    target_program = target_home / "agent.too"
-    if copied_source_program.is_file():
-        source_text = copied_source_program.read_text(encoding="utf-8")
-    else:
-        source_text = _default_program_source(target_name, template_name="default")
-    target_program.write_text(
-        _rewrite_program_source(source_text, target_name), encoding="utf-8"
-    )
-    return target_program
-
-
-def _parse_agent_ref(text: str) -> AgentRef:
-    if text.startswith(("http://", "https://")):
-        github_ref = parse_github_file_url(text)
-        if github_ref is not None:
-            _require_too_path(github_ref.path, text)
-            return github_ref
-        ref = HttpAgentRef(url=text)
-        _require_too_path(urlsplit(ref.url).path, text)
-        return ref
-    if text.startswith("github://"):
-        github_ref = parse_github_ref(text)
-        _require_too_path(github_ref.path, text)
-        return github_ref
-    raise ValueError(f"unsupported agent ref: {text}")
-
-
-def _resolve_github_agent_shorthand(
-    owner: str, name: str, *, repo: str
-) -> GitHubRef:
-    for candidate in _github_agent_shorthand_candidates(owner, repo, name):
-        if _github_agent_ref_exists(candidate):
-            return candidate
-    raise ValueError(
-        f"could not resolve agent shorthand: {_agent_shorthand_label(owner, repo, name)}"
-    )
-
-
-def _github_agent_shorthand_candidates(
-    owner: str, repo: str, name: str
-) -> tuple[GitHubRef, ...]:
-    try:
-        rev = _github_repo_default_branch(owner, repo)
-    except ValueError:
-        rev = "main"
-    return (
-        GitHubRef(owner=owner, repo=repo, path=f"agents/{name}.too", rev=rev),
-        GitHubRef(owner=owner, repo=repo, path=f"{name}.too", rev=rev),
-    )
-
-
-def _agent_shorthand_label(owner: str, repo: str, name: str) -> str:
-    if repo == "agents":
-        return f"{owner}/{name}"
-    return f"{owner}/{repo}/{name}"
-
-
-def _github_agent_ref_exists(ref: GitHubRef) -> bool:
-    request = Request(
-        github_raw_url(ref), method="HEAD", headers={"User-Agent": "toolang/0.1"}
-    )
-    try:
-        with urlopen(request, timeout=30):
-            return True
-    except (HTTPError, URLError):
-        return False
-
-
-@lru_cache
-def _github_repo_default_branch(owner: str, repo: str) -> str:
-    api_url = (
-        f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo, safe='')}"
-    )
-    request = Request(
-        api_url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "toolang/0.1",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-    )
-    try:
-        with urlopen(request, timeout=30) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except (HTTPError, URLError, json.JSONDecodeError) as exc:
-        raise ValueError(
-            f"could not resolve GitHub default branch: {owner}/{repo}"
-        ) from exc
-    if not isinstance(data, dict) or not isinstance(data.get("default_branch"), str):
-        raise ValueError(f"unexpected GitHub repository response: {owner}/{repo}")
-    return data["default_branch"]
-
-
-def _require_too_path(path_text: str, text: str) -> None:
-    if Path(path_text).suffix != ".too":
-        raise ValueError(f"agent ref must point to a .too program: {text}")
-
-
 def _safe_visiting_root_label(name: str) -> str:
     label = "".join(
         char.lower() if char.isalnum() or char in {"-", "_"} else "-" for char in name
     )
     return label.strip("-_") or "agent"
-
-
-def _fetch_http_text(url: str) -> str:
-    request = Request(url, headers={"User-Agent": "toolang/0.1"})
-    try:
-        with urlopen(request, timeout=30) as response:
-            return response.read().decode("utf-8")
-    except (HTTPError, URLError) as exc:
-        raise ValueError(f"could not fetch agent program: {url}") from exc
-
-
-def _fetch_github_text(ref: GitHubRef) -> str:
-    return _fetch_http_text(github_raw_url(ref))
 
 
 def write_runtime_state(

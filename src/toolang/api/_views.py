@@ -20,9 +20,9 @@ from toolang.execution.records import (
     RunRecord,
 )
 from toolang import templates
-from toolang.catalog import cap as caps
+from toolang.state import caps
 from toolang.catalog.job import JobCatalog
-import toolang.work.definitions as job_definitions
+from toolang.catalog import job_files as job_definitions
 from toolang.work.state import AgentJobs
 from toolang.work.store import JobRecord, open_job_store
 from toolang.state.durable import scan_durable_state

@@ -1,1 +1,1 @@
-"""Durable task, chore, and file work."""
+"""Effective job scheduling, runtime stores, and file inbox work."""

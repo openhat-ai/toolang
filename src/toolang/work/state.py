@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 
 from ..lang.ast import JobDecl, Program
-from . import definitions as job_definitions
+from toolang.catalog import job_files as job_definitions
 
 
 @dataclass(frozen=True, slots=True)

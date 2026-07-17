@@ -98,14 +98,15 @@
   compatibility export of the error type owned by `toolang.base`.
 - `toolang.lang` owns `.too` parsing, authored source semantics, and source
   editing.
-- `toolang.agent` owns local agent identity, layout, runtime-state files,
-  managed processes, sandbox filesystem assembly, process assembly,
-  agent-specific built-in tools, and channel execution orchestration.
-- `toolang.catalog` owns authored agent, cap, and job CRUD plus cap source
-  resolution.
-- `toolang.work` owns task and chore documents, job scheduling state, file
-  inbox requests, their independent stores, and scheduling loops.
-- `toolang.state` owns durable/prepared source snapshots, immutable
+- `toolang.agent` owns runtime-state files, managed processes, visiting and
+  roaming agent materialization, sandbox filesystem assembly, process
+  assembly, agent-specific built-in tools, and channel execution orchestration.
+- `toolang.catalog` owns authored resident-agent layout and source CRUD,
+  authored cap and job CRUD, and remote agent and cap source resolution.
+- `toolang.work` owns effective job scheduling state, file inbox requests,
+  runtime stores, watchers, and scheduling loops.
+- `toolang.state` owns durable/prepared source snapshots, effective cap
+  projection and materialization, immutable
   root/home/agent state, and source-state watching.
 - `toolang.execution` owns run binding, execution trace, durable run truth,
   response projection, and execution storage.

@@ -16,6 +16,7 @@ from ... import templates
 from ...common.error import ToolangError
 from ...common.github import parse_github_ref
 from toolang.catalog import cap as cap_store
+from toolang.state import caps as cap_state
 from ...state import watcher as state_watcher
 from ..common.updates import append_agent_update
 from ..common.context import context_agent, context_root, user_call
@@ -216,7 +217,7 @@ def list_caps(
         kinds=set(CAP_KINDS),
     )
     try:
-        selected_entries = cap_store.select_cap_entries(
+        selected_entries = cap_state.select_cap_entries(
             entries,
             _cap_filter_selectors(filter_, implicit_kind=None),
             agent_name=agent_name,
@@ -269,7 +270,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             kinds={kind},
         )
         try:
-            selected_entries = cap_store.select_cap_entries(
+            selected_entries = cap_state.select_cap_entries(
                 entries,
                 _cap_filter_selectors(filter_, implicit_kind=kind),
                 agent_name=agent_name,
@@ -560,11 +561,11 @@ def _entry_source(entry: PreparedEntry, *, agent_name: str) -> str:
     form = _entry_form(entry)
     if form in {"ref", "wired"}:
         return _external_source_url(
-            cap_store.entry_ref(entry, agent_name=agent_name), entry=entry
+            cap_state.entry_ref(entry, agent_name=agent_name), entry=entry
         )
-    source = cap_store.entry_definition_file(entry)
+    source = cap_state.entry_definition_file(entry)
     if form == "inline":
-        line = cap_store.entry_line(entry)
+        line = cap_state.entry_line(entry)
         return f"{source}:{line}" if line is not None else source
     return source
 
@@ -584,11 +585,11 @@ def _external_source_url(ref: str, *, entry: PreparedEntry) -> str:
 
 
 def _entry_form(entry: PreparedEntry) -> CapForm:
-    return cap_store.entry_form(entry)
+    return cap_state.entry_form(entry)
 
 
 def _entry_scope_label(entry: PreparedEntry, *, agent_name: str) -> CapScope:
-    return cap_store.entry_scope(entry, agent_name=agent_name)
+    return cap_state.entry_scope(entry, agent_name=agent_name)
 
 
 def _cap_filter_selectors(
@@ -596,7 +597,7 @@ def _cap_filter_selectors(
 ) -> tuple[str, ...]:
     if value is None:
         return ()
-    items = cap_store.split_cap_selectors((value,))
+    items = cap_state.split_cap_selectors((value,))
     if not items:
         raise click.ClickException("--filter requires at least one value")
     legacy_tokens = tuple(item.lower() for item in items)
@@ -646,7 +647,7 @@ def _all_cap_entries(
             return entries
         finally:
             progress.finish(details=False)
-    return cap_store.list_entries(
+    return cap_state.list_entries(
         toolang_root,
         agent_name,
         visibility=None if visibility == "all" else visibility,
@@ -680,19 +681,13 @@ def _named_entry(
     kind: EntryKind,
     name: str,
     source_origin: Literal["local", "remote"] | None = None,
-    source_form: cap_store.EntryForm | None = None,
+    source_form: cap_state.EntryForm | None = None,
 ) -> PreparedEntry:
-    entries = (
-        cap_store.CapCatalog(toolang_root, agent_name, visibility=visibility).list(
-            kinds={kind}
-        )
-        if source_origin == "local"
-        else cap_store.list_entries(
-            toolang_root,
-            agent_name,
-            visibility=visibility,
-            kinds={kind},
-        )
+    entries = cap_state.list_entries(
+        toolang_root,
+        agent_name,
+        visibility=visibility,
+        kinds={kind},
     )
     for entry in entries:
         if entry.name != name:
@@ -713,11 +708,13 @@ def _local_entry_exists(
     kind: EntryKind,
     name: str,
 ) -> bool:
-    return any(
-        entry.name == name
-        for entry in cap_store.CapCatalog(
-            toolang_root, agent_name, visibility=visibility
-        ).list(kinds={kind})
+    return (
+        cap_store.CapCatalog(
+            toolang_root,
+            agent_name,
+            visibility=visibility,
+        ).get(kind, name)
+        is not None
     )
 
 

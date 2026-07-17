@@ -12,11 +12,11 @@ import typer
 from typer.core import TyperCommand
 
 from .... import templates
-from toolang.agent import local as agents
+from toolang.catalog.agent import agent_home
 from ....execution.records import UpdateKind
 from toolang.state.durable import scan_durable_state
 from toolang.catalog.job import JobCatalog
-import toolang.work.definitions as job_definitions
+from toolang.catalog import job_files as job_definitions
 from toolang.work.state import AgentJobs
 from toolang.work.store import open_job_store
 from ...common.client import runtime_post
@@ -424,7 +424,7 @@ def _agent_jobs(root: Path, agent: str) -> AgentJobs:
 
 def _location(root: Path, agent: str, path: Path) -> str:
     try:
-        return str(path.relative_to(agents.agent_home(root, agent)))
+        return str(path.relative_to(agent_home(root, agent)))
     except ValueError:
         return str(path)
 

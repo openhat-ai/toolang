@@ -5,8 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal, overload
 
-from toolang.work import definitions as job_definitions
-from toolang.work.state import HomeJobs
+from . import job_files as job_definitions
 
 
 class JobCatalog:
@@ -209,9 +208,6 @@ class JobCatalog:
             else job_definitions._remove_archived_chore
         )
         return remove(self.root, self.name, job_id)
-
-    def snapshot(self) -> HomeJobs:
-        return HomeJobs.load(self.root, self.name)
 
     def allocate_id(self) -> str:
         return job_definitions.allocate_job_id(self.root, self.name)

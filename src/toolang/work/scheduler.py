@@ -10,7 +10,7 @@ from ..execution.executor import Executor
 from ..execution.records import RunRecord
 from ..execution.request import RunRequest
 from ..state.agent import AgentState
-from . import definitions as job_definitions
+from toolang.catalog import job_files as job_definitions
 from .state import AgentJobs, HomeJobs
 from .store import ClaimedJob, JobStore
 

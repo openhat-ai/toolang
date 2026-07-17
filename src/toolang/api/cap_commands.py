@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
 
 from toolang.catalog import cap as caps
+from toolang.state import caps as cap_state
 from toolang.state.prepared import PreparedEntry, PreparedVisibility
 
 CapKind = Literal["psyche", "skill", "service", "prompt"]
@@ -168,7 +169,7 @@ def _find_authored_entry(
     kind: CapKind,
     name: str,
 ) -> PreparedEntry:
-    for entry in caps.list_entries(
+    for entry in cap_state.list_entries(
         context.root,
         context.name,
         visibility=visibility,
@@ -183,13 +184,13 @@ def _cap_detail_item(context, entry: PreparedEntry) -> dict[str, object]:
     item: dict[str, object] = {
         "kind": entry.kind,
         "name": entry.name,
-        "scope": caps.entry_scope(entry, agent_name=context.name),
-        "origin": caps.entry_origin(entry),
-        "form": caps.entry_form(entry),
-        "ref": caps.entry_ref(entry, agent_name=context.name),
-        "definition_file": caps.entry_definition_file(entry),
+        "scope": cap_state.entry_scope(entry, agent_name=context.name),
+        "origin": cap_state.entry_origin(entry),
+        "form": cap_state.entry_form(entry),
+        "ref": cap_state.entry_ref(entry, agent_name=context.name),
+        "definition_file": cap_state.entry_definition_file(entry),
     }
-    line = caps.entry_line(entry)
+    line = cap_state.entry_line(entry)
     if line is not None:
         item["line"] = line
     return item

@@ -23,7 +23,8 @@ from uvicorn.main import STARTUP_FAILURE
 
 from toolang.agent import local as agents
 from toolang.agent.sandbox import prepare_root_mounts
-from toolang.catalog import cap as cap_store
+from toolang.catalog import agent as agent_catalog
+from toolang.state import caps as cap_store
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.protocols.sandbox import AgentSandbox
 from toolang.base.types.model import ModelAlias
@@ -1095,7 +1096,7 @@ def assemble_execution(
     executor = Executor(
         root=toolang_root,
         name=agent_name,
-        home=agents.agent_home(toolang_root, agent_name),
+        home=agent_catalog.agent_home(toolang_root, agent_name),
         id_state_path=agents.agent_id_state_path(toolang_root, agent_name),
         setup=setup,
         store=store,
@@ -1224,7 +1225,7 @@ def _up_managed_sandbox(
     request = SandboxStartRequest(
         selector=selector,
         local_root=toolang_root,
-        local_home=agents.agent_home(toolang_root, agent_name),
+        local_home=agent_catalog.agent_home(toolang_root, agent_name),
         sandbox_root=sandbox_root,
         sandbox_home=sandbox_home,
         agent_name=agent_name,

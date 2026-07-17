@@ -1,1 +1,1 @@
-"""Agent identity, filesystem layout, processes, and runtime assembly."""
+"""Agent runtime materialization, processes, tools, and assembly."""

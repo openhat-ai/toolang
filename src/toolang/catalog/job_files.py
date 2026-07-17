@@ -1,4 +1,4 @@
-"""Local task and chore definition and lifecycle helpers."""
+"""Authored task and chore documents and lifecycle helpers."""
 
 from __future__ import annotations
 

@@ -8,7 +8,7 @@ from pathlib import Path
 import click
 
 from toolang.work import files as file_requests
-from toolang.catalog.cap import split_cap_selectors
+from toolang.state.caps import split_cap_selectors
 from toolang.execution.request import ExecutableKind
 from toolang.lang.ast import AgicDecl, FlowDecl, Parameter
 from toolang.plugin.models.resolution import split_model_selectors

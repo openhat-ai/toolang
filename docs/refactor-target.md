@@ -40,7 +40,7 @@ exist only when it owns state, invariants, or a meaningful protocol.
 
 ```text
 toolang/
-├── agent/                  # identity, layout, sources, processes, runtime assembly
+├── agent/                  # runtime materialization, processes, tools, and assembly
 ├── api/                    # FastAPI application and resource routes
 ├── base/                   # plugin-facing protocols and shared value types
 ├── catalog/                # authored agent, cap, and job CRUD
@@ -52,7 +52,7 @@ toolang/
 ├── plugin/                 # plugin loading, config, and built-in implementations
 ├── state/                  # durable/prepared files and immutable agent state
 ├── templates/              # built-in authored-file templates
-└── work/                   # jobs, file requests, watchers, stores, and scheduling
+└── work/                   # effective jobs, file requests, watchers, stores, scheduling
 ```
 
 Packages should contain concept families rather than one file per class. Most
@@ -102,9 +102,9 @@ The canonical implementations are `catalog.agent.AgentCatalog`,
 - `clone()`
 - `remove()`
 
-It returns `AgentLayout` values. Remote agent resolution, fetching, and
-materialization belong to agent source operations. Process start, stop, and
-status belong to `AgentProcess`.
+It returns `AgentLayout` values. Remote agent source resolution and fetching
+belong to the catalog; visiting and roaming materialization belongs to
+`toolang.agent`. Process start, stop, and status belong to `AgentProcess`.
 
 ### CapCatalog
 
@@ -117,8 +117,8 @@ Each `CapCatalog` instance manages one root or agent-home cap location:
 - `remove()`
 - `snapshot()`
 
-Remote fetching, caching, and materialization remain separate from authored
-CRUD.
+Remote source resolution belongs to the catalog. Remote content fetching,
+caching, and effective-cap materialization remain in `toolang.state`.
 
 ### JobCatalog
 

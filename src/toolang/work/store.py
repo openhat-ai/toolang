@@ -11,7 +11,7 @@ import sqlite3
 import threading
 from typing import Literal, cast
 
-from . import definitions as job_definitions
+from toolang.catalog import job_files as job_definitions
 from ..execution.records import RunStatus
 from .state import AgentJobs, JobDefinition
 

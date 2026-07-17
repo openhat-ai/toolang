@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from toolang.catalog.job import JobCatalog
-import toolang.work.definitions as job_definitions
+from toolang.catalog import job_files as job_definitions
 from toolang.common.ids import LOCAL_ID_FAMILY, decode_id
 
 

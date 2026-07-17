@@ -14,6 +14,7 @@ import pytest
 from typer.testing import CliRunner
 
 from toolang.agent import local as agents
+from toolang.catalog import agent as agent_catalog
 from toolang.catalog.agent import AgentCatalog
 from toolang.catalog import cap as caps
 from toolang.state import caps as cap_state
@@ -57,7 +58,7 @@ def _create_cap(
     root: Path,
     agent: str,
     *,
-    visibility: caps.PreparedVisibility,
+    visibility: caps.Visibility,
     kind: caps.EntryKind,
     name: str,
     text: str,
@@ -639,56 +640,13 @@ def test_cli_clone_copies_agent_without_caps(tmp_path: Path) -> None:
     assert not (toolang_root / "agents" / "bob" / ".caps").exists()
 
 
-def test_agent_selector_parsing_supports_name_shorthand_and_ref() -> None:
-    local = agents.parse_agent_selector("alice")
-    github_short = agents.parse_agent_selector("brice/alice")
-    host_short = agents.parse_agent_selector("toolang.ai/alice")
-    github_ref = agents.parse_agent_selector(
-        "github://brice/agents/team/alice.too@main"
-    )
-
-    assert local.form == "name"
-    assert local.name == "alice"
-    assert github_short.form == "shorthand"
-    assert github_short.github_owner == "brice"
-    assert github_short.name == "alice"
-    assert host_short.form == "shorthand"
-    assert host_short.resolved_ref().render() == "https://toolang.ai/alice.too"
-    assert github_ref.form == "ref"
-    assert (
-        github_ref.resolved_ref().render()
-        == "github://brice/agents/team/alice.too@main"
-    )
-
-
-def test_agent_selector_parsing_supports_repo_shorthand() -> None:
-    selector = agents.parse_agent_selector("brice/project/alice")
-
-    assert selector.form == "shorthand"
-    assert selector.github_owner == "brice"
-    assert selector.github_repo == "project"
-    assert selector.name == "alice"
-
-
-def test_agent_selector_canonicalizes_raw_refs_heads_url() -> None:
-    selector = agents.parse_agent_selector(
-        "https://raw.githubusercontent.com/briceyan/agents/refs/heads/main/dev.too"
-    )
-
-    assert selector.form == "ref"
-    assert (
-        selector.resolved_ref().render()
-        == "github://briceyan/agents/dev.too@refs/heads/main"
-    )
-
-
 def test_cli_clone_remote_shorthand_defaults_target_name(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
     probes: list[str] = []
 
-    def fake_fetch(ref: agents.AgentRef) -> str:
+    def fake_fetch(ref: agent_catalog.AgentRef) -> str:
         assert ref.render() == "github://brice/agents/agents/alice.too@main"
         return "agent source-name\n"
 
@@ -697,10 +655,10 @@ def test_cli_clone_remote_shorthand_defaults_target_name(
         return ref.path == "agents/alice.too"
 
     monkeypatch.setattr(
-        agents, "_github_repo_default_branch", lambda owner, repo: "main"
+        agent_catalog, "_github_repo_default_branch", lambda owner, repo: "main"
     )
-    monkeypatch.setattr(agents, "_github_agent_ref_exists", fake_exists)
-    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
+    monkeypatch.setattr(agent_catalog, "_github_agent_ref_exists", fake_exists)
+    monkeypatch.setattr(agent_catalog, "fetch_agent_ref", fake_fetch)
 
     result = runner.invoke(
         cli.app,
@@ -723,7 +681,7 @@ def test_cli_clone_remote_repo_shorthand_uses_named_repo(
     toolang_root = tmp_path / "toolang"
     probes: list[str] = []
 
-    def fake_fetch(ref: agents.AgentRef) -> str:
+    def fake_fetch(ref: agent_catalog.AgentRef) -> str:
         assert ref.render() == "github://brice/project/alice.too@trunk"
         return "agent source-name\n"
 
@@ -732,10 +690,10 @@ def test_cli_clone_remote_repo_shorthand_uses_named_repo(
         return ref.path == "alice.too"
 
     monkeypatch.setattr(
-        agents, "_github_repo_default_branch", lambda owner, repo: "trunk"
+        agent_catalog, "_github_repo_default_branch", lambda owner, repo: "trunk"
     )
-    monkeypatch.setattr(agents, "_github_agent_ref_exists", fake_exists)
-    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
+    monkeypatch.setattr(agent_catalog, "_github_agent_ref_exists", fake_exists)
+    monkeypatch.setattr(agent_catalog, "fetch_agent_ref", fake_fetch)
 
     result = runner.invoke(
         cli.app,
@@ -753,78 +711,16 @@ def test_cli_clone_remote_repo_shorthand_uses_named_repo(
     ]
 
 
-def test_agent_shorthand_falls_back_to_main_when_default_branch_probe_fails(
-    monkeypatch,
-) -> None:
-    probes: list[str] = []
-
-    def fail_default_branch(owner: str, repo: str) -> str:
-        del owner, repo
-        raise ValueError("rate limited")
-
-    def fake_exists(ref: GitHubRef) -> bool:
-        probes.append(ref.render())
-        return ref.path == "dev.too"
-
-    monkeypatch.setattr(agents, "_github_repo_default_branch", fail_default_branch)
-    monkeypatch.setattr(agents, "_github_agent_ref_exists", fake_exists)
-
-    selector = agents.parse_agent_selector("briceyan/dev")
-    ref = agents.resolve_agent_selector_ref(selector)
-
-    assert ref.render() == "github://briceyan/agents/dev.too@main"
-    assert probes == [
-        "github://briceyan/agents/agents/dev.too@main",
-        "github://briceyan/agents/dev.too@main",
-    ]
-
-
-def test_agent_shorthand_error_uses_input_shape(monkeypatch) -> None:
-    monkeypatch.setattr(
-        agents, "_github_repo_default_branch", lambda owner, repo: "main"
-    )
-    monkeypatch.setattr(agents, "_github_agent_ref_exists", lambda ref: False)
-
-    selector = agents.parse_agent_selector("briceyan/dev")
-
-    with pytest.raises(
-        ValueError, match="could not resolve agent shorthand: briceyan/dev"
-    ):
-        agents.resolve_agent_selector_ref(selector)
-
-
-def test_github_agent_fetch_uses_raw_url(monkeypatch) -> None:
-    captured: dict[str, str] = {}
-
-    def fake_fetch(url: str) -> str:
-        captured["url"] = url
-        return "agent dev\n"
-
-    monkeypatch.setattr(agents, "_fetch_http_text", fake_fetch)
-
-    text = agents._fetch_github_text(
-        GitHubRef(
-            owner="briceyan", repo="agents", path="dev.too", rev="main"
-        )
-    )
-
-    assert text == "agent dev\n"
-    assert (
-        captured["url"]
-        == "https://raw.githubusercontent.com/briceyan/agents/main/dev.too"
-    )
-
-
 def test_cli_clone_remote_url_supports_explicit_target(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
 
-    def fake_fetch(ref: agents.AgentRef) -> str:
+    def fake_fetch(ref: agent_catalog.AgentRef) -> str:
         assert ref.render() == "https://toolang.ai/demo/researcher.too"
         return "agent demo\n"
 
-    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
+    monkeypatch.setattr(agent_catalog, "fetch_agent_ref", fake_fetch)
 
     result = runner.invoke(
         cli.app,
@@ -1503,7 +1399,7 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     captured: dict[str, object] = {}
 
-    def fake_fetch(ref: agents.AgentRef, *, progress=None) -> str:
+    def fake_fetch(ref: agent_catalog.AgentRef, *, progress=None) -> str:
         del progress
         assert ref.render() == "github://brice/agents/agents/alice.too@main"
         return "agent remote-source\n"
@@ -1528,12 +1424,14 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
         return 0
 
     monkeypatch.setattr(
-        agents, "_github_repo_default_branch", lambda owner, repo: "main"
+        agent_catalog, "_github_repo_default_branch", lambda owner, repo: "main"
     )
     monkeypatch.setattr(
-        agents, "_github_agent_ref_exists", lambda ref: ref.path == "agents/alice.too"
+        agent_catalog,
+        "_github_agent_ref_exists",
+        lambda ref: ref.path == "agents/alice.too",
     )
-    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
+    monkeypatch.setattr(agent_catalog, "fetch_agent_ref", fake_fetch)
     monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
     monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
     monkeypatch.setattr(agent_up, "resolve_runtime_port", lambda **_kwargs: 45123)
@@ -1560,7 +1458,7 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
     toolang_root = tmp_path / "toolang"
     captured: dict[str, object] = {}
 
-    def fake_fetch(ref: agents.AgentRef, *, progress=None) -> str:
+    def fake_fetch(ref: agent_catalog.AgentRef, *, progress=None) -> str:
         del progress
         assert ref.render() == "https://toolang.ai/demo/researcher.too"
         return "agent researcher\n"
@@ -1579,7 +1477,7 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
         captured["port"] = startup.port
         return 0
 
-    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
+    monkeypatch.setattr(agent_catalog, "fetch_agent_ref", fake_fetch)
     monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
     monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
     monkeypatch.setattr(agent_up, "resolve_runtime_port", lambda **_kwargs: 45124)
@@ -1594,7 +1492,7 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
     assert captured["agent_name"] == "researcher"
     assert captured["toolang_root"] == agents.visiting_root(
         toolang_root,
-        agents.HttpAgentRef(url="https://toolang.ai/demo/researcher.too"),
+        agent_catalog.HttpAgentRef(url="https://toolang.ai/demo/researcher.too"),
     )
     assert captured["port"] == 45124
 
@@ -1647,7 +1545,7 @@ def test_cli_run_rejects_missing_resident_agent(tmp_path: Path, monkeypatch) -> 
 
     assert result.exit_code == 1
     assert "Agent missing not found" in result.stderr
-    assert not agents.agent_home(toolang_root, "missing").exists()
+    assert not agent_catalog.agent_home(toolang_root, "missing").exists()
 
 
 def test_cli_run_interrupts_prepare_once(tmp_path: Path, monkeypatch) -> None:
@@ -1680,7 +1578,7 @@ def test_cli_run_interrupts_prepare_once(tmp_path: Path, monkeypatch) -> None:
 
 def test_cli_run_rejects_active_visiting_agent(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    ref = agents.HttpAgentRef(url="https://toolang.ai/demo/researcher.too")
+    ref = agent_catalog.HttpAgentRef(url="https://toolang.ai/demo/researcher.too")
     visiting_root = agents.visiting_root(toolang_root, ref)
     (visiting_root / "agents" / "researcher").mkdir(parents=True, exist_ok=True)
     agents.write_runtime_state(
@@ -1691,7 +1589,9 @@ def test_cli_run_rejects_active_visiting_agent(tmp_path: Path, monkeypatch) -> N
         pid=os.getpid(),
     )
     monkeypatch.setattr(
-        agents, "fetch_agent_ref", lambda *_args, **_kwargs: "agent researcher\n"
+        agent_catalog,
+        "fetch_agent_ref",
+        lambda *_args, **_kwargs: "agent researcher\n",
     )
     monkeypatch.setattr(
         agent_up,
@@ -1739,16 +1639,16 @@ def test_visiting_run_target_reuses_stable_root_and_program(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    ref = agents.HttpAgentRef(
+    ref = agent_catalog.HttpAgentRef(
         url=f"https://toolang.ai/demo/{uuid4().hex}/researcher.too"
     )
-    fetches: list[agents.AgentRef] = []
+    fetches: list[agent_catalog.AgentRef] = []
 
-    def fake_fetch(fetch_ref: agents.AgentRef, **_kwargs) -> str:
+    def fake_fetch(fetch_ref: agent_catalog.AgentRef, **_kwargs) -> str:
         fetches.append(fetch_ref)
         return "agent old-name\n"
 
-    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
+    monkeypatch.setattr(agent_catalog, "fetch_agent_ref", fake_fetch)
 
     with agents.resolved_run_target(toolang_root, ref.render()) as first:
         agents.write_runtime_state(
@@ -1783,7 +1683,7 @@ def test_visiting_run_target_reuses_stable_root_and_program(
 
 
 def test_visiting_root_ignores_local_toolang_root(tmp_path: Path) -> None:
-    ref = agents.HttpAgentRef(url="https://toolang.ai/demo/researcher.too")
+    ref = agent_catalog.HttpAgentRef(url="https://toolang.ai/demo/researcher.too")
 
     assert agents.visiting_root(tmp_path / "one", ref) == agents.visiting_root(
         tmp_path / "two", ref
@@ -1803,7 +1703,7 @@ def test_visiting_run_target_reuses_shorthand_cache_without_resolving(
     program_path.parent.mkdir(parents=True, exist_ok=True)
     program_path.write_text(f"agent {agent_name}\n", encoding="utf-8")
     monkeypatch.setattr(
-        agents,
+        agent_catalog,
         "resolve_agent_selector_ref",
         lambda *_args, **_kwargs: pytest.fail(
             "fresh visiting cache should not resolve"
@@ -1820,18 +1720,18 @@ def test_visiting_run_target_refetches_stale_program_cache(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    ref = agents.HttpAgentRef(
+    ref = agent_catalog.HttpAgentRef(
         url=f"https://toolang.ai/demo/{uuid4().hex}/researcher.too"
     )
     fetched_sources = iter(("agent old-name\n", "agent newer-name\n"))
-    fetches: list[agents.AgentRef] = []
+    fetches: list[agent_catalog.AgentRef] = []
 
-    def fake_fetch(fetch_ref: agents.AgentRef, **_kwargs) -> str:
+    def fake_fetch(fetch_ref: agent_catalog.AgentRef, **_kwargs) -> str:
         fetches.append(fetch_ref)
         return next(fetched_sources)
 
     monkeypatch.setattr(agents, "VISITING_PROGRAM_CACHE_TTL_SEC", 60)
-    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
+    monkeypatch.setattr(agent_catalog, "fetch_agent_ref", fake_fetch)
 
     with agents.resolved_run_target(toolang_root, ref.render()) as first:
         program_path = first.toolang_root / "agents" / first.agent_name / "agent.too"
@@ -2999,7 +2899,7 @@ def test_cli_start_rejects_missing_agent(tmp_path: Path, monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert "Agent missing not found" in result.stderr
-    assert not agents.agent_home(toolang_root, "missing").exists()
+    assert not agent_catalog.agent_home(toolang_root, "missing").exists()
 
 
 def test_cli_remove_deletes_stopped_agent(tmp_path: Path) -> None:
@@ -3463,7 +3363,7 @@ def test_cli_info_reads_cap_counts_from_prepared_locks(
     def fail_list_entries(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("info should use prepared locks for cap counts")
 
-    monkeypatch.setattr(caps, "list_entries", fail_list_entries)
+    monkeypatch.setattr(cap_state, "list_entries", fail_list_entries)
 
     result = runner.invoke(
         cli.app,
@@ -3502,7 +3402,7 @@ def test_cli_info_rebuilds_missing_prepared_lock(tmp_path: Path, monkeypatch) ->
             "info should rebuild prepared locks instead of scanning entries"
         )
 
-    monkeypatch.setattr(caps, "list_entries", fail_list_entries)
+    monkeypatch.setattr(cap_state, "list_entries", fail_list_entries)
 
     result = runner.invoke(
         cli.app,
@@ -5427,8 +5327,8 @@ def test_cli_stop_stops_sandboxed_agent(tmp_path: Path, monkeypatch) -> None:
 
 def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state,
         "_remote_materialized_files",
@@ -5537,7 +5437,7 @@ def test_cli_cap_remote_list_shows_accessible_source_url(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state,
         "_remote_materialized_files",
@@ -5576,7 +5476,7 @@ def test_cli_cap_remote_file_list_uses_github_blob_url(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state,
         "_remote_materialized_files",
@@ -5712,8 +5612,8 @@ def test_cli_cap_local_new_reuses_existing_remote_cap_outputs(
     toolang_root = tmp_path / "toolang"
     fetches: list[str] = []
 
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         fetches.append(ref.render())
@@ -5752,8 +5652,8 @@ def test_cli_cap_local_new_reuses_existing_remote_cap_outputs(
 
 def test_cli_cap_remote_add_reports_not_found(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: False)
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: False)
 
     result = _invoke_caps_app(
         ["skill", "add", "acme/missing"],
@@ -5769,8 +5669,8 @@ def test_cli_cap_add_preserves_unrelated_config_sections(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     config_path = toolang_root / "config.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
@@ -5805,7 +5705,7 @@ def test_cli_remote_cap_add_remove_reuses_existing_wired_outputs(
     AgentCatalog(toolang_root).create("alice")
     fetches: list[str] = []
 
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         fetches.append(ref.render())
@@ -5901,7 +5801,7 @@ def test_cli_cap_new_cancel_does_not_resolve_program_remote_uses(
     )
     monkeypatch.setattr(cli.click, "edit", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        cap_state,
+        caps,
         "_github_repo_default_branch",
         lambda owner, repo: pytest.fail(
             f"unexpected remote branch lookup: {owner}/{repo}"
@@ -5928,8 +5828,8 @@ def test_cli_cap_new_save_does_not_resolve_program_remote_uses(
         "agent alice\n\nwith skill briceyan/pdf-processing\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state,
         "_fetch_github_directory",
@@ -5939,7 +5839,7 @@ def test_cli_cap_new_save_does_not_resolve_program_remote_uses(
 
     monkeypatch.setattr(cli.click, "edit", lambda *_args, **_kwargs: "Saved psyche.\n")
     monkeypatch.setattr(
-        cap_state,
+        caps,
         "_github_repo_default_branch",
         lambda owner, repo: pytest.fail(
             f"unexpected remote branch lookup: {owner}/{repo}"
@@ -7038,8 +6938,8 @@ def test_cli_cap_list_global_filters_results(tmp_path: Path, monkeypatch) -> Non
 
 def test_cli_cap_list_concept_filters_results(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
 
     _create_cap(
         toolang_root,
@@ -7218,7 +7118,7 @@ def test_standalone_caps_list_collects_all_kinds_once(
         calls.append(kinds)
         return ()
 
-    monkeypatch.setattr(caps, "list_entries", fake_list_entries)
+    monkeypatch.setattr(cap_state, "list_entries", fake_list_entries)
 
     result = runner.invoke(
         caps_cli.app,

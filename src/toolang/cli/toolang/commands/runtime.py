@@ -12,7 +12,8 @@ import click
 import typer
 
 from toolang.agent import local as agents
-from toolang.catalog.cap import split_cap_selectors
+from toolang.catalog import agent as agent_catalog
+from toolang.state.caps import split_cap_selectors
 from toolang.plugin.models.resolution import split_model_selectors
 from toolang.plugin.sandboxes.loading import create_sandbox_plugin
 from toolang.plugin.tools.registry import split_tool_selectors
@@ -369,7 +370,7 @@ def start(
     from ...common.progress import as_progress_sink, make_cli_progress
 
     selector = require_runtime_agent(ctx, agent)
-    if user_call(agents.parse_agent_selector, selector).form != "name":
+    if user_call(agent_catalog.parse_agent_selector, selector).form != "name":
         raise click.ClickException(
             "start only supports local agent names; clone the remote source first"
         )
@@ -499,7 +500,7 @@ def resolve_startup(
     from ...common.progress import as_progress_sink
 
     root, agent = target.toolang_root, target.agent_name
-    if target.kind == "resident" and not agents.agent_home(root, agent).is_dir():
+    if target.kind == "resident" and not agent_catalog.agent_home(root, agent).is_dir():
         raise click.ClickException(f"Agent {agent} not found")
     existing = agents.AgentProcess(root, agent).status(ui_base_url=ui_base_url())
     if existing is not None and existing.status in {"running", "preparing", "starting"}:

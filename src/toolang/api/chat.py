@@ -16,7 +16,7 @@ from toolang.execution.binding import allocate_thread_id
 from toolang.execution.effective import effective_origin_model_selectors, select_origin_agic
 from toolang.plugin.models.resolution import selectable_model_targets, split_model_selectors
 from toolang.plugin.tools.registry import split_tool_selectors
-from toolang.catalog.cap import split_cap_selectors
+from toolang.state.caps import split_cap_selectors
 from toolang.execution.records import ThreadPeer
 from toolang.execution.records import RunRecord
 from toolang.execution.reply import BufferedReplySink, SseReplySink, TraceReplySink

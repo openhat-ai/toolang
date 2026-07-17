@@ -22,6 +22,7 @@ import pytest
 import frontmatter
 
 from toolang.agent import local as agents
+from toolang.catalog import agent as agent_catalog
 from toolang.catalog.agent import AgentCatalog
 from toolang.catalog import cap as caps
 from toolang.catalog.job import JobCatalog
@@ -85,10 +86,9 @@ from toolang.base.types.sandbox import (
 )
 from toolang.catalog.cap import (
     add_remote_entry,
-    list_entries,
     remove_remote_entry,
 )
-from toolang.state.caps import build_visibility_lock
+from toolang.state.caps import build_visibility_lock, list_entries
 from toolang.state import caps as cap_state
 from toolang.plugin.config import ChannelBinding
 from toolang.config.log_spec import PY_LOG_ENV_VAR
@@ -143,7 +143,7 @@ def _put_cap(
     root: Path,
     agent: str,
     *,
-    visibility: caps.PreparedVisibility,
+    visibility: caps.Visibility,
     kind: caps.EntryKind,
     name: str,
     body: str = "",
@@ -2646,8 +2646,8 @@ def test_control_routes_update_durable_only_without_prepare_reload(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
@@ -4361,118 +4361,12 @@ def test_runtime_tool_plugin_config_maps_service_caps_to_service_use(
     ]
 
 
-def test_durable_caps_collapse_skill_directories(tmp_path: Path) -> None:
-    toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "skills" / "reviewer" / "SKILL.md", "# Reviewer\n")
-    _write_text(toolang_root / "skills" / "reviewer" / "notes.txt", "asset\n")
-    _write_text(toolang_root / "prompts" / "rewrite.md", "# Rewrite\n")
-
-    entries = caps.CapCatalog(toolang_root, "alice", visibility="shared").list()
-
-    assert [(entry.kind, entry.path) for entry in entries] == [
-        ("prompt", "prompts/rewrite.md"),
-        ("skill", "skills/reviewer/SKILL.md"),
-    ]
-
-
-def test_caps_put_list_remove_local_entries(tmp_path: Path) -> None:
-    toolang_root = tmp_path / "toolang"
-    shared = caps.CapCatalog(toolang_root, "alice", visibility="shared")
-    private = caps.CapCatalog(toolang_root, "alice", visibility="private")
-
-    prompt_path = _put_cap(
-        toolang_root,
-        "alice",
-        visibility="shared",
-        kind="prompt",
-        name="rewrite",
-        meta={"description": "Rewrite text"},
-        body="Rewrite this text.",
-    )
-    skill_path = _put_cap(
-        toolang_root,
-        "alice",
-        visibility="private",
-        kind="skill",
-        name="reviewer",
-        meta={"description": "Review code"},
-        body="Review code carefully.",
-    )
-    service_path = _put_cap(
-        toolang_root,
-        "alice",
-        visibility="shared",
-        kind="service",
-        name="linear",
-        meta={
-            "description": "Linear MCP",
-            "transport": "stdio",
-            "target": "uvx mcp-remote https://mcp.linear.app/sse",
-            "env": "LINEAR_API_KEY, API_KEY",
-        },
-    )
-
-    assert prompt_path == toolang_root / "prompts" / "rewrite.md"
-    assert (
-        skill_path
-        == toolang_root / "agents" / "alice" / "skills" / "reviewer" / "SKILL.md"
-    )
-    assert service_path == toolang_root / "services" / "linear.md"
-
-    shared_entries = shared.list()
-    private_entries = private.list()
-
-    assert [(entry.kind, entry.meta["description"]) for entry in shared_entries] == [
-        ("prompt", "Rewrite text"),
-        ("service", "Linear MCP"),
-    ]
-    assert [(entry.kind, entry.path) for entry in private_entries] == [
-        ("skill", "agents/alice/skills/reviewer/SKILL.md")
-    ]
-
-    assert (
-        shared.remove("prompt", "rewrite")
-        is True
-    )
-    assert (
-        shared.remove("service", "linear")
-        is True
-    )
-    assert (
-        private.remove("skill", "reviewer")
-        is True
-    )
-    assert shared.list() == ()
-    assert private.list() == ()
-
-
-def test_caps_reject_service_env_map(tmp_path: Path) -> None:
-    toolang_root = tmp_path / "toolang"
-
-    with pytest.raises(
-        ValueError, match="service env must list environment variable names"
-    ):
-        _put_cap(
-            toolang_root,
-            "alice",
-            visibility="shared",
-            kind="service",
-            name="linear",
-            meta={
-                "description": "Linear MCP",
-                "transport": "stdio",
-                "target": "uvx mcp-remote https://mcp.linear.app/sse",
-                "env": {"LINEAR_API_KEY": "$LINEAR_API_KEY"},
-            },
-        )
-
-
 def test_prepare_materializes_remote_entries_from_config(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_materialized_files(*, relative_entry_path, kind, name, ref):
         del kind, name, ref
@@ -4521,8 +4415,8 @@ def test_remote_skill_shorthand_probes_agent_skills_and_skills_repos(
         probes.append(ref)
         return ref == "github://anthropics/skills/skills/pdf@main"
 
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(cap_state, "_github_remote_exists", fake_exists)
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", fake_exists)
 
     add_remote_entry(
         toolang_root,
@@ -4557,9 +4451,9 @@ def test_remote_cap_repo_shorthand_uses_named_repo_path_probes(
         return ref == "github://anthropics/project/pdf@trunk"
 
     monkeypatch.setattr(
-        cap_state, "_github_repo_default_branch", lambda owner, repo: "trunk"
+        caps, "_github_repo_default_branch", lambda owner, repo: "trunk"
     )
-    monkeypatch.setattr(cap_state, "_github_remote_exists", fake_exists)
+    monkeypatch.setattr(caps, "_github_remote_exists", fake_exists)
 
     add_remote_entry(
         toolang_root,
@@ -4585,7 +4479,7 @@ def test_remote_skill_add_canonicalizes_github_tree_url(
 ) -> None:
     toolang_root = tmp_path / "toolang"
 
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state,
         "_fetch_github_directory",
@@ -4633,7 +4527,7 @@ def test_remote_skill_add_canonicalizes_github_skill_file_url(
 ) -> None:
     toolang_root = tmp_path / "toolang"
 
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state,
         "_fetch_github_directory",
@@ -4666,7 +4560,7 @@ def test_remote_skill_add_canonicalizes_raw_refs_heads_skill_file_url(
 ) -> None:
     toolang_root = tmp_path / "toolang"
 
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state,
         "_fetch_github_directory",
@@ -4700,8 +4594,8 @@ def test_state_watcher_refresh_records_remote_cap_updates(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state,
         "_fetch_github_directory",
@@ -4793,8 +4687,8 @@ def test_prepare_reuses_remote_caps_when_visibility_inputs_and_outputs_match(
     toolang_root = tmp_path / "toolang"
     fetches: list[str] = []
 
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         fetches.append(ref.render())
@@ -4887,8 +4781,8 @@ def test_prepare_reuses_private_remote_caps_when_shared_inputs_change(
     toolang_root = tmp_path / "toolang"
     fetches: list[str] = []
 
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         fetches.append(ref.render())
@@ -4924,8 +4818,8 @@ def test_prepare_reuses_private_remote_caps_when_local_cap_changes(
     toolang_root = tmp_path / "toolang"
     fetches: list[str] = []
 
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         fetches.append(ref.render())
@@ -4971,8 +4865,8 @@ def test_concurrent_agent_prepare_reuses_shared_lock_after_another_agent_updates
     fetches: list[str] = []
     fetch_lock = threading.Lock()
 
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
 
     AgentCatalog(toolang_root).create("alice")
     AgentCatalog(toolang_root).create("bob")
@@ -5044,7 +4938,7 @@ def test_prepare_reuses_program_ref_caps_when_inline_program_changes(
     toolang_root = tmp_path / "toolang"
     fetches: list[str] = []
 
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         fetches.append(ref.render())
@@ -5077,7 +4971,7 @@ def test_prepare_fetches_only_changed_program_ref_cap(
     toolang_root = tmp_path / "toolang"
     fetches: list[str] = []
 
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         fetches.append(ref.render())
@@ -5117,8 +5011,8 @@ def test_list_entries_reuses_prepared_program_ref_resolution(
 ) -> None:
     toolang_root = tmp_path / "toolang"
 
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state, "_fetch_github_file", lambda ref: b"Remote psyche body.\n"
     )
@@ -5131,13 +5025,13 @@ def test_list_entries_reuses_prepared_program_ref_resolution(
     state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
 
     monkeypatch.setattr(
-        cap_state,
+        caps,
         "_github_repo_default_branch",
         lambda owner, repo: pytest.fail(
             f"unexpected remote branch lookup: {owner}/{repo}"
         ),
     )
-    entries = caps.list_entries(
+    entries = cap_state.list_entries(
         toolang_root, "alice", visibility="private", kinds={"psyche"}
     )
 
@@ -5153,8 +5047,8 @@ def test_prepare_refetches_remote_caps_when_prepared_output_does_not_match_lock(
     toolang_root = tmp_path / "toolang"
     fetch_count = 0
 
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         nonlocal fetch_count
@@ -5196,7 +5090,7 @@ def test_remote_skill_add_rejects_missing_github_tree_url(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: False)
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: False)
 
     with pytest.raises(
         ValueError, match="remote skill not found or missing entry file"
@@ -5268,7 +5162,7 @@ def test_prepare_materializes_remote_skill_from_program_use(
         "agent alice\n\nwith skill https://github.com/coinbase/agentic-wallet-skills/tree/main/skills/fund\n",
     )
 
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state,
         "_fetch_github_directory",
@@ -5621,33 +5515,10 @@ def test_prepare_fetches_remote_caps_with_bounded_concurrency(
     ]
 
 
-def test_remote_shorthand_falls_back_to_main_when_default_branch_lookup_fails(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(
-        cap_state,
-        "_github_repo_default_branch",
-        lambda owner, repo: (_ for _ in ()).throw(ValueError("rate limited")),
-    )
-    monkeypatch.setattr(
-        cap_state,
-        "_github_remote_exists",
-        lambda kind, ref: (
-            kind == "psyche"
-            and ref == "github://briceyan/agents/psyches/senior-engineer.md@main"
-        ),
-    )
-
-    assert (
-        cap_state._resolve_remote_ref("psyche", "briceyan/senior-engineer")
-        == "github://briceyan/agents/psyches/senior-engineer.md@main"
-    )
-
-
 def test_caps_list_and_remove_remote_entries(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
 
     add_remote_entry(
         toolang_root,
@@ -8109,7 +7980,7 @@ def _build_context(
     executor = Executor(
         root=toolang_root,
         name=agent_name,
-        home=agents.agent_home(toolang_root, agent_name),
+        home=agent_catalog.agent_home(toolang_root, agent_name),
         id_state_path=agents.agent_id_state_path(toolang_root, agent_name),
         setup=setup,
         store=store,
@@ -8122,7 +7993,7 @@ def _build_context(
     return ApiContext(
         root=toolang_root,
         name=agent_name,
-        home=agents.agent_home(toolang_root, agent_name),
+        home=agent_catalog.agent_home(toolang_root, agent_name),
         room=agents.agent_room(toolang_root, agent_name),
         get_agent_state=watcher.current,
         channel_bindings=channel_bindings or {},

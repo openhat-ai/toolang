@@ -14,7 +14,8 @@ import click
 import typer
 
 from toolang.agent import local as agents
-from toolang.catalog.cap import split_cap_selectors
+from toolang.catalog.agent import agent_home
+from toolang.state.caps import split_cap_selectors
 from ....config.env import load_runtime_environ
 from toolang.plugin.models.resolution import split_model_selectors
 from toolang.plugin.tools.registry import split_tool_selectors
@@ -430,7 +431,7 @@ def _chat_home_label(ctx: typer.Context) -> str:
         agent_name = context_agent(ctx)
         if agent_name is None:
             return "agent home"
-        return str(agents.agent_home(context_root(ctx), agent_name))
+        return str(agent_home(context_root(ctx), agent_name))
     except Exception:
         return "agent home"
 

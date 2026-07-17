@@ -10,9 +10,10 @@ from typing import Any, Literal, cast
 import frontmatter
 
 from toolang.catalog import cap as caps
+from toolang.state import caps as cap_state
 from toolang.common.immutable import mutable_data
 from toolang.catalog.job import JobCatalog
-import toolang.work.definitions as job_definitions
+from toolang.catalog import job_files as job_definitions
 from toolang.common.error import ToolangError
 from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.tool import ToolContext
@@ -614,7 +615,7 @@ def _list_caps(
 ) -> list[dict[str, Any]]:
     scope = _scope(context)
     filter_visibility = _visibility_filter(visibility)
-    entries = caps.list_entries(
+    entries = cap_state.list_entries(
         scope.toolang_root,
         scope.agent_name,
         visibility=None if filter_visibility == "all" else filter_visibility,
@@ -724,7 +725,7 @@ def _find_cap_entry(
     source_form: str | None = None,
 ) -> PreparedEntry:
     entry_visibility = None if visibility == "all" else visibility
-    entries = caps.list_entries(
+    entries = cap_state.list_entries(
         scope.toolang_root,
         scope.agent_name,
         visibility=entry_visibility,
@@ -743,7 +744,8 @@ def _find_cap_entry(
         qualifier = f"{source_origin} " if source_origin is not None else ""
         raise ToolangError(f"{qualifier}{kind} not found: {name}")
     return sorted(
-        matches, key=lambda entry: caps.entry_ref(entry, agent_name=scope.agent_name)
+        matches,
+        key=lambda entry: cap_state.entry_ref(entry, agent_name=scope.agent_name),
     )[0]
 
 
@@ -753,19 +755,19 @@ def _cap_payload(
     *,
     include_content: bool = False,
 ) -> dict[str, Any]:
-    visibility = caps.entry_visibility(entry, agent_name=scope.agent_name)
+    visibility = cap_state.entry_visibility(entry, agent_name=scope.agent_name)
     item: dict[str, Any] = {
         "kind": entry.kind,
         "name": entry.name,
-        "scope": caps.entry_scope(entry, agent_name=scope.agent_name),
-        "origin": caps.entry_origin(entry),
-        "form": caps.entry_form(entry),
-        "ref": caps.entry_ref(entry, agent_name=scope.agent_name),
+        "scope": cap_state.entry_scope(entry, agent_name=scope.agent_name),
+        "origin": cap_state.entry_origin(entry),
+        "form": cap_state.entry_form(entry),
+        "ref": cap_state.entry_ref(entry, agent_name=scope.agent_name),
         "path": str(scope.toolang_root / entry.path),
-        "definition_file": caps.entry_definition_file(entry),
+        "definition_file": cap_state.entry_definition_file(entry),
         "meta": mutable_data(entry.meta),
     }
-    line = caps.entry_line(entry)
+    line = cap_state.entry_line(entry)
     if line is not None:
         item["line"] = line
     if include_content and entry.source.form == "file":

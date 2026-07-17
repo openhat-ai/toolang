@@ -18,9 +18,9 @@
     "toolang.api",
     "toolang.catalog",
     "toolang.catalog.cap",
+    "toolang.catalog.job_files",
     "toolang.state",
     "toolang.work",
-    "toolang.work.definitions",
     "toolang.execution",
     "toolang.plugin",
     "toolang.plugin.models",
@@ -237,12 +237,12 @@
                 {% if "toolang.catalog.cap" in all_modules %}
                     <article class="reference-card">
                         <h3><a href="toolang/catalog/cap.html"><code>toolang.catalog.cap</code></a></h3>
-                        <p>Cap definitions, local cap files, remote cap refs, and effective cap views.</p>
+                        <p>Authored cap definitions, local cap files, remote cap refs, and source resolution.</p>
                     </article>
                 {% endif %}
-                {% if "toolang.work.definitions" in all_modules %}
+                {% if "toolang.catalog.job_files" in all_modules %}
                     <article class="reference-card">
-                        <h3><a href="toolang/work/definitions.html"><code>toolang.work.definitions</code></a></h3>
+                        <h3><a href="toolang/catalog/job_files.html"><code>toolang.catalog.job_files</code></a></h3>
                         <p>Task and chore document models, scheduling fields, and local work-file helpers.</p>
                     </article>
                 {% endif %}

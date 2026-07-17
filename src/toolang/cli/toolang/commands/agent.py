@@ -12,8 +12,9 @@ import click
 import typer
 
 from toolang.catalog.job import JobCatalog
-from toolang.catalog.agent import AgentCatalog
+from toolang.catalog.agent import AgentCatalog, agent_home
 from toolang.agent import local as agents
+from toolang import templates
 from toolang.state.caps import effective_cap_entries
 from toolang.state.prepared import PreparedEntry
 from ...common.updates import append_agent_update
@@ -46,7 +47,13 @@ def new_agent(
 ) -> None:
     root = context_root(ctx)
     try:
-        layout = AgentCatalog(root).create(agent, template=template)
+        source_text = templates.render_template(
+            "agent",
+            template,
+            agent_name=agent,
+            name=agent,
+        )
+        layout = AgentCatalog(root).create(agent, source_text=source_text)
     except FileExistsError as exc:
         raise click.ClickException(f"Agent {agent} already exists") from exc
     append_agent_update(
@@ -87,15 +94,17 @@ def remove_agent(
     agent: Annotated[str, typer.Argument(help="Agent name")],
 ) -> None:
     root = context_root(ctx)
+    process = agents.AgentProcess(root, agent)
+    status = process.status(ui_base_url=ui_base_url())
+    if status is not None and status.status in {"running", "preparing", "starting"}:
+        raise click.ClickException(active_agent_error(status))
+    if process.pids():
+        raise click.ClickException(f"Agent {agent} already running")
     try:
         AgentCatalog(root).remove(agent)
     except FileNotFoundError as exc:
         raise click.ClickException(f"Agent {agent} not found") from exc
-    except ValueError as exc:
-        status = agents.AgentProcess(root, agent).status(ui_base_url=ui_base_url())
-        if status is not None and status.status in {"running", "preparing", "starting"}:
-            raise click.ClickException(active_agent_error(status)) from exc
-        raise click.ClickException(f"Agent {agent} already running") from exc
+    agents.remove_sandbox_stage(root, agent)
     typer.echo(f"Removed agent {agent}")
 
 
@@ -131,7 +140,7 @@ def info_agent(
     if status is None:
         raise click.ClickException(f"Agent {agent_name} not found")
     runtime_state = process.state() or {}
-    created_at = created_time(agents.agent_home(root, agent_name))
+    created_at = created_time(agent_home(root, agent_name))
     started_at = runtime_value(runtime_state.get("started_at"))
     updated_at = runtime_value(runtime_state.get("updated_at"))
     status_value = status.status
@@ -140,7 +149,7 @@ def info_agent(
         if online is not None:
             status_value = f"{status.status} ({online})"
     rows = [
-        ("Home", str(agents.agent_home(root, agent_name))),
+        ("Home", str(agent_home(root, agent_name))),
         ("Caps", _caps_summary(root, agent_name)),
         ("Jobs", _jobs_summary(root, agent_name)),
         ("Tools", _tools_summary(root, agent_name)),

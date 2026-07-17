@@ -11,7 +11,7 @@ from toolang.base.protocols.tool import AgentTool
 from toolang.common.error import ToolangError
 from toolang.base.types.model import ModelTarget
 
-from toolang.catalog import cap as cap_store
+from toolang.state import caps as cap_store
 from ..lang.ast import AgicDecl, Directive, Program
 from ..state.agent import AgentState
 from toolang.state.prepared import PreparedEntry

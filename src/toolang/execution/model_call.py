@@ -12,7 +12,7 @@ from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.model import ModelTarget
 
-from toolang.catalog import cap as cap_store
+from toolang.state import caps as cap_store
 from ..common.immutable import mutable_data
 from ..lang.ast import AgicDecl, Message as AstMessage, Program
 from toolang.state.prepared import PreparedEntry
