@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from importlib import import_module, metadata
 from pathlib import Path
+import subprocess
+import sys
 import tomllib
 from typing import Any
 
@@ -39,3 +41,16 @@ def test_installed_console_scripts_match_project() -> None:
     }
 
     assert installed == _project_scripts()
+
+
+def test_cli_package_is_executable_as_a_module() -> None:
+    completed = subprocess.run(
+        [sys.executable, "-m", "toolang.cli.app", "--version"],
+        cwd=PROJECT_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.startswith("toolang ")
