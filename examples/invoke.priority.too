@@ -1,6 +1,6 @@
 #!/usr/bin/env toolang
 
-# Manual checks for CLI ordering against one thunk that allows multiple refs.
+# Manual checks for CLI ordering against one agic that allows multiple refs.
 #
 # Prefer Claude first:
 #   toolang examples/invoke.priority.too rewrite "Rewrite this sentence." \
@@ -14,8 +14,8 @@
 #     --model anthropic/claude-sonnet-4.5@openrouter \
 #     --model google/gemini-3.1-pro-preview@openrouter
 
-agic rewrite(in: Part[]):
-  model = openai/gpt-5, anthropic/claude-sonnet-4.5, google/gemini-3.1-pro-preview
+agic rewrite(_: Part[]):
+  models = openai/gpt-5, anthropic/claude-sonnet-4.5, google/gemini-3.1-pro-preview
 
   Rewrite the input for a technical audience.
   Keep the answer short and direct.

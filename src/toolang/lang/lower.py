@@ -9,7 +9,6 @@ from typing import TypeVar, cast
 from tree_sitter import Node as CstNode
 
 from . import ast
-from .cst import Cst
 
 _PROMPT_PARAM_RE = re.compile(r"^(?P<name>[A-Za-z_][\w-]*)(?P<optional>\?)?$")
 _DECL_REF_RE = re.compile(r"^[A-Za-z_][\w-]*$")
@@ -21,18 +20,18 @@ def _node_line(node: NodeT) -> int:
     return node.span.line
 
 
-def lower(cst: Cst) -> ast.Program:
+def _lower(cst: ast._ParsedSource) -> ast.Program:
     """Lower a checked CST without applying semantic validation."""
 
     return _Lowerer(cst).lower()
 
 
 class _Lowerer:
-    def __init__(self, cst: Cst) -> None:
+    def __init__(self, cst: ast._ParsedSource) -> None:
         self.cst = cst
         self.withs: list[ast.WithDecl] = []
         self.caps: list[ast.CapDecl] = []
-        self.works: list[ast.WorkDecl] = []
+        self.jobs: list[ast.JobDecl] = []
         self.structs: list[ast.StructDecl] = []
         self.contexts: list[ast.ContextDecl] = []
         self.instructs: list[ast.InstructDecl] = []
@@ -62,7 +61,7 @@ class _Lowerer:
             doc="\n".join(filter(None, program_doc)).strip() or None,
             withs=tuple(sorted(self.withs, key=_node_line)),
             caps=tuple(sorted(self.caps, key=_node_line)),
-            works=tuple(sorted(self.works, key=_node_line)),
+            jobs=tuple(sorted(self.jobs, key=_node_line)),
             structs=tuple(sorted(self.structs, key=_node_line)),
             contexts=tuple(sorted(self.contexts, key=_node_line)),
             instructs=tuple(sorted(self.instructs, key=_node_line)),
@@ -74,7 +73,9 @@ class _Lowerer:
         if node.type == "with":
             self.withs.append(
                 ast.WithDecl(
-                    cap_kind=cast(ast.CapKind, self._required_text(node, "kind").strip()),
+                    cap_kind=cast(
+                        ast.CapKind, self._required_text(node, "kind").strip()
+                    ),
                     reference=self._required_text(node, "reference").strip(),
                     span=self._span(node),
                     doc=doc,
@@ -85,16 +86,16 @@ class _Lowerer:
             self.caps.append(self._lower_cap(node, doc=doc))
             return
         if node.type in {"task", "chore"}:
-            self.works.append(self._lower_work(node, doc=doc))
+            self.jobs.append(self._lower_job(node, doc=doc))
             return
         if node.type == "struct":
             self.structs.append(self._lower_struct(node, doc=doc))
             return
         if node.type == "context":
-            self.contexts.append(self._lower_context(node, doc=doc, generated=False))
+            self.contexts.append(self._lower_context(node, doc=doc))
             return
         if node.type == "instruct":
-            self.instructs.append(self._lower_instruct(node, doc=doc, generated=False))
+            self.instructs.append(self._lower_instruct(node, doc=doc))
             return
         if node.type == "agic":
             self.agics.append(self._lower_agic(node, doc=doc))
@@ -102,13 +103,17 @@ class _Lowerer:
         if node.type == "flow":
             self.flows.append(self._lower_flow(node, doc=doc))
             return
-        raise RuntimeError(f"Unsupported Toolang CST item {node.type!r} at line {self._line(node)}.")
+        raise RuntimeError(
+            f"Unsupported Toolang CST item {node.type!r} at line {self._line(node)}."
+        )
 
     def _lower_cap(self, node: CstNode, *, doc: str | None) -> ast.CapDecl:
         body = self._required(node, "body")
         meta = self._properties(body)
         params = (
-            self._prompt_parameters(str(meta.get("params") or ""), span=self._span(node))
+            self._prompt_parameters(
+                str(meta.get("params") or ""), span=self._span(node)
+            )
             if node.type == "prompt"
             else ()
         )
@@ -122,10 +127,10 @@ class _Lowerer:
             doc=doc,
         )
 
-    def _lower_work(self, node: CstNode, *, doc: str | None) -> ast.WorkDecl:
+    def _lower_job(self, node: CstNode, *, doc: str | None) -> ast.JobDecl:
         body = self._required(node, "body")
-        return ast.WorkDecl(
-            kind=cast(ast.WorkKind, node.type),
+        return ast.JobDecl(
+            kind=cast(ast.JobKind, node.type),
             name=self._required_text(node, "name").strip(),
             body=self._content_text(body),
             meta=self._properties(body),
@@ -145,7 +150,9 @@ class _Lowerer:
                 pending_doc.clear()
                 continue
             if child.type != "field":
-                raise RuntimeError(f"Unsupported struct CST node {child.type!r} at line {self._line(child)}.")
+                raise RuntimeError(
+                    f"Unsupported struct CST node {child.type!r} at line {self._line(child)}."
+                )
             fields.append(
                 ast.Field(
                     name=self._required_text(child, "name").strip(),
@@ -168,14 +175,9 @@ class _Lowerer:
         node: CstNode,
         *,
         doc: str | None,
-        generated: bool,
     ) -> ast.ContextDecl:
         return ast.ContextDecl(
-            name=(
-                self._generated_name("context", node)
-                if generated
-                else self._optional_text(node.child_by_field_name("name")) or "default"
-            ),
+            name=self._optional_text(node.child_by_field_name("name")) or "default",
             body=self._block_text(self._required(node, "body")),
             span=self._span(node),
             doc=doc,
@@ -186,21 +188,18 @@ class _Lowerer:
         node: CstNode,
         *,
         doc: str | None,
-        generated: bool,
     ) -> ast.InstructDecl:
         return ast.InstructDecl(
-            name=(
-                self._generated_name("instruct", node)
-                if generated
-                else self._optional_text(node.child_by_field_name("name")) or "default"
-            ),
+            name=self._optional_text(node.child_by_field_name("name")) or "default",
             body=self._block_text(self._required(node, "body")),
             span=self._span(node),
             doc=doc,
         )
 
     def _lower_agic(self, node: CstNode, *, doc: str | None) -> ast.AgicDecl:
-        input_param, params, explicit = self._parameters(node.child_by_field_name("params"), owner=node)
+        input_param, params = self._parameters(
+            node.child_by_field_name("params"), owner=node
+        )
         directives: list[ast.Directive] = []
         messages: list[ast.Message] = []
         context: str | None = None
@@ -232,16 +231,24 @@ class _Lowerer:
                 instruct = self._lower_setting(child, target="instruct")
                 continue
             if child.type == "messages":
-                messages.extend(self._lower_messages(child, initial_doc=self._pending_doc(pending_doc)))
+                messages.extend(
+                    self._lower_messages(
+                        child, initial_doc=self._pending_doc(pending_doc)
+                    )
+                )
                 pending_doc.clear()
                 continue
             if child.type == "message":
-                messages.append(self._lower_message(child, doc=self._pending_doc(pending_doc)))
+                messages.append(
+                    self._lower_message(child, doc=self._pending_doc(pending_doc))
+                )
                 pending_doc.clear()
                 continue
             if child.type in {"pass_keyword", "pass_statement"}:
                 continue
-            raise RuntimeError(f"Unsupported agic CST node {child.type!r} at line {self._line(child)}.")
+            raise RuntimeError(
+                f"Unsupported agic CST node {child.type!r} at line {self._line(child)}."
+            )
 
         return ast.AgicDecl(
             name=self._optional_text(node.child_by_field_name("name")) or "default",
@@ -252,7 +259,6 @@ class _Lowerer:
             context=context,
             instruct=instruct,
             messages=tuple(messages),
-            params_explicit=explicit,
             span=self._span(node),
             doc=doc,
         )
@@ -262,7 +268,9 @@ class _Lowerer:
             return self._text(ref).strip()
         body = self._child_of_type(node, "text_inline")
         if body is None:
-            raise RuntimeError(f"Missing inline {target} body at line {self._line(node)}.")
+            raise RuntimeError(
+                f"Missing inline {target} body at line {self._line(node)}."
+            )
         text = self._block_text(body)
         if self._child_of_type(body, "text_line") and _DECL_REF_RE.fullmatch(text):
             return text
@@ -282,7 +290,9 @@ class _Lowerer:
         self.instructs.append(decl)
         return decl.name
 
-    def _lower_messages(self, node: CstNode, *, initial_doc: str | None = None) -> list[ast.Message]:
+    def _lower_messages(
+        self, node: CstNode, *, initial_doc: str | None = None
+    ) -> list[ast.Message]:
         messages: list[ast.Message] = []
         pending_doc = [initial_doc] if initial_doc else []
         for child in node.named_children:
@@ -293,18 +303,26 @@ class _Lowerer:
                 pending_doc.clear()
                 continue
             if child.type != "message":
-                raise RuntimeError(f"Unsupported message CST node {child.type!r} at line {self._line(child)}.")
-            messages.append(self._lower_message(child, doc=self._pending_doc(pending_doc)))
+                raise RuntimeError(
+                    f"Unsupported message CST node {child.type!r} at line {self._line(child)}."
+                )
+            messages.append(
+                self._lower_message(child, doc=self._pending_doc(pending_doc))
+            )
             pending_doc.clear()
         return messages
 
     def _lower_message(self, node: CstNode, *, doc: str | None) -> ast.Message:
         role = self._child_of_type(node, "role")
-        content = self._child_of_type(node, "text_inline") or self._child_of_type(node, "unroled_message")
+        content = self._child_of_type(node, "text_inline") or self._child_of_type(
+            node, "unroled_message"
+        )
         if content is None:
             raise RuntimeError(f"Missing message content at line {self._line(node)}.")
         return ast.Message(
-            role=cast(ast.Role, self._text(role).strip() if role is not None else "user"),
+            role=cast(
+                ast.Role, self._text(role).strip() if role is not None else "user"
+            ),
             content=self._block_text(content),
             explicit=role is not None,
             span=self._span(node),
@@ -312,7 +330,9 @@ class _Lowerer:
         )
 
     def _lower_flow(self, node: CstNode, *, doc: str | None) -> ast.FlowDecl:
-        input_param, params, explicit = self._parameters(node.child_by_field_name("params"), owner=node)
+        input_param, params = self._parameters(
+            node.child_by_field_name("params"), owner=node
+        )
         directives: list[ast.Directive] = []
         stmts: list[ast.FlowStmt] = []
         pending_doc: list[str] = []
@@ -328,12 +348,18 @@ class _Lowerer:
                 directives.append(self._lower_directive(child))
                 continue
             if child.type == "statements":
-                stmts.extend(self._lower_statements(child, initial_doc=self._pending_doc(pending_doc)))
+                stmts.extend(
+                    self._lower_statements(
+                        child, initial_doc=self._pending_doc(pending_doc)
+                    )
+                )
                 pending_doc.clear()
                 continue
             if child.type in {"pass_keyword", "pass_statement"}:
                 continue
-            raise RuntimeError(f"Unsupported flow CST node {child.type!r} at line {self._line(child)}.")
+            raise RuntimeError(
+                f"Unsupported flow CST node {child.type!r} at line {self._line(child)}."
+            )
         return ast.FlowDecl(
             name=self._optional_text(node.child_by_field_name("name")) or "main",
             input=input_param,
@@ -341,12 +367,13 @@ class _Lowerer:
             output=self._optional_text(node.child_by_field_name("return")),
             directives=tuple(directives),
             stmts=tuple(stmts),
-            params_explicit=explicit,
             span=self._span(node),
             doc=doc,
         )
 
-    def _lower_statements(self, node: CstNode, *, initial_doc: str | None = None) -> list[ast.FlowStmt]:
+    def _lower_statements(
+        self, node: CstNode, *, initial_doc: str | None = None
+    ) -> list[ast.FlowStmt]:
         stmts: list[ast.FlowStmt] = []
         pending_doc = [initial_doc] if initial_doc else []
         for child in node.named_children:
@@ -376,7 +403,9 @@ class _Lowerer:
 
         span = self._span(node)
         if node.type == "implicit_run_statement":
-            runnable = self._generated_agic(node, body=self._block_text(node), output=None)
+            runnable = self._generated_agic(
+                node, body=self._block_text(node), output=None
+            )
             return ast.RunStmt(runnable=runnable, span=span, doc=doc)
         if node.type == "run_statement":
             return ast.RunStmt(runnable=self._runnable(node), span=span, doc=doc)
@@ -388,7 +417,9 @@ class _Lowerer:
                 doc=doc,
             )
         if node.type == "ask_statement":
-            return ast.AskStmt(body=self._block_text(self._required(node, "body")), span=span, doc=doc)
+            return ast.AskStmt(
+                body=self._block_text(self._required(node, "body")), span=span, doc=doc
+            )
         if node.type == "scatter_statement":
             return ast.ScatterStmt(
                 count=self._required_int(node, "count"),
@@ -409,13 +440,17 @@ class _Lowerer:
         if node.type == "settle_statement":
             return ast.SettleStmt(runnable=self._runnable(node), span=span, doc=doc)
         if node.type == "map_statement":
-            return ast.MapStmt(runnable=self._runnable(node), par=self._par(node), span=span, doc=doc)
+            return ast.MapStmt(
+                runnable=self._runnable(node), par=self._par(node), span=span, doc=doc
+            )
         if node.type in {"keep_statement", "drop_statement"}:
             position = self._child_of_type(node, "position_clause")
             statement = ast.KeepStmt if node.type == "keep_statement" else ast.DropStmt
             return statement(
                 position=(
-                    cast(ast.Position, self._required_text(position, "position").strip())
+                    cast(
+                        ast.Position, self._required_text(position, "position").strip()
+                    )
                     if position
                     else None
                 ),
@@ -429,7 +464,11 @@ class _Lowerer:
             selection = self._child_of_type(node, "rank_selection_clause")
             return ast.RankStmt(
                 scorer=self._runnable(node, output="Number"),
-                limit=cast(ast.Limit, self._required_text(selection, "selection").strip()) if selection else None,
+                limit=cast(
+                    ast.Limit, self._required_text(selection, "selection").strip()
+                )
+                if selection
+                else None,
                 count=self._required_int(selection, "count") if selection else None,
                 par=self._par(node),
                 span=span,
@@ -439,7 +478,9 @@ class _Lowerer:
             body = self._required(node, "body")
             statements = self._child_of_type(body, "statements")
             if statements is None:
-                raise RuntimeError(f"Missing repeat statements at line {self._line(node)}.")
+                raise RuntimeError(
+                    f"Missing repeat statements at line {self._line(node)}."
+                )
             until_node = self._child_of_type(body, "until_statement")
             until = None
             if until_node is not None:
@@ -456,7 +497,9 @@ class _Lowerer:
                 span=span,
                 doc=doc,
             )
-        raise RuntimeError(f"Unsupported flow statement {node.type!r} at line {self._line(node)}.")
+        raise RuntimeError(
+            f"Unsupported flow statement {node.type!r} at line {self._line(node)}."
+        )
 
     def _runnable(self, node: CstNode, *, output: str | None = None) -> str:
         if runnable := node.child_by_field_name("runnable"):
@@ -491,28 +534,34 @@ class _Lowerer:
         node: CstNode | None,
         *,
         owner: CstNode,
-    ) -> tuple[ast.Parameter | None, tuple[ast.Parameter, ...], bool]:
+    ) -> tuple[ast.Parameter | None, tuple[ast.Parameter, ...]]:
         if node is None:
-            return self._default_input(owner), (), False
+            return self._default_input(owner), ()
         input_param: ast.Parameter | None = None
         params: list[ast.Parameter] = []
         for child in node.children_by_field_name("param"):
+            name = self._required_text(child, "name").strip()
             param = ast.Parameter(
-                name=self._required_text(child, "name").strip(),
+                name=name,
                 optional=child.child_by_field_name("optional") is not None,
-                type_name=self._optional_text(child.child_by_field_name("type")),
+                type_name=(
+                    self._optional_text(child.child_by_field_name("type"))
+                    or ("Part[]" if name == "_" else None)
+                ),
                 span=self._span(child),
             )
-            if param.name == "in" and input_param is None:
+            if param.name == "_" and input_param is None and not params:
                 input_param = param
             else:
                 params.append(param)
-        return input_param, tuple(params), True
+        return input_param, tuple(params)
 
     def _default_input(self, owner: CstNode) -> ast.Parameter:
-        return ast.Parameter(name="in", type_name="Pack", span=self._span(owner))
+        return ast.Parameter(name="_", type_name="Part[]", span=self._span(owner))
 
-    def _prompt_parameters(self, raw: str, *, span: ast.Span) -> tuple[ast.Parameter, ...]:
+    def _prompt_parameters(
+        self, raw: str, *, span: ast.Span
+    ) -> tuple[ast.Parameter, ...]:
         if not raw.strip():
             return ()
         params: list[ast.Parameter] = []
@@ -533,13 +582,17 @@ class _Lowerer:
         return ast.Directive(
             name=self._required_text(node, "key").strip(),
             operator=self._required_text(node, "operator").strip(),
-            values=tuple(item for item in (part.strip() for part in raw.split(",")) if item),
+            values=tuple(
+                item for item in (part.strip() for part in raw.split(",")) if item
+            ),
             span=self._span(node),
         )
 
     def _properties(self, node: CstNode) -> dict[str, str]:
         return {
-            self._required_text(child, "key").strip(): self._required_text(child, "value").strip()
+            self._required_text(child, "key").strip(): self._required_text(
+                child, "value"
+            ).strip()
             for child in node.named_children
             if child.type == "property"
         }
@@ -554,7 +607,8 @@ class _Lowerer:
                 (
                     item
                     for item in node.named_children
-                    if item.type in {"text_inline", "text_line", "text_block", "text_body"}
+                    if item.type
+                    in {"text_inline", "text_line", "text_block", "text_body"}
                 ),
                 None,
             )
@@ -565,13 +619,17 @@ class _Lowerer:
             lines: list[str] = []
             for child in node.named_children:
                 if child.type == "text_body_line":
-                    content = child.child_by_field_name("content") or self._child_of_type(child, "indented_raw_text")
+                    content = child.child_by_field_name(
+                        "content"
+                    ) or self._child_of_type(child, "indented_raw_text")
                     lines.append(self._text(content).rstrip())
                 elif child.type == "blank_line":
                     lines.append("")
             return self._dedent(lines)
         if node.type == "text_body_line":
-            content = node.child_by_field_name("content") or self._child_of_type(node, "indented_raw_text")
+            content = node.child_by_field_name("content") or self._child_of_type(
+                node, "indented_raw_text"
+            )
             return self._text(content).strip()
         return self._text(node).strip()
 
@@ -581,7 +639,9 @@ class _Lowerer:
         if not non_blank:
             return ""
         indent = min(len(line) - len(line.lstrip(" \t")) for line in non_blank)
-        return "\n".join(line[indent:].rstrip() if line.strip() else "" for line in lines).strip()
+        return "\n".join(
+            line[indent:].rstrip() if line.strip() else "" for line in lines
+        ).strip()
 
     def _par(self, node: CstNode) -> int | None:
         clause = self._child_of_type(node, "par_clause")
@@ -619,7 +679,9 @@ class _Lowerer:
     def _required(node: CstNode, field: str) -> CstNode:
         child = node.child_by_field_name(field)
         if child is None:
-            raise RuntimeError(f"Missing CST field {field!r} at line {node.start_point.row + 1}.")
+            raise RuntimeError(
+                f"Missing CST field {field!r} at line {node.start_point.row + 1}."
+            )
         return child
 
     @staticmethod

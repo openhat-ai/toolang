@@ -42,6 +42,6 @@ The generated site currently covers:
 - `toolang`
   - including `toolang.base`
   - including `toolang.execution`
-  - including `toolang.models`
-  - including `toolang.tools`
+  - including `toolang.plugin.models`
+  - including `toolang.plugin.tools`
   - including other public subpackages under `src/toolang/`

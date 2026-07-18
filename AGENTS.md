@@ -49,7 +49,7 @@
   Do not add serializer wrapper modules unless they add real meaning.
 - Let the package that owns a source format own its parsing and source-editing
   semantics. For example, `.too` parsing and authored source edits belong to
-  `toolang.program`, not to adjacent packages that merely consume programs.
+  `toolang.lang`, not to adjacent packages that merely consume programs.
 - Prefer APIs built around concept objects over loose primitive bundles. If a
   runtime operation naturally works on `SandboxSpec`, `SandboxState`,
   `AgentRef`, or similar constructs, expose that object directly instead of
@@ -91,24 +91,37 @@
   runtime.
 - `toolang.base` owns the shared plugin-facing protocols, value types, and
   helper utilities used across tool, loop, channel, sandbox, model provider,
-  and model adapter plugins.
-- `toolang.program` owns `.too` parsing, authored source semantics, and source
+  and model adapter plugins, including the shared Toolang error type.
+- `toolang.common` owns package-neutral immutable-container helpers, progress
+  events, selectors, Toolang-owned id allocation, and shared GitHub
+  source-reference parsing and rendering. `toolang.common.error` is a
+  compatibility export of the error type owned by `toolang.base`.
+- `toolang.lang` owns `.too` parsing, authored source semantics, and source
   editing.
-- `toolang.agents` owns local agent home layout, runtime-state files, and
-  managed agent process helpers.
-- `toolang.caps` owns cap refs, authored cap files, local cap config, and
-  prepared cap views.
-- `toolang.work` owns task and chore document semantics.
-- `toolang.state` owns durable, prepared, live, and pulse state models.
+- `toolang.agent` owns runtime-state files, managed processes, visiting and
+  roaming agent materialization, sandbox filesystem assembly, process
+  assembly, agent-specific built-in tools, and channel execution orchestration.
+- `toolang.catalog` owns authored resident-agent layout and source CRUD,
+  authored cap and job CRUD, and remote agent and cap source resolution.
+- `toolang.work` owns effective job scheduling state, file inbox requests,
+  runtime stores, watchers, and scheduling loops.
+- `toolang.state` owns durable/prepared source snapshots, effective cap
+  projection and materialization, immutable
+  root/home/agent state, and source-state watching.
 - `toolang.execution` owns run binding, execution trace, durable run truth,
   response projection, and execution storage.
-- `toolang.tools`, `toolang.loops`, `toolang.channels`, `toolang.sandboxes`,
-  `toolang.models.providers`, and `toolang.models.adapters` own the built-in
-  plugin-family implementations.
-- `toolang.plugin` owns generic entry point discovery and plugin
-  loading.
-- `toolang.config` owns runtime config resolution helpers.
-- `toolang.up` owns agent startup and FastAPI app assembly.
+- `toolang.execution.detail` is the canonical typed projection boundary for
+  runs, threads, steps, failures, and caller-facing messages. API code only
+  serializes these projections; CLI code reads them through the shared
+  remote-or-local execution adapter and only renders them.
+- `toolang.plugin` owns generic entry point discovery, pure plugin configuration
+  parsing, and independently reusable built-in tool, loop, channel, sandbox,
+  model-provider, and model-adapter implementations. It does not locate or read
+  runtime config files and may depend only on `toolang.base` and
+  `toolang.common` among internal packages.
+- `toolang.api` owns FastAPI application assembly and HTTP route mapping.
+- `toolang.config` owns runtime config file loading, root/agent layer merging,
+  environment-reference resolution, and runtime config resolution helpers.
 - `toolang.cli` owns CLI orchestration and environment resolution.
 
 
@@ -142,6 +155,10 @@
 - Keep runtime execution logic separate from file parsing and path resolution.
 - `runs.db` owns runtime transcript messages as well as activation,
   thread, run, and step truth. Do not add a separate durable chat-store layer.
+- Persist run, command, and step truth by sending trace events through
+  `PersistSink`. Keep `RunStore` mutation methods limited to the event
+  projection primitives used by that sink; tests should construct trace events
+  instead of adding direct-write convenience APIs.
 - Synced state should be reusable without reparsing unchanged source files.
 
 

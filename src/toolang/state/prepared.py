@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -13,10 +14,26 @@ from uuid import uuid4
 
 import frontmatter
 
-from .program import PreparedProgram
+from ..common.github import parse_github_ref
+from ..common.immutable import freeze_mapping, mutable_data
+from ..lang.ast import (
+    AgicDecl,
+    CapDecl,
+    ContextDecl,
+    Directive,
+    FlowDecl,
+    FlowStmt,
+    InstructDecl,
+    Message,
+    Parameter,
+    StructDecl,
+    WithDecl,
+    to_data,
+)
+from .durable import ProgramSource
 
 PreparedVisibility = Literal["shared", "private"]
-EntryKind = Literal["psyche", "skill", "service", "prompt", "task", "chore"]
+EntryKind = Literal["psyche", "skill", "service", "prompt"]
 EntryShape = Literal["file", "dir"]
 SourceOrigin = Literal["local", "remote"]
 SourceForm = Literal["inline", "ref", "wired", "file"]
@@ -29,22 +46,18 @@ _CAP_DIR_BY_KIND: dict[EntryKind, str] = {
     "skill": "skills",
     "service": "services",
     "prompt": "prompts",
-    "task": "tasks",
-    "chore": "chores",
 }
 _KIND_BY_SOURCE_BUCKET: dict[str, EntryKind] = {
     "psyches": "psyche",
     "skills": "skill",
     "services": "service",
     "prompts": "prompt",
-    "tasks": "task",
-    "chores": "chore",
 }
 _SOURCE_BUCKET_BY_KIND: dict[EntryKind, str] = {
     kind: bucket for bucket, kind in _KIND_BY_SOURCE_BUCKET.items()
 }
 _SOURCE_DIRS_SHARED = ("psyches", "skills", "services", "prompts")
-_SOURCE_DIRS_PRIVATE = (*_SOURCE_DIRS_SHARED, "tasks", "chores", "drafts", "archive")
+_SOURCE_DIRS_PRIVATE = _SOURCE_DIRS_SHARED
 _ARTIFACT_BUCKETS = ("inline", "ref", "wired")
 
 
@@ -95,8 +108,11 @@ class PreparedEntry:
     ref: str
     path: str
     source: PreparedSource
-    meta: dict[str, object]
+    meta: Mapping[str, object]
     content: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "meta", freeze_mapping(self.meta))
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -106,7 +122,7 @@ class PreparedEntry:
             "ref": self.ref,
             "path": self.path,
             "source": self.source.to_data(),
-            "meta": dict(self.meta),
+            "meta": mutable_data(self.meta),
             "content": self.content,
         }
 
@@ -136,7 +152,7 @@ class PreparedLock:
     fingerprint: str
     input_fingerprint: str
     entries: tuple[PreparedEntry, ...]
-    program: PreparedProgram | None
+    program_source: ProgramSource | None
     prepared_dir: Path
     lock_path: Path
     lock_mtime_ns: int
@@ -154,20 +170,20 @@ class PreparedLock:
             "lock_path": str(self.lock_path),
             "entries": [entry.to_snapshot() for entry in self.entries],
         }
-        if self.program is not None:
-            data["program"] = self.program.to_snapshot()
+        if self.program_source is not None:
+            data["program"] = _program_snapshot(self.program_source)
         return data
 
 
 @dataclass(frozen=True, slots=True)
-class PreparedState:
-    """Combined prepared state for one runtime."""
+class PreparedLocks:
+    """Prepared root and agent-home lock files loaded together."""
 
     toolang_root: Path
     agent_name: str
     shared_lock: PreparedLock
     private_lock: PreparedLock
-    program: PreparedProgram
+    program_source: ProgramSource
     fingerprint: str
     updated_at: str
 
@@ -175,7 +191,7 @@ class PreparedState:
         return {
             "fingerprint": self.fingerprint,
             "updated_at": self.updated_at,
-            "program": self.program.to_snapshot(),
+            "program": _program_snapshot(self.program_source),
             "shared": self.shared_lock.to_snapshot(),
             "private": self.private_lock.to_snapshot(),
         }
@@ -220,18 +236,20 @@ def load_private_lock(toolang_root: Path, agent_name: str) -> PreparedLock:
     return _load_lock(private_lock_path(toolang_root, agent_name), visibility="private")
 
 
-def load_prepared_state(toolang_root: Path, agent_name: str) -> PreparedState:
+def load_prepared_locks(toolang_root: Path, agent_name: str) -> PreparedLocks:
     """Load both prepared lock files for one runtime."""
 
     shared_lock = load_shared_lock(toolang_root)
     private_lock = load_private_lock(toolang_root, agent_name)
-    return PreparedState(
+    return PreparedLocks(
         toolang_root=toolang_root,
         agent_name=agent_name,
         shared_lock=shared_lock,
         private_lock=private_lock,
-        program=_require_program(private_lock),
-        fingerprint=_combined_fingerprint(shared_lock.fingerprint, private_lock.fingerprint),
+        program_source=_require_program_source(private_lock),
+        fingerprint=_combined_fingerprint(
+            shared_lock.fingerprint, private_lock.fingerprint
+        ),
         updated_at=max(shared_lock.updated_at, private_lock.updated_at),
     )
 
@@ -265,20 +283,31 @@ def _load_lock(lock_path: Path, *, visibility: PreparedVisibility) -> PreparedLo
         raise ValueError(f"unsupported prepared lock schema: {data.get('schema')!r}")
     base = _scope_base(lock_path)
     toolang_root = _toolang_root_from_lock_path(lock_path, visibility=visibility)
-    entries = _manifest_entries(data, base=base, toolang_root=toolang_root, visibility=visibility)
-    program_data = cast(dict[str, object] | None, cast(dict[str, object], data["prepared"]).get("program"))
-    program = _program_from_manifest(program_data, base=base, toolang_root=toolang_root)
-    input_fingerprint = _manifest_input_fingerprint(data, base=base, toolang_root=toolang_root, visibility=visibility)
-    fingerprint = _manifest_lock_fingerprint(data, entries, base=base, toolang_root=toolang_root)
-    if visibility == "private" and program is not None:
-        fingerprint = _combined_fingerprint(fingerprint, program.fingerprint())
+    entries = _manifest_entries(
+        data, base=base, toolang_root=toolang_root, visibility=visibility
+    )
+    program_data = cast(
+        dict[str, object] | None,
+        cast(dict[str, object], data["prepared"]).get("program"),
+    )
+    program_source = _program_from_manifest(
+        program_data, base=base, toolang_root=toolang_root
+    )
+    input_fingerprint = _manifest_input_fingerprint(
+        data, base=base, toolang_root=toolang_root, visibility=visibility
+    )
+    fingerprint = _manifest_lock_fingerprint(
+        data, entries, base=base, toolang_root=toolang_root
+    )
+    if visibility == "private" and program_source is not None:
+        fingerprint = _combined_fingerprint(fingerprint, program_source.fingerprint())
     return PreparedLock(
         visibility=visibility,
         updated_at=str(data["built_at"]),
         fingerprint=fingerprint,
         input_fingerprint=input_fingerprint,
         entries=entries,
-        program=program,
+        program_source=program_source,
         prepared_dir=lock_path.parent,
         lock_path=lock_path,
         lock_mtime_ns=lock_path.stat().st_mtime_ns,
@@ -293,7 +322,7 @@ def _empty_shared_lock(toolang_root: Path) -> PreparedLock:
         fingerprint=_EMPTY_LOCK_FINGERPRINT,
         input_fingerprint=_EMPTY_INPUT_FINGERPRINT,
         entries=(),
-        program=None,
+        program_source=None,
         prepared_dir=lock_path.parent,
         lock_path=lock_path,
         lock_mtime_ns=0,
@@ -308,10 +337,10 @@ def _combined_fingerprint(shared_fingerprint: str, private_fingerprint: str) -> 
     return digest.hexdigest()
 
 
-def _require_program(lock: PreparedLock) -> PreparedProgram:
-    if lock.program is None:
+def _require_program_source(lock: PreparedLock) -> ProgramSource:
+    if lock.program_source is None:
         raise FileNotFoundError("prepared private lock is missing program data")
-    return lock.program
+    return lock.program_source
 
 
 def _replace_bytes(path: Path, content: bytes) -> None:
@@ -322,7 +351,9 @@ def _replace_bytes(path: Path, content: bytes) -> None:
 
 def _lock_manifest(lock: PreparedLock) -> dict[str, object]:
     base = _scope_base(lock.lock_path)
-    toolang_root = _toolang_root_from_lock_path(lock.lock_path, visibility=lock.visibility)
+    toolang_root = _toolang_root_from_lock_path(
+        lock.lock_path, visibility=lock.visibility
+    )
     sources = _sources_manifest(base=base, visibility=lock.visibility)
     artifacts, artifact_refs = _artifacts_manifest(
         lock.entries,
@@ -331,7 +362,7 @@ def _lock_manifest(lock: PreparedLock) -> dict[str, object]:
     )
     prepared = _prepared_manifest(
         lock.entries,
-        lock.program,
+        lock.program_source,
         sources=sources,
         artifact_refs=artifact_refs,
         base=base,
@@ -346,20 +377,28 @@ def _lock_manifest(lock: PreparedLock) -> dict[str, object]:
     }
 
 
-def _sources_manifest(*, base: Path, visibility: PreparedVisibility) -> dict[str, object]:
+def _sources_manifest(
+    *, base: Path, visibility: PreparedVisibility
+) -> dict[str, object]:
     data: dict[str, object] = {}
     if visibility == "private":
         _add_file_source(data, "program", base / "agent.too", base=base)
     _add_file_source(data, "config", base / "config.toml", base=base)
-    source_dirs = _SOURCE_DIRS_SHARED if visibility == "shared" else _SOURCE_DIRS_PRIVATE
+    source_dirs = (
+        _SOURCE_DIRS_SHARED if visibility == "shared" else _SOURCE_DIRS_PRIVATE
+    )
     for directory_name in source_dirs:
         directory = base / directory_name
         if directory.exists():
-            data[directory_name] = _directory_source(directory, base=base, bucket=directory_name)
+            data[directory_name] = _directory_source(
+                directory, base=base, bucket=directory_name
+            )
     return data
 
 
-def _add_file_source(data: dict[str, object], name: str, path: Path, *, base: Path) -> None:
+def _add_file_source(
+    data: dict[str, object], name: str, path: Path, *, base: Path
+) -> None:
     if not path.is_file():
         return
     data[name] = _file_manifest(path, base=base)
@@ -426,7 +465,9 @@ def _artifacts_manifest(
         item_path = str(item["path"])
         if item_path in seen_paths[bucket]:
             bucket_data = cast(dict[str, object], buckets[bucket])
-            refs[_entry_key(entry)] = _artifact_item_index(cast(list[dict[str, object]], bucket_data["items"]), item_path)
+            refs[_entry_key(entry)] = _artifact_item_index(
+                cast(list[dict[str, object]], bucket_data["items"]), item_path
+            )
             continue
         bucket_data = cast(dict[str, object], buckets[bucket])
         items = cast(list[dict[str, object]], bucket_data["items"])
@@ -466,7 +507,7 @@ def _artifact_item_manifest(
 
 def _prepared_manifest(
     entries: tuple[PreparedEntry, ...],
-    program: PreparedProgram | None,
+    program_source: ProgramSource | None,
     *,
     sources: dict[str, object],
     artifact_refs: dict[str, int],
@@ -474,8 +515,6 @@ def _prepared_manifest(
     toolang_root: Path,
 ) -> dict[str, object]:
     caps: list[dict[str, object]] = []
-    tasks: list[dict[str, object]] = []
-    chores: list[dict[str, object]] = []
     cap_indexes: dict[tuple[str, str], int] = {}
     for entry in entries:
         item = _prepared_item_manifest(
@@ -485,22 +524,225 @@ def _prepared_manifest(
             base=base,
             toolang_root=toolang_root,
         )
-        if entry.kind in {"task", "chore"}:
-            target = tasks if entry.kind == "task" else chores
-            target.append(item)
-            continue
         cap_indexes[(entry.kind, entry.name)] = len(caps)
         caps.append(item)
-    data: dict[str, object] = {
-        "caps": caps,
-        "tasks": tasks,
-        "chores": chores,
-    }
-    if program is not None:
-        program_data = program.to_lock_data()
+    data: dict[str, object] = {"caps": caps}
+    if program_source is not None:
+        program_data = _program_lock_data(program_source)
         _attach_program_prepared_refs(program_data, cap_indexes)
         data["program"] = program_data
     return data
+
+
+def _program_snapshot(source: ProgramSource) -> dict[str, object]:
+    program = source.parse()
+    data: dict[str, object] = {
+        "agent_name": source.agent_name,
+        "source_path": source.source_path,
+        "agics": [_agic_to_data(item) for item in program.agics],
+    }
+    if program.flows:
+        data["flows"] = [_flow_to_data(item) for item in program.flows]
+    return data
+
+
+def _program_lock_data(source: ProgramSource) -> dict[str, object]:
+    program = source.parse()
+    data: dict[str, object] = {
+        "source": "program",
+        "source_text": source.source_text,
+        "uses": [_with_to_lock_data(item) for item in program.withs],
+        "structs": [_struct_to_lock_data(item) for item in program.structs],
+        "contexts": [_context_to_lock_data(item) for item in program.contexts],
+        "instructs": [_instruct_to_lock_data(item) for item in program.instructs],
+        "caps": [_cap_to_lock_data(item) for item in program.caps],
+        "agics": [_agic_to_lock_data(item) for item in program.agics],
+    }
+    if program.flows:
+        data["flows"] = [_flow_to_lock_data(item) for item in program.flows]
+    return data
+
+
+def _param_to_data(param: Parameter) -> dict[str, object]:
+    return {
+        "name": param.name,
+        "optional": param.optional,
+        "type_name": param.type_name,
+    }
+
+
+def _agic_to_data(agic: AgicDecl) -> dict[str, object]:
+    return {
+        **_executable_to_data(agic),
+        "context": agic.context,
+        "instruct": agic.instruct,
+        "messages": [_message_to_data(item) for item in agic.messages],
+    }
+
+
+def _flow_to_data(flow: FlowDecl) -> dict[str, object]:
+    return {
+        **_executable_to_data(flow),
+        "stmts": [_flow_stmt_to_data(item) for item in flow.stmts],
+    }
+
+
+def _executable_to_data(executable: AgicDecl | FlowDecl) -> dict[str, object]:
+    return {
+        "name": executable.name,
+        "input": (
+            _param_to_data(executable.input) if executable.input is not None else None
+        ),
+        "params": [_param_to_data(item) for item in executable.params],
+        "output": executable.output,
+        "directives": [_directive_to_data(item) for item in executable.directives],
+    }
+
+
+def _flow_stmt_to_data(stmt: FlowStmt) -> dict[str, object]:
+    return cast(dict[str, object], to_data(stmt))
+
+
+def _directive_to_data(directive: Directive) -> dict[str, object]:
+    return {
+        "name": directive.name,
+        "operator": directive.operator,
+        "values": list(directive.values),
+        "line": directive.span.line,
+    }
+
+
+def _message_to_data(message: Message) -> dict[str, object]:
+    return {
+        "role": message.role,
+        "content": message.content,
+        "explicit": message.explicit,
+        "line": message.span.line,
+    }
+
+
+def _with_to_lock_data(use: WithDecl) -> dict[str, object]:
+    return {
+        "kind": use.cap_kind,
+        "ref": use.reference,
+        "line": use.span.line,
+    }
+
+
+def _struct_to_lock_data(struct: StructDecl) -> dict[str, object]:
+    return {
+        "name": struct.name,
+        "line": struct.span.line,
+        "fields": [
+            {
+                "name": field.name,
+                "type": _source_type_name(field.type_name),
+                "optional": field.optional,
+                "line": field.span.line,
+            }
+            for field in struct.fields
+        ],
+    }
+
+
+def _instruct_to_lock_data(instruct: InstructDecl) -> dict[str, object]:
+    return {
+        "name": instruct.name,
+        "line": instruct.span.line,
+        "content": instruct.body,
+    }
+
+
+def _context_to_lock_data(context: ContextDecl) -> dict[str, object]:
+    return {
+        "name": context.name,
+        "line": context.span.line,
+        "content": context.body,
+    }
+
+
+def _cap_to_lock_data(cap: CapDecl) -> dict[str, object]:
+    return {
+        "kind": cap.kind,
+        "name": cap.name,
+        "line": cap.span.line,
+    }
+
+
+def _agic_to_lock_data(agic: AgicDecl) -> dict[str, object]:
+    data = _executable_to_lock_data(agic)
+    data.update(
+        {
+            "context": agic.context,
+            "instruct": agic.instruct,
+            "messages": [_message_to_lock_data(item) for item in agic.messages],
+        }
+    )
+    return data
+
+
+def _flow_to_lock_data(flow: FlowDecl) -> dict[str, object]:
+    data = _executable_to_lock_data(flow)
+    data["stmts"] = [_flow_stmt_to_lock_data(item) for item in flow.stmts]
+    return data
+
+
+def _executable_to_lock_data(executable: AgicDecl | FlowDecl) -> dict[str, object]:
+    data: dict[str, object] = {
+        "name": executable.name,
+        "line": executable.span.line,
+        "params": _executable_params_to_lock_data(executable),
+        "directives": [_directive_to_lock_data(item) for item in executable.directives],
+    }
+    if executable.output is not None:
+        data["output"] = _source_type_name(executable.output)
+    return data
+
+
+def _executable_params_to_lock_data(
+    executable: AgicDecl | FlowDecl,
+) -> list[dict[str, object]]:
+    params: list[dict[str, object]] = []
+    if executable.input is not None:
+        params.append(_param_to_lock_data(executable.input))
+    params.extend(_param_to_lock_data(item) for item in executable.params)
+    return params
+
+
+def _flow_stmt_to_lock_data(stmt: FlowStmt) -> dict[str, object]:
+    data = _flow_stmt_to_data(stmt)
+    data["span"] = {"line": stmt.span.line}
+    return data
+
+
+def _param_to_lock_data(param: Parameter) -> dict[str, object]:
+    return {
+        "name": param.name,
+        "type": _source_type_name(param.type_name),
+        "optional": param.optional,
+    }
+
+
+def _directive_to_lock_data(directive: Directive) -> dict[str, object]:
+    return {
+        "key": directive.name,
+        "op": directive.operator,
+        "values": list(directive.values),
+        "line": directive.span.line,
+    }
+
+
+def _message_to_lock_data(message: Message) -> dict[str, object]:
+    return {
+        "role": message.role,
+        "content": message.content,
+        "explicit": message.explicit,
+        "line": message.span.line,
+    }
+
+
+def _source_type_name(type_name: str | None) -> str:
+    return type_name or "Text"
 
 
 def _prepared_item_manifest(
@@ -515,7 +757,9 @@ def _prepared_item_manifest(
         "kind": entry.kind,
         "name": entry.name,
         "form": entry.source.form,
-        "source": _prepared_source_ref(entry, sources=sources, base=base, toolang_root=toolang_root),
+        "source": _prepared_source_ref(
+            entry, sources=sources, base=base, toolang_root=toolang_root
+        ),
     }
     origin = _origin_manifest(entry)
     if origin:
@@ -557,28 +801,21 @@ def _origin_manifest(entry: PreparedEntry) -> dict[str, object]:
     if entry.source.form in {"wired", "ref"}:
         data["ref"] = entry.ref
         if entry.ref.startswith("github://"):
-            github = _parse_github_ref(entry.ref)
-            data.update(github)
+            github = parse_github_ref(entry.ref)
+            data.update(
+                {
+                    "provider": "github",
+                    "repo": f"{github.owner}/{github.repo}",
+                    "path": github.path,
+                    "commit": github.rev,
+                }
+            )
     return data
-
-
-def _parse_github_ref(ref: str) -> dict[str, object]:
-    body = ref.removeprefix("github://")
-    target, _, rev = body.partition("@")
-    parts = target.split("/")
-    if len(parts) < 3:
-        return {"provider": "github", "commit": rev}
-    return {
-        "provider": "github",
-        "repo": f"{parts[0]}/{parts[1]}",
-        "path": "/".join(parts[2:]),
-        "commit": rev,
-    }
 
 
 def _object_manifest(entry: PreparedEntry, *, toolang_root: Path) -> dict[str, object]:
     return {
-        "meta": dict(entry.meta),
+        "meta": entry.to_data()["meta"],
         "content": entry.content or _entry_content(entry, toolang_root=toolang_root),
     }
 
@@ -622,11 +859,11 @@ def _manifest_entries(
     prepared = cast(dict[str, object], data["prepared"])
     entries: list[PreparedEntry] = []
     for item in cast(list[dict[str, object]], prepared.get("caps", [])):
-        entries.append(_entry_from_prepared_item(item, data=data, base=base, toolang_root=toolang_root))
-    for item in cast(list[dict[str, object]], prepared.get("tasks", [])):
-        entries.append(_entry_from_prepared_item(item, data=data, base=base, toolang_root=toolang_root))
-    for item in cast(list[dict[str, object]], prepared.get("chores", [])):
-        entries.append(_entry_from_prepared_item(item, data=data, base=base, toolang_root=toolang_root))
+        entries.append(
+            _entry_from_prepared_item(
+                item, data=data, base=base, toolang_root=toolang_root
+            )
+        )
     return tuple(entries)
 
 
@@ -641,7 +878,9 @@ def _entry_from_prepared_item(
     form = cast(SourceForm, str(item["form"]))
     source_item = _manifest_source_item(item, data=data, kind=kind)
     artifact_item = _manifest_artifact_item(item, data=data, form=form)
-    source_path = _manifest_entry_source_path(item, source_item=source_item, base=base, toolang_root=toolang_root)
+    source_path = _manifest_entry_source_path(
+        item, source_item=source_item, base=base, toolang_root=toolang_root
+    )
     path, shape = _manifest_entry_path(
         item,
         source_item=source_item,
@@ -661,7 +900,9 @@ def _entry_from_prepared_item(
         kind=kind,
         name=str(item["name"]),
         shape=shape,
-        ref=_manifest_entry_ref(item, form=form, kind=kind, base=base, toolang_root=toolang_root),
+        ref=_manifest_entry_ref(
+            item, form=form, kind=kind, base=base, toolang_root=toolang_root
+        ),
         path=path,
         source=PreparedSource(
             origin="remote" if form in {"ref", "wired"} else "local",
@@ -713,7 +954,9 @@ def _manifest_entry_source_path(
 ) -> str:
     source = item["source"]
     if isinstance(source, str):
-        return _root_relative(base / str(source_item["path"]), toolang_root=toolang_root)
+        return _root_relative(
+            base / str(source_item["path"]), toolang_root=toolang_root
+        )
     return _root_relative(base / str(source_item["path"]), toolang_root=toolang_root)
 
 
@@ -729,14 +972,22 @@ def _manifest_entry_path(
 ) -> tuple[str, EntryShape]:
     if form == "file":
         if kind == "skill" and source_item.get("shape") == "dir":
-            return _root_relative(base / str(source_item["path"]) / "SKILL.md", toolang_root=toolang_root), "dir"
-        return _root_relative(base / str(source_item["path"]), toolang_root=toolang_root), cast(EntryShape, source_item.get("shape", "file"))
+            return _root_relative(
+                base / str(source_item["path"]) / "SKILL.md", toolang_root=toolang_root
+            ), "dir"
+        return _root_relative(
+            base / str(source_item["path"]), toolang_root=toolang_root
+        ), cast(EntryShape, source_item.get("shape", "file"))
     if artifact_item is None:
         raise KeyError("artifact")
     if artifact_item.get("shape") == "dir":
         entrypoint = "SKILL.md" if kind == "skill" else f"{item['name']}.md"
-        return _root_relative(base / str(artifact_item["path"]) / entrypoint, toolang_root=toolang_root), "dir"
-    return _root_relative(base / str(artifact_item["path"]), toolang_root=toolang_root), "file"
+        return _root_relative(
+            base / str(artifact_item["path"]) / entrypoint, toolang_root=toolang_root
+        ), "dir"
+    return _root_relative(
+        base / str(artifact_item["path"]), toolang_root=toolang_root
+    ), "file"
 
 
 def _manifest_entry_ref(
@@ -761,16 +1012,15 @@ def _program_from_manifest(
     *,
     base: Path,
     toolang_root: Path,
-) -> PreparedProgram | None:
+) -> ProgramSource | None:
     if data is None:
         return None
     source_path = _root_relative(base / "agent.too", toolang_root=toolang_root)
     agent_name = base.name
-    return PreparedProgram(
+    return ProgramSource(
         agent_name=agent_name,
         source_path=source_path,
         source_text=str(data.get("source_text", "")),
-        body_text=str(data.get("body_text", "")),
     )
 
 
@@ -788,7 +1038,11 @@ def _manifest_input_fingerprint(
         category = _manifest_file_category(str(item["scope_path"]))
         if visibility == "shared" and category == "job":
             continue
-        digest.update(_root_relative(base / str(item["scope_path"]), toolang_root=toolang_root).encode("utf-8"))
+        digest.update(
+            _root_relative(
+                base / str(item["scope_path"]), toolang_root=toolang_root
+            ).encode("utf-8")
+        )
         digest.update(b"\0")
         digest.update(category.encode("utf-8"))
         digest.update(b"\0")
@@ -806,7 +1060,14 @@ def _manifest_source_files(sources: dict[str, object]) -> list[dict[str, object]
     for key, value in sources.items():
         item = cast(dict[str, object], value)
         if "fingerprint" in item:
-            files.append({"scope_path": item["path"], "relative_path": item["path"], "fingerprint": item["fingerprint"], "size": item["size"]})
+            files.append(
+                {
+                    "scope_path": item["path"],
+                    "relative_path": item["path"],
+                    "fingerprint": item["fingerprint"],
+                    "size": item["size"],
+                }
+            )
             continue
         for child in cast(list[dict[str, object]], item.get("items", [])):
             files.extend(_manifest_item_files(child))
@@ -815,7 +1076,14 @@ def _manifest_source_files(sources: dict[str, object]) -> list[dict[str, object]
 
 def _manifest_item_files(item: dict[str, object]) -> list[dict[str, object]]:
     if "fingerprint" in item:
-        return [{"scope_path": item["path"], "relative_path": item["path"], "fingerprint": item["fingerprint"], "size": item["size"]}]
+        return [
+            {
+                "scope_path": item["path"],
+                "relative_path": item["path"],
+                "fingerprint": item["fingerprint"],
+                "size": item["size"],
+            }
+        ]
     files: list[dict[str, object]] = []
     for child in cast(list[dict[str, object]], item.get("items", [])):
         files.extend(_manifest_item_files(child))
@@ -823,13 +1091,10 @@ def _manifest_item_files(item: dict[str, object]) -> list[dict[str, object]]:
 
 
 def _manifest_file_category(scope_path: str) -> str:
-    first = Path(scope_path).parts[0]
     if scope_path == "agent.too":
         return "program"
     if scope_path == "config.toml":
         return "config"
-    if first in {"tasks", "chores", "drafts", "archive"}:
-        return "job"
     return "cap"
 
 
@@ -840,7 +1105,9 @@ def _manifest_lock_fingerprint(
     base: Path,
     toolang_root: Path,
 ) -> str:
-    content_fingerprints = _manifest_content_fingerprints(data, base=base, toolang_root=toolang_root)
+    content_fingerprints = _manifest_content_fingerprints(
+        data, base=base, toolang_root=toolang_root
+    )
     payload = [
         {
             "kind": entry.kind,
@@ -854,12 +1121,18 @@ def _manifest_lock_fingerprint(
                 "path": entry.source.path,
                 "fingerprint": entry.source.fingerprint,
             },
-            "meta": entry.meta,
-            "content_fingerprint": content_fingerprints.get(entry.path, entry.source.fingerprint),
+            "meta": entry.to_data()["meta"],
+            "content_fingerprint": content_fingerprints.get(
+                entry.path, entry.source.fingerprint
+            ),
         }
         for entry in sorted(entries, key=lambda item: (item.kind, item.name, item.ref))
     ]
-    return sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    return sha256(
+        json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def _manifest_content_fingerprints(
@@ -870,8 +1143,14 @@ def _manifest_content_fingerprints(
 ) -> dict[str, str]:
     result: dict[str, str] = {}
     for bucket in cast(dict[str, object], data.get("artifacts", {})).values():
-        for item in cast(list[dict[str, object]], cast(dict[str, object], bucket).get("items", [])):
-            result.update(_manifest_content_fingerprints_for_item(item, base=base, toolang_root=toolang_root))
+        for item in cast(
+            list[dict[str, object]], cast(dict[str, object], bucket).get("items", [])
+        ):
+            result.update(
+                _manifest_content_fingerprints_for_item(
+                    item, base=base, toolang_root=toolang_root
+                )
+            )
     return result
 
 
@@ -882,11 +1161,17 @@ def _manifest_content_fingerprints_for_item(
     toolang_root: Path,
 ) -> dict[str, str]:
     if "fingerprint" in item:
-        return {_root_relative(base / str(item["path"]), toolang_root=toolang_root): str(item["fingerprint"])}
+        return {
+            _root_relative(base / str(item["path"]), toolang_root=toolang_root): str(
+                item["fingerprint"]
+            )
+        }
     files = cast(list[dict[str, object]], item.get("items", []))
     digest = sha256()
     for child in sorted(files, key=lambda value: str(value["path"])):
-        digest.update(str(Path(str(child["path"])).relative_to(str(item["path"]))).encode("utf-8"))
+        digest.update(
+            str(Path(str(child["path"])).relative_to(str(item["path"]))).encode("utf-8")
+        )
         digest.update(b"\0")
         digest.update(str(child["fingerprint"]).encode("utf-8"))
         digest.update(b"\n")
@@ -904,8 +1189,13 @@ def _manifest_item_fingerprint(item: dict[str, object]) -> str:
     if "fingerprint" in item:
         return str(item["fingerprint"])
     digest = sha256()
-    for child in sorted(cast(list[dict[str, object]], item.get("items", [])), key=lambda value: str(value["path"])):
-        digest.update(str(Path(str(child["path"])).relative_to(str(item["path"]))).encode("utf-8"))
+    for child in sorted(
+        cast(list[dict[str, object]], item.get("items", [])),
+        key=lambda value: str(value["path"]),
+    ):
+        digest.update(
+            str(Path(str(child["path"])).relative_to(str(item["path"]))).encode("utf-8")
+        )
         digest.update(b"\0")
         digest.update(str(child["fingerprint"]).encode("utf-8"))
         digest.update(b"\n")
@@ -920,7 +1210,9 @@ def _scope_base(lock_path: Path) -> Path:
     return lock_path.parent.parent
 
 
-def _toolang_root_from_lock_path(lock_path: Path, *, visibility: PreparedVisibility) -> Path:
+def _toolang_root_from_lock_path(
+    lock_path: Path, *, visibility: PreparedVisibility
+) -> Path:
     if visibility == "shared":
         return lock_path.parent.parent
     return lock_path.parents[3]

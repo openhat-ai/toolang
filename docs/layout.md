@@ -88,7 +88,7 @@ Key paths:
 | -------------- | ------------------------------------------------------------ |
 | `status.json` | Runtime status, endpoint, sandbox summary, and enabled features |
 | `agent.log`    | Runtime log                                                  |
-| `logs/<thunk>/<run_id>.log` | Per-run script invoke logs when `PY_LOG` is set |
+| `logs/<agic>/<run_id>.log` | Per-run script invoke logs when `PY_LOG` is set |
 | `jobs.db` | Scheduler job projection and atomic job claims                |
 | `runs.db` | Threads, runs, steps, updates, and prompt blobs               |
 | `files.db` | File request claims, fingerprints, and completion state        |

@@ -110,8 +110,8 @@ Rules:
 - `_` may declare another type explicitly.
 - `_` is never optional.
 
-The semantic AST preserves the difference through
-`AgicDecl.params_explicit` and `FlowDecl.params_explicit`.
+The semantic AST represents `()` with no primary input and an empty named
+parameter tuple.
 
 
 ### Named Parameters

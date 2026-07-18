@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-import tomllib
+
+from .toml import load_optional_toml
 
 DEFAULT_UI_BASE_URL = "https://too.run"
 
@@ -41,11 +42,8 @@ def resolve_cors_allowed_origins(
     return items or None
 
 
-def _load_root_web_config(toolang_root: Path) -> dict[str, str | list[str]]:
-    path = toolang_root / "config.toml"
-    if not path.exists():
-        return {}
-    payload = tomllib.loads(path.read_text(encoding="utf-8"))
+def _load_root_web_config(toolang_root: Path) -> dict[str, object]:
+    payload = load_optional_toml(toolang_root / "config.toml")
     web = payload.get("web", {})
     if not isinstance(web, dict):
         return {}

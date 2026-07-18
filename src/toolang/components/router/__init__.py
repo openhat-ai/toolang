@@ -1,2 +1,0 @@
-"""HTTP router component implementations."""
-

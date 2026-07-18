@@ -6,6 +6,9 @@ Shared contracts and canonical value types live in:
 
 - `toolang.base`
 
+Plugins should raise `toolang.common.error.ToolangError` for invalid Toolang
+configuration, input, or runtime behavior that should be presented to users.
+
 
 ## Plugin Families
 
@@ -86,12 +89,12 @@ entry points and are not imported directly by family-specific loaders.
 
 The built-in plugin packages are:
 
-- `toolang.tools.*`
-- `toolang.loops.*`
-- `toolang.channels.*`
-- `toolang.sandboxes.*`
-- `toolang.models.providers.*`
-- `toolang.models.adapters.*`
+- `toolang.plugin.tools.*`
+- `toolang.plugin.loops.*`
+- `toolang.plugin.channels.*`
+- `toolang.plugin.sandboxes.*`
+- `toolang.plugin.models.providers.*`
+- `toolang.plugin.models.adapters.*`
 
 Each entry point names one factory such as `create_tool_set`, `create_loop`,
 `create_channel`, `create_sandbox`, `create_model_provider`, or
@@ -99,9 +102,9 @@ Each entry point names one factory such as `create_tool_set`, `create_loop`,
 multiple Toolang plugin entry points, including multiple entry points in the
 same family.
 
-Plugin packages do not own loader modules. Core runtime code asks the generic
-loader for a family by entry point group, then applies runtime-specific binding
-logic such as tool name encoding or model provider configuration.
+`toolang.plugin.loading` owns generic entry point discovery. Family loading
+modules apply runtime-specific binding such as tool name encoding, model
+provider configuration, channel bindings, or sandbox selection.
 
 
 ## Configuration Rule

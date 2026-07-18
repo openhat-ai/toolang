@@ -1,5 +1,0 @@
-"""Runtime management API routes."""
-
-from .router import create_router
-
-__all__ = ["create_router"]

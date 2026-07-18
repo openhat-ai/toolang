@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields, is_dataclass
+from dataclasses import dataclass, field, fields
+from collections.abc import Mapping
+from functools import lru_cache
 from typing import Any, ClassVar, Literal
 
+from tree_sitter import Language, Node as TreeSitterNode, Parser, Tree
+import tree_sitter_toolang
+
+from toolang.common.immutable import freeze_mapping
+
 CapKind = Literal["psyche", "skill", "service", "prompt"]
-WorkKind = Literal["task", "chore"]
+JobKind = Literal["task", "chore"]
 Role = Literal["user", "assistant", "tool"]
 Position = Literal["first", "last"]
 Limit = Literal["top", "bottom"]
@@ -15,6 +22,12 @@ Limit = Literal["top", "bottom"]
 @dataclass(frozen=True, slots=True)
 class Span:
     line: int
+
+
+@dataclass(frozen=True, slots=True)
+class _ParsedSource:
+    tree: Tree
+    source: bytes
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -47,17 +60,22 @@ class CapDecl(Node):
     kind: CapKind
     name: str
     body: str
-    language: str | None = None
-    meta: dict[str, Any] = field(default_factory=dict)
+    meta: Mapping[str, Any] = field(default_factory=dict)
     params: tuple[Parameter, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "meta", freeze_mapping(self.meta))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class WorkDecl(Node):
-    kind: WorkKind
+class JobDecl(Node):
+    kind: JobKind
     name: str
     body: str
-    meta: dict[str, Any] = field(default_factory=dict)
+    meta: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "meta", freeze_mapping(self.meta))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -66,7 +84,6 @@ class ContextDecl(Node):
 
     name: str
     body: str
-    language: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -75,7 +92,6 @@ class InstructDecl(Node):
 
     name: str
     body: str
-    language: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -125,7 +141,6 @@ class AgicDecl(Node):
     context: str | None = None
     instruct: str | None = None
     messages: tuple[Message, ...] = ()
-    params_explicit: bool = False
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -275,7 +290,6 @@ class FlowDecl(Node):
     output: str | None = None
     directives: tuple[Directive, ...] = ()
     stmts: tuple[FlowStmt, ...] = ()
-    params_explicit: bool = False
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -284,22 +298,67 @@ class Program(Node):
 
     withs: tuple[WithDecl, ...] = ()
     caps: tuple[CapDecl, ...] = ()
-    works: tuple[WorkDecl, ...] = ()
+    jobs: tuple[JobDecl, ...] = ()
     structs: tuple[StructDecl, ...] = ()
     contexts: tuple[ContextDecl, ...] = ()
     instructs: tuple[InstructDecl, ...] = ()
     agics: tuple[AgicDecl, ...] = ()
     flows: tuple[FlowDecl, ...] = ()
 
+    def find_agic(self, name: str) -> AgicDecl | None:
+        return next((item for item in self.agics if item.name == name), None)
+
+    def find_flow(self, name: str) -> FlowDecl | None:
+        return next((item for item in self.flows if item.name == name), None)
+
+    def find_instruct(self, name: str) -> InstructDecl | None:
+        return next((item for item in self.instructs if item.name == name), None)
+
+    def find_context(self, name: str) -> ContextDecl | None:
+        return next((item for item in self.contexts if item.name == name), None)
+
     @classmethod
     def from_source(cls, source: str) -> Program:
-        from . import cst
-        from .lower import lower
-        from .validate import validate
+        from .lower import _lower
+        from .validate import _validate
 
-        program = lower(cst.parse(source))
-        validate(program)
+        program = _lower(_parse_source(source))
+        _validate(program)
         return program
+
+
+def _parse_source(source: str) -> _ParsedSource:
+    from .diagnostics import ToolangSyntaxError
+
+    syntax = source if not source or source.endswith("\n") else f"{source}\n"
+    encoded = syntax.encode("utf-8")
+    tree = _parse_tree(encoded)
+    lines = source.splitlines()
+    if error := _first_syntax_error(tree.root_node):
+        line = error.start_point.row + 1
+        raw = lines[line - 1] if line <= len(lines) else ""
+        if raw.startswith((" ", "\t")) and raw.strip():
+            raise ToolangSyntaxError(f"Unexpected indentation at line {line}.")
+        raise ToolangSyntaxError(f"Syntax error at line {line}.")
+    return _ParsedSource(tree=tree, source=encoded)
+
+
+def _parse_tree(source: bytes) -> Tree:
+    return Parser(_language()).parse(source)
+
+
+def _first_syntax_error(node: TreeSitterNode) -> TreeSitterNode | None:
+    if node.is_error or node.is_missing or node.type.startswith("invalid_"):
+        return node
+    for child in node.children:
+        if error := _first_syntax_error(child):
+            return error
+    return None
+
+
+@lru_cache(maxsize=1)
+def _language() -> Language:
+    return Language(tree_sitter_toolang.language())
 
 
 def to_data(value: object) -> object:
@@ -308,17 +367,12 @@ def to_data(value: object) -> object:
     if isinstance(value, Node):
         return {
             "kind": value.kind,
-            **{
-                item.name: to_data(getattr(value, item.name))
-                for item in fields(value)
-            },
+            **{item.name: to_data(getattr(value, item.name)) for item in fields(value)},
         }
     if isinstance(value, Span):
         return {"line": value.line}
-    if is_dataclass(value) and not isinstance(value, type):
-        return {item.name: to_data(getattr(value, item.name)) for item in fields(value)}
     if isinstance(value, tuple | list):
         return [to_data(item) for item in value]
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return {str(key): to_data(item) for key, item in value.items()}
     return value

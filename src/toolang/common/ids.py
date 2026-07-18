@@ -13,8 +13,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 import importlib
 import json
+import os
 from pathlib import Path
-from types import ModuleType
+from types import MappingProxyType, ModuleType
 from typing import TextIO, cast
 
 try:  # pragma: no cover - exercised on POSIX in tests
@@ -23,11 +24,10 @@ except ImportError:  # pragma: no cover - platform dependent
     _fcntl_module = None
 
 
-ID_ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz"
-ID_BASE = len(ID_ALPHABET)
-ID_EPOCH = datetime(2026, 1, 1, tzinfo=UTC)
+_ID_ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz"
+_ID_EPOCH = datetime(2026, 1, 1, tzinfo=UTC)
 
-_ID_LOOKUP = {char: index for index, char in enumerate(ID_ALPHABET)}
+_ID_LOOKUP = {char: index for index, char in enumerate(_ID_ALPHABET)}
 _FCNTL: ModuleType | None = _fcntl_module
 _ID_FEISTEL_ROUNDS = 4
 
@@ -45,7 +45,7 @@ class IdFamily:
     seq_multiplier: int
     seq_offset: int
     mask_seed: int = 0x15A5
-    epoch: datetime = ID_EPOCH
+    epoch: datetime = _ID_EPOCH
 
     def __post_init__(self) -> None:
         if not self.name.strip():
@@ -58,6 +58,9 @@ class IdFamily:
             raise ValueError("tick_seconds must be positive")
         if self.epoch.tzinfo is None:
             raise ValueError("epoch must be timezone-aware")
+        object.__setattr__(self, "epoch", self.epoch.astimezone(UTC))
+        if (self.width * 5) % 2:
+            raise ValueError("id family width must contain an even number of bits")
         if self.tick_multiplier <= 0 or self.tick_multiplier >= self.tick_modulus:
             raise ValueError("tick_multiplier must be inside the tick domain")
         if self.seq_multiplier <= 0 or self.seq_multiplier >= self.seq_modulus:
@@ -124,13 +127,21 @@ class AllocatorState:
     last_tick: int = -1
     last_seq: int = -1
 
+    def __post_init__(self) -> None:
+        if self.last_tick < -1:
+            raise ValueError("last_tick must be at least -1")
+        if self.last_seq < -1:
+            raise ValueError("last_seq must be at least -1")
+        if self.last_tick == -1 and self.last_seq != -1:
+            raise ValueError("last_seq requires an allocated tick")
+
     @classmethod
     def from_data(cls, payload: Mapping[str, object]) -> AllocatorState:
         """Parse one serialized allocator state."""
 
         return cls(
-            last_tick=_int_value(payload.get("last_tick"), default=-1),
-            last_seq=_int_value(payload.get("last_seq"), default=-1),
+            last_tick=_int_value(payload["last_tick"]) if "last_tick" in payload else -1,
+            last_seq=_int_value(payload["last_seq"]) if "last_seq" in payload else -1,
         )
 
     def to_data(self) -> dict[str, int]:
@@ -146,20 +157,27 @@ class AllocatorState:
 class AllocatorSnapshot:
     """One persisted allocator snapshot keyed by family name."""
 
-    families: dict[str, AllocatorState] = field(default_factory=dict)
+    families: Mapping[str, AllocatorState] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "families", MappingProxyType(dict(self.families)))
 
     @classmethod
     def from_data(cls, payload: Mapping[str, object]) -> AllocatorSnapshot:
         """Parse one serialized allocator snapshot."""
 
-        raw_families = payload.get("families")
-        if not isinstance(raw_families, Mapping):
+        if "families" not in payload:
             return cls()
+        raw_families = payload["families"]
+        if not isinstance(raw_families, Mapping):
+            raise ValueError("allocator snapshot families must be a mapping")
         items: dict[str, AllocatorState] = {}
         for raw_name, raw_state in raw_families.items():
-            name = str(raw_name).strip()
-            if not name or not isinstance(raw_state, Mapping):
-                continue
+            if not isinstance(raw_name, str) or not raw_name.strip():
+                raise ValueError("allocator snapshot family name cannot be empty")
+            name = raw_name.strip()
+            if not isinstance(raw_state, Mapping):
+                raise ValueError(f"allocator state for {name!r} must be a mapping")
             items[name] = AllocatorState.from_data(cast(Mapping[str, object], raw_state))
         return cls(families=items)
 
@@ -169,28 +187,14 @@ class AllocatorSnapshot:
 
         if not path.is_file():
             return cls()
-        text = path.read_text(encoding="utf-8").strip()
-        if not text:
-            return cls()
-        data = json.loads(text)
-        if not isinstance(data, Mapping):
-            raise ValueError(f"invalid allocator snapshot: {path}")
-        return cls.from_data(data)
+        with _locked_state_file(path) as handle:
+            return _snapshot_from_handle(handle)
 
     def save(self, path: Path) -> None:
         """Write this allocator snapshot to disk."""
 
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "families": {
-                name: state.to_data()
-                for name, state in sorted(self.families.items())
-            }
-        }
-        path.write_text(
-            json.dumps(payload, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        with _locked_state_file(path) as handle:
+            _write_snapshot(handle, self)
 
     def state_for(self, family: IdFamily) -> AllocatorState:
         """Return the current state for one family."""
@@ -301,12 +305,6 @@ RUN_ID_FAMILY = IdFamily(
     mask_seed=0x6D35,
 )
 
-ID_FAMILIES = {
-    family.name: family
-    for family in (LOCAL_ID_FAMILY, RUN_ID_FAMILY)
-}
-
-
 def encode_id(*, family: IdFamily, tick: int, seq: int) -> str:
     """Encode one raw tick/seq pair into one fixed-width id."""
 
@@ -318,7 +316,7 @@ def encode_id(*, family: IdFamily, tick: int, seq: int) -> str:
         multiplier=family.tick_multiplier,
         offset=family.tick_offset,
     )
-    mixed_seq = seq ^ tick_mask(family=family, tick=tick)
+    mixed_seq = seq ^ _tick_mask(family=family, tick=tick)
     seq_code = _affine_encode(
         mixed_seq,
         modulus=family.seq_modulus,
@@ -355,7 +353,7 @@ def decode_id(value: str, *, family: IdFamily) -> DecodedId:
         multiplier=family.seq_multiplier,
         offset=family.seq_offset,
     )
-    seq = mixed_seq ^ tick_mask(family=family, tick=tick)
+    seq = mixed_seq ^ _tick_mask(family=family, tick=tick)
     return DecodedId(
         value=text,
         family=family,
@@ -366,7 +364,7 @@ def decode_id(value: str, *, family: IdFamily) -> DecodedId:
     )
 
 
-def tick_mask(*, family: IdFamily, tick: int) -> int:
+def _tick_mask(*, family: IdFamily, tick: int) -> int:
     """Return the reversible tick-derived seq mask for one family."""
 
     _check_range("tick", tick, family.tick_modulus)
@@ -388,8 +386,12 @@ def reserve_next_id(
     """Reserve the next id from one in-memory allocator state."""
 
     issued_at = _as_utc(now or datetime.now(UTC))
+    if max_attempts <= 0:
+        raise ValueError("max_attempts must be positive")
     current_tick = family.tick_for(issued_at)
     tick = max(current_tick, state.last_tick)
+    if tick >= family.tick_modulus:
+        raise OverflowError(f"{family.name} id allocator exhausted its tick domain")
     next_seq = 0 if tick > state.last_tick else state.last_seq + 1
     for _attempt in range(max_attempts):
         if next_seq >= family.seq_modulus:
@@ -435,15 +437,6 @@ def archive_prefix(value: str, *, family: IdFamily) -> str:
     """Return the stable archive prefix for one id."""
 
     return decode_id(value, family=family).archive_prefix
-
-
-def family_by_name(name: str) -> IdFamily:
-    """Return one registered family by name."""
-
-    key = name.strip()
-    if not key:
-        raise KeyError("id family name cannot be empty")
-    return ID_FAMILIES[key]
 
 
 def _permute_wire_code(value: int, *, family: IdFamily) -> int:
@@ -531,7 +524,7 @@ def _encode_fixed_width(value: int, *, width: int) -> str:
     chars = ["0"] * width
     current = value
     for index in range(width - 1, -1, -1):
-        chars[index] = ID_ALPHABET[current & 0x1F]
+        chars[index] = _ID_ALPHABET[current & 0x1F]
         current >>= 5
     return "".join(chars)
 
@@ -561,9 +554,9 @@ def _as_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-def _int_value(value: object, *, default: int) -> int:
+def _int_value(value: object) -> int:
     if value is None:
-        return default
+        raise TypeError("null values are not valid integers")
     if isinstance(value, bool):
         raise TypeError("boolean values are not valid integers")
     if isinstance(value, int):
@@ -575,14 +568,16 @@ def _int_value(value: object, *, default: int) -> int:
 def _locked_state_file(path: Path) -> Iterator[TextIO]:
     path.parent.mkdir(parents=True, exist_ok=True)
     handle = path.open("a+", encoding="utf-8")
+    locked = False
     try:
         if _FCNTL is None:  # pragma: no cover - platform dependent
             raise RuntimeError("file-backed id allocation requires fcntl")
         _FCNTL.flock(handle.fileno(), _FCNTL.LOCK_EX)
+        locked = True
         handle.seek(0)
         yield handle
     finally:
-        if _FCNTL is not None:  # pragma: no branch - simple cleanup
+        if locked and _FCNTL is not None:  # pragma: no branch - simple cleanup
             _FCNTL.flock(handle.fileno(), _FCNTL.LOCK_UN)
         handle.close()
 
@@ -609,3 +604,4 @@ def _write_snapshot(handle: TextIO, snapshot: AllocatorSnapshot) -> None:
     handle.truncate()
     handle.write(text)
     handle.flush()
+    os.fsync(handle.fileno())

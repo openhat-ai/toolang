@@ -1,7 +1,7 @@
-"""Shared base-layer error types."""
+"""Shared Toolang error types exposed to plugins."""
 
 from __future__ import annotations
 
 
 class ToolangError(Exception):
-    """Raised when one Toolang plugin contract or runtime input is invalid."""
+    """Raised when Toolang input, configuration, or runtime behavior is invalid."""

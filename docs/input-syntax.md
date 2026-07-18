@@ -1,61 +1,211 @@
 # Input Syntax
 
-This document defines how interactive submissions and authored content become
-content and run input.
+This document defines how interactive and authored text becomes content and
+typed run input.
 
 
-## Structure
-
-A submission is either a command or content:
+## Model
 
 ```text
-Submission = Command | Content
-Command    = Slash | Shell
-Content    = Text | Prompt | Include
+Submission  = Command | Content
+Command     = Slash | Shell
+Content     = ContentItem+
+ContentItem = Text | Prompt | Include
 ```
 
-A command occupies the first non-empty line and may own the content that
-follows it. Content produces `Part[]` input.
+- `Submission` is one interactive chat action. Only submissions dispatch
+  commands.
+- `Content` is an ordered tree that renders to `Part[]`.
+- `ContentBody` is source text owned by a declaration or document and parsed as
+  `Content` under that source's profile.
+- `RunInput` is typed runtime data: one optional primary value plus named
+  parameters. It contains no source syntax.
 
-`Part[]` is ordered multimodal content. Plain multiline text produces one
-`TextPart` containing the complete text; line breaks alone do not create more
-parts.
+The source terms describe different stages:
 
+- Chat input is a `Submission`.
+- Task and chore inputs are document `ContentBody` values that later become
+  `RunInput`.
+- An agic body is model-call content evaluated inside a run.
+- A flow body is `FlowStmt[]`, not content text.
+- A flow statement body is either a `ContentBody` or nested `FlowStmt[]`, as
+  defined by that statement.
 
-## Applicable Sources
-
-The same content parser is used across input surfaces, but submission commands
-and runtime template variables are source-specific:
-
-| Source | Slash | Shell | Prompt/include | Template variables |
-| --- | --- | --- | --- | --- |
-| CLI chat input box | yes | yes | yes | no |
-| WebUI chat input box | yes | no | yes | no |
-| `task.md` / `chore.md` content | no | no | yes | no |
-| agic message or content | no | no | yes | yes |
-| flow statement or `let` content | no | no | yes | yes |
-
-CLI and WebUI command registries may expose different built-in commands, but a
-shared command keeps the same syntax and semantics. A WebUI must reject a
-shell-command line rather than execute it on the server or send it to the
-model as ordinary input.
-
-Task and chore documents contain authored content. Prompts are expanded
-when the job creates a run, and include paths are resolved relative to the job
-document. The content itself does not interpolate run locals; `{{name}}` remains
-literal text unless it belongs to an expanded prompt template.
-
-Agic and flow content is program-authored. Include paths are resolved
-relative to the `.too` source. Template variables may read `_`, named locals,
-and the documented runtime template context. Inline flow content uses the same
-rules as the generated inline agic; `let` content uses them without making a
-model call.
-
-For browser input, includes resolve only uploaded or otherwise
-authorized file references. They never expose arbitrary server paths.
+`Part[]` is ordered multimodal content. Plain multiline text remains one
+`TextPart`; line breaks alone do not create parts. A prompt has slash-like
+spelling but is a content item, not a command.
 
 
-## Executable Input
+## Source Profiles
+
+| Source | Entry | Built-in slash | Shell | Template scope | Produces |
+| --- | --- | --- | --- | --- | --- |
+| CLI chat | Submission | yes | execute | none | command or RunInput |
+| WebUI chat | Submission | yes | reject | none | command or RunInput |
+| task/chore body | ContentBody | no | text | none | RunInput |
+| agic body/message | ContentBody | no | text | locals and runtime | ModelCall content |
+| flow inline agic | ContentBody | no | text | locals and runtime | generated AgicDecl |
+| flow `let` | ContentBody | no | text | locals and runtime | Local |
+| flow `ask` | ContentBody | no | text | locals and runtime | HumanCall content |
+| prompt template | ContentBody | no | text | declared params and `_` | expanded Content |
+
+`text` means that a leading `!` is ordinary content. A WebUI rejects shell
+syntax instead of executing it on the server or sending it to the model.
+
+Includes resolve relative to the owning task, chore, `.too` source, or prompt
+definition. Browser sources may resolve only uploaded or otherwise authorized
+references. Prompt templates see only declared parameters, explicit `_` input,
+and documented prompt runtime values.
+
+
+## Submission
+
+Only the first non-empty line is dispatched:
+
+```text
+reserved slash name   -> Slash
+!                     -> Shell
+registered slash name -> Prompt within Content
+otherwise             -> Content
+```
+
+Built-in slash names are reserved. Unknown command lines are errors rather than
+implicit model input.
+
+### Slash
+
+A built-in slash declares whether following content is rejected or parsed as
+input:
+
+```text
+/help
+/run review --mode strict
+/steer
+```
+
+For example, `/help` accepts no content, while `/run` and `/steer` may accept
+`Part[]` input.
+
+### Shell
+
+A CLI shell command starts with `!`:
+
+```text
+!git status
+```
+
+The first line is the command. Following text is literal stdin, not `Content`.
+Shell commands do not create execution records.
+
+### Escapes
+
+At a position where a prefix would otherwise be recognized:
+
+```text
+//text  literal /text
+!!text  literal !text on the first line
+@@text  literal @text
+```
+
+Escaping removes one prefix character.
+
+
+## Content
+
+Prompts and includes are recognized on standalone lines and are disabled inside
+fenced code blocks. Text may be interleaved with any number of them.
+
+### Text
+
+Ordinary multiline input remains one text item with its authored line breaks.
+
+### Include
+
+An include replaces one standalone line with a file part:
+
+```text
+@README.md
+@"path with spaces/image.png"
+```
+
+It does not own attached content.
+
+### Prompt
+
+A registered custom slash invokes a prompt template:
+
+```text
+/review src/app.py "only errors"
+```
+
+It may appear anywhere in `Content`. Optional input has an explicit boundary:
+
+```text
+PromptInput = ":" InlineText | ":" NEWLINE IndentedContent
+```
+
+The delimiter is the first unquoted colon after the arguments. Without it, the
+prompt receives only its declared parameters. Inline input ends with the line;
+indented input ends at the first non-empty dedented line.
+
+```text
+/review src/app.py: Focus on cancellation.
+
+/review src/app.py:
+  Review event ordering.
+  @docs/executor.md
+  /rules strict:
+    Ignore formatting issues.
+
+This text is outside the prompt input.
+```
+
+Indented input is `Content`, so prompts may contain includes and nested prompts.
+A prompt never consumes following sibling content implicitly.
+
+Prompt composition follows these rules:
+
+- expansion is depth first
+- rendered output is parsed in content-only mode
+- rendered output may contain prompts and includes, but not dispatch commands
+- each prompt has its own parameter and `_` scope
+- direct and indirect cycles are errors; repeated sibling calls are allowed
+- errors report the prompt call stack
+
+Implementations apply cumulative limits to one expansion. Recommended defaults
+are depth 16, 64 prompt calls, 256 output parts, and 1,000,000 text characters.
+Include resolvers enforce separate access and byte limits.
+
+
+## Processing
+
+Interactive chat dispatches its submission first. Every content source then
+uses the same pipeline under its source profile:
+
+```text
+parse Content
+render permitted template variables
+expand prompts depth first in content-only mode
+resolve includes
+coalesce adjacent text into Part[]
+```
+
+The consumer determines what happens next:
+
+```text
+chat/task/chore Content -> Part[] -> signature coercion -> RunInput -> run
+agic ContentBody        -> Part[] -> Message -> ModelCall
+flow inline agic        -> generated AgicDecl -> child run
+flow let ContentBody    -> Part[] -> Local
+flow ask ContentBody    -> Part[] -> HumanCall
+prompt ContentBody      -> expanded Content -> enclosing pipeline
+```
+
+Prompt expansion does not enable local interpolation in chat, task, or chore
+content and never redispatches built-in or shell commands.
+
+
+## Run Input
 
 Agics and flows use `_` as their primary input parameter:
 
@@ -68,173 +218,31 @@ agic parse(_: Json, mode: Text):
 flow research(_: Text) -> Report:
 ```
 
-Omitting the parameter list implies `_ : Part[]`. An explicit empty list `()`
-means the executable accepts no primary input. An untyped parameter defaults to
-`Part[]`.
+Omitting the parameter list implies `_ : Part[]`. `()` accepts no primary
+input. An untyped parameter defaults to `Part[]`.
 
-Interactive and authored content is parsed first, producing `Part[]`. The
-calling surface then coerces that value to the declared primary input type:
+Content first renders to `Part[]`, then the calling surface coerces it to the
+declared type:
 
 ```text
 Part[]     preserve ordered parts
 Part       require exactly one part
-Text       require text-only content and join it without losing authored lines
+Text       require text-only content and preserve authored lines
 Number     parse one canonical number
 Boolean    parse true or false
 Json       parse one JSON value
 Struct/T[] parse JSON and validate the declared type
 ```
 
-No implicit coercion may discard a non-text part. Invalid input is rejected
-before the executor emits `run_begin`.
+No coercion may discard a non-text part. Invalid input is rejected before
+`run_begin`.
 
-Type and flow shape are independent. A primary input whose type is `Part[]` or
-`T[]` initializes one local with `shape=item`; it becomes `shape=list` only
-through a flow operation that explicitly creates a collection.
+The executor initializes `_` from the primary value and named locals from the
+parameters. `Message` belongs to model calls and is not part of `RunInput`.
 
-
-## Commands
-
-Commands are recognized only on the first non-empty line.
-
-### Slash
-
-Built-in commands use reserved slash names:
-
-```text
-/help
-/run review --mode strict
-/steer
-```
-
-Each slash declares one content policy:
-
-```text
-none   following content is rejected
-input  following content is parsed as Part[]
-```
-
-For example, `/help` accepts no content, while `/run` and `/steer` may accept
-input content.
-
-### Shell
-
-A shell command starts with `!`:
-
-```text
-!git status
-```
-
-The first line is the shell command. Following content is passed as literal
-stdin and is not parsed as content. Shell commands do not create execution
-records.
-
-
-## Content
-
-Content consists of text, prompts, and includes. Prompts and includes are
-recognized only on standalone lines and are disabled inside fenced code blocks.
-
-### Text
-
-Ordinary multiline input remains one text block. Newlines do not create parts
-by themselves.
-
-### Prompt
-
-A registered custom slash name is a prompt:
-
-```text
-/review src/app.py "only errors"
-```
-
-It renders a prompt template and replaces the prompt line with the rendered
-content. Prompts may appear anywhere in content, including the first
-line.
-
-Attached content uses the same inline or indented syntax as agic content:
-
-```text
-/review src/app.py: Focus on cancellation.
-
-/review src/app.py:
-  Focus on cancellation and event ordering.
-  @docs/executor.md
-```
-
-Without a colon, the prompt has only parameters. With a colon, the parsed
-content becomes its `_ : Part[]` input. The prompt owns only that explicit
-content and never implicitly consumes the rest of the submission.
-
-Rendered prompt content may contain includes, but it is not
-dispatched again as a built-in or shell command.
-
-### Include
-
-An include references one file on a standalone line:
-
-```text
-@README.md
-@"path with spaces/image.png"
-```
-
-It replaces the line with the corresponding part. Includes may appear anywhere
-in content and do not own attached content.
-
-
-## Dispatch
-
-The first non-empty line is resolved in this order:
-
-```text
-reserved slash name   -> slash
-!                     -> shell
-registered slash name -> prompt within content
-otherwise             -> content
-```
-
-After dispatch, content is parsed in source order:
-
-```text
-text
-prompts
-includes
-```
-
-Built-in slash names are reserved and cannot be registered as prompt names.
-Unknown command lines are errors rather than implicit model input.
-
-
-## Escapes
-
-At a position where a prefix would otherwise be recognized:
-
-```text
-//text  literal /text
-!!text  literal !text on the first line
-@@text  literal @text
-```
-
-Escaping removes one prefix character before content parsing.
-
-
-## Content Processing
-
-Interactive chat first performs command dispatch. Other sources start with
-content processing directly:
-
-```text
-parse text, prompts, and includes
-render runtime template variables when the source permits them
-expand registered prompts and their declared parameters
-resolve includes with the source-specific file resolver
-produce ordered Part[]
-```
-
-Prompt templates always render their own declared parameters. This does not
-enable runtime-local interpolation in the surrounding chat, task, or chore
-content. Content produced by template rendering is never redispatched as a
-built-in or shell command.
+Value type and flow shape are independent. A `Part[]` or `T[]` value starts as
+one `shape=item` local and becomes `shape=list` only through an explicit flow
+operation.
 
 
 ## Run Output
@@ -252,5 +260,5 @@ Part[]                one JSON array
 ```
 
 Model messages are assembled from `Part[]`, but `Message` is not a Toolang
-input or output type. The executor decodes the terminal assistant parts into
-the declared value before updating the primary local.
+input or output type. The executor decodes terminal assistant parts before
+updating `_`.

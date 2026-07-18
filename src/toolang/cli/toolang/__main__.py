@@ -1,8 +1,6 @@
-"""Run the main Toolang CLI package."""
+"""Module entry point for ``python -m toolang.cli.toolang``."""
 
-from __future__ import annotations
-
-from .app import main
+from .cli import main
 
 
 raise SystemExit(main())

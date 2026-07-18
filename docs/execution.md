@@ -8,17 +8,21 @@ in [executor.md](./executor.md).
 
 ## State Forms
 
-Toolang uses three forms of state:
+Toolang uses three source-state forms:
 
 | State Form | Meaning |
 | --- | --- |
-| `durable` | Authored files and persisted execution truth |
-| `prepared` | Immutable runtime-ready snapshots |
-| `live` | In-memory state available to accept later work |
+| `durable` | Authored files discovered under the root and agent home |
+| `prepared` | Materialized cap locks and preserved program source |
+| `agent` | Immutable effective `RootState + HomeState` used by execution |
 
-A run captures one prepared `LiveState` when accepted. Accepted queued runs
-retain that snapshot, and child runs inherit it from their parent. A live-state
-update therefore affects only requests accepted later.
+A run captures immutable `AgentState` and `AgentSetup` values when accepted,
+and child runs inherit them from their parent. Later source updates therefore
+affect only requests accepted later.
+
+Scheduled and manually triggered jobs also capture their `JobDefinition` as
+run metadata when claimed. Execution consumes that metadata and never reads
+task or chore files, so a job edit cannot change an accepted run.
 
 
 ## Durable Store
@@ -79,13 +83,14 @@ request handling / executor -> TraceEventHandler -> PersistSink -> runs.db
                                                 -> resource event bus
 ```
 
-Request handling may allocate run and command ids. Queues may retain pending
-requests in memory. Neither request handling, the queue, nor the executor may
-create or update execution records directly.
+Request handling may allocate run and command ids. Neither request handling nor
+the executor may create or update execution records directly.
 
 `PersistSink` consumes the ordered trace, creates records, applies lifecycle
 updates, accumulates parts, and maintains projection-only input/output
 provenance. Replaying the same trace must produce the same record state.
+Resource event streaming is a separate trace projection and never persists
+run, command, or step truth.
 
 
 ## Run Lifecycle
@@ -121,6 +126,9 @@ executor and carries the terminal status:
 ```text
 finished | failed | canceled
 ```
+
+The accepted run context records the immutable agent-state fingerprint used by
+that run. Child runs inherit the same fingerprint.
 
 
 ## Step Lifecycle

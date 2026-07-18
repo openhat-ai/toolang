@@ -103,6 +103,7 @@ class SandboxStartRequest:
     run_command: tuple[str, ...] = ()
     run_shell_command: str | None = None
     env_vars: dict[str, str] = field(default_factory=dict)
+    mounts: tuple[SandboxMount, ...] = ()
     local_dev_artifact: Path | None = None
 
 

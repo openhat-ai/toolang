@@ -12,30 +12,28 @@ import click
 import typer
 from typer.core import TyperGroup
 
-from ...base.error import ToolangError
-from ..utils import (
-    _OptionalPrefixAgentCommand,
-    _OptionalPrefixAgentGroup,
-    _OptionalPrefixAgentListCommand,
-    _OptionalPrefixAgentTemplateCommand,
-    _append_agent_update,
-    _context_agent,
-    _context_root,
-    _echo_block,
-    _echo_table,
-    _wrap_user_error,
+from ... import templates
+from ...common.error import ToolangError
+from ...common.github import parse_github_ref
+from toolang.catalog import cap as cap_store
+from toolang.state import caps as cap_state
+from ...state import watcher as state_watcher
+from ..common.updates import append_agent_update
+from ..common.context import context_agent, context_root, user_call
+from ..common.output import echo_block, echo_table
+from ..common.routing import (
+    OptionalPrefixAgentCommand,
+    OptionalPrefixAgentListCommand,
+    OptionalPrefixAgentTemplateCommand,
 )
 
 if TYPE_CHECKING:
-    from ... import caps as cap_store
-    from ... import templates
     from ...execution.records import UpdateKind
-    from ...components.trigger import watch as watch_feature
-    from ...state.prepared import PreparedEntry, PreparedState
-    from ..progress import CliProgress
+    from toolang.state.prepared import PreparedEntry, PreparedLocks
+    from ..common.progress import CliProgress
 
 CapKind = Literal["skill", "psyche", "prompt", "service"]
-EntryKind = Literal["psyche", "skill", "service", "prompt", "task", "chore"]
+EntryKind = CapKind
 PreparedVisibility = Literal["shared", "private"]
 CapForm = Literal["inline", "ref", "wired", "file"]
 CapScope = Literal["root", "home", "here"]
@@ -44,109 +42,52 @@ CAP_FORMS: tuple[CapForm, ...] = ("inline", "ref", "wired", "file")
 CAP_SCOPES: tuple[CapScope, ...] = ("root", "home", "here")
 
 
-class _LazyModule:
-    """Import a module only when one of its attributes is used."""
-
-    def __init__(self, module_name: str) -> None:
-        self._module_name = module_name
-        self._module: object | None = None
-
-    def _load(self) -> object:
-        if self._module is None:
-            import importlib
-
-            self._module = importlib.import_module(self._module_name)
-        return self._module
-
-    def __getattr__(self, name: str) -> object:
-        return getattr(self._load(), name)
-
-    def __setattr__(self, name: str, value: object) -> None:
-        if name.startswith("_"):
-            object.__setattr__(self, name, value)
-            return
-        setattr(self._load(), name, value)
-
-    def __delattr__(self, name: str) -> None:
-        if name.startswith("_"):
-            object.__delattr__(self, name)
-            return
-        delattr(self._load(), name)
-
-
-if not TYPE_CHECKING:
-    cap_store = _LazyModule("toolang.caps")
-    templates = _LazyModule("toolang.templates")
-    watch_feature = _LazyModule("toolang.components.trigger.watch")
-
-
-def register_standalone_caps_commands(app: typer.Typer, *, rich_help_panel: str | None = None) -> None:
-    app.command(
-        "list",
-        help="Inspect available caps.",
-        cls=_OptionalPrefixAgentListCommand,
-    )(_list_all_caps)
-    _register_cap_kind_commands(
-        app,
-        rich_help_panel=rich_help_panel,
-        group_cls=_OptionalPrefixAgentGroup,
-    )
-
-
-def register_toolang_caps_commands(app: typer.Typer, *, rich_help_panel: str | None = None) -> None:
-    _register_cap_kind_commands(
-        app,
-        rich_help_panel=rich_help_panel,
-        group_cls=_OptionalPrefixAgentGroup,
-    )
-    app.command(
-        "caps",
-        help="Inspect available caps.",
-        cls=_OptionalPrefixAgentListCommand,
-        rich_help_panel=rich_help_panel,
-    )(_list_all_caps)
-
-
-def _kind_command_cls(label: str) -> type[_OptionalPrefixAgentCommand]:
+def _kind_command_cls(label: str) -> type[OptionalPrefixAgentCommand]:
     return type(
         f"{label.title().replace(' ', '')}ScopeCommand",
-        (_OptionalPrefixAgentCommand,),
-        {"argument_help": f"Apply to this agent's home {label} instead of root {label}."},
+        (OptionalPrefixAgentCommand,),
+        {
+            "argument_help": f"Apply to this agent's home {label} instead of root {label}."
+        },
     )
 
 
-def _kind_list_command_cls(label: str) -> type[_OptionalPrefixAgentListCommand]:
+def _kind_list_command_cls(label: str) -> type[OptionalPrefixAgentListCommand]:
     return type(
         f"{label.title().replace(' ', '')}ListScopeCommand",
-        (_OptionalPrefixAgentListCommand,),
+        (OptionalPrefixAgentListCommand,),
         {"argument_help": f"Also include this agent's home {label}."},
     )
 
 
-def _kind_template_command_cls(label: str) -> type[_OptionalPrefixAgentTemplateCommand]:
+def _kind_template_command_cls(label: str) -> type[OptionalPrefixAgentTemplateCommand]:
     return type(
         f"{label.title().replace(' ', '')}TemplateScopeCommand",
-        (_OptionalPrefixAgentTemplateCommand,),
-        {"argument_help": f"Apply to this agent's home {label} instead of root {label}."},
+        (OptionalPrefixAgentTemplateCommand,),
+        {
+            "argument_help": f"Apply to this agent's home {label} instead of root {label}."
+        },
     )
 
 
-def _kind_group_cls(group_cls: type[TyperGroup] | None, label: str) -> type[TyperGroup] | None:
+def _kind_group_cls(
+    group_cls: type[TyperGroup] | None, label: str
+) -> type[TyperGroup] | None:
     if group_cls is None:
         return None
     return type(
         f"{label.title().replace(' ', '')}ScopeGroup",
         (group_cls,),
-        {"argument_help": f"Apply to this agent's home {label} instead of root {label}."},
+        {
+            "argument_help": f"Apply to this agent's home {label} instead of root {label}."
+        },
     )
 
 
-def _register_cap_kind_commands(
-    app: typer.Typer,
+def create_cap_apps(
     *,
-    rich_help_panel: str | None = None,
     group_cls: type[TyperGroup] | None = None,
-) -> None:
+) -> dict[CapKind, typer.Typer]:
     cap_titles: dict[CapKind, str] = {
         "psyche": "Psyche",
         "skill": "Skill",
@@ -222,6 +163,7 @@ def _register_cap_kind_commands(
         ),
     )
 
+    apps: dict[CapKind, typer.Typer] = {}
     for kind in cap_titles:
         title = cap_titles[kind]
         label = cap_labels[kind]
@@ -249,15 +191,11 @@ def _register_cap_kind_commands(
                     else command_cls
                 ),
             )(spec.factory(kind, title))
-        app.add_typer(
-            cap_app,
-            name=kind,
-            no_args_is_help=True,
-            rich_help_panel=rich_help_panel,
-        )
+        apps[kind] = cap_app
+    return apps
 
 
-def _list_all_caps(
+def list_caps(
     ctx: typer.Context,
     filter_: Annotated[
         str | None,
@@ -268,18 +206,18 @@ def _list_all_caps(
         ),
     ] = None,
 ) -> None:
-    selected_agent = _context_agent(ctx)
+    selected_agent = context_agent(ctx)
     agent_name = selected_agent or "default"
     effective_visibility = "all" if selected_agent else "shared"
     entries = _all_cap_entries(
-        _context_root(ctx),
+        context_root(ctx),
         agent_name,
         visibility=effective_visibility,
         prepare=selected_agent is not None,
-        kinds=set(cast(tuple[EntryKind, ...], CAP_KINDS)),
+        kinds=set(CAP_KINDS),
     )
     try:
-        selected_entries = cap_store.select_cap_entries(
+        selected_entries = cap_state.select_cap_entries(
             entries,
             _cap_filter_selectors(filter_, implicit_kind=None),
             agent_name=agent_name,
@@ -288,7 +226,7 @@ def _list_all_caps(
         raise click.ClickException(str(exc)) from exc
     rows = [
         (
-            cast(CapKind, entry.kind),
+            entry.kind,
             entry.name,
             _entry_source(entry, agent_name=agent_name),
             _entry_form(entry),
@@ -300,8 +238,10 @@ def _list_all_caps(
         typer.echo("No caps found.")
         return
     kind_order = {kind: index for index, kind in enumerate(CAP_KINDS)}
-    rows.sort(key=lambda item: (kind_order[item[0]], item[1], item[3], item[4], item[2]))
-    _echo_table(
+    rows.sort(
+        key=lambda item: (kind_order[item[0]], item[1], item[3], item[4], item[2])
+    )
+    echo_table(
         ("KIND", "CAP", "SOURCE", "FORM", "SCOPE"),
         rows,
     )
@@ -319,22 +259,22 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             ),
         ] = None,
     ) -> None:
-        selected_agent = _context_agent(ctx)
+        selected_agent = context_agent(ctx)
         agent_name = selected_agent or "default"
         effective_visibility = "all" if selected_agent else "shared"
         entries = _all_cap_entries(
-            _context_root(ctx),
+            context_root(ctx),
             agent_name,
             visibility=effective_visibility,
             prepare=selected_agent is not None,
-            kinds={cast(EntryKind, kind)},
+            kinds={kind},
         )
         try:
-            selected_entries = cap_store.select_cap_entries(
+            selected_entries = cap_state.select_cap_entries(
                 entries,
-                _cap_filter_selectors(filter_, implicit_kind=cast(EntryKind, kind)),
+                _cap_filter_selectors(filter_, implicit_kind=kind),
                 agent_name=agent_name,
-                implicit_kind=cast(EntryKind, kind),
+                implicit_kind=kind,
             )
         except ToolangError as exc:
             raise click.ClickException(str(exc)) from exc
@@ -351,7 +291,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             typer.echo(f"No {kind}s found.")
             return
         rows.sort(key=lambda item: (item[0], item[2], item[3], item[1]))
-        _echo_table(
+        echo_table(
             (title.upper(), "SOURCE", "FORM", "SCOPE"),
             rows,
         )
@@ -369,12 +309,12 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ] = "default",
     ) -> None:
         visibility, agent_name = _target_visibility(ctx)
-        selected_agent = _context_agent(ctx)
+        selected_agent = context_agent(ctx)
         if _local_entry_exists(
-            _context_root(ctx),
+            context_root(ctx),
             agent_name,
             visibility=visibility,
-            kind=cast(EntryKind, kind),
+            kind=kind,
             name=name,
         ):
             raise click.ClickException(f"{title} {name} already exists")
@@ -386,18 +326,17 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         if text is None:
             typer.echo("No changes")
             raise typer.Exit()
-        path = _wrap_user_error(
-            cap_store.put_local_entry_text,
-            _context_root(ctx),
-            agent_name,
-            visibility=visibility,
-            kind=cast(EntryKind, kind),
-            name=name,
-            text=text,
+        path = user_call(
+            cap_store.CapCatalog(
+                context_root(ctx), agent_name, visibility=visibility
+            ).create,
+            kind,
+            name,
+            text,
         )
         if selected_agent:
             _refresh_and_append_cap_update(
-                _context_root(ctx),
+                context_root(ctx),
                 selected_agent,
                 kind=kind,
                 name=name,
@@ -415,15 +354,11 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         name: str = typer.Argument(..., help=f"{title} name"),
     ) -> None:
         visibility, agent_name = _target_visibility(ctx)
-        selected_agent = _context_agent(ctx)
+        selected_agent = context_agent(ctx)
         try:
-            text = cap_store.load_local_entry_text(
-                _context_root(ctx),
-                agent_name,
-                visibility=visibility,
-                kind=cast(EntryKind, kind),
-                name=name,
-            )
+            text = cap_store.CapCatalog(
+                context_root(ctx), agent_name, visibility=visibility
+            ).read(kind, name)
         except FileNotFoundError as exc:
             raise click.ClickException(f"{title} {name} not found") from exc
         updated_text = click.edit(
@@ -434,18 +369,17 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         if updated_text is None or updated_text == text:
             typer.echo("No changes")
             raise typer.Exit()
-        path = _wrap_user_error(
-            cap_store.put_local_entry_text,
-            _context_root(ctx),
-            agent_name,
-            visibility=visibility,
-            kind=cast(EntryKind, kind),
-            name=name,
-            text=updated_text,
+        path = user_call(
+            cap_store.CapCatalog(
+                context_root(ctx), agent_name, visibility=visibility
+            ).update,
+            kind,
+            name,
+            updated_text,
         )
         if selected_agent:
             _refresh_and_append_cap_update(
-                _context_root(ctx),
+                context_root(ctx),
                 selected_agent,
                 kind=kind,
                 name=name,
@@ -462,17 +396,17 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         ref: str = typer.Argument(..., help=f"{title} ref"),
     ) -> None:
-        from ..progress import as_progress_sink
+        from ..common.progress import as_progress_sink
 
         visibility, agent_name = _target_visibility(ctx)
-        selected_agent = _context_agent(ctx)
+        selected_agent = context_agent(ctx)
         progress = _make_cap_write_progress()
         try:
             cap_store.add_remote_entry(
-                _context_root(ctx),
+                context_root(ctx),
                 agent_name,
                 visibility=visibility,
-                kind=cast(EntryKind, kind),
+                kind=kind,
                 ref=ref,
                 progress=as_progress_sink(progress),
             )
@@ -481,22 +415,22 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             message = str(exc)
             if "conflicting entries" in message:
                 raise click.ClickException(
-                    f"{title} {cap_store.remote_entry_name(cast(EntryKind, kind), ref)} already exists"
+                    f"{title} {cap_store.remote_entry_name(kind, ref)} already exists"
                 ) from exc
             raise click.ClickException(f"Wired {kind} {ref} not found") from exc
         entry = _named_entry(
-            _context_root(ctx),
+            context_root(ctx),
             agent_name,
             visibility=visibility,
-            kind=cast(EntryKind, kind),
-            name=cap_store.remote_entry_name(cast(EntryKind, kind), ref),
+            kind=kind,
+            name=cap_store.remote_entry_name(kind, ref),
             source_origin="remote",
             source_form="wired",
         )
         if selected_agent:
             try:
                 _refresh_and_append_cap_update(
-                    _context_root(ctx),
+                    context_root(ctx),
                     selected_agent,
                     kind=kind,
                     name=entry.name,
@@ -519,29 +453,29 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         name: str = typer.Argument(..., help=f"{title} name"),
     ) -> None:
         visibility, agent_name = _target_visibility(ctx)
-        selected_agent = _context_agent(ctx)
+        selected_agent = context_agent(ctx)
         entry = _named_entry(
-            _context_root(ctx),
+            context_root(ctx),
             agent_name,
             visibility=visibility,
-            kind=cast(EntryKind, kind),
+            kind=kind,
             name=name,
             source_origin="remote",
             source_form="wired",
         )
-        removed = _wrap_user_error(
+        removed = user_call(
             cap_store.remove_remote_entry,
-            _context_root(ctx),
+            context_root(ctx),
             agent_name,
             visibility=visibility,
-            kind=cast(EntryKind, kind),
+            kind=kind,
             name=name,
         )
         if not removed:
             raise click.ClickException(f"{title} {name} not found")
         if selected_agent:
             _refresh_and_append_cap_update(
-                _context_root(ctx),
+                context_root(ctx),
                 selected_agent,
                 kind=kind,
                 name=name,
@@ -559,31 +493,30 @@ def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         name: str = typer.Argument(..., help=f"{title} name"),
     ) -> None:
         visibility, agent_name = _target_visibility(ctx)
-        selected_agent = _context_agent(ctx)
+        selected_agent = context_agent(ctx)
         entry = _named_entry(
-            _context_root(ctx),
+            context_root(ctx),
             agent_name,
             visibility=visibility,
-            kind=cast(EntryKind, kind),
+            kind=kind,
             name=name,
             source_origin="local",
         )
-        deleted_path = _context_root(ctx) / entry.path
+        deleted_path = context_root(ctx) / entry.path
         if entry.shape == "dir":
             deleted_path = deleted_path.parent
-        removed = _wrap_user_error(
-            cap_store.remove_local_entry,
-            _context_root(ctx),
-            agent_name,
-            visibility=visibility,
-            kind=cast(EntryKind, kind),
-            name=name,
+        removed = user_call(
+            cap_store.CapCatalog(
+                context_root(ctx), agent_name, visibility=visibility
+            ).remove,
+            kind,
+            name,
         )
         if not removed:
             raise click.ClickException(f"{title} {name} not found")
         if selected_agent:
             _refresh_and_append_cap_update(
-                _context_root(ctx),
+                context_root(ctx),
                 selected_agent,
                 kind=kind,
                 name=name,
@@ -605,20 +538,20 @@ def _make_template_command(kind: CapKind, title: str) -> Callable[..., None]:
         ] = None,
     ) -> None:
         if name is not None:
-            _echo_block(templates.load_template(kind, name).raw_text.rstrip("\n"))
+            echo_block(templates.load_template(kind, name).raw_text.rstrip("\n"))
             return
         specs = templates.list_templates(kind)
         if not specs:
             typer.echo(f"No {kind} templates found.")
             return
         rows = [(item.name, item.description or "-") for item in specs]
-        _echo_table(("TEMPLATE", "DESCRIPTION"), rows)
+        echo_table(("TEMPLATE", "DESCRIPTION"), rows)
 
     return template
 
 
 def _target_visibility(ctx: typer.Context) -> tuple[PreparedVisibility, str]:
-    agent_name = _context_agent(ctx)
+    agent_name = context_agent(ctx)
     if agent_name:
         return "private", agent_name
     return "shared", "default"
@@ -627,10 +560,12 @@ def _target_visibility(ctx: typer.Context) -> tuple[PreparedVisibility, str]:
 def _entry_source(entry: PreparedEntry, *, agent_name: str) -> str:
     form = _entry_form(entry)
     if form in {"ref", "wired"}:
-        return _external_source_url(cap_store.entry_ref(entry, agent_name=agent_name), entry=entry)
-    source = cap_store.entry_definition_file(entry)
+        return _external_source_url(
+            cap_state.entry_ref(entry, agent_name=agent_name), entry=entry
+        )
+    source = cap_state.entry_definition_file(entry)
     if form == "inline":
-        line = cap_store.entry_line(entry)
+        line = cap_state.entry_line(entry)
         return f"{source}:{line}" if line is not None else source
     return source
 
@@ -638,33 +573,31 @@ def _entry_source(entry: PreparedEntry, *, agent_name: str) -> str:
 def _external_source_url(ref: str, *, entry: PreparedEntry) -> str:
     if not ref.startswith("github://"):
         return ref
-    body = ref.removeprefix("github://")
     try:
-        repo_ref, rev = body.rsplit("@", 1)
-        owner, repo, path = repo_ref.split("/", 2)
+        github = parse_github_ref(ref)
     except ValueError:
-        return ref
-    if not owner or not repo or not path or not rev:
         return ref
     view = "blob" if entry.shape == "file" else "tree"
     return (
-        f"https://github.com/{quote(owner, safe='')}/{quote(repo, safe='')}"
-        f"/{view}/{quote(rev, safe='/')}/{quote(path, safe='/')}"
+        f"https://github.com/{quote(github.owner, safe='')}/{quote(github.repo, safe='')}"
+        f"/{view}/{quote(github.rev, safe='/')}/{quote(github.path, safe='/')}"
     )
 
 
 def _entry_form(entry: PreparedEntry) -> CapForm:
-    return cap_store.entry_form(entry)
+    return cap_state.entry_form(entry)
 
 
 def _entry_scope_label(entry: PreparedEntry, *, agent_name: str) -> CapScope:
-    return cap_store.entry_scope(entry, agent_name=agent_name)
+    return cap_state.entry_scope(entry, agent_name=agent_name)
 
 
-def _cap_filter_selectors(value: str | None, *, implicit_kind: EntryKind | None) -> tuple[str, ...]:
+def _cap_filter_selectors(
+    value: str | None, *, implicit_kind: EntryKind | None
+) -> tuple[str, ...]:
     if value is None:
         return ()
-    items = cap_store.split_cap_selectors((value,))
+    items = cap_state.split_cap_selectors((value,))
     if not items:
         raise click.ClickException("--filter requires at least one value")
     legacy_tokens = tuple(item.lower() for item in items)
@@ -691,28 +624,30 @@ def _all_cap_entries(
     prepare: bool,
     kinds: set[EntryKind],
 ) -> tuple[PreparedEntry, ...]:
-    from ...state.durable import scan_durable_state
+    from toolang.state.durable import scan_durable_state
 
-    durable = _wrap_user_error(scan_durable_state, toolang_root, agent_name)
-    if prepare and durable.program_source is not None:
-        from ..progress import as_progress_sink, make_cli_progress
+    durable = user_call(scan_durable_state, toolang_root, agent_name)
+    if prepare and durable.program_path is not None:
+        from ..common.progress import as_progress_sink, make_cli_progress
 
         progress = make_cli_progress(
             prepare_summary_label="Resolved",
             show_materialize_summary=True,
         )
         try:
-            prepared = _wrap_user_error(
-                watch_feature.build_prepared_state,
+            prepared = user_call(
+                state_watcher.prepare_locks,
                 durable,
                 progress=as_progress_sink(progress),
             )
-            entries = _prepared_cap_entries(prepared, visibility=visibility, kinds=kinds)
+            entries = _prepared_cap_entries(
+                prepared, visibility=visibility, kinds=kinds
+            )
             progress.set_prepare_total(len(entries))
             return entries
         finally:
             progress.finish(details=False)
-    return cap_store.list_entries(
+    return cap_state.list_entries(
         toolang_root,
         agent_name,
         visibility=None if visibility == "all" else visibility,
@@ -721,16 +656,20 @@ def _all_cap_entries(
 
 
 def _prepared_cap_entries(
-    prepared: PreparedState,
+    prepared: PreparedLocks,
     *,
     visibility: PreparedVisibility | Literal["all"],
     kinds: set[EntryKind],
 ) -> tuple[PreparedEntry, ...]:
     entries: list[PreparedEntry] = []
     if visibility in {"all", "shared"}:
-        entries.extend(entry for entry in prepared.shared_lock.entries if entry.kind in kinds)
+        entries.extend(
+            entry for entry in prepared.shared_lock.entries if entry.kind in kinds
+        )
     if visibility in {"all", "private"}:
-        entries.extend(entry for entry in prepared.private_lock.entries if entry.kind in kinds)
+        entries.extend(
+            entry for entry in prepared.private_lock.entries if entry.kind in kinds
+        )
     return tuple(entries)
 
 
@@ -742,22 +681,13 @@ def _named_entry(
     kind: EntryKind,
     name: str,
     source_origin: Literal["local", "remote"] | None = None,
-    source_form: cap_store.EntryForm | None = None,
+    source_form: cap_state.EntryForm | None = None,
 ) -> PreparedEntry:
-    entries = (
-        cap_store.list_local_entries(
-            toolang_root,
-            agent_name,
-            visibility=visibility,
-            kinds={kind},
-        )
-        if source_origin == "local"
-        else cap_store.list_entries(
-            toolang_root,
-            agent_name,
-            visibility=visibility,
-            kinds={kind},
-        )
+    entries = cap_state.list_entries(
+        toolang_root,
+        agent_name,
+        visibility=visibility,
+        kinds={kind},
     )
     for entry in entries:
         if entry.name != name:
@@ -778,14 +708,13 @@ def _local_entry_exists(
     kind: EntryKind,
     name: str,
 ) -> bool:
-    return any(
-        entry.name == name
-        for entry in cap_store.list_local_entries(
+    return (
+        cap_store.CapCatalog(
             toolang_root,
             agent_name,
             visibility=visibility,
-            kinds={kind},
-        )
+        ).get(kind, name)
+        is not None
     )
 
 
@@ -798,7 +727,7 @@ def _append_cap_update(
     visibility: PreparedVisibility,
 ) -> None:
     update_kind = cast("UpdateKind", f"{kind}_changed")
-    _append_agent_update(
+    append_agent_update(
         toolang_root,
         agent_name,
         update_kind,
@@ -810,7 +739,7 @@ def _append_cap_update(
 
 
 def _make_cap_write_progress() -> CliProgress:
-    from ..progress import make_cli_progress
+    from ..common.progress import make_cli_progress
 
     return make_cli_progress(
         prepare_summary_label="Resolved",
@@ -828,12 +757,12 @@ def _refresh_and_append_cap_update(
     progress_total: int,
     progress: CliProgress | None = None,
 ) -> None:
-    from ...state.durable import scan_durable_state
-    from ..progress import as_progress_sink
+    from toolang.state.durable import scan_durable_state
+    from ..common.progress import as_progress_sink
 
-    durable = _wrap_user_error(scan_durable_state, toolang_root, agent_name)
-    _wrap_user_error(
-        watch_feature.build_prepared_state,
+    durable = user_call(scan_durable_state, toolang_root, agent_name)
+    user_call(
+        state_watcher.prepare_locks,
         durable,
         progress=as_progress_sink(progress),
     )

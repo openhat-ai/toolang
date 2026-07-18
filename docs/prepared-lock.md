@@ -154,7 +154,6 @@ A root lock uses `config.toml` and `skills/pdf/SKILL.md`.
     "program": {
       "source": "program",
       "source_text": "agent alice\n\nuse skill github://coinbase/agentic-wallet-skills/skills/fund@<commit-sha>\n",
-      "body_text": "use skill github://coinbase/agentic-wallet-skills/skills/fund@<commit-sha>\n",
       "uses": [
         {
           "kind": "skill",
@@ -187,7 +186,7 @@ A root lock uses `config.toml` and `skills/pdf/SKILL.md`.
         {
           "name": null,
           "line": 30,
-          "content": "You are running {{thunk.name}}."
+          "content": "You are running {{agic.name}}."
         }
       ],
       "caps": [
@@ -198,14 +197,14 @@ A root lock uses `config.toml` and `skills/pdf/SKILL.md`.
           "cap": 1
         }
       ],
-      "thunks": [
+      "agics": [
         {
           "name": "review",
           "line": 40,
           "params": [
             {
-              "name": "input",
-              "type": "Message",
+              "name": "_",
+              "type": "Part[]",
               "optional": false
             },
             {
@@ -460,36 +459,37 @@ Program fields are:
 | --- | --- |
 | `source` | Always `program`, referring to `sources.program` |
 | `source_text` | Full prepared program source text |
-| `body_text` | Program body after the optional agent header and shebang are removed |
 | `uses` | Program `use` items |
 | `structs` | Program `struct` items |
 | `contexts` | Top-level `context` items |
 | `instructs` | Top-level `instruct` items |
 | `caps` | Program `psyche`, `skill`, `service`, and `prompt` items |
-| `thunks` | Program `thunk` items |
+| `agics` | Program `agic` items |
 
 Program cap items use `caps`, not `declarations` or `definitions`, because the
 collection specifically describes program-level cap items. Each item may point
 to the corresponding runtime cap with `cap`, an index into
 `prepared.caps`.
 
-Program `use` items may also point to the ref prepared cap with `cap`,
+Program `with` items may also point to the ref prepared cap with `cap`,
 an index into `prepared.caps`.
 
-Thunk fields follow grammar names:
+Agic fields follow grammar names:
 
 | Field | Meaning |
 | --- | --- |
-| `params` | Thunk `params`, preserving source order |
-| `output` | Thunk output type |
-| `directives` | Thunk `directive` items |
-| `blocks` | Thunk `block` items |
+| `params` | Primary input and named parameters, preserving source order |
+| `output` | Agic output type |
+| `directives` | Agic `directive` items |
+| `context` | Selected context declaration |
+| `instruct` | Selected instruct declaration |
+| `messages` | Authored model message items |
 
-Use `directives` and `blocks` in the lock format. Those names match
-`tree-sitter-toolang`; directive and message concepts are runtime projections.
+Use `directives` and `messages` in the lock format. Directive and message
+concepts are runtime projections.
 
 Type strings use the canonical source spelling from the grammar. Built-in
-types include `Text`, `Number`, `Boolean`, `Json`, and `Message`. User type
+types include `Text`, `Number`, `Boolean`, `Json`, `Part`, and `Part[]`. User type
 names such as `Path`, `Artifact`, or `ReviewResult` use the same spelling as
 the source. Array suffixes are preserved, for example `ReviewFinding[]`.
 
