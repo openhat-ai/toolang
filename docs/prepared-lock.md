@@ -203,8 +203,8 @@ A root lock uses `config.toml` and `skills/pdf/SKILL.md`.
           "line": 40,
           "params": [
             {
-              "name": "input",
-              "type": "Message",
+              "name": "_",
+              "type": "Part[]",
               "optional": false
             },
             {
@@ -471,23 +471,25 @@ collection specifically describes program-level cap items. Each item may point
 to the corresponding runtime cap with `cap`, an index into
 `prepared.caps`.
 
-Program `use` items may also point to the ref prepared cap with `cap`,
+Program `with` items may also point to the ref prepared cap with `cap`,
 an index into `prepared.caps`.
 
 Agic fields follow grammar names:
 
 | Field | Meaning |
 | --- | --- |
-| `params` | Agic `params`, preserving source order |
+| `params` | Primary input and named parameters, preserving source order |
 | `output` | Agic output type |
 | `directives` | Agic `directive` items |
-| `blocks` | Agic `block` items |
+| `context` | Selected context declaration |
+| `instruct` | Selected instruct declaration |
+| `messages` | Authored model message items |
 
-Use `directives` and `blocks` in the lock format. Those names match
-`tree-sitter-toolang`; directive and message concepts are runtime projections.
+Use `directives` and `messages` in the lock format. Directive and message
+concepts are runtime projections.
 
 Type strings use the canonical source spelling from the grammar. Built-in
-types include `Text`, `Number`, `Boolean`, `Json`, and `Message`. User type
+types include `Text`, `Number`, `Boolean`, `Json`, `Part`, and `Part[]`. User type
 names such as `Path`, `Artifact`, or `ReviewResult` use the same spelling as
 the source. Array suffixes are preserved, for example `ReviewFinding[]`.
 

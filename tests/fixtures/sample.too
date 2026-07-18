@@ -10,7 +10,7 @@ struct WorkspaceSummary:
   title: Text
   summary: Text
 
-agic summarize(in: Part[]) -> WorkspaceSummary:
+agic summarize(_: Part[]) -> WorkspaceSummary:
   models = gpt-5
   skills = review
 

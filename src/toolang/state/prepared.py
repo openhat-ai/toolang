@@ -548,36 +548,18 @@ def _program_snapshot(source: ProgramSource) -> dict[str, object]:
 
 def _program_lock_data(source: ProgramSource) -> dict[str, object]:
     program = source.parse()
-    line_offset = source.body_line_offset
     data: dict[str, object] = {
         "source": "program",
         "source_text": source.source_text,
-        "uses": [
-            _with_to_lock_data(item, line_offset=line_offset) for item in program.withs
-        ],
-        "structs": [
-            _struct_to_lock_data(item, line_offset=line_offset)
-            for item in program.structs
-        ],
-        "contexts": [
-            _context_to_lock_data(item, line_offset=line_offset)
-            for item in program.contexts
-        ],
-        "instructs": [
-            _instruct_to_lock_data(item, line_offset=line_offset)
-            for item in program.instructs
-        ],
-        "caps": [
-            _cap_to_lock_data(item, line_offset=line_offset) for item in program.caps
-        ],
-        "agics": [
-            _agic_to_lock_data(item, line_offset=line_offset) for item in program.agics
-        ],
+        "uses": [_with_to_lock_data(item) for item in program.withs],
+        "structs": [_struct_to_lock_data(item) for item in program.structs],
+        "contexts": [_context_to_lock_data(item) for item in program.contexts],
+        "instructs": [_instruct_to_lock_data(item) for item in program.instructs],
+        "caps": [_cap_to_lock_data(item) for item in program.caps],
+        "agics": [_agic_to_lock_data(item) for item in program.agics],
     }
     if program.flows:
-        data["flows"] = [
-            _flow_to_lock_data(item, line_offset=line_offset) for item in program.flows
-        ]
+        data["flows"] = [_flow_to_lock_data(item) for item in program.flows]
     return data
 
 
@@ -639,92 +621,78 @@ def _message_to_data(message: Message) -> dict[str, object]:
     }
 
 
-def _with_to_lock_data(use: WithDecl, *, line_offset: int) -> dict[str, object]:
+def _with_to_lock_data(use: WithDecl) -> dict[str, object]:
     return {
         "kind": use.cap_kind,
         "ref": use.reference,
-        "line": use.span.line + line_offset,
+        "line": use.span.line,
     }
 
 
-def _struct_to_lock_data(struct: StructDecl, *, line_offset: int) -> dict[str, object]:
+def _struct_to_lock_data(struct: StructDecl) -> dict[str, object]:
     return {
         "name": struct.name,
-        "line": struct.span.line + line_offset,
+        "line": struct.span.line,
         "fields": [
             {
                 "name": field.name,
                 "type": _source_type_name(field.type_name),
                 "optional": field.optional,
-                "line": field.span.line + line_offset,
+                "line": field.span.line,
             }
             for field in struct.fields
         ],
     }
 
 
-def _instruct_to_lock_data(
-    instruct: InstructDecl, *, line_offset: int
-) -> dict[str, object]:
+def _instruct_to_lock_data(instruct: InstructDecl) -> dict[str, object]:
     return {
         "name": instruct.name,
-        "line": instruct.span.line + line_offset,
+        "line": instruct.span.line,
         "content": instruct.body,
     }
 
 
-def _context_to_lock_data(
-    context: ContextDecl, *, line_offset: int
-) -> dict[str, object]:
+def _context_to_lock_data(context: ContextDecl) -> dict[str, object]:
     return {
         "name": context.name,
-        "line": context.span.line + line_offset,
+        "line": context.span.line,
         "content": context.body,
     }
 
 
-def _cap_to_lock_data(cap: CapDecl, *, line_offset: int) -> dict[str, object]:
+def _cap_to_lock_data(cap: CapDecl) -> dict[str, object]:
     return {
         "kind": cap.kind,
         "name": cap.name,
-        "line": cap.span.line + line_offset,
+        "line": cap.span.line,
     }
 
 
-def _agic_to_lock_data(agic: AgicDecl, *, line_offset: int) -> dict[str, object]:
-    data = _executable_to_lock_data(agic, line_offset=line_offset)
+def _agic_to_lock_data(agic: AgicDecl) -> dict[str, object]:
+    data = _executable_to_lock_data(agic)
     data.update(
         {
             "context": agic.context,
             "instruct": agic.instruct,
-            "messages": [
-                _message_to_lock_data(item, line_offset=line_offset)
-                for item in agic.messages
-            ],
+            "messages": [_message_to_lock_data(item) for item in agic.messages],
         }
     )
     return data
 
 
-def _flow_to_lock_data(flow: FlowDecl, *, line_offset: int) -> dict[str, object]:
-    data = _executable_to_lock_data(flow, line_offset=line_offset)
-    data["stmts"] = [
-        _flow_stmt_to_lock_data(item, line_offset=line_offset) for item in flow.stmts
-    ]
+def _flow_to_lock_data(flow: FlowDecl) -> dict[str, object]:
+    data = _executable_to_lock_data(flow)
+    data["stmts"] = [_flow_stmt_to_lock_data(item) for item in flow.stmts]
     return data
 
 
-def _executable_to_lock_data(
-    executable: AgicDecl | FlowDecl, *, line_offset: int
-) -> dict[str, object]:
+def _executable_to_lock_data(executable: AgicDecl | FlowDecl) -> dict[str, object]:
     data: dict[str, object] = {
         "name": executable.name,
-        "line": executable.span.line + line_offset,
+        "line": executable.span.line,
         "params": _executable_params_to_lock_data(executable),
-        "directives": [
-            _directive_to_lock_data(item, line_offset=line_offset)
-            for item in executable.directives
-        ],
+        "directives": [_directive_to_lock_data(item) for item in executable.directives],
     }
     if executable.output is not None:
         data["output"] = _source_type_name(executable.output)
@@ -741,9 +709,9 @@ def _executable_params_to_lock_data(
     return params
 
 
-def _flow_stmt_to_lock_data(stmt: FlowStmt, *, line_offset: int) -> dict[str, object]:
+def _flow_stmt_to_lock_data(stmt: FlowStmt) -> dict[str, object]:
     data = _flow_stmt_to_data(stmt)
-    data["span"] = {"line": stmt.span.line + line_offset}
+    data["span"] = {"line": stmt.span.line}
     return data
 
 
@@ -755,23 +723,21 @@ def _param_to_lock_data(param: Parameter) -> dict[str, object]:
     }
 
 
-def _directive_to_lock_data(
-    directive: Directive, *, line_offset: int
-) -> dict[str, object]:
+def _directive_to_lock_data(directive: Directive) -> dict[str, object]:
     return {
         "key": directive.name,
         "op": directive.operator,
         "values": list(directive.values),
-        "line": directive.span.line + line_offset,
+        "line": directive.span.line,
     }
 
 
-def _message_to_lock_data(message: Message, *, line_offset: int) -> dict[str, object]:
+def _message_to_lock_data(message: Message) -> dict[str, object]:
     return {
         "role": message.role,
         "content": message.content,
         "explicit": message.explicit,
-        "line": message.span.line + line_offset,
+        "line": message.span.line,
     }
 
 

@@ -23,25 +23,9 @@ class ProgramSource:
     source_path: str
     source_text: str
 
-    @property
-    def body_text(self) -> str:
-        return _program_body(self.source_text)
-
-    @property
-    def body_line_offset(self) -> int:
-        body_lines = self.body_text.splitlines()
-        if not body_lines:
-            return 0
-        source_lines = self.source_text.splitlines()
-        body_len = len(body_lines)
-        for index in range(0, len(source_lines) - body_len + 1):
-            if source_lines[index : index + body_len] == body_lines:
-                return index
-        return 0
-
     def parse(self) -> Program:
-        body = self.body_text
-        return Program.from_source(body) if body.strip() else Program(span=Span(line=1))
+        source = _parseable_program_source(self.source_text)
+        return Program.from_source(source) if source.strip() else Program(span=Span(line=1))
 
     def fingerprint(self) -> str:
         payload = json.dumps(
@@ -80,17 +64,18 @@ class ProgramSource:
         return source
 
 
-def _program_body(source_text: str) -> str:
+def _parseable_program_source(source_text: str) -> str:
+    """Hide only the agent header while retaining all authored source lines."""
+
     lines = source_text.splitlines()
-    if lines and lines[0].startswith("#!"):
-        lines = lines[1:]
-        while lines and not lines[0].strip():
-            lines = lines[1:]
-    if lines and _AGENT_HEADER_RE.match(lines[0].strip()):
-        return "\n".join(lines[1:]).lstrip("\n")
-    if source_text.startswith("#!"):
-        return "\n".join(lines).lstrip("\n")
-    return source_text
+    for index, line in enumerate(lines):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if _AGENT_HEADER_RE.match(line.strip()):
+            lines[index] = ""
+        break
+    rendered = "\n".join(lines)
+    return f"{rendered}\n" if source_text.endswith("\n") else rendered
 
 
 @dataclass(frozen=True, slots=True)

@@ -288,7 +288,7 @@ def test_cli_main_runs_roaming_file_runtime_for_script_inbox(
 ) -> None:
     program_path = tmp_path / "demo.too"
     program_path.write_text(
-        "agic file(in: Part[]):\n  Process a file.\n", encoding="utf-8"
+        "agic file(_: Part[]):\n  Process a file.\n", encoding="utf-8"
     )
     inbox = tmp_path / "inbox"
     inbox.mkdir()
@@ -385,7 +385,7 @@ def test_cli_main_keeps_roaming_agic_invoke_when_agic_is_present(
 ) -> None:
     program_path = tmp_path / "demo.too"
     program_path.write_text(
-        "agic file(in: Part[]):\n  Process a file.\n", encoding="utf-8"
+        "agic file(_: Part[]):\n  Process a file.\n", encoding="utf-8"
     )
     inbox = tmp_path / "inbox"
     inbox.mkdir()
@@ -1799,10 +1799,10 @@ def test_cli_roaming_program_help_lists_available_targets(
 agic:
   Reply directly.
 
-agic summarize(in: Part[], style?):
+agic summarize(_: Part[], style?):
   Summarize the current workspace in a concise style.
 
-flow review(in: Text):
+flow review(_: Text):
   map: Review one item.
 """.strip(),
     )
@@ -1860,7 +1860,7 @@ def test_cli_roaming_agic_help_is_dynamic(capsys, tmp_path: Path) -> None:
     program_path = _write_roaming_program(
         tmp_path,
         """
-agic summarize(in: Part[], style?, audience?):
+agic summarize(_: Part[], style?, audience?):
   Summarize the current workspace in a concise style.
 """.strip(),
     )
@@ -1921,7 +1921,7 @@ def test_cli_roaming_invoke_passes_default_agic_params_and_parts(
     program_path = _write_roaming_program(
         tmp_path,
         """
-agic(in: Part[], tone?, retries?: Number, dry_run?: Boolean):
+agic(_: Part[], tone?, retries?: Number, dry_run?: Boolean):
   Rewrite the input using the provided controls.
 """.strip(),
     )
@@ -2006,7 +2006,7 @@ def test_cli_roaming_invoke_passes_explicit_tool_selectors(
     program_path = _write_roaming_program(
         tmp_path,
         """
-agic(in: Part[]):
+agic(_: Part[]):
   Reply directly.
 """.strip(),
     )
@@ -2061,7 +2061,7 @@ def test_cli_roaming_invoke_passes_explicit_cap_selectors(
     program_path = _write_roaming_program(
         tmp_path,
         """
-agic(in: Part[]):
+agic(_: Part[]):
   Reply directly.
 """.strip(),
     )
@@ -2458,7 +2458,7 @@ def test_cli_roaming_invoke_requires_part_for_message_input(
     program_path = _write_roaming_program(
         tmp_path,
         """
-agic summarize(in: Part[]):
+agic summarize(_: Part[]):
   Summarize the current workspace in a concise style.
 """.strip(),
     )
@@ -2496,7 +2496,7 @@ def test_cli_roaming_invoke_passes_flow_executable_kind(
     program_path = _write_roaming_program(
         tmp_path,
         """
-flow review(in: Text):
+flow review(_: Text):
   map: Normalize the item.
 """.strip(),
     )
@@ -2626,7 +2626,7 @@ def test_cli_roaming_invoke_treats_unknown_name_equals_value_as_message_part(
     program_path = _write_roaming_program(
         tmp_path,
         """
-agic(in: Part[], tone?):
+agic(_: Part[], tone?):
   Reply directly.
 """.strip(),
     )
@@ -2686,7 +2686,7 @@ def test_cli_roaming_invoke_reads_md_path_as_text_part(
     program_path = _write_roaming_program(
         tmp_path,
         """
-agic(in: Part[]):
+agic(_: Part[]):
   Reply directly.
 """.strip(),
     )
@@ -2750,7 +2750,7 @@ def test_cli_roaming_invoke_reads_mdx_path_as_text_part(
     program_path = _write_roaming_program(
         tmp_path,
         """
-agic(in: Part[]):
+agic(_: Part[]):
   Reply directly.
 """.strip(),
     )
@@ -2811,7 +2811,7 @@ def test_cli_roaming_invoke_passes_video_path_part(
     program_path = _write_roaming_program(
         tmp_path,
         """
-agic(in: Part[]):
+agic(_: Part[]):
   Reply directly.
 """.strip(),
     )
@@ -6349,7 +6349,7 @@ def test_cli_parse_prints_too_ast(tmp_path: Path) -> None:
         "struct Result:\n"
         "  title: Text\n"
         "\n"
-        "agic review(in: Pack) -> Json:\n"
+        "agic review(_: Part[]) -> Json:\n"
         "  models = deepseek/*\n"
         "  user: Review it.\n",
         encoding="utf-8",
@@ -6367,7 +6367,8 @@ def test_cli_parse_prints_too_ast(tmp_path: Path) -> None:
     agic = ast_data["agics"][0]
     assert agic["kind"] == "agic"
     assert agic["name"] == "review"
-    assert agic["input"]["type_name"] == "Pack"
+    assert agic["input"]["name"] == "_"
+    assert agic["input"]["type_name"] == "Part[]"
     assert agic["output"] == "Json"
     assert agic["directives"][0]["name"] == "models"
     assert agic["messages"][0]["content"] == "Review it."
@@ -6406,8 +6407,8 @@ def test_cli_fmt_formats_too_file(tmp_path: Path) -> None:
         "struct Result:\n"
         "    title:Text\n"
         "\n"
-        "agic review( input:Message)->Json:\n"
-        "    model= deepseek/*\n"
+        "agic review( _:Part[])->Json:\n"
+        "    models= deepseek/*\n"
         "    user:   Review it.\n",
         encoding="utf-8",
     )
@@ -6422,7 +6423,7 @@ def test_cli_fmt_formats_too_file(tmp_path: Path) -> None:
         "struct Result:\n"
         "  title: Text\n"
         "\n"
-        "agic review(in: Pack) -> Json:\n"
+        "agic review(_: Part[]) -> Json:\n"
         "  models = deepseek/*\n"
         "\n"
         "  user: Review it.\n"
@@ -6431,7 +6432,7 @@ def test_cli_fmt_formats_too_file(tmp_path: Path) -> None:
 
 def test_cli_fmt_check_reports_unformatted_without_writing(tmp_path: Path) -> None:
     source_path = tmp_path / "agent.too"
-    source = "agic review( input:Message):\n    user:   Review it.\n"
+    source = "agic review( _:Part[]):\n    user:   Review it.\n"
     source_path.write_text(source, encoding="utf-8")
 
     result = runner.invoke(cli.app, ["fmt", "--check", str(source_path)])
@@ -6445,22 +6446,22 @@ def test_cli_fmt_formats_stdin_with_filepath() -> None:
     result = runner.invoke(
         cli.app,
         ["fmt", "--stdin-filepath", "buffer.too"],
-        input="agic review( input:Message):\n    user:   Review it.\n",
+        input="agic review( _:Part[]):\n    user:   Review it.\n",
     )
 
     assert result.exit_code == 0
-    assert result.stdout == ("agic review(in: Pack):\n  user: Review it.\n")
+    assert result.stdout == ("agic review(_: Part[]):\n  user: Review it.\n")
 
 
 def test_cli_fmt_formats_dash_as_stdin() -> None:
     result = runner.invoke(
         cli.app,
         ["fmt", "-"],
-        input="agic review( input:Message):\n    user:   Review it.\n",
+        input="agic review( _:Part[]):\n    user:   Review it.\n",
     )
 
     assert result.exit_code == 0
-    assert result.stdout == ("agic review(in: Pack):\n  user: Review it.\n")
+    assert result.stdout == ("agic review(_: Part[]):\n  user: Review it.\n")
 
 
 def test_cli_fmt_handles_implicit_message_before_roles() -> None:
@@ -6468,7 +6469,7 @@ def test_cli_fmt_handles_implicit_message_before_roles() -> None:
         cli.app,
         ["fmt", "-"],
         input=(
-            "agic is_relevant(in:Part[]):\n"
+            "agic is_relevant(_:Part[]):\n"
             "    Evidence bundle:\n"
             "    {{ _ }}\n"
             "\n"
@@ -6482,7 +6483,7 @@ def test_cli_fmt_handles_implicit_message_before_roles() -> None:
 
     assert result.exit_code == 0
     assert result.stdout == (
-        "agic is_relevant(in: Part[]):\n"
+        "agic is_relevant(_: Part[]):\n"
         "  Evidence bundle:\n"
         "  {{ _ }}\n"
         "\n"
@@ -6498,11 +6499,11 @@ def test_cli_fmt_formats_stdin_with_tab_size() -> None:
     result = runner.invoke(
         cli.app,
         ["fmt", "--tab-size", "4", "-"],
-        input="agic review( input:Message):\n  user:\n    Review it.\n",
+        input="agic review( _:Part[]):\n  user:\n    Review it.\n",
     )
 
     assert result.exit_code == 0
-    assert result.stdout == ("agic review(in: Pack):\n    user:\n        Review it.\n")
+    assert result.stdout == ("agic review(_: Part[]):\n    user:\n        Review it.\n")
 
 
 def test_cli_fmt_allows_stdin_filepath_with_dash() -> None:

@@ -21,7 +21,12 @@ from toolang.execution.events import (
     StepEnd,
     TraceEvent,
 )
-from toolang.execution.executor import Executor, Local, _RunExecution, _decode_agic_output
+from toolang.execution.executor import (
+    Executor,
+    Local,
+    _RunExecution,
+    _decode_agic_output,
+)
 from toolang.execution.request import RunRequest
 from toolang.execution.records import InputRef, OutputRef
 from toolang.execution.setup import AgentSetup
@@ -47,10 +52,10 @@ from toolang.lang.ast import (
 
 
 FLOW_SOURCE = """
-agic helper(in: Text) -> Text:
-  user: {{in}}
+agic helper(_: Text) -> Text:
+  user: {{_}}
 
-flow pipeline(in: Text) -> Text:
+flow pipeline(_: Text) -> Text:
   run helper
   run -> Text: inline run
   bare inline run
@@ -251,13 +256,11 @@ flow shared:
 def test_executor_persists_parent_and_child_run_hierarchy(tmp_path) -> None:
     child = FlowDecl(
         name="child",
-        params_explicit=True,
         stmts=(LetStmt(value="done", span=Span(line=2)),),
         span=Span(line=1),
     )
     parent = FlowDecl(
         name="parent",
-        params_explicit=True,
         stmts=(RunStmt(runnable="child", span=Span(line=5)),),
         span=Span(line=4),
     )
@@ -266,7 +269,9 @@ def test_executor_persists_parent_and_child_run_hierarchy(tmp_path) -> None:
     sink = PersistSink(store)
     sink.on_event(_starting(binding, parent))
 
-    result = asyncio.run(_RunExecution(context, emit=sink.on_event).run(binding, parent))
+    result = asyncio.run(
+        _RunExecution(context, emit=sink.on_event).run(binding, parent)
+    )
 
     assert result == Local("done", "item")
     runs = store.list_runs(limit=None, include_superseded=True)
@@ -292,12 +297,10 @@ def test_executor_persists_parent_and_child_run_hierarchy(tmp_path) -> None:
 def test_executor_map_preserves_input_order(tmp_path) -> None:
     identity = FlowDecl(
         name="identity",
-        params_explicit=True,
         span=Span(line=1),
     )
     flow = FlowDecl(
         name="map_values",
-        params_explicit=True,
         stmts=(MapStmt(runnable="identity", par=2, span=Span(line=4)),),
         span=Span(line=3),
     )
@@ -320,7 +323,6 @@ def test_executor_map_preserves_input_order(tmp_path) -> None:
 def test_executor_positional_filters_use_system_steps(tmp_path) -> None:
     flow = FlowDecl(
         name="select_values",
-        params_explicit=True,
         stmts=(
             KeepStmt(position="first", count=3, span=Span(line=2)),
             DropStmt(position="last", count=1, span=Span(line=3)),
@@ -346,13 +348,11 @@ def test_executor_positional_filters_use_system_steps(tmp_path) -> None:
 def test_parallel_failure_ends_children_before_parent_step(tmp_path) -> None:
     invalid_child = FlowDecl(
         name="invalid_child",
-        params_explicit=True,
         stmts=(GatherStmt(runnable="invalid_child", span=Span(line=2)),),
         span=Span(line=1),
     )
     flow = FlowDecl(
         name="parallel_failure",
-        params_explicit=True,
         stmts=(MapStmt(runnable="invalid_child", par=2, span=Span(line=4)),),
         span=Span(line=3),
     )
@@ -391,7 +391,6 @@ def test_parallel_failure_ends_children_before_parent_step(tmp_path) -> None:
 def test_executor_repeat_uses_unique_nested_step_paths(tmp_path) -> None:
     flow = FlowDecl(
         name="repeat_values",
-        params_explicit=True,
         stmts=(
             RepeatStmt(
                 count=2,
@@ -422,7 +421,6 @@ def test_executor_repeat_uses_unique_nested_step_paths(tmp_path) -> None:
 def test_nested_first_step_inherits_parent_basis_without_cycle(tmp_path) -> None:
     flow = FlowDecl(
         name="nested_basis",
-        params_explicit=True,
         stmts=(
             LetStmt(value="before", span=Span(line=2)),
             RepeatStmt(
@@ -453,7 +451,6 @@ def test_nested_first_step_inherits_parent_basis_without_cycle(tmp_path) -> None
 def test_run_output_tracks_primary_binding_not_last_step(tmp_path) -> None:
     flow = FlowDecl(
         name="bindings",
-        params_explicit=True,
         stmts=(
             LetStmt(value="primary", span=Span(line=2)),
             LetStmt(value="named", binding="side", span=Span(line=3)),
@@ -479,7 +476,6 @@ def test_flow_validates_its_declared_output(tmp_path) -> None:
     flow = FlowDecl(
         name="typed",
         output="Number",
-        params_explicit=True,
         stmts=(LetStmt(value="not a number", span=Span(line=2)),),
         span=Span(line=1),
     )
@@ -524,10 +520,9 @@ def test_agic_decodes_and_validates_structured_output() -> None:
 
 
 def test_next_call_steer_waits_for_a_calling_statement(tmp_path) -> None:
-    child = FlowDecl(name="child", params_explicit=True, span=Span(line=1))
+    child = FlowDecl(name="child", span=Span(line=1))
     flow = FlowDecl(
         name="steering",
-        params_explicit=True,
         stmts=(
             LetStmt(value="before", span=Span(line=3)),
             RunStmt(runnable="child", span=Span(line=4)),
@@ -567,10 +562,9 @@ def test_next_call_steer_waits_for_a_calling_statement(tmp_path) -> None:
 
 
 def test_next_call_stop_cancels_before_the_calling_statement(tmp_path) -> None:
-    child = FlowDecl(name="child", params_explicit=True, span=Span(line=1))
+    child = FlowDecl(name="child", span=Span(line=1))
     flow = FlowDecl(
         name="stopping",
-        params_explicit=True,
         stmts=(
             LetStmt(value="before", span=Span(line=3)),
             RunStmt(runnable="child", span=Span(line=4)),
@@ -614,7 +608,7 @@ def test_next_call_stop_cancels_before_the_calling_statement(tmp_path) -> None:
 def test_run_begin_uses_execution_time_not_acceptance_time(
     tmp_path, monkeypatch
 ) -> None:
-    flow = FlowDecl(name="timing", params_explicit=True, span=Span(line=1))
+    flow = FlowDecl(name="timing", span=Span(line=1))
     context, binding = _executor_fixture(tmp_path, flow)
     events: list[TraceEvent] = []
     monkeypatch.setattr(

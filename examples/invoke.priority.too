@@ -14,8 +14,8 @@
 #     --model anthropic/claude-sonnet-4.5@openrouter \
 #     --model google/gemini-3.1-pro-preview@openrouter
 
-agic rewrite(in: Part[]):
-  model = openai/gpt-5, anthropic/claude-sonnet-4.5, google/gemini-3.1-pro-preview
+agic rewrite(_: Part[]):
+  models = openai/gpt-5, anthropic/claude-sonnet-4.5, google/gemini-3.1-pro-preview
 
   Rewrite the input for a technical audience.
   Keep the answer short and direct.

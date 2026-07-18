@@ -141,7 +141,6 @@ class AgicDecl(Node):
     context: str | None = None
     instruct: str | None = None
     messages: tuple[Message, ...] = ()
-    params_explicit: bool = False
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -291,7 +290,6 @@ class FlowDecl(Node):
     output: str | None = None
     directives: tuple[Directive, ...] = ()
     stmts: tuple[FlowStmt, ...] = ()
-    params_explicit: bool = False
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -321,24 +319,21 @@ class Program(Node):
 
     @classmethod
     def from_source(cls, source: str) -> Program:
-        from .lower import lower
-        from .validate import validate
+        from .lower import _lower
+        from .validate import _validate
 
-        program = lower(_parse_source(source))
-        validate(program)
+        program = _lower(_parse_source(source))
+        _validate(program)
         return program
 
 
 def _parse_source(source: str) -> _ParsedSource:
     from .diagnostics import ToolangSyntaxError
 
-    normalized = _source_without_shebang(source)
-    syntax = (
-        normalized if not normalized or normalized.endswith("\n") else f"{normalized}\n"
-    )
+    syntax = source if not source or source.endswith("\n") else f"{source}\n"
     encoded = syntax.encode("utf-8")
     tree = _parse_tree(encoded)
-    lines = normalized.splitlines()
+    lines = source.splitlines()
     if error := _first_syntax_error(tree.root_node):
         line = error.start_point.row + 1
         raw = lines[line - 1] if line <= len(lines) else ""
@@ -359,13 +354,6 @@ def _first_syntax_error(node: TreeSitterNode) -> TreeSitterNode | None:
         if error := _first_syntax_error(child):
             return error
     return None
-
-
-def _source_without_shebang(source: str) -> str:
-    if not source.startswith("#!"):
-        return source
-    _first, separator, rest = source.partition("\n")
-    return f"\n{rest}" if separator else ""
 
 
 @lru_cache(maxsize=1)

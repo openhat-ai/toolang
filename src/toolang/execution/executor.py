@@ -996,8 +996,6 @@ def _initial_locals(binding: _Run, executable: AgicDecl | FlowDecl) -> dict[str,
     if executable.input is not None:
         primary = Local(binding.input_text, "item")
         locals["_"] = primary
-        if executable.input.name != "_":
-            locals[executable.input.name] = primary
     else:
         locals.setdefault("_", Local())
     return locals

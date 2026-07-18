@@ -1,4 +1,7 @@
-from toolang.lang.format import format_source
+import pytest
+
+from tests import FIXTURES_ROOT, PROJECT_ROOT
+from toolang.lang import Program, ToolangFormatError, format_source, to_data
 
 
 def test_format_source_normalizes_too_spacing() -> None:
@@ -9,8 +12,8 @@ struct ReviewSummary:
     title:Text
     summary?:   Text
 
-agic review( input:Message,path?:Path)->Json:
-    model= gpt-5
+agic review( _:Part[],path?:Path)->Json:
+    models= gpt-5
     skills += review,patch
     user:   Review the target carefully.
 """.strip()
@@ -22,7 +25,7 @@ agic review( input:Message,path?:Path)->Json:
         "  title: Text\n"
         "  summary?: Text\n"
         "\n"
-        "agic review(in: Pack, path?: Path) -> Json:\n"
+        "agic review(_: Part[], path?: Path) -> Json:\n"
         "  models = gpt-5\n"
         "  skills += review, patch\n"
         "\n"
@@ -35,7 +38,7 @@ def test_format_source_uses_configured_tab_size() -> None:
 struct ReviewSummary:
   title:Text
 
-agic review(input:Message):
+agic review(_:Part[]):
   user:
     Review it.
 """.strip()
@@ -44,9 +47,22 @@ agic review(input:Message):
         "struct ReviewSummary:\n"
         "    title: Text\n"
         "\n"
-        "agic review(in: Pack):\n"
+        "agic review(_: Part[]):\n"
         "    user:\n"
         "        Review it.\n"
+    )
+
+
+def test_format_source_expands_tabs_using_configured_tab_size() -> None:
+    source = "agic followup:\n\tcontext:\n\t   repo context\n\tuser:\n\t   hello\n"
+
+    assert format_source(source, tab_size=8) == (
+        "agic followup:\n"
+        "        context:\n"
+        "                repo context\n"
+        "\n"
+        "        user:\n"
+        "                hello\n"
     )
 
 
@@ -76,6 +92,7 @@ chore stale_prs  :
     assert format_source(source) == (
         "task review_api:\n"
         "  title = Review API changes\n"
+        "\n"
         "  Review the API changes.\n"
         "\n"
         "chore stale_prs:\n"
@@ -113,7 +130,7 @@ agic followup:
 
 def test_format_source_normalizes_agic_blank_lines_by_section() -> None:
     source = """
-agic review(input: Message):
+agic review(_:Part[]):
 
     models = gpt-5
 
@@ -130,7 +147,7 @@ agic review(input: Message):
 """.strip()
 
     assert format_source(source) == (
-        "agic review(in: Pack):\n"
+        "agic review(_: Part[]):\n"
         "  models = gpt-5\n"
         "  tools = shell\n"
         "\n"
@@ -187,11 +204,7 @@ agic followup:
 """.strip()
 
     assert format_source(source) == (
-        "agic followup:\n"
-        "  instruct: strict\n"
-        "  context: none\n"
-        "\n"
-        "  user: hello\n"
+        "agic followup:\n  instruct: strict\n  context: none\n\n  user: hello\n"
     )
 
 
@@ -244,7 +257,9 @@ agic slug(title) -> Text:
     )
 
 
-def test_format_source_does_not_absorb_same_indent_implicit_message_after_control_block() -> None:
+def test_format_source_does_not_absorb_same_indent_implicit_message_after_control_block() -> (
+    None
+):
     source = """
 agic slug(title) -> Text:
     context:
@@ -296,7 +311,7 @@ agic:
 
 def test_format_source_keeps_explicit_roles_after_implicit_messages() -> None:
     source = """
-agic is_relevant(in: Part[]):
+agic is_relevant(_: Part[]):
     Evidence bundle:
     {{ _ }}
 
@@ -311,7 +326,7 @@ agic is_relevant(in: Part[]):
 """.strip()
 
     assert format_source(source) == (
-        "agic is_relevant(in: Part[]):\n"
+        "agic is_relevant(_: Part[]):\n"
         "  Evidence bundle:\n"
         "  {{ _ }}\n"
         "\n"
@@ -455,3 +470,209 @@ struct BulletList:
         "struct BulletList:\n"
         "    items: Text[]\n"
     )
+
+
+def test_format_source_covers_complete_program_and_is_idempotent() -> None:
+    source = """#!/usr/bin/env toolang<spaces>
+##!complete formatter fixture
+
+with skill   org/review
+
+service search  :
+    description= Search docs
+    protocol = http
+    target= https://example.com/mcp
+
+    Search documentation.
+
+prompt summarize:
+    params= topic,focus?
+
+    Summarize {{topic}}.
+
+struct Result:
+    summary:Text
+    notes?: Text[]
+
+context repo:
+    Repository context.
+
+instruct concise:
+    Be concise.
+
+agic review( _,focus ? : Text)->Result:
+    models= gpt-5,claude
+    context: repo
+    instruct: concise
+    user:
+        Review {{ _ }}.
+
+flow pipeline( _:Part[])->Result:
+    tools+= shell,filesystem
+    let drafts= scatter   2 review
+    repeat 2:
+        run review
+        until:
+            Done.
+""".replace("<spaces>", "   ")
+    expected = """#!/usr/bin/env toolang
+
+##! complete formatter fixture
+
+with skill org/review
+
+service search:
+  description = Search docs
+  protocol = http
+  target = https://example.com/mcp
+
+  Search documentation.
+
+prompt summarize:
+  params = topic,focus?
+
+  Summarize {{topic}}.
+
+struct Result:
+  summary: Text
+  notes?: Text[]
+
+context repo:
+  Repository context.
+
+instruct concise:
+  Be concise.
+
+agic review(_: Part[], focus?: Text) -> Result:
+  models = gpt-5, claude
+
+  context: repo
+  instruct: concise
+
+  user:
+    Review {{ _ }}.
+
+flow pipeline(_: Part[]) -> Result:
+  tools += shell, filesystem
+  let drafts = scatter 2 review
+  repeat 2:
+    run review
+    until:
+      Done.
+"""
+
+    formatted = format_source(source)
+
+    assert formatted == expected
+    assert format_source(formatted) == formatted
+    program = Program.from_source(formatted)
+    assert program.agics[0].input is not None
+    assert (program.agics[0].input.name, program.agics[0].input.type_name) == (
+        "_",
+        "Part[]",
+    )
+    assert [statement.kind for statement in program.flows[0].stmts] == [
+        "scatter",
+        "repeat",
+    ]
+
+
+def test_repo_programs_format_idempotently_without_semantic_changes() -> None:
+    source_paths = [
+        *sorted(FIXTURES_ROOT.glob("*.too")),
+        *(
+            path
+            for path in sorted((PROJECT_ROOT / "examples").glob("*.too"))
+            if path.name != "invoke-playground.too"
+        ),
+    ]
+
+    for source_path in source_paths:
+        source = source_path.read_text(encoding="utf-8")
+        formatted = format_source(source)
+
+        assert format_source(formatted) == formatted, source_path.name
+        assert _without_spans(to_data(Program.from_source(formatted))) == _without_spans(
+            to_data(Program.from_source(source))
+        ), source_path.name
+
+
+def test_format_source_preserves_relative_content_indentation() -> None:
+    source = """context example:
+      first
+        nested
+      last
+"""
+
+    assert format_source(source) == ("context example:\n  first\n    nested\n  last\n")
+
+
+def test_format_source_preserves_header_comments() -> None:
+    source = """struct Result: # result
+  value:Text
+
+agic review(_:Part[]):   # executable
+  pass
+"""
+
+    assert format_source(source) == (
+        "struct Result:  # result\n"
+        "  value: Text\n"
+        "\n"
+        "agic review(_: Part[]):  # executable\n"
+        "  pass\n"
+    )
+
+
+def test_format_source_preserves_semantic_blank_line_count() -> None:
+    source = """agic messages:
+    First message.
+
+
+    Second message.
+
+flow steps:
+    First step.
+
+
+    Second step.
+"""
+
+    formatted = format_source(source)
+    program = Program.from_source(formatted)
+
+    assert "  First message.\n\n\n  Second message.\n" in formatted
+    assert "  First step.\n\n\n  Second step.\n" in formatted
+    assert [message.content for message in program.agics[0].messages] == [
+        "First message.",
+        "Second message.",
+    ]
+    assert [statement.kind for statement in program.flows[0].stmts] == [
+        "run",
+        "run",
+    ]
+
+
+@pytest.mark.parametrize("tab_size", [0, -1])
+def test_format_source_rejects_non_positive_tab_size(tab_size: int) -> None:
+    with pytest.raises(ToolangFormatError, match="tab size must be positive"):
+        format_source("agic:\n  pass\n", tab_size=tab_size)
+
+
+def _without_spans(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            key: _without_spans(item)
+            for key, item in value.items()
+            if key != "span"
+        }
+    if isinstance(value, list):
+        return [_without_spans(item) for item in value]
+    return value
+
+
+def test_format_source_reports_original_syntax_error_line_after_shebang() -> None:
+    source = "#!/usr/bin/env toolang\n\nnot-a-declaration\n"
+
+    with pytest.raises(ToolangFormatError, match="line 3"):
+        format_source(source)

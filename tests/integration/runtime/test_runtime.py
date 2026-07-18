@@ -338,7 +338,7 @@ def test_collect_file_submissions_scans_existing_inbox_files_once(
     inbox = tmp_path / "inbox"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nagic file(in: Part[]):\n  Process a file.\n",
+        "agent alice\n\nagic file(_: Part[]):\n  Process a file.\n",
     )
     _write_text(inbox / "note.txt", "hello")
     context = _build_context(
@@ -2051,13 +2051,13 @@ def test_chat_default_executable_uses_default_agic_not_single_flow(
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
         """
-agic expand(in: Part[]):
+agic expand(_: Part[]):
   Expand.
 
-agic search(in: Part[]):
+agic search(_: Part[]):
   Search.
 
-flow research(in: Text):
+flow research(_: Text):
   run expand
 """,
     )
@@ -2082,13 +2082,13 @@ def test_chat_stream_executes_flow_runnable(tmp_path: Path) -> None:
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
         """
-agic expand(in: Part[]):
+agic expand(_: Part[]):
   Expand.
 
-agic search(in: Part[]):
+agic search(_: Part[]):
   Search.
 
-flow research(in: Text):
+flow research(_: Text):
   run expand
 """,
     )
@@ -2125,10 +2125,10 @@ def test_chat_stream_pre_start_failure_emits_error_and_done(tmp_path: Path) -> N
         _write_text(
             toolang_root / "agents" / "alice" / "agent.too",
             """
-agic expand(in: Part[]):
+agic expand(_: Part[]):
   Expand.
 
-agic search(in: Part[]):
+agic search(_: Part[]):
   Search.
 """,
         )
@@ -4755,7 +4755,6 @@ def test_prepare_rebuilds_stale_lock_schema_as_cache_miss(
                     "agent_name": "alice",
                     "source_path": "agents/alice/agent.too",
                     "source_text": "agent alice\n",
-                    "body_text": "agent alice\n",
                 },
             }
         ),
@@ -6241,7 +6240,7 @@ def test_script_run_thread_id_uses_script_prefix(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nagic summarize(in: Part[]):\n  Summarize it.\n",
+        "agent alice\n\nagic summarize(_: Part[]):\n  Summarize it.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -6271,7 +6270,7 @@ def test_assemble_file_run_input_includes_authored_file_agic_message(
         toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
-            "agic file(in: Part[]):\n"
+            "agic file(_: Part[]):\n"
             "  tools = filesystem/*\n\n"
             "  user:\n"
             "    Write one short text summary to outbox/index.md.\n"
@@ -6308,9 +6307,9 @@ def test_child_run_input_uses_authored_agic_message_and_current_input(
         toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
-            "agic draft(in: Text) -> Text:\n"
-            "  user: Draft {{in}}.\n\n"
-            "flow pipeline(in: Text) -> Text:\n"
+            "agic draft(_: Text) -> Text:\n"
+            "  user: Draft {{_}}.\n\n"
+            "flow pipeline(_: Text) -> Text:\n"
             "  run draft\n"
         ),
     )
@@ -6356,7 +6355,7 @@ def test_top_level_chat_agic_uses_its_authored_message(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        ("agent alice\n\nagic probe(in: Text) -> Text:\n  user: CHAT_OK: {{in}}\n"),
+        ("agent alice\n\nagic probe(_: Text) -> Text:\n  user: CHAT_OK: {{_}}\n"),
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -6395,7 +6394,7 @@ def test_assemble_run_input_hides_tools_when_activation_has_no_tools(
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nagic summarize(in: Part[]):\n  Reply directly.\n",
+        "agent alice\n\nagic summarize(_: Part[]):\n  Reply directly.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -6442,7 +6441,7 @@ def test_assemble_run_input_uses_explicit_activation_tools_for_script_runs(
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nagic summarize(in: Part[]):\n  Reply directly.\n",
+        "agent alice\n\nagic summarize(_: Part[]):\n  Reply directly.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -6526,7 +6525,7 @@ def test_assemble_run_input_logs_activation_set_math(tmp_path: Path, caplog) -> 
         toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
-            "agic summarize(in: Part[]):\n"
+            "agic summarize(_: Part[]):\n"
             "  models = openai/gpt-5\n"
             "  tools -= service_use/bridge_start, service_use/init, service_use/auth_start, service_use/tool_call\n"
             "  skills = local-reviewer\n\n"
@@ -6591,7 +6590,7 @@ def test_assemble_run_input_logs_activation_set_math(tmp_path: Path, caplog) -> 
     assert skill_steps == [
         {
             "op": "=",
-            "line": 4,
+            "line": 6,
             "selectors": ["local-reviewer"],
             "matches": ["skill/local-reviewer"],
             "before": ["skill/local-reviewer"],
@@ -6620,7 +6619,7 @@ def test_assemble_run_input_uses_agic_user_message_for_script_runs(
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nagic rewrite(in: Part[]):\n  Rewrite the input for a technical audience.\n",
+        "agent alice\n\nagic rewrite(_: Part[]):\n  Rewrite the input for a technical audience.\n",
     )
     context = _build_context(
         toolang_root=toolang_root,
@@ -6660,7 +6659,7 @@ def test_script_run_can_simulate_history_with_explicit_message_blocks(
         toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
-            "agic replay(in: Part[]):\n"
+            "agic replay(_: Part[]):\n"
             f"  recall = {recall}\n"
             "  context none\n"
             "  instruct none\n\n"
@@ -6725,7 +6724,7 @@ def test_script_run_keeps_implicit_user_block_as_single_invoke_message(
         toolang_root / "agents" / "alice" / "agent.too",
         (
             "agent alice\n\n"
-            "agic replay(in: Part[]):\n"
+            "agic replay(_: Part[]):\n"
             "  recall = none\n"
             "  context none\n\n"
             "  Use one invoke message.\n"

@@ -1,11 +1,11 @@
-agic expand_queries(in: Part[]):
+agic expand_queries(_: Part[]):
   Research question:
   {{ _ }}
 
   Turn this research question into 6 diverse web search queries.
   Return one query per line. No bullets, no numbering.
 
-agic search_web(in: Part[]):
+agic search_web(_: Part[]):
   tools = web_search/*
 
   Query:
@@ -18,7 +18,7 @@ agic search_web(in: Part[]):
   - title, url, date if available
   - one sentence on why it matters
 
-agic extract_findings(in: Part[]):
+agic extract_findings(_: Part[]):
   Evidence bundle:
   {{ _ }}
 
@@ -26,7 +26,7 @@ agic extract_findings(in: Part[]):
   Prefer source-backed claims.
   Return concise bullets with URLs preserved.
 
-agic synthesize_report(in: Part[]):
+agic synthesize_report(_: Part[]):
   Findings:
   {{ _ }}
 
@@ -39,7 +39,7 @@ agic synthesize_report(in: Part[]):
   - Source notes
   - Next search directions
 
-flow research(in: Text):
+flow research(_: Text):
   ## Expand the research question into diverse search queries
   run expand_queries
   ## Search the web for each query
@@ -53,7 +53,7 @@ flow research(in: Text):
   ## Synthesize the final research brief
   run synthesize_report
 
-agic is_relevant(in: Part[]):
+agic is_relevant(_: Part[]):
   Evidence bundle:
   {{ _ }}
 

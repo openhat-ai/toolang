@@ -1076,7 +1076,6 @@ def _collect_program_use_entries(
     program = program_source.parse()
     relative_program_path = Path(program_source.source_path)
     program_path = durable.toolang_root / relative_program_path
-    line_offset = program_source.body_line_offset
     requests: list[_RemoteEntryRequest] = []
     for use in program.withs:
         kind = use.cap_kind
@@ -1093,7 +1092,7 @@ def _collect_program_use_entries(
                 relative_config_path=relative_program_path,
                 config_path=program_path,
                 form="ref",
-                source_line=use.span.line + line_offset,
+                source_line=use.span.line,
             )
         )
     return _materialize_remote_entry_requests(
@@ -1120,7 +1119,6 @@ def _collect_program_embedded_entries(
     program = program_source.parse()
     relative_program_path = Path(program_source.source_path)
     program_path = durable.toolang_root / relative_program_path
-    line_offset = program_source.body_line_offset
     entries: list[PreparedEntry] = []
     files: dict[str, bytes] = {}
     seen: dict[tuple[EntryKind, str], int] = {}
@@ -1135,9 +1133,9 @@ def _collect_program_embedded_entries(
         if existing_line is not None:
             raise ValueError(
                 f"duplicate embedded {kind} cap: {cap.name} "
-                f"(lines {existing_line} and {cap.span.line + line_offset})"
+                f"(lines {existing_line} and {cap.span.line})"
             )
-        seen[key] = cap.span.line + line_offset
+        seen[key] = cap.span.line
         entry, entry_files = _embedded_entry_from_cap(
             durable.toolang_root,
             durable.agent_name,
@@ -1145,7 +1143,7 @@ def _collect_program_embedded_entries(
             cap=cap,
             relative_program_path=relative_program_path,
             program_path=program_path,
-            source_line=cap.span.line + line_offset,
+            source_line=cap.span.line,
         )
         entries.append(entry)
         files.update(entry_files)

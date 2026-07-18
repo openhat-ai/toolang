@@ -26,7 +26,7 @@ _LOGGER = logging.getLogger("toolang.run")
 _THREAD_AGIC_NAMES = frozenset({"chat", "task", "chore", "file"})
 _RUNTIME_DEFAULT_AGIC = AgicDecl(
     name="default",
-    input=Parameter(name="in", type_name="Pack", span=Span(line=1)),
+    input=Parameter(name="_", type_name="Part[]", span=Span(line=1)),
     span=Span(line=1),
 )
 
@@ -120,7 +120,7 @@ def effective_run_sets(
     services_base = cap_entries(selected_cap_entries, kind="service")
     effective_tools, tool_math = select_tools_with_trace(
         tools_base,
-        directives_for(agic, "tool"),
+        directives_for(agic, "tools"),
     )
     effective_models, model_math = model_set_math(
         context,
@@ -129,15 +129,15 @@ def effective_run_sets(
     )
     effective_psyches, psyche_math = select_entries_with_trace(
         psyches_base,
-        directives_for(agic, "psyche"),
+        directives_for(agic, "psyches"),
     )
     effective_skills, skill_math = select_entries_with_trace(
         skills_base,
-        directives_for(agic, "skill"),
+        directives_for(agic, "skills"),
     )
     effective_services, service_math = select_entries_with_trace(
         services_base,
-        directives_for(agic, "service"),
+        directives_for(agic, "services"),
     )
     set_math: dict[str, object] = {
         "models": model_math,
@@ -201,9 +201,7 @@ def run_allowed_model_selectors(
     )
 
 
-def run_tools_base(
-    context: SupportsRunAssembly, *, run: _Run
-) -> dict[str, AgentTool]:
+def run_tools_base(context: SupportsRunAssembly, *, run: _Run) -> dict[str, AgentTool]:
     tools = dict(run.setup.tools)
     selectors = run.tool_selectors
     if selectors is None:
@@ -211,8 +209,7 @@ def run_tools_base(
     if not selectors:
         return {}
     refs_by_model_name = {
-        name: tool_ref_for_model_tool(name, tool)
-        for name, tool in tools.items()
+        name: tool_ref_for_model_tool(name, tool) for name, tool in tools.items()
     }
     missing = [
         selector
@@ -222,11 +219,7 @@ def run_tools_base(
     if missing:
         raise ToolangError(f"tool selector matched no tools: {', '.join(missing)}")
     selected_names = selected_tool_names(refs_by_model_name, selectors)
-    return {
-        name: tools[name]
-        for name in selected_names
-        if name in tools
-    }
+    return {name: tools[name] for name in selected_names if name in tools}
 
 
 def run_cap_entries(
@@ -276,7 +269,7 @@ def model_set_math(
 ) -> tuple[tuple[str, ...], dict[str, object]]:
     agic_selectors, agic_steps = _apply_string_directives_with_trace(
         (),
-        directives_for(agic, "model"),
+        directives_for(agic, "models"),
     )
     effective = select_model_selectors(
         context,
@@ -299,7 +292,7 @@ def model_set_math(
 
 
 def agic_model_refs(agic: AgicDecl) -> tuple[str, ...]:
-    return _apply_string_directives((), directives_for(agic, "model"))
+    return _apply_string_directives((), directives_for(agic, "models"))
 
 
 def select_tools(
@@ -315,11 +308,7 @@ def select_tools_with_trace(
     directives: tuple[Directive, ...],
 ) -> tuple[dict[str, AgentTool], dict[str, object]]:
     names, steps = _apply_tool_directives_with_trace(tools_base, directives)
-    selected = {
-        name: tools_base[name]
-        for name in names
-        if name in tools_base
-    }
+    selected = {name: tools_base[name] for name in names if name in tools_base}
     return (
         selected,
         {
@@ -353,7 +342,9 @@ def select_entries_with_trace(
     )
 
 
-def cap_entries(entries: AgentState | tuple[PreparedEntry, ...], *, kind: str) -> tuple[PreparedEntry, ...]:
+def cap_entries(
+    entries: AgentState | tuple[PreparedEntry, ...], *, kind: str
+) -> tuple[PreparedEntry, ...]:
     cap_entries = entries.caps if isinstance(entries, AgentState) else entries
     return tuple(entry for entry in cap_entries if entry.kind == kind)
 
@@ -385,20 +376,7 @@ def log_set_math(*, run: _Run, agic: AgicDecl, set_math: dict[str, object]) -> N
 
 
 def directives_for(agic: AgicDecl, name: str) -> tuple[Directive, ...]:
-    """Return directives belonging to one normalized directive family."""
-
-    aliases = {
-        "models": "model",
-        "tools": "tool",
-        "psyches": "psyche",
-        "skills": "skill",
-        "services": "service",
-    }
-    return tuple(
-        item
-        for item in agic.directives
-        if aliases.get(item.name, item.name) == name
-    )
+    return tuple(item for item in agic.directives if item.name == name)
 
 
 def _apply_tool_directives_with_trace(
@@ -407,8 +385,7 @@ def _apply_tool_directives_with_trace(
 ) -> tuple[tuple[str, ...], list[dict[str, object]]]:
     current = list(tools_base)
     refs_by_model_name = {
-        name: tool_ref_for_model_tool(name, tool)
-        for name, tool in tools_base.items()
+        name: tool_ref_for_model_tool(name, tool) for name, tool in tools_base.items()
     }
     steps: list[dict[str, object]] = []
     for directive in directives:
@@ -466,7 +443,9 @@ def _apply_cap_directives_with_trace(
                     seen.add(identity)
         elif op == "remove":
             blocked = {_entry_identity(entry) for entry in matches}
-            current = [entry for entry in current if _entry_identity(entry) not in blocked]
+            current = [
+                entry for entry in current if _entry_identity(entry) not in blocked
+            ]
         steps.append(
             _directive_step(
                 directive=directive,
@@ -573,7 +552,9 @@ def _set_math_summary(set_math: dict[str, object]) -> str:
     for domain in ("models", "tools", "psyches", "skills", "services"):
         value = set_math.get(domain)
         if isinstance(value, dict):
-            parts.append(_domain_set_math_summary(domain, cast(dict[str, object], value)))
+            parts.append(
+                _domain_set_math_summary(domain, cast(dict[str, object], value))
+            )
     return "; ".join(parts)
 
 
@@ -585,7 +566,9 @@ def _domain_set_math_summary(domain: str, value: dict[str, object]) -> str:
     steps = value.get("agic_directive_steps")
     if not isinstance(steps, list):
         steps = value.get("directive_steps")
-    expression = _set_math_expression(cast(list[object], steps) if isinstance(steps, list) else [])
+    expression = _set_math_expression(
+        cast(list[object], steps) if isinstance(steps, list) else []
+    )
     return f"{domain} {base_count} {expression} -> {effective_count}"
 
 

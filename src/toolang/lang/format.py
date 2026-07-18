@@ -2,54 +2,38 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
 
-from tree_sitter import Node
+from tree_sitter import Node, Tree
 
-from .ast import _parse_tree, _source_without_shebang
+from .ast import _first_syntax_error, _parse_tree
 from .diagnostics import ToolangFormatError
 
 
-DIRECTIVE_KEY_ALIASES = {
-    "model": "models",
-    "models": "models",
-    "tool": "tools",
-    "tools": "tools",
-    "skill": "skills",
-    "skills": "skills",
-    "service": "services",
-    "services": "services",
-    "psyche": "psyches",
-    "psyches": "psyches",
-    "hands": "hands",
-    "handoffs": "handoffs",
-    "recall": "recall",
-}
-AGIC_HEADER_RE = re.compile(r"^(?P<indent>[ \t]*)agic(?P<rest>.*):(?P<suffix>[ \t]*(?:#.*)?)$")
-STRUCT_HEADER_RE = re.compile(r"^(?P<indent>[ \t]*)struct(?P<rest>.*):(?P<suffix>[ \t]*(?:#.*)?)$")
-FIELD_RE = re.compile(
-    r"^(?P<indent>[ \t]+)(?P<name>[a-z][a-z0-9_-]*)(?P<optional>\?)?:"
-    r"(?P<space>[ \t]*)(?P<type>[A-Za-z][A-Za-z0-9]*(?:\[\])?)(?P<suffix>[ \t]*(?:#.*)?)$"
+_EXECUTABLE_HEADER_RE = re.compile(
+    r"^(?P<kind>agic|flow)(?P<rest>.*):(?P<suffix>[ \t]*(?:#.*)?)$"
 )
-DIRECTIVE_RE = re.compile(
-    r"^(?P<indent>[ \t]*)(?P<key>model|models|tool|tools|skill|skills|service|services|"
-    r"psyche|psyches|hands|handoffs|recall)(?P<space>[ \t]*)(?P<op>=|\+=|-=)"
+_STRUCT_HEADER_RE = re.compile(r"^struct(?P<rest>.*):(?P<suffix>[ \t]*(?:#.*)?)$")
+_DIRECTIVE_RE = re.compile(
+    r"^(?P<indent>[ \t]*)(?P<key>models|tools|skills|services|psyches|hands|handoffs|recall)"
+    r"(?P<space>[ \t]*)(?P<op>=|\+=|-=)"
 )
-TOP_LEVEL_RE = re.compile(r"^(with|struct|psyche|skill|service|prompt|task|chore|context|instruct|agic|flow)\b")
-WITH_LINE_RE = re.compile(r"^with[ \t]+(?P<kind>\S+)[ \t]+(?P<reference>.+?)$")
-DECL_HEADER_RE = re.compile(
+_TOP_LEVEL_RE = re.compile(
+    r"^(with|struct|psyche|skill|service|prompt|task|chore|context|instruct|agic|flow)\b"
+)
+_WITH_LINE_RE = re.compile(r"^with[ \t]+(?P<kind>\S+)[ \t]+(?P<reference>.+?)$")
+_DECL_HEADER_RE = re.compile(
     r"^(?P<kind>psyche|skill|service|prompt|task|chore)[ \t]+(?P<name>[^:\s]+)[ \t]*:"
     r"(?P<body>[ \t]*.*)$"
 )
-NAMED_BLOCK_HEADER_RE = re.compile(
+_NAMED_BLOCK_HEADER_RE = re.compile(
     r"^(?P<kind>context|instruct)(?:[ \t]+(?P<name>[^:\s]+))?[ \t]*:"
     r"(?P<body>[ \t]*.*)$"
 )
-MESSAGE_HEADER_RE = re.compile(
+_MESSAGE_HEADER_RE = re.compile(
     r"^(?P<kind>context|instruct|user|assistant|tool)[ \t]*:(?P<body>[ \t]*.*)$"
 )
-COMMENT_SPLIT_KINDS = {
+_COMMENT_SPLIT_KINDS = {
     "directive",
     "control",
     "control_block_header",
@@ -58,19 +42,25 @@ COMMENT_SPLIT_KINDS = {
     "message_body",
     "block_body",
 }
-
-
-@dataclass(frozen=True, slots=True)
-class _TreeSitterSource:
-    source: str
-    line_map: tuple[int | None, ...]
-
-    def original_line_index(self, row: int) -> int:
-        if 0 <= row < len(self.line_map):
-            original = self.line_map[row]
-            if original is not None:
-                return original
-        return row
+_FLOW_STATEMENT_TYPES = {
+    "let_statement",
+    "run_statement",
+    "seek_statement",
+    "ask_statement",
+    "scatter_statement",
+    "storm_statement",
+    "gather_statement",
+    "settle_statement",
+    "map_statement",
+    "keep_statement",
+    "drop_statement",
+    "rank_statement",
+    "repeat_statement",
+    "until_statement",
+}
+_FLOW_STATEMENT_RE = re.compile(
+    r"^(let|run|seek|ask|scatter|storm|gather|settle|map|keep|drop|rank|repeat|until|pass)\b"
+)
 
 
 def format_source(source: str, *, tab_size: int = 2) -> str:
@@ -80,84 +70,119 @@ def format_source(source: str, *, tab_size: int = 2) -> str:
         raise ToolangFormatError("tab size must be positive.")
     if not source:
         return ""
-    formatted = "\n".join(_format_source_lines(source.splitlines(), tab_size=tab_size)).rstrip()
+    tree = _syntax_tree(source)
+    formatted = "\n".join(
+        _format_source_lines(
+            source.splitlines(), root=tree.root_node, tab_size=tab_size
+        )
+    ).rstrip()
     if formatted:
         formatted = f"{formatted}\n"
-    _validate_syntax(formatted)
+    _syntax_tree(formatted)
     return formatted
 
 
-def _format_source_lines(lines: list[str], *, tab_size: int) -> list[str]:
+def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list[str]:
     formatted: list[str] = []
-    current_top: str | None = None
-    in_fence = False
-    agic_block_indent: int | None = None
     indent = " " * tab_size
+    current_top: str | None = None
+    agic_block_indent: int | None = None
+    flow_repeat_indents: list[int] = []
+    flow_content_block: tuple[int, int] | None = None
 
     for index, raw_line in enumerate(lines):
         line = raw_line.rstrip()
         stripped = line.strip()
-        leading = _leading_whitespace(line)
-
-        if index == 0 and line.startswith("#!"):
-            formatted.append(line)
-            continue
-
-        if in_fence:
-            formatted.append(line)
-            if stripped.startswith("```"):
-                in_fence = False
-            continue
 
         if not stripped:
-            if current_top == "agic":
-                agic_block_indent = None
             formatted.append("")
             continue
 
-        if not leading:
+        column = len(_leading_whitespace(line))
+        node = root.named_descendant_for_point_range((index, column), (index, column))
+        if node is None:
+            formatted.append(line)
+            continue
+        if column == 0:
             current_top = _top_level_kind(stripped)
             agic_block_indent = None
-            if stripped.startswith("#"):
-                formatted.append(_format_comment_line(stripped))
-                continue
-            if current_top == "with":
-                formatted.append(_format_with_line(stripped))
-                continue
-            if current_top == "struct":
-                formatted.append(_format_struct_header_line(stripped))
-                continue
-            if current_top == "agic":
-                formatted.append(_format_agic_header_line(stripped))
-                continue
-            if current_top in {"context", "instruct"}:
-                rendered = _format_named_block_header_line(stripped)
-                formatted.append(rendered)
-                in_fence = _opens_fence(rendered)
-                continue
-            if current_top in {"psyche", "skill", "service", "prompt", "task", "chore"}:
-                rendered = _format_decl_header_line(stripped)
-                formatted.append(rendered)
-                in_fence = _opens_fence(rendered)
-                continue
+            flow_repeat_indents.clear()
+            flow_content_block = None
+        if line.startswith("#!"):
             formatted.append(line)
             continue
 
-        if current_top == "struct":
-            formatted.append(_format_struct_body_line(stripped, indent=indent))
+        if current_top == "agic" and column > 0:
+            if _DIRECTIVE_RE.match(line):
+                formatted.append(f"{indent}{_format_directive_line(stripped)}")
+                agic_block_indent = None
+                continue
+            if match := _MESSAGE_HEADER_RE.match(stripped):
+                formatted.append(f"{indent}{_format_message_header_line(match)}")
+                agic_block_indent = column if not match.group("body").strip() else None
+                continue
+            if stripped.startswith("#"):
+                formatted.append(f"{indent}{_format_comment_line(stripped)}")
+                continue
+            if agic_block_indent is not None and column > agic_block_indent:
+                formatted.append(f"{indent}{indent}{stripped}")
+                continue
+            agic_block_indent = None
+            formatted.append(f"{indent}{stripped}")
             continue
 
-        if current_top == "agic":
-            rendered, agic_block_indent = _format_agic_body_line(
-                line,
-                block_indent=agic_block_indent,
-                indent=indent,
+        if current_top == "flow" and column > 0:
+            if _DIRECTIVE_RE.match(line):
+                formatted.append(f"{indent}{_format_directive_line(stripped)}")
+                flow_content_block = None
+                continue
+
+            if _FLOW_STATEMENT_RE.match(stripped):
+                while flow_repeat_indents and column <= flow_repeat_indents[-1]:
+                    flow_repeat_indents.pop()
+                depth = 1 + len(flow_repeat_indents)
+                formatted.append(
+                    f"{indent * depth}{_format_flow_statement_line(stripped)}"
+                )
+                flow_content_block = (
+                    (column, depth)
+                    if ":" in stripped
+                    and not stripped.partition(":")[2].strip()
+                    and not stripped.startswith("repeat")
+                    else None
+                )
+                if stripped.startswith("repeat"):
+                    flow_repeat_indents.append(column)
+                continue
+
+            if stripped.startswith("#"):
+                depth = 1 + sum(
+                    1 for repeat_indent in flow_repeat_indents if repeat_indent < column
+                )
+                formatted.append(f"{indent * depth}{_format_comment_line(stripped)}")
+                continue
+
+            if flow_content_block is not None:
+                block_indent, block_depth = flow_content_block
+                if column > block_indent:
+                    formatted.append(f"{indent * (block_depth + 1)}{stripped}")
+                    continue
+                flow_content_block = None
+            depth = 1 + sum(
+                1 for repeat_indent in flow_repeat_indents if repeat_indent < column
             )
-            formatted.append(rendered)
-            in_fence = _opens_fence(rendered)
+            formatted.append(f"{indent * depth}{stripped}")
             continue
 
-        formatted.append(line)
+        depth = 0 if column == 0 else _indent_depth(node)
+        rendered_indent = indent * depth
+        if node.type == "indented_raw_text":
+            extra = _relative_content_indent(lines, node, tab_size=tab_size)
+            content = line.lstrip(" \t")
+            formatted.append(f"{rendered_indent}{' ' * extra}{content}")
+            continue
+
+        formatted.append(f"{rendered_indent}{_format_syntax_line(stripped, node=node)}")
 
     return _collapse_blank_edges(
         _normalize_blank_lines(
@@ -169,17 +194,113 @@ def _format_source_lines(lines: list[str], *, tab_size: int) -> list[str]:
     )
 
 
-def _validate_syntax(source: str) -> None:
-    normalized_source = _source_without_shebang(source)
-    syntax_source = _tree_sitter_source(normalized_source)
-    tree = _parse_tree(syntax_source.source.encode("utf-8"))
-    error_node = _first_error_node(tree.root_node)
+def _syntax_tree(source: str) -> Tree:
+    syntax = source if source.endswith("\n") else f"{source}\n"
+    tree = _parse_tree(syntax.encode("utf-8"))
+    error_node = _first_syntax_error(tree.root_node)
     if error_node is not None:
-        _raise_syntax_error(normalized_source.splitlines(), syntax_source, error_node)
+        _raise_syntax_error(source.splitlines(), error_node)
+    return tree
+
+
+def _format_syntax_line(stripped_line: str, *, node: Node) -> str:
+    if stripped_line.startswith("#"):
+        return _format_comment_line(stripped_line)
+
+    ancestors = _ancestor_types(node)
+    top_level = _top_level_kind(stripped_line)
+    if top_level == "with":
+        return _format_with_line(stripped_line)
+    if top_level == "struct":
+        return _format_struct_header_line(stripped_line)
+    if top_level in {"agic", "flow"}:
+        return _format_executable_header_line(stripped_line)
+    if top_level in {"context", "instruct"}:
+        return _format_named_block_header_line(stripped_line)
+    if top_level in {"psyche", "skill", "service", "prompt", "task", "chore"}:
+        return _format_decl_header_line(stripped_line)
+
+    if "field" in ancestors:
+        return _format_struct_body_line(stripped_line)
+    if "property" in ancestors:
+        return _format_property_line(stripped_line)
+    if "directive" in ancestors:
+        return _format_directive_line(stripped_line)
+    if ancestors & {
+        "context_setting",
+        "instruct_setting",
+        "message",
+    }:
+        if match := _MESSAGE_HEADER_RE.match(stripped_line):
+            return _format_message_header_line(match)
+        return _collapse_syntax_space(stripped_line)
+    if ancestors & _FLOW_STATEMENT_TYPES:
+        return _format_flow_statement_line(stripped_line)
+    return stripped_line
+
+
+def _ancestor_types(node: Node) -> set[str]:
+    result: set[str] = set()
+    current: Node | None = node
+    while current is not None:
+        result.add(current.type)
+        current = current.parent
+    return result
+
+
+def _indent_depth(node: Node) -> int:
+    ancestors = _ancestor_types(node)
+    if ancestors & {"struct_body", "cap_body", "job_body"}:
+        return 1
+    if "agic_body" in ancestors:
+        return 1 + sum(1 for current in _ancestors(node) if current.type == "text_body")
+    if "flow_body" in ancestors:
+        return 1 + sum(
+            1
+            for current in _ancestors(node)
+            if current.type in {"repeat_body", "repeat_until_body", "text_body"}
+        )
+    if ancestors & {"context", "instruct"} and "text_body" in ancestors:
+        return 1
+    return 0
+
+
+def _ancestors(node: Node):
+    current: Node | None = node
+    while current is not None:
+        yield current
+        current = current.parent
+
+
+def _relative_content_indent(lines: list[str], node: Node, *, tab_size: int) -> int:
+    container = next(
+        (
+            current
+            for current in _ancestors(node)
+            if current.type
+            in {"text_body", "unroled_message", "implicit_run_statement"}
+        ),
+        node,
+    )
+    content_rows = [
+        child.start_point.row
+        for child in container.named_children
+        if child.type == "text_body_line"
+    ]
+    if not content_rows:
+        content_rows = [node.start_point.row]
+    widths = [
+        len(_leading_whitespace(lines[row]).expandtabs(tab_size))
+        for row in content_rows
+        if row < len(lines) and lines[row].strip()
+    ]
+    base = min(widths, default=0)
+    current = len(_leading_whitespace(lines[node.start_point.row]).expandtabs(tab_size))
+    return max(0, current - base)
 
 
 def _top_level_kind(stripped_line: str) -> str | None:
-    match = TOP_LEVEL_RE.match(stripped_line)
+    match = _TOP_LEVEL_RE.match(stripped_line)
     if match is None:
         return None
     return match.group(1)
@@ -187,7 +308,7 @@ def _top_level_kind(stripped_line: str) -> str | None:
 
 def _format_with_line(stripped_line: str) -> str:
     body, comment = _split_inline_comment(stripped_line)
-    match = WITH_LINE_RE.match(body)
+    match = _WITH_LINE_RE.match(body)
     if match is None:
         return stripped_line
     return f"with {match.group('kind')} {match.group('reference').strip()}{comment}"
@@ -207,14 +328,14 @@ def _format_comment_line(stripped_line: str) -> str:
 
 
 def _format_decl_header_line(stripped_line: str) -> str:
-    match = DECL_HEADER_RE.match(stripped_line)
+    match = _DECL_HEADER_RE.match(stripped_line)
     if match is None:
         return stripped_line
     return f"{match.group('kind')} {match.group('name')}: {match.group('body').strip()}".rstrip()
 
 
 def _format_named_block_header_line(stripped_line: str) -> str:
-    match = NAMED_BLOCK_HEADER_RE.match(stripped_line)
+    match = _NAMED_BLOCK_HEADER_RE.match(stripped_line)
     if match is None:
         return stripped_line
     name = match.group("name")
@@ -223,31 +344,42 @@ def _format_named_block_header_line(stripped_line: str) -> str:
 
 
 def _format_struct_header_line(stripped_line: str) -> str:
-    match = STRUCT_HEADER_RE.match(stripped_line)
+    match = _STRUCT_HEADER_RE.match(stripped_line)
     if match is None:
         return stripped_line
     rest = match.group("rest").strip()
-    return f"struct{f' {rest}' if rest else ''}:"
+    suffix = match.group("suffix").strip()
+    return f"struct{f' {rest}' if rest else ''}:{f'  {suffix}' if suffix else ''}"
 
 
-def _format_struct_body_line(stripped_line: str, *, indent: str) -> str:
-    if stripped_line.startswith("#"):
-        return f"{indent}{stripped_line}"
+def _format_struct_body_line(stripped_line: str) -> str:
     body, comment = _split_inline_comment(stripped_line)
     field_match = re.fullmatch(
-        r"(?P<name>[a-z][a-z0-9_-]*)(?P<optional>\?)?[ \t]*:[ \t]*(?P<type>[A-Za-z][A-Za-z0-9]*(?:\[\])?)",
+        r"(?P<name>[a-z][a-z0-9_-]*)[ \t]*(?P<optional>\?)?[ \t]*:[ \t]*"
+        r"(?P<type>[A-Za-z][A-Za-z0-9]*(?:\[\])*)",
         body,
     )
     if field_match is None:
-        return f"{indent}{stripped_line}"
+        return stripped_line
     return (
-        f"{indent}{field_match.group('name')}{field_match.group('optional') or ''}: "
+        f"{field_match.group('name')}{field_match.group('optional') or ''}: "
         f"{field_match.group('type')}{comment}"
     )
 
 
-def _format_agic_header_line(stripped_line: str) -> str:
-    match = AGIC_HEADER_RE.match(stripped_line)
+def _format_property_line(stripped_line: str) -> str:
+    body, comment = _split_inline_comment(stripped_line)
+    match = re.fullmatch(
+        r"(?P<key>[a-z][a-z0-9_]*(_[a-z0-9]+)*)[ \t]*=[ \t]*(?P<value>.*)",
+        body,
+    )
+    if match is None:
+        return stripped_line
+    return f"{match.group('key')} = {match.group('value').strip()}{comment}".rstrip()
+
+
+def _format_executable_header_line(stripped_line: str) -> str:
+    match = _EXECUTABLE_HEADER_RE.match(stripped_line)
     if match is None:
         return stripped_line
     rest = match.group("rest").strip()
@@ -256,10 +388,14 @@ def _format_agic_header_line(stripped_line: str) -> str:
         rest, raw_output = rest.rsplit("->", 1)
         output_type = raw_output.strip()
         output = f" -> {output_type}" if output_type else ""
-    name, params = _parse_agic_rest(rest)
+    name, params = _parse_executable_rest(rest)
     rendered_name = f" {name}" if name else ""
     rendered_params = "" if params is None else f"({_format_signature_params(params)})"
-    return f"agic{rendered_name}{rendered_params}{output}:{match.group('suffix')}"
+    suffix = match.group("suffix").strip()
+    return (
+        f"{match.group('kind')}{rendered_name}{rendered_params}{output}:"
+        f"{f'  {suffix}' if suffix else ''}"
+    )
 
 
 def _format_signature_params(raw: str) -> str:
@@ -270,7 +406,8 @@ def _format_signature_params(raw: str) -> str:
         if not item:
             continue
         match = re.fullmatch(
-            r"(?P<name>[A-Za-z_][\w-]*)(?P<optional>\?)?(?::[ \t]*(?P<type>[A-Za-z][A-Za-z0-9]*(?:\[\])?))?",
+            r"(?P<name>[A-Za-z_][\w-]*)[ \t]*(?P<optional>\?)?"
+            r"(?:[ \t]*:[ \t]*(?P<type>[A-Za-z][A-Za-z0-9]*(?:\[\])*))?",
             item,
         )
         if match is None:
@@ -278,57 +415,47 @@ def _format_signature_params(raw: str) -> str:
             continue
         type_name = match.group("type")
         raw_name = match.group("name")
-        if raw_name == "_" and type_name is None:
-            rendered.append("in: Pack")
-            continue
-        if raw_name == "input" and type_name == "Message":
-            rendered.append("in: Pack")
-            continue
+        if raw_name == "_":
+            type_name = type_name or "Part[]"
         type_text = f": {type_name}" if type_name else ""
-        name = "in" if raw_name == "_" else raw_name
-        rendered.append(f"{name}{match.group('optional') or ''}{type_text}")
+        rendered.append(f"{raw_name}{match.group('optional') or ''}{type_text}")
     return ", ".join(rendered)
 
 
-def _format_agic_body_line(line: str, *, block_indent: int | None, indent: str) -> tuple[str, int | None]:
-    stripped = line.strip()
-    leading_width = len(_leading_whitespace(line).expandtabs(2))
-    directive_match = DIRECTIVE_RE.match(line)
-    if directive_match is not None:
-        return _format_directive_line(stripped, indent=indent), None
-
-    message_match = MESSAGE_HEADER_RE.match(stripped)
-    if message_match is not None:
-        return _format_message_header_line(message_match, indent=indent), leading_width
-
-    if block_indent is not None and leading_width > block_indent:
-        return f"{indent}{indent}{stripped}", block_indent
-
-    if stripped.startswith("#"):
-        return f"{indent}{stripped}", block_indent
-
-    return f"{indent}{stripped}", None
-
-
-def _format_directive_line(stripped_line: str, *, indent: str) -> str:
+def _format_directive_line(stripped_line: str) -> str:
     body, comment = _split_inline_comment(stripped_line)
     match = re.fullmatch(
-        r"(?P<key>model|models|tool|tools|skill|skills|service|services|"
-        r"psyche|psyches|hands|handoffs|recall)[ \t]*(?P<op>=|\+=|-=)[ \t]*(?P<values>.*)",
+        r"(?P<key>models|tools|skills|services|psyches|hands|handoffs|recall)"
+        r"[ \t]*(?P<op>=|\+=|-=)[ \t]*(?P<values>.*)",
         body,
     )
     if match is None:
-        return f"{indent}{stripped_line}"
-    key = DIRECTIVE_KEY_ALIASES.get(match.group("key"), match.group("key"))
+        return stripped_line
     values = _format_csv_values(match.group("values"))
-    return f"{indent}{key} {match.group('op')} {values}{comment}".rstrip()
+    return f"{match.group('key')} {match.group('op')} {values}{comment}".rstrip()
 
 
-def _format_message_header_line(match: re.Match[str], *, indent: str) -> str:
+def _format_message_header_line(match: re.Match[str]) -> str:
     body = match.group("body").strip()
     if not body:
-        return f"{indent}{match.group('kind')}:"
-    return f"{indent}{match.group('kind')}: {body}"
+        return f"{match.group('kind')}:"
+    return f"{match.group('kind')}: {body}"
+
+
+def _format_flow_statement_line(stripped_line: str) -> str:
+    before, separator, after = stripped_line.partition(":")
+    rendered = _collapse_syntax_space(before)
+    if not separator:
+        return rendered
+    body = after.strip()
+    return f"{rendered}:" if not body else f"{rendered}: {body}"
+
+
+def _collapse_syntax_space(value: str) -> str:
+    rendered = re.sub(r"[ \t]+", " ", value.strip())
+    rendered = re.sub(r"[ \t]*->[ \t]*", " -> ", rendered)
+    rendered = re.sub(r"[ \t]*=[ \t]*", " = ", rendered)
+    return rendered
 
 
 def _format_csv_values(raw: str) -> str:
@@ -388,7 +515,11 @@ def _order_control_segments(lines: list[str], *, tab_size: int) -> list[str]:
             index += 1
             continue
 
-        top_level = _top_level_kind(stripped) if stripped and not _leading_whitespace(line) else None
+        top_level = (
+            _top_level_kind(stripped)
+            if stripped and not _leading_whitespace(line)
+            else None
+        )
         if top_level is not None:
             in_agic = top_level == "agic"
 
@@ -419,7 +550,10 @@ def _collect_control_segments(
     while index < len(lines):
         while index < len(lines) and not lines[index].strip():
             index += 1
-        if index >= len(lines) or _control_header_kind(lines[index], tab_size=tab_size) is None:
+        if (
+            index >= len(lines)
+            or _control_header_kind(lines[index], tab_size=tab_size) is None
+        ):
             break
 
         segment = [lines[index]]
@@ -454,7 +588,7 @@ def _is_block_continuation(line: str, *, tab_size: int) -> bool:
     return (
         bool(line.strip())
         and bool(_leading_whitespace(line))
-        and len(_leading_whitespace(line).expandtabs(2)) > tab_size
+        and len(_leading_whitespace(line).expandtabs(tab_size)) > tab_size
     )
 
 
@@ -464,7 +598,7 @@ def _normalize_blank_lines(lines: list[str], *, tab_size: int) -> list[str]:
     in_agic = False
     previous_kind: str | None = None
     previous_significant_kind: str | None = None
-    pending_blank = False
+    pending_blank = 0
 
     for line in lines:
         stripped = line.strip()
@@ -475,18 +609,26 @@ def _normalize_blank_lines(lines: list[str], *, tab_size: int) -> list[str]:
             previous_kind = "fence"
             continue
         if not stripped:
-            pending_blank = True
+            pending_blank += 1
             continue
 
         kind = _formatted_line_kind(line, in_agic=in_agic, tab_size=tab_size)
-        if _needs_blank_line(previous_kind, kind, pending_blank=pending_blank):
+        if _needs_blank_line(previous_kind, kind, pending_blank=bool(pending_blank)):
             _append_blank_line(normalized)
-        elif previous_kind == "comment" and _needs_blank_line_after_comment(previous_significant_kind, kind):
+        elif previous_kind == "comment" and _needs_blank_line_after_comment(
+            previous_significant_kind, kind
+        ):
             _append_blank_line(normalized)
         elif pending_blank and _preserves_blank_line(previous_kind, kind):
-            _append_blank_line(normalized)
+            _append_blank_lines(
+                normalized,
+                min(
+                    pending_blank,
+                    2 if kind in {"message_body", "block_body", "indented"} else 1,
+                ),
+            )
         normalized.append(line)
-        pending_blank = False
+        pending_blank = 0
 
         top_level = _top_level_kind(stripped) if not _leading_whitespace(line) else None
         if top_level is not None:
@@ -517,7 +659,7 @@ def _formatted_line_kind(line: str, *, in_agic: bool, tab_size: int) -> str:
         return "other_top_level"
     if not in_agic:
         return "indented"
-    if DIRECTIVE_RE.match(line):
+    if _DIRECTIVE_RE.match(line):
         return "directive"
     message_match = _formatted_message_header_match(line, tab_size=tab_size)
     if message_match is not None:
@@ -528,19 +670,23 @@ def _formatted_line_kind(line: str, *, in_agic: bool, tab_size: int) -> str:
         if message_match.group("kind") in {"context", "instruct"}:
             return "control"
         return "message_header"
-    if len(_leading_whitespace(line).expandtabs(2)) > tab_size:
+    if len(_leading_whitespace(line).expandtabs(tab_size)) > tab_size:
         return "block_body"
     if stripped.startswith("#"):
         return "comment"
     return "message_body"
 
 
-def _formatted_message_header_match(line: str, *, tab_size: int) -> re.Match[str] | None:
+def _formatted_message_header_match(
+    line: str, *, tab_size: int
+) -> re.Match[str] | None:
     indent = re.escape(" " * tab_size)
     return re.match(rf"^{indent}(?P<kind>context|instruct|user|assistant|tool):", line)
 
 
-def _needs_blank_line(previous_kind: str | None, current_kind: str, *, pending_blank: bool) -> bool:
+def _needs_blank_line(
+    previous_kind: str | None, current_kind: str, *, pending_blank: bool
+) -> bool:
     if previous_kind is None:
         return False
     if current_kind in {"top_level", "agic_header", "other_top_level"}:
@@ -554,15 +700,42 @@ def _needs_blank_line(previous_kind: str | None, current_kind: str, *, pending_b
     if current_kind == "directive":
         return previous_kind not in {"agic_header", "directive"}
     if current_kind == "control":
-        return previous_kind in {"directive", "message_header", "message_body", "block_body"}
+        return previous_kind in {
+            "directive",
+            "message_header",
+            "message_body",
+            "block_body",
+        }
     if current_kind == "control_block_header":
-        return previous_kind in {"directive", "control", "message_header", "message_body", "block_body"}
+        return previous_kind in {
+            "directive",
+            "control",
+            "message_header",
+            "message_body",
+            "block_body",
+        }
     if current_kind == "message_header":
-        return previous_kind in {"directive", "control", "message_header", "message_body", "block_body"}
+        return previous_kind in {
+            "directive",
+            "control",
+            "message_header",
+            "message_body",
+            "block_body",
+        }
     if current_kind == "message_block_header":
-        return previous_kind in {"directive", "control", "message_header", "message_body", "block_body"}
+        return previous_kind in {
+            "directive",
+            "control",
+            "message_header",
+            "message_body",
+            "block_body",
+        }
     if current_kind == "block_body":
-        return previous_kind not in {"control_block_header", "message_block_header", "block_body"}
+        return previous_kind not in {
+            "control_block_header",
+            "message_block_header",
+            "block_body",
+        }
     if current_kind == "message_body":
         return previous_kind not in {
             "control_block_header",
@@ -574,8 +747,13 @@ def _needs_blank_line(previous_kind: str | None, current_kind: str, *, pending_b
     return False
 
 
-def _needs_blank_line_after_comment(previous_significant_kind: str | None, current_kind: str) -> bool:
-    if previous_significant_kind not in COMMENT_SPLIT_KINDS or current_kind not in COMMENT_SPLIT_KINDS:
+def _needs_blank_line_after_comment(
+    previous_significant_kind: str | None, current_kind: str
+) -> bool:
+    if (
+        previous_significant_kind not in _COMMENT_SPLIT_KINDS
+        or current_kind not in _COMMENT_SPLIT_KINDS
+    ):
         return False
     return previous_significant_kind == current_kind or _needs_blank_line(
         previous_significant_kind,
@@ -591,7 +769,11 @@ def _preserves_blank_line(previous_kind: str | None, current_kind: str) -> bool:
         return True
     if previous_kind == current_kind == "top_comment":
         return True
-    return previous_kind == current_kind and current_kind in {"message_body", "block_body"}
+    return previous_kind == current_kind and current_kind in {
+        "message_body",
+        "block_body",
+        "indented",
+    }
 
 
 def _append_blank_line(lines: list[str]) -> None:
@@ -599,139 +781,16 @@ def _append_blank_line(lines: list[str]) -> None:
         lines.append("")
 
 
-def _tree_sitter_source(source: str) -> _TreeSitterSource:
-    original_lines = source.splitlines()
-    transformed: list[str] = []
-    line_map: list[int | None] = []
-    index = 0
-
-    while index < len(original_lines):
-        line = original_lines[index]
-        agic_match = AGIC_HEADER_RE.match(line)
-        if agic_match is None:
-            transformed.append(_transform_non_agic_line(line))
-            line_map.append(index)
-            index += 1
-            continue
-
-        transformed.append(_transform_agic_header(line))
-        line_map.append(index)
-        index += 1
-
-        while index < len(original_lines):
-            body_line = original_lines[index]
-            if TOP_LEVEL_RE.match(body_line):
-                break
-            explicit_block_match = re.match(
-                r"^(?P<indent>[ \t]*)(context|instruct|user|assistant|tool):",
-                body_line,
-            )
-            if explicit_block_match is not None:
-                block_indent = len(explicit_block_match.group("indent"))
-                transformed.append(body_line)
-                line_map.append(index)
-                index += 1
-                while index < len(original_lines):
-                    continuation = original_lines[index]
-                    if TOP_LEVEL_RE.match(continuation):
-                        break
-                    if continuation.strip() and len(_leading_whitespace(continuation)) <= block_indent:
-                        break
-                    transformed.append(continuation)
-                    line_map.append(index)
-                    index += 1
-                continue
-
-            transformed.append(_transform_non_agic_line(body_line))
-            line_map.append(index)
-            index += 1
-
-    if source:
-        tree_source = "\n".join(transformed) + "\n"
-    else:
-        tree_source = ""
-    return _TreeSitterSource(
-        source=tree_source,
-        line_map=tuple(line_map),
-    )
+def _append_blank_lines(lines: list[str], count: int) -> None:
+    existing = 0
+    for line in reversed(lines):
+        if line:
+            break
+        existing += 1
+    lines.extend("" for _ in range(max(0, count - existing)))
 
 
-def _transform_non_agic_line(line: str) -> str:
-    if STRUCT_HEADER_RE.match(line) is not None:
-        return line
-
-    field_match = FIELD_RE.match(line)
-    if field_match is not None:
-        return (
-            f"{field_match.group('indent')}{field_match.group('name')}"
-            f"{field_match.group('optional') or ''}:"
-            f"{field_match.group('space')}{field_match.group('type')}"
-            f"{field_match.group('suffix')}"
-        )
-
-    return _transform_directive_line(line)
-
-
-def _transform_agic_header(line: str) -> str:
-    match = AGIC_HEADER_RE.match(line)
-    if match is None:
-        return line
-    rest = match.group("rest")
-    output = ""
-    if "->" in rest:
-        rest, raw_output = rest.rsplit("->", 1)
-        output = f" -> {raw_output.strip()}"
-    name, params = _parse_agic_rest(rest)
-    rendered_name = f" {name}" if name else ""
-    rendered_params = "" if params is None else f"({_tree_sitter_params(params)})"
-    return f"{match.group('indent')}agic{rendered_name}{rendered_params}{output}:{match.group('suffix')}"
-
-
-def _transform_directive_line(line: str) -> str:
-    match = DIRECTIVE_RE.match(line)
-    if match is None:
-        return line
-    key = match.group("key")
-    normalized_key = "models" if key == "model" else key
-    values = line[match.end() :]
-    rendered_values = " selector" if values.strip() else values
-    return (
-        f"{match.group('indent')}{normalized_key}"
-        f"{match.group('space')}{match.group('op')}{rendered_values}"
-    )
-
-
-def _tree_sitter_params(raw: str) -> str:
-    if not raw.strip():
-        return ""
-    rendered: list[str] = []
-    for item in [part.strip() for part in raw.split(",")]:
-        if item == "_":
-            rendered.append("in: Pack")
-            continue
-        match = re.fullmatch(
-            r"(?P<name>[A-Za-z_][\w-]*)(?P<optional>\?)?(?::\s*(?P<type>[A-Za-z][A-Za-z0-9]*(?:\[\])?))?",
-            item,
-        )
-        if match is None:
-            rendered.append(item)
-            continue
-        raw_name = match.group("name")
-        raw_type = match.group("type")
-        if raw_name == "_" and raw_type is None:
-            rendered.append("in: Pack")
-            continue
-        if raw_name == "input" and raw_type == "Message":
-            rendered.append("in: Pack")
-            continue
-        name = "in" if raw_name == "_" else raw_name
-        optional = match.group("optional") or ""
-        type_name = raw_type or "Text"
-        rendered.append(f"{name}{optional}: {type_name}")
-    return ", ".join(rendered)
-
-
-def _parse_agic_rest(rest: str) -> tuple[str | None, str | None]:
+def _parse_executable_rest(rest: str) -> tuple[str | None, str | None]:
     rest = rest.strip()
     if not rest:
         return None, None
@@ -745,31 +804,10 @@ def _parse_agic_rest(rest: str) -> tuple[str | None, str | None]:
     return name, rest[params_start + 1 : params_end]
 
 
-def _first_error_node(node: Node) -> Node | None:
-    if node.is_error or node.is_missing:
-        if _is_ignored_error_node(node):
-            return None
-        return node
-    for child in node.children:
-        result = _first_error_node(child)
-        if result is not None:
-            return result
-    return None
-
-
-def _is_ignored_error_node(node: Node) -> bool:
-    parent = node.parent
-    while parent is not None:
-        if parent.type == "frontmatter":
-            return True
-        parent = parent.parent
-    return False
-
-
-def _raise_syntax_error(lines: list[str], syntax_source: _TreeSitterSource, node: Node) -> None:
-    original_row = syntax_source.original_line_index(node.start_point.row)
-    line_number = original_row + 1
-    raw_line = _line_text(lines, original_row)
+def _raise_syntax_error(lines: list[str], node: Node) -> None:
+    row = node.start_point.row
+    line_number = row + 1
+    raw_line = lines[row] if 0 <= row < len(lines) else ""
     if raw_line.startswith((" ", "\t")) and raw_line.strip():
         raise ToolangFormatError(f"Unexpected indentation at line {line_number}.")
     raise ToolangFormatError(f"Syntax error at line {line_number}.")
@@ -801,9 +839,3 @@ def _collapse_blank_edges(lines: list[str]) -> list[str]:
 
 def _leading_whitespace(line: str) -> str:
     return line[: len(line) - len(line.lstrip(" \t"))]
-
-
-def _line_text(lines: list[str], row: int) -> str:
-    if 0 <= row < len(lines):
-        return lines[row]
-    return ""

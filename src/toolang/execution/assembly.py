@@ -128,8 +128,7 @@ class RunInput:
         )
         params = invoke_params(run)
         if agic.input is not None and input_text:
-            params = {**params, agic.input.name: input_text}
-            params.setdefault("_", input_text)
+            params = {**params, "_": input_text}
         sets = effective_run_sets(context, run=run, agic=agic)
         model_math = sets.set_math.get("models")
         if isinstance(model_math, dict):
@@ -254,22 +253,22 @@ class RunInput:
     def tools(self) -> dict[str, AgentTool]:
         """Return the effective tool mapping for this run."""
 
-        return select_tools(self.tools_base, directives_for(self.agic, "tool"))
+        return select_tools(self.tools_base, directives_for(self.agic, "tools"))
 
     def psyches(self) -> tuple[PreparedEntry, ...]:
         """Return the effective psyche entries for this run."""
 
-        return select_entries(self.psyches_base, directives_for(self.agic, "psyche"))
+        return select_entries(self.psyches_base, directives_for(self.agic, "psyches"))
 
     def skills(self) -> tuple[PreparedEntry, ...]:
         """Return the effective skill entries for this run."""
 
-        return select_entries(self.skills_base, directives_for(self.agic, "skill"))
+        return select_entries(self.skills_base, directives_for(self.agic, "skills"))
 
     def services(self) -> tuple[PreparedEntry, ...]:
         """Return the effective service entries for this run."""
 
-        return select_entries(self.services_base, directives_for(self.agic, "service"))
+        return select_entries(self.services_base, directives_for(self.agic, "services"))
 
     def rendered_messages(self) -> tuple[AstMessage, ...]:
         """Return authored agic messages rendered with the current params."""

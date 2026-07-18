@@ -10,7 +10,7 @@
 # The `file` agic turns each file into a concise wiki page in:
 #
 # examples/.toolang/agents/llm-wiki/wiki/
-agic file(in: Part[]):
+agic file(_: Part[]):
   tools = filesystem/*
 
   user:
@@ -24,7 +24,7 @@ agic file(in: Part[]):
   visible, a compact summary, key facts, and searchable keywords.
   After writing, reply with only: Wikified `<file name or path>`.
 
-agic chat(in: Part[]):
+agic chat(_: Part[]):
   tools = filesystem/*
 
   user:

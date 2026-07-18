@@ -9,14 +9,14 @@ from typing import Any
 from . import ast
 from .diagnostics import ToolangValidationError
 
-SERVICE_FIELDS = frozenset(
+_SERVICE_FIELDS = frozenset(
     {"description", "transport", "protocol", "target", "headers", "env"}
 )
-ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-PARAM_NAME_RE = re.compile(r"^[A-Za-z_][\w-]*$")
+_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_PARAM_NAME_RE = re.compile(r"^[A-Za-z_][\w-]*$")
 
 
-def validate(program: ast.Program) -> None:
+def _validate(program: ast.Program) -> None:
     """Validate one complete semantic AST."""
 
     _validate_caps(program.caps)
@@ -39,13 +39,13 @@ def validate(program: ast.Program) -> None:
         _validate_stmts(flow.stmts, runnables=runnables)
 
 
-def validate_service_meta(
+def _validate_service_meta(
     meta: Mapping[str, Any],
     *,
     line_number: int,
     require_description: bool = False,
 ) -> None:
-    _require_exact_fields(meta, SERVICE_FIELDS, kind="service", line=line_number)
+    _require_exact_fields(meta, _SERVICE_FIELDS, kind="service", line=line_number)
     description = meta.get("description")
     if require_description and (not isinstance(description, str) or not description):
         raise ToolangValidationError(
@@ -93,7 +93,7 @@ def _validate_caps(caps: tuple[ast.CapDecl, ...]) -> None:
             raise ToolangValidationError(f"Duplicate {cap.kind} name {cap.name!r}.")
         seen.add(key)
         if cap.kind == "service":
-            validate_service_meta(
+            _validate_service_meta(
                 cap.meta, line_number=cap.span.line, require_description=True
             )
         elif cap.kind == "prompt":
@@ -105,7 +105,7 @@ def _validate_caps(caps: tuple[ast.CapDecl, ...]) -> None:
                 label=f"parameter in prompt {cap.name!r}",
             )
             for param in cap.params:
-                if PARAM_NAME_RE.fullmatch(param.name) is None:
+                if _PARAM_NAME_RE.fullmatch(param.name) is None:
                     raise ToolangValidationError(
                         f"Invalid prompt parameter {param.name!r} at line {param.span.line}."
                     )
@@ -145,12 +145,18 @@ def _validate_parameters(
     *,
     owner: str,
 ) -> None:
+    if input_param is not None and input_param.optional:
+        raise ToolangValidationError(f"{owner} primary input '_' must not be optional.")
     seen = {input_param.name} if input_param is not None else set()
     if "runtime" in seen:
         raise ToolangValidationError(
             f"{owner} must not use reserved parameter name 'runtime'."
         )
     for param in params:
+        if param.name == "_":
+            raise ToolangValidationError(
+                f"{owner} primary input '_' must be the first parameter."
+            )
         if param.name == "runtime":
             raise ToolangValidationError(
                 f"{owner} must not use reserved parameter name 'runtime'."
@@ -359,5 +365,5 @@ def _is_env_names(value: object) -> bool:
     else:
         return False
     return bool(items) and all(
-        ENV_NAME_RE.fullmatch(item) is not None for item in items
+        _ENV_NAME_RE.fullmatch(item) is not None for item in items
     )

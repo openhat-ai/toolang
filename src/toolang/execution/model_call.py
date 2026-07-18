@@ -321,8 +321,7 @@ def _template_param_values(
 ) -> dict[str, object]:
     values: dict[str, object] = {}
     if agic.input is not None:
-        values[agic.input.name] = params.get(agic.input.name)
-        values["_"] = params.get("_", values[agic.input.name])
+        values["_"] = params.get("_")
     for param in agic.params:
         values[param.name] = params.get(param.name)
     return values

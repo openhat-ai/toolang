@@ -8,6 +8,7 @@ import pytest
 from tests import FIXTURES_ROOT, PROJECT_ROOT
 from toolang.common.error import ToolangError
 from toolang.lang import Program, to_data
+from toolang.lang.ast import LetStmt, RepeatStmt
 from toolang.lang.input import expand_program_input
 from toolang.state.durable import scan_durable_state
 
@@ -40,10 +41,10 @@ context:
 instruct concise:
   Be concise.
 
-agic review(in: Text, focus?) -> Review:
+agic review(_: Text, focus?) -> Review:
   context: default
   instruct: concise
-  user: Review {{in}}.
+  user: Review {{_}}.
 
 flow main:
   run review
@@ -73,7 +74,7 @@ flow main:
     assert agic.context == "default"
     assert agic.instruct == "concise"
     assert agic.messages[0].role == "user"
-    assert agic.messages[0].content == "Review {{in}}."
+    assert agic.messages[0].content == "Review {{_}}."
     assert program.flows[0].name == "main"
     assert program.flows[0].stmts[0].kind == "run"
 
@@ -87,18 +88,23 @@ agic implicit:
 agic empty():
   Hello.
 
+agic explicit(_):
+  Hello.
+
 agic args(name: Text, detail?):
   Hello.
 
-agic custom(in: Json, detail: Text):
+agic custom(_: Json, detail: Text):
   Hello.
 """
     )
 
-    implicit, empty, args, custom = program.agics
-    assert implicit.input is not None and implicit.input.type_name == "Pack"
-    assert not implicit.params_explicit
-    assert empty.input is None and empty.params == () and empty.params_explicit
+    implicit, empty, explicit, args, custom = program.agics
+    assert implicit.input is not None
+    assert (implicit.input.name, implicit.input.type_name) == ("_", "Part[]")
+    assert empty.input is None and empty.params == ()
+    assert explicit.input is not None
+    assert (explicit.input.name, explicit.input.type_name) == ("_", "Part[]")
     assert args.input is None
     assert [(item.name, item.type_name, item.optional) for item in args.params] == [
         ("name", "Text", False),
@@ -108,6 +114,85 @@ agic custom(in: Json, detail: Text):
     assert [(item.name, item.type_name) for item in custom.params] == [
         ("detail", "Text")
     ]
+
+
+@pytest.mark.parametrize(
+    ("signature", "message"),
+    [
+        ("_?", "must not be optional"),
+        ("name, _: Json", "must be the first parameter"),
+    ],
+)
+def test_primary_input_validation(signature: str, message: str) -> None:
+    with pytest.raises(ToolangError, match=message):
+        Program.from_source(f"agic invalid({signature}):\n  pass\n")
+
+
+def test_program_lowers_complete_flow_statement_set() -> None:
+    program = Program.from_source(
+        """
+agic action:
+  pass
+
+agic predicate -> Boolean:
+  pass
+
+agic score -> Number:
+  pass
+
+flow pipeline:
+  run action
+  seek reviewer action
+  ask: Continue?
+  scatter 2 action
+  storm 3 action par 2
+  gather action
+  settle action
+  map action par 4
+  keep first 2
+  keep predicate par 2
+  drop last 1
+  drop predicate
+  rank score top 3 par 2
+  let saved = run action
+  let note:
+    Store this note.
+
+  repeat 2:
+    run action
+    until: Complete?
+"""
+    )
+
+    statements = program.flows[0].stmts
+    assert [statement.kind for statement in statements] == [
+        "run",
+        "seek",
+        "ask",
+        "scatter",
+        "storm",
+        "gather",
+        "settle",
+        "map",
+        "keep",
+        "keep",
+        "drop",
+        "drop",
+        "rank",
+        "run",
+        "let",
+        "repeat",
+    ]
+    assert statements[13].binding == "saved"
+    let_statement = statements[14]
+    assert isinstance(let_statement, LetStmt)
+    assert let_statement.binding == "note"
+    assert let_statement.value == "Store this note."
+    repeat = statements[-1]
+    assert isinstance(repeat, RepeatStmt)
+    assert repeat.count == 2
+    assert [statement.kind for statement in repeat.stmts] == ["run"]
+    assert repeat.until is not None
 
 
 def test_inline_prompting_is_flattened_and_referenced() -> None:
@@ -130,6 +215,25 @@ agic answer:
     ]
     assert [(item.name, item.body) for item in program.instructs] == [
         ("<instruct:5>", "Local instruct.")
+    ]
+
+
+def test_directives_use_canonical_names() -> None:
+    program = Program.from_source(
+        """
+agic configured:
+  models = openai/gpt-5
+  tools += shell
+  skills -= review
+
+  Configured.
+"""
+    )
+
+    assert [item.name for item in program.agics[0].directives] == [
+        "models",
+        "tools",
+        "skills",
     ]
 
 
@@ -195,7 +299,7 @@ flow pipeline:
     assert program.find_instruct("default") is None
 
 
-def test_program_source_strips_header_without_adding_runtime_declarations(
+def test_program_source_hides_header_without_adding_runtime_declarations(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "toolang"
@@ -209,8 +313,26 @@ def test_program_source_strips_header_without_adding_runtime_declarations(
     prepared = scan_durable_state(root, "alice").load_program()
     program = prepared.parse()
 
-    assert prepared.body_text == ""
+    assert prepared.source_text == "#!/usr/bin/env toolang\n\nagent alice\n"
     assert program.agics == ()
+
+
+def test_program_source_parse_preserves_authored_shebang_line_numbers(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "toolang"
+    agent_dir = root / "agents" / "alice"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "agent.too").write_text(
+        "#!/usr/bin/env toolang\n\n# Agent description.\nagent alice\n\nagic chat:\n  Reply.\n",
+        encoding="utf-8",
+    )
+
+    source = scan_durable_state(root, "alice").load_program()
+    program = source.parse()
+
+    assert source.source_text.startswith("#!/usr/bin/env toolang\n")
+    assert program.agics[0].span.line == 6
 
 
 def test_program_source_preserves_explicit_default_agic(tmp_path: Path) -> None:

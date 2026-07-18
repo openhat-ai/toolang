@@ -10,8 +10,8 @@
 
 with skill briceyan/review
 
-agic gpt_only(in: Part[]):
-  model = openai/gpt-5
+agic gpt_only(_: Part[]):
+  models = openai/gpt-5
 
   Rewrite the input into one concise paragraph.
   Preserve the original meaning and improve clarity.

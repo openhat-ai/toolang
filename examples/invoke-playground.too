@@ -10,13 +10,13 @@ struct Summary:
 struct BulletList:
   items: Text[]
 
-# agic summarize(in: Part[]) -> Summary:
+# agic summarize(_: Part[]) -> Summary:
 #   Produce a compact summary with a short title and a short summary paragraph.
 
-# agic bullets(in: Part[]) -> BulletList:
+# agic bullets(_: Part[]) -> BulletList:
 #   Extract the main points into short bullet items.
 
-# agic rewrite(in: Part[], tone?, audience?):
+# agic rewrite(_: Part[], tone?, audience?):
 #   Rewrite the input in the requested tone.
 #   Adjust depth and wording for the requested audience when it is provided.
 
