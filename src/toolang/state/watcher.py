@@ -99,6 +99,22 @@ class StateWatcher:
             if state.fingerprint != previous:
                 yield state
 
+    async def run(
+        self,
+        *,
+        stop_signal: asyncio.Event,
+        interval_ms: float = DEFAULT_INTERVAL_MS,
+        debounce_ms: float = DEFAULT_DEBOUNCE_MS,
+    ) -> None:
+        """Keep the current state synchronized until the caller stops watching."""
+
+        async for _ in self.updates(
+            stop_signal=stop_signal,
+            interval_ms=interval_ms,
+            debounce_ms=debounce_ms,
+        ):
+            pass
+
     def _needs_refresh(self) -> bool:
         try:
             return (

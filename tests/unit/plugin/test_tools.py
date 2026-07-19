@@ -6,11 +6,12 @@ from pathlib import Path
 
 import pytest
 
+from toolang.base.error import ToolangError
 from toolang.base.types.message import Message, TextPart, message_text
-from toolang.base.types.tool import ToolContext
+from toolang.base.types.tool import ToolContext, ToolService
 from toolang.execution.store import RunStore, run_store_path
 from toolang.execution.records import ThreadPeer
-from toolang.agent.tools.agent_chat import create_tool_set as create_agent_chat_tool
+from toolang.execution.tools.agent_chat import create_tool_set as create_agent_chat_tool
 from toolang.plugin.tools.filesystem import create_tool_set as create_filesystem_tool
 from toolang.plugin.tools.service_use import create_tool_set as create_service_use_tool
 from toolang.plugin.tools.shell import create_tool_set as create_shell_tool
@@ -18,12 +19,47 @@ from toolang.plugin.tools.web_search import create_tool_set as create_web_search
 from tests.support.execution import project_run_start
 
 
-def _tool_context(home: Path, plugin_name: str) -> ToolContext:
+def _tool_context(
+    home: Path,
+    plugin_name: str,
+    *,
+    run_id: str = "run-1",
+    services: tuple[ToolService, ...] = (),
+) -> ToolContext:
     return ToolContext(
-        run_id="run-1",
+        run_id=run_id,
         home=home,
         room=home / ".runtime" / "tools" / plugin_name,
         wd=home,
+        services=services,
+    )
+
+
+def _service_context(
+    home: Path,
+    *,
+    name: str = "github",
+    transport: str = "http",
+    target: str = "https://mcp.github.com/mcp",
+    env_names: tuple[str, ...] = (),
+    environ: dict[str, str] | None = None,
+    run_id: str = "run-1",
+) -> ToolContext:
+    return _tool_context(
+        home,
+        "service_use",
+        run_id=run_id,
+        services=(
+            ToolService(
+                name=name,
+                meta={
+                    "transport": transport,
+                    "target": target,
+                    "env": env_names,
+                },
+                environ=environ or {},
+            ),
+        ),
     )
 
 
@@ -156,7 +192,7 @@ def test_agent_chat_tool_creates_child_thread_and_sends_peer_request(monkeypatch
         calls.append({"url": url, "json": json, "timeout": timeout})
         return FakeResponse()
 
-    monkeypatch.setattr("toolang.agent.tools.agent_chat.httpx.post", fake_post)
+    monkeypatch.setattr("toolang.execution.tools.agent_chat.httpx.post", fake_post)
     tool = create_agent_chat_tool(
         {"peers": [{"name": "bob", "endpoint": "http://127.0.0.1:7002"}]}
     ).tools()["send"]
@@ -235,7 +271,7 @@ def test_agent_chat_tool_accepts_direct_peer_object_without_config(monkeypatch, 
         calls.append({"url": url, "json": json, "timeout": timeout})
         return FakeResponse()
 
-    monkeypatch.setattr("toolang.agent.tools.agent_chat.httpx.post", fake_post)
+    monkeypatch.setattr("toolang.execution.tools.agent_chat.httpx.post", fake_post)
     tool = create_agent_chat_tool({}).tools()["send"]
 
     try:
@@ -310,7 +346,7 @@ def test_agent_chat_tool_can_call_streaming_peer_chat(monkeypatch, tmp_path: Pat
         calls.append({"method": method, "url": url, "json": json, "timeout": timeout})
         return FakeStream()
 
-    monkeypatch.setattr("toolang.agent.tools.agent_chat.httpx.stream", fake_stream)
+    monkeypatch.setattr("toolang.execution.tools.agent_chat.httpx.stream", fake_stream)
     tool = create_agent_chat_tool({}).tools()["send"]
 
     try:
@@ -336,17 +372,7 @@ def test_agent_chat_tool_can_call_streaming_peer_chat(monkeypatch, tmp_path: Pat
 
 
 def test_service_use_tool_definition_uses_object_input_schema() -> None:
-    plugin = create_service_use_tool(
-        {
-            "visible_services": [
-                {
-                    "name": "github",
-                    "transport": "http",
-                    "target": "https://mcp.github.com/mcp",
-                }
-            ]
-        }
-    )
+    plugin = create_service_use_tool({})
 
     definition = plugin.tools()["tool_call"].definition()
 
@@ -358,17 +384,7 @@ def test_service_use_tool_definition_uses_object_input_schema() -> None:
 
 
 def test_service_use_tool_exposes_leaf_commands_only() -> None:
-    plugin = create_service_use_tool(
-        {
-            "visible_services": [
-                {
-                    "name": "github",
-                    "transport": "http",
-                    "target": "https://mcp.github.com/mcp",
-                }
-            ]
-        }
-    )
+    plugin = create_service_use_tool({})
 
     assert "auth_start" in plugin.tools()
     assert "auth_complete" in plugin.tools()
@@ -389,18 +405,11 @@ def test_service_use_tool_exposes_leaf_commands_only() -> None:
 def test_service_use_tool_calls_http_service_via_mcat(monkeypatch, tmp_path: Path) -> None:
     home = tmp_path / "alice"
     home.mkdir()
-    (home / ".env").write_text("GITHUB_TOKEN=github-token\n", encoding="utf-8")
-    plugin = create_service_use_tool(
-        {
-            "visible_services": [
-                {
-                    "name": "github",
-                    "transport": "http",
-                    "target": "https://mcp.github.com/mcp",
-                    "env_vars": ["GITHUB_TOKEN"],
-                }
-            ]
-        }
+    plugin = create_service_use_tool({})
+    context = _service_context(
+        home,
+        env_names=("GITHUB_TOKEN",),
+        environ={"GITHUB_TOKEN": "github-token"},
     )
     calls: list[tuple[str, object]] = []
 
@@ -424,11 +433,11 @@ def test_service_use_tool_calls_http_service_via_mcat(monkeypatch, tmp_path: Pat
 
     plugin.tools()["init"].invoke(
         {"service": "github"},
-        _tool_context(home, "service_use"),
+        context,
     )
     result = plugin.tools()["tool_list"].invoke(
         {"service": "github"},
-        _tool_context(home, "service_use"),
+        context,
     )
 
     assert result["ok"] is True
@@ -439,20 +448,27 @@ def test_service_use_tool_calls_http_service_via_mcat(monkeypatch, tmp_path: Pat
     assert calls[1][0] == "list_tools"
 
 
+def test_service_use_requires_explicitly_resolved_environment(
+    monkeypatch, tmp_path: Path
+) -> None:
+    home = tmp_path / "alice"
+    home.mkdir()
+    (home / ".env").write_text("GITHUB_TOKEN=dotenv-token\n", encoding="utf-8")
+    monkeypatch.setenv("GITHUB_TOKEN", "process-token")
+    plugin = create_service_use_tool({})
+
+    with pytest.raises(ToolangError, match="service env var is missing: GITHUB_TOKEN"):
+        plugin.tools()["init"].invoke(
+            {"service": "github"},
+            _service_context(home, env_names=("GITHUB_TOKEN",)),
+        )
+
+
 def test_service_use_tool_serializes_dict_input_for_tool_call(monkeypatch, tmp_path: Path) -> None:
     home = tmp_path / "alice"
     home.mkdir()
-    plugin = create_service_use_tool(
-        {
-            "visible_services": [
-                {
-                    "name": "github",
-                    "transport": "http",
-                    "target": "https://mcp.github.com/mcp",
-                }
-            ]
-        }
-    )
+    plugin = create_service_use_tool({})
+    context = _service_context(home)
 
     def fake_init_session(*, connection_file: str, sess_info_file: str):
         Path(sess_info_file).parent.mkdir(parents=True, exist_ok=True)
@@ -473,7 +489,7 @@ def test_service_use_tool_serializes_dict_input_for_tool_call(monkeypatch, tmp_p
 
     plugin.tools()["init"].invoke(
         {"service": "github"},
-        _tool_context(home, "service_use"),
+        context,
     )
     result = plugin.tools()["tool_call"].invoke(
         {
@@ -481,7 +497,7 @@ def test_service_use_tool_serializes_dict_input_for_tool_call(monkeypatch, tmp_p
             "tool_name": "search_issues",
             "input": {"query": "toolang"},
         },
-        _tool_context(home, "service_use"),
+        context,
     )
 
     assert result["ok"] is True
@@ -490,17 +506,7 @@ def test_service_use_tool_serializes_dict_input_for_tool_call(monkeypatch, tmp_p
 
 def test_service_use_tool_definitions_explain_auth_and_input_contract(tmp_path: Path) -> None:
     del tmp_path
-    plugin = create_service_use_tool(
-        {
-            "visible_services": [
-                {
-                    "name": "linear",
-                    "transport": "http",
-                    "target": "https://mcp.linear.app/mcp",
-                }
-            ]
-        }
-    )
+    plugin = create_service_use_tool({})
     bridge_start_description = plugin.tools()["bridge_start"].definition().description
     init_description = plugin.tools()["init"].definition().description
     auth_start_description = plugin.tools()["auth_start"].definition().description
@@ -532,21 +538,11 @@ def test_service_use_tool_definitions_explain_auth_and_input_contract(tmp_path: 
 def test_service_use_bridge_start_is_not_required_for_http_service(tmp_path: Path) -> None:
     home = tmp_path / "alice"
     home.mkdir()
-    plugin = create_service_use_tool(
-        {
-            "visible_services": [
-                {
-                    "name": "github",
-                    "transport": "http",
-                    "target": "https://mcp.github.com/mcp",
-                }
-            ]
-        }
-    )
+    plugin = create_service_use_tool({})
 
     result = plugin.tools()["bridge_start"].invoke(
         {"service": "github"},
-        _tool_context(home, "service_use"),
+        _service_context(home),
     )
 
     assert result["ok"] is True
@@ -554,20 +550,53 @@ def test_service_use_bridge_start_is_not_required_for_http_service(tmp_path: Pat
     assert not (home / ".runtime" / "tools" / "service_use" / "github" / "connection.json").exists()
 
 
+def test_service_use_bridge_start_parses_effective_stdio_target(
+    monkeypatch, tmp_path: Path
+) -> None:
+    home = tmp_path / "alice"
+    home.mkdir()
+    plugin = create_service_use_tool({})
+    calls: list[dict[str, object]] = []
+
+    def fake_bridge_start(**kwargs):
+        calls.append(kwargs)
+        return {"status": "running"}
+
+    monkeypatch.setattr("mcat_cli.bridge.bridge_start", fake_bridge_start)
+
+    result = plugin.tools()["bridge_start"].invoke(
+        {"service": "local"},
+        _service_context(
+            home,
+            name="local",
+            transport="stdio",
+            target="uvx mcp-server --quiet",
+        ),
+    )
+
+    assert result["ok"] is True
+    assert calls[0]["command"] == ["uvx", "mcp-server", "--quiet"]
+
+
+def test_service_use_rejects_service_outside_effective_run(tmp_path: Path) -> None:
+    home = tmp_path / "alice"
+    home.mkdir()
+    plugin = create_service_use_tool({})
+
+    with pytest.raises(
+        ToolangError,
+        match="service is not visible to this agent: github",
+    ):
+        plugin.tools()["init"].invoke(
+            {"service": "github"},
+            _tool_context(home, "service_use"),
+        )
+
+
 def test_service_use_auth_start_prepares_http_connection(monkeypatch, tmp_path: Path) -> None:
     home = tmp_path / "alice"
     home.mkdir()
-    plugin = create_service_use_tool(
-        {
-            "visible_services": [
-                {
-                    "name": "linear",
-                    "transport": "http",
-                    "target": "https://mcp.linear.app/mcp",
-                }
-            ]
-        }
-    )
+    plugin = create_service_use_tool({})
 
     def fake_run_auth(**kwargs):
         assert kwargs["endpoint"] is None
@@ -580,7 +609,11 @@ def test_service_use_auth_start_prepares_http_connection(monkeypatch, tmp_path: 
 
     result = plugin.tools()["auth_start"].invoke(
         {"service": "linear"},
-        _tool_context(home, "service_use"),
+        _service_context(
+            home,
+            name="linear",
+            target="https://mcp.linear.app/mcp",
+        ),
     )
 
     assert result["ok"] is True
@@ -590,66 +623,37 @@ def test_service_use_auth_start_prepares_http_connection(monkeypatch, tmp_path: 
 def test_service_use_tool_init_fails_without_bridge_state(tmp_path: Path) -> None:
     home = tmp_path / "alice"
     home.mkdir()
-    plugin = create_service_use_tool(
-        {
-            "visible_services": [
-                {
-                    "name": "github",
-                    "transport": "http",
-                    "target": "https://mcp.github.com/mcp",
-                }
-            ]
-        }
-    )
+    plugin = create_service_use_tool({})
 
     with pytest.raises(Exception):
         plugin.tools()["init"].invoke(
             {"service": "github"},
-            _tool_context(home, "service_use"),
+            _service_context(home),
         )
 
 
 def test_service_use_tool_call_fails_without_init(tmp_path: Path) -> None:
     home = tmp_path / "alice"
     home.mkdir()
-    plugin = create_service_use_tool(
-        {
-            "visible_services": [
-                {
-                    "name": "github",
-                    "transport": "http",
-                    "target": "https://mcp.github.com/mcp",
-                }
-            ]
-        }
-    )
+    plugin = create_service_use_tool({})
+    context = _service_context(home)
 
     plugin.tools()["bridge_start"].invoke(
         {"service": "github"},
-        _tool_context(home, "service_use"),
+        context,
     )
 
     with pytest.raises(Exception):
         plugin.tools()["tool_list"].invoke(
             {"service": "github"},
-            _tool_context(home, "service_use"),
+            context,
         )
 
 
 def test_service_use_reuses_service_scoped_session_file(monkeypatch, tmp_path: Path) -> None:
     home = tmp_path / "alice"
     home.mkdir()
-    plugin = create_service_use_tool(
-        {
-            "visible_services": [
-                {
-                    "name": "github",
-                    "transport": "http",
-                    "target": "https://mcp.github.com/mcp",
-                }
-            ]
-        }
-    )
+    plugin = create_service_use_tool({})
     session_files: list[str] = []
 
     def fake_init_session(*, connection_file: str, sess_info_file: str):
@@ -664,21 +668,11 @@ def test_service_use_reuses_service_scoped_session_file(monkeypatch, tmp_path: P
 
     plugin.tools()["init"].invoke(
         {"service": "github"},
-        ToolContext(
-            run_id="run-a",
-            home=home,
-            room=home / ".runtime" / "tools" / "service_use",
-            wd=home,
-        ),
+        _service_context(home, run_id="run-a"),
     )
     plugin.tools()["init"].invoke(
         {"service": "github"},
-        ToolContext(
-            run_id="run-b",
-            home=home,
-            room=home / ".runtime" / "tools" / "service_use",
-            wd=home,
-        ),
+        _service_context(home, run_id="run-b"),
     )
 
     assert session_files[0].endswith("/github/session.json")

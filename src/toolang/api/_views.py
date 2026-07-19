@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import asdict
-from collections.abc import AsyncIterator, Container, Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -43,23 +43,13 @@ from toolang.work.state import (
 from toolang.work.store import JobRecord, open_job_store
 from toolang.state.source import read_authored_source
 from toolang.state.state import PreparedCap
-from toolang.agent.features import (
-    ROUTER_COMPONENTS,
-    RUNNER_COMPONENTS,
-    TRIGGER_COMPONENTS,
-    component_group,
-    normalize_component_names,
-)
-from toolang.agent.channel_runtime import channel_context
+from toolang.up.channels import channel_context
 from ._streaming import ShutdownAwareStreamingResponse
 
 if TYPE_CHECKING:
     from toolang.api.context import ApiContext
 
 CapKind = Literal["psyche", "skill", "service", "prompt"]
-ROUTER_COMPONENT_LEAVES = frozenset(component_group(ROUTER_COMPONENTS, "router"))
-RUNNER_COMPONENT_LEAVES = frozenset(component_group(RUNNER_COMPONENTS, "runner"))
-TRIGGER_COMPONENT_LEAVES = frozenset(component_group(TRIGGER_COMPONENTS, "trigger"))
 COLLECTION_TO_KIND: dict[str, CapKind] = {
     "psyches": "psyche",
     "skills": "skill",
@@ -132,20 +122,9 @@ class ChorePatchRequest(_ApiModel):
     schedule: str | None = None
 
 
-def snapshot_context(
-    context: ApiContext,
-    *,
-    enabled_components: Sequence[str] | None = None,
-    enabled_features: Sequence[str] | None = None,
-) -> dict[str, object]:
+def snapshot_context(context: ApiContext) -> dict[str, object]:
     """Return the internal runtime snapshot used by tests and diagnostics."""
 
-    components = (
-        enabled_components if enabled_components is not None else enabled_features
-    )
-    if components is None:
-        raise TypeError("enabled_components is required")
-    components = normalize_component_names(tuple(components))
     durable = read_authored_source(context.root, context.name)
     agent_state = context.get_agent_state()
     runs = context.store.list_runs(limit=None)
@@ -168,16 +147,6 @@ def snapshot_context(
         for run in recent_runs
     }
     return {
-        "enabled_components": list(components),
-        "router_components": _select_components(
-            components, "router", ROUTER_COMPONENT_LEAVES
-        ),
-        "runner_components": _select_components(
-            components, "runner", RUNNER_COMPONENT_LEAVES
-        ),
-        "trigger_components": _select_components(
-            components, "trigger", TRIGGER_COMPONENT_LEAVES
-        ),
         "durable": {
             "toolang_root": str(durable.toolang_root),
             "agent_name": durable.agent_name,
@@ -857,11 +826,7 @@ def _runtime_endpoint(
         endpoint = runtime_state.get("endpoint")
         if isinstance(endpoint, str) and endpoint.strip():
             return endpoint.strip()
-    host = context.config.get("server.host")
-    port = context.config.get("server.port")
-    if isinstance(host, str) and isinstance(port, int):
-        return f"http://{host}:{port}"
-    return None
+    return f"http://{context.host}:{context.port}"
 
 
 def _runtime_sandbox_spec(runtime_state: dict[str, object]) -> str:
@@ -939,14 +904,3 @@ def _authored_entries(
         context.name,
         visibility=cast(Literal["shared", "private"], visibility),
     )
-
-
-def _select_components(
-    enabled_components: Sequence[str], namespace: str, allowed: Container[str]
-) -> list[str]:
-    prefix = f"{namespace}."
-    return [
-        component.removeprefix(prefix)
-        for component in enabled_components
-        if component.startswith(prefix) and component.removeprefix(prefix) in allowed
-    ]

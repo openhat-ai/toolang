@@ -32,12 +32,14 @@ def parse_model_aliases(
     for payload in config_layers:
         models_table = _models_table(payload)
         raw_aliases = models_table.get("aliases")
-        if not isinstance(raw_aliases, dict):
+        if not isinstance(raw_aliases, Mapping):
             continue
         for name, value in raw_aliases.items():
-            if not isinstance(name, str) or not isinstance(value, dict):
+            if not isinstance(name, str) or not isinstance(value, Mapping):
                 continue
-            aliases[name] = parse_model_alias(name, cast(dict[str, object], value))
+            aliases[name] = parse_model_alias(
+                name, cast(Mapping[str, object], value)
+            )
     return aliases
 
 
@@ -50,12 +52,14 @@ def parse_model_provider_configs(
     for payload in config_layers:
         models_table = _models_table(payload)
         raw_providers = models_table.get("providers")
-        if not isinstance(raw_providers, dict):
+        if not isinstance(raw_providers, Mapping):
             continue
         for name, value in raw_providers.items():
-            if not isinstance(name, str) or not isinstance(value, dict):
+            if not isinstance(name, str) or not isinstance(value, Mapping):
                 continue
-            configs[name] = parse_model_provider_config(name, cast(dict[str, object], value))
+            configs[name] = parse_model_provider_config(
+                name, cast(Mapping[str, object], value)
+            )
     return configs
 
 
@@ -70,12 +74,14 @@ def parse_default_models(
         raw_default = models_table.get("default")
         if isinstance(raw_default, str):
             defaults = (raw_default.strip(),) if raw_default.strip() else ()
-        elif isinstance(raw_default, list):
+        elif isinstance(raw_default, Sequence) and not isinstance(
+            raw_default, (str, bytes, bytearray)
+        ):
             defaults = tuple(str(item).strip() for item in raw_default if str(item).strip())
     return defaults
 
 
-def parse_model_alias(name: str, payload: dict[str, object]) -> ModelAlias:
+def parse_model_alias(name: str, payload: Mapping[str, object]) -> ModelAlias:
     """Parse one `[models.aliases.<name>]` table."""
 
     ref = _required_model_config_str(payload, "ref", config_name=name, kind="model alias")
@@ -91,8 +97,8 @@ def parse_model_alias(name: str, payload: dict[str, object]) -> ModelAlias:
     streaming = _optional_model_config_bool(payload.get("streaming"))
     headers = _model_config_string_table(payload.get("headers"))
     options = (
-        dict(cast(dict[str, object], payload.get("options", {})))
-        if isinstance(payload.get("options"), dict)
+        dict(cast(Mapping[str, object], payload.get("options", {})))
+        if isinstance(payload.get("options"), Mapping)
         else {}
     )
     details = _optional_model_config_str(payload.get("details"))
@@ -115,12 +121,14 @@ def parse_model_alias(name: str, payload: dict[str, object]) -> ModelAlias:
     )
 
 
-def parse_model_provider_config(name: str, payload: dict[str, object]) -> ModelProviderConfig:
+def parse_model_provider_config(
+    name: str, payload: Mapping[str, object]
+) -> ModelProviderConfig:
     """Parse one `[models.providers.<name>]` table."""
 
     options = (
-        dict(cast(dict[str, object], payload.get("options", {})))
-        if isinstance(payload.get("options"), dict)
+        dict(cast(Mapping[str, object], payload.get("options", {})))
+        if isinstance(payload.get("options"), Mapping)
         else {}
     )
     return ModelProviderConfig(
@@ -134,15 +142,15 @@ def parse_model_provider_config(name: str, payload: dict[str, object]) -> ModelP
     )
 
 
-def _models_table(payload: Mapping[str, object]) -> dict[str, object]:
+def _models_table(payload: Mapping[str, object]) -> Mapping[str, object]:
     raw_models = payload.get("models")
-    if not isinstance(raw_models, dict):
+    if not isinstance(raw_models, Mapping):
         return {}
-    return cast(dict[str, object], raw_models)
+    return cast(Mapping[str, object], raw_models)
 
 
 def _required_model_config_str(
-    payload: dict[str, object],
+    payload: Mapping[str, object],
     key: str,
     *,
     config_name: str,
@@ -168,13 +176,15 @@ def _optional_model_config_bool(value: object) -> bool | None:
 
 
 def _model_config_str_tuple(value: object) -> tuple[str, ...]:
-    if not isinstance(value, list):
+    if not isinstance(value, Sequence) or isinstance(
+        value, (str, bytes, bytearray)
+    ):
         return ()
     return tuple(str(item).strip() for item in value if str(item).strip())
 
 
 def _model_config_string_table(value: object) -> dict[str, str]:
-    if not isinstance(value, dict):
+    if not isinstance(value, Mapping):
         return {}
     result: dict[str, str] = {}
     for key, item in value.items():

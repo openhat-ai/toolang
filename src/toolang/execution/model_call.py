@@ -350,7 +350,6 @@ def _runtime_base(
         "is_script": run.origin == "script",
         "is_task": run.origin == "task",
         "is_chore": run.origin == "chore",
-        "sandbox": _runtime_sandbox(context),
         "run": {
             "thread_id": run.thread_id,
             "program_source": str(
@@ -442,13 +441,6 @@ def _message_blocks_body(blocks: tuple[AstMessage, ...]) -> str:
     return "\n\n".join(
         block.content.strip() for block in blocks if block.content.strip()
     ).strip()
-
-
-def _runtime_sandbox(context: SupportsRunAssembly) -> str:
-    value = context.config.get("runtime.sandbox")
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return "none"
 
 
 def _metadata_items(meta: Mapping[str, object]) -> list[dict[str, str]]:

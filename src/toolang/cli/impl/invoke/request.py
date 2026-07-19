@@ -24,6 +24,7 @@ class RoamingInvokeRequest:
     models: tuple[str, ...]
     tools: tuple[str, ...]
     caps: tuple[str, ...]
+    sandbox: str | None
     invoke_params: dict[str, object]
     invoke_parts: list[dict[str, str]]
     quiet: bool = False
@@ -35,12 +36,21 @@ class MissingInvokeInput(click.ClickException):
 
 def consume_control_options(
     argv: list[str],
-) -> tuple[bool, int, tuple[str, ...], tuple[str, ...], tuple[str, ...], list[str]]:
+) -> tuple[
+    bool,
+    int,
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    str | None,
+    list[str],
+]:
     quiet = False
     verbosity = 0
     models: list[str] = []
     tools: list[str] = []
     caps: list[str] = []
+    sandbox: str | None = None
     remaining: list[str] = []
     index = 0
     while index < len(argv):
@@ -96,6 +106,16 @@ def consume_control_options(
                 caps.append(cap)
                 index += 2
                 continue
+        if token.startswith("--sandbox="):
+            sandbox = _sandbox_value(token.partition("=")[2])
+            index += 1
+            continue
+        if token == "--sandbox":
+            if index + 1 >= len(argv):
+                raise click.ClickException("--sandbox requires a value")
+            sandbox = _sandbox_value(argv[index + 1])
+            index += 2
+            continue
         remaining.append(token)
         index += 1
     return (
@@ -104,6 +124,7 @@ def consume_control_options(
         split_model_selectors(tuple(models)),
         split_tool_selectors(tuple(tools)),
         split_cap_selectors(tuple(caps)),
+        sandbox,
         remaining,
     )
 
@@ -117,6 +138,7 @@ def parse_request(
     leading_models: tuple[str, ...] = (),
     leading_tools: tuple[str, ...] = (),
     leading_caps: tuple[str, ...] = (),
+    leading_sandbox: str | None = None,
 ) -> RoamingInvokeRequest:
     executable_params = tuple(executable.params)
     param_index = {param.name: param for param in executable_params}
@@ -125,6 +147,7 @@ def parse_request(
     models = list(leading_models)
     tools = list(leading_tools)
     caps = list(leading_caps)
+    sandbox = leading_sandbox
     quiet = False
     verbosity = leading_verbosity
     index = 0
@@ -181,6 +204,16 @@ def parse_request(
             caps.extend(split_cap_selectors((cap,)))
             index += 2
             continue
+        if token.startswith("--sandbox="):
+            sandbox = _sandbox_value(token.partition("=")[2])
+            index += 1
+            continue
+        if token == "--sandbox":
+            if index + 1 >= len(argv):
+                raise click.ClickException("--sandbox requires a value")
+            sandbox = _sandbox_value(argv[index + 1])
+            index += 2
+            continue
         if token in {"--quiet", "-q"}:
             quiet = True
             index += 1
@@ -228,10 +261,18 @@ def parse_request(
         models=tuple(dict.fromkeys(models)),
         tools=tuple(dict.fromkeys(tools)),
         caps=tuple(dict.fromkeys(caps)),
+        sandbox=sandbox,
         invoke_params=invoke_params,
         invoke_parts=invoke_parts,
         quiet=quiet,
     )
+
+
+def _sandbox_value(raw: str) -> str:
+    value = raw.strip()
+    if not value:
+        raise click.ClickException("--sandbox requires a value")
+    return value
 
 
 def _parse_boolean_value(raw: str, *, option_name: str) -> bool:

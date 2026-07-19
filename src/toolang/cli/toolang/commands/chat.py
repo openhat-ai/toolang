@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 import os
 import sys
 import threading
@@ -13,20 +14,24 @@ from uuid import uuid4
 import click
 import typer
 
-from toolang.agent import local as agents
+from toolang.up import process as agents
+from toolang.up import server as agent_up
+from toolang.base.types.sandbox import SandboxSelector
+from toolang.common.error import ToolangError
+from toolang.execution.stream import trace_event_data
 from toolang.state.state import split_cap_selectors
-from ....config.env import load_runtime_environ
 from toolang.plugin.models.resolution import split_model_selectors
 from toolang.plugin.tools.registry import split_tool_selectors
 from ...impl.chat import slashes as chat_slashes
-from ...impl.chat.base import friendly_error as chat_friendly_error
+from ...impl.chat.base import ChatClient, friendly_error as chat_friendly_error
 from ...impl.chat.history import ChatInputHistoryStore
-from ...impl.chat.client import LocalChatClient
+from ...impl.chat.local import LocalChatSession
 from ...impl.chat.tui import ChatTuiApp
 from ...common.client import (
+    RuntimeClient,
     RuntimeClientError,
     message_payload,
-    running_runtime_client,
+    owned_runtime_client,
     runtime_client,
     runtime_get,
     runtime_post,
@@ -34,7 +39,9 @@ from ...common.client import (
 from ...common.context import (
     context_agent,
     context_root,
+    load_runtime_environ,
     require_prefix_agent,
+    ui_base_url,
 )
 from ...common.execution import execution_get
 from ...common.output import echo_table
@@ -77,12 +84,24 @@ def chat_command(
     flow: Annotated[
         str | None, typer.Option("--flow", help="Use a flow for new runs.")
     ] = None,
+    sandbox: Annotated[
+        str | None,
+        typer.Option(
+            "--sandbox",
+            help="Execute the session in this sandbox when no API is running.",
+        ),
+    ] = None,
 ) -> None:
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
     selectors = _chat_selector_payload(
         models=models, tools=tools, caps=caps, agic=agic, flow=flow
     )
-    _chat_interactive(ctx, thread_id=thread_id, selector_payload=selectors)
+    _chat_interactive(
+        ctx,
+        thread_id=thread_id,
+        selector_payload=selectors,
+        sandbox=sandbox,
+    )
 
 
 def send_command(
@@ -401,15 +420,113 @@ def _chat_interactive(
     *,
     thread_id: str | None,
     selector_payload: dict[str, object] | None = None,
+    sandbox: str | None = None,
 ) -> None:
-    if not sys.stdin.isatty() or not sys.stdout.isatty():
-        _chat_interactive_scripted(
-            ctx, thread_id=thread_id, selector_payload=selector_payload
+    with _chat_runtime(ctx, sandbox=sandbox) as client:
+        if not sys.stdin.isatty() or not sys.stdout.isatty():
+            if isinstance(client, RuntimeClient):
+                _chat_interactive_scripted(
+                    ctx, thread_id=thread_id, selector_payload=selector_payload
+                )
+            else:
+                _chat_interactive_scripted_local(
+                    ctx,
+                    client=client,
+                    thread_id=thread_id,
+                    selector_payload=selector_payload,
+                )
+            return
+        _chat_interactive_prompt_toolkit(
+            ctx,
+            thread_id=thread_id,
+            selector_payload=selector_payload,
+            client=client,
         )
+
+
+@contextmanager
+def _chat_runtime(
+    ctx: typer.Context, *, sandbox: str | None
+) -> Iterator[ChatClient]:
+    """Reuse an API or own the selected execution host for this chat session."""
+
+    root = context_root(ctx)
+    name = require_prefix_agent(ctx)
+    existing = agents.AgentProcess(root, name).status(ui_base_url=ui_base_url())
+    if (
+        existing is not None
+        and existing.status == "running"
+        and existing.endpoint is not None
+    ):
+        if sandbox is not None:
+            _validate_running_sandbox(existing, sandbox)
+        yield RuntimeClient(existing.endpoint)
         return
-    _chat_interactive_prompt_toolkit(
-        ctx, thread_id=thread_id, selector_payload=selector_payload
+
+    from . import runtime as runtime_commands
+
+    if existing is not None and existing.status in {"running", "preparing", "starting"}:
+        raise click.ClickException(runtime_commands.active_agent_error(existing))
+    environ = load_runtime_environ(root, name, base_environ=os.environ)
+    environ["TOOLANG_ROOT"] = str(root)
+    agent_state = agent_up.prepare_agent(toolang_root=root, agent_name=name)
+    agent_hosting = agent_up.resolve_agent_hosting(
+        agent_state,
+        sandbox=sandbox,
+        environ=environ,
     )
+    if agent_hosting.selector.driver == "none":
+        local = LocalChatSession(
+            root,
+            name,
+            environ=environ,
+            agent_state=agent_state,
+        )
+        try:
+            yield local
+        finally:
+            local.close()
+        return
+
+    target = agents.MaterializedRunTarget(root, name, "resident")
+    launch = runtime_commands.resolve_startup(
+        ctx,
+        target,
+        sandbox=agent_hosting.selector.render(),
+        models=None,
+        tools=None,
+        caps=None,
+        inboxes=None,
+        port=None,
+        host="127.0.0.1",
+        endpoint_host=None,
+        dev=None,
+        background=True,
+        progress=None,
+    )
+    if launch.log_plan.path is None:
+        raise click.ClickException("agent log path was not resolved")
+    with owned_runtime_client(
+        root=root,
+        name=name,
+        startup=launch.startup,
+        environ=launch.environ,
+        log_path=launch.log_plan.path,
+    ) as client:
+        yield client
+
+
+def _validate_running_sandbox(status: agents.AgentStatus, requested: str) -> None:
+    selector = SandboxSelector.parse(requested)
+    actual = status.sandbox
+    matches = actual == selector.render()
+    if selector.target is None and isinstance(actual, str):
+        matches = actual.partition(":")[0] == selector.driver
+    if not matches:
+        raise click.ClickException(
+            f"agent is already running in sandbox {actual or 'unknown'}; "
+            f"cannot use {selector.render()} for this chat"
+        )
 
 
 def _chat_input_history_store(ctx: typer.Context) -> ChatInputHistoryStore | None:
@@ -440,37 +557,30 @@ def _chat_interactive_prompt_toolkit(
     *,
     thread_id: str | None,
     selector_payload: dict[str, object] | None = None,
+    client: ChatClient,
 ) -> None:
-    client = running_runtime_client(ctx)
-    local = None
-    if client is None:
-        root = context_root(ctx)
-        name = require_prefix_agent(ctx)
-        local = LocalChatClient(
-            root,
-            name,
-            environ=load_runtime_environ(root, name, base_environ=os.environ),
-        )
-        client = local
-    try:
-        ChatTuiApp.run(
-            thread_id=thread_id,
-            selects=dict(selector_payload or {}),
-            home=_chat_home_label(ctx),
-            input_history=_chat_input_history_store(ctx),
-            client=client,
-        )
-    finally:
-        if local is not None:
-            local.close()
+    ChatTuiApp.run(
+        thread_id=thread_id,
+        selects=dict(selector_payload or {}),
+        home=_chat_home_label(ctx),
+        input_history=_chat_input_history_store(ctx),
+        client=client,
+    )
 
 
 def _chat_resolve_model_command_labels(
-    ctx: typer.Context, selectors: Sequence[str]
+    ctx: typer.Context,
+    selectors: Sequence[str],
+    *,
+    client: ChatClient | None = None,
 ) -> tuple[str, ...] | None:
     try:
-        payload = runtime_get(ctx, "/api/v1/chat/models")
-    except click.ClickException:
+        payload = (
+            client.list_models()
+            if client is not None
+            else runtime_get(ctx, "/api/v1/chat/models")
+        )
+    except (click.ClickException, RuntimeClientError, ToolangError, ValueError):
         return None
     return chat_slashes._chat_resolve_model_command_labels(payload, selectors)
 
@@ -543,8 +653,59 @@ def _chat_interactive_scripted(
             listener.stop()
 
 
+def _chat_interactive_scripted_local(
+    ctx: typer.Context,
+    *,
+    client: ChatClient,
+    thread_id: str | None,
+    selector_payload: dict[str, object] | None = None,
+) -> None:
+    selectors = dict(selector_payload or {})
+    renderer = _ThreadEventRenderer()
+
+    def ensure_thread_id() -> str:
+        nonlocal thread_id
+        if thread_id is None:
+            thread_id = client.create_thread()
+            typer.echo(f"thread {thread_id}")
+        return thread_id
+
+    if thread_id is not None:
+        typer.echo(f"thread {thread_id}")
+    while True:
+        try:
+            text = input("> ")
+        except EOFError:
+            return
+        except KeyboardInterrupt:
+            typer.echo()
+            return
+        if text.strip() in {"/exit", "/quit"}:
+            return
+        if not text.strip():
+            continue
+        if _chat_handle_scripted_command(
+            ctx,
+            text,
+            selectors,
+            client=client,
+        ):
+            continue
+        client.start_run(
+            ensure_thread_id(),
+            text,
+            selectors,
+            lambda event: renderer.render(trace_event_data(event)),
+            lambda error: typer.echo(chat_friendly_error(error), err=True),
+        )
+
+
 def _chat_handle_scripted_command(
-    ctx: typer.Context, message: str, selector_payload: dict[str, object]
+    ctx: typer.Context,
+    message: str,
+    selector_payload: dict[str, object],
+    *,
+    client: ChatClient | None = None,
 ) -> bool:
     parsed = chat_slashes._chat_local_command(message)
     if parsed is None:
@@ -556,7 +717,7 @@ def _chat_handle_scripted_command(
         return True
     if command in {"agic", "flow"}:
         return _chat_handle_scripted_executable_command(
-            ctx, command, argument, selector_payload
+            ctx, command, argument, selector_payload, client=client
         )
     if command not in {"model", "models"}:
         typer.echo(f"Unknown command: /{command}")
@@ -566,7 +727,7 @@ def _chat_handle_scripted_command(
         if not selectors:
             typer.echo("/model requires a selector")
             return True
-        labels = _chat_resolve_model_command_labels(ctx, selectors)
+        labels = _chat_resolve_model_command_labels(ctx, selectors, client=client)
         if labels is None:
             typer.echo(f"Model selector matched no models: {', '.join(selectors)}")
             return True
@@ -574,9 +735,14 @@ def _chat_handle_scripted_command(
         typer.echo(f"model: {', '.join(labels)}")
         return True
     try:
-        payload = runtime_get(ctx, "/api/v1/chat/models")
-    except click.ClickException as exc:
-        typer.echo(chat_friendly_error(exc.message))
+        payload = (
+            client.list_models()
+            if client is not None
+            else runtime_get(ctx, "/api/v1/chat/models")
+        )
+    except (click.ClickException, RuntimeClientError, ToolangError, ValueError) as exc:
+        message = exc.message if isinstance(exc, click.ClickException) else str(exc)
+        typer.echo(chat_friendly_error(message))
         return True
     typer.echo("available models")
     for line in chat_slashes._chat_model_list_lines(payload):
@@ -589,6 +755,8 @@ def _chat_handle_scripted_executable_command(
     command: str,
     argument: str,
     selector_payload: dict[str, object],
+    *,
+    client: ChatClient | None = None,
 ) -> bool:
     if argument:
         chat_slashes._chat_set_executable_selector(
@@ -597,9 +765,14 @@ def _chat_handle_scripted_executable_command(
         typer.echo(f"{command}: {argument}")
         return True
     try:
-        payload = runtime_get(ctx, f"/api/v1/chat/{command}s")
-    except click.ClickException as exc:
-        typer.echo(chat_friendly_error(exc.message))
+        payload = (
+            client.list_executables(command)
+            if client is not None
+            else runtime_get(ctx, f"/api/v1/chat/{command}s")
+        )
+    except (click.ClickException, RuntimeClientError, ToolangError, ValueError) as exc:
+        message = exc.message if isinstance(exc, click.ClickException) else str(exc)
+        typer.echo(chat_friendly_error(message))
         return True
     selected = _text(selector_payload.get(command))
     typer.echo(f"available {command}s")

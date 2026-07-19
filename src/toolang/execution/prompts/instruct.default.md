@@ -2,7 +2,6 @@
 origin: {{runtime.origin}}
 thread_id: {{runtime.run.thread_id}}
 agent_home: {{runtime.agent.home}}
-sandbox: {{runtime.sandbox}}
 program_source: {{runtime.run.program_source}}
 
 <instruction-priority>

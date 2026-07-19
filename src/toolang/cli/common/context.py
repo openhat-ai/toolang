@@ -6,12 +6,15 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import tomllib
 from typing import Any
 
 import click
 import typer
+from dotenv import dotenv_values
 
 from ...common.error import ToolangError
+from ...common.web import resolve_ui_base_url
 from ...catalog.error import CatalogError
 
 
@@ -61,10 +64,13 @@ def resolve_root(
 
 
 def ui_base_url(*, environ: Mapping[str, str] | None = None) -> str:
-    from ...config.web import resolve_ui_base_url
-
     values = os.environ if environ is None else environ
-    return resolve_ui_base_url(resolve_root(None, environ=values), environ=values)
+    root = resolve_root(None, environ=values)
+    config: dict[str, object] = {}
+    path = root / "config.toml"
+    if path.is_file():
+        config = tomllib.loads(path.read_text(encoding="utf-8"))
+    return resolve_ui_base_url(config, environ=values)
 
 
 def runtime_environ(
@@ -73,13 +79,35 @@ def runtime_environ(
     *,
     root: Path | None = None,
 ) -> dict[str, str]:
-    from ...config.env import load_runtime_environ
-
     return load_runtime_environ(
         root or context_root(ctx),
         agent_name,
         base_environ=os.environ,
     )
+
+
+def load_runtime_environ(
+    root: Path,
+    agent_name: str,
+    *,
+    base_environ: Mapping[str, str],
+) -> dict[str, str]:
+    """Load root and agent dotenv defaults below explicit process values."""
+
+    merged = _load_dotenv(root / ".env")
+    merged.update(_load_dotenv(root / "agents" / agent_name / ".env"))
+    merged.update(base_environ)
+    return merged
+
+
+def _load_dotenv(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    return {
+        key: value
+        for key, value in dotenv_values(path).items()
+        if isinstance(key, str) and isinstance(value, str)
+    }
 
 
 def user_call(function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:

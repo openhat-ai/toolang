@@ -30,7 +30,6 @@ def spawn(
     plugins: Mapping[str, AgentChannel],
     executor: Executor,
     get_agent_state: Callable[[], AgentState],
-    enabled_components: tuple[str, ...],
     interval_ms: float,
     stop_signal: asyncio.Event,
 ) -> asyncio.Task[None]:
@@ -44,7 +43,6 @@ def spawn(
             plugins=plugins,
             executor=executor,
             get_agent_state=get_agent_state,
-            enabled_components=enabled_components,
             interval_ms=interval_ms,
             stop_signal=stop_signal,
         )
@@ -59,7 +57,6 @@ async def run(
     plugins: Mapping[str, AgentChannel],
     executor: Executor,
     get_agent_state: Callable[[], AgentState],
-    enabled_components: tuple[str, ...],
     interval_ms: float,
     stop_signal: asyncio.Event,
 ) -> None:
@@ -81,7 +78,6 @@ async def run(
                 plugins=plugins,
                 executor=executor,
                 get_agent_state=get_agent_state,
-                enabled_components=enabled_components,
             )
         try:
             await asyncio.wait_for(stop_signal.wait(), timeout=interval_timeout)
@@ -99,7 +95,6 @@ async def _poll_binding(
     plugins: Mapping[str, AgentChannel],
     executor: Executor,
     get_agent_state: Callable[[], AgentState],
-    enabled_components: tuple[str, ...],
 ) -> None:
     plugin = plugins.get(binding_name)
     if plugin is None:
@@ -120,8 +115,6 @@ async def _poll_binding(
     _write_state(state_path, result.next_state)
     if not result.deliveries:
         return
-    if "runner.chat" not in enabled_components:
-        return
     logger.debug(
         "poll.received agent=%s binding=%s deliveries=%s cursor=%s",
         name,
@@ -135,7 +128,7 @@ async def _poll_binding(
             get_agent_state=get_agent_state,
             plugins=plugins,
             home=home,
-            component_name="chat",
+            group="chat",
             binding_name=binding_name,
             delivery=delivery,
         )
@@ -163,7 +156,7 @@ def start_delivery(
     get_agent_state: Callable[[], AgentState],
     plugins: Mapping[str, AgentChannel],
     home: Path,
-    component_name: str,
+    group: str,
     binding_name: str,
     delivery: InboundDelivery,
 ) -> asyncio.Task[RunRecord]:
@@ -171,7 +164,7 @@ def start_delivery(
     metadata = {**bound.meta, "channel": binding_name, "sender": bound.sender}
     return executor.start(
         RunRequest(
-            group=component_name,
+            group=group,
             origin=bound.origin,
             thread_id=bound.thread_id,
             input=bound.text,

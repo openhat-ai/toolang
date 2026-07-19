@@ -246,9 +246,17 @@ class AgentState:
     root_version: bytes
     home_version: bytes
     toolang_version: str
+    root_config: Mapping[str, object]
+    home_config: Mapping[str, object]
+    config: Mapping[str, object]
     program: Program
     caps: tuple[PreparedCap, ...]
     loaded_at: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "root_config", freeze_mapping(self.root_config))
+        object.__setattr__(self, "home_config", freeze_mapping(self.home_config))
+        object.__setattr__(self, "config", freeze_mapping(self.config))
 
     @property
     def fingerprint(self) -> str:
@@ -277,6 +285,8 @@ def compose_agent_state(
     root_version: bytes,
     home_version: bytes,
     toolang_version: str,
+    root_config: Mapping[str, object],
+    home_config: Mapping[str, object],
     program: Program,
     root_caps: tuple[PreparedCap, ...],
     home_caps: tuple[PreparedCap, ...],
@@ -289,10 +299,29 @@ def compose_agent_state(
         root_version=root_version,
         home_version=home_version,
         toolang_version=toolang_version,
+        root_config=root_config,
+        home_config=home_config,
+        config=_merge_config(root_config, home_config),
         program=program,
         caps=effective_caps(root_caps, home_caps),
         loaded_at=loaded_at,
     )
+
+
+def _merge_config(
+    base: Mapping[str, object], override: Mapping[str, object]
+) -> dict[str, object]:
+    merged = dict(base)
+    for key, value in override.items():
+        current = merged.get(key)
+        if isinstance(current, Mapping) and isinstance(value, Mapping):
+            merged[key] = _merge_config(
+                cast(Mapping[str, object], current),
+                cast(Mapping[str, object], value),
+            )
+        else:
+            merged[key] = value
+    return merged
 
 
 def agent_state_version(root_version: bytes, home_version: bytes) -> bytes:

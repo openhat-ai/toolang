@@ -7,8 +7,8 @@ from pathlib import Path
 
 import typer
 
-from toolang.agent import local as agents
-from ...config.log import configure_logging
+from toolang.up import process as agents
+from ...up.logging import configure_logging
 from ..caps.commands import CAP_KINDS
 from ..common.routing import extract_root_args
 from .commands import runtime

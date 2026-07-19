@@ -98,10 +98,10 @@
   compatibility export of the error type owned by `toolang.base`.
 - `toolang.lang` owns `.too` parsing, authored source semantics, and source
   editing.
-- `toolang.agent` owns remote agent source resolution, runtime-state files,
-  managed processes, visiting and roaming agent materialization, sandbox
-  filesystem assembly, process assembly, agent-specific built-in tools, and
-  channel execution orchestration.
+- `toolang.up` owns remote agent target resolution, runtime-state files,
+  managed processes, visiting and roaming materialization, sandbox filesystem
+  assembly, resolved `AgentHosting`, API process assembly, and channel execution
+  orchestration.
 - `toolang.catalog` owns local agent-home CRUD, authored cap and job CRUD,
   wired cap references, and bundled authored-file templates. Its collections
   receive explicit directories or config-file paths and do not resolve remote
@@ -112,7 +112,7 @@
   snapshots, effective cap projection and materialization, immutable
   root/home/agent state, and source-state watching.
 - `toolang.execution` owns run binding, execution trace, durable run truth,
-  response projection, and execution storage.
+  response projection, execution storage, and agent-specific built-in tools.
 - `toolang.execution.detail` is the canonical typed projection boundary for
   runs, threads, steps, failures, and caller-facing messages. API code only
   serializes these projections; CLI code reads them through the shared
@@ -123,9 +123,10 @@
   runtime config files and may depend only on `toolang.base` and
   `toolang.common` among internal packages.
 - `toolang.api` owns FastAPI application assembly and HTTP route mapping.
-- `toolang.config` owns runtime config file loading, root/agent layer merging,
-  environment-reference resolution, and runtime config resolution helpers.
-- `toolang.cli` owns CLI orchestration and environment resolution.
+- `toolang.cli` owns CLI orchestration, process environment resolution, dotenv
+  loading, and process-level Web and logging call sites. Immutable root and home
+  config layers are carried by `AgentState`; plugin packages own pure parsing of
+  their explicit config sections.
 
 
 ## Agent Identity

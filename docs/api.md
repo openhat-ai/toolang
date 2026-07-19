@@ -82,17 +82,20 @@ toolang list
 PY_LOG=toolang.run=info toolang ./examples/invoke-playground.too summarize "Summarize this workspace"
 toolang ./examples/invoke-playground.too --help
 toolang ./examples/invoke-playground.too summarize "Summarize this workspace"
+toolang ./examples/invoke-playground.too summarize "Summarize this workspace" --sandbox docker
 toolang ./examples/file-agent.too --inbox ./inbox
 toolang run alice
+toolang run alice --sandbox docker
 toolang run brice/alice
 toolang run https://toolang.ai/alice.too
 toolang clone brice/alice
 toolang start alice
+toolang start alice --sandbox docker
 toolang stop alice
 toolang info alice
-toolang alice chat "What changed today?"
-toolang alice chat --thread tui_3nprht9x "Continue"
-toolang alice chat --thread tui_3nprht9x --tui
+toolang alice chat
+toolang alice chat tui_3nprht9x
+toolang alice chat --sandbox docker
 toolang alice threads
 toolang alice runs --thread tui_3nprht9x
 toolang alice steer run_ppkp9e94 "Use the smaller patch"
@@ -137,7 +140,8 @@ Foreground runtime port selection depends on the agent mode:
 | --- | --- | --- |
 | Resident | Local managed name such as `alice` | Reuse the agent's last port when available, otherwise choose from `7001-7999` |
 | Visiting | Remote selector such as `brice/alice` or `https://toolang.ai/alice.too` | Reuse the visiting root's last port when available, otherwise choose an OS temporary port |
-| Roaming invoke | Local `.too` path with an agic name | No HTTP runtime port; the agic is invoked directly |
+| Roaming invoke with `--sandbox none` | Local `.too` path with an agic or flow name | No HTTP runtime port; the executable is invoked directly |
+| Sandboxed roaming invoke | Local `.too` path with an agic or flow name and a managed `--sandbox` | Reuse the roaming agent's last port when available, otherwise choose from `7001-7999`; the session-owned API is removed after the run |
 | Roaming file runtime | Local `.too` path with `--inbox` and no agic name | Choose an OS temporary port |
 
 
@@ -162,6 +166,10 @@ Behavior:
 - stdout is reserved for the final agic result
 - progress messages are written to stderr only when stderr is a TTY
 - `-q` or `--quiet` suppresses progress messages
+- `--sandbox SELECTOR` hosts execution in the selected sandbox; `none` keeps
+  direct execution in the current CLI process
+- managed sandbox execution streams the same trace events back to the
+  foreground CLI and removes its session-owned API after the run
 - `PY_LOG=toolang.run=info toolang a.too agic ...` writes runtime logs under `.toolang/agents/<agent>/.runtime/logs/<agic>/<run_id>.log`
 - `PY_LOG=debug toolang a.too agic ...` also writes lower-level provider and HTTP logs to that run log file
 - `toolang a.too --help` lists invokable agics
@@ -195,7 +203,7 @@ Behavior:
 
 - `SCRIPT` is materialized into its sibling `.toolang` roaming root.
 - Each `--inbox` value must name an existing directory.
-- Startup enables `runner.file`, `trigger.file`, and `trigger.watch`.
+- Startup enables `runner.file` and `trigger.file`; AgentState watching is always active.
 - Startup requires an agic named `file` that accepts message input and has no
   required parameters.
 - Files already present in an inbox at startup are eligible for processing.
@@ -228,7 +236,19 @@ selector handling. Both resolve the runnable target, reject already-active
 runtimes, build a `StartupSpec`, prepare the agent state, and then launch from
 that resolved startup checkpoint. `run` starts the resolved runtime in the
 foreground. `start` serializes the same resolved startup into the hidden
-background `toolang run` command.
+background `toolang run` command. The hosting shell resolves `--sandbox`; the
+API process inside the selected host always runs the same server core and the
+executor does not branch on its host.
+
+When `--sandbox` is omitted, resident run/start commands use the effective
+root/home `[sandbox]` binding, falling back to `none` when no binding exists.
+An explicit selector, including `--sandbox none`, overrides that binding.
+
+For host hosting, `run` keeps the API process in the current foreground process
+and `start` launches a detached process. For managed hosting such as Docker,
+both commands launch the same foreground API process inside the managed host;
+`run` waits for that host and stops it on exit, while `start` returns after the
+API is ready.
 
 Agent entrypoints also share one logging policy resolver:
 
@@ -291,6 +311,11 @@ Core endpoints are grouped as:
 - `jobs`
 - `activity`
 - `hook`
+
+Non-interactive execution uses `POST /api/v1/runs/stream`. It accepts an agic
+or flow selector, input, model/tool/cap selectors, and metadata, and returns the
+canonical trace event stream. The roaming CLI uses this endpoint when the
+executor must be hosted outside the current process.
 
 
 ## Agent Endpoints
@@ -455,13 +480,17 @@ For multipart payload details:
 message stream subset. This endpoint is an adapter for chat UI clients. The
 canonical progress protocol is exposed through the activity event streams.
 
-The CLI command for interactive chat is `toolang <agent> chat [thread]`.
+The CLI command for interactive chat is
+`toolang <agent> chat [thread] [--sandbox <selector>]`.
 Without a thread id, the TUI creates a terminal chat thread on first input. With
-a thread id, it continues that thread. When the agent HTTP runtime is running,
-the TUI uses it; otherwise the TUI assembles the same executor locally and runs
-without a daemon. Job thread ids are inspectable and controllable through thread
-and run commands, but `chat` does not implicitly reopen tasks or create manual
-chore runs.
+a thread id, it continues that thread. When the agent API is already running,
+the TUI uses it. Without a running API, effective `sandbox=none` creates a
+process-local chat session and calls `Executor` in the current foreground CLI.
+A managed sandbox such as Docker instead uses a session-owned API and stops it
+when the session closes. Both paths use the same root, home, state watcher, run
+store, and chat-client contract. Job thread ids are inspectable and controllable
+through thread and run commands, but `chat` does not implicitly reopen tasks or
+create manual chore runs.
 
 
 ## Job Endpoints

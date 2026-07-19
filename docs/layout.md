@@ -86,7 +86,7 @@ Key paths:
 
 | Path           | Purpose                                                      |
 | -------------- | ------------------------------------------------------------ |
-| `status.json` | Runtime status, endpoint, sandbox summary, and enabled features |
+| `status.json` | Runtime status, endpoint, sandbox summary, and selected models |
 | `agent.log`    | Runtime log                                                  |
 | `logs/<agic>/<run_id>.log` | Per-run script invoke logs when `PY_LOG` is set |
 | `jobs.db` | Scheduler job projection and atomic job claims                |

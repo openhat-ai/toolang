@@ -17,12 +17,11 @@ Preparation has two independently versioned scopes:
 - `HomePrepared` contains agent config, the parsed `Program`, and private
   `PreparedCap` values.
 
-`AgentState` is the parsed `Program` plus the effective `PreparedCap` values
-from one exact root/home version pair. It retains the three version identifiers,
-but not the two cache objects or parsed config. Runtime configuration is loaded
-through `toolang.config`. An executor takes an `AgentState` snapshot at the
-beginning of each top-level run and keeps using that snapshot for the entire
-run.
+`AgentState` is the parsed `Program`, immutable root and home config layers,
+their merged config view, and the effective `PreparedCap` values from one exact
+root/home version pair. It retains the three version identifiers but not the two
+cache objects. An executor takes an `AgentState` snapshot at the beginning of
+each top-level run and keeps using that snapshot for the entire run.
 
 
 ## Layout
@@ -155,4 +154,5 @@ prepared version directories are not treated as authored source changes.
 The watcher also performs the same metadata-only source check on its configured
 local interval so a change in the startup-to-watch registration window, or a
 missed filesystem event, is recovered. This local check reuses unchanged remote
-materialization and is not remote polling.
+materialization and is not remote polling. Agent API processes always run this
+watcher.

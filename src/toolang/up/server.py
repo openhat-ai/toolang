@@ -15,15 +15,15 @@ import socket
 import time
 import threading
 from types import FrameType
-from typing import Any, cast
+from typing import Any
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI
 import uvicorn
 from uvicorn.main import STARTUP_FAILURE
 
-from toolang.agent import local as agents
-from toolang.agent.sandbox import prepare_root_mounts
+from toolang.up import process as agents
+from toolang.up.mounts import prepare_root_mounts
 from toolang.state import state as cap_store
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.protocols.sandbox import AgentSandbox
@@ -34,21 +34,22 @@ from toolang.base.types.sandbox import (
     SandboxState,
 )
 from toolang.plugin.tools.registry import split_tool_selectors
-from toolang.config.log import (
+from toolang.up.logging import (
     DEFAULT_LOG_LEVEL,
     build_uvicorn_log_config,
     configure_logging,
     configure_logging_plan,
     resolve_agent_logging,
 )
-from toolang.config.files import (
-    load_config_layers,
-    load_named_config,
-    load_sandbox_config,
+from toolang.plugin.config import (
+    merge_named_configs,
+    merge_sandbox_config,
+    parse_channel_bindings,
+    parse_sandbox_binding,
 )
-from toolang.plugin.config import parse_channel_bindings, parse_sandbox_binding
-from toolang.config.log_spec import PY_LOG_ENV_VAR
-from toolang.config.web import resolve_cors_allowed_origins, resolve_ui_base_url
+from toolang.common.env_logger import PY_LOG_ENV_VAR
+from toolang.common.web import resolve_ui_base_url
+from toolang.up.web import resolve_cors_allowed_origins
 from toolang.execution.executor import Executor
 from toolang.execution.reply import ReplySink
 from toolang.execution.records import RunRecord
@@ -61,20 +62,9 @@ from toolang.work.scheduler import Scheduler
 from toolang.work.store import open_job_store
 from toolang.work.watcher import JobWatcher
 from toolang.api.app import create_app
-from toolang.agent.features import (
-    DEFAULT_ENABLED_COMPONENTS,
-    RUNNER_COMPONENTS,
-    TRIGGER_COMPONENTS,
-    ComponentName,
-    component_group,
-    format_component_group,
-    normalize_component_names,
-)
 from toolang.api.context import ApiContext
-from toolang.config.runtime import RuntimeConfig
 from toolang.work import inbox as files
-from toolang.agent import channel_runtime as poll
-from toolang.agent import state_updates as watch
+from toolang.up import channels as poll
 from toolang.common.progress import ProgressSink
 from toolang.state.source import read_authored_source
 from toolang.state.state import AgentState
@@ -99,7 +89,6 @@ DEFAULT_TRIGGER_INTERVAL_MS: dict[str, float] = {
     "file": files.DEFAULT_INTERVAL_MS,
     "pulse": DEFAULT_SCHEDULER_INTERVAL_MS,
     "poll": poll.DEFAULT_INTERVAL_MS,
-    "watch": state_watcher.DEFAULT_INTERVAL_MS,
 }
 DEFAULT_WATCH_DEBOUNCE_MS = state_watcher.DEFAULT_DEBOUNCE_MS
 DEFAULT_FILE_STABLE_MS = files.DEFAULT_STABLE_MS
@@ -112,6 +101,15 @@ state_logger = logging.getLogger("toolang.state")
 
 
 @dataclass(frozen=True, slots=True)
+class AgentHosting:
+    """Resolved host driver and plugin inputs for one agent process."""
+
+    plugin: AgentSandbox
+    selector: SandboxSelector
+    config: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
 class StartupSpec:
     """One fully resolved agent startup request."""
 
@@ -120,21 +118,13 @@ class StartupSpec:
     host: str
     endpoint_host: str
     port: int
-    enabled_components: tuple[ComponentName, ...]
-    sandbox_plugin: AgentSandbox
-    selector: SandboxSelector
-    sandbox_config: dict[str, object]
+    hosting: AgentHosting
     dev_artifact: Path | None
     model_selectors: tuple[str, ...]
     tool_selectors: tuple[str, ...] | None
     cap_selectors: tuple[str, ...]
     file_inboxes: tuple[Path, ...] = ()
     log_spec: str | None = None
-
-    @property
-    def enabled_features(self) -> tuple[ComponentName, ...]:
-        return self.enabled_components
-
 
 @dataclass(frozen=True, slots=True)
 class _StartupModelSelection:
@@ -160,11 +150,10 @@ def up(
     file_inboxes: Sequence[Path] | None = None,
     dev: Path | None = None,
     sandbox_child: bool = False,
-    component_names: Sequence[str] | None = None,
-    feature_names: Sequence[str] | None = None,
     log_spec: str | None = None,
     environ: Mapping[str, str],
     progress: ProgressSink | None = None,
+    wait: bool = False,
 ) -> int:
     """Start one agent runtime."""
 
@@ -180,8 +169,6 @@ def up(
         caps=caps,
         file_inboxes=file_inboxes,
         dev=dev,
-        component_names=component_names,
-        feature_names=feature_names,
         log_spec=log_spec,
         environ=environ,
     )
@@ -190,6 +177,7 @@ def up(
         environ=environ,
         sandbox_child=sandbox_child,
         progress=progress,
+        wait=wait,
     )
 
 
@@ -200,27 +188,28 @@ def start_runtime(
     sandbox_child: bool = False,
     progress: ProgressSink | None = None,
     agent_state: AgentState | None = None,
+    wait: bool = False,
 ) -> int:
     """Start one already resolved agent runtime."""
 
     _restore_termination_signal_defaults()
-    if spec.selector.driver != "none":
+    if spec.hosting.selector.driver != "none":
         return _up_managed_sandbox(
-            plugin=spec.sandbox_plugin,
-            selector=spec.selector,
-            sandbox_config=spec.sandbox_config,
+            plugin=spec.hosting.plugin,
+            selector=spec.hosting.selector,
+            sandbox_config=spec.hosting.config,
             toolang_root=spec.toolang_root,
             agent_name=spec.agent_name,
             host=spec.host,
             endpoint_host=spec.endpoint_host,
             port=spec.port,
-            enabled_components=spec.enabled_components,
             environ=environ,
             dev_artifact=spec.dev_artifact,
             model_selectors=spec.model_selectors,
             tool_selectors=spec.tool_selectors,
             cap_selectors=spec.cap_selectors,
             file_inboxes=spec.file_inboxes,
+            wait=wait,
         )
     return _up_local(
         toolang_root=spec.toolang_root,
@@ -228,7 +217,6 @@ def start_runtime(
         host=spec.host,
         endpoint_host=spec.endpoint_host,
         port=spec.port,
-        enabled_components=spec.enabled_components,
         environ=environ,
         sandbox_child=sandbox_child,
         model_selectors=spec.model_selectors,
@@ -279,10 +267,9 @@ def invoke(
     state = agent_state or prepare_agent(
         toolang_root=toolang_root, agent_name=agent_name
     )
-    executor, watcher, _ = assemble_execution(
+    executor, watcher = assemble_execution(
         toolang_root=toolang_root,
         agent_name=agent_name,
-        enabled_components=(),
         environ=invoke_environ,
         model_selectors=_normalize_model_selectors(models),
         tool_selectors=_normalize_tool_selectors(tools),
@@ -342,23 +329,6 @@ def prepare_agent(
     )
 
 
-def prepare_runtime(
-    *,
-    toolang_root: Path,
-    agent_name: str,
-    force: bool = False,
-    progress: ProgressSink | None = None,
-) -> None:
-    """Prepare one agent runtime without starting it."""
-
-    prepare_agent(
-        toolang_root=toolang_root,
-        agent_name=agent_name,
-        force=force,
-        progress=progress,
-    )
-
-
 def resolve_startup(
     *,
     toolang_root: Path,
@@ -372,20 +342,13 @@ def resolve_startup(
     caps: Sequence[str] | None = None,
     file_inboxes: Sequence[Path] | None = None,
     dev: Path | None = None,
-    component_names: Sequence[str] | None = None,
-    feature_names: Sequence[str] | None = None,
     log_spec: str | None = None,
     temporary_port: bool = False,
     environ: Mapping[str, str],
+    agent_state: AgentState | None = None,
 ) -> StartupSpec:
     """Resolve one explicit startup request into stable runtime inputs."""
 
-    requested_components = (
-        component_names if component_names is not None else feature_names
-    )
-    enabled_components = normalize_component_names(
-        requested_components or DEFAULT_ENABLED_COMPONENTS
-    )
     endpoint_host = endpoint_host or _default_endpoint_host(host)
     resolved_port = resolve_runtime_port(
         host=host,
@@ -394,12 +357,57 @@ def resolve_startup(
         agent_name=agent_name,
         temporary=temporary_port,
     )
+    state = agent_state or prepare_agent(
+        toolang_root=toolang_root,
+        agent_name=agent_name,
+    )
+    hosting = resolve_agent_hosting(
+        state,
+        sandbox=sandbox,
+        environ=environ,
+    )
+    dev_artifact = _resolve_dev_artifact(dev) if dev is not None else None
+    model_selectors = _normalize_model_selectors(models)
+    tool_selectors = _normalize_tool_selectors(tools)
+    cap_selectors = _normalize_cap_selectors(caps)
+    resolved_file_inboxes = _normalize_file_inboxes(file_inboxes)
+    _validate_startup_models(
+        toolang_root=toolang_root,
+        agent_name=agent_name,
+        selectors=model_selectors,
+        environ=environ,
+        agent_state=state,
+    )
+    if resolved_file_inboxes:
+        _validate_file_agic(toolang_root=toolang_root, agent_name=agent_name)
+    return StartupSpec(
+        toolang_root=toolang_root,
+        agent_name=agent_name,
+        host=host,
+        endpoint_host=endpoint_host,
+        port=resolved_port,
+        hosting=hosting,
+        dev_artifact=dev_artifact,
+        model_selectors=model_selectors,
+        tool_selectors=tool_selectors,
+        cap_selectors=cap_selectors,
+        file_inboxes=resolved_file_inboxes,
+        log_spec=log_spec.strip()
+        if isinstance(log_spec, str) and log_spec.strip()
+        else None,
+    )
+
+
+def resolve_agent_hosting(
+    state: AgentState,
+    *,
+    sandbox: str | None,
+    environ: Mapping[str, str],
+) -> AgentHosting:
+    """Resolve one explicit or configured agent hosting driver."""
+
     sandbox_binding = parse_sandbox_binding(
-        load_sandbox_config(
-            toolang_root,
-            agent_name,
-            environ=environ,
-        )
+        merge_sandbox_config(_config_layers(state), environ=environ)
     )
     if sandbox is not None:
         value = sandbox.strip()
@@ -429,57 +437,11 @@ def resolve_startup(
             else None
         ),
     )
-    dev_artifact = _resolve_dev_artifact(dev) if dev is not None else None
-    model_selectors = _normalize_model_selectors(models)
-    tool_selectors = _normalize_tool_selectors(tools)
-    cap_selectors = _normalize_cap_selectors(caps)
-    resolved_file_inboxes = _normalize_file_inboxes(file_inboxes)
-    if resolved_file_inboxes:
-        enabled_components = _components_with_file_request(enabled_components)
-    if _startup_requires_model(enabled_components):
-        _validate_startup_models(
-            toolang_root=toolang_root,
-            agent_name=agent_name,
-            selectors=model_selectors,
-            environ=environ,
-        )
-    if "runner.file" in enabled_components:
-        _validate_file_agic(toolang_root=toolang_root, agent_name=agent_name)
-    return StartupSpec(
-        toolang_root=toolang_root,
-        agent_name=agent_name,
-        host=host,
-        endpoint_host=endpoint_host,
-        port=resolved_port,
-        enabled_components=enabled_components,
-        sandbox_plugin=sandbox_plugin,
+    return AgentHosting(
+        plugin=sandbox_plugin,
         selector=selector,
-        sandbox_config=sandbox_config,
-        dev_artifact=dev_artifact,
-        model_selectors=model_selectors,
-        tool_selectors=tool_selectors,
-        cap_selectors=cap_selectors,
-        file_inboxes=resolved_file_inboxes,
-        log_spec=log_spec.strip()
-        if isinstance(log_spec, str) and log_spec.strip()
-        else None,
+        config=sandbox_config,
     )
-
-
-def _startup_requires_model(enabled_components: Sequence[str]) -> bool:
-    return any(
-        component_name in RUNNER_COMPONENTS for component_name in enabled_components
-    )
-
-
-def _components_with_file_request(
-    components: tuple[ComponentName, ...],
-) -> tuple[ComponentName, ...]:
-    enabled = list(components)
-    for component_name in ("runner.file", "trigger.file"):
-        if component_name not in enabled:
-            enabled.append(cast(ComponentName, component_name))
-    return tuple(enabled)
 
 
 def _normalize_file_inboxes(file_inboxes: Sequence[Path] | None) -> tuple[Path, ...]:
@@ -508,26 +470,50 @@ def _validate_file_agic(*, toolang_root: Path, agent_name: str) -> None:
         raise ValueError(f"file agic cannot have required parameters: {joined}")
 
 
+def _config_layers(
+    state: AgentState,
+) -> tuple[Mapping[str, object], Mapping[str, object]]:
+    return state.root_config, state.home_config
+
+
 def load_model_aliases(
     toolang_root: Path,
     agent_name: str,
+    *,
+    agent_state: AgentState | None = None,
 ) -> dict[str, ModelAlias]:
     """Load model aliases at the agent composition boundary."""
 
-    return parse_model_aliases(load_config_layers(toolang_root, agent_name))
+    state = agent_state or prepare_agent(
+        toolang_root=toolang_root, agent_name=agent_name
+    )
+    return parse_model_aliases(_config_layers(state))
 
 
-def load_default_models(toolang_root: Path, agent_name: str) -> tuple[str, ...]:
+def load_default_models(
+    toolang_root: Path,
+    agent_name: str,
+    *,
+    agent_state: AgentState | None = None,
+) -> tuple[str, ...]:
     """Load default model selectors at the agent composition boundary."""
 
-    return parse_default_models(load_config_layers(toolang_root, agent_name))
+    state = agent_state or prepare_agent(
+        toolang_root=toolang_root, agent_name=agent_name
+    )
+    return parse_default_models(_config_layers(state))
 
 
 def _load_model_providers(
     toolang_root: Path,
     agent_name: str,
+    *,
+    agent_state: AgentState | None = None,
 ) -> dict[str, ModelProvider]:
-    config_layers = load_config_layers(toolang_root, agent_name)
+    state = agent_state or prepare_agent(
+        toolang_root=toolang_root, agent_name=agent_name
+    )
+    config_layers = _config_layers(state)
     return load_model_providers(parse_model_provider_configs(config_layers))
 
 
@@ -537,11 +523,18 @@ def _validate_startup_models(
     agent_name: str,
     selectors: Sequence[str],
     environ: Mapping[str, str],
+    agent_state: AgentState,
 ) -> None:
     context = _StartupModelSelection(
-        model_providers=_load_model_providers(toolang_root, agent_name),
-        model_aliases=load_model_aliases(toolang_root, agent_name),
-        default_models=load_default_models(toolang_root, agent_name),
+        model_providers=_load_model_providers(
+            toolang_root, agent_name, agent_state=agent_state
+        ),
+        model_aliases=load_model_aliases(
+            toolang_root, agent_name, agent_state=agent_state
+        ),
+        default_models=load_default_models(
+            toolang_root, agent_name, agent_state=agent_state
+        ),
         model_environ=environ,
         model_cache_dir=toolang_root / ".runtime" / "model-cache",
     )
@@ -562,6 +555,7 @@ def build_run_argv(
     tools: Sequence[str] | None = None,
     caps: Sequence[str] | None = None,
     sandbox_child: bool = False,
+    background_hosting: bool = False,
 ) -> tuple[str, ...]:
     """Build one explicit argv for the hidden managed-runtime run path."""
 
@@ -579,7 +573,7 @@ def build_run_argv(
             "--port",
             str(spec.port),
             "--sandbox",
-            sandbox or spec.selector.render(),
+            sandbox or spec.hosting.selector.render(),
         ]
     )
     effective_models = _normalize_model_selectors(models) or spec.model_selectors
@@ -597,10 +591,10 @@ def build_run_argv(
         command.extend(["--dev", str(spec.dev_artifact)])
     if sandbox_child:
         command.append("--sandbox-child")
+    if background_hosting:
+        command.append("--background-hosting")
     for inbox in spec.file_inboxes:
         command.extend(["--inbox", str(inbox)])
-    for component_name in spec.enabled_components:
-        command.extend(["--enable", component_name])
     return tuple(command)
 
 
@@ -617,7 +611,6 @@ def _up_local(
     host: str,
     endpoint_host: str,
     port: int,
-    enabled_components: tuple[ComponentName, ...],
     environ: Mapping[str, str],
     sandbox_child: bool,
     model_selectors: tuple[str, ...],
@@ -630,39 +623,34 @@ def _up_local(
 ) -> int:
     runtime_log_spec = _runtime_log_spec_value(log_spec, environ)
     configure_logging(spec=runtime_log_spec, environ=environ)
-    loop_intervals_ms = dict(DEFAULT_TRIGGER_INTERVAL_MS)
-    for component_name in component_group(TRIGGER_COMPONENTS, "trigger"):
-        if (
-            component_name in loop_intervals_ms
-            and loop_intervals_ms[component_name] <= 0
-        ):
-            raise ValueError(f"trigger interval must be positive: {component_name}")
+    for name, interval_ms in DEFAULT_TRIGGER_INTERVAL_MS.items():
+        if interval_ms <= 0:
+            raise ValueError(f"trigger interval must be positive: {name}")
+    prepared_state = agent_state or prepare_agent(
+        toolang_root=toolang_root,
+        agent_name=agent_name,
+        progress=progress,
+    )
     cors_allowed_origins = resolve_cors_allowed_origins(
-        toolang_root,
+        prepared_state.root_config,
         environ=environ,
     )
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    executor, watcher, config = assemble_execution(
+    executor, watcher = assemble_execution(
         toolang_root=toolang_root,
         agent_name=agent_name,
-        enabled_components=enabled_components,
         environ=environ,
         model_selectors=model_selectors,
-        host=host,
-        port=port,
-        cors_allowed_origins=cors_allowed_origins or [],
         tool_selectors=tool_selectors,
         cap_selectors=cap_selectors,
-        file_inboxes=file_inboxes,
         progress=progress,
-        agent_state=agent_state,
+        agent_state=prepared_state,
     )
     state = watcher.current()
-    _log_state_loaded(executor, config, state)
+    _log_state_loaded(executor, state)
     executor.store.append_update(
         kind="started",
         payload={
-            "components": list(enabled_components),
             "state_fingerprint": state.fingerprint,
         },
         created_at=started_at,
@@ -673,7 +661,6 @@ def _up_local(
         type="agent_start",
         payload={
             "agent": agent_name,
-            "components": list(enabled_components),
             "state_fingerprint": state.fingerprint,
             "started_at": started_at,
         },
@@ -681,9 +668,8 @@ def _up_local(
     endpoint = f"http://{endpoint_host}:{port}"
     shutdown_signal = threading.Event()
     channel_bindings = parse_channel_bindings(
-        load_named_config(
-            toolang_root,
-            agent_name,
+        merge_named_configs(
+            _config_layers(state),
             section="channels",
             environ=environ,
         )
@@ -701,13 +687,16 @@ def _up_local(
         },
         executor=executor,
         store=executor.store,
-        config=config,
-        enabled_components=enabled_components,
+        host=host,
+        port=port,
+        cors_allowed_origins=cors_allowed_origins,
     )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         stop_signal = asyncio.Event()
+        bg_tasks: list[asyncio.Task[None]] = []
+        job_store = None
         try:
             if not sandbox_child:
                 agents.write_runtime_state(
@@ -716,39 +705,22 @@ def _up_local(
                     endpoint=endpoint,
                     started_at=started_at,
                     pid=os.getpid(),
-                    components=enabled_components,
                     models=model_selectors,
                 )
-            bg_tasks: list[asyncio.Task[None]] = []
-            job_store = None
-            if "trigger.pulse" in enabled_components:
-                interval_value = config.require("components.trigger.pulse.interval_ms")
-                if not isinstance(interval_value, int | float):
-                    raise TypeError(
-                        "invalid config: components.trigger.pulse.interval_ms"
-                    )
-                job_store = open_job_store(toolang_root, agent_name)
-                job_watcher = JobWatcher(toolang_root, agent_name)
-                scheduler = Scheduler(
-                    job_store=job_store,
-                    executor=executor,
-                    get_home_jobs=job_watcher.current,
-                    get_agent_state=watcher.current,
-                    kinds=tuple(
-                        kind
-                        for kind in ("task", "chore")
-                        if f"runner.{kind}" in enabled_components
-                    ),
-                    interval_ms=float(interval_value),
-                )
-                bg_tasks.extend(
-                    [
-                        job_watcher.start(stop_signal=stop_signal),
-                        scheduler.start(stop_signal=stop_signal),
-                    ]
-                )
-            if "trigger.poll" in enabled_components:
-                bg_tasks.append(
+            job_store = open_job_store(toolang_root, agent_name)
+            job_watcher = JobWatcher(toolang_root, agent_name)
+            scheduler = Scheduler(
+                job_store=job_store,
+                executor=executor,
+                get_home_jobs=job_watcher.current,
+                get_agent_state=watcher.current,
+                kinds=("task", "chore"),
+                interval_ms=DEFAULT_TRIGGER_INTERVAL_MS["pulse"],
+            )
+            bg_tasks.extend(
+                [
+                    job_watcher.start(stop_signal=stop_signal),
+                    scheduler.start(stop_signal=stop_signal),
                     poll.spawn(
                         name=agent_name,
                         home=executor.home,
@@ -756,24 +728,21 @@ def _up_local(
                         plugins=context.channel_plugins,
                         executor=executor,
                         get_agent_state=watcher.current,
-                        enabled_components=enabled_components,
                         interval_ms=DEFAULT_TRIGGER_INTERVAL_MS["poll"],
                         stop_signal=stop_signal,
-                    )
-                )
-            if "trigger.watch" in enabled_components:
-                bg_tasks.append(
-                    watch.spawn(
-                        root=toolang_root,
-                        name=agent_name,
-                        watcher=watcher,
-                        executor=executor,
-                        store=executor.store,
-                        config=config,
+                    ),
+                ]
+            )
+            bg_tasks.append(
+                asyncio.create_task(
+                    watcher.run(
                         stop_signal=stop_signal,
+                        interval_ms=state_watcher.DEFAULT_INTERVAL_MS,
+                        debounce_ms=DEFAULT_WATCH_DEBOUNCE_MS,
                     )
                 )
-            if "trigger.file" in enabled_components:
+            )
+            if file_inboxes:
                 bg_tasks.append(
                     files.spawn(
                         root=toolang_root,
@@ -817,7 +786,7 @@ def _up_local(
             executor.store.close()
 
     app = create_app(context, lifespan=lifespan, shutdown_signal=shutdown_signal)
-    webui_url = _runtime_webui_url(endpoint, toolang_root=toolang_root, environ=environ)
+    webui_url = _runtime_webui_url(endpoint, state=state, environ=environ)
     _run_uvicorn_app(
         app,
         host=host,
@@ -827,21 +796,9 @@ def _up_local(
         ),
         shutdown_signal=shutdown_signal,
         on_starting=lambda: logger.info(
-            "Agent starting root=%s trigger=%s runner=%s router=%s",
+            "Agent starting root=%s",
             toolang_root,
-            format_component_group(enabled_components, "trigger"),
-            format_component_group(enabled_components, "runner"),
-            format_component_group(enabled_components, "router"),
-            extra={
-                "color_message": "Agent starting root="
-                + "\x1b[1m%s\x1b[0m"
-                + " trigger="
-                + "\x1b[1m%s\x1b[0m"
-                + " runner="
-                + "\x1b[1m%s\x1b[0m"
-                + " router="
-                + "\x1b[1m%s\x1b[0m"
-            },
+            extra={"color_message": "Agent starting root=\x1b[1m%s\x1b[0m"},
         ),
         on_running=lambda: logger.info(
             "Agent started webui=%s",
@@ -863,13 +820,11 @@ def _runtime_log_spec_value(
     return env_spec or None
 
 
-def _log_state_loaded(
-    executor: Executor, config: RuntimeConfig, state: AgentState
-) -> None:
+def _log_state_loaded(executor: Executor, state: AgentState) -> None:
     state_logger.info(
         "Agent loaded state=%s models=%s tools=%s psyches=%s skills=%s services=%s",
         _short_fingerprint(state.fingerprint),
-        _model_count(executor, config),
+        _model_count(executor),
         len(executor.setup.tools),
         _cap_count(state, "psyche"),
         _cap_count(state, "skill"),
@@ -877,32 +832,14 @@ def _log_state_loaded(
     )
 
 
-def _model_count(executor: Executor, config: RuntimeConfig) -> int:
+def _model_count(executor: Executor) -> int:
     try:
-        selectors = _model_allowed_selectors(config)
+        selectors = executor.allowed_model_selectors
         if selectors:
             return len(select_model_selectors(executor, activation_selectors=selectors))
         return len(select_model_selectors(executor))
     except Exception:
-        selectors = config.get("models.allowed_selectors")
-        if isinstance(selectors, tuple):
-            return len(selectors)
-        if isinstance(selectors, list):
-            return len(selectors)
-        return 0
-
-
-def _model_allowed_selectors(config: RuntimeConfig) -> tuple[str, ...]:
-    selectors = config.get("models.allowed_selectors")
-    if isinstance(selectors, tuple):
-        return tuple(
-            item for item in selectors if isinstance(item, str) and item.strip()
-        )
-    if isinstance(selectors, list):
-        return tuple(
-            item for item in selectors if isinstance(item, str) and item.strip()
-        )
-    return ()
+        return len(executor.allowed_model_selectors)
 
 
 def _cap_count(state: AgentState, kind: str) -> int:
@@ -1017,20 +954,14 @@ def assemble_execution(
     *,
     toolang_root: Path,
     agent_name: str,
-    enabled_components: tuple[ComponentName, ...],
     environ: Mapping[str, str],
     model_selectors: Sequence[str] = (),
     tool_selectors: Sequence[str] | None = None,
     cap_selectors: Sequence[str] = (),
-    host: str = "127.0.0.1",
-    port: int = 0,
-    cors_allowed_origins: Sequence[str] = (),
-    file_inboxes: Sequence[Path] = (),
     progress: ProgressSink | None = None,
     agent_state: AgentState | None = None,
-) -> tuple[Executor, state_watcher.StateWatcher, RuntimeConfig]:
+) -> tuple[Executor, state_watcher.StateWatcher]:
     """Assemble one executor and its versioned agent state."""
-    runtime_state = agents.AgentProcess(toolang_root, agent_name).state() or {}
     if agent_state is None:
         agent_state = prepare_agent(
             toolang_root=toolang_root, agent_name=agent_name, progress=progress
@@ -1039,65 +970,37 @@ def assemble_execution(
     normalized_model_selectors = _normalize_model_selectors(model_selectors)
     normalized_tool_selectors = _normalize_tool_selectors(tool_selectors)
     normalized_cap_selectors = _normalize_cap_selectors(cap_selectors)
-    model_providers = _load_model_providers(toolang_root, agent_name)
-    model_aliases = load_model_aliases(toolang_root, agent_name)
-    default_models = load_default_models(toolang_root, agent_name)
-    if (
-        normalized_model_selectors
-        or _startup_requires_model(enabled_components)
-        or not enabled_components
-    ):
-        _validate_model_selectors(
-            _StartupModelSelection(
-                model_providers=model_providers,
-                model_aliases=model_aliases,
-                default_models=default_models,
-                model_environ=environ,
-                model_cache_dir=toolang_root / ".runtime" / "model-cache",
-            ),
-            normalized_model_selectors,
-        )
+    model_providers = _load_model_providers(
+        toolang_root, agent_name, agent_state=state
+    )
+    model_aliases = load_model_aliases(
+        toolang_root, agent_name, agent_state=state
+    )
+    default_models = load_default_models(
+        toolang_root, agent_name, agent_state=state
+    )
+    _validate_model_selectors(
+        _StartupModelSelection(
+            model_providers=model_providers,
+            model_aliases=model_aliases,
+            default_models=default_models,
+            model_environ=environ,
+            model_cache_dir=toolang_root / ".runtime" / "model-cache",
+        ),
+        normalized_model_selectors,
+    )
     _validate_cap_selectors(state, normalized_cap_selectors, agent_name=agent_name)
     state = _select_agent_caps(state, normalized_cap_selectors, agent_name=agent_name)
     default_model_selector = (
         normalized_model_selectors[0] if normalized_model_selectors else None
     )
-    config = RuntimeConfig(
-        {
-            "server.host": host,
-            "server.port": port,
-            "server.endpoint": _runtime_endpoint_value(
-                host=host, port=port, runtime_state=runtime_state
-            ),
-            "components.enabled": tuple(enabled_components),
-            "components.trigger.pulse.interval_ms": DEFAULT_TRIGGER_INTERVAL_MS[
-                "pulse"
-            ],
-            "components.trigger.poll.interval_ms": DEFAULT_TRIGGER_INTERVAL_MS["poll"],
-            "components.trigger.watch.interval_ms": DEFAULT_TRIGGER_INTERVAL_MS[
-                "watch"
-            ],
-            "components.trigger.watch.debounce_ms": DEFAULT_WATCH_DEBOUNCE_MS,
-            "components.trigger.file.interval_ms": DEFAULT_TRIGGER_INTERVAL_MS["file"],
-            "components.trigger.file.stable_ms": DEFAULT_FILE_STABLE_MS,
-            "components.trigger.file.inboxes": tuple(file_inboxes),
-            "web.cors_allowed_origins": list(cors_allowed_origins),
-            "models.default_selector": default_model_selector,
-            "models.allowed_selectors": normalized_model_selectors,
-            "tools.allowed_selectors": normalized_tool_selectors,
-            "caps.allowed_selectors": normalized_cap_selectors,
-            "runtime.sandbox": _runtime_sandbox_value(runtime_state),
-        }
-    )
     store = RunStore(run_store_path(toolang_root, agent_name))
     tools = load_runtime_tools(
-        plugin_config=load_named_config(
-            toolang_root,
-            agent_name,
+        plugin_config=merge_named_configs(
+            _config_layers(state),
             section="tools",
             environ=environ,
         ),
-        entries=state.caps,
     )
     selected_tools = select_tools(tools, normalized_tool_selectors)
     validate_tool_selectors(tools, normalized_tool_selectors)
@@ -1116,7 +1019,8 @@ def assemble_execution(
         model_aliases=model_aliases,
         default_models=default_models,
         model_environ=environ,
-        config=config,
+        default_model_selector=default_model_selector,
+        allowed_model_selectors=normalized_model_selectors,
     )
     watcher = state_watcher.StateWatcher(
         toolang_root,
@@ -1126,50 +1030,20 @@ def assemble_execution(
             value, normalized_cap_selectors, agent_name=agent_name
         ),
     )
-    return executor, watcher, config
-
-
-def _runtime_endpoint_value(
-    *,
-    host: str,
-    port: int,
-    runtime_state: Mapping[str, object],
-) -> str | None:
-    endpoint = runtime_state.get("endpoint")
-    if isinstance(endpoint, str) and endpoint.strip():
-        return endpoint.strip()
-    if port > 0:
-        return f"http://{host}:{port}"
-    return None
-
-
-def _runtime_sandbox_value(runtime_state: Mapping[str, object]) -> str:
-    sandbox = runtime_state.get("sandbox")
-    if isinstance(sandbox, dict):
-        sandbox_data = {str(key): value for key, value in sandbox.items()}
-        selector = sandbox_data.get("selector")
-        if isinstance(selector, dict):
-            selector_data = {str(key): value for key, value in selector.items()}
-            driver = selector_data.get("driver")
-            target = selector_data.get("target")
-            if isinstance(driver, str) and driver.strip():
-                if isinstance(target, str) and target.strip():
-                    return f"{driver.strip()}:{target.strip()}"
-                return driver.strip()
-    return "none"
+    return executor, watcher
 
 
 def _runtime_webui_url(
     endpoint: str,
     *,
-    toolang_root: Path,
+    state: AgentState,
     environ: Mapping[str, str],
 ) -> str:
     try:
         endpoint_port = urlsplit(endpoint).port
     except ValueError:
         endpoint_port = None
-    base_url = resolve_ui_base_url(toolang_root, environ=environ).rstrip("/")
+    base_url = resolve_ui_base_url(state.root_config, environ=environ).rstrip("/")
     if endpoint_port is None:
         return base_url
     return f"{base_url}/{endpoint_port}"
@@ -1185,13 +1059,13 @@ def _up_managed_sandbox(
     host: str,
     endpoint_host: str,
     port: int,
-    enabled_components: tuple[ComponentName, ...],
     environ: Mapping[str, str],
     dev_artifact: Path | None,
     model_selectors: tuple[str, ...],
     tool_selectors: tuple[str, ...] | None,
     cap_selectors: tuple[str, ...],
     file_inboxes: tuple[Path, ...],
+    wait: bool,
 ) -> int:
     endpoint = f"http://{endpoint_host}:{port}"
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -1202,10 +1076,11 @@ def _up_managed_sandbox(
         host=host,
         endpoint_host=endpoint_host,
         port=port,
-        enabled_components=enabled_components,
-        sandbox_plugin=plugin,
-        selector=selector,
-        sandbox_config=dict(sandbox_config),
+        hosting=AgentHosting(
+            plugin=plugin,
+            selector=selector,
+            config=dict(sandbox_config),
+        ),
         dev_artifact=dev_artifact,
         model_selectors=model_selectors,
         tool_selectors=tool_selectors,
@@ -1219,7 +1094,6 @@ def _up_managed_sandbox(
         started_at=started_at,
         pid=os.getpid(),
         sandbox=initial_sandbox_state,
-        components=enabled_components,
         models=model_selectors,
         status="preparing",
     )
@@ -1246,7 +1120,6 @@ def _up_managed_sandbox(
         endpoint_host=endpoint_host,
         port=port,
         endpoint=endpoint,
-        component_names=enabled_components,
         run_command=(
             "toolang",
             *build_run_argv(
@@ -1274,7 +1147,6 @@ def _up_managed_sandbox(
             sandbox=plan.state.to_data()
             if plan.state is not None
             else initial_sandbox_state,
-            components=enabled_components,
             models=model_selectors,
             status="starting",
         )
@@ -1288,6 +1160,22 @@ def _up_managed_sandbox(
             stable_sec=1.0,
         )
     except Exception as exc:
+        cleanup_state = (
+            start.state
+            if start is not None
+            else plan.state
+            if plan is not None
+            else None
+        )
+        if cleanup_state is not None:
+            try:
+                plugin.stop(cleanup_state, force=True)
+            except Exception:
+                logger.exception(
+                    "Failed to clean up sandbox after startup error agent=%s sandbox=%s",
+                    agent_name,
+                    selector.render(),
+                )
         failed_endpoint = (
             start.endpoint if start is not None and start.endpoint else endpoint
         )
@@ -1307,7 +1195,6 @@ def _up_managed_sandbox(
             started_at=started_at,
             pid=os.getpid(),
             sandbox=failed_sandbox_state,
-            components=enabled_components,
             models=model_selectors,
             status="failed",
             message=str(exc),
@@ -1320,7 +1207,6 @@ def _up_managed_sandbox(
         started_at=started_at,
         pid=None,
         sandbox=start.state.to_data(),
-        components=enabled_components,
         models=model_selectors,
         status="running",
     )
@@ -1330,7 +1216,54 @@ def _up_managed_sandbox(
         selector.render(),
         start.endpoint or endpoint,
     )
+    if wait:
+        try:
+            result = _wait_for_managed_sandbox(plugin, start.state)
+        except KeyboardInterrupt:
+            result = 130
+        finally:
+            plugin.stop(start.state)
+            agents.stop_runtime_state(
+                toolang_root,
+                agent_name,
+                expected_started_at=started_at,
+            )
+        return result
     return 0
+
+
+def _wait_for_managed_sandbox(
+    plugin: AgentSandbox,
+    state: SandboxState,
+) -> int:
+    """Wait in the foreground while preserving managed-sandbox cleanup."""
+
+    termination_signal: int | None = None
+    previous_handlers: dict[int, object] = {}
+
+    def request_termination(signum: int, _frame: object) -> None:
+        nonlocal termination_signal
+        termination_signal = signum
+
+    try:
+        for name in ("SIGTERM", "SIGHUP"):
+            signum = getattr(signal, name, None)
+            if signum is None:
+                continue
+            try:
+                previous_handlers[signum] = signal.getsignal(signum)
+                signal.signal(signum, request_termination)
+            except (OSError, RuntimeError, ValueError):
+                previous_handlers.pop(signum, None)
+        while termination_signal is None and plugin.alive(state):
+            time.sleep(0.25)
+        return 128 + termination_signal if termination_signal is not None else 0
+    finally:
+        for signum, handler in previous_handlers.items():
+            try:
+                signal.signal(signum, handler)
+            except (OSError, RuntimeError, ValueError):
+                continue
 
 
 def _normalize_model_selectors(models: Sequence[str] | None) -> tuple[str, ...]:

@@ -61,12 +61,12 @@ too = "toolang.cli.toolang.cli:main"
 caps = "toolang.cli.caps.cli:main"
 
 [project.entry-points."toolang.tool"]
-agent_chat = "toolang.agent.tools.agent_chat:create_tool_set"
+agent_chat = "toolang.execution.tools.agent_chat:create_tool_set"
 filesystem = "toolang.plugin.tools.filesystem:create_tool_set"
 service_use = "toolang.plugin.tools.service_use:create_tool_set"
 shell = "toolang.plugin.tools.shell:create_tool_set"
 web_search = "toolang.plugin.tools.web_search:create_tool_set"
-agent_state = "toolang.agent.tools.agent_state:create_tool_set"
+agent_state = "toolang.execution.tools.agent_state:create_tool_set"
 
 [project.entry-points."toolang.model_provider"]
 custom = "toolang.plugin.models.providers.custom:create_model_provider"

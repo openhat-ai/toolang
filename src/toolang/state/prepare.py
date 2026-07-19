@@ -76,6 +76,8 @@ def compose_prepared_state(
         root_version=root.version,
         home_version=home.version,
         toolang_version=root.toolang_version,
+        root_config=root.config,
+        home_config=home.config,
         program=home.program,
         root_caps=root.caps,
         home_caps=home.caps,

@@ -12,7 +12,7 @@ from typing import Annotated
 import click
 import typer
 
-from ...config.log import configure_logging
+from ...up.logging import configure_logging
 from ..common.context import CliContext, resolve_root
 from ..common.routing import (
     OptionalPrefixAgentGroup,

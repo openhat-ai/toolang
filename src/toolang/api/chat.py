@@ -203,7 +203,6 @@ async def _submit_chat_run(
     *,
     thread_id: str | None,
 ) -> tuple[RunRecord, BufferedReplySink]:
-    _require_chat_runner(context)
     reply = BufferedReplySink()
     run_id = context.executor.allocate_run_id()
 
@@ -221,7 +220,6 @@ async def _stream_chat_run(
     *,
     thread_id: str | None,
 ):
-    _require_chat_runner(context)
     reply = TraceReplySink() if payload.client == "tui" else SseReplySink(thread_id=thread_id)
     run_id = context.executor.allocate_run_id()
     context.executor.start(
@@ -254,12 +252,6 @@ def _chat_run_request(
         cap_selectors=_cap_selectors(payload),
         metadata=_thread_metadata(payload),
     )
-
-
-def _require_chat_runner(context: ApiContext) -> None:
-    enabled_components = context.config.require("components.enabled")
-    if not isinstance(enabled_components, tuple) or "runner.chat" not in enabled_components:
-        raise HTTPException(status_code=403, detail="component is not enabled: runner.chat")
 
 
 async def _guarded_stream(

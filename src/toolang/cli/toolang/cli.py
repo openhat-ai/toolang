@@ -14,7 +14,7 @@ import typer
 from typer import rich_utils
 from typer.core import TyperGroup
 
-from ...config.log import configure_logging
+from ...up.logging import configure_logging
 from ..caps import commands as cap_commands
 from ..common.context import CliContext, resolve_root
 from ..common import version as _version

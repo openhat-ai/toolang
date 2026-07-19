@@ -1,4 +1,4 @@
-"""Shared logging helpers."""
+"""Default logging for Toolang CLI and agent startup."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import re
 import sys
 from typing import Any, Literal, cast
 
-from .log_spec import (
+from toolang.common.env_logger import (
     LogSpec,
     OFF_LOG_LEVEL,
     PY_LOG_ENV_VAR,
@@ -107,7 +107,7 @@ def build_uvicorn_log_config(
         },
         "filters": {
             "httpx": {
-                "()": "toolang.config.log.HttpxLogFilter",
+                "()": "toolang.up.logging.HttpxLogFilter",
             }
         },
         "handlers": {
