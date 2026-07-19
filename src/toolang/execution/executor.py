@@ -39,7 +39,7 @@ from ..lang.ast import (
 )
 from toolang.plugin.loading import load_loop as _default_load_loop
 from ..state.state import AgentState
-from .assembly import ConfigView, RunInput, SupportsRunAssembly
+from .assembly import RunInput, SupportsRunAssembly
 from .binding import _Run, _bind_run_request, allocate_run_id, invoke_params
 from .context import RunContext
 from .events import (
@@ -113,7 +113,8 @@ class Executor:
         model_aliases: Mapping[str, ModelAlias],
         default_models: Sequence[str],
         model_environ: Mapping[str, str],
-        config: ConfigView,
+        default_model_selector: str | None = None,
+        allowed_model_selectors: Sequence[str] = (),
         trace: TraceEventHandler | None = None,
         load_loop: Callable[[str], Any] | None = None,
     ) -> None:
@@ -128,7 +129,8 @@ class Executor:
         self.model_environ = dict(model_environ)
         self.model_cache_dir = root / ".runtime" / "model-cache"
         self.model_cache_refresh = False
-        self.config = config
+        self.default_model_selector = default_model_selector
+        self.allowed_model_selectors = tuple(allowed_model_selectors)
         self._trace = combine_trace_handlers(
             PersistSink(store, agent_id=name).on_event,
             *(() if trace is None else (trace,)),

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 
-from toolang.agent import local as agents
+from toolang.up import process as agents
 from . import _views
 
 

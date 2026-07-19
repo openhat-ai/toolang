@@ -104,7 +104,6 @@ class DockerSandbox:
                     "endpoint_host": request.endpoint_host,
                     "port": request.port,
                     "endpoint": request.endpoint,
-                    "component_names": list(request.component_names or request.feature_names),
                     "sandbox": {
                         "driver": request.selector.driver,
                         "target": request.selector.target,

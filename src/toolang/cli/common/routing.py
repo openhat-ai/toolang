@@ -243,15 +243,6 @@ class OptionalPrefixAgentTemplateCommand(OptionalPrefixAgentCommand):
         ]
 
 
-def normalize_components(components: Sequence[str] | None) -> list[str] | None:
-    if components is None:
-        return None
-    normalized: list[str] = []
-    for item in components:
-        normalized.extend(value.strip() for value in item.split(",") if value.strip())
-    return normalized
-
-
 class _HelpOnlyTyperArgument(TyperArgument):
     """One help-only argument that never participates in parsing."""
 

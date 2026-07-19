@@ -8,7 +8,6 @@ from pathlib import Path
 import threading
 
 from toolang.base.protocols.channel import AgentChannel
-from toolang.config.runtime import RuntimeConfig
 from toolang.execution.executor import Executor
 from toolang.execution.store import RunStore
 from toolang.plugin.config import ChannelBinding
@@ -28,6 +27,7 @@ class ApiContext:
     channel_plugins: Mapping[str, AgentChannel]
     executor: Executor
     store: RunStore
-    config: RuntimeConfig
-    enabled_components: tuple[str, ...]
+    host: str
+    port: int
+    cors_allowed_origins: tuple[str, ...]
     shutdown_signal: threading.Event | None = None

@@ -4,16 +4,31 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import json
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
-from toolang.agent import local as agents
+from toolang.up import process as agents
 from toolang.common.ids import LOCAL_ID_FAMILY, allocate_id
 from toolang.execution.detail import ExecutionProjector
 from toolang.execution.records import RunStatus
+from toolang.execution.reply import TraceReplySink
 from toolang.execution.request import RunRequest
 from toolang.execution.stream import event_data, stream_events
 from . import _views
+
+
+class RunCreateRequest(BaseModel):
+    """One non-interactive agic or flow execution request."""
+
+    executable_kind: Literal["agic", "flow"] = "agic"
+    executable_name: str | None = None
+    input: str = ""
+    models: list[str] = Field(default_factory=list)
+    tools: list[str] | None = None
+    caps: list[str] = Field(default_factory=list)
+    metadata: dict[str, object] = Field(default_factory=dict)
 
 
 def create_router() -> APIRouter:
@@ -33,6 +48,42 @@ def create_router() -> APIRouter:
             limit=limit, thread_id=thread_id, status=status
         )
         return {"items": [item.to_data() for item in items]}
+
+    @router.post("/runs/stream", tags=["activity"], summary="Execute Run Stream")
+    async def execute_run_stream(
+        request: Request,
+        payload: RunCreateRequest,
+    ) -> _views.ShutdownAwareStreamingResponse:
+        context = request.app.state.context
+        reply = TraceReplySink()
+        context.executor.start(
+            RunRequest(
+                group="script",
+                origin="script",
+                run_id=context.executor.allocate_run_id(),
+                executable_kind=payload.executable_kind,
+                executable_name=payload.executable_name,
+                input=payload.input,
+                model_selectors=tuple(payload.models),
+                tool_selectors=(
+                    tuple(payload.tools) if payload.tools is not None else None
+                ),
+                cap_selectors=tuple(payload.caps),
+                metadata=dict(payload.metadata),
+            ),
+            context.get_agent_state(),
+            reply=reply,
+        )
+        return _views.ShutdownAwareStreamingResponse(
+            _views._guarded_stream(reply.stream()),
+            shutdown_signal=getattr(context, "shutdown_signal", None),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @router.get("/runs/{run_id}", tags=["activity"], summary="Get Run")
     async def run_detail(request: Request, run_id: str) -> dict[str, object]:

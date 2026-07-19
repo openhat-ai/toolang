@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from toolang.agent.sandbox import prepare_root_mounts
+from toolang.up.mounts import prepare_root_mounts
 
 
 def test_prepare_root_mounts_owns_toolang_layout(tmp_path: Path) -> None:

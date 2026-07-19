@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 import threading
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from prompt_toolkit.output.color_depth import ColorDepth
 from rich.console import RenderableType
@@ -17,7 +17,7 @@ from toolang.base.types.message import (
     ToolCallPart,
     ToolResultPart,
 )
-from toolang.cli.impl.chat import blocks, client, events, rendering, slashes, tui, widgets
+from toolang.cli.impl.chat import blocks, events, local, rendering, slashes, tui, widgets
 from toolang.cli.impl.chat.base import ChatUIEvent
 from toolang.execution.events import (
     PartDelta,
@@ -33,7 +33,7 @@ from toolang.execution.events import (
 from toolang.execution.records import InputRef
 
 
-def test_local_chat_client_runs_stop_and_steer_on_one_event_loop(
+def test_local_chat_session_runs_stop_and_steer_on_one_event_loop(
     tmp_path: Path, monkeypatch
 ) -> None:
     started = threading.Event()
@@ -44,15 +44,17 @@ def test_local_chat_client_runs_stop_and_steer_on_one_event_loop(
             self.reply: Any = None
             self.release: asyncio.Event | None = None
             self.request: Any = None
-            self.store: Any = None
+            self.store: Any = SimpleNamespace(
+                close=lambda: operations.append(("store_close", 0))
+            )
+            self.id_state_path = tmp_path / "ids.json"
 
         def allocate_run_id(self) -> str:
             return "run_local"
 
         async def run(self, request, state, *, reply) -> None:
             del state
-            loop = asyncio.get_running_loop()
-            operations.append(("run", id(loop)))
+            operations.append(("run", id(asyncio.get_running_loop())))
             self.request = request
             self.reply = reply
             self.release = asyncio.Event()
@@ -74,23 +76,29 @@ def test_local_chat_client_runs_stop_and_steer_on_one_event_loop(
         async def close(self) -> None:
             operations.append(("close", id(asyncio.get_running_loop())))
 
-    class FakeStore:
-        def close(self) -> None:
-            operations.append(("store_close", 0))
+    class FakeWatcher:
+        def current(self) -> object:
+            return object()
+
+        async def run(self, *, stop_signal, **_kwargs) -> None:
+            await stop_signal.wait()
 
     executor = FakeExecutor()
-    executor.store = FakeStore()
-    watcher = SimpleNamespace(refresh=lambda: object())
     monkeypatch.setattr(
-        client.up,
+        local.agent_up,
         "assemble_execution",
-        lambda **_kwargs: (executor, watcher, SimpleNamespace()),
+        lambda **_kwargs: (executor, FakeWatcher()),
     )
-    chat_client = client.LocalChatClient(tmp_path, "alice", environ={})
+    session = local.LocalChatSession(
+        tmp_path,
+        "alice",
+        environ={},
+        agent_state=cast(Any, SimpleNamespace()),
+    )
     received: list[str] = []
     errors: list[str] = []
     run_thread = threading.Thread(
-        target=lambda: chat_client.start_run(
+        target=lambda: session.start_run(
             "term_test",
             "hello",
             {"flow": "review"},
@@ -101,17 +109,19 @@ def test_local_chat_client_runs_stop_and_steer_on_one_event_loop(
     run_thread.start()
     assert started.wait(timeout=1)
 
-    chat_client.steer_run("run_local", "focus", lambda _event: None, errors.append)
-    chat_client.stop_run("run_local", lambda _event: None, errors.append)
+    session.steer_run("run_local", "focus", lambda _event: None, errors.append)
+    session.stop_run("run_local", lambda _event: None, errors.append)
     run_thread.join(timeout=1)
-    chat_client.close()
+    session.close()
 
     assert not run_thread.is_alive()
     assert errors == []
     assert received == ["run_starting", "run_steering", "run_stopping", "run_end"]
     assert executor.request.executable_kind == "flow"
     assert executor.request.executable_name == "review"
-    loop_ids = {loop_id for operation, loop_id in operations if operation != "store_close"}
+    loop_ids = {
+        loop_id for operation, loop_id in operations if operation != "store_close"
+    }
     assert len(loop_ids) == 1
 
 

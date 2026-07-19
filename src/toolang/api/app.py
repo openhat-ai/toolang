@@ -38,13 +38,7 @@ def create_app(
 ) -> FastAPI:
     """Create one FastAPI app for an existing runtime context."""
 
-    enabled = context.enabled_components
-    raw_origins = context.config.get("web.cors_allowed_origins")
-    origins = (
-        [item for item in raw_origins if isinstance(item, str) and item.strip()]
-        if isinstance(raw_origins, list)
-        else DEFAULT_CORS_ORIGINS
-    )
+    origins = list(context.cors_allowed_origins or DEFAULT_CORS_ORIGINS)
     app = FastAPI(
         title="Toolang Agent API",
         lifespan=lifespan,
@@ -75,17 +69,14 @@ def create_app(
         )
 
     @app.get("/healthz", tags=["agent"], summary="Health Check")
-    def healthz() -> dict[str, object]:
-        return {"ok": True, "enabled_components": list(enabled)}
+    def healthz() -> dict[str, bool]:
+        return {"ok": True}
 
-    if "router.chat" in enabled:
-        app.include_router(chat.create_router())
-    if "router.manage" in enabled:
-        app.include_router(cap_commands.create_router())
-        app.include_router(job_commands.create_router())
-    if "router.inspect" in enabled:
-        app.include_router(agent.create_router())
-        app.include_router(caps.create_router())
-        app.include_router(jobs.create_router())
-        app.include_router(runs.create_router())
+    app.include_router(chat.create_router())
+    app.include_router(cap_commands.create_router())
+    app.include_router(job_commands.create_router())
+    app.include_router(agent.create_router())
+    app.include_router(caps.create_router())
+    app.include_router(jobs.create_router())
+    app.include_router(runs.create_router())
     return app

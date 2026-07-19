@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-import shlex
-from typing import Any, Protocol, cast
+from typing import Any, cast
 
 from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.tool import ToolContext, ToolDefinition
@@ -17,22 +16,6 @@ from .registry import (
     selected_tool_names,
     tool_ref_for_model_tool,
 )
-
-
-class RuntimeCapEntry(Protocol):
-    """Cap data needed to derive built-in tool configuration."""
-
-    @property
-    def kind(self) -> str:
-        """Return the cap kind."""
-
-    @property
-    def name(self) -> str:
-        """Return the authored cap name."""
-
-    @property
-    def meta(self) -> Mapping[str, object]:
-        """Return immutable cap metadata."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,35 +80,10 @@ def load_tool_plugins(
 def load_runtime_tools(
     *,
     plugin_config: Mapping[str, Mapping[str, Any]],
-    entries: Sequence[RuntimeCapEntry],
     selectors: Sequence[str] | None = None,
 ) -> dict[str, AgentTool]:
-    tools = load_tool_plugins(
-        config=runtime_tool_config(
-            plugin_config=plugin_config,
-            entries=entries,
-        )
-    )
+    tools = load_tool_plugins(config=plugin_config)
     return select_tools(tools, selectors)
-
-
-def runtime_tool_config(
-    *,
-    plugin_config: Mapping[str, Mapping[str, Any]],
-    entries: Sequence[RuntimeCapEntry],
-) -> dict[str, dict[str, object]]:
-    config = {name: dict(payload) for name, payload in plugin_config.items()}
-    visible_services = [
-        service
-        for entry in entries
-        if entry.kind == "service"
-        if (service := _service_config(entry)) is not None
-    ]
-    if visible_services:
-        service_use = dict(config.get("service_use", {}))
-        service_use["visible_services"] = visible_services
-        config["service_use"] = service_use
-    return config
 
 
 def select_tools(
@@ -158,41 +116,3 @@ def validate_tool_selectors(
     ]
     if missing:
         raise ValueError(f"tool selector matched no tools: {', '.join(missing)}")
-
-
-def _service_config(entry: RuntimeCapEntry) -> dict[str, object] | None:
-    transport = _text(entry.meta.get("transport"))
-    target = _text(entry.meta.get("target"))
-    if transport not in {"http", "stdio"} or target is None:
-        return None
-    service: dict[str, object] = {
-        "name": entry.name,
-        "description": _text(entry.meta.get("description")),
-        "transport": transport,
-        "target": target,
-    }
-    if transport == "stdio":
-        try:
-            command = shlex.split(target)
-        except ValueError:
-            command = []
-        if command:
-            service["command"] = command
-    env_vars = _env_names(entry.meta.get("env"))
-    if env_vars:
-        service["env_vars"] = env_vars
-    return {key: value for key, value in service.items() if value is not None}
-
-
-def _env_names(value: object) -> list[str]:
-    if isinstance(value, str):
-        return [item.strip() for item in value.split(",") if item.strip()]
-    if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-    return []
-
-
-def _text(value: object) -> str | None:
-    if not isinstance(value, str):
-        return None
-    return value.strip() or None

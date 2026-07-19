@@ -12,7 +12,7 @@ import typer
 from typer.core import TyperCommand
 
 from ....catalog import templates
-from toolang.agent.local import agent_home
+from toolang.up.process import agent_home
 from ....execution.records import UpdateKind
 from toolang.state.source import read_authored_source
 from toolang.catalog.job import AuthoredJobs, JobFile, JobStage

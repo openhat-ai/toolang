@@ -618,7 +618,7 @@ def _all_cap_entries(
     kinds: set[EntryKind],
 ) -> tuple[PreparedCap, ...]:
     if prepare and (toolang_root / "agents" / agent_name / "agent.too").is_file():
-        from toolang.agent.runtime import prepare_agent
+        from toolang.up.server import prepare_agent
         from ..common.progress import as_progress_sink, make_cli_progress
 
         progress = make_cli_progress(
@@ -768,7 +768,7 @@ def _refresh_and_append_cap_update(
     progress_total: int,
     progress: CliProgress | None = None,
 ) -> None:
-    from toolang.agent.runtime import prepare_agent
+    from toolang.up.server import prepare_agent
     from ..common.progress import as_progress_sink
 
     user_call(

@@ -36,7 +36,7 @@ from toolang.base.types.run import (
     ToolCall,
     ToolCallResult,
 )
-from toolang.base.types.tool import ToolContext
+from toolang.base.types.tool import ToolContext, ToolService
 from .events import (
     PartDelta,
     PartEnd,
@@ -377,6 +377,7 @@ class RunContext:
         record = _invoke_tool_call(
             run_id=self._input.run.run_id,
             tools=self._input.tools(),
+            services=self._input.tool_services,
             snapshot=self._snapshot,
             call=call,
         )
@@ -700,6 +701,7 @@ def _invoke_tool_call(
     *,
     run_id: str,
     tools: Mapping[str, AgentTool],
+    services: tuple[ToolService, ...],
     snapshot: RunSnapshot,
     call: ToolCall,
 ) -> ToolCallResult:
@@ -716,6 +718,7 @@ def _invoke_tool_call(
                 snapshot=snapshot,
                 tool_name=name,
                 tools=tools,
+                services=services,
             ),
         )
         error = None
@@ -738,6 +741,7 @@ def _tool_context(
     snapshot: RunSnapshot,
     tool_name: str,
     tools: Mapping[str, AgentTool],
+    services: tuple[ToolService, ...],
 ) -> ToolContext:
     if not snapshot.agent.root:
         raise ToolangError("run snapshot has no agent root")
@@ -755,6 +759,7 @@ def _tool_context(
         home=home,
         room=home / ".runtime" / "tools" / plugin_name,
         wd=home,
+        services=services,
     )
 
 

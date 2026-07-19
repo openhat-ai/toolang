@@ -21,10 +21,9 @@ from fastapi.testclient import TestClient
 import pytest
 import frontmatter
 
-from toolang.agent import local as agents
+from toolang.up import process as agents
 from toolang.catalog import cap as caps
 from toolang.catalog.job import AuthoredJobs
-from toolang.work.scheduler import DEFAULT_INTERVAL_MS as DEFAULT_SCHEDULER_INTERVAL_MS
 from toolang.work.scheduler import Scheduler
 from toolang.work.authoring import assign_missing_authored_job_ids
 from toolang.work.state import AgentJobs, job_thread_id
@@ -86,8 +85,8 @@ from toolang.base.types.sandbox import (
 )
 from toolang.state.state import list_entries, materialize_visibility
 from toolang.state import state as cap_state
-from toolang.plugin.config import ChannelBinding
-from toolang.config.log_spec import PY_LOG_ENV_VAR
+from toolang.plugin.config import ChannelBinding, merge_named_configs
+from toolang.common.env_logger import PY_LOG_ENV_VAR
 from toolang.execution import executor as run_executor_module
 from toolang.execution.assembly import RunInput
 from toolang.execution.binding import _bind_run_request
@@ -99,11 +98,9 @@ from toolang.execution.setup import AgentSetup
 from toolang.api import _views as inspect
 from toolang.api import chat as chat_loop
 from toolang.api._streaming import ShutdownAwareStreamingResponse
-from toolang.agent.features import normalize_component_names
 from toolang.work import inbox as files
-from toolang.agent import channel_runtime as poll
-from toolang.agent import state_updates as watch
-from toolang.plugin.tools.loading import load_runtime_tools, runtime_tool_config
+from toolang.up import channels as poll
+from toolang.plugin.tools.loading import load_runtime_tools
 from toolang.work import files as file_requests
 from toolang.state.source import read_authored_source
 from toolang.state.cache import load_home_prepared, load_root_prepared
@@ -114,17 +111,12 @@ from toolang.state.state import (
 )
 from toolang.plugin.loops.basic import BasicLoop
 from toolang.plugin.models.loading import load_model_adapters, load_model_providers
-from toolang.agent import runtime as up_module
+from toolang.up import server as up_module
 from toolang.api.context import ApiContext
-from toolang.config.runtime import RuntimeConfig
-from toolang.agent.channel_runtime import start_delivery
-from toolang.agent.runtime import (
-    load_default_models,
-    up as run_experiments_up,
-)
+from toolang.up.channels import start_delivery
+from toolang.up.server import up as run_experiments_up
 from toolang.api.app import create_app
-from toolang.config.files import load_config_layers, load_named_config
-from toolang.plugin.models.config import parse_model_aliases
+from toolang.plugin.models.config import parse_default_models, parse_model_aliases
 from tests.support.execution import (
     emit_event,
     project_command,
@@ -228,7 +220,6 @@ def test_executor_stop_projects_command_and_canceled_run(tmp_path: Path) -> None
     context = _build_context(
         toolang_root=tmp_path,
         agent_name="alice",
-        enabled_features=("chat",),
     )
     project_run_start(
         context.store,
@@ -402,10 +393,7 @@ def test_collect_file_submissions_scans_existing_inbox_files_once(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("file",),
     )
-    context.config.set("components.trigger.file.inboxes", (inbox,))
-    context.config.set("components.trigger.file.stable_ms", 0.0)
     store = file_requests.open_file_request_store(toolang_root, "alice")
     try:
         first = files.collect_file_submissions(
@@ -430,13 +418,12 @@ def test_collect_file_submissions_scans_existing_inbox_files_once(
     assert rows[0].status == "running"
 
 
-def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
+def test_create_app_mounts_complete_api(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -452,21 +439,17 @@ def test_create_app_mounts_only_enabled_routes(tmp_path: Path) -> None:
             assert thread_id.startswith("web_")
             assert body["message"]["parts"][0]["text"] == "say hello"
             assert body["assistant"]["parts"][0]["text"] == "assistant:say hello"
-            assert (
-                client.put(
-                    "/api/v1/skills/reviewer/wired",
-                    json={"visibility": "private", "ref": "acme/reviewer"},
-                ).status_code
-                == 404
+            manage_response = client.put(
+                "/api/v1/skills/reviewer/wired",
+                json={"visibility": "private", "ref": "acme/reviewer"},
             )
+            assert manage_response.status_code == 400
 
             runs = client.get("/api/v1/runs").json()["items"]
             profile = client.get("/api/v1/profile").json()
             caps_response = client.get("/api/v1/caps").json()
             threads = client.get("/api/v1/threads").json()["items"]
-            snapshot = inspect.snapshot_context(
-                context, enabled_features=("chat", "inspect")
-            )
+            snapshot = inspect.snapshot_context(context)
             durable = cast(dict[str, object], snapshot["durable"])
             prepared = cast(dict[str, object], snapshot["prepared"])
             state = cast(dict[str, object], snapshot["state"])
@@ -553,7 +536,6 @@ def test_threads_api_reports_full_run_count_independent_of_recent_run_limit(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect",),
     )
     project_run_start(
         context.store,
@@ -618,7 +600,6 @@ def test_threads_api_reports_active_run(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect",),
     )
     project_run_start(
         context.store,
@@ -657,7 +638,6 @@ def test_run_events_api_returns_resource_scoped_events(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect",),
     )
     project_run_start(
         context.store,
@@ -713,7 +693,6 @@ def test_agent_events_include_thread_updates_for_run_lifecycle(tmp_path: Path) -
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect",),
     )
 
     _emit_trace(
@@ -766,7 +745,6 @@ def test_run_starting_trace_precedes_run_begin(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect",),
     )
 
     _emit_trace(
@@ -812,7 +790,6 @@ def test_steer_run_appends_run_steering_event(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect",),
     )
     project_run_start(
         context.store,
@@ -863,7 +840,6 @@ def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect",),
     )
     project_run_start(
         context.store,
@@ -924,7 +900,6 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect",),
     )
     project_run_start(
         context.store,
@@ -1022,7 +997,6 @@ def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect",),
     )
     _emit_trace(
         context,
@@ -1061,7 +1035,8 @@ def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
         model_aliases=context.executor.model_aliases,
         default_models=context.executor.default_models,
         model_environ=context.executor.model_environ,
-        config=context.config,
+        default_model_selector=context.executor.default_model_selector,
+        allowed_model_selectors=context.executor.allowed_model_selectors,
     )
     emit = executor._handler(None)
     emit(
@@ -1141,7 +1116,6 @@ def test_agent_events_include_cap_updates(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("manage", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -1169,7 +1143,6 @@ def test_chat_api_allocates_web_threads_by_default_and_rejects_unknown_thread_id
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -1209,7 +1182,6 @@ def test_chat_api_allocates_term_threads_for_term_client(tmp_path: Path) -> None
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -1232,7 +1204,6 @@ def test_chat_api_creates_empty_terminal_threads(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -1258,7 +1229,6 @@ def test_chat_rewind_supersedes_previous_run_in_thread_projection(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -1305,7 +1275,6 @@ def test_chat_rewind_cancels_running_run_before_superseding(tmp_path: Path) -> N
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat", "inspect"),
     )
     project_run_start(
         context.store,
@@ -1350,7 +1319,6 @@ def test_chat_fork_copies_prior_runs_into_new_thread(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -1408,7 +1376,6 @@ def test_chat_fork_can_include_anchor_run_in_new_thread(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -1466,7 +1433,6 @@ def test_chat_api_records_peer_for_new_thread_and_rejects_mismatch(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="bob",
-        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -1519,11 +1485,11 @@ def test_chat_models_lists_effective_selectors_for_term_agic(tmp_path: Path) -> 
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat", "inspect"),
     )
     context.executor.model_environ = {"OPENAI_API_KEY": "secret"}
-    context.config.set(
-        "models.allowed_selectors", ("openai/o3[openai]", "openai/gpt-5[openai]")
+    context.executor.allowed_model_selectors = (
+        "openai/o3[openai]",
+        "openai/gpt-5[openai]",
     )
     app = _create_test_app(context)
 
@@ -1565,7 +1531,6 @@ def test_chat_models_returns_all_discoverable_when_unrestricted(tmp_path: Path) 
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat", "inspect"),
     )
     context.executor.model_environ = {"OPENAI_API_KEY": "secret"}
     app = _create_test_app(context)
@@ -1608,7 +1573,6 @@ def test_chat_executable_endpoints_list_agics_and_flows(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -1648,7 +1612,6 @@ def test_chat_request_passes_selected_agic_and_flow_to_executor(
         context = _build_context(
             toolang_root=toolang_root,
             agent_name="alice",
-            enabled_features=("chat", "inspect"),
         )
         captured: list[RunRequest] = []
 
@@ -1701,7 +1664,6 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect",),
     )
     app = _create_test_app(context)
     store = context.store
@@ -1815,7 +1777,6 @@ def test_create_app_allows_webui_cors_origin(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect",),
     )
     app = _create_test_app(context)
 
@@ -1835,7 +1796,6 @@ def test_chat_returns_failed_run_as_assistant_message(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -1887,7 +1847,6 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect",),
     )
     project_run_start(
         context.store,
@@ -1979,7 +1938,6 @@ def test_chat_projects_tool_parts_from_tool_call_steps(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -2002,7 +1960,6 @@ def test_chat_stream_emits_tool_and_text_chunks(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -2045,7 +2002,6 @@ def test_chat_stream_tui_client_emits_trace_events(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -2073,6 +2029,40 @@ def test_chat_stream_tui_client_emits_trace_events(tmp_path: Path) -> None:
     assert "data: [DONE]" in stream_text
 
 
+def test_run_stream_executes_script_with_latest_agent_state(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
+    context = _build_context(
+        toolang_root=toolang_root,
+        agent_name="alice",
+    )
+    app = _create_test_app(context)
+
+    with _patched_executor_execution_with_tools(output_text="assistant:done"):
+        with TestClient(app) as client:
+            with client.stream(
+                "POST",
+                "/api/v1/runs/stream",
+                json={
+                    "executable_kind": "agic",
+                    "input": "hello",
+                    "models": ["openai"],
+                    "metadata": {"invoke_params": {"count": 2}},
+                },
+            ) as response:
+                assert response.status_code == 200
+                stream_text = "".join(
+                    chunk.decode("utf-8") for chunk in response.iter_raw()
+                )
+
+            runs = client.get("/api/v1/runs").json()["items"]
+
+    assert '"type":"run_starting"' in stream_text
+    assert '"type":"run_end"' in stream_text
+    assert "data: [DONE]" in stream_text
+    assert runs[0]["origin"] == "script"
+
+
 def test_chat_stream_emits_before_run_completion(tmp_path: Path) -> None:
     async def run_test() -> None:
         toolang_root = tmp_path / "toolang"
@@ -2080,7 +2070,6 @@ def test_chat_stream_emits_before_run_completion(tmp_path: Path) -> None:
         context = _build_context(
             toolang_root=toolang_root,
             agent_name="alice",
-            enabled_features=("chat", "inspect"),
         )
 
         release = threading.Event()
@@ -2088,9 +2077,7 @@ def test_chat_stream_emits_before_run_completion(tmp_path: Path) -> None:
         timer.start()
         try:
             with _patched_executor_streaming_text(release):
-                async with _running_context(
-                    context, enabled_features=("chat", "inspect")
-                ):
+                async with _running_context(context):
                     stream = chat_loop._stream_chat_run(
                         context,
                         chat_loop.ChatRequest(
@@ -2143,7 +2130,6 @@ flow research(_: Text):
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
     bound = bind_run_request(
         context,
@@ -2174,7 +2160,6 @@ flow research(_: Text):
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -2214,9 +2199,8 @@ agic search(_: Part[]):
         context = _build_context(
             toolang_root=toolang_root,
             agent_name="alice",
-            enabled_features=("chat", "inspect"),
         )
-        async with _running_context(context, enabled_features=("chat", "inspect")):
+        async with _running_context(context):
             stream = chat_loop._stream_chat_run(
                 context,
                 chat_loop.ChatRequest(
@@ -2288,7 +2272,6 @@ def test_chat_stream_allows_tool_only_turns(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -2318,7 +2301,6 @@ def test_create_app_is_pure_route_assembly(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat", "inspect"),
     )
 
     app = create_app(context)
@@ -2328,13 +2310,12 @@ def test_create_app_is_pure_route_assembly(tmp_path: Path) -> None:
     context.store.close()
 
 
-def test_hook_routes_are_not_component_enabled(tmp_path: Path) -> None:
+def test_hook_routes_are_not_mounted_without_channel_hooks(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect",),
     )
     app = _create_test_app(context)
 
@@ -2389,7 +2370,6 @@ def test_poll_loop_queues_channel_deliveries_and_delivers_reply(tmp_path: Path) 
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("poll", "chat", "inspect"),
         channel_bindings={
             "telegram": ChannelBinding(
                 name="telegram",
@@ -2405,8 +2385,8 @@ def test_poll_loop_queues_channel_deliveries_and_delivers_reply(tmp_path: Path) 
         async def run_test() -> None:
             async with _running_context(
                 context,
-                enabled_features=("poll", "chat", "inspect"),
                 loop_intervals_ms={"poll": 10.0},
+                poll_channels=True,
             ):
                 await _wait_for_completed_count(context, 1)
                 run = context.store.list_runs(limit=1)[0]
@@ -2465,7 +2445,6 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("poll", "chat"),
         channel_bindings={
             "telegram": ChannelBinding(
                 name="telegram",
@@ -2628,7 +2607,6 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("poll", "chat"),
         channel_bindings={
             "telegram": ChannelBinding(
                 name="telegram",
@@ -2735,7 +2713,6 @@ def test_control_routes_update_durable_only_without_prepare_reload(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("manage", "inspect"),
     )
     initial_state_fingerprint = context.get_agent_state().fingerprint
     initial_prepared_fingerprint = initial_state_fingerprint
@@ -2752,9 +2729,7 @@ def test_control_routes_update_durable_only_without_prepare_reload(
         assert add_response.json()["item"]["form"] == "wired"
         assert add_response.json()["item"]["scope"] == "home"
 
-        snapshot = inspect.snapshot_context(
-            context, enabled_features=("manage", "inspect")
-        )
+        snapshot = inspect.snapshot_context(context)
         durable = cast(dict[str, object], snapshot["durable"])
         prepared = cast(dict[str, object], snapshot["prepared"])
         state = cast(dict[str, object], snapshot["state"])
@@ -2772,9 +2747,7 @@ def test_control_routes_update_durable_only_without_prepare_reload(
         assert remove_response.status_code == 200
         assert remove_response.json() == {"ok": True}
 
-        snapshot = inspect.snapshot_context(
-            context, enabled_features=("manage", "inspect")
-        )
+        snapshot = inspect.snapshot_context(context)
         durable = cast(dict[str, object], snapshot["durable"])
         definitions = cast(dict[str, object], durable["definitions"])
         assert definitions["private_entries"] == []
@@ -2802,7 +2775,6 @@ def test_cap_template_api_lists_and_reads_templates(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect",),
     )
     app = _create_test_app(context)
 
@@ -2826,7 +2798,7 @@ def test_cap_template_api_lists_and_reads_templates(tmp_path: Path) -> None:
         assert "# env: API_TOKEN, ANOTHER_ENV_VAR" in item["content"]
 
 
-def test_background_features_start_runs(tmp_path: Path) -> None:
+def test_agent_startup_background_loops_start_runs(tmp_path: Path) -> None:
     async def run_test() -> None:
         toolang_root = tmp_path / "toolang"
         _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
@@ -2837,12 +2809,13 @@ def test_background_features_start_runs(tmp_path: Path) -> None:
         context = _build_context(
             toolang_root=toolang_root,
             agent_name="alice",
-            enabled_features=("pulse",),
         )
 
         with _patched_executor_execution():
             async with _running_context(
-                context, enabled_features=("pulse",), loop_intervals_ms={"pulse": 10.0}
+                context,
+                loop_intervals_ms={"pulse": 10.0},
+                schedule_jobs=True,
             ):
                 for _ in range(50):
                     completed = [
@@ -2878,9 +2851,7 @@ def test_job_store_claims_due_chores_and_tasks(tmp_path: Path) -> None:
         toolang_root / "agents" / "alice" / "tasks" / "review.md",
         "---\ntitle: Review\n---\nReview synced remote task.\n",
     )
-    context = _build_context(
-        toolang_root=toolang_root, agent_name="alice", enabled_features=()
-    )
+    context = _build_context(toolang_root=toolang_root, agent_name="alice")
     definitions = AgentJobs.load(
         toolang_root, "alice", context.get_agent_state().program
     )
@@ -2908,7 +2879,6 @@ def test_bind_run_request_allocates_normalized_local_ids(tmp_path: Path) -> None
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
 
     bound = bind_run_request(
@@ -2929,7 +2899,6 @@ def test_bind_run_request_uses_explicit_thread_kind_for_new_thread(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
 
     bound = bind_run_request(
@@ -2948,7 +2917,7 @@ def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
-        "toolang.agent.runtime._pick_runtime_port",
+        "toolang.up.server._pick_runtime_port",
         lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
     )
 
@@ -2971,7 +2940,7 @@ def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
         captured["log_config"] = log_config
         captured["shutdown_signal"] = shutdown_signal
 
-    monkeypatch.setattr("toolang.agent.runtime._run_uvicorn_app", fake_run_uvicorn_app)
+    monkeypatch.setattr("toolang.up.server._run_uvicorn_app", fake_run_uvicorn_app)
     monkeypatch.setattr(
         cap_state,
         "_fetch_github_directory",
@@ -2982,8 +2951,7 @@ def test_up_picks_free_port_when_unspecified(tmp_path: Path, monkeypatch) -> Non
         toolang_root=toolang_root,
         agent_name="alice",
         host="0.0.0.0",
-        component_names=("inspect",),
-        environ={},
+        environ={"OPENAI_API_KEY": "secret"},
     )
 
     assert result == 0
@@ -3024,9 +2992,9 @@ def test_up_logs_runtime_urls_after_start_and_stop(
         if on_stopped is not None:
             on_stopped()
 
-    monkeypatch.setattr("toolang.agent.runtime._run_uvicorn_app", fake_run_uvicorn_app)
+    monkeypatch.setattr("toolang.up.server._run_uvicorn_app", fake_run_uvicorn_app)
     monkeypatch.setattr(
-        "toolang.agent.runtime.configure_logging", lambda **_kwargs: None
+        "toolang.up.server.configure_logging", lambda **_kwargs: None
     )
     caplog.set_level(logging.INFO, logger="toolang.runtime")
 
@@ -3035,8 +3003,7 @@ def test_up_logs_runtime_urls_after_start_and_stop(
         agent_name="alice",
         host="127.0.0.1",
         port=8765,
-        feature_names=("inspect",),
-        environ={},
+        environ={"OPENAI_API_KEY": "secret"},
     )
 
     assert result == 0
@@ -3048,7 +3015,7 @@ def test_up_logs_runtime_urls_after_start_and_stop(
     assert len(messages) == 4
     assert (
         messages[0]
-        == f"Agent starting root={toolang_root} trigger=none runner=none router=inspect"
+        == f"Agent starting root={toolang_root}"
     )
     assert messages[1] == "Agent started webui=https://agents.example.test/8765"
     assert messages[2] == "Agent stopping"
@@ -3059,7 +3026,7 @@ def test_up_logs_runtime_urls_after_start_and_stop(
         if record.name == "toolang.runtime"
     ]
     assert color_messages[0] == (
-        "Agent starting root=\x1b[1m%s\x1b[0m trigger=\x1b[1m%s\x1b[0m runner=\x1b[1m%s\x1b[0m router=\x1b[1m%s\x1b[0m"
+        "Agent starting root=\x1b[1m%s\x1b[0m"
     )
     assert color_messages[1] == "Agent started webui=\x1b[1m%s\x1b[0m"
 
@@ -3080,8 +3047,8 @@ def test_local_runtime_configures_logging_before_state_loaded(
         captured["spec"] = spec
         captured["environ"] = environ
 
-    def fake_log_state_loaded(executor, config, state) -> None:
-        del executor, config, state
+    def fake_log_state_loaded(executor, state) -> None:
+        del executor, state
         order.append("state")
 
     def fake_run_uvicorn_app(*args, **kwargs) -> None:
@@ -3098,8 +3065,10 @@ def test_local_runtime_configures_logging_before_state_loaded(
         host="127.0.0.1",
         endpoint_host="localhost",
         port=8765,
-        enabled_components=("router.inspect",),
-        environ={PY_LOG_ENV_VAR: "toolang.state=info"},
+        environ={
+            PY_LOG_ENV_VAR: "toolang.state=info",
+            "OPENAI_API_KEY": "secret",
+        },
         sandbox_child=False,
         model_selectors=(),
         tool_selectors=None,
@@ -3118,13 +3087,10 @@ def test_state_loaded_log_counts_selectable_models(tmp_path: Path, caplog) -> No
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
 
     caplog.set_level(logging.INFO, logger="toolang.state")
-    up_module._log_state_loaded(
-        context.executor, context.config, context.get_agent_state()
-    )
+    up_module._log_state_loaded(context.executor, context.get_agent_state())
 
     messages = [
         record.getMessage()
@@ -3134,16 +3100,16 @@ def test_state_loaded_log_counts_selectable_models(tmp_path: Path, caplog) -> No
     assert messages == [
         (
             f"Agent loaded state={context.get_agent_state().fingerprint[:12]} "
-            f"models={up_module._model_count(context.executor, context.config)} "
+            f"models={up_module._model_count(context.executor)} "
             f"tools={len(context.executor.setup.tools)} "
             "psyches=0 skills=0 services=0"
         )
     ]
-    assert up_module._model_count(context.executor, context.config) > 0
-    unrestricted_count = up_module._model_count(context.executor, context.config)
-    context.config.set("models.allowed_selectors", ("openai/gpt-5[openai]",))
-    assert up_module._model_count(context.executor, context.config) == 1
-    assert up_module._model_count(context.executor, context.config) < unrestricted_count
+    assert up_module._model_count(context.executor) > 0
+    unrestricted_count = up_module._model_count(context.executor)
+    context.executor.allowed_model_selectors = ("openai/gpt-5[openai]",)
+    assert up_module._model_count(context.executor) == 1
+    assert up_module._model_count(context.executor) < unrestricted_count
 
 
 def test_assemble_execution_rejects_unmatched_tool_selector(tmp_path: Path) -> None:
@@ -3156,7 +3122,6 @@ def test_assemble_execution_rejects_unmatched_tool_selector(tmp_path: Path) -> N
         up_module.assemble_execution(
             toolang_root=toolang_root,
             agent_name="alice",
-            enabled_components=("runner.chat",),
             environ={"OPENAI_API_KEY": "secret"},
             tool_selectors=("missing/none",),
         )
@@ -3170,7 +3135,6 @@ def test_assemble_execution_rejects_unmatched_cap_selector(tmp_path: Path) -> No
         up_module.assemble_execution(
             toolang_root=toolang_root,
             agent_name="alice",
-            enabled_components=("runner.chat",),
             environ={"OPENAI_API_KEY": "secret"},
             cap_selectors=("skill/missing",),
         )
@@ -3196,10 +3160,9 @@ def test_assemble_execution_applies_tool_and_cap_selectors(tmp_path: Path) -> No
         text="---\ndescription: Extra\n---\n# Extra\n",
     )
 
-    executor, watcher, _ = up_module.assemble_execution(
+    executor, watcher = up_module.assemble_execution(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_components=("runner.chat",),
         environ={"OPENAI_API_KEY": "secret"},
         tool_selectors=("shell/*",),
         cap_selectors=("skill/local-reviewer",),
@@ -3222,15 +3185,13 @@ def test_watch_reload_preserves_tool_and_cap_selectors(tmp_path: Path) -> None:
         name="local-reviewer",
         text="---\ndescription: Review local changes\n---\n# Local Reviewer\n",
     )
-    executor, watcher, config = up_module.assemble_execution(
+    executor, watcher = up_module.assemble_execution(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_components=("trigger.watch", "runner.chat"),
         environ={"OPENAI_API_KEY": "secret"},
         tool_selectors=("shell/*",),
         cap_selectors=("skill/local-reviewer",),
     )
-    config.set("components.trigger.watch.debounce_ms", 1)
     binding = _bind_run_request(
         RunRequest(group="chat", origin="chat", input="hello"),
         id_state_path=executor.id_state_path,
@@ -3252,17 +3213,8 @@ def test_watch_reload_preserves_tool_and_cap_selectors(tmp_path: Path) -> None:
     expected_fingerprint = refreshed_state.fingerprint
     assert expected_fingerprint != before
 
-    watch._apply_state(
-        root=toolang_root,
-        name="alice",
-        previous=watcher.current(),
-        state=refreshed_state,
-        executor=executor,
-        config=config,
-    )
-
     assert watcher.current().fingerprint == expected_fingerprint
-    assert executor.setup is not accepted_setup
+    assert executor.setup is accepted_setup
     assert binding.setup is accepted_setup
     assert tuple(binding.setup.tools) == ("shell__execute",)
     assert tuple(executor.setup.tools) == ("shell__execute",)
@@ -3272,7 +3224,7 @@ def test_watch_reload_preserves_tool_and_cap_selectors(tmp_path: Path) -> None:
 
 
 def test_trigger_logger_names_are_flat() -> None:
-    assert watch.logger.name == "toolang.watch"
+    assert state_watcher.logger.name == "toolang.watch"
     assert state_prepare.logger.name == "toolang.prepare"
     assert poll.logger.name == "toolang.poll"
 
@@ -3292,7 +3244,7 @@ def test_up_reuses_previous_agent_port_when_unspecified(
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
-        "toolang.agent.runtime._pick_runtime_port",
+        "toolang.up.server._pick_runtime_port",
         lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
     )
 
@@ -3315,14 +3267,13 @@ def test_up_reuses_previous_agent_port_when_unspecified(
         captured["log_config"] = log_config
         captured["shutdown_signal"] = shutdown_signal
 
-    monkeypatch.setattr("toolang.agent.runtime._run_uvicorn_app", fake_run_uvicorn_app)
+    monkeypatch.setattr("toolang.up.server._run_uvicorn_app", fake_run_uvicorn_app)
 
     result = run_experiments_up(
         toolang_root=toolang_root,
         agent_name="alice",
         host="127.0.0.1",
-        feature_names=("inspect",),
-        environ={},
+        environ={"OPENAI_API_KEY": "secret"},
     )
 
     assert result == 0
@@ -3350,7 +3301,7 @@ def test_up_falls_back_when_previous_agent_port_is_unavailable(
         )
 
         monkeypatch.setattr(
-            "toolang.agent.runtime._pick_runtime_port",
+            "toolang.up.server._pick_runtime_port",
             lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
         )
 
@@ -3374,15 +3325,14 @@ def test_up_falls_back_when_previous_agent_port_is_unavailable(
             captured["shutdown_signal"] = shutdown_signal
 
         monkeypatch.setattr(
-            "toolang.agent.runtime._run_uvicorn_app", fake_run_uvicorn_app
+            "toolang.up.server._run_uvicorn_app", fake_run_uvicorn_app
         )
 
         result = run_experiments_up(
             toolang_root=toolang_root,
             agent_name="alice",
             host="127.0.0.1",
-            feature_names=("inspect",),
-            environ={},
+            environ={"OPENAI_API_KEY": "secret"},
         )
 
     assert result == 0
@@ -3412,16 +3362,16 @@ def test_up_falls_back_when_stopped_agent_port_is_unavailable(
         return False
 
     monkeypatch.setattr(
-        "toolang.agent.runtime._port_is_available", fake_port_is_available
+        "toolang.up.server._port_is_available", fake_port_is_available
     )
     monkeypatch.setattr(
-        "toolang.agent.runtime._wait_for_port_available",
+        "toolang.up.server._wait_for_port_available",
         lambda *_args, **_kwargs: pytest.fail(
             "stopped runtime ports should not be awaited"
         ),
     )
     monkeypatch.setattr(
-        "toolang.agent.runtime._pick_runtime_port",
+        "toolang.up.server._pick_runtime_port",
         lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
     )
 
@@ -3442,14 +3392,13 @@ def test_up_falls_back_when_stopped_agent_port_is_unavailable(
         captured["port"] = port
         captured["shutdown_signal"] = shutdown_signal
 
-    monkeypatch.setattr("toolang.agent.runtime._run_uvicorn_app", fake_run_uvicorn_app)
+    monkeypatch.setattr("toolang.up.server._run_uvicorn_app", fake_run_uvicorn_app)
 
     result = run_experiments_up(
         toolang_root=toolang_root,
         agent_name="alice",
         host="127.0.0.1",
-        feature_names=("inspect",),
-        environ={},
+        environ={"OPENAI_API_KEY": "secret"},
     )
 
     assert result == 0
@@ -3473,16 +3422,16 @@ def test_resolve_runtime_port_does_not_wait_for_stopped_preferred_port(
     agents.stop_runtime_state(toolang_root, "alice")
 
     monkeypatch.setattr(
-        "toolang.agent.runtime._port_is_available", lambda host, port: False
+        "toolang.up.server._port_is_available", lambda host, port: False
     )
     monkeypatch.setattr(
-        "toolang.agent.runtime._wait_for_port_available",
+        "toolang.up.server._wait_for_port_available",
         lambda *_args, **_kwargs: pytest.fail(
             "stopped runtime ports should not be awaited"
         ),
     )
     monkeypatch.setattr(
-        "toolang.agent.runtime._pick_runtime_port",
+        "toolang.up.server._pick_runtime_port",
         lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
     )
 
@@ -3503,13 +3452,13 @@ def test_resolve_runtime_port_uses_temporary_picker_for_visiting_agents(
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
 
     monkeypatch.setattr(
-        "toolang.agent.runtime._pick_runtime_port",
+        "toolang.up.server._pick_runtime_port",
         lambda *_args, **_kwargs: pytest.fail(
             "visiting agents should not use the resident port range"
         ),
     )
     monkeypatch.setattr(
-        "toolang.agent.runtime._pick_temporary_runtime_port", lambda host: 45678
+        "toolang.up.server._pick_temporary_runtime_port", lambda host: 45678
     )
 
     resolved = up_module.resolve_runtime_port(
@@ -3537,10 +3486,10 @@ def test_resolve_runtime_port_reuses_visiting_agent_previous_port(
         status="stopped",
     )
     monkeypatch.setattr(
-        "toolang.agent.runtime._port_is_available", lambda host, port: port == 45679
+        "toolang.up.server._port_is_available", lambda host, port: port == 45679
     )
     monkeypatch.setattr(
-        "toolang.agent.runtime._pick_temporary_runtime_port",
+        "toolang.up.server._pick_temporary_runtime_port",
         lambda *_args: pytest.fail(
             "available preferred visiting port should be reused"
         ),
@@ -3587,7 +3536,7 @@ def test_pick_runtime_port_uses_first_available_auto_port(
         return port == 7003
 
     monkeypatch.setattr(
-        "toolang.agent.runtime._port_is_available", fake_port_is_available
+        "toolang.up.server._port_is_available", fake_port_is_available
     )
 
     resolved = up_module._pick_runtime_port(
@@ -3628,15 +3577,14 @@ def test_up_uses_cors_origins_from_root_config(tmp_path: Path, monkeypatch) -> N
         captured["log_config"] = log_config
         captured["shutdown_signal"] = shutdown_signal
 
-    monkeypatch.setattr("toolang.agent.runtime._run_uvicorn_app", fake_run_uvicorn_app)
+    monkeypatch.setattr("toolang.up.server._run_uvicorn_app", fake_run_uvicorn_app)
 
     result = run_experiments_up(
         toolang_root=toolang_root,
         agent_name="alice",
         host="127.0.0.1",
         port=8765,
-        feature_names=("inspect",),
-        environ={},
+        environ={"OPENAI_API_KEY": "secret"},
     )
 
     assert result == 0
@@ -3700,14 +3648,14 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(
         )
 
     monkeypatch.setattr(
-        "toolang.agent.runtime.create_sandbox_plugin",
+        "toolang.up.server.create_sandbox_plugin",
         lambda name, config=None: FakeSandbox(),
     )
     monkeypatch.setattr(
-        "toolang.agent.runtime._wait_for_sandbox_ready",
+        "toolang.up.server._wait_for_sandbox_ready",
         lambda **kwargs: captured.setdefault("ready", kwargs),
     )
-    monkeypatch.setattr("toolang.agent.runtime._run_uvicorn_app", fail_run_uvicorn_app)
+    monkeypatch.setattr("toolang.up.server._run_uvicorn_app", fail_run_uvicorn_app)
 
     result = run_experiments_up(
         toolang_root=toolang_root,
@@ -3715,7 +3663,6 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(
         host="127.0.0.1",
         port=8765,
         sandbox="docker:python:3.13-slim",
-        feature_names=("inspect",),
         environ={"OPENAI_API_KEY": "secret"},
     )
 
@@ -3758,11 +3705,7 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(
     assert "--sandbox" in request.run_command
     assert request.run_command[request.run_command.index("--sandbox") + 1] == "none"
     assert "--sandbox-child" in request.run_command
-    assert "--enable" in request.run_command
-    assert (
-        request.run_command[request.run_command.index("--enable") + 1]
-        == "router.inspect"
-    )
+    assert "--enable" not in request.run_command
     runtime_state = json.loads(
         agents.agent_runtime_state_path(toolang_root, "alice").read_text(
             encoding="utf-8"
@@ -3775,6 +3718,38 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(
     ready = cast(dict[str, object], captured["ready"])
     assert ready["host"] == "127.0.0.1"
     assert ready["port"] == 8765
+
+
+def test_managed_sandbox_wait_converts_sigterm_to_controlled_exit(monkeypatch) -> None:
+    captured_handlers: dict[int, object] = {}
+    restored_handlers: list[tuple[int, object]] = []
+
+    class FakeSandbox:
+        def alive(self, state: SandboxState) -> bool:
+            del state
+            return True
+
+    def fake_signal(signum: int, handler: object) -> None:
+        if signum in captured_handlers:
+            restored_handlers.append((signum, handler))
+        else:
+            captured_handlers[signum] = handler
+
+    def fake_sleep(_seconds: float) -> None:
+        handler = cast(Any, captured_handlers[signal.SIGTERM])
+        handler(signal.SIGTERM, None)
+
+    monkeypatch.setattr(up_module.signal, "getsignal", lambda _signum: signal.SIG_DFL)
+    monkeypatch.setattr(up_module.signal, "signal", fake_signal)
+    monkeypatch.setattr(up_module.time, "sleep", fake_sleep)
+
+    result = up_module._wait_for_managed_sandbox(
+        cast(AgentSandbox, FakeSandbox()),
+        SandboxState(selector=SandboxSelector(driver="docker")),
+    )
+
+    assert result == 128 + signal.SIGTERM
+    assert (signal.SIGTERM, signal.SIG_DFL) in restored_handlers
 
 
 def test_up_defaults_docker_target_when_selector_omits_one(
@@ -3825,11 +3800,11 @@ def test_up_defaults_docker_target_when_selector_omits_one(
             del state, force
 
     monkeypatch.setattr(
-        "toolang.agent.runtime.create_sandbox_plugin",
+        "toolang.up.server.create_sandbox_plugin",
         lambda name, config=None: FakeSandbox(),
     )
     monkeypatch.setattr(
-        "toolang.agent.runtime._wait_for_sandbox_ready", lambda **kwargs: None
+        "toolang.up.server._wait_for_sandbox_ready", lambda **kwargs: None
     )
 
     result = run_experiments_up(
@@ -3838,8 +3813,7 @@ def test_up_defaults_docker_target_when_selector_omits_one(
         host="127.0.0.1",
         port=8765,
         sandbox="docker",
-        feature_names=("inspect",),
-        environ={},
+        environ={"OPENAI_API_KEY": "secret"},
     )
 
     assert result == 0
@@ -3854,6 +3828,7 @@ def test_up_marks_managed_sandbox_failed_when_ready_check_fails(
 ) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
+    stopped: dict[str, object] = {}
 
     class FakeSandbox:
         name = "docker"
@@ -3887,14 +3862,15 @@ def test_up_marks_managed_sandbox_failed_when_ready_check_fails(
             return False
 
         def stop(self, state: SandboxState, *, force: bool = False) -> None:
-            del state, force
+            stopped["state"] = state
+            stopped["force"] = force
 
     monkeypatch.setattr(
-        "toolang.agent.runtime.create_sandbox_plugin",
+        "toolang.up.server.create_sandbox_plugin",
         lambda name, config=None: FakeSandbox(),
     )
     monkeypatch.setattr(
-        "toolang.agent.runtime._wait_for_sandbox_ready",
+        "toolang.up.server._wait_for_sandbox_ready",
         lambda **kwargs: (_ for _ in ()).throw(ValueError("sandbox failed")),
     )
 
@@ -3905,8 +3881,7 @@ def test_up_marks_managed_sandbox_failed_when_ready_check_fails(
             host="127.0.0.1",
             port=8765,
             sandbox="docker:python:3.13-slim",
-            feature_names=("inspect",),
-            environ={},
+            environ={"OPENAI_API_KEY": "secret"},
         )
     except ValueError as exc:
         assert str(exc) == "sandbox failed"
@@ -3920,6 +3895,8 @@ def test_up_marks_managed_sandbox_failed_when_ready_check_fails(
     )
     assert runtime_state["status"] == "failed"
     assert runtime_state["message"] == "sandbox failed"
+    assert cast(SandboxState, stopped["state"]).runtime_id == "sandbox-alice"
+    assert stopped["force"] is True
 
 
 def test_up_marks_managed_sandbox_failed_when_prepare_fails(
@@ -3951,7 +3928,7 @@ def test_up_marks_managed_sandbox_failed_when_prepare_fails(
             del state, force
 
     monkeypatch.setattr(
-        "toolang.agent.runtime.create_sandbox_plugin",
+        "toolang.up.server.create_sandbox_plugin",
         lambda name, config=None: FakeSandbox(),
     )
 
@@ -3962,8 +3939,7 @@ def test_up_marks_managed_sandbox_failed_when_prepare_fails(
             host="127.0.0.1",
             port=8765,
             sandbox="docker",
-            feature_names=("inspect",),
-            environ={},
+            environ={"OPENAI_API_KEY": "secret"},
         )
     except ValueError as exc:
         assert str(exc) == "prepare failed"
@@ -4095,7 +4071,7 @@ def test_agent_status_uses_matching_process_when_runtime_state_is_stale(
     )
 
     monkeypatch.setattr(
-        "toolang.agent.local._agent_runtime_process_pids", lambda *_args: (43210,)
+        "toolang.up.process._agent_runtime_process_pids", lambda *_args: (43210,)
     )
 
     status = agents.AgentProcess(toolang_root, "alice").status(
@@ -4110,7 +4086,7 @@ def test_agent_status_uses_matching_process_when_runtime_state_is_stale(
 
 
 def test_resolve_dev_artifact_picks_newest_wheel_recursively(tmp_path: Path) -> None:
-    from toolang.agent import runtime as up_module
+    from toolang.up import server as up_module
 
     dist = tmp_path / "dist"
     dist.mkdir(parents=True, exist_ok=True)
@@ -4143,7 +4119,7 @@ def test_stop_agent_terminates_local_pid_and_marks_state_stopped(
             raise OSError("dead")
         alive["running"] = False
 
-    monkeypatch.setattr("toolang.agent.local.os.kill", fake_kill)
+    monkeypatch.setattr("toolang.up.process.os.kill", fake_kill)
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -4176,9 +4152,9 @@ def test_stop_agent_marks_state_stopped_without_waiting_for_endpoint_release(
     )
     observed: dict[str, object] = {}
 
-    monkeypatch.setattr("toolang.agent.local._pid_alive", lambda pid: pid == 43210)
+    monkeypatch.setattr("toolang.up.process._pid_alive", lambda pid: pid == 43210)
     monkeypatch.setattr(
-        "toolang.agent.local._stop_pid",
+        "toolang.up.process._stop_pid",
         lambda pid, *, force: observed.setdefault("stopped_pid", pid) and True,
     )
 
@@ -4208,10 +4184,10 @@ def test_stop_agent_terminates_matching_process_when_runtime_state_is_stale(
     stopped_pids: list[int] = []
 
     monkeypatch.setattr(
-        "toolang.agent.local._agent_runtime_process_pids", lambda *_args: (43210,)
+        "toolang.up.process._agent_runtime_process_pids", lambda *_args: (43210,)
     )
     monkeypatch.setattr(
-        "toolang.agent.local._stop_pid",
+        "toolang.up.process._stop_pid",
         lambda pid, *, force: stopped_pids.append(pid) or True,
     )
 
@@ -4241,9 +4217,9 @@ def test_stop_agent_rejects_stubborn_process_without_marking_state_stopped(
     )
 
     monkeypatch.setattr(
-        "toolang.agent.local._agent_runtime_process_pids", lambda *_args: (43210,)
+        "toolang.up.process._agent_runtime_process_pids", lambda *_args: (43210,)
     )
-    monkeypatch.setattr("toolang.agent.local._stop_pid", lambda _pid, *, force: False)
+    monkeypatch.setattr("toolang.up.process._stop_pid", lambda _pid, *, force: False)
 
     with pytest.raises(ValueError, match="retry with --force"):
         agents.AgentProcess(toolang_root, "alice").stop()
@@ -4327,15 +4303,14 @@ def test_up_reads_web_config_without_validating_experiments_caps(
         captured["app"] = app
         captured["shutdown_signal"] = shutdown_signal
 
-    monkeypatch.setattr("toolang.agent.runtime._run_uvicorn_app", fake_run_uvicorn_app)
+    monkeypatch.setattr("toolang.up.server._run_uvicorn_app", fake_run_uvicorn_app)
 
     result = run_experiments_up(
         toolang_root=toolang_root,
         agent_name="alice",
         host="127.0.0.1",
         port=8765,
-        feature_names=("inspect",),
-        environ={},
+        environ={"OPENAI_API_KEY": "secret"},
     )
 
     assert result == 0
@@ -4350,6 +4325,40 @@ def test_up_reads_web_config_without_validating_experiments_caps(
     assert response.headers["access-control-allow-origin"] == "https://too.run"
 
 
+def test_up_always_watches_agent_state(tmp_path: Path, monkeypatch) -> None:
+    toolang_root = tmp_path / "toolang"
+    prompt_path = toolang_root / "agents" / "alice" / "prompts" / "rewrite.md"
+    _write_text(prompt_path, "---\ndescription: v1\n---\nPrompt v1\n")
+    captured: dict[str, object] = {}
+
+    def fake_run_uvicorn_app(app, **_kwargs) -> None:
+        captured["app"] = app
+
+    monkeypatch.setattr("toolang.up.server._run_uvicorn_app", fake_run_uvicorn_app)
+    monkeypatch.setattr(state_watcher, "DEFAULT_INTERVAL_MS", 10.0)
+    monkeypatch.setattr(up_module, "DEFAULT_WATCH_DEBOUNCE_MS", 10.0)
+
+    result = run_experiments_up(
+        toolang_root=toolang_root,
+        agent_name="alice",
+        port=8765,
+        environ={"OPENAI_API_KEY": "secret"},
+    )
+
+    assert result == 0
+    app = cast(FastAPI, captured["app"])
+    context = cast(ApiContext, app.state.context)
+    initial_fingerprint = context.get_agent_state().fingerprint
+    with TestClient(app):
+        _write_text(prompt_path, "---\ndescription: v2\n---\nPrompt v2\n")
+        for _ in range(200):
+            if context.get_agent_state().fingerprint != initial_fingerprint:
+                break
+            time.sleep(0.01)
+
+    assert context.get_agent_state().fingerprint != initial_fingerprint
+
+
 def test_prepare_reload_refreshes_prepared_and_agent_state(tmp_path: Path) -> None:
     async def run_test() -> None:
         toolang_root = tmp_path / "toolang"
@@ -4358,14 +4367,12 @@ def test_prepare_reload_refreshes_prepared_and_agent_state(tmp_path: Path) -> No
         context = _build_context(
             toolang_root=toolang_root,
             agent_name="alice",
-            enabled_features=("watch",),
         )
 
         initial_fingerprint = context.get_agent_state().fingerprint
         initial_program = context.get_agent_state().program
         async with _running_context(
             context,
-            enabled_features=("watch",),
             loop_intervals_ms={"watch": 10.0},
         ):
             _write_text(prompt_path, "---\ndescription: v2\n---\nPrompt v2\n")
@@ -4386,14 +4393,15 @@ def test_prepare_reload_refreshes_prepared_and_agent_state(tmp_path: Path) -> No
     asyncio.run(run_test())
 
 
-def test_prepare_reload_refreshes_service_use_visible_services(tmp_path: Path) -> None:
+def test_prepare_reload_refreshes_service_state_without_mutating_setup(
+    tmp_path: Path,
+) -> None:
     async def run_test() -> None:
         toolang_root = tmp_path / "toolang"
         _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
         context = _build_context(
             toolang_root=toolang_root,
             agent_name="alice",
-            enabled_features=("watch",),
         )
 
         initial_fingerprint = context.get_agent_state().fingerprint
@@ -4406,7 +4414,6 @@ def test_prepare_reload_refreshes_service_use_visible_services(tmp_path: Path) -
 
         async with _running_context(
             context,
-            enabled_features=("watch",),
             loop_intervals_ms={"watch": 10.0},
         ):
             _write_text(
@@ -4420,52 +4427,27 @@ def test_prepare_reload_refreshes_service_use_visible_services(tmp_path: Path) -
             refreshed = await _wait_for_fingerprint_change(context, initial_fingerprint)
             assert refreshed
 
+            assert any(
+                cap.kind == "service" and cap.name == "linear"
+                for cap in context.get_agent_state().caps
+            )
             service_schema = (
                 context.executor.setup.tools["service_use__bridge_start"]
                 .definition()
                 .parameters["properties"]["service"]
             )
-            assert service_schema["enum"] == ["linear"]
+            assert "enum" not in service_schema
+            bound = bind_run_request(
+                context,
+                RunRequest(group="chat", origin="chat", input="hello"),
+            )
+            bundle = RunInput.from_binding(context.executor, bound)
+            assert [service.name for service in bundle.tool_services] == ["linear"]
+            assert bundle.tool_services[0].meta["target"] == (
+                "https://mcp.linear.app/mcp"
+            )
 
     asyncio.run(run_test())
-
-
-def test_runtime_tool_plugin_config_maps_service_caps_to_service_use(
-    tmp_path: Path,
-) -> None:
-    toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
-    _write_text(
-        toolang_root / "agents" / "alice" / "services" / "linear.md",
-        "---\n"
-        "description: Linear MCP\n"
-        "transport: stdio\n"
-        "target: uvx mcp-remote https://mcp.linear.app/sse\n"
-        "env: LINEAR_API_KEY, API_KEY\n"
-        "---\n",
-    )
-    state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
-
-    config = runtime_tool_config(
-        plugin_config=load_named_config(
-            toolang_root,
-            "alice",
-            section="tools",
-            environ={},
-        ),
-        entries=state.caps,
-    )
-
-    assert config["service_use"]["visible_services"] == [
-        {
-            "name": "linear",
-            "description": "Linear MCP",
-            "transport": "stdio",
-            "target": "uvx mcp-remote https://mcp.linear.app/sse",
-            "command": ["uvx", "mcp-remote", "https://mcp.linear.app/sse"],
-            "env_vars": ["LINEAR_API_KEY", "API_KEY"],
-        }
-    ]
 
 
 def test_prepare_materializes_remote_entries_from_config(
@@ -4696,7 +4678,7 @@ def test_remote_skill_add_canonicalizes_raw_refs_heads_skill_file_url(
     assert home.caps[0].ref == expected_ref
 
 
-def test_state_watcher_refresh_records_remote_cap_updates(
+def test_state_watcher_refreshes_remote_cap_state(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
@@ -4728,18 +4710,10 @@ def test_state_watcher_refresh_records_remote_cap_updates(
         kind="skill",
         ref="acme/review",
     )
-    updates: list[tuple[str, dict[str, object]]] = []
-
-    class Store:
-        def append_update(self, *, kind, payload=None, created_at=None):
-            del created_at
-            updates.append((kind, dict(payload or {})))
-
     watcher = state_watcher.StateWatcher(toolang_root, "alice", state)
     next_state = watcher.refresh()
-    watch._append_entry_change_updates(cast(RunStore, Store()), state, next_state)
 
-    assert ("skill_changed", {"name": "review", "visibility": "private"}) in updates
+    assert any(cap.name == "review" for cap in next_state.caps)
     assert next_state.fingerprint != state.fingerprint
     assert next_state.program == state.program
 
@@ -4968,7 +4942,6 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect",),
     )
     app = _create_test_app(context)
     with TestClient(app) as client:
@@ -5120,13 +5093,11 @@ def test_runs_bind_latest_agent_state(tmp_path: Path) -> None:
         context = _build_context(
             toolang_root=toolang_root,
             agent_name="alice",
-            enabled_features=("chat", "watch"),
         )
 
         with _patched_executor_execution():
             async with _running_context(
                 context,
-                enabled_features=("chat", "watch"),
                 loop_intervals_ms={"watch": 10.0},
             ):
                 first_fingerprint = context.get_agent_state().fingerprint
@@ -5173,7 +5144,6 @@ def test_new_task_reloads_into_agent_state_and_tasks_endpoint(tmp_path: Path) ->
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect", "watch"),
     )
     app = _create_test_app(context)
 
@@ -5211,7 +5181,6 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect", "manage"),
     )
     app = _create_test_app(context)
 
@@ -5314,7 +5283,6 @@ def test_jobs_api_projects_active_run_tasks_as_running(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect", "manage"),
     )
     task = _jobs(toolang_root, "alice").list(kind="task")[0]
     project_run_start(
@@ -5343,7 +5311,6 @@ def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect", "manage"),
     )
     app = _create_test_app(context)
 
@@ -5445,12 +5412,8 @@ def test_new_task_reloads_and_pulse_runs_it(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("inspect", "watch", "pulse"),
     )
-    context.config.set("components.trigger.watch.interval_ms", 10.0)
-    context.config.set("components.trigger.watch.debounce_ms", 10.0)
-    context.config.set("components.trigger.pulse.interval_ms", 10.0)
-    app = _create_test_app(context)
+    app = _create_test_app(context, schedule_jobs=True)
     completed: list[RunRecord] = []
 
     with _patched_executor_execution():
@@ -5502,7 +5465,6 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("pulse",),
     )
     task_entry = _jobs(toolang_root, "alice").list(kind="task")[0]
     task = task_entry
@@ -5560,7 +5522,8 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
         .definition()
         .parameters["properties"]["service"]
     )
-    assert service_schema["enum"] == ["linear"]
+    assert "enum" not in service_schema
+    assert [service.name for service in bundle.tool_services] == ["linear"]
 
 
 def test_chore_run_includes_remote_task_sync_protocol_in_prompt_bundle(
@@ -5576,7 +5539,6 @@ def test_chore_run_includes_remote_task_sync_protocol_in_prompt_bundle(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("pulse",),
     )
     chore = _jobs(toolang_root, "alice").list(kind="chore")[0]
     definition = AgentJobs.load(
@@ -5623,7 +5585,6 @@ def test_pulse_marks_finished_task_job_done(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("pulse",),
     )
     store = open_job_store(toolang_root, "alice")
     definitions = AgentJobs.load(
@@ -5672,7 +5633,6 @@ def test_pulse_marks_failed_task_job_failed(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("pulse",),
     )
     store = open_job_store(toolang_root, "alice")
     definitions = AgentJobs.load(
@@ -5721,10 +5681,9 @@ def test_assemble_run_input_prefers_agic_model_over_activation_default(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
     context.executor.model_environ = {"OPENAI_API_KEY": "secret"}
-    context.config.set("models.default_selector", "openai/gpt-5[openai]")
+    context.executor.default_model_selector = "openai/gpt-5[openai]"
     bound = bind_run_request(
         context,
         RunRequest(group="chat", origin="chat", input="hello"),
@@ -5747,11 +5706,11 @@ def test_assemble_run_input_accepts_explicit_run_model_within_allowed_set(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
     context.executor.model_environ = {"OPENAI_API_KEY": "secret"}
-    context.config.set(
-        "models.allowed_selectors", ("openai/o3[openai]", "openai/gpt-5[openai]")
+    context.executor.allowed_model_selectors = (
+        "openai/o3[openai]",
+        "openai/gpt-5[openai]",
     )
     bound = bind_run_request(
         context,
@@ -5787,9 +5746,8 @@ def test_assemble_run_input_uses_activation_default_when_agic_omits_one(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
-    context.config.set("models.default_selector", "openai/gpt-5[openai]")
+    context.executor.default_model_selector = "openai/gpt-5[openai]"
     bound = bind_run_request(
         context,
         RunRequest(group="chat", origin="chat", input="hello"),
@@ -5810,7 +5768,6 @@ def test_script_run_thread_id_uses_script_prefix(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
     bound = bind_run_request(
         context,
@@ -5844,9 +5801,8 @@ def test_assemble_file_run_input_includes_authored_file_agic_message(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
-    context.config.set("models.default_selector", "openai/gpt-5[openai]")
+    context.executor.default_model_selector = "openai/gpt-5[openai]"
     bound = bind_run_request(
         context,
         RunRequest(
@@ -5881,7 +5837,6 @@ def test_child_run_input_uses_authored_agic_message_and_current_input(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
     root = bind_run_request(
         context,
@@ -5925,7 +5880,6 @@ def test_top_level_chat_agic_uses_its_authored_message(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
     project_run_start(
         context.store,
@@ -5965,10 +5919,9 @@ def test_assemble_run_input_hides_tools_when_activation_has_no_tools(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
         tool_selectors=(),
     )
-    context.config.set("models.default_selector", "openai/gpt-5[openai]")
+    context.executor.default_model_selector = "openai/gpt-5[openai]"
     invoke_bound = bind_run_request(
         context,
         RunRequest(
@@ -6012,10 +5965,9 @@ def test_assemble_run_input_uses_explicit_activation_tools_for_script_runs(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
         tool_selectors=("shell/*",),
     )
-    context.config.set("models.default_selector", "openai/gpt-5[openai]")
+    context.executor.default_model_selector = "openai/gpt-5[openai]"
     invoke_bound = bind_run_request(
         context,
         RunRequest(
@@ -6059,10 +6011,10 @@ def test_assemble_run_input_applies_run_resource_selectors(tmp_path: Path) -> No
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
-    context.config.set(
-        "models.allowed_selectors", ("openai/gpt-5[openai]", "openai/o3[openai]")
+    context.executor.allowed_model_selectors = (
+        "openai/gpt-5[openai]",
+        "openai/o3[openai]",
     )
     bound = bind_run_request(
         context,
@@ -6109,10 +6061,10 @@ def test_assemble_run_input_logs_activation_set_math(tmp_path: Path, caplog) -> 
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
-    context.config.set(
-        "models.allowed_selectors", ("openai/gpt-5[openai]", "openai/o3[openai]")
+    context.executor.allowed_model_selectors = (
+        "openai/gpt-5[openai]",
+        "openai/o3[openai]",
     )
     bound = bind_run_request(
         context,
@@ -6190,7 +6142,6 @@ def test_assemble_run_input_uses_agic_user_message_for_script_runs(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
     bound = bind_run_request(
         context,
@@ -6240,7 +6191,6 @@ def test_script_run_can_simulate_history_with_explicit_message_blocks(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=(),
     )
     previous = project_run_start(
         context.store,
@@ -6303,7 +6253,6 @@ def test_script_run_keeps_implicit_user_block_as_single_invoke_message(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=(),
     )
     bound = bind_run_request(
         context,
@@ -6333,7 +6282,6 @@ def test_assemble_run_input_keeps_thread_messages_out_of_system_instructions(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
     bound = bind_run_request(
         context,
@@ -6372,7 +6320,6 @@ def test_assemble_run_input_expands_embedded_prompt_for_chat_message(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
     bound = bind_run_request(
         context,
@@ -6413,7 +6360,6 @@ def test_run_input_prepends_selected_context_to_user_message(tmp_path: Path) -> 
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
     bound = bind_run_request(
         context,
@@ -6445,7 +6391,6 @@ def test_run_input_debug_logs_computed_prompt_bundle(tmp_path: Path, caplog) -> 
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
     bound = bind_run_request(
         context,
@@ -6494,7 +6439,6 @@ def test_chat_run_prefers_named_chat_agic_over_default(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
     bound = bind_run_request(
         context,
@@ -6515,7 +6459,7 @@ def test_program_default_instruct_overrides_runtime_default(tmp_path: Path) -> N
         (
             "agent alice\n\n"
             "instruct:\n"
-            "  Agent {{runtime.agent.name}} in sandbox {{runtime.sandbox}}.\n"
+            "  Agent {{runtime.agent.name}} is ready.\n"
             "  Reply directly.\n\n"
             "agic chat:\n"
             "  user: hello\n"
@@ -6524,7 +6468,6 @@ def test_program_default_instruct_overrides_runtime_default(tmp_path: Path) -> N
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
     bound = bind_run_request(
         context,
@@ -6533,7 +6476,7 @@ def test_program_default_instruct_overrides_runtime_default(tmp_path: Path) -> N
 
     instructions = RunInput.from_binding(context.executor, bound).instructions()
 
-    assert "Agent alice in sandbox none." in instructions
+    assert "Agent alice is ready." in instructions
     assert "Reply directly." in instructions
     assert "You are the alice Toolang agent." not in instructions
 
@@ -6554,7 +6497,6 @@ def test_agic_instruct_can_select_named_instruct(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=(),
     )
     bound = bind_run_request(
         context,
@@ -6579,7 +6521,6 @@ def test_agic_instruct_none_suppresses_agent_instruct_layer(tmp_path: Path) -> N
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=(),
     )
     bound = bind_run_request(
         context,
@@ -6611,7 +6552,6 @@ def test_agic_instruct_block_renders_as_agent_instruction(tmp_path: Path) -> Non
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=(),
     )
     bound = bind_run_request(
         context,
@@ -6639,7 +6579,6 @@ def test_agent_markdown_psyche_files_change_default_behavior(tmp_path: Path) -> 
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
     bound = bind_run_request(
         context,
@@ -6683,7 +6622,6 @@ def test_chat_run_uses_program_default_when_chat_agic_is_missing(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
     (toolang_root / "psyches" / "reviewer.md").unlink()
     (toolang_root / "skills" / "reviewer" / "SKILL.md").unlink()
@@ -6709,7 +6647,6 @@ def test_chat_run_uses_program_default_when_chat_agic_is_missing(
     assert "List configured peer agents available for agent_chat" not in instructions
     assert "agent_chat__peers" in bundle.tools()
     assert f"agent_home: {toolang_root / 'agents' / 'alice'}" in instructions
-    assert "sandbox: none" in instructions
     assert (
         "Do not call tools or inspect files just to explore the environment."
         in instructions
@@ -6736,11 +6673,10 @@ def test_execute_run_rejects_agic_model_outside_activation_allowlist(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
     context.executor.model_environ = {"OPENAI_API_KEY": "secret"}
-    context.config.set("models.allowed_selectors", ("openai/o3[openai]",))
-    context.config.set("models.default_selector", "openai/o3[openai]")
+    context.executor.allowed_model_selectors = ("openai/o3[openai]",)
+    context.executor.default_model_selector = "openai/o3[openai]"
 
     outcome = asyncio.run(
         context.executor.run(
@@ -6766,9 +6702,8 @@ def test_execute_run_pre_start_failure_persists_failed_accepted_run(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
-    context.config.set("models.default_selector", "claude")
+    context.executor.default_model_selector = "claude"
     context.executor.model_environ = {}
     context.executor.model_environ = {}
 
@@ -6804,7 +6739,6 @@ def test_script_executor_logs_lifecycle(tmp_path: Path, caplog) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
 
     with (
@@ -6920,7 +6854,6 @@ def test_chat_accepts_structured_message_parts_and_model_selector(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat", "inspect"),
     )
     app = _create_test_app(context)
 
@@ -7188,7 +7121,6 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
     previous = project_run_start(
         context.store,
@@ -7376,7 +7308,6 @@ def test_run_input_recall_none_disables_thread_history_and_tool_context(
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
-        enabled_features=("chat",),
     )
     previous = project_run_start(
         context.store,
@@ -7421,28 +7352,24 @@ def test_run_input_recall_none_disables_thread_history_and_tool_context(
 async def _running_context(
     context: ApiContext,
     *,
-    enabled_features: tuple[str, ...],
     loop_intervals_ms: dict[str, float] | None = None,
+    poll_channels: bool = False,
+    schedule_jobs: bool = False,
 ):
-    enabled_components = normalize_component_names(enabled_features)
+    intervals = {
+        "pulse": 10.0,
+        "poll": 10.0,
+        "watch": 10.0,
+        "file": 10.0,
+    }
+    intervals.update(loop_intervals_ms or {})
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         stop_signal = asyncio.Event()
-        if loop_intervals_ms is not None:
-            for feature_name, interval_ms in loop_intervals_ms.items():
-                context.config.set(
-                    f"components.trigger.{feature_name}.interval_ms",
-                    interval_ms,
-                )
-
         background_tasks: list[asyncio.Task[None]] = []
         scheduler_store = None
-        if "trigger.pulse" in enabled_components:
-            interval_value = context.config.require(
-                "components.trigger.pulse.interval_ms"
-            )
-            assert isinstance(interval_value, int | float)
+        if schedule_jobs:
             scheduler_store = open_job_store(context.root, context.name)
             job_watcher = JobWatcher(context.root, context.name)
             scheduler = Scheduler(
@@ -7450,7 +7377,7 @@ async def _running_context(
                 executor=context.executor,
                 get_home_jobs=job_watcher.current,
                 get_agent_state=context.get_agent_state,
-                interval_ms=float(interval_value),
+                interval_ms=intervals["pulse"],
             )
             background_tasks.extend(
                 [
@@ -7458,9 +7385,7 @@ async def _running_context(
                     scheduler.start(stop_signal=stop_signal),
                 ]
             )
-        if "trigger.poll" in enabled_components:
-            interval = context.config.require("components.trigger.poll.interval_ms")
-            assert isinstance(interval, int | float)
+        if poll_channels:
             background_tasks.append(
                 poll.spawn(
                     name=context.name,
@@ -7469,48 +7394,23 @@ async def _running_context(
                     plugins=context.channel_plugins,
                     executor=context.executor,
                     get_agent_state=context.get_agent_state,
-                    enabled_components=enabled_components,
-                    interval_ms=float(interval),
+                    interval_ms=intervals["poll"],
                     stop_signal=stop_signal,
                 )
             )
-        if "trigger.watch" in enabled_components:
-            context.config.set("components.trigger.watch.debounce_ms", 10.0)
-            watcher = state_watcher.StateWatcher(
-                context.root, context.name, context.get_agent_state()
-            )
-            context.get_agent_state = watcher.current
-            background_tasks.append(
-                watch.spawn(
-                    root=context.root,
-                    name=context.name,
-                    watcher=watcher,
-                    executor=context.executor,
-                    store=context.store,
-                    config=context.config,
+        watcher = state_watcher.StateWatcher(
+            context.root, context.name, context.get_agent_state()
+        )
+        context.get_agent_state = watcher.current
+        background_tasks.append(
+            asyncio.create_task(
+                watcher.run(
                     stop_signal=stop_signal,
+                    interval_ms=intervals["watch"],
+                    debounce_ms=10.0,
                 )
             )
-        if "trigger.file" in enabled_components:
-            interval = context.config.require("components.trigger.file.interval_ms")
-            stable = context.config.require("components.trigger.file.stable_ms")
-            inboxes = context.config.require("components.trigger.file.inboxes")
-            assert isinstance(interval, int | float)
-            assert isinstance(stable, int | float)
-            assert isinstance(inboxes, tuple)
-            assert all(isinstance(inbox, Path) for inbox in inboxes)
-            background_tasks.append(
-                files.spawn(
-                    root=context.root,
-                    name=context.name,
-                    executor=context.executor,
-                    get_agent_state=context.get_agent_state,
-                    inboxes=cast(tuple[Path, ...], inboxes),
-                    interval_ms=float(interval),
-                    stable_ms=float(stable),
-                    stop_signal=stop_signal,
-                )
-            )
+        )
         try:
             await asyncio.sleep(0)
             yield
@@ -7528,13 +7428,19 @@ async def _running_context(
         yield context
 
 
-def _create_test_app(context: ApiContext) -> FastAPI:
+def _create_test_app(
+    context: ApiContext,
+    *,
+    poll_channels: bool = False,
+    schedule_jobs: bool = False,
+) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        enabled_features = cast(
-            tuple[str, ...], context.config.require("components.enabled")
-        )
-        async with _running_context(context, enabled_features=enabled_features):
+        async with _running_context(
+            context,
+            poll_channels=poll_channels,
+            schedule_jobs=schedule_jobs,
+        ):
             yield
 
     return create_app(context, lifespan=lifespan)
@@ -7544,7 +7450,6 @@ def _build_context(
     *,
     toolang_root: Path,
     agent_name: str,
-    enabled_features: tuple[str, ...],
     channel_bindings: dict[str, ChannelBinding] | None = None,
     channel_plugins: dict[str, AgentChannel] | None = None,
     tool_selectors: tuple[str, ...] | None = None,
@@ -7556,13 +7461,11 @@ def _build_context(
     store = RunStore(run_store_path(toolang_root, agent_name))
     setup = AgentSetup(
         tools=load_runtime_tools(
-            plugin_config=load_named_config(
-                toolang_root,
-                agent_name,
+            plugin_config=merge_named_configs(
+                (state.root_config, state.home_config),
                 section="tools",
                 environ={},
             ),
-            entries=state.caps,
             selectors=tool_selectors,
         ),
         model_providers={
@@ -7572,24 +7475,9 @@ def _build_context(
         },
         model_adapters=load_model_adapters(),
     )
-    config = RuntimeConfig(
-        {
-            "server.host": "127.0.0.1",
-            "server.port": 8765,
-            "server.endpoint": "http://127.0.0.1:8765",
-            "components.enabled": normalize_component_names(enabled_features),
-            "components.trigger.pulse.interval_ms": DEFAULT_SCHEDULER_INTERVAL_MS,
-            "components.trigger.poll.interval_ms": poll.DEFAULT_INTERVAL_MS,
-            "components.trigger.watch.interval_ms": state_watcher.DEFAULT_INTERVAL_MS,
-            "components.trigger.watch.debounce_ms": state_watcher.DEFAULT_DEBOUNCE_MS,
-            "components.trigger.file.interval_ms": files.DEFAULT_INTERVAL_MS,
-            "components.trigger.file.stable_ms": files.DEFAULT_STABLE_MS,
-            "components.trigger.file.inboxes": (),
-            "runtime.sandbox": "none",
-        }
-    )
-    model_aliases = parse_model_aliases(load_config_layers(toolang_root, agent_name))
-    default_models = load_default_models(toolang_root, agent_name)
+    config_layers = (state.root_config, state.home_config)
+    model_aliases = parse_model_aliases(config_layers)
+    default_models = parse_default_models(config_layers)
     model_environ = {"OPENAI_API_KEY": "secret"}
     executor = Executor(
         root=toolang_root,
@@ -7601,7 +7489,6 @@ def _build_context(
         model_aliases=model_aliases,
         default_models=default_models,
         model_environ=model_environ,
-        config=config,
     )
     watcher = state_watcher.StateWatcher(toolang_root, agent_name, state)
     return ApiContext(
@@ -7614,8 +7501,9 @@ def _build_context(
         channel_plugins=channel_plugins or {},
         executor=executor,
         store=store,
-        config=config,
-        enabled_components=normalize_component_names(enabled_features),
+        host="127.0.0.1",
+        port=8765,
+        cors_allowed_origins=(),
     )
 
 
@@ -7638,7 +7526,7 @@ async def _run_delivery(
         get_agent_state=context.get_agent_state,
         plugins=context.channel_plugins,
         home=context.home,
-        component_name="poll",
+        group="poll",
         binding_name=binding_name,
         delivery=delivery,
     )
@@ -7671,12 +7559,7 @@ async def _wait_for_active_run(context: ApiContext) -> None:
     for _ in range(100):
         state = cast(
             dict[str, object],
-            inspect.snapshot_context(
-                context,
-                enabled_features=cast(
-                    tuple[str, ...], context.config.require("components.enabled")
-                ),
-            )["state"],
+            inspect.snapshot_context(context)["state"],
         )
         if state["active_runs"]:
             return

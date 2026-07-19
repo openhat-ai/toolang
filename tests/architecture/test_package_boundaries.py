@@ -12,14 +12,13 @@ from tests import PROJECT_ROOT
 SOURCE_ROOT = PROJECT_ROOT / "src" / "toolang"
 
 PACKAGES = (
-    "agent",
     "api",
     "base",
     "catalog",
     "cli",
     "common",
-    "config",
     "execution",
+    "up",
     "lang",
     "plugin",
     "state",
@@ -27,14 +26,18 @@ PACKAGES = (
 )
 
 PACKAGE_IMPORT_RULES: dict[str, frozenset[str] | None] = {
-    "agent": None,  # TODO: Review the agent package boundary.
     "api": None,  # TODO: Review the API package boundary.
     "base": frozenset(),
     "catalog": frozenset({"common"}),
     "cli": None,  # TODO: Review the CLI package boundary.
     "common": frozenset({"base"}),
-    "config": frozenset(),
     "execution": None,  # TODO: Review the execution package boundary.
+    # Up is the top-level process composition boundary. It may assemble
+    # the API and runtime owners, but it must never depend on CLI orchestration,
+    # authored catalog commands, or language implementation details.
+    "up": frozenset(
+        {"api", "base", "common", "execution", "plugin", "state", "work"}
+    ),
     # lang uses the shared error type and immutable metadata containers.
     "lang": frozenset({"base", "common"}),
     # common is currently needed only for shared selector parsing and matching.

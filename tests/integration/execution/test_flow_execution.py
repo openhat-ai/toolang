@@ -154,7 +154,6 @@ def test_public_executor_runs_explicit_agent_state(tmp_path) -> None:
         model_aliases={},
         default_models=(),
         model_environ={},
-        config=cast(Any, {}),
         trace=events.append,
     )
 

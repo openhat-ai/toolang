@@ -166,6 +166,11 @@ def _build_roaming_help_app(source_label: str, program: Program) -> typer.Typer:
             "--caps",
             help="Allow selected caps. Pass CSV or repeat.",
         ),
+        sandbox: str | None = typer.Option(
+            None,
+            "--sandbox",
+            help="Execute in this sandbox.",
+        ),
         quiet: bool = typer.Option(
             False,
             "--quiet",
@@ -173,7 +178,7 @@ def _build_roaming_help_app(source_label: str, program: Program) -> typer.Typer:
             help="Suppress progress messages.",
         ),
     ) -> None:
-        del model, tools, caps, quiet
+        del model, tools, caps, sandbox, quiet
         return None
 
     for agic in effective_agics(program):
@@ -235,6 +240,11 @@ def _make_roaming_help_command() -> Callable[..., None]:
             "--caps",
             help="Allow selected caps. Pass CSV or repeat.",
         ),
+        sandbox: str | None = typer.Option(
+            None,
+            "--sandbox",
+            help="Execute in this sandbox.",
+        ),
         quiet: bool = typer.Option(
             False,
             "--quiet",
@@ -242,7 +252,7 @@ def _make_roaming_help_command() -> Callable[..., None]:
             help="Suppress progress messages.",
         ),
     ) -> None:
-        del model, tools, caps, quiet
+        del model, tools, caps, sandbox, quiet
         return None
 
     return command

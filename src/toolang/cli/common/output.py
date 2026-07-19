@@ -13,7 +13,7 @@ from rich.table import Table
 from rich.text import Text
 import typer
 
-from toolang.agent import local as agents
+from toolang.up import process as agents
 
 TableJustify = Literal["default", "left", "center", "right", "full"]
 

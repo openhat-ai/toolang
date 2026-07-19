@@ -30,12 +30,12 @@ class _FakeEntryPoint:
 def _patch_tool_entry_points(monkeypatch) -> None:
     from toolang.base.examples.tools import create_echo_tool_set
     from toolang.base.examples.tools import create_math_add_tool_set
-    from toolang.agent.tools.agent_chat import create_tool_set as create_agent_chat_tool
+    from toolang.execution.tools.agent_chat import create_tool_set as create_agent_chat_tool
     from toolang.plugin.tools.filesystem import create_tool_set as create_filesystem_tool
     from toolang.plugin.tools.service_use import create_tool_set as create_service_use_tool
     from toolang.plugin.tools.shell import create_tool_set as create_shell_tool
     from toolang.plugin.tools.web_search import create_tool_set as create_web_search_tool
-    from toolang.agent.tools.agent_state import create_tool_set as create_agent_state_tool
+    from toolang.execution.tools.agent_state import create_tool_set as create_agent_state_tool
     from toolang.base.examples.tools import create_working_tree_tool_set
 
     entries = [

@@ -13,6 +13,7 @@ from toolang.base.protocols.model import ModelProvider
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import Message, TextPart, message_summary, message_text
 from toolang.base.types.model import ModelAlias, ModelTarget
+from toolang.base.types.tool import ToolService
 
 from ..lang.ast import AgicDecl, Message as AstMessage
 from toolang.state.state import PreparedCap
@@ -46,12 +47,6 @@ _TEXT_HISTORY_MESSAGE_LIMIT = 32
 _LOGGER = logging.getLogger("toolang.run")
 
 
-class ConfigView(Protocol):
-    """Read-only activation config used by run assembly."""
-
-    def get(self, key: str, default: object | None = None) -> object | None: ...
-
-
 class SupportsRunAssembly(Protocol):
     """Runtime resources needed to assemble one immutable run input."""
 
@@ -66,7 +61,8 @@ class SupportsRunAssembly(Protocol):
     model_environ: Mapping[str, str]
     model_cache_dir: Path
     model_cache_refresh: bool
-    config: ConfigView
+    default_model_selector: str | None
+    allowed_model_selectors: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +81,7 @@ class RunInput:
     models_base: tuple[str, ...]
     tools_base: dict[str, AgentTool]
     snapshot: RunSnapshot
+    tool_services: tuple[ToolService, ...] = field(default_factory=tuple)
     psyches_base: tuple[PreparedCap, ...] = field(default_factory=tuple)
     skills_base: tuple[PreparedCap, ...] = field(default_factory=tuple)
     services_base: tuple[PreparedCap, ...] = field(default_factory=tuple)
@@ -166,6 +163,7 @@ class RunInput:
             history=history,
             models_base=sets.models_base,
             tools_base=sets.tools_base,
+            tool_services=_tool_services(sets.services, context.model_environ),
             psyches_base=sets.psyches_base,
             skills_base=sets.skills_base,
             services_base=sets.services_base,
@@ -292,6 +290,33 @@ class RunInput:
         """Return the assembled context text for this run."""
 
         return self.context_text
+
+
+def _tool_services(
+    entries: tuple[PreparedCap, ...],
+    environ: Mapping[str, str],
+) -> tuple[ToolService, ...]:
+    services: list[ToolService] = []
+    for entry in entries:
+        raw_env = entry.meta.get("env")
+        if isinstance(raw_env, str):
+            env_names = tuple(
+                name.strip() for name in raw_env.split(",") if name.strip()
+            )
+        elif isinstance(raw_env, list | tuple):
+            env_names = tuple(
+                str(name).strip() for name in raw_env if str(name).strip()
+            )
+        else:
+            env_names = ()
+        services.append(
+            ToolService(
+                name=entry.name,
+                meta=entry.meta,
+                environ={name: environ[name] for name in env_names if name in environ},
+            )
+        )
+    return tuple(services)
 
 
 def _model_context_targets(

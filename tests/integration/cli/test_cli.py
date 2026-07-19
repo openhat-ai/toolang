@@ -1,24 +1,28 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
 import hashlib
 import io
 import json
 from pathlib import Path
 import os
 import time
+from types import SimpleNamespace
 from datetime import datetime, timezone
 from typing import Any, cast
 from uuid import uuid4
+import click
 import pytest
 from typer.testing import CliRunner
 
-from toolang.agent import local as agents
+from toolang.up import process as agents
 from toolang.catalog import templates
 from toolang.catalog import cap as caps
 from toolang.state import state as cap_state
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.model import ModelInfo
+from toolang.base.types.sandbox import SandboxSelector
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.common.github import GitHubRef
 import toolang.cli.toolang.cli as cli
@@ -35,21 +39,26 @@ import toolang.cli.caps.cli as caps_cli
 from toolang.cli.common.context import CliContext
 import toolang.cli.common.output as cli_output
 from toolang.cli.common.progress import CliProgress
-from toolang.config.log import DEFAULT_AGENT_LOG_SPEC
-from toolang.config.log_spec import PY_LOG_ENV_VAR
+from toolang.up.logging import DEFAULT_AGENT_LOG_SPEC
+from toolang.common.env_logger import PY_LOG_ENV_VAR
 from toolang.execution.events import RunEnd, RunStarting, StepEnd, StepBegin
 from toolang.execution.records import InputRef, OutputRef, RunRecord
 from toolang.common.progress import ProgressEvent
 from toolang.plugin.loading import PluginInfo
 from toolang.catalog.job import AuthoredJobs, JobFile
 from toolang.execution.store import RunStore, run_store_path
-from toolang.agent import runtime as agent_up
+from toolang.up import server as agent_up
 from tests.support.execution import project_run_end, project_run_start, project_step
 from tests.support.catalog import FixtureLocalAgents
 from wcwidth import wcswidth
 
 runner = CliRunner()
 DEFAULT_AGENT_SOURCE = templates.render_template("agent")
+
+
+@contextmanager
+def _fake_chat_runtime(*_args: object, **_kwargs: object):
+    yield chat_commands.RuntimeClient("http://runtime")
 
 
 def _create_cap(
@@ -1434,6 +1443,7 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
         sandbox_child: bool,
         progress=None,
         agent_state=None,
+        wait: bool = False,
     ) -> int:
         del environ, sandbox_child, progress, agent_state
         captured["toolang_root"] = startup.toolang_root
@@ -1456,7 +1466,6 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
     )
     monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
     monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
-    monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
     monkeypatch.setattr(agent_up, "resolve_runtime_port", lambda **_kwargs: 45123)
 
     result = runner.invoke(
@@ -1468,7 +1477,7 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
     assert result.exit_code == 0
     assert captured["agent_name"] == "alice"
     assert captured["program_exists"] is True
-    assert captured["program_text"] == "agent alice\n"
+    assert captured["program_text"] == "agent remote-source\n"
     assert captured["toolang_root"] == agents.visiting_source_root(
         toolang_root,
         source="brice/alice",
@@ -1493,6 +1502,7 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
         sandbox_child: bool,
         progress=None,
         agent_state=None,
+        wait: bool = False,
     ) -> int:
         del environ, sandbox_child, progress, agent_state
         captured["toolang_root"] = startup.toolang_root
@@ -1502,7 +1512,6 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
 
     monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
     monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
-    monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
     monkeypatch.setattr(agent_up, "resolve_runtime_port", lambda **_kwargs: 45124)
 
     result = runner.invoke(
@@ -1852,6 +1861,8 @@ flow review(_: Text):
     assert "Allow selected tools. Pass CSV or repeat." in captured.out
     assert "--caps" in captured.out
     assert "Allow selected caps. Pass CSV or repeat." in captured.out
+    assert "--sandbox" in captured.out
+    assert "Execute in this sandbox." in captured.out
     assert (
         captured.out.index("--models")
         < captured.out.index("--tools")
@@ -1965,6 +1976,7 @@ agic(_: Part[], tone?, retries?: Number, dry_run?: Boolean):
         reply,
         log_spec: str | None = None,
         agent_state=None,
+        wait: bool = False,
         **selectors,
     ):
         outcome = _fake_invoke_record(toolang_root, agent_name)
@@ -2023,6 +2035,108 @@ agic(_: Part[], tone?, retries?: Number, dry_run?: Boolean):
     }
 
 
+def test_cli_roaming_invoke_routes_sandboxed_execution_through_hosting(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    program_path = _write_roaming_program(
+        tmp_path,
+        """
+agic(_: Text):
+  Reply directly.
+""".strip(),
+    )
+    captured: dict[str, object] = {}
+
+    def fail_direct_invoke(**_kwargs):
+        raise AssertionError("sandboxed invocation must not execute on the CLI host")
+
+    def fake_hosted_invoke(**kwargs):
+        captured.update(kwargs)
+        return _fake_invoke_record(kwargs["toolang_root"], kwargs["agent_name"])
+
+    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fail_direct_invoke)
+    monkeypatch.setattr(cli_invoke, "_invoke_hosted", fake_hosted_invoke)
+
+    result = cli.main(
+        [str(program_path), "default", "hello", "--sandbox", "docker:python"]
+    )
+    output = capsys.readouterr()
+
+    assert result == 0
+    assert output.out.strip() == "done"
+    request = cast(Any, captured["request"])
+    assert request.sandbox == "docker:python"
+
+
+def test_roaming_hosted_invoke_starts_session_api_with_execution_selectors(
+    tmp_path: Path, monkeypatch
+) -> None:
+    captured: dict[str, object] = {}
+    request = cli_invoke.RoamingInvokeRequest(
+        executable_name="default",
+        executable_kind="agic",
+        verbosity=0,
+        input_text="hello",
+        models=("openai/gpt-5",),
+        tools=("shell/*",),
+        caps=("skill/reviewer",),
+        sandbox="docker:python",
+        invoke_params={},
+        invoke_parts=[{"type": "text", "text": "hello"}],
+    )
+
+    monkeypatch.setattr(agents.AgentProcess, "status", lambda *_args, **_kwargs: None)
+
+    def fake_resolve_startup(**kwargs):
+        captured["startup"] = kwargs
+        return SimpleNamespace(sandbox_plugin=object())
+
+    class FakeClient:
+        def invoke(self, payload, *, on_event=None):
+            captured["payload"] = payload
+            captured["on_event"] = on_event
+            return RunRecord(
+                id="run_1",
+                parent=None,
+                thread="script_1",
+                input=InputRef(),
+                output=None,
+                status="finished",
+            )
+
+    @contextmanager
+    def fake_owned_runtime_client(**kwargs):
+        captured["owned"] = kwargs
+        yield FakeClient()
+
+    monkeypatch.setattr(cli_invoke.agent_up, "resolve_startup", fake_resolve_startup)
+    monkeypatch.setattr(
+        cli_invoke, "owned_runtime_client", fake_owned_runtime_client
+    )
+    reply = invoke_rendering.ScriptProgressSink(
+        executable_name="default", render=False
+    )
+
+    result = cli_invoke._invoke_hosted(
+        toolang_root=tmp_path,
+        agent_name="demo",
+        request=request,
+        metadata={"invoke_params": {}},
+        environ={"OPENAI_API_KEY": "secret"},
+        state=cast(Any, object()),
+        reply=reply,
+    )
+
+    startup = cast(dict[str, object], captured["startup"])
+    assert result.run_id == "run_1"
+    assert startup["sandbox"] == "docker:python"
+    assert startup["models"] == ("openai/gpt-5",)
+    assert startup["tools"] == ("shell/*",)
+    assert startup["caps"] == ("skill/reviewer",)
+    assert cast(dict[str, object], captured["payload"])["input"] == "hello"
+    assert cast(dict[str, object], captured["owned"])["root"] == tmp_path
+
+
 def test_cli_roaming_invoke_passes_explicit_tool_selectors(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -2049,6 +2163,7 @@ agic(_: Part[]):
         reply,
         log_spec: str | None = None,
         agent_state=None,
+        wait: bool = False,
         **selectors,
     ):
         outcome = _fake_invoke_record(toolang_root, agent_name)
@@ -2103,6 +2218,7 @@ agic(_: Part[]):
         reply,
         log_spec: str | None = None,
         agent_state=None,
+        wait: bool = False,
         **selectors,
     ):
         outcome = _fake_invoke_record(toolang_root, agent_name)
@@ -2156,6 +2272,7 @@ agic:
         reply,
         log_spec: str | None = None,
         agent_state=None,
+        wait: bool = False,
         **selectors,
     ):
         outcome = _fake_invoke_record(toolang_root, agent_name)
@@ -2210,6 +2327,7 @@ agic:
         reply,
         log_spec: str | None = None,
         agent_state=None,
+        wait: bool = False,
         **selectors,
     ):
         outcome = _fake_invoke_record(toolang_root, agent_name)
@@ -2272,6 +2390,7 @@ agic:
         reply,
         log_spec: str | None = None,
         agent_state=None,
+        wait: bool = False,
         **selectors,
     ):
         outcome = _fake_invoke_record(toolang_root, agent_name)
@@ -2335,6 +2454,7 @@ agic:
         reply,
         log_spec: str | None = None,
         agent_state=None,
+        wait: bool = False,
         **selectors,
     ):
         outcome = _fake_invoke_record(toolang_root, agent_name)
@@ -2389,6 +2509,7 @@ agic:
         reply,
         log_spec: str | None = None,
         agent_state=None,
+        wait: bool = False,
         **selectors,
     ):
         del (
@@ -2538,6 +2659,7 @@ flow review(_: Text):
         reply,
         log_spec: str | None = None,
         agent_state=None,
+        wait: bool = False,
         **selectors,
     ):
         outcome = _fake_invoke_record(toolang_root, agent_name)
@@ -2600,6 +2722,7 @@ agic:
         reply,
         log_spec: str | None = None,
         agent_state=None,
+        wait: bool = False,
         **selectors,
     ):
         outcome = _fake_invoke_record(toolang_root, agent_name)
@@ -2667,6 +2790,7 @@ agic(_: Part[], tone?):
         reply,
         log_spec: str | None = None,
         agent_state=None,
+        wait: bool = False,
         **selectors,
     ):
         outcome = _fake_invoke_record(toolang_root, agent_name)
@@ -2729,6 +2853,7 @@ agic(_: Part[]):
         reply,
         log_spec: str | None = None,
         agent_state=None,
+        wait: bool = False,
         **selectors,
     ):
         outcome = _fake_invoke_record(toolang_root, agent_name)
@@ -2793,6 +2918,7 @@ agic(_: Part[]):
         reply,
         log_spec: str | None = None,
         agent_state=None,
+        wait: bool = False,
         **selectors,
     ):
         outcome = _fake_invoke_record(toolang_root, agent_name)
@@ -2854,6 +2980,7 @@ agic(_: Part[]):
         reply,
         log_spec: str | None = None,
         agent_state=None,
+        wait: bool = False,
         **selectors,
     ):
         outcome = _fake_invoke_record(toolang_root, agent_name)
@@ -3231,10 +3358,11 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-07T11:00:00Z",
         pid=os.getpid(),
-        components=("router.chat", "runner.chat", "trigger.pulse"),
         status="running",
         message="ready",
     )
+    status = agents.AgentProcess(toolang_root, "alice").status(ui_base_url="")
+    assert status is not None
 
     result = runner.invoke(
         cli.app,
@@ -3448,7 +3576,6 @@ def test_cli_info_for_stopped_agent_shows_created_only(tmp_path: Path) -> None:
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-07T11:00:00Z",
         pid=os.getpid(),
-        components=("router.chat", "runner.chat", "trigger.pulse"),
         status="running",
     )
     agents.stop_runtime_state(toolang_root, "alice")
@@ -3501,7 +3628,6 @@ def test_cli_info_for_running_docker_sandbox_shows_container_pid(
             "runtime_id": "toolang-alice",
             "meta": {},
         },
-        components=("router.chat", "runner.chat", "trigger.pulse"),
         status="running",
     )
 
@@ -3565,7 +3691,6 @@ def test_cli_info_prefers_runtime_models_for_active_agent(
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-07T11:00:00Z",
         pid=os.getpid(),
-        components=("router.chat", "runner.chat"),
         models=("claude", "gpt-5"),
         status="running",
     )
@@ -4177,6 +4302,7 @@ def test_cli_run_hands_to_agent_up(tmp_path: Path, monkeypatch) -> None:
         sandbox_child: bool = False,
         progress=None,
         agent_state=None,
+        wait: bool = False,
     ) -> int:
         del progress, agent_state
         captured["toolang_root"] = startup.toolang_root
@@ -4184,18 +4310,17 @@ def test_cli_run_hands_to_agent_up(tmp_path: Path, monkeypatch) -> None:
         captured["host"] = startup.host
         captured["endpoint_host"] = startup.endpoint_host
         captured["port"] = startup.port
-        captured["sandbox"] = startup.selector.render()
+        captured["sandbox"] = startup.hosting.selector.render()
         captured["models"] = startup.model_selectors
         captured["tools"] = startup.tool_selectors
         captured["dev"] = startup.dev_artifact
         captured["sandbox_child"] = sandbox_child
-        captured["component_names"] = startup.enabled_components
+        captured["wait"] = wait
         captured["log_spec"] = startup.log_spec
         captured["environ"] = environ
         return 0
 
     monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
-    monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -4206,10 +4331,6 @@ def test_cli_run_hands_to_agent_up(tmp_path: Path, monkeypatch) -> None:
             "0.0.0.0",
             "--port",
             "9000",
-            "--enable",
-            "chat",
-            "--enable",
-            "inspect",
         ],
         env={"TOOLANG_ROOT": str(toolang_root)},
     )
@@ -4225,11 +4346,7 @@ def test_cli_run_hands_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     assert captured["tools"] is None
     assert captured["dev"] is None
     assert captured["sandbox_child"] is False
-    assert captured["component_names"] == (
-        "router.chat",
-        "runner.chat",
-        "router.inspect",
-    )
+    assert captured["wait"] is True
     assert captured["log_spec"] == DEFAULT_AGENT_LOG_SPEC
     assert cast(dict[str, str], captured["environ"])["TOOLANG_ROOT"] == str(
         toolang_root
@@ -4240,12 +4357,55 @@ def test_cli_run_hands_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     )
 
 
+def test_cli_run_uses_configured_sandbox_unless_overridden(
+    tmp_path: Path, monkeypatch
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    _agents(toolang_root).create("alice")
+    (toolang_root / "config.toml").write_text(
+        '[sandbox]\ndriver = "docker"\ntarget = "python:3.13-slim"\n',
+        encoding="utf-8",
+    )
+    captured: list[str] = []
+
+    def fake_start_runtime(startup, **_kwargs) -> int:
+        captured.append(startup.hosting.selector.render())
+        return 0
+
+    monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
+
+    configured = runner.invoke(
+        cli.app,
+        ["--root", str(toolang_root), "run", "alice"],
+        env={},
+    )
+    overridden = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(toolang_root),
+            "run",
+            "alice",
+            "--sandbox",
+            "none",
+        ],
+        env={},
+    )
+
+    assert configured.exit_code == 0
+    assert overridden.exit_code == 0
+    assert captured == ["docker:python:3.13-slim", "none"]
+
+
 def test_cli_run_reuses_agent_state_for_foreground_runtime(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
-    agent_state = object()
+    agent_state = agent_up.prepare_agent(
+        toolang_root=toolang_root,
+        agent_name="alice",
+    )
     captured: dict[str, object] = {}
     prepare_calls = 0
 
@@ -4261,6 +4421,7 @@ def test_cli_run_reuses_agent_state_for_foreground_runtime(
         sandbox_child: bool = False,
         progress=None,
         agent_state=None,
+        wait: bool = False,
     ) -> int:
         del startup, environ, sandbox_child, progress
         captured["agent_state"] = agent_state
@@ -4271,7 +4432,7 @@ def test_cli_run_reuses_agent_state_for_foreground_runtime(
 
     result = runner.invoke(
         cli.app,
-        ["run", "alice", "--enable", "inspect"],
+        ["run", "alice"],
         env={"TOOLANG_ROOT": str(toolang_root)},
     )
 
@@ -4293,6 +4454,7 @@ def test_cli_run_resolves_port_when_unspecified(tmp_path: Path, monkeypatch) -> 
         sandbox_child: bool = False,
         progress=None,
         agent_state=None,
+        wait: bool = False,
     ) -> int:
         del progress, agent_state
         captured["toolang_root"] = startup.toolang_root
@@ -4300,21 +4462,19 @@ def test_cli_run_resolves_port_when_unspecified(tmp_path: Path, monkeypatch) -> 
         captured["host"] = startup.host
         captured["endpoint_host"] = startup.endpoint_host
         captured["port"] = startup.port
-        captured["sandbox"] = startup.selector.render()
+        captured["sandbox"] = startup.hosting.selector.render()
         captured["models"] = startup.model_selectors
         captured["dev"] = startup.dev_artifact
         captured["sandbox_child"] = sandbox_child
-        captured["component_names"] = startup.enabled_components
         captured["log_spec"] = startup.log_spec
         captured["environ"] = environ
         return 0
 
     monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
-    monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
-        ["run", "alice", "--enable", "chat"],
+        ["run", "alice"],
         env={"TOOLANG_ROOT": str(toolang_root)},
     )
 
@@ -4328,45 +4488,9 @@ def test_cli_run_resolves_port_when_unspecified(tmp_path: Path, monkeypatch) -> 
     assert captured["models"] == ()
     assert captured["dev"] is None
     assert captured["sandbox_child"] is False
-    assert captured["component_names"] == ("router.chat", "runner.chat")
     assert captured["log_spec"] == DEFAULT_AGENT_LOG_SPEC
     assert cast(dict[str, str], captured["environ"])["TOOLANG_ROOT"] == str(
         toolang_root
-    )
-
-
-def test_cli_run_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
-    toolang_root = tmp_path / "toolang"
-    _agents(toolang_root).create("alice")
-    captured: dict[str, object] = {}
-
-    def fake_start_runtime(
-        startup: agent_up.StartupSpec,
-        *,
-        environ: dict[str, str],
-        sandbox_child: bool = False,
-        progress=None,
-        agent_state=None,
-    ) -> int:
-        del environ, sandbox_child, progress, agent_state
-        captured["component_names"] = startup.enabled_components
-        return 0
-
-    monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
-    monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
-
-    result = runner.invoke(
-        cli.app,
-        ["run", "alice", "--enable", "chat,inspect,poll"],
-        env={"TOOLANG_ROOT": str(toolang_root)},
-    )
-
-    assert result.exit_code == 0
-    assert captured["component_names"] == (
-        "router.chat",
-        "runner.chat",
-        "router.inspect",
-        "trigger.poll",
     )
 
 
@@ -4384,13 +4508,13 @@ def test_cli_run_passes_model_selectors_to_agent_up(
         sandbox_child: bool = False,
         progress=None,
         agent_state=None,
+        wait: bool = False,
     ) -> int:
         del environ, sandbox_child, progress, agent_state
         captured["models"] = startup.model_selectors
         return 0
 
     monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
-    monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -4416,13 +4540,13 @@ def test_cli_run_accepts_glob_model_selector_as_available_model_filter(
         sandbox_child: bool = False,
         progress=None,
         agent_state=None,
+        wait: bool = False,
     ) -> int:
         del environ, sandbox_child, progress, agent_state
         captured["models"] = startup.model_selectors
         return 0
 
     monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
-    monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -4446,13 +4570,13 @@ def test_cli_run_passes_tool_selectors_to_agent_up(tmp_path: Path, monkeypatch) 
         sandbox_child: bool = False,
         progress=None,
         agent_state=None,
+        wait: bool = False,
     ) -> int:
         del environ, sandbox_child, progress, agent_state
         captured["tools"] = startup.tool_selectors
         return 0
 
     monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
-    monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -4476,13 +4600,13 @@ def test_cli_run_passes_cap_selectors_to_agent_up(tmp_path: Path, monkeypatch) -
         sandbox_child: bool = False,
         progress=None,
         agent_state=None,
+        wait: bool = False,
     ) -> int:
         del environ, sandbox_child, progress, agent_state
         captured["caps"] = startup.cap_selectors
         return 0
 
     monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
-    monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -4512,7 +4636,7 @@ def test_cli_run_rejects_missing_default_model_env(tmp_path: Path, monkeypatch) 
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(toolang_root), "run", "alice", "--enable", "chat"],
+        ["--root", str(toolang_root), "run", "alice"],
         env={
             "DEEPSEEK_API_KEY": "",
             "GEMINI_API_KEY": "",
@@ -4539,6 +4663,7 @@ def test_cli_run_uses_py_log_spec(tmp_path: Path, monkeypatch) -> None:
         sandbox_child: bool = False,
         progress=None,
         agent_state=None,
+        wait: bool = False,
     ) -> int:
         del sandbox_child, progress, agent_state
         captured["environ"] = environ
@@ -4546,7 +4671,6 @@ def test_cli_run_uses_py_log_spec(tmp_path: Path, monkeypatch) -> None:
         return 0
 
     monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
-    monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
@@ -4599,11 +4723,12 @@ def test_cli_run_loads_root_and_agent_env_with_agent_override(
         sandbox_child: bool = False,
         progress=None,
         agent_state=None,
+        wait: bool = False,
     ) -> int:
         del progress, agent_state
         captured["environ"] = environ
         captured["endpoint_host"] = startup.endpoint_host
-        captured["sandbox"] = startup.selector.render()
+        captured["sandbox"] = startup.hosting.selector.render()
         captured["models"] = startup.model_selectors
         captured["dev"] = startup.dev_artifact
         captured["sandbox_child"] = sandbox_child
@@ -4611,11 +4736,10 @@ def test_cli_run_loads_root_and_agent_env_with_agent_override(
         return 0
 
     monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
-    monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(toolang_root), "run", "alice", "--enable", "inspect"],
+        ["--root", str(toolang_root), "run", "alice"],
         env={},
     )
 
@@ -4683,8 +4807,6 @@ def test_cli_start_spawns_background_run_and_reports_status(
             "alice",
             "--sandbox",
             "none",
-            "--enable",
-            "inspect",
         ],
         env={},
     )
@@ -4707,8 +4829,7 @@ def test_cli_start_spawns_background_run_and_reports_status(
         "8765",
         "--sandbox",
         "none",
-        "--enable",
-        "router.inspect",
+        "--background-hosting",
     ]
     assert cast(dict[str, str], captured["env"])["TOOLANG_ROOT"] == str(toolang_root)
     assert (
@@ -4874,60 +4995,6 @@ def test_cli_start_allows_restart_after_stale_preparing_state(
 
     assert result.exit_code == 0
     assert "Agent alice already running" not in result.stderr
-
-
-def test_cli_start_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
-    toolang_root = tmp_path / "toolang"
-    _agents(toolang_root).create("alice")
-    captured: dict[str, object] = {}
-    monkeypatch.setattr(agent_up, "resolve_runtime_port", lambda **_kwargs: 8765)
-
-    class FakeProcess:
-        def poll(self) -> None:
-            return None
-
-    def fake_popen(
-        command,
-        *,
-        stdin,
-        stdout,
-        stderr,
-        env,
-        cwd: str,
-        start_new_session: bool,
-        close_fds: bool,
-    ):
-        del stdin, stderr, env, cwd, start_new_session, close_fds
-        captured["command"] = command
-        agents.write_runtime_state(
-            toolang_root,
-            "alice",
-            endpoint="http://127.0.0.1:8765",
-            started_at="2026-04-07T11:00:01Z",
-            pid=os.getpid(),
-        )
-        return FakeProcess()
-
-    monkeypatch.setattr(agents.subprocess, "Popen", fake_popen)
-
-    result = runner.invoke(
-        cli.app,
-        ["--root", str(toolang_root), "start", "alice", "--enable", "chat,inspect"],
-        env={"OPENAI_API_KEY": "secret"},
-    )
-
-    assert result.exit_code == 0
-    command = cast(list[str], captured["command"])
-    assert "--port" in command
-    assert command[command.index("--port") + 1] == "8765"
-    assert command[-6:] == [
-        "--enable",
-        "router.chat",
-        "--enable",
-        "runner.chat",
-        "--enable",
-        "router.inspect",
-    ]
 
 
 def test_cli_start_includes_model_selectors_in_background_command(
@@ -5188,7 +5255,7 @@ def test_cli_start_reuses_preferred_runtime_port(tmp_path: Path, monkeypatch) ->
     )
     captured: dict[str, object] = {}
     monkeypatch.setattr(
-        "toolang.agent.local._agent_runtime_process_pids", lambda *_args: ()
+        "toolang.up.process._agent_runtime_process_pids", lambda *_args: ()
     )
 
     class FakeProcess:
@@ -5230,22 +5297,7 @@ def test_cli_start_reuses_preferred_runtime_port(tmp_path: Path, monkeypatch) ->
     command = cast(list[str], captured["command"])
     assert "--port" in command
     assert command[command.index("--port") + 1] == "63295"
-    assert "--enable" in command
-    component_names = [
-        command[index + 1]
-        for index, value in enumerate(command[:-1])
-        if value == "--enable"
-    ]
-    assert component_names == [
-        "router.chat",
-        "router.manage",
-        "router.inspect",
-        "runner.chat",
-        "runner.task",
-        "runner.chore",
-        "trigger.pulse",
-        "trigger.watch",
-    ]
+    assert "--enable" not in command
 
 
 def test_cli_start_reports_failed_when_process_exits_before_state(
@@ -6788,13 +6840,12 @@ def test_cli_chat_help_supports_model_tool_and_cap_options() -> None:
 
 def test_cli_runtime_option_help_order_and_descriptions() -> None:
     expected = (
-        ("--sandbox", "Run the agent in a sandbox."),
+        ("--sandbox", "Run in this sandbox; defaults to agent config or"),
         ("--models", "Limit available models. Pass CSV or repeat."),
         ("--tools", "Allow selected tools. Pass CSV or repeat."),
         ("--caps", "Allow selected caps. Pass CSV or repeat."),
         ("--host", "Bind the agent API to this host."),
         ("--port", "Bind the agent API to this port."),
-        ("--enable", "Enable runtime components. Pass CSV or repeat."),
         ("--dev", "Use wheels from this file or directory"),
     )
 
@@ -6806,7 +6857,8 @@ def test_cli_runtime_option_help_order_and_descriptions() -> None:
         assert positions == sorted(positions)
         for _option, description in expected:
             assert description in result.stdout
-        assert "[default: none]" in result.stdout
+        assert "--enable" not in result.stdout
+        assert "[default: none]" not in result.stdout
         assert "starting a sandbox." in result.stdout
 
 
@@ -7490,9 +7542,11 @@ def test_cli_chat_passes_model_tool_cap_and_executable_selectors(monkeypatch) ->
         *,
         thread_id: str | None,
         selector_payload: dict[str, object] | None = None,
+        sandbox: str | None = None,
     ) -> None:
         captured["thread_id"] = thread_id
         captured["selector_payload"] = selector_payload
+        captured["sandbox"] = sandbox
 
     monkeypatch.setattr(chat_commands, "_chat_interactive", fake_chat_interactive)
 
@@ -7514,6 +7568,8 @@ def test_cli_chat_passes_model_tool_cap_and_executable_selectors(monkeypatch) ->
             "[here]",
             "--agic",
             "summarize",
+            "--sandbox",
+            "docker",
         ]
     )
 
@@ -7524,6 +7580,7 @@ def test_cli_chat_passes_model_tool_cap_and_executable_selectors(monkeypatch) ->
     assert payload["tools"] == ["filesystem", "shell", "service_use"]
     assert payload["caps"] == ["skill/reviewer", "service/*[home]", "[here]"]
     assert payload["agic"] == "summarize"
+    assert captured["sandbox"] == "docker"
 
 
 def test_cli_chat_without_agent_shows_help_without_opening_ui(monkeypatch) -> None:
@@ -7534,8 +7591,9 @@ def test_cli_chat_without_agent_shows_help_without_opening_ui(monkeypatch) -> No
         *,
         thread_id: str | None,
         selector_payload: dict[str, object] | None = None,
+        sandbox: str | None = None,
     ) -> None:
-        del thread_id, selector_payload
+        del thread_id, selector_payload, sandbox
         nonlocal opened
         opened = True
 
@@ -7587,6 +7645,7 @@ def test_cli_chat_without_args_does_not_create_thread_until_first_message(
         return {"thread_id": "term_new"}
 
     monkeypatch.setattr(chat_commands, "runtime_post", fake_runtime_post)
+    monkeypatch.setattr(chat_commands, "_chat_runtime", _fake_chat_runtime)
     monkeypatch.setattr(
         agents.AgentProcess,
         "status",
@@ -7617,6 +7676,7 @@ def test_cli_chat_scripted_help_command_does_not_create_thread(monkeypatch) -> N
         return {"thread_id": "term_new"}
 
     monkeypatch.setattr(chat_commands, "runtime_post", fake_runtime_post)
+    monkeypatch.setattr(chat_commands, "_chat_runtime", _fake_chat_runtime)
     monkeypatch.setattr(
         agents.AgentProcess,
         "status",
@@ -7674,6 +7734,7 @@ def test_cli_chat_without_thread_creates_thread_for_first_scripted_message(
         streams.append((request_path, payload))
 
     monkeypatch.setattr(chat_commands, "runtime_post", fake_runtime_post)
+    monkeypatch.setattr(chat_commands, "_chat_runtime", _fake_chat_runtime)
     monkeypatch.setattr(
         chat_commands, "_start_thread_event_listener", fake_start_thread_event_listener
     )
@@ -7709,6 +7770,57 @@ def test_cli_chat_without_thread_creates_thread_for_first_scripted_message(
     }
 
 
+def test_cli_process_local_chat_script_uses_chat_client_contract(
+    monkeypatch, capsys
+) -> None:
+    calls: list[tuple[str, object]] = []
+    inputs = iter(("hello", "/exit"))
+
+    class FakeClient:
+        def create_thread(self) -> str:
+            calls.append(("create_thread", None))
+            return "term_local"
+
+        def start_run(
+            self, thread_id, message, selects, on_event, on_error
+        ) -> None:
+            del on_event, on_error
+            calls.append(
+                (
+                    "start_run",
+                    {"thread": thread_id, "message": message, "selects": selects},
+                )
+            )
+
+        def list_models(self):
+            return {"default": None, "items": []}
+
+        def list_executables(self, _kind):
+            return {"default": None, "items": []}
+
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
+
+    chat_commands._chat_interactive_scripted_local(
+        cast(Any, object()),
+        client=cast(Any, FakeClient()),
+        thread_id=None,
+        selector_payload={"models": ["openai/gpt-5"]},
+    )
+
+    assert calls == [
+        ("create_thread", None),
+        (
+            "start_run",
+            {
+                "thread": "term_local",
+                "message": "hello",
+                "selects": {"models": ["openai/gpt-5"]},
+            },
+        ),
+    ]
+    assert "thread term_local" in capsys.readouterr().out
+
+
 def test_cli_chat_thread_without_message_sends_interactive_lines(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
     listeners: list[str] = []
@@ -7731,6 +7843,7 @@ def test_cli_chat_thread_without_message_sends_interactive_lines(monkeypatch) ->
     monkeypatch.setattr(
         chat_commands, "_start_thread_event_listener", fake_start_thread_event_listener
     )
+    monkeypatch.setattr(chat_commands, "_chat_runtime", _fake_chat_runtime)
     monkeypatch.setattr(
         chat_commands, "_runtime_consume_stream", fake_runtime_consume_stream
     )
@@ -7758,13 +7871,16 @@ def test_cli_chat_interactive_tty_uses_prompt_toolkit(monkeypatch) -> None:
 
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(chat_commands, "_chat_runtime", _fake_chat_runtime)
 
     def fake_prompt_toolkit(
         ctx: Any,
         *,
         thread_id: str,
         selector_payload: dict[str, object] | None = None,
+        client=None,
     ) -> None:
+        del client
         captured["ctx"] = ctx
         captured["thread_id"] = thread_id
         captured["selector_payload"] = selector_payload
@@ -7791,6 +7907,7 @@ def test_cli_chat_interactive_tty_accepts_missing_thread_without_creating_thread
 
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(chat_commands, "_chat_runtime", _fake_chat_runtime)
 
     def fake_runtime_post(
         _ctx: Any, request_path: str, *, payload: dict[str, object]
@@ -7803,8 +7920,9 @@ def test_cli_chat_interactive_tty_accepts_missing_thread_without_creating_thread
         *,
         thread_id: str | None,
         selector_payload: dict[str, object] | None = None,
+        client=None,
     ) -> None:
-        del ctx
+        del ctx, client
         captured["thread_id"] = thread_id
         captured["selector_payload"] = selector_payload
 
@@ -7821,29 +7939,10 @@ def test_cli_chat_interactive_tty_accepts_missing_thread_without_creating_thread
     assert captured["selector_payload"] == {}
 
 
-def test_cli_chat_tui_uses_local_executor_when_runtime_is_stopped(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_cli_chat_tui_uses_runtime_client(monkeypatch) -> None:
     captured: dict[str, object] = {}
+    runtime_client = object()
 
-    class FakeLocalClient:
-        def __init__(
-            self, root: Path, name: str, *, environ: Mapping[str, str]
-        ) -> None:
-            captured.update(root=root, name=name, environ=dict(environ), client=self)
-
-        def close(self) -> None:
-            captured["closed"] = True
-
-    monkeypatch.setattr(chat_commands, "running_runtime_client", lambda _ctx: None)
-    monkeypatch.setattr(chat_commands, "context_root", lambda _ctx: tmp_path)
-    monkeypatch.setattr(chat_commands, "require_prefix_agent", lambda _ctx: "alice")
-    monkeypatch.setattr(
-        chat_commands,
-        "load_runtime_environ",
-        lambda *_args, **_kwargs: {"MODEL_KEY": "secret"},
-    )
-    monkeypatch.setattr(chat_commands, "LocalChatClient", FakeLocalClient)
     monkeypatch.setattr(
         chat_commands.ChatTuiApp,
         "run",
@@ -7854,13 +7953,199 @@ def test_cli_chat_tui_uses_local_executor_when_runtime_is_stopped(
         cast(Any, object()),
         thread_id=None,
         selector_payload={"agic": "chat"},
+        client=cast(Any, runtime_client),
     )
+
+    assert cast(dict[str, object], captured["run"])["client"] is runtime_client
+
+
+def test_cli_chat_owns_temporary_hosted_api(tmp_path: Path, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    sandbox_plugin = object()
+    startup = SimpleNamespace(hosting=SimpleNamespace(plugin=sandbox_plugin))
+    launch = SimpleNamespace(
+        startup=startup,
+        environ={"TOOLANG_ROOT": str(tmp_path)},
+        log_plan=SimpleNamespace(path=tmp_path / "agent.log"),
+    )
+
+    monkeypatch.setattr(chat_commands, "context_root", lambda _ctx: tmp_path)
+    monkeypatch.setattr(chat_commands, "require_prefix_agent", lambda _ctx: "alice")
+    monkeypatch.setattr(chat_commands.agent_up, "prepare_agent", lambda **_kwargs: object())
+    monkeypatch.setattr(
+        chat_commands.agent_up,
+        "resolve_agent_hosting",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            selector=SandboxSelector(driver="docker")
+        ),
+    )
+    monkeypatch.setattr(
+        runtime_commands,
+        "resolve_startup",
+        lambda *_args, **kwargs: captured.setdefault("resolve", kwargs) and launch,
+    )
+    monkeypatch.setattr(
+        agent_up,
+        "build_run_argv",
+        lambda _startup, *, background_hosting=False: (
+            captured.update(background_hosting=background_hosting) or ("run", "alice")
+        ),
+    )
+
+    def fake_start(self, command, **kwargs):
+        del self
+        captured["command"] = command
+        captured["start"] = kwargs
+        return agents.AgentStatus(
+            name="alice",
+            status="running",
+            endpoint="http://localhost:8765",
+            api_url=None,
+            webui_url=None,
+            sandbox="docker",
+        )
+
+    def fake_stop(self, **kwargs):
+        del self
+        captured["stop"] = kwargs
+        return True
+
+    monkeypatch.setattr(agents.AgentProcess, "start", fake_start)
+    monkeypatch.setattr(agents.AgentProcess, "stop", fake_stop)
+
+    with chat_commands._chat_runtime(
+        cast(Any, object()), sandbox="docker"
+    ) as client:
+        assert cast(chat_commands.RuntimeClient, client).endpoint == "http://localhost:8765"
+
+    assert cast(dict[str, object], captured["resolve"])["sandbox"] == "docker"
+    assert captured["background_hosting"] is True
+    assert cast(dict[str, object], captured["stop"]) == {
+        "sandbox_plugin": sandbox_plugin,
+        "force": True,
+    }
+
+
+def test_cli_chat_without_runtime_uses_process_local_executor_for_none_hosting(
+    tmp_path: Path, monkeypatch
+) -> None:
+    captured: dict[str, object] = {}
+    state = object()
+
+    class FakeLocalSession:
+        def __init__(self, root, name, **kwargs):
+            captured.update(root=root, name=name, kwargs=kwargs)
+
+        def close(self) -> None:
+            captured["closed"] = True
+
+    monkeypatch.setattr(chat_commands, "context_root", lambda _ctx: tmp_path)
+    monkeypatch.setattr(chat_commands, "require_prefix_agent", lambda _ctx: "alice")
+    monkeypatch.setattr(agents.AgentProcess, "status", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        chat_commands, "load_runtime_environ", lambda *_args, **_kwargs: {"KEY": "value"}
+    )
+    monkeypatch.setattr(
+        chat_commands.agent_up, "prepare_agent", lambda **_kwargs: state
+    )
+    monkeypatch.setattr(
+        chat_commands.agent_up,
+        "resolve_agent_hosting",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            selector=SandboxSelector(driver="none")
+        ),
+    )
+    monkeypatch.setattr(chat_commands, "LocalChatSession", FakeLocalSession)
+    monkeypatch.setattr(
+        runtime_commands,
+        "resolve_startup",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("none hosting must not resolve or start an API runtime")
+        ),
+    )
+
+    with chat_commands._chat_runtime(cast(Any, object()), sandbox="none") as client:
+        assert isinstance(client, FakeLocalSession)
 
     assert captured["root"] == tmp_path
     assert captured["name"] == "alice"
-    assert captured["environ"] == {"MODEL_KEY": "secret"}
-    assert cast(dict[str, object], captured["run"])["client"] is captured["client"]
+    kwargs = cast(dict[str, object], captured["kwargs"])
+    assert kwargs["environ"] == {"KEY": "value", "TOOLANG_ROOT": str(tmp_path)}
+    assert kwargs["agent_state"] is state
     assert captured["closed"] is True
+
+
+def test_process_local_chat_session_closes_real_state_watcher(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    _agents(root).create("alice")
+    state = agent_up.prepare_agent(toolang_root=root, agent_name="alice")
+    session = chat_commands.LocalChatSession(
+        root,
+        "alice",
+        environ={"OPENAI_API_KEY": "secret"},
+        agent_state=state,
+    )
+
+    session.close()
+
+    assert session._thread.is_alive() is False
+
+
+def test_cli_chat_reuses_one_compatible_runtime_status(
+    tmp_path: Path, monkeypatch
+) -> None:
+    status_calls = 0
+
+    def fake_status(*_args, **_kwargs):
+        nonlocal status_calls
+        status_calls += 1
+        return agents.AgentStatus(
+            name="alice",
+            status="running",
+            endpoint="http://localhost:7001",
+            api_url=None,
+            webui_url=None,
+            sandbox="docker:python",
+        )
+
+    monkeypatch.setattr(chat_commands, "context_root", lambda _ctx: tmp_path)
+    monkeypatch.setattr(chat_commands, "require_prefix_agent", lambda _ctx: "alice")
+    monkeypatch.setattr(agents.AgentProcess, "status", fake_status)
+
+    with chat_commands._chat_runtime(
+        cast(Any, object()), sandbox="docker"
+    ) as client:
+        assert cast(chat_commands.RuntimeClient, client).endpoint == (
+            "http://localhost:7001"
+        )
+
+    assert status_calls == 1
+
+
+def test_cli_chat_rejects_sandbox_that_differs_from_running_api(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(chat_commands, "context_root", lambda _ctx: tmp_path)
+    monkeypatch.setattr(chat_commands, "require_prefix_agent", lambda _ctx: "alice")
+    monkeypatch.setattr(
+        agents.AgentProcess,
+        "status",
+        lambda *_args, **_kwargs: agents.AgentStatus(
+            name="alice",
+            status="running",
+            endpoint="http://localhost:7001",
+            api_url=None,
+            webui_url=None,
+            sandbox="docker:python",
+        ),
+    )
+
+    with pytest.raises(
+        click.ClickException,
+        match="already running in sandbox docker:python; cannot use none",
+    ):
+        with chat_commands._chat_runtime(cast(Any, object()), sandbox="none"):
+            raise AssertionError("mismatched runtime must not be reused")
 
 
 def test_cli_thread_event_renderer_prints_thread_messages(capsys) -> None:
@@ -7994,6 +8279,7 @@ def test_cli_chat_help_uses_thread_option() -> None:
     assert "--caps" in result.stdout
     assert "--agic" in result.stdout
     assert "--flow" in result.stdout
+    assert "--sandbox" in result.stdout
     assert "--model         " not in result.stdout
     assert "thread      [THREAD]" in result.stdout
     assert "target      [THREAD]" not in result.stdout
@@ -9050,6 +9336,7 @@ def test_cli_chat_term_without_message_exits_without_creating_thread(
         return {"thread_id": "term_new"}
 
     monkeypatch.setattr(chat_commands, "runtime_post", fake_runtime_post)
+    monkeypatch.setattr(chat_commands, "_chat_runtime", _fake_chat_runtime)
 
     result = _invoke_app(["chat", "dev"], input="/exit\n")
 

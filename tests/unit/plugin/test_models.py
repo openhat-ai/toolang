@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+import tomllib
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -21,7 +22,6 @@ from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage, ToolCall
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.common.error import ToolangError
-from toolang.config.files import load_config_layers
 from toolang.execution.context import RunContext, RunSnapshot, SnapshotAgent, SnapshotProgram, SnapshotRun
 from toolang.execution.assembly import RunInput
 from toolang.execution.binding import _Run
@@ -41,6 +41,14 @@ from toolang.plugin.models.adapters.responses import encode_message, response_pa
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
 from toolang.plugin.loading import load_loop, load_loops
 from toolang.plugin.models.config import parse_default_models, parse_model_aliases
+
+
+def load_config_layers(root: Path, agent_name: str) -> tuple[dict[str, object], ...]:
+    layers: list[dict[str, object]] = []
+    for path in (root / "config.toml", root / "agents" / agent_name / "config.toml"):
+        if path.is_file():
+            layers.append(tomllib.loads(path.read_text(encoding="utf-8")))
+    return tuple(layers)
 
 
 class _FakeTool(AgentTool):

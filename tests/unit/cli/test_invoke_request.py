@@ -24,8 +24,17 @@ def _agic(*, accepts_input: bool = True, params: tuple[Parameter, ...] = ()) -> 
 
 
 def test_consume_control_options_splits_models_and_honors_separator() -> None:
-    quiet, verbosity, models, tools, caps, remaining = consume_control_options(
-        ["--models", "openai,google", "-vv", "--", "-v-v", "message"]
+    quiet, verbosity, models, tools, caps, sandbox, remaining = consume_control_options(
+        [
+            "--models",
+            "openai,google",
+            "--sandbox",
+            "docker:python",
+            "-vv",
+            "--",
+            "-v-v",
+            "message",
+        ]
     )
 
     assert quiet is False
@@ -33,6 +42,7 @@ def test_consume_control_options_splits_models_and_honors_separator() -> None:
     assert models == ("openai", "google")
     assert tools == ()
     assert caps == ()
+    assert sandbox == "docker:python"
     assert remaining == ["--", "-v-v", "message"]
 
 
@@ -45,6 +55,22 @@ def test_parse_request_splits_and_deduplicates_model_selectors() -> None:
 
     assert request.models == ("openai", "google")
     assert request.input_text == "hello"
+
+
+def test_parse_request_accepts_sandbox_after_invoke_input() -> None:
+    request = parse_request(
+        _agic(),
+        ["hello", "--sandbox=docker:python"],
+        executable_kind="agic",
+    )
+
+    assert request.sandbox == "docker:python"
+    assert request.input_text == "hello"
+
+
+def test_parse_request_rejects_empty_sandbox() -> None:
+    with pytest.raises(click.ClickException, match="--sandbox requires a value"):
+        parse_request(_agic(), ["hello", "--sandbox="], executable_kind="agic")
 
 
 def test_parse_request_coerces_typed_parameters(tmp_path: Path) -> None:

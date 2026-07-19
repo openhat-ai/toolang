@@ -13,8 +13,8 @@ from rich.live import Live
 from rich.text import Text
 import typer
 
-from toolang.agent import local as agents
-from toolang.config.log_spec import PY_LOG_ENV_VAR
+from toolang.up import process as agents
+from toolang.common.env_logger import PY_LOG_ENV_VAR
 from toolang.execution.events import RunEnd, RunStarting, StepBegin, StepEnd, TraceEvent
 from toolang.execution.records import trace_index, trace_run
 from toolang.execution.records import RunRecord

@@ -14,7 +14,7 @@ import typer
 
 from toolang.catalog.job import AuthoredJobs
 from toolang.catalog.agent import LocalAgents
-from toolang.agent import local as agents
+from toolang.up import process as agents
 from toolang.catalog import templates
 from toolang.state.state import PreparedCap
 from ...common.updates import append_agent_update
@@ -244,7 +244,7 @@ def _cap_counts(entries: Sequence[PreparedCap]) -> dict[str, int]:
 
 
 def _prepare_cap_counts(root: Path, agent: str) -> dict[str, int]:
-    from toolang.agent import runtime as up
+    from toolang.up import server as up
 
     progress = make_cli_progress(show_materialize_summary=True)
     try:
@@ -277,7 +277,7 @@ def _models_summary(
     runtime_state: dict[str, object],
     running: bool,
 ) -> str:
-    from toolang.agent import runtime as up
+    from toolang.up import server as up
 
     selectors: Sequence[str] = ()
     raw_models = runtime_state.get("models")

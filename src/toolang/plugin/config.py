@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
 
@@ -24,6 +24,105 @@ class SandboxBinding:
 
     selector: SandboxSelector
     config: dict[str, object]
+
+
+def merge_named_configs(
+    config_layers: Sequence[Mapping[str, object]],
+    *,
+    section: str,
+    environ: Mapping[str, str],
+) -> dict[str, dict[str, object]]:
+    """Merge one named plugin section from explicit config layers."""
+
+    merged: dict[str, dict[str, object]] = {}
+    for payload in config_layers:
+        table = payload.get(section)
+        if not isinstance(table, Mapping):
+            continue
+        for raw_name, raw_value in table.items():
+            if not isinstance(raw_name, str) or not isinstance(raw_value, Mapping):
+                continue
+            current = dict(merged.get(raw_name, {}))
+            current.update(
+                resolve_env_refs(
+                    {str(key): value for key, value in raw_value.items()},
+                    environ,
+                    context=f"{section}.{raw_name}",
+                )
+            )
+            merged[raw_name] = current
+    return merged
+
+
+def merge_sandbox_config(
+    config_layers: Sequence[Mapping[str, object]],
+    *,
+    environ: Mapping[str, str],
+) -> dict[str, object] | None:
+    """Merge sandbox configuration from explicit root and home layers."""
+
+    driver: str | None = None
+    target: str | None = None
+    config: dict[str, object] = {}
+    for payload in config_layers:
+        raw_sandbox = payload.get("sandbox")
+        if not isinstance(raw_sandbox, Mapping):
+            continue
+        sandbox = cast(Mapping[str, object], raw_sandbox)
+        raw_driver = sandbox.get("driver")
+        if not isinstance(raw_driver, str) or not raw_driver.strip():
+            raw_driver = sandbox.get("plugin")
+        if isinstance(raw_driver, str) and raw_driver.strip():
+            driver = raw_driver.strip()
+            raw_target = sandbox.get("target")
+            target = (
+                raw_target.strip()
+                if isinstance(raw_target, str) and raw_target.strip()
+                else None
+            )
+        raw_config = sandbox.get("config")
+        if isinstance(raw_config, Mapping):
+            config.update(
+                resolve_env_refs(
+                    {str(key): value for key, value in raw_config.items()},
+                    environ,
+                    context="sandbox.config",
+                )
+            )
+    if driver is None:
+        return None
+    return {"driver": driver, "target": target, "config": config}
+
+
+def resolve_env_refs(
+    payload: Mapping[str, object],
+    environ: Mapping[str, str],
+    *,
+    context: str,
+) -> dict[str, object]:
+    """Resolve explicit ``_env`` references in plugin configuration."""
+
+    resolved = dict(payload)
+    for key, value in tuple(payload.items()):
+        if not key.endswith("_env") or not isinstance(value, str):
+            continue
+        target_key = key[:-4]
+        if target_key in resolved:
+            resolved.pop(key, None)
+            continue
+        env_name = value.strip()
+        if not env_name:
+            resolved.pop(key, None)
+            continue
+        env_value = environ.get(env_name)
+        if env_value is None:
+            raise ValueError(
+                f"missing environment variable {env_name} for {context}.{key}; "
+                f"set {env_name} or provide {context}.{target_key} directly"
+            )
+        resolved[target_key] = env_value
+        resolved.pop(key, None)
+    return resolved
 
 
 def parse_channel_bindings(

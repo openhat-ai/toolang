@@ -11,12 +11,12 @@ from typing import Annotated, TYPE_CHECKING
 import click
 import typer
 
-from toolang.agent import local as agents
+from toolang.up import process as agents
 from toolang.state.state import split_cap_selectors
 from toolang.plugin.models.resolution import split_model_selectors
 from toolang.plugin.sandboxes.loading import create_sandbox_plugin
 from toolang.plugin.tools.registry import split_tool_selectors
-from ....config.log import (
+from ....up.logging import (
     LoggingPlan,
     configure_logging_plan,
     resolve_agent_logging,
@@ -29,10 +29,9 @@ from ...common.context import (
     user_call,
 )
 from ...common.output import active_agent_error
-from ...common.routing import normalize_components
 
 if TYPE_CHECKING:
-    from toolang.agent import runtime as agent_up
+    from toolang.up import server as agent_up
     from ....state.state import AgentState
     from ...common.progress import CliProgress
 
@@ -52,7 +51,6 @@ class _RoamingFileOptions:
     models: tuple[str, ...]
     tools: tuple[str, ...] | None
     caps: tuple[str, ...]
-    components: tuple[str, ...]
     host: str
     endpoint_host: str | None
     port: int | None
@@ -67,8 +65,8 @@ def is_roaming_file_request(args: list[str]) -> bool:
 
 
 def run_roaming_file(source: Path, args: list[str]) -> int:
-    from toolang.agent import runtime as up
-    from ....config.env import load_runtime_environ
+    from toolang.up import server as up
+    from ...common.context import load_runtime_environ
 
     try:
         options = _parse_roaming_file_options(args)
@@ -101,7 +99,6 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
             caps=options.caps,
             file_inboxes=options.inboxes,
             dev=options.dev,
-            component_names=options.components,
             log_spec=log_plan.spec,
             temporary_port=options.port is None,
             environ=log_plan.environ,
@@ -131,7 +128,6 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
     models: list[str] = []
     tools: list[str] | None = None
     caps: list[str] = []
-    components: list[str] = ["runner.file", "trigger.file", "trigger.watch"]
     host = "127.0.0.1"
     endpoint_host: str | None = None
     port: int | None = None
@@ -146,7 +142,6 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
             "--models",
             "--tools",
             "--caps",
-            "--enable",
             "--host",
             "--endpoint-host",
             "--port",
@@ -166,8 +161,6 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
                 tools.extend(split_tool_selectors((value,)))
             elif option == "--caps":
                 caps.extend(split_cap_selectors((value,)))
-            elif option == "--enable":
-                components.extend(normalize_components([value]) or [])
             elif option == "--host":
                 host = value
             elif option == "--endpoint-host":
@@ -198,7 +191,6 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
         models=tuple(dict.fromkeys(models)),
         tools=None if tools is None else tuple(dict.fromkeys(tools)),
         caps=tuple(dict.fromkeys(caps)),
-        components=tuple(dict.fromkeys(components)),
         host=host,
         endpoint_host=endpoint_host,
         port=port,
@@ -220,7 +212,10 @@ def run(
         help="Existing local agent name, remote agent ref, or URL.",
         hidden=True,
     ),
-    sandbox: Annotated[str, typer.Option(help="Run the agent in a sandbox.")] = "none",
+    sandbox: Annotated[
+        str | None,
+        typer.Option(help="Run in this sandbox; defaults to agent config or none."),
+    ] = None,
     models: Annotated[
         list[str] | None,
         typer.Option("--models", help="Limit available models. Pass CSV or repeat."),
@@ -238,10 +233,6 @@ def run(
     ] = "127.0.0.1",
     port: Annotated[
         int | None, typer.Option(help="Bind the agent API to this port.")
-    ] = None,
-    components: Annotated[
-        list[str] | None,
-        typer.Option("--enable", help="Enable runtime components. Pass CSV or repeat."),
     ] = None,
     inboxes: Annotated[
         list[Path] | None,
@@ -264,8 +255,11 @@ def run(
     sandbox_child: Annotated[
         bool, typer.Option("--sandbox-child", hidden=True)
     ] = False,
+    background_hosting: Annotated[
+        bool, typer.Option("--background-hosting", hidden=True)
+    ] = False,
 ) -> None:
-    from toolang.agent import runtime as up
+    from toolang.up import server as up
     from ...common.progress import as_progress_sink, make_cli_progress
 
     selector = require_runtime_agent(ctx, agent)
@@ -282,7 +276,6 @@ def run(
                 models=models,
                 tools=tools,
                 caps=caps,
-                components=normalize_components(components),
                 inboxes=inboxes,
                 port=port,
                 host=host,
@@ -301,6 +294,7 @@ def run(
                     sandbox_child=sandbox_child,
                     progress=None,
                     agent_state=launch.agent_state,
+                    wait=not background_hosting,
                 )
             )
     except KeyboardInterrupt:
@@ -325,7 +319,10 @@ def start(
     agent: str | None = typer.Argument(
         None, help="Existing local agent name.", hidden=True
     ),
-    sandbox: Annotated[str, typer.Option(help="Run the agent in a sandbox.")] = "none",
+    sandbox: Annotated[
+        str | None,
+        typer.Option(help="Run in this sandbox; defaults to agent config or none."),
+    ] = None,
     models: Annotated[
         list[str] | None,
         typer.Option("--models", help="Limit available models. Pass CSV or repeat."),
@@ -343,10 +340,6 @@ def start(
     ] = "127.0.0.1",
     port: Annotated[
         int | None, typer.Option(help="Bind the agent API to this port.")
-    ] = None,
-    components: Annotated[
-        list[str] | None,
-        typer.Option("--enable", help="Enable runtime components. Pass CSV or repeat."),
     ] = None,
     inboxes: Annotated[
         list[Path] | None,
@@ -367,7 +360,7 @@ def start(
         typer.Option("--endpoint-host", help="Endpoint host name.", hidden=True),
     ] = None,
 ) -> None:
-    from toolang.agent import runtime as up
+    from toolang.up import server as up
     from ...common.progress import as_progress_sink, make_cli_progress
 
     selector = require_runtime_agent(ctx, agent)
@@ -387,7 +380,6 @@ def start(
                 models=models,
                 tools=tools,
                 caps=caps,
-                components=normalize_components(components),
                 inboxes=inboxes,
                 port=port,
                 host=host,
@@ -411,7 +403,7 @@ def start(
         sys.executable,
         "-m",
         "toolang.cli.toolang",
-        *up.build_run_argv(launch.startup),
+        *up.build_run_argv(launch.startup, background_hosting=True),
     ]
     try:
         status = agents.AgentProcess(
@@ -488,7 +480,6 @@ def resolve_startup(
     models: list[str] | None,
     tools: list[str] | None,
     caps: list[str] | None,
-    components: list[str] | None,
     inboxes: list[Path] | None,
     port: int | None,
     host: str,
@@ -497,7 +488,7 @@ def resolve_startup(
     background: bool,
     progress: CliProgress | None,
 ) -> RuntimeStartup:
-    from toolang.agent import runtime as up
+    from toolang.up import server as up
     from ...common.progress import as_progress_sink
 
     root, agent = target.toolang_root, target.agent_name
@@ -515,6 +506,12 @@ def resolve_startup(
     )
     if not background:
         configure_logging_plan(log_plan)
+    agent_state = user_call(
+        up.prepare_agent,
+        toolang_root=root,
+        agent_name=agent,
+        progress=as_progress_sink(progress),
+    )
     startup = user_call(
         up.resolve_startup,
         toolang_root=root,
@@ -528,15 +525,9 @@ def resolve_startup(
         caps=caps,
         file_inboxes=inboxes,
         dev=dev,
-        component_names=components,
         log_spec=log_plan.spec,
         temporary_port=target.kind == "visiting" and port is None,
         environ=log_plan.environ,
-    )
-    agent_state = user_call(
-        up.prepare_agent,
-        toolang_root=root,
-        agent_name=agent,
-        progress=as_progress_sink(progress),
+        agent_state=agent_state,
     )
     return RuntimeStartup(target, startup, log_plan.environ, log_plan, agent_state)

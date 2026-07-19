@@ -11,7 +11,7 @@ import sqlite3
 import threading
 from typing import Literal, cast
 
-from toolang.agent import local as agents
+from toolang.up import process as agents
 from toolang.execution.records import RunStatus
 
 FileRequestStatus = Literal["running", "finished", "failed", "canceled"]

@@ -773,8 +773,6 @@ def write_runtime_state(
     started_at: str,
     pid: int | None,
     sandbox: dict[str, object] | None = None,
-    components: Sequence[str] | None = None,
-    features: Sequence[str] | None = None,
     models: Sequence[str] | None = None,
     status: str = "running",
     message: str | None = None,
@@ -792,9 +790,6 @@ def write_runtime_state(
             "updated_at": started_at,
             "pid": pid,
             "sandbox": sandbox,
-            "components": list(
-                components if components is not None else features or ()
-            ),
             "models": list(models or ()),
             "message": message,
         },

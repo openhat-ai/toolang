@@ -6,7 +6,7 @@ import re
 import sys
 from typing import cast
 
-from toolang.config.log import (
+from toolang.up.logging import (
     DEFAULT_AGENT_LOG_SPEC,
     HttpxLogFilter,
     MessageRegexFilter,
@@ -14,7 +14,7 @@ from toolang.config.log import (
     configure_logging,
     resolve_agent_logging,
 )
-from toolang.config.log_spec import OFF_LOG_LEVEL, PY_LOG_ENV_VAR, parse_log_level, parse_log_spec, resolve_log_spec
+from toolang.common.env_logger import OFF_LOG_LEVEL, PY_LOG_ENV_VAR, parse_log_level, parse_log_spec, resolve_log_spec
 
 
 def test_httpx_log_filter_redacts_telegram_token_and_demotes_to_debug() -> None:

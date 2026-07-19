@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from toolang.agent import local as agents
+from toolang.up import process as agents
 from toolang.common.github import GitHubRef
 
 

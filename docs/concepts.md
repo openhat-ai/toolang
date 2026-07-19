@@ -72,6 +72,33 @@ Placement determines which root, home, source, and config files participate in
 runtime assembly. It does not define the semantic shape of one run.
 
 
+## Agent Hosting
+
+Agent hosting describes where and how the agent API process is launched after
+an agent target has been materialized. It is separate from source placement.
+
+Current hosting drivers are:
+
+| Driver | Meaning |
+| --- | --- |
+| `none` | Run the API process on the current host |
+| `docker` | Run the API process in a container with the same root and home mounted into it |
+
+Future drivers may use a cloud host or combine a host API process with
+restricted tool execution. The CLI resolves `--sandbox` into hosting inputs;
+`Executor` receives an `AgentSetup` and an immutable `AgentState` and does not
+know where its process is hosted.
+
+The materialized root and home remain the authoritative data in every hosting
+driver. A hosted process exposes the same agent API on the same selected
+numeric port from the caller's perspective.
+
+Foreground CLI sessions may avoid an API process when the resolved driver is
+`none`. For example, chat can use a process-local executor in the current CLI.
+Managed drivers use a session-owned API so the executor remains inside the
+selected host.
+
+
 ## Caps
 
 Caps are reusable agent primitives that shape behavior and available tools.

@@ -30,6 +30,8 @@ RunStore       durable trace projection
 
 `AgentSetup` is fixed when the executor is constructed. `Executor.run()`
 receives one explicit `AgentState`, and all child runs retain that same object.
+Effective service definitions are projected from that captured state into tool
+call context instead of being copied into `AgentSetup` at process startup.
 Process assembly, watchers, channels, CLI, and HTTP are outside the executor.
 
 
@@ -151,12 +153,15 @@ class Executor:
         *,
         root: Path,
         name: str,
+        home: Path,
+        id_state_path: Path,
         setup: AgentSetup,
         store: RunStore,
         model_aliases: Mapping[str, ModelAlias],
         default_models: Sequence[str],
         model_environ: Mapping[str, str],
-        config: ConfigView,
+        default_model_selector: str | None = None,
+        allowed_model_selectors: Sequence[str] = (),
         trace: TraceEventHandler | None = None,
     ) -> None: ...
 

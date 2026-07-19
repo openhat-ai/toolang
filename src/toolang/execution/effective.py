@@ -163,22 +163,14 @@ def effective_run_sets(
 
 
 def activation_default_model_selector(context: SupportsRunAssembly) -> str | None:
-    value = context.config.get("models.default_selector")
-    if not isinstance(value, str):
-        return None
-    selector = value.strip()
+    selector = (context.default_model_selector or "").strip()
     return selector or None
 
 
 def activation_allowed_model_selectors(
     context: SupportsRunAssembly,
 ) -> tuple[str, ...]:
-    value = context.config.get("models.allowed_selectors")
-    if isinstance(value, tuple):
-        return tuple(item for item in value if isinstance(item, str) and item.strip())
-    if isinstance(value, list):
-        return tuple(item for item in value if isinstance(item, str) and item.strip())
-    return ()
+    return tuple(item for item in context.allowed_model_selectors if item.strip())
 
 
 def run_allowed_model_selectors(

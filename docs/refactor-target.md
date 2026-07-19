@@ -40,14 +40,13 @@ exist only when it owns state, invariants, or a meaningful protocol.
 
 ```text
 toolang/
-├── agent/                  # runtime materialization, processes, tools, and assembly
 ├── api/                    # FastAPI application and resource routes
 ├── base/                   # plugin-facing protocols and shared value types
 ├── catalog/                # authored agent, cap, and job CRUD plus templates
 ├── cli/                    # CLI entry points and user interfaces
 ├── common/                 # small package-neutral primitives
-├── config/                 # runtime configuration and logging
 ├── execution/              # requests, records, events, stores, replies, executor
+├── up/                     # agent targets, processes, sandbox hosting, API assembly
 ├── lang/                   # .too AST, parsing, lowering, validation, formatting
 ├── plugin/                 # plugin loading, config, and built-in implementations
 ├── state/                  # durable/prepared files and immutable agent state
@@ -110,7 +109,7 @@ directory:
 
 It works directly with agent names and home paths; there is no `LocalAgent`
 model. Remote source resolution, cloning orchestration, and visiting or roaming
-materialization belong to `toolang.agent` and the CLI. Process start, stop, and
+materialization belong to `toolang.up` and the CLI. Process start, stop, and
 status belong to `AgentProcess`.
 
 `create()` always receives explicit authored content. Callers that want a
@@ -172,7 +171,9 @@ program-declared jobs remain available as `AgentState.program.jobs`.
 
 `StateWatcher` monitors the relevant files and publishes new immutable
 `AgentState` versions. It owns invalidation and reuse of unchanged parsed
-sources. It does not know about `Executor` or `Scheduler`.
+sources. It does not know about `Executor` or `Scheduler`. Every API process
+that can accept runs starts its watcher as process infrastructure; watching is
+not an optional runtime component.
 
 `AgentSetup` is separate from source state and contains installed runtime
 implementations:
@@ -185,8 +186,15 @@ class AgentSetup:
     model_adapters: Mapping[str, ModelAdapter]
 ```
 
-Process-level component selection is startup configuration and is not part of
-`AgentSetup` or `AgentState`.
+Effective service definitions remain in the `AgentState` captured for each
+run. Run assembly passes those definitions and their explicitly resolved
+environment values through `ToolContext`; they are not frozen into
+`AgentSetup` when the process starts.
+
+There is no general `toolang.config` package. Prepared root and home config are
+part of `AgentState`. The CLI resolves environment variables and process
+settings at the call site; plugin families parse their own sections from
+explicit config mappings.
 
 
 ## Durable Work
@@ -366,17 +374,26 @@ functions move to their named modules.
 
 ## Process Assembly
 
-`toolang.agent.runtime` resolves startup configuration and assembles concrete
+`toolang.up.server` resolves startup configuration and assembles concrete
 objects. It may construct watchers, setup, stores, executor, scheduler, and API
 state, but it must not wrap them in an `AgentRuntime` aggregate.
+
+The CLI is the only public process origin. It first resolves one materialized
+agent target, then selects hosting from `--sandbox` or explicit config. Hosting
+decides whether the API process runs on the host, in Docker, or in a future
+remote or hybrid environment. The server core and `Executor` do not inspect
+that hosting decision.
 
 `toolang.api.app` owns FastAPI application and route assembly. Resource modules
 such as `chat`, `runs`, `jobs`, and `caps` own HTTP request mapping;
 `_streaming` and `_views` are internal API implementation modules.
 
-Direct TUI and script execution may assemble the same objects without a daemon.
-The HTTP server is another caller of the executor, not the owner of execution.
-A central runtime event bus is not required by the target architecture.
+Scripts with `sandbox=none` may assemble an executor for one-shot invocation.
+Managed-sandbox script runs use a session-owned API and stream canonical trace
+events back to the CLI. Chat reuses an existing API when present. Without one,
+`sandbox=none` uses a process-local executor and managed hosting owns a temporary
+API for the session. A central runtime event bus is not required by the target
+architecture.
 
 
 ## Dependency Direction
@@ -385,12 +402,12 @@ The intended package dependency direction is:
 
 ```text
 base/common
-    -> lang/config/catalog/plugin
+    -> lang/catalog/plugin
     -> state and work.state
     -> execution foundations
     -> Executor
     -> Scheduler
-    -> api, agent runtime, and CLI
+    -> api, up, and CLI
 ```
 
 Additional constraints:
@@ -437,7 +454,7 @@ target APIs.
    self-driven `Scheduler`.
 5. Move CLI behavior into the five first-level CLI areas and reduce the root
    app to explicit assembly.
-6. Move process assembly to `agent.runtime` and HTTP assembly to `api.app`.
+6. Move process assembly to `up.server` and HTTP assembly to `api.app`.
 7. Move plugin families under `plugin`, authored CRUD under `catalog`, and
    durable job/file processing under `work`.
 8. Delete superseded modules and compatibility paths, then update the stable

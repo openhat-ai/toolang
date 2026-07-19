@@ -1,4 +1,4 @@
-"""Parse env_logger-style logging directives for Toolang."""
+"""Parse env_logger-style logging directives."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ class LogSpec:
 
 
 def ensure_custom_levels() -> None:
-    """Register custom Toolang logging level names once."""
+    """Register custom logging level names once."""
 
     if logging.getLevelName(TRACE_LOG_LEVEL) != "TRACE":
         logging.addLevelName(TRACE_LOG_LEVEL, "TRACE")

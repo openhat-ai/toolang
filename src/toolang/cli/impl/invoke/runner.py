@@ -9,11 +9,19 @@ import sys
 import click
 import typer
 
-from toolang.agent import local as agents
-from toolang.agent import runtime as agent_up
+from toolang.up import process as agents
+from toolang.up import server as agent_up
+from toolang.base.types.sandbox import SandboxSelector
 from toolang.common.error import ToolangError
-from toolang.config.env import load_runtime_environ
+from toolang.up.logging import resolve_agent_logging
+from toolang.cli.common.client import (
+    RuntimeClient,
+    RuntimeClientError,
+    owned_runtime_client,
+)
+from toolang.cli.common.context import load_runtime_environ
 from toolang.execution.effective import effective_agics
+from toolang.execution.records import RunRecord
 from toolang.execution.request import ExecutableKind
 from toolang.lang.ast import AgicDecl, FlowDecl, Program
 from toolang.state.state import AgentState
@@ -66,6 +74,7 @@ def handle_roaming_invoke(
         leading_models,
         leading_tools,
         leading_caps,
+        leading_sandbox,
         normalized_remaining,
     ) = consume_control_options(remaining)
     prepare_progress = _prepare_progress(quiet=quiet, argv=remaining)
@@ -110,6 +119,7 @@ def handle_roaming_invoke(
                 leading_models=leading_models,
                 leading_tools=leading_tools,
                 leading_caps=leading_caps,
+                leading_sandbox=leading_sandbox,
             )
         except MissingInvokeInput:
             show_help(
@@ -131,20 +141,32 @@ def handle_roaming_invoke(
             "invoke_params": request.invoke_params,
             "invoke_parts": request.invoke_parts,
         }
-        outcome = agent_up.invoke(
-            toolang_root=toolang_root,
-            agent_name=agent_name,
-            executable_kind=request.executable_kind,
-            executable_name=request.executable_name,
-            input_text=request.input_text,
-            models=request.models,
-            tools=request.tools or None,
-            caps=request.caps or None,
-            metadata=metadata,
-            environ=runtime_environ,
-            reply=script_progress,
-            agent_state=state,
-        )
+        selector = SandboxSelector.parse(request.sandbox or "none")
+        if selector.driver == "none":
+            outcome = agent_up.invoke(
+                toolang_root=toolang_root,
+                agent_name=agent_name,
+                executable_kind=request.executable_kind,
+                executable_name=request.executable_name,
+                input_text=request.input_text,
+                models=request.models,
+                tools=request.tools or None,
+                caps=request.caps or None,
+                metadata=metadata,
+                environ=runtime_environ,
+                reply=script_progress,
+                agent_state=state,
+            )
+        else:
+            outcome = _invoke_hosted(
+                toolang_root=toolang_root,
+                agent_name=agent_name,
+                request=request,
+                metadata=metadata,
+                environ=runtime_environ,
+                state=state,
+                reply=script_progress,
+            )
     except KeyboardInterrupt:
         if script_progress is not None:
             script_progress.interrupt()
@@ -164,6 +186,7 @@ def handle_roaming_invoke(
         ValueError,
         ToolangError,
         click.ClickException,
+        RuntimeClientError,
     ) as exc:
         if prepare_progress is not None:
             prepare_progress.finish(details=False)
@@ -175,6 +198,87 @@ def handle_roaming_invoke(
         toolang_root=toolang_root,
         agent_name=agent_name,
         executable_name=request.executable_name,
+    )
+
+
+def _invoke_hosted(
+    *,
+    toolang_root: Path,
+    agent_name: str,
+    request: RoamingInvokeRequest,
+    metadata: dict[str, object],
+    environ: dict[str, str],
+    state: AgentState,
+    reply: ScriptProgressSink,
+) -> RunRecord:
+    selector = SandboxSelector.parse(request.sandbox or "none")
+    process = agents.AgentProcess(toolang_root, agent_name)
+    status = process.status(ui_base_url="")
+    if status is not None and status.status in {"running", "preparing", "starting"}:
+        if status.status != "running" or status.endpoint is None:
+            raise click.ClickException(f"agent API is not ready: {agent_name}")
+        if not _sandbox_matches(status.sandbox, selector):
+            raise click.ClickException(
+                f"agent is already running in sandbox {status.sandbox or 'unknown'}; "
+                f"cannot use {selector.render()} for this run"
+            )
+        return _invoke_client(RuntimeClient(status.endpoint), request, metadata, reply)
+
+    runtime_environ = dict(environ)
+    runtime_environ["TOOLANG_ROOT"] = str(toolang_root)
+    log_plan = resolve_agent_logging(
+        mode="start",
+        environ=runtime_environ,
+        agent_log_path=agents.agent_runtime_log_path(toolang_root, agent_name),
+    )
+    startup = agent_up.resolve_startup(
+        toolang_root=toolang_root,
+        agent_name=agent_name,
+        sandbox=selector.render(),
+        models=request.models,
+        tools=request.tools or None,
+        caps=request.caps,
+        log_spec=log_plan.spec,
+        environ=log_plan.environ,
+        agent_state=state,
+    )
+    if log_plan.path is None:
+        raise click.ClickException("agent log path was not resolved")
+    with owned_runtime_client(
+        root=toolang_root,
+        name=agent_name,
+        startup=startup,
+        environ=log_plan.environ,
+        log_path=log_plan.path,
+    ) as client:
+        return _invoke_client(client, request, metadata, reply)
+
+
+def _invoke_client(
+    client: RuntimeClient,
+    request: RoamingInvokeRequest,
+    metadata: dict[str, object],
+    reply: ScriptProgressSink,
+) -> RunRecord:
+    return client.invoke(
+        {
+            "executable_kind": request.executable_kind,
+            "executable_name": request.executable_name,
+            "input": request.input_text or "",
+            "models": list(request.models),
+            "tools": list(request.tools) if request.tools else None,
+            "caps": list(request.caps),
+            "metadata": metadata,
+        },
+        on_event=reply.on_event,
+    )
+
+
+def _sandbox_matches(actual: str | None, requested: SandboxSelector) -> bool:
+    if actual == requested.render():
+        return True
+    return requested.target is None and isinstance(actual, str) and (
+        actual.partition(":")[0] == requested.driver
     )
 
 

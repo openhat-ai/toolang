@@ -7,6 +7,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
+import shlex
+import threading
 from typing import Any, Literal, cast
 
 from toolang.base.error import ToolangError
@@ -15,6 +17,7 @@ from toolang.base.types.tool import ToolContext, ToolDefinition
 
 ServiceTransport = Literal["http", "stdio"]
 ConnectionFileWriter = Callable[[str, dict[str, Any]], None]
+_ENV_LOCK = threading.RLock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +29,7 @@ class VisibleService:
     command: tuple[str, ...] = ()
     port: int | None = None
     env_vars: tuple[str, ...] = ()
+    env: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,7 +57,6 @@ class _LeafTool(AgentTool):
 @dataclass(frozen=True, slots=True)
 class _ServiceUseAdapter:
     plugin_name: str
-    services: Mapping[str, VisibleService]
     connection_version: int | None
     write_connection_file: ConnectionFileWriter
 
@@ -265,14 +268,11 @@ class _ServiceUseAdapter:
         return _LeafTool(name=name, _definition=definition, _invoke=invoke)
 
     def _service_schema(self) -> dict[str, Any]:
-        service_names = sorted(self.services)
-        if service_names:
-            return {"type": "string", "enum": service_names, "description": "Visible service name."}
         return {"type": "string", "description": "Visible service name."}
 
     def runtime(self, arguments: Mapping[str, Any], context: ToolContext) -> ServiceRuntime:
         service_name = str(arguments.get("service", "")).strip()
-        service = self.services.get(service_name)
+        service = _context_service(context, service_name)
         if service is None:
             raise ToolangError(f"service is not visible to this agent: {service_name}")
         base = context.room / service.name
@@ -281,7 +281,7 @@ class _ServiceUseAdapter:
             connection_path=base / "connection.json",
             session_path=base / "session.json",
             token_path=base / "token.json",
-            env_vars=_service_env(context.home, service.env_vars),
+            env_vars=_service_env(service),
         )
 
     def _invoke_bridge_start(
@@ -525,7 +525,6 @@ class _ServiceUseAdapter:
 class ServiceUsePlugin:
     """One service plugin backed by mcat_cli modules."""
 
-    config: dict[str, Any]
     connection_version: int | None
     write_connection_file: ConnectionFileWriter
     name: str
@@ -535,7 +534,6 @@ class ServiceUsePlugin:
     def __post_init__(self) -> None:
         adapter = _ServiceUseAdapter(
             plugin_name=self.name,
-            services=load_visible_services(self.config.get("visible_services")),
             connection_version=self.connection_version,
             write_connection_file=self.write_connection_file,
         )
@@ -548,8 +546,8 @@ class ServiceUsePlugin:
 def create_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
     """Create the service_use tool plugin."""
 
+    del config
     return ServiceUsePlugin(
-        config=dict(config),
         connection_version=None,
         write_connection_file=_write_connection_file,
         name="service_use",
@@ -557,18 +555,28 @@ def create_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
     )
 
 
-def load_visible_services(raw: object) -> dict[str, VisibleService]:
-    if raw is None:
-        return {}
-    if not isinstance(raw, list):
-        raise ValueError("visible_services must be a list")
-    services: dict[str, VisibleService] = {}
-    for item in raw:
-        if not isinstance(item, dict):
-            raise ValueError("visible_services entries must be objects")
-        service = visible_service_from_data(cast(Mapping[str, Any], item))
-        services[service.name] = service
-    return services
+def _context_service(
+    context: ToolContext,
+    service_name: str,
+) -> VisibleService | None:
+    for service in context.services:
+        if service.name != service_name:
+            continue
+        data = {"name": service.name, **dict(service.meta)}
+        if data.get("transport") == "stdio" and isinstance(data.get("target"), str):
+            data["command"] = shlex.split(cast(str, data["target"]))
+        data["env_vars"] = _service_env_names(service.meta.get("env"))
+        data["env"] = dict(service.environ)
+        return visible_service_from_data(data)
+    return None
+
+
+def _service_env_names(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [name.strip() for name in value.split(",") if name.strip()]
+    if isinstance(value, list | tuple):
+        return [str(name).strip() for name in value if str(name).strip()]
+    return []
 
 
 def visible_service_from_data(data: Mapping[str, Any]) -> VisibleService:
@@ -597,6 +605,7 @@ def visible_service_from_data(data: Mapping[str, Any]) -> VisibleService:
         command=tuple(command),
         port=_optional_int(data.get("port")),
         env_vars=tuple(_string_list(data.get("env_vars"))),
+        env=_string_mapping(data.get("env")),
     )
 
 
@@ -666,16 +675,17 @@ def _write_connection_file(path: str, payload: dict[str, Any]) -> None:
 
 @contextmanager
 def patched_environ(values: Mapping[str, str]):
-    previous = {key: os.environ.get(key) for key in values}
-    os.environ.update(values)
-    try:
-        yield
-    finally:
-        for key, old in previous.items():
-            if old is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = old
+    with _ENV_LOCK:
+        previous = {key: os.environ.get(key) for key in values}
+        os.environ.update(values)
+        try:
+            yield
+        finally:
+            for key, old in previous.items():
+                if old is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = old
 
 
 def _ensure_http_connection(
@@ -700,19 +710,10 @@ def _ensure_http_connection(
     )
 
 
-def _service_env(home: Path, env_names: tuple[str, ...]) -> dict[str, str]:
-    if not env_names:
-        return {}
-    from dotenv import dotenv_values
-
-    payload = {
-        key: str(value)
-        for key, value in dotenv_values(home / ".env").items()
-        if value is not None
-    }
+def _service_env(service: VisibleService) -> dict[str, str]:
     resolved: dict[str, str] = {}
-    for name in env_names:
-        value = os.environ.get(name, payload.get(name))
+    for name in service.env_vars:
+        value = service.env.get(name)
         if value is None:
             raise ToolangError(f"service env var is missing: {name}")
         resolved[name] = value
@@ -736,6 +737,18 @@ def _string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         raise ValueError("list value must be a list")
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _string_mapping(value: object) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError("env must be an object")
+    return {
+        str(key): str(item)
+        for key, item in value.items()
+        if str(key).strip()
+    }
 
 
 def _required_text(value: object, *, name: str) -> str:
