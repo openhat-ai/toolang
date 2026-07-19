@@ -11,10 +11,10 @@ from toolang.base.protocols.tool import AgentTool
 from toolang.common.error import ToolangError
 from toolang.base.types.model import ModelTarget
 
-from toolang.state import caps as cap_store
+from toolang.state import state as cap_store
 from ..lang.ast import AgicDecl, Directive, Parameter, Program, Span
-from ..state.agent import AgentState
-from toolang.state.prepared import PreparedEntry
+from ..state.state import AgentState
+from toolang.state.state import PreparedCap
 from toolang.plugin.tools.registry import selected_tool_names, tool_ref_for_model_tool
 from toolang.plugin.models.resolution import resolve_model, select_model_selectors
 
@@ -37,15 +37,15 @@ class EffectiveRunSets:
 
     models_base: tuple[str, ...]
     tools_base: dict[str, AgentTool]
-    psyches_base: tuple[PreparedEntry, ...]
-    skills_base: tuple[PreparedEntry, ...]
-    services_base: tuple[PreparedEntry, ...]
+    psyches_base: tuple[PreparedCap, ...]
+    skills_base: tuple[PreparedCap, ...]
+    services_base: tuple[PreparedCap, ...]
     model_selectors: tuple[str, ...]
     models: tuple[ModelTarget, ...]
     tools: dict[str, AgentTool]
-    psyches: tuple[PreparedEntry, ...]
-    skills: tuple[PreparedEntry, ...]
-    services: tuple[PreparedEntry, ...]
+    psyches: tuple[PreparedCap, ...]
+    skills: tuple[PreparedCap, ...]
+    services: tuple[PreparedCap, ...]
     set_math: dict[str, object]
 
 
@@ -224,7 +224,7 @@ def run_tools_base(context: SupportsRunAssembly, *, run: _Run) -> dict[str, Agen
 
 def run_cap_entries(
     context: SupportsRunAssembly, *, run: _Run
-) -> tuple[PreparedEntry, ...]:
+) -> tuple[PreparedCap, ...]:
     entries = tuple(run.state.caps)
     selectors = run.cap_selectors
     if not selectors:
@@ -320,17 +320,17 @@ def select_tools_with_trace(
 
 
 def select_entries(
-    base: tuple[PreparedEntry, ...],
+    base: tuple[PreparedCap, ...],
     directives: tuple[Directive, ...],
-) -> tuple[PreparedEntry, ...]:
+) -> tuple[PreparedCap, ...]:
     selected, _math = select_entries_with_trace(base, directives)
     return selected
 
 
 def select_entries_with_trace(
-    base: tuple[PreparedEntry, ...],
+    base: tuple[PreparedCap, ...],
     directives: tuple[Directive, ...],
-) -> tuple[tuple[PreparedEntry, ...], dict[str, object]]:
+) -> tuple[tuple[PreparedCap, ...], dict[str, object]]:
     entries, steps = _apply_cap_directives_with_trace(base, directives)
     return (
         entries,
@@ -343,8 +343,8 @@ def select_entries_with_trace(
 
 
 def cap_entries(
-    entries: AgentState | tuple[PreparedEntry, ...], *, kind: str
-) -> tuple[PreparedEntry, ...]:
+    entries: AgentState | tuple[PreparedCap, ...], *, kind: str
+) -> tuple[PreparedCap, ...]:
     cap_entries = entries.caps if isinstance(entries, AgentState) else entries
     return tuple(entry for entry in cap_entries if entry.kind == kind)
 
@@ -415,9 +415,9 @@ def _apply_tool_directives_with_trace(
 
 
 def _apply_cap_directives_with_trace(
-    base: tuple[PreparedEntry, ...],
+    base: tuple[PreparedCap, ...],
     directives: tuple[Directive, ...],
-) -> tuple[tuple[PreparedEntry, ...], list[dict[str, object]]]:
+) -> tuple[tuple[PreparedCap, ...], list[dict[str, object]]]:
     current = list(base)
     kind = base[0].kind if base else None
     agent_name = _entry_agent_name(base)
@@ -529,15 +529,15 @@ def _directive_step(
     }
 
 
-def _entry_label(entry: PreparedEntry) -> str:
+def _entry_label(entry: PreparedCap) -> str:
     return f"{entry.kind}/{entry.name}"
 
 
-def _entry_identity(entry: PreparedEntry) -> tuple[str, str, str]:
+def _entry_identity(entry: PreparedCap) -> tuple[str, str, str]:
     return (entry.kind, entry.name, entry.ref)
 
 
-def _entry_agent_name(entries: tuple[PreparedEntry, ...]) -> str:
+def _entry_agent_name(entries: tuple[PreparedCap, ...]) -> str:
     for entry in entries:
         path = entry.path or entry.source.path
         prefix, separator, rest = path.partition("agents/")

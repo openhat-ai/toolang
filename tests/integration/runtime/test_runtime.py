@@ -84,8 +84,8 @@ from toolang.base.types.sandbox import (
     SandboxStartResult,
     SandboxState,
 )
-from toolang.state.caps import list_entries, materialize_visibility
-from toolang.state import caps as cap_state
+from toolang.state.state import list_entries, materialize_visibility
+from toolang.state import state as cap_state
 from toolang.plugin.config import ChannelBinding
 from toolang.config.log_spec import PY_LOG_ENV_VAR
 from toolang.execution import executor as run_executor_module
@@ -105,10 +105,11 @@ from toolang.agent import channel_runtime as poll
 from toolang.agent import state_updates as watch
 from toolang.plugin.tools.loading import load_runtime_tools, runtime_tool_config
 from toolang.work import files as file_requests
-from toolang.state.durable import scan_durable_state
+from toolang.state.source import read_authored_source
+from toolang.state.cache import load_home_prepared, load_root_prepared
 from toolang.state import prepare as state_prepare
 from toolang.state import watcher as state_watcher
-from toolang.state.prepared import (
+from toolang.state.state import (
     PreparedVisibility,
 )
 from toolang.plugin.loops.basic import BasicLoop
@@ -4371,11 +4372,15 @@ def test_prepare_reload_refreshes_prepared_and_agent_state(tmp_path: Path) -> No
             refreshed = await _wait_for_fingerprint_change(context, initial_fingerprint)
             assert refreshed
             current = context.get_agent_state()
-            assert current.root.caps == ()
+            root = load_root_prepared(toolang_root, current.root_version)
+            home = load_home_prepared(
+                toolang_root, "alice", current.home_version
+            )
+            assert root.caps == ()
             assert current.program == initial_program
             assert any(
                 entry.source.path == "agents/alice/prompts/rewrite.md"
-                for entry in current.home.caps
+                for entry in home.caps
             )
 
     asyncio.run(run_test())
@@ -4495,12 +4500,13 @@ def test_prepare_materializes_remote_entries_from_config(
     assert config_path == toolang_root / "config.toml"
 
     state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
+    root = load_root_prepared(toolang_root, state.root_version)
 
-    assert [entry.source.origin for entry in state.root.caps] == ["remote"]
-    assert [entry.source.form for entry in state.root.caps] == ["wired"]
-    assert state.root.caps[0].ref == "github://acme/agents/prompts/rewrite.md@main"
+    assert [entry.source.origin for entry in root.caps] == ["remote"]
+    assert [entry.source.form for entry in root.caps] == ["wired"]
+    assert root.caps[0].ref == "github://acme/agents/prompts/rewrite.md@main"
     assert [Path(entry.path) for entry in state.caps] == [
-        state.root.generation_dir / "files" / "wired" / "prompts" / "rewrite.md"
+        root.version_dir / "files" / "wired" / "prompts" / "rewrite.md"
     ]
 
 
@@ -4602,17 +4608,18 @@ def test_remote_skill_add_canonicalizes_github_tree_url(
         encoding="utf-8"
     )
     state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
+    home = load_home_prepared(toolang_root, "alice", state.home_version)
 
     assert (
         'answers = { ref = "github://brave/brave-search-skills/skills/answers@main" }'
         in config_text
     )
     assert (
-        state.home.caps[0].ref
+        home.caps[0].ref
         == "github://brave/brave-search-skills/skills/answers@main"
     )
     assert (
-        state.home.generation_dir
+        home.version_dir
         / "files"
         / "wired"
         / "skills"
@@ -4647,10 +4654,11 @@ def test_remote_skill_add_canonicalizes_github_skill_file_url(
         encoding="utf-8"
     )
     state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
+    home = load_home_prepared(toolang_root, "alice", state.home_version)
 
     expected_ref = "github://vercel-labs/agent-browser/skills/agent-browser@main"
     assert f'agent-browser = {{ ref = "{expected_ref}" }}' in config_text
-    assert state.home.caps[0].ref == expected_ref
+    assert home.caps[0].ref == expected_ref
 
 
 def test_remote_skill_add_canonicalizes_raw_refs_heads_skill_file_url(
@@ -4679,12 +4687,13 @@ def test_remote_skill_add_canonicalizes_raw_refs_heads_skill_file_url(
         encoding="utf-8"
     )
     state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
+    home = load_home_prepared(toolang_root, "alice", state.home_version)
 
     expected_ref = (
         "github://vercel-labs/agent-browser/skills/agent-browser@refs/heads/main"
     )
     assert f'agent-browser = {{ ref = "{expected_ref}" }}' in config_text
-    assert state.home.caps[0].ref == expected_ref
+    assert home.caps[0].ref == expected_ref
 
 
 def test_state_watcher_refresh_records_remote_cap_updates(
@@ -4751,7 +4760,7 @@ def test_state_watcher_reparses_changed_program(tmp_path: Path) -> None:
     assert next_state.program.agics[0].messages[0].content == "Updated."
 
 
-def test_agent_state_config_is_deeply_immutable(tmp_path: Path) -> None:
+def test_prepared_config_is_deeply_immutable(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
     _write_text(
@@ -4764,14 +4773,18 @@ def test_agent_state_config_is_deeply_immutable(tmp_path: Path) -> None:
     )
 
     state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
-    runtime = cast(Any, state.config["runtime"])
+    root = load_root_prepared(toolang_root, state.root_version)
+    home = load_home_prepared(toolang_root, "alice", state.home_version)
+    root_runtime = cast(Any, root.config["runtime"])
+    home_runtime = cast(Any, home.config["runtime"])
 
-    assert runtime["sandbox"] == "none"
-    assert runtime["models"] == ("home",)
+    assert root_runtime["sandbox"] == "none"
+    assert root_runtime["models"] == ("root",)
+    assert home_runtime["models"] == ("home",)
     with pytest.raises(TypeError):
-        cast(Any, state.config)["runtime"] = {}
+        cast(Any, root.config)["runtime"] = {}
     with pytest.raises(TypeError):
-        runtime["sandbox"] = "docker"
+        root_runtime["sandbox"] = "docker"
 
 
 def test_remote_skill_add_rejects_missing_github_tree_url(
@@ -4815,14 +4828,15 @@ def test_prepare_materializes_remote_skill_directory(
     monkeypatch.setattr(cap_state, "_fetch_github_directory", fake_directory)
 
     state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
-    skill_dir = state.home.generation_dir / "files" / "wired" / "skills" / "pdf"
+    home = load_home_prepared(toolang_root, "alice", state.home_version)
+    skill_dir = home.version_dir / "files" / "wired" / "skills" / "pdf"
 
     assert (
         skill_dir / "SKILL.md"
     ).read_text(encoding="utf-8") == "---\ndescription: PDF work\n---\n# PDF\n"
     assert (skill_dir / "REFERENCE.md").read_text(encoding="utf-8") == "# Reference\n"
-    assert state.home.caps[0].meta["description"] == "PDF work"
-    assert state.home.caps[0].source.form == "wired"
+    assert home.caps[0].meta["description"] == "PDF work"
+    assert home.caps[0].source.form == "wired"
 
 
 def test_prepare_materializes_remote_skill_from_program_use(
@@ -4844,12 +4858,13 @@ def test_prepare_materializes_remote_skill_from_program_use(
     )
 
     state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
+    home = load_home_prepared(toolang_root, "alice", state.home_version)
 
     skill_path = Path(state.caps[0].path)
     assert skill_path.read_text(encoding="utf-8").startswith(
         "---\ndescription: github://coinbase/"
     )
-    entry = state.home.caps[0]
+    entry = home.caps[0]
     assert entry.name == "fund"
     assert entry.ref == "github://coinbase/agentic-wallet-skills/skills/fund@main"
     assert entry.source.origin == "remote"
@@ -4857,9 +4872,9 @@ def test_prepare_materializes_remote_skill_from_program_use(
     assert entry.source.path == "agents/alice/agent.too"
     assert entry.source.line == 3
     assert [Path(entry.path) for entry in state.caps] == [
-        state.home.generation_dir
+        home.version_dir
         / "files"
-        / "referenced"
+        / "cited"
         / "skills"
         / "fund"
         / "SKILL.md"
@@ -4890,8 +4905,9 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
     )
 
     state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
+    home = load_home_prepared(toolang_root, "alice", state.home_version)
 
-    inline_dir = state.home.generation_dir / "files" / "inline"
+    inline_dir = home.version_dir / "files" / "inline"
     psyche_path = inline_dir / "psyches" / "reviewer.md"
     assert psyche_path.read_text(encoding="utf-8") == "Prefer concrete findings."
     service_path = inline_dir / "services" / "github.md"
@@ -4910,7 +4926,7 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
             "Target audience: {{audience}}\n"
         ).rstrip()
     )
-    entries_by_kind = {entry.kind: entry for entry in state.home.caps}
+    entries_by_kind = {entry.kind: entry for entry in home.caps}
     assert set(entries_by_kind) == {"prompt", "psyche", "service"}
     assert entries_by_kind["psyche"].name == "reviewer"
     assert entries_by_kind["psyche"].ref == "inline://psyches/reviewer"
@@ -4927,17 +4943,17 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
     assert entries_by_kind["prompt"].source.path == "agents/alice/agent.too"
     assert entries_by_kind["prompt"].source.line == 13
     assert {Path(entry.path) for entry in state.caps} == {
-        state.home.generation_dir
+        home.version_dir
         / "files"
         / "inline"
         / "prompts"
         / "summarize.md",
-        state.home.generation_dir
+        home.version_dir
         / "files"
         / "inline"
         / "psyches"
         / "reviewer.md",
-        state.home.generation_dir
+        home.version_dir
         / "files"
         / "inline"
         / "services"
@@ -5056,7 +5072,7 @@ def test_prepare_fetches_remote_caps_with_bounded_concurrency(
 
     monkeypatch.setattr(cap_state, "_fetch_github_file", fake_fetch)
 
-    durable = scan_durable_state(toolang_root, "alice")
+    durable = read_authored_source(toolang_root, "alice")
     entries, files = materialize_visibility(durable, visibility="shared")
 
     assert max_active == 2

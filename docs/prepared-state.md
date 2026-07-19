@@ -13,17 +13,21 @@ created by state.
 
 Preparation has two independently versioned scopes:
 
-- root state contains root config and shared caps;
-- home state contains agent config, `agent.too`, and private caps.
+- `RootPrepared` contains root config and shared `PreparedCap` values;
+- `HomePrepared` contains agent config, the parsed `Program`, and private
+  `PreparedCap` values.
 
-`AgentState` is one exact root/home pair. An executor takes an `AgentState`
-snapshot at the beginning of each top-level run and keeps using that snapshot
-for the entire run.
+`AgentState` is the parsed `Program` plus the effective `PreparedCap` values
+from one exact root/home version pair. It retains the three version identifiers,
+but not the two cache objects or parsed config. Runtime configuration is loaded
+through `toolang.config`. An executor takes an `AgentState` snapshot at the
+beginning of each top-level run and keeps using that snapshot for the entire
+run.
 
 
 ## Layout
 
-Root generations live under `${TOOLANG_ROOT}/.prepared`. Home generations live
+Root caches live under `${TOOLANG_ROOT}/.prepared`. Home caches live
 under `${TOOLANG_ROOT}/agents/<agent>/.prepared`.
 
 ```text
@@ -40,19 +44,19 @@ under `${TOOLANG_ROOT}/agents/<agent>/.prepared`.
         config.toml
         authored/
         inline/
-        referenced/
+        cited/
         wired/
 ```
 
-Root generations omit `agent.too`. Directories that have no files may also be
+Root versions omit `agent.too`. Directories that have no files may also be
 absent.
 
-`current` contains the hexadecimal version of the published generation.
+`current` contains the hexadecimal version of the published prepared cache.
 `prepare.lock` serializes writers for only that scope. Readers load immutable
-generation directories and do not hold the writer lock.
+version directories and do not hold the writer lock.
 
 
-## Generation Documents
+## Cache Documents
 
 `source.json` is a coarse filesystem snapshot. It contains a sorted tree of
 names, node types, modification times in nanoseconds, sizes, and children. It
@@ -61,8 +65,9 @@ metadata detects additions, removals, and renames; file metadata detects normal
 content changes. A change that deliberately preserves both size and mtime may
 be missed, which is an accepted tradeoff for this fast check.
 
-`resolved.json` records remote-reference resolution and the hashes of
-materialized files. A normal source check reuses this resolution. A wired ref
+`resolved.json` records each `CapResolution` and the hashes of its materialized
+files. Caps that require no remote resolution do not have a `CapResolution`.
+A normal source check reuses existing prepared output. A wired ref
 that names a mutable branch is therefore refreshed only when its authored
 declaration changes or an explicit refresh is requested. The watcher performs
 no implicit network polling.
@@ -72,23 +77,24 @@ startup and watcher updates use `prepare_agent_state()` and therefore reuse an
 unchanged authored ref without contacting its remote source.
 
 `prepared.json` contains the Toolang version, parsed config, parsed program AST
-for home state, and prepared cap metadata projections. Cap bodies are not
+for home state, and serialized `PreparedCap` values. Cap bodies are not
 embedded in this document; runtime consumers read the corresponding immutable
 file only when needed. A new process can construct
-`AgentState` from the three generation documents and `files/` without parsing
+`RootPrepared` or `HomePrepared` from the three cache documents and `files/`
+without parsing
 authored source again.
 
 Loading validates document schemas, scope, version, and referenced file
-existence and sizes. If the current generation is incomplete or invalid,
+existence and sizes. If the current version is incomplete or invalid,
 preparation quarantines that directory and atomically recreates the same
 content-addressed version. Quarantined directories are left for the future
-generation garbage collector rather than deleted on the prepare hot path.
+cache garbage collector rather than deleted on the prepare hot path.
 
-`files/` makes a generation self-contained:
+`files/` makes a prepared version self-contained:
 
 - `authored/` copies authored cap files;
 - `inline/` contains materialized caps declared inside `agent.too`;
-- `referenced/` contains materialized program references;
+- `cited/` contains materialized program references;
 - `wired/` contains materialized wired caps;
 - `agent.too` and `config.toml` preserve the scope inputs when present.
 
@@ -111,33 +117,33 @@ The `AgentState` version is a separate SHA-256 digest over a domain separator,
 the 32-byte root version, and the 32-byte home version. Root and home order is
 significant.
 
-Generations do not share content-addressed objects. Identical files may be
+Prepared versions do not share content-addressed objects. Identical files may be
 duplicated between versions to keep storage and loading simple. Preparation
-does not delete old generations on its hot path; a separate garbage collector
-may later retain the most recent generations.
+does not delete old versions on its hot path; a separate garbage collector may
+later retain the most recent versions.
 
 
 ## Prepare and Publish
 
-Preparation first compares the current generation's source tree. If it matches,
-the generation is reused without resolving remote references or reparsing
+Preparation first compares the current version's `Source`. If it matches, the
+prepared cache is reused without resolving remote references or reparsing
 source. The Toolang version is currently metadata only, as described above.
 
 When rebuilding, a writer:
 
 1. acquires the scope's `prepare.lock`;
-2. checks the current generation again so concurrent processes reuse completed
+2. checks the current version again so concurrent processes reuse completed
    work;
 3. scans source metadata and captures source files;
 4. resolves and materializes referenced and wired caps;
 5. parses config, program, and caps;
 6. verifies that source metadata did not change during the build;
-7. writes a complete temporary generation and atomically renames it;
+7. writes a complete temporary version and atomically renames it;
 8. atomically publishes `current`.
 
 Root and home locks are independent. Multiple foreground CLI processes and
 background agents can prepare concurrently, while all agents safely share the
-root generation.
+root cache.
 
 
 ## Watching
@@ -145,7 +151,7 @@ root generation.
 The state watcher observes root and home authored source plus both `current`
 pointers. A relevant local change triggers preparation and publishes a new
 immutable `AgentState` only when the resulting version changes. Changes inside
-prepared generation directories are not treated as authored source changes.
+prepared version directories are not treated as authored source changes.
 The watcher also performs the same metadata-only source check on its configured
 local interval so a change in the startup-to-watch registration window, or a
 missed filesystem event, is recovered. This local check reuses unchanged remote

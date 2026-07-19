@@ -11,7 +11,7 @@ import frontmatter
 
 from toolang.catalog import cap as caps
 from toolang.catalog.error import CatalogError
-from toolang.state import caps as cap_state
+from toolang.state import state as cap_state
 from toolang.common.immutable import mutable_data
 from toolang.catalog.job import (
     DEFAULT_CHORE_SCHEDULE,
@@ -23,7 +23,7 @@ from toolang.common.error import ToolangError
 from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.tool import ToolContext
 from toolang.base.utils.function_tools import create_function_tool, tool
-from toolang.state.prepared import PreparedEntry, PreparedVisibility
+from toolang.state.state import PreparedCap, PreparedVisibility
 from toolang.work.authoring import (
     allocate_authored_job_id,
     assign_missing_authored_job_ids,
@@ -728,7 +728,7 @@ def _find_cap_entry(
     visibility: VisibilityFilter | PreparedVisibility,
     source_origin: str | None = None,
     source_form: str | None = None,
-) -> PreparedEntry:
+) -> PreparedCap:
     entry_visibility = None if visibility == "all" else visibility
     entries = cap_state.list_entries(
         scope.toolang_root,
@@ -756,7 +756,7 @@ def _find_cap_entry(
 
 def _cap_payload(
     scope: _AgentStateScope,
-    entry: PreparedEntry,
+    entry: PreparedCap,
     *,
     include_content: bool = False,
 ) -> dict[str, Any]:

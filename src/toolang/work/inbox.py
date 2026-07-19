@@ -12,7 +12,7 @@ from collections.abc import Callable
 from toolang.execution.executor import Executor
 from toolang.execution.records import RunRecord
 from toolang.execution.request import RunRequest
-from toolang.state.agent import AgentState
+from toolang.state.state import AgentState
 from toolang.work import files
 
 DEFAULT_INTERVAL_MS = 1_000.0

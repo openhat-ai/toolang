@@ -16,7 +16,7 @@ from toolang.execution.records import RunRecord
 from toolang.execution.reply import build_channel_reply_sink
 from toolang.execution.request import RunRequest
 from toolang.plugin.config import ChannelBinding
-from toolang.state.agent import AgentState
+from toolang.state.state import AgentState
 
 DEFAULT_INTERVAL_MS = 300.0
 logger = logging.getLogger("toolang.poll")

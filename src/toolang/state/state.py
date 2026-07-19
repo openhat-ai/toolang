@@ -1,4 +1,4 @@
-"""Prepared cap state and remote materialization."""
+"""Resolved and prepared cap state plus immutable runtime agent state."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
 import hashlib
+from hashlib import sha256
 import io
 import json
 from pathlib import Path
@@ -20,17 +21,10 @@ from urllib.request import Request, urlopen
 import frontmatter
 
 from toolang.catalog import cap as cap_catalog
-from toolang.state.durable import DurableFile, DurableState, scan_durable_state
+from toolang.state.source import AuthoredFile, AuthoredSource, read_authored_source
+from ..common.immutable import freeze_mapping, mutable_data
 from ..common.progress import ProgressSink, emit_progress
-from toolang.state.prepared import (
-    EntryKind,
-    PreparedEntry,
-    SourceForm,
-    SourceOrigin,
-    PreparedVisibility,
-    PreparedSource,
-)
-from ..lang.ast import CapDecl
+from ..lang.ast import CapDecl, Program, to_data
 from toolang.common.selectors import (
     Selector,
     filter_value_matches,
@@ -45,6 +39,12 @@ from toolang.common.github import (
     parse_github_url,
 )
 
+PreparedVisibility = Literal["shared", "private"]
+EntryKind = Literal["psyche", "skill", "service", "prompt"]
+EntryShape = Literal["file", "dir"]
+SourceOrigin = Literal["local", "remote"]
+SourceForm = Literal["inline", "ref", "wired", "file"]
+
 CAP_KINDS: tuple[EntryKind, ...] = cap_catalog.CAP_KINDS
 Visibility = PreparedVisibility
 EntryOrigin = SourceOrigin
@@ -55,6 +55,278 @@ FILE_BACKED_KINDS = frozenset({"psyche", "service", "prompt"})
 DIR_NAME_BY_KIND: dict[EntryKind, str] = cap_catalog.CAP_DIR_BY_KIND
 KIND_BY_DIR_NAME: dict[str, EntryKind] = cap_catalog.CAP_KIND_BY_DIR
 REMOTE_CAP_MATERIALIZE_WORKERS = 4
+_AGENT_STATE_VERSION_DOMAIN = b"toolang-agent-state-v1\0"
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedFile:
+    """One file fixed by a remote cap resolution."""
+
+    path: str
+    size: int
+    sha256: str
+
+    def to_data(self) -> dict[str, object]:
+        return {"path": self.path, "size": self.size, "sha256": self.sha256}
+
+    @classmethod
+    def from_data(cls, data: Mapping[str, object]) -> ResolvedFile:
+        size = data["size"]
+        if not isinstance(size, int) or isinstance(size, bool):
+            raise TypeError("resolved file size must be an integer")
+        return cls(
+            path=str(data["path"]),
+            size=size,
+            sha256=str(data["sha256"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CapResolution:
+    """Persisted resolution of one cited or wired cap reference."""
+
+    kind: EntryKind
+    name: str
+    form: SourceForm
+    authored_ref: str
+    resolved_ref: str
+    definition: str
+    materialized: str
+    content_hash: str
+    files: tuple[ResolvedFile, ...]
+    line: int | None = None
+
+    def to_data(self) -> dict[str, object]:
+        data: dict[str, object] = {
+            "kind": self.kind,
+            "name": self.name,
+            "form": self.form,
+            "authored_ref": self.authored_ref,
+            "resolved_ref": self.resolved_ref,
+            "definition": self.definition,
+            "materialized": self.materialized,
+            "content_hash": self.content_hash,
+            "files": [file.to_data() for file in self.files],
+        }
+        if self.line is not None:
+            data["line"] = self.line
+        return data
+
+    @classmethod
+    def from_data(cls, data: Mapping[str, object]) -> CapResolution:
+        raw_files = data["files"]
+        if not isinstance(raw_files, list):
+            raise TypeError("resolved cap files must be a list")
+        line = data.get("line")
+        return cls(
+            kind=cast(EntryKind, str(data["kind"])),
+            name=str(data["name"]),
+            form=cast(SourceForm, str(data["form"])),
+            authored_ref=str(data["authored_ref"]),
+            resolved_ref=str(data["resolved_ref"]),
+            definition=str(data["definition"]),
+            materialized=str(data["materialized"]),
+            content_hash=str(data["content_hash"]),
+            files=tuple(
+                ResolvedFile.from_data(cast(dict[str, object], file))
+                for file in raw_files
+                if isinstance(file, dict)
+            ),
+            line=line if isinstance(line, int) and not isinstance(line, bool) else None,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CapSource:
+    """Authored provenance retained by one prepared cap."""
+
+    origin: SourceOrigin
+    form: SourceForm
+    path: str
+    updated_at: str
+    fingerprint: str
+    authored_ref: str | None = None
+    line: int | None = None
+
+    def to_data(self) -> dict[str, object]:
+        data: dict[str, object] = {
+            "origin": self.origin,
+            "form": self.form,
+            "path": self.path,
+            "updated_at": self.updated_at,
+            "fingerprint": self.fingerprint,
+        }
+        if self.line is not None:
+            data["line"] = self.line
+        if self.authored_ref is not None:
+            data["authored_ref"] = self.authored_ref
+        return data
+
+    @classmethod
+    def from_data(cls, data: dict[str, object]) -> CapSource:
+        raw_line = data.get("line")
+        return cls(
+            origin=cast(SourceOrigin, str(data["origin"])),
+            form=cast(SourceForm, str(data["form"])),
+            path=str(data["path"]),
+            updated_at=str(data["updated_at"]),
+            fingerprint=str(data["fingerprint"]),
+            authored_ref=(
+                str(data["authored_ref"])
+                if data.get("authored_ref") is not None
+                else None
+            ),
+            line=raw_line if isinstance(raw_line, int) else None,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedCap:
+    """One cap backed by an immutable prepared filesystem path."""
+
+    kind: EntryKind
+    name: str
+    shape: EntryShape
+    ref: str
+    path: str
+    source: CapSource
+    meta: Mapping[str, object]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "meta", freeze_mapping(self.meta))
+
+    @property
+    def visibility(self) -> PreparedVisibility:
+        if self.source.form in {"inline", "ref"}:
+            return "private"
+        return "private" if self.source.path.startswith("agents/") else "shared"
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "kind": self.kind,
+            "name": self.name,
+            "shape": self.shape,
+            "ref": self.ref,
+            "path": self.path,
+            "source": self.source.to_data(),
+            "meta": mutable_data(self.meta),
+        }
+
+    def read_text(self) -> str:
+        """Read this cap from its immutable prepared file."""
+
+        return Path(self.path).read_text(encoding="utf-8")
+
+    def read_content(self) -> str:
+        """Read the cap body lazily from its immutable prepared file."""
+
+        return frontmatter.loads(self.read_text()).content.strip()
+
+    def to_snapshot(self) -> dict[str, object]:
+        return self.to_data()
+
+    @classmethod
+    def from_data(cls, data: dict[str, object]) -> PreparedCap:
+        return cls(
+            kind=cast(EntryKind, str(data["kind"])),
+            name=str(data["name"]),
+            shape=cast(EntryShape, str(data["shape"])),
+            ref=str(data["ref"]),
+            path=str(data["path"]),
+            source=CapSource.from_data(cast(dict[str, object], data["source"])),
+            meta=dict(cast(dict[str, object], data.get("meta", {}))),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AgentState:
+    """Program and effective prepared caps fixed for one top-level run."""
+
+    version: bytes
+    root_version: bytes
+    home_version: bytes
+    toolang_version: str
+    program: Program
+    caps: tuple[PreparedCap, ...]
+    loaded_at: str
+
+    @property
+    def fingerprint(self) -> str:
+        return self.version.hex()
+
+    @property
+    def updated_at(self) -> str:
+        return self.loaded_at
+
+    def to_snapshot(self) -> dict[str, object]:
+        return {
+            "fingerprint": self.fingerprint,
+            "version": self.version.hex(),
+            "root_version": self.root_version.hex(),
+            "home_version": self.home_version.hex(),
+            "toolang_version": self.toolang_version,
+            "updated_at": self.loaded_at,
+            "loaded_at": self.loaded_at,
+            "program": to_data(self.program),
+            "caps": [cap.path for cap in self.caps],
+        }
+
+
+def compose_agent_state(
+    *,
+    root_version: bytes,
+    home_version: bytes,
+    toolang_version: str,
+    program: Program,
+    root_caps: tuple[PreparedCap, ...],
+    home_caps: tuple[PreparedCap, ...],
+    loaded_at: str,
+) -> AgentState:
+    """Compose runtime state without retaining prepared cache layers."""
+
+    return AgentState(
+        version=agent_state_version(root_version, home_version),
+        root_version=root_version,
+        home_version=home_version,
+        toolang_version=toolang_version,
+        program=program,
+        caps=effective_caps(root_caps, home_caps),
+        loaded_at=loaded_at,
+    )
+
+
+def agent_state_version(root_version: bytes, home_version: bytes) -> bytes:
+    """Return the version of one exact root and home prepared pair."""
+
+    _require_sha256(root_version, name="root version")
+    _require_sha256(home_version, name="home version")
+    digest = sha256()
+    digest.update(_AGENT_STATE_VERSION_DOMAIN)
+    digest.update(root_version)
+    digest.update(home_version)
+    return digest.digest()
+
+
+def effective_caps(
+    root: tuple[PreparedCap, ...],
+    home: tuple[PreparedCap, ...],
+) -> tuple[PreparedCap, ...]:
+    """Overlay private prepared caps over shared caps."""
+
+    effective: dict[tuple[str, str], PreparedCap] = {}
+    for cap in (*root, *home):
+        effective[(cap.kind, cap.name)] = cap
+    return tuple(
+        sorted(
+            effective.values(),
+            key=lambda cap: (cap.kind, cap.name, cap.ref),
+        )
+    )
+
+
+def _require_sha256(value: bytes, *, name: str) -> None:
+    if len(value) != sha256().digest_size:
+        raise ValueError(f"{name} must contain 32 bytes")
 
 
 def resolve_remote_ref(
@@ -321,40 +593,36 @@ def list_entries(
     *,
     visibility: PreparedVisibility | None = None,
     kinds: set[EntryKind] | None = None,
-) -> tuple[PreparedEntry, ...]:
-    """List effective cap entries projected from durable authored state."""
+) -> tuple[PreparedCap, ...]:
+    """List effective cap entries projected from authored authored state."""
 
-    durable = scan_durable_state(toolang_root, agent_name)
+    authored = read_authored_source(toolang_root, agent_name)
     entries, _ = _collect_visibility_entries_with_files(
-        durable, visibility=visibility, kinds=kinds
+        authored, visibility=visibility, kinds=kinds
     )
     return entries
 
 
-def entry_visibility(entry: PreparedEntry, *, agent_name: str) -> Visibility:
+def entry_visibility(entry: PreparedCap, *, agent_name: str) -> Visibility:
     """Return the external visibility for one prepared entry."""
 
-    if entry.source.form in {"inline", "ref"}:
-        return "private"
-    prefix = f"agents/{agent_name}/"
-    if entry.path.startswith(prefix) or entry.source.path.startswith(prefix):
-        return "private"
-    return "shared"
+    del agent_name
+    return entry.visibility
 
 
-def entry_origin(entry: PreparedEntry) -> EntryOrigin:
+def entry_origin(entry: PreparedCap) -> EntryOrigin:
     """Return where one prepared entry's content originates."""
 
     return entry.source.origin
 
 
-def entry_form(entry: PreparedEntry) -> EntryForm:
+def entry_form(entry: PreparedCap) -> EntryForm:
     """Return how one prepared entry is authored or attached."""
 
     return entry.source.form
 
 
-def entry_scope(entry: PreparedEntry, *, agent_name: str) -> EntryScope:
+def entry_scope(entry: PreparedCap, *, agent_name: str) -> EntryScope:
     """Return where one prepared entry is available."""
 
     if entry.source.form in {"inline", "ref"}:
@@ -364,7 +632,7 @@ def entry_scope(entry: PreparedEntry, *, agent_name: str) -> EntryScope:
     return "home"
 
 
-def entry_ref(entry: PreparedEntry, *, agent_name: str) -> str:
+def entry_ref(entry: PreparedCap, *, agent_name: str) -> str:
     """Return the canonical external ref for one prepared entry."""
 
     origin = entry_origin(entry)
@@ -376,13 +644,13 @@ def entry_ref(entry: PreparedEntry, *, agent_name: str) -> str:
     return f"{'root' if visibility == 'shared' else 'home'}://{DIR_NAME_BY_KIND[entry.kind]}/{entry.name}"
 
 
-def entry_definition_file(entry: PreparedEntry) -> str:
+def entry_definition_file(entry: PreparedCap) -> str:
     """Return the authored file that defines or links one prepared entry."""
 
     return entry.source.path
 
 
-def entry_line(entry: PreparedEntry) -> int | None:
+def entry_line(entry: PreparedCap) -> int | None:
     """Return the authored source line for one prepared entry when known."""
 
     return entry.source.line
@@ -395,7 +663,7 @@ def split_cap_selectors(items: list[str] | tuple[str, ...] | None) -> tuple[str,
 
 
 def cap_entry_matches_selector(
-    entry: PreparedEntry,
+    entry: PreparedCap,
     selector: str | Selector,
     *,
     agent_name: str,
@@ -422,12 +690,12 @@ def cap_entry_matches_selector(
 
 
 def select_cap_entries(
-    entries: tuple[PreparedEntry, ...],
+    entries: tuple[PreparedCap, ...],
     selectors: list[str] | tuple[str, ...] | None,
     *,
     agent_name: str,
     implicit_kind: EntryKind | None = None,
-) -> tuple[PreparedEntry, ...]:
+) -> tuple[PreparedCap, ...]:
     """Return entries selected by a selector list."""
 
     parsed = tuple(
@@ -436,7 +704,7 @@ def select_cap_entries(
     )
     if not parsed:
         return entries
-    selected: list[PreparedEntry] = []
+    selected: list[PreparedCap] = []
     seen: set[tuple[str, str, str]] = set()
     for selector in parsed:
         for entry in entries:
@@ -455,7 +723,7 @@ def select_cap_entries(
 
 
 def _entry_selector_filter_value(
-    entry: PreparedEntry,
+    entry: PreparedCap,
     key: str,
     *,
     agent_name: str,
@@ -470,16 +738,16 @@ def _entry_selector_filter_value(
 
 
 def collect_local_entries(
-    durable: DurableState,
+    authored: AuthoredSource,
     *,
     visibility: PreparedVisibility | None = None,
     kinds: set[EntryKind] | None = None,
-) -> tuple[PreparedEntry, ...]:
-    """Collect local prepared entries from durable authored files."""
+) -> tuple[PreparedCap, ...]:
+    """Collect local prepared entries from authored authored files."""
 
-    entries: dict[str, PreparedEntry] = {}
-    for item in durable.files:
-        entry = _local_entry_from_file(durable, item)
+    entries: dict[str, PreparedCap] = {}
+    for item in authored.files:
+        entry = _local_entry_from_file(authored, item)
         if entry is None:
             continue
         entry_visibility_value: PreparedVisibility = (
@@ -494,17 +762,17 @@ def collect_local_entries(
 
 
 def _collect_visibility_entries_with_files(
-    durable: DurableState,
+    authored: AuthoredSource,
     *,
     visibility: PreparedVisibility | None = None,
     kinds: set[EntryKind] | None = None,
     materialize_remote: bool = False,
     remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
-) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
-    local_entries = collect_local_entries(durable, visibility=visibility, kinds=kinds)
+) -> tuple[tuple[PreparedCap, ...], dict[str, bytes]]:
+    local_entries = collect_local_entries(authored, visibility=visibility, kinds=kinds)
     remote_entries, files = _collect_remote_entries(
-        durable,
+        authored,
         visibility=visibility,
         kinds=kinds,
         materialize=materialize_remote,
@@ -512,13 +780,13 @@ def _collect_visibility_entries_with_files(
         progress=progress,
     )
     embedded_entries, embedded_files = _collect_program_embedded_entries(
-        durable,
+        authored,
         visibility=visibility,
         kinds=kinds,
         materialize=materialize_remote,
     )
     use_entries, use_files = _collect_program_use_entries(
-        durable,
+        authored,
         visibility=visibility,
         kinds=kinds,
         materialize=materialize_remote,
@@ -534,12 +802,12 @@ def _collect_visibility_entries_with_files(
 
 
 def materialize_visibility(
-    durable: DurableState,
+    authored: AuthoredSource,
     *,
     visibility: PreparedVisibility,
     remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
-) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
+) -> tuple[tuple[PreparedCap, ...], dict[str, bytes]]:
     """Build prepared cap entries and materialized files for one visibility."""
 
     emit_progress(
@@ -548,10 +816,10 @@ def materialize_visibility(
         phase="prepare.visibility",
         label=f"Prepare {visibility} caps",
         status="running",
-        detail=durable.agent_name,
+        detail=authored.agent_name,
     )
     entries, files = _collect_visibility_entries_with_files(
-        durable,
+        authored,
         visibility=visibility,
         materialize_remote=True,
         remote_cache=remote_cache,
@@ -569,19 +837,19 @@ def materialize_visibility(
     return entries, files
 
 
-def generation_remote_cache(
-    durable: DurableState,
+def prepared_remote_cache(
+    authored: AuthoredSource,
     *,
     visibility: PreparedVisibility,
-    entries: tuple[PreparedEntry, ...],
+    entries: tuple[PreparedCap, ...],
 ) -> _RemoteEntryCache:
-    """Build reusable remote inputs from one immutable generation."""
+    """Build reusable remote inputs from one immutable prepared version."""
 
     cache: _RemoteEntryCache = {}
     for entry in entries:
         if entry.source.origin != "remote":
             continue
-        files = _cache_entry_files(durable.toolang_root, entry)
+        files = _cache_entry_files(authored.toolang_root, entry)
         authored_ref = entry.source.authored_ref
         if files is None or authored_ref is None:
             continue
@@ -618,7 +886,7 @@ def _remote_entry_cache_key(
 
 def _cache_entry_files(
     toolang_root: Path,
-    entry: PreparedEntry,
+    entry: PreparedCap,
 ) -> tuple[tuple[str, bytes], ...] | None:
     entry_path = toolang_root / entry.path
     if entry.shape == "dir":
@@ -689,35 +957,35 @@ def _emit_cached_remote_progress(
     )
 
 
-def durable_entries_snapshot(
-    durable: DurableState,
+def authored_entries_snapshot(
+    authored: AuthoredSource,
 ) -> dict[str, object]:
-    """Return a JSON-friendly durable definitions snapshot."""
+    """Return a JSON-friendly authored definitions snapshot."""
 
     shared_entries, _ = _collect_visibility_entries_with_files(
-        durable, visibility="shared"
+        authored, visibility="shared"
     )
     private_entries, _ = _collect_visibility_entries_with_files(
-        durable, visibility="private"
+        authored, visibility="private"
     )
     return {
-        "program_source": durable.program_path,
-        "config_paths": list(durable.config_paths),
+        "program_source": authored.program_path,
+        "config_paths": list(authored.config_paths),
         "shared_entries": [entry.to_snapshot() for entry in shared_entries],
         "private_entries": [entry.to_snapshot() for entry in private_entries],
     }
 
 
 def _local_entry_from_file(
-    durable: DurableState,
-    item: DurableFile,
-) -> PreparedEntry | None:
+    authored: AuthoredSource,
+    item: AuthoredFile,
+) -> PreparedCap | None:
     if item.category != "cap":
         return None
     visibility: PreparedVisibility = "shared" if item.origin == "root" else "private"
     relative_path = Path(item.relative_path)
     local_parts = _local_parts(
-        relative_path, agent_name=durable.agent_name, visibility=visibility
+        relative_path, agent_name=authored.agent_name, visibility=visibility
     )
     if len(local_parts) < 2:
         return None
@@ -728,30 +996,30 @@ def _local_entry_from_file(
     if kind == "skill":
         if tuple(local_parts[2:]) != ("SKILL.md",):
             return None
-        return _skill_entry(durable, item, visibility=visibility, name=local_parts[1])
+        return _skill_entry(authored, item, visibility=visibility, name=local_parts[1])
     if kind in FILE_BACKED_KINDS and len(local_parts) == 2:
         return _file_entry(item, kind=kind)
     return None
 
 
 def _skill_entry(
-    durable: DurableState,
-    definition: DurableFile,
+    authored: AuthoredSource,
+    definition: AuthoredFile,
     *,
     visibility: PreparedVisibility,
     name: str,
-) -> PreparedEntry:
-    prefix = Path() if visibility == "shared" else Path("agents") / durable.agent_name
+) -> PreparedCap:
+    prefix = Path() if visibility == "shared" else Path("agents") / authored.agent_name
     root_relative_dir = prefix / DIR_NAME_BY_KIND["skill"] / name
     root_relative_file = root_relative_dir / "SKILL.md"
-    return PreparedEntry(
+    return PreparedCap(
         kind="skill",
         name=name,
         shape="dir",
         ref=_local_cap_ref(visibility, "skill", name),
         path=str(root_relative_file),
         source=_snapshot_source_record(
-            durable,
+            authored,
             root_relative_path=root_relative_dir,
         ),
         meta=_load_meta_text(definition.read_text()),
@@ -759,12 +1027,12 @@ def _skill_entry(
 
 
 def _file_entry(
-    item: DurableFile,
+    item: AuthoredFile,
     *,
     kind: EntryKind,
-) -> PreparedEntry:
+) -> PreparedCap:
     relative_path = Path(item.relative_path)
-    return PreparedEntry(
+    return PreparedCap(
         kind=kind,
         name=relative_path.stem,
         shape="file",
@@ -781,13 +1049,13 @@ def _file_entry(
 
 
 def _snapshot_source_record(
-    durable: DurableState,
+    authored: AuthoredSource,
     *,
     root_relative_path: Path,
-) -> PreparedSource:
+) -> CapSource:
     files = tuple(
         item
-        for item in durable.files
+        for item in authored.files
         if Path(item.relative_path).is_relative_to(root_relative_path)
     )
     digest = hashlib.sha256()
@@ -798,7 +1066,7 @@ def _snapshot_source_record(
         digest.update(item.digest.encode("utf-8"))
         digest.update(b"\n")
     latest_mtime_ns = max(item.mtime_ns for item in files)
-    return PreparedSource(
+    return CapSource(
         origin="local",
         form="file",
         path=str(root_relative_path),
@@ -808,11 +1076,11 @@ def _snapshot_source_record(
 
 
 def _snapshot_file_source_record(
-    item: DurableFile,
+    item: AuthoredFile,
     *,
     root_relative_path: Path,
-) -> PreparedSource:
-    return PreparedSource(
+) -> CapSource:
+    return CapSource(
         origin="local",
         form="file",
         path=str(root_relative_path),
@@ -836,13 +1104,13 @@ def _source_record(
     form: EntryForm,
     shape: Literal["file", "dir"],
     line: int | None = None,
-) -> PreparedSource:
+) -> CapSource:
     fingerprint = (
         _dir_fingerprint(absolute_path)
         if shape == "dir"
         else _file_fingerprint(absolute_path)
     )
-    return PreparedSource(
+    return CapSource(
         origin=origin,
         form=form,
         path=str(root_relative_path),
@@ -856,7 +1124,7 @@ def _file_fingerprint(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _ensure_no_conflicts(entries: tuple[PreparedEntry, ...]) -> None:
+def _ensure_no_conflicts(entries: tuple[PreparedCap, ...]) -> None:
     seen: dict[tuple[str, str], str] = {}
     for entry in entries:
         key = (entry.kind, entry.name)
@@ -868,8 +1136,8 @@ def _ensure_no_conflicts(entries: tuple[PreparedEntry, ...]) -> None:
         seen[key] = entry.ref
 
 
-def _dedupe_entries(entries: tuple[PreparedEntry, ...]) -> tuple[PreparedEntry, ...]:
-    by_ref: dict[str, PreparedEntry] = {}
+def _dedupe_entries(entries: tuple[PreparedCap, ...]) -> tuple[PreparedCap, ...]:
+    by_ref: dict[str, PreparedCap] = {}
     for entry in sorted(entries, key=_entry_sort_key):
         by_ref.setdefault(entry.ref, entry)
     return tuple(sorted(by_ref.values(), key=_entry_sort_key))
@@ -915,7 +1183,7 @@ def _json_compatible(value: object) -> object:
     return str(value)
 
 
-def _entry_sort_key(entry: PreparedEntry) -> tuple[str, str, str]:
+def _entry_sort_key(entry: PreparedCap) -> tuple[str, str, str]:
     return (entry.kind, entry.name, entry.ref)
 
 
@@ -941,16 +1209,16 @@ def _local_parts(
 
 
 def _collect_remote_entries(
-    durable: DurableState,
+    authored: AuthoredSource,
     *,
     visibility: PreparedVisibility | None = None,
     kinds: set[EntryKind] | None = None,
     materialize: bool = False,
     remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
-) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
+) -> tuple[tuple[PreparedCap, ...], dict[str, bytes]]:
     requests = _collect_remote_entry_requests(
-        durable,
+        authored,
         visibility=visibility,
         kinds=kinds,
     )
@@ -963,7 +1231,7 @@ def _collect_remote_entries(
 
 
 def _collect_remote_entry_requests(
-    durable: DurableState,
+    authored: AuthoredSource,
     *,
     visibility: PreparedVisibility | None,
     kinds: set[EntryKind] | None,
@@ -975,7 +1243,7 @@ def _collect_remote_entry_requests(
         config_file = next(
             (
                 item
-                for item in durable.files
+                for item in authored.files
                 if item.category == "config" and item.origin == config_origin
             ),
             None,
@@ -1001,20 +1269,20 @@ def _collect_remote_entry_requests(
 
 
 def _collect_program_use_entries(
-    durable: DurableState,
+    authored: AuthoredSource,
     *,
     visibility: PreparedVisibility | None = None,
     kinds: set[EntryKind] | None = None,
     materialize: bool = False,
     remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
-) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
-    if visibility == "shared" or durable.program_path is None:
+) -> tuple[tuple[PreparedCap, ...], dict[str, bytes]]:
+    if visibility == "shared" or authored.program_path is None:
         return (), {}
-    program_source = durable.load_program()
+    program_source = authored.load_program()
     program = program_source.parse()
     relative_program_path = Path(program_source.source_path)
-    program_file = next(item for item in durable.files if item.category == "program")
+    program_file = next(item for item in authored.files if item.category == "program")
     requests: list[_RemoteEntryRequest] = []
     for use in program.withs:
         kind = use.cap_kind
@@ -1044,20 +1312,20 @@ def _collect_program_use_entries(
 
 
 def _collect_program_embedded_entries(
-    durable: DurableState,
+    authored: AuthoredSource,
     *,
     visibility: PreparedVisibility | None = None,
     kinds: set[EntryKind] | None = None,
     materialize: bool = False,
-) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
+) -> tuple[tuple[PreparedCap, ...], dict[str, bytes]]:
     del materialize
-    if visibility == "shared" or durable.program_path is None:
+    if visibility == "shared" or authored.program_path is None:
         return (), {}
-    program_source = durable.load_program()
+    program_source = authored.load_program()
     program = program_source.parse()
     relative_program_path = Path(program_source.source_path)
-    program_path = durable.toolang_root / relative_program_path
-    entries: list[PreparedEntry] = []
+    program_path = authored.toolang_root / relative_program_path
+    entries: list[PreparedCap] = []
     files: dict[str, bytes] = {}
     seen: dict[tuple[EntryKind, str], int] = {}
     for cap in program.caps:
@@ -1099,11 +1367,11 @@ def _embedded_entry_from_cap(
     relative_program_path: Path,
     program_path: Path,
     source_line: int,
-) -> tuple[PreparedEntry, dict[str, bytes]]:
+) -> tuple[PreparedCap, dict[str, bytes]]:
     relative_entry_path = _relative_embedded_entry_path(kind=kind, name=cap.name)
     content = _embedded_materialized_content(cap)
     return (
-        PreparedEntry(
+        PreparedCap(
             kind=kind,
             name=cap.name,
             shape="file",
@@ -1152,7 +1420,7 @@ def _remote_entry_from_ref(
     materialize: bool,
     remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
-) -> tuple[PreparedEntry, dict[str, bytes]]:
+) -> tuple[PreparedCap, dict[str, bytes]]:
     request = _RemoteEntryRequest(
         visibility=visibility,
         kind=kind,
@@ -1215,13 +1483,13 @@ def _remote_entry_from_ref(
         )
     try:
         entry_content = entry_files[str(relative_entry_path)]
-        entry = PreparedEntry(
+        entry = PreparedCap(
             kind=kind,
             name=name,
             shape="dir" if kind == "skill" else "file",
             ref=canonical_ref,
             path=str(relative_entry_path),
-            source=PreparedSource(
+            source=CapSource(
                 origin="remote",
                 form=form,
                 path=str(relative_config_path),
@@ -1275,7 +1543,7 @@ def _materialize_remote_entry_requests(
     materialize: bool,
     remote_cache: _RemoteEntryCache | None,
     progress: ProgressSink | None,
-) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
+) -> tuple[tuple[PreparedCap, ...], dict[str, bytes]]:
     if not requests:
         return (), {}
     if not materialize:
@@ -1287,9 +1555,9 @@ def _materialize_remote_entry_requests(
         )
     for request in requests:
         _emit_remote_entry_pending(request, progress=progress)
-    entries: list[PreparedEntry] = []
+    entries: list[PreparedCap] = []
     files: dict[str, bytes] = {}
-    results: list[tuple[PreparedEntry, dict[str, bytes]] | None] = [None] * len(
+    results: list[tuple[PreparedCap, dict[str, bytes]] | None] = [None] * len(
         requests
     )
     first_error: BaseException | None = None
@@ -1335,8 +1603,8 @@ def _materialize_remote_entry_requests_serial(
     materialize: bool,
     remote_cache: _RemoteEntryCache | None,
     progress: ProgressSink | None,
-) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
-    entries: list[PreparedEntry] = []
+) -> tuple[tuple[PreparedCap, ...], dict[str, bytes]]:
+    entries: list[PreparedCap] = []
     files: dict[str, bytes] = {}
     for request in requests:
         entry, entry_files = _remote_entry_from_request(
@@ -1356,7 +1624,7 @@ def _remote_entry_from_request(
     materialize: bool,
     remote_cache: _RemoteEntryCache | None,
     progress: ProgressSink | None,
-) -> tuple[PreparedEntry, dict[str, bytes]]:
+) -> tuple[PreparedCap, dict[str, bytes]]:
     return _remote_entry_from_ref(
         visibility=request.visibility,
         kind=request.kind,
@@ -1409,7 +1677,7 @@ def _relative_remote_entry_path(
     name: str,
     form: Literal["wired", "ref"],
 ) -> Path:
-    bucket = "referenced" if form == "ref" else "wired"
+    bucket = "cited" if form == "ref" else "wired"
     root = Path(bucket) / DIR_NAME_BY_KIND[kind] / name
     if kind == "skill":
         return root / "SKILL.md"

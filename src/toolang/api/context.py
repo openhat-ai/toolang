@@ -12,7 +12,7 @@ from toolang.config.runtime import RuntimeConfig
 from toolang.execution.executor import Executor
 from toolang.execution.store import RunStore
 from toolang.plugin.config import ChannelBinding
-from toolang.state.agent import AgentState
+from toolang.state.state import AgentState
 
 
 @dataclass(slots=True)

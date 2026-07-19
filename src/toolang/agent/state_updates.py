@@ -14,8 +14,8 @@ from toolang.execution.executor import Executor
 from toolang.execution.records import UpdateKind
 from toolang.execution.store import RunStore
 from toolang.plugin.models.resolution import select_model_selectors
-from toolang.state.agent import AgentState
-from toolang.state.prepared import PreparedVisibility
+from toolang.state.state import AgentState
+from toolang.state.state import PreparedVisibility
 from toolang.plugin.tools.loading import load_runtime_tools
 from toolang.state.watcher import StateWatcher
 
@@ -141,14 +141,12 @@ def _entry_change_snapshot(
     if state is None:
         return {}
     snapshot: dict[tuple[PreparedVisibility, str, str], tuple[str, str, str]] = {}
-    layers = (("shared", state.root.caps), ("private", state.home.caps))
-    for visibility, entries in layers:
-        for entry in entries:
-            snapshot[(visibility, entry.kind, entry.name)] = (
-                entry.ref,
-                entry.source.fingerprint,
-                entry.source.path,
-            )
+    for entry in state.caps:
+        snapshot[(entry.visibility, entry.kind, entry.name)] = (
+            entry.ref,
+            entry.source.fingerprint,
+            entry.source.path,
+        )
     return snapshot
 
 

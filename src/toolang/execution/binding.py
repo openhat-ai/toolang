@@ -11,7 +11,7 @@ from typing import Any, cast
 from toolang.base.types.message import Message, message_text
 
 from toolang.plugin.loading import normalize_run_loop_name
-from ..state.agent import AgentState
+from ..state.state import AgentState
 from ..common.ids import LOCAL_ID_FAMILY, RUN_ID_FAMILY, allocate_id
 from .store import utc_now
 from .records import RunLoop, ThreadPeer

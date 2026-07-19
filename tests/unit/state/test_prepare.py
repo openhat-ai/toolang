@@ -4,16 +4,15 @@ from concurrent.futures import ProcessPoolExecutor
 import json
 import multiprocessing
 from pathlib import Path
-from typing import cast
 
 import pytest
 
-from toolang.state.agent import compose_agent_state
-from toolang.state import caps as cap_state
-from toolang.state.generation import prepared_generation_dir
+from toolang.state import state as cap_state
+from toolang.state.cache import load_root_prepared, prepared_version_dir
 from toolang.state.prepare import (
+    compose_prepared_state,
     prepare_agent_state,
-    prepare_generations,
+    prepare_root_home,
     refresh_agent_state,
 )
 
@@ -47,7 +46,7 @@ def _prepare_agent_versions_in_process(
     )
 
 
-def test_prepare_generations_snapshot_root_and_home(tmp_path: Path) -> None:
+def test_prepare_root_home_snapshot_root_and_home(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     root_prompt = toolang_root / "prompts" / "review.md"
     root_prompt.parent.mkdir(parents=True)
@@ -67,7 +66,7 @@ def test_prepare_generations_snapshot_root_and_home(tmp_path: Path) -> None:
     )
     (skill / "notes.txt").write_text("asset\n", encoding="utf-8")
 
-    root, prepared_home = prepare_generations(
+    root, prepared_home = prepare_root_home(
         toolang_root,
         "alice",
         toolang_version="0.2.7",
@@ -80,10 +79,10 @@ def test_prepare_generations_snapshot_root_and_home(tmp_path: Path) -> None:
     assert not (toolang_root / ".caps").exists()
     assert not (home / ".caps").exists()
     assert Path(root.caps[0].path) == (
-        root.generation_dir / "files" / "authored" / "prompts" / "review.md"
+        root.version_dir / "files" / "authored" / "prompts" / "review.md"
     )
     assert Path(prepared_home.caps[0].path) == (
-        prepared_home.generation_dir
+        prepared_home.version_dir
         / "files"
         / "authored"
         / "skills"
@@ -91,7 +90,7 @@ def test_prepare_generations_snapshot_root_and_home(tmp_path: Path) -> None:
         / "SKILL.md"
     )
     assert (
-        prepared_home.generation_dir
+        prepared_home.version_dir
         / "files"
         / "authored"
         / "skills"
@@ -101,12 +100,11 @@ def test_prepare_generations_snapshot_root_and_home(tmp_path: Path) -> None:
     assert prepared_home.program.span.line == 1
     assert root.config == {"models": {"default": "root"}}
     assert prepared_home.config == {"models": {"default": "home"}}
-    assert prepared_generation_dir(toolang_root, root.version) == root.generation_dir
-    state = compose_agent_state(root, prepared_home)
+    assert prepared_version_dir(toolang_root, root.version) == root.version_dir
+    state = compose_prepared_state(root, prepared_home)
     assert state.root_version == root.version
     assert state.home_version == prepared_home.version
     assert state.toolang_version == "0.2.7"
-    assert state.config == {"models": {"default": "home"}}
     assert len(state.version) == 32
     assert [(entry.kind, entry.name) for entry in state.caps] == [
         ("prompt", "review"),
@@ -144,18 +142,18 @@ def test_prepare_does_not_create_missing_agent_program(tmp_path: Path) -> None:
     assert not (home / "agent.too").exists()
 
 
-def test_prepare_generations_reuses_unchanged_versions(tmp_path: Path) -> None:
+def test_prepare_root_home_reuses_unchanged_versions(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
     (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
 
-    first = prepare_generations(
+    first = prepare_root_home(
         toolang_root,
         "alice",
         toolang_version="0.2.7",
     )
-    second = prepare_generations(
+    second = prepare_root_home(
         toolang_root,
         "alice",
         toolang_version="0.2.8",
@@ -191,8 +189,11 @@ def test_prepare_materializes_inline_caps_as_independent_files(
 
     assert len(state.caps) == 1
     entry = state.caps[0]
+    home_version_dir = prepared_version_dir(
+        toolang_root, state.home_version, "alice"
+    )
     assert Path(entry.path) == (
-        state.home.generation_dir
+        home_version_dir
         / "files"
         / "inline"
         / "prompts"
@@ -202,7 +203,7 @@ def test_prepare_materializes_inline_caps_as_independent_files(
     assert entry.read_content() == "Summarize this."
     assert entry.source.path == "agents/alice/agent.too"
     prepared = json.loads(
-        (state.home.generation_dir / "prepared.json").read_text(encoding="utf-8")
+        (home_version_dir / "prepared.json").read_text(encoding="utf-8")
     )
     assert "content" not in prepared["caps"][0]
 
@@ -313,13 +314,13 @@ def test_remote_refresh_changes_resolved_and_root_version(
         cap_state, "_remote_materialized_files", fake_materialized_files
     )
 
-    first_root, _ = prepare_generations(
+    first_root, _ = prepare_root_home(
         toolang_root,
         "alice",
         toolang_version="0.2.7",
     )
     content["value"] = b"---\ndescription: Rewrite\n---\nSecond.\n"
-    cached_root, _ = prepare_generations(
+    cached_root, _ = prepare_root_home(
         toolang_root,
         "alice",
         toolang_version="0.2.7",
@@ -329,31 +330,31 @@ def test_remote_refresh_changes_resolved_and_root_version(
         "alice",
         toolang_version="0.2.7",
     )
-    second_root = refreshed.root
+    second_root = load_root_prepared(toolang_root, refreshed.root_version)
 
     assert cached_root.version == first_root.version
     assert (
-        cached_root.generation_dir
+        cached_root.version_dir
         / "files"
         / "wired"
         / "prompts"
         / "rewrite.md"
     ).read_bytes() == b"---\ndescription: Rewrite\n---\nFirst.\n"
     assert second_root.version != first_root.version
-    assert second_root.resolved["entries"] != first_root.resolved["entries"]
+    assert second_root.resolutions != first_root.resolutions
     assert (
         second_root.caps[0].source.fingerprint
         != first_root.caps[0].source.fingerprint
     )
     assert (
-        second_root.generation_dir
+        second_root.version_dir
         / "files"
         / "wired"
         / "prompts"
         / "rewrite.md"
     ).read_bytes() == content["value"]
     assert Path(second_root.caps[0].path) == (
-        second_root.generation_dir
+        second_root.version_dir
         / "files"
         / "wired"
         / "prompts"
@@ -386,7 +387,7 @@ def test_local_change_reuses_unchanged_remote_materialization(
             )
         },
     )
-    first, _ = prepare_generations(
+    first, _ = prepare_root_home(
         toolang_root,
         "alice",
         toolang_version="0.2.7",
@@ -402,7 +403,7 @@ def test_local_change_reuses_unchanged_remote_materialization(
         ),
     )
 
-    second, _ = prepare_generations(
+    second, _ = prepare_root_home(
         toolang_root,
         "alice",
         toolang_version="0.2.7",
@@ -448,7 +449,7 @@ def test_authored_ref_change_refreshes_remote_materialization(
         cap_state, "_remote_materialized_files", fake_materialized_files
     )
 
-    first, _ = prepare_generations(
+    first, _ = prepare_root_home(
         toolang_root,
         "alice",
         toolang_version="0.2.7",
@@ -457,7 +458,7 @@ def test_authored_ref_change_refreshes_remote_materialization(
         '[prompts]\nrewrite = { ref = "acme/rewrite-v2" }\n',
         encoding="utf-8",
     )
-    second, _ = prepare_generations(
+    second, _ = prepare_root_home(
         toolang_root,
         "alice",
         toolang_version="0.2.7",
@@ -467,8 +468,7 @@ def test_authored_ref_change_refreshes_remote_materialization(
     assert first.version != second.version
     assert first.caps[0].source.authored_ref == "acme/rewrite"
     assert second.caps[0].source.authored_ref == "acme/rewrite-v2"
-    resolved = cast(tuple[dict[str, object], ...], second.resolved["entries"])
-    assert resolved[0]["authored_ref"] == "acme/rewrite-v2"
+    assert second.resolutions[0].authored_ref == "acme/rewrite-v2"
 
 
 def test_prepare_repairs_invalid_current_generation_document(tmp_path: Path) -> None:
@@ -481,7 +481,8 @@ def test_prepare_repairs_invalid_current_generation_document(tmp_path: Path) -> 
         "alice",
         toolang_version="0.2.7",
     )
-    prepared_path = first.home.generation_dir / "prepared.json"
+    version_dir = prepared_version_dir(toolang_root, first.home_version, "alice")
+    prepared_path = version_dir / "prepared.json"
     prepared_path.write_text("{invalid", encoding="utf-8")
 
     repaired = prepare_agent_state(
@@ -490,11 +491,9 @@ def test_prepare_repairs_invalid_current_generation_document(tmp_path: Path) -> 
         toolang_version="0.2.7",
     )
 
-    assert repaired.home.version == first.home.version
+    assert repaired.home_version == first.home_version
     assert json.loads(prepared_path.read_text(encoding="utf-8"))["scope"] == "home"
-    quarantined = first.home.generation_dir.parent.glob(
-        f".{first.home.version.hex()}.invalid-*"
-    )
+    quarantined = version_dir.parent.glob(f".{first.home_version.hex()}.invalid-*")
     assert len(tuple(quarantined)) == 1
 
 
@@ -513,7 +512,7 @@ def test_prepare_repairs_missing_prepared_cap_file(tmp_path: Path) -> None:
         "alice",
         toolang_version="0.2.7",
     )
-    prepared_cap = Path(first.home.caps[0].path)
+    prepared_cap = Path(first.caps[0].path)
     prepared_cap.unlink()
 
     repaired = prepare_agent_state(
@@ -522,7 +521,7 @@ def test_prepare_repairs_missing_prepared_cap_file(tmp_path: Path) -> None:
         toolang_version="0.2.7",
     )
 
-    assert repaired.home.version == first.home.version
-    assert Path(repaired.home.caps[0].path).read_text(encoding="utf-8") == (
+    assert repaired.home_version == first.home_version
+    assert Path(repaired.caps[0].path).read_text(encoding="utf-8") == (
         "---\ndescription: Review\n---\nReview carefully.\n"
     )

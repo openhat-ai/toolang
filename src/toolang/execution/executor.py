@@ -38,7 +38,7 @@ from ..lang.ast import (
     StructDecl,
 )
 from toolang.plugin.loading import load_loop as _default_load_loop
-from ..state.agent import AgentState
+from ..state.state import AgentState
 from .assembly import ConfigView, RunInput, SupportsRunAssembly
 from .binding import _Run, _bind_run_request, allocate_run_id, invoke_params
 from .context import RunContext

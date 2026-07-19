@@ -20,7 +20,7 @@ from toolang.execution.effective import (
 )
 from toolang.plugin.models.resolution import selectable_model_targets, split_model_selectors
 from toolang.plugin.tools.registry import split_tool_selectors
-from toolang.state.caps import split_cap_selectors
+from toolang.state.state import split_cap_selectors
 from toolang.execution.records import ThreadPeer
 from toolang.execution.records import RunRecord
 from toolang.execution.reply import BufferedReplySink, SseReplySink, TraceReplySink

@@ -16,7 +16,7 @@ from toolang.catalog.job import AuthoredJobs
 from toolang.catalog.agent import LocalAgents
 from toolang.agent import local as agents
 from toolang.catalog import templates
-from toolang.state.prepared import PreparedEntry
+from toolang.state.state import PreparedCap
 from ...common.updates import append_agent_update
 from ...common.context import (
     context_root,
@@ -223,20 +223,18 @@ def _caps_summary(root: Path, agent: str) -> str:
 
 
 def _prepared_cap_counts(root: Path, agent: str) -> dict[str, int] | None:
-    from toolang.state.agent import compose_agent_state
-    from toolang.state.generation import load_home_prepared, load_root_prepared
+    from toolang.state.state import effective_caps
+    from toolang.state.cache import load_home_prepared, load_root_prepared
 
     try:
-        state = compose_agent_state(
-            load_root_prepared(root),
-            load_home_prepared(root, agent),
-        )
+        root_prepared = load_root_prepared(root)
+        home_prepared = load_home_prepared(root, agent)
     except (FileNotFoundError, OSError, TypeError, ValueError, KeyError):
         return None
-    return _cap_counts(state.caps)
+    return _cap_counts(effective_caps(root_prepared.caps, home_prepared.caps))
 
 
-def _cap_counts(entries: Sequence[PreparedEntry]) -> dict[str, int]:
+def _cap_counts(entries: Sequence[PreparedCap]) -> dict[str, int]:
     counts = {"psyches": 0, "skills": 0, "services": 0, "prompts": 0}
     for entry in entries:
         key = f"{entry.kind}s"

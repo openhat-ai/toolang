@@ -20,7 +20,7 @@ from toolang.execution.records import (
     RunRecord,
 )
 from toolang.catalog import templates
-from toolang.state import caps
+from toolang.state import state as caps
 from toolang.catalog.job import (
     DEFAULT_CHORE_SCHEDULE,
     AuthoredJobs,
@@ -41,8 +41,8 @@ from toolang.work.state import (
     job_thread_id,
 )
 from toolang.work.store import JobRecord, open_job_store
-from toolang.state.durable import scan_durable_state
-from toolang.state.prepared import PreparedEntry
+from toolang.state.source import read_authored_source
+from toolang.state.state import PreparedCap
 from toolang.agent.features import (
     ROUTER_COMPONENTS,
     RUNNER_COMPONENTS,
@@ -146,7 +146,7 @@ def snapshot_context(
     if components is None:
         raise TypeError("enabled_components is required")
     components = normalize_component_names(tuple(components))
-    durable = scan_durable_state(context.root, context.name)
+    durable = read_authored_source(context.root, context.name)
     agent_state = context.get_agent_state()
     runs = context.store.list_runs(limit=None)
     operational_facts: dict[str, object] = {
@@ -609,7 +609,7 @@ def _path_updated_at(path: Path) -> str:
     ).isoformat()
 
 
-def _cap_summary_item(context: ApiContext, entry: PreparedEntry) -> dict[str, object]:
+def _cap_summary_item(context: ApiContext, entry: PreparedCap) -> dict[str, object]:
     item: dict[str, object] = {
         "name": entry.name,
         "description": str(entry.meta["description"])
@@ -628,7 +628,7 @@ def _cap_summary_item(context: ApiContext, entry: PreparedEntry) -> dict[str, ob
     return item
 
 
-def _cap_detail_item(context: ApiContext, entry: PreparedEntry) -> dict[str, object]:
+def _cap_detail_item(context: ApiContext, entry: PreparedCap) -> dict[str, object]:
     item = _cap_summary_item(context, entry)
     content_path = Path(entry.path)
     content = (
@@ -668,7 +668,7 @@ def _template_detail(template: templates.TemplateSpec) -> dict[str, object]:
 
 def _state_entry_by_name(
     context: ApiContext, *, kind: CapKind, name: str
-) -> PreparedEntry:
+) -> PreparedCap:
     for entry in context.get_agent_state().caps:
         if entry.kind == kind and entry.name == name:
             return entry
@@ -933,7 +933,7 @@ def _collection_kind(collection: str) -> CapKind:
 
 def _authored_entries(
     context: ApiContext, *, visibility: str
-) -> tuple[PreparedEntry, ...]:
+) -> tuple[PreparedCap, ...]:
     return caps.list_entries(
         context.root,
         context.name,

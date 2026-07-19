@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from ..execution.executor import Executor
 from ..execution.records import RunRecord
 from ..execution.request import RunRequest
-from ..state.agent import AgentState
+from ..state.state import AgentState
 from toolang.catalog.job import JobKind
 from .state import AgentJobs, HomeJobs
 from .store import ClaimedJob, JobStore
