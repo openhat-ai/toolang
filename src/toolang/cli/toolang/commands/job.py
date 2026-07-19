@@ -14,7 +14,7 @@ from typer.core import TyperCommand
 from ....catalog import templates
 from toolang.agent.local import agent_home
 from ....execution.records import UpdateKind
-from toolang.state.durable import scan_durable_state
+from toolang.state.source import read_authored_source
 from toolang.catalog.job import AuthoredJobs, JobFile, JobStage
 from toolang.catalog.error import CatalogError
 from toolang.work.authoring import (
@@ -428,7 +428,7 @@ def _reconcile(root: Path, agent: str, kind: JobKind) -> None:
 
 
 def _agent_jobs(root: Path, agent: str) -> AgentJobs:
-    program = scan_durable_state(root, agent).load_program().parse()
+    program = read_authored_source(root, agent).load_program().parse()
     return AgentJobs.load(root, agent, program)
 
 

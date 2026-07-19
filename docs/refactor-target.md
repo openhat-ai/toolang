@@ -429,7 +429,7 @@ target APIs.
 
 1. Consolidate language behavior in `toolang.lang` and introduce the focused
    agent, cap, and job value types and catalogs.
-2. Replace prepared/live state layers with `SourceTree`, `HomePrepared`,
+2. Replace prepared/live state layers with `Source`, `HomePrepared`,
    `RootPrepared`, `AgentState`, and their watcher.
 3. Extract `RunStore`, persistence, reply sinks, and the final executor entry
    point from the current execution stack.

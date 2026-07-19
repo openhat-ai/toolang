@@ -12,10 +12,10 @@ from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.model import ModelTarget
 
-from toolang.state import caps as cap_store
+from toolang.state import state as cap_store
 from ..common.immutable import mutable_data
 from ..lang.ast import AgicDecl, Message as AstMessage, Program
-from toolang.state.prepared import PreparedEntry
+from toolang.state.state import PreparedCap
 from .template import render_text_template
 from . import prompts
 from .effective import directives_for
@@ -50,9 +50,9 @@ def build_model_call_assembly(
     params: dict[str, Any],
     models: tuple[ModelTarget, ...],
     tools: dict[str, AgentTool],
-    psyches: tuple[PreparedEntry, ...],
-    skills: tuple[PreparedEntry, ...],
-    services: tuple[PreparedEntry, ...],
+    psyches: tuple[PreparedCap, ...],
+    skills: tuple[PreparedCap, ...],
+    services: tuple[PreparedCap, ...],
 ) -> ModelCallAssembly:
     user_template_context = user_template_context_for_run(
         context,
@@ -158,9 +158,9 @@ def system_template_context_for_run(
     params: dict[str, Any],
     models: tuple[ModelTarget, ...],
     tools: dict[str, AgentTool],
-    psyches: tuple[PreparedEntry, ...],
-    skills: tuple[PreparedEntry, ...],
-    services: tuple[PreparedEntry, ...],
+    psyches: tuple[PreparedCap, ...],
+    skills: tuple[PreparedCap, ...],
+    services: tuple[PreparedCap, ...],
 ) -> dict[str, object]:
     del tools
     runtime = _runtime_base(
@@ -386,7 +386,7 @@ def _model_target_to_context(target: ModelTarget) -> dict[str, object]:
 
 def _prepared_entry_to_context(
     context: SupportsRunAssembly,
-    entry: PreparedEntry,
+    entry: PreparedCap,
 ) -> dict[str, object]:
     content = entry.read_content() if entry.kind == "psyche" else ""
     description = entry.meta.get("description")

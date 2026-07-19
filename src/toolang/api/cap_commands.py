@@ -8,8 +8,8 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
 
 from toolang.catalog import cap as caps
-from toolang.state import caps as cap_state
-from toolang.state.prepared import PreparedEntry, PreparedVisibility
+from toolang.state import state as cap_state
+from toolang.state.state import PreparedCap, PreparedVisibility
 
 CapKind = Literal["psyche", "skill", "service", "prompt"]
 ApiVisibility = Literal["private", "shared"]
@@ -186,7 +186,7 @@ def _find_authored_entry(
     visibility: PreparedVisibility,
     kind: CapKind,
     name: str,
-) -> PreparedEntry:
+) -> PreparedCap:
     for entry in cap_state.list_entries(
         context.root,
         context.name,
@@ -198,7 +198,7 @@ def _find_authored_entry(
     raise HTTPException(status_code=404, detail=f"{kind} not found: {name}")
 
 
-def _cap_detail_item(context, entry: PreparedEntry) -> dict[str, object]:
+def _cap_detail_item(context, entry: PreparedCap) -> dict[str, object]:
     item: dict[str, object] = {
         "kind": entry.kind,
         "name": entry.name,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from toolang.state import caps
+from toolang.state import state as caps
 
 
 def test_remote_shorthand_falls_back_to_main_when_branch_lookup_fails(

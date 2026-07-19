@@ -17,7 +17,7 @@ from ...catalog.error import CatalogConflictError
 from ...common.error import ToolangError
 from ...common.github import parse_github_ref
 from toolang.catalog import cap as cap_store
-from toolang.state import caps as cap_state
+from toolang.state import state as cap_state
 from ..common.updates import append_agent_update
 from ..common.context import context_agent, context_root, user_call
 from ..common.output import echo_block, echo_table
@@ -29,8 +29,8 @@ from ..common.routing import (
 
 if TYPE_CHECKING:
     from ...execution.records import UpdateKind
-    from toolang.state.agent import AgentState
-    from toolang.state.prepared import PreparedEntry
+    from toolang.state.state import AgentState
+    from toolang.state.state import PreparedCap
     from ..common.progress import CliProgress
 
 CapKind = Literal["skill", "psyche", "prompt", "service"]
@@ -550,7 +550,7 @@ def _target_visibility(ctx: typer.Context) -> tuple[PreparedVisibility, str]:
     return "shared", "default"
 
 
-def _entry_source(entry: PreparedEntry, *, agent_name: str) -> str:
+def _entry_source(entry: PreparedCap, *, agent_name: str) -> str:
     form = _entry_form(entry)
     if form in {"ref", "wired"}:
         return _external_source_url(
@@ -563,7 +563,7 @@ def _entry_source(entry: PreparedEntry, *, agent_name: str) -> str:
     return source
 
 
-def _external_source_url(ref: str, *, entry: PreparedEntry) -> str:
+def _external_source_url(ref: str, *, entry: PreparedCap) -> str:
     if not ref.startswith("github://"):
         return ref
     try:
@@ -577,11 +577,11 @@ def _external_source_url(ref: str, *, entry: PreparedEntry) -> str:
     )
 
 
-def _entry_form(entry: PreparedEntry) -> CapForm:
+def _entry_form(entry: PreparedCap) -> CapForm:
     return cap_state.entry_form(entry)
 
 
-def _entry_scope_label(entry: PreparedEntry, *, agent_name: str) -> CapScope:
+def _entry_scope_label(entry: PreparedCap, *, agent_name: str) -> CapScope:
     return cap_state.entry_scope(entry, agent_name=agent_name)
 
 
@@ -616,7 +616,7 @@ def _all_cap_entries(
     visibility: PreparedVisibility | Literal["all"],
     prepare: bool,
     kinds: set[EntryKind],
-) -> tuple[PreparedEntry, ...]:
+) -> tuple[PreparedCap, ...]:
     if prepare and (toolang_root / "agents" / agent_name / "agent.too").is_file():
         from toolang.agent.runtime import prepare_agent
         from ..common.progress import as_progress_sink, make_cli_progress
@@ -652,13 +652,13 @@ def _prepared_cap_entries(
     *,
     visibility: PreparedVisibility | Literal["all"],
     kinds: set[EntryKind],
-) -> tuple[PreparedEntry, ...]:
-    entries: list[PreparedEntry] = []
-    if visibility in {"all", "shared"}:
-        entries.extend(entry for entry in state.root.caps if entry.kind in kinds)
-    if visibility in {"all", "private"}:
-        entries.extend(entry for entry in state.home.caps if entry.kind in kinds)
-    return tuple(entries)
+) -> tuple[PreparedCap, ...]:
+    return tuple(
+        cap
+        for cap in state.caps
+        if cap.kind in kinds
+        and (visibility == "all" or cap.visibility == visibility)
+    )
 
 
 def _named_entry(
@@ -670,7 +670,7 @@ def _named_entry(
     name: str,
     source_origin: Literal["local", "remote"] | None = None,
     source_form: cap_state.EntryForm | None = None,
-) -> PreparedEntry:
+) -> PreparedCap:
     entries = cap_state.list_entries(
         toolang_root,
         agent_name,

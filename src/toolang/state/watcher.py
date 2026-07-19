@@ -9,11 +9,16 @@ from pathlib import Path
 
 from watchfiles import Change, awatch
 
-from .agent import AgentState
-from .generation import load_current_version, prepared_current_path
+from .state import AgentState
+from .cache import (
+    load_current_version,
+    load_version_source,
+    prepared_current_path,
+    prepared_version_dir,
+)
 from .prepare import prepare_agent_state
 from .source import scan_home_source, scan_root_source
-from toolang.state.durable import is_durable_path
+from toolang.state.source import is_source_path
 
 DEFAULT_INTERVAL_MS = 1_000.0
 DEFAULT_DEBOUNCE_MS = 500.0
@@ -79,7 +84,7 @@ class StateWatcher:
                 for kind, path in changes
                 if kind in _RELEVANT_CHANGES
                 and (
-                    is_durable_path(self.root, self.name, Path(path))
+                    is_source_path(self.root, self.name, Path(path))
                     or _is_prepared_current_path(
                         self.root, self.name, Path(path)
                     )
@@ -100,8 +105,18 @@ class StateWatcher:
                 load_current_version(self.root) != self._state.root_version
                 or load_current_version(self.root, self.name)
                 != self._state.home_version
-                or scan_root_source(self.root) != self._state.root.source
-                or scan_home_source(self.root, self.name) != self._state.home.source
+                or scan_root_source(self.root)
+                != load_version_source(
+                    prepared_version_dir(self.root, self._state.root_version)
+                )
+                or scan_home_source(self.root, self.name)
+                != load_version_source(
+                    prepared_version_dir(
+                        self.root,
+                        self._state.home_version,
+                        self.name,
+                    )
+                )
             )
         except (FileNotFoundError, TypeError, ValueError):
             return True

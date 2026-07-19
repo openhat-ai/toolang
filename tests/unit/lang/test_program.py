@@ -10,7 +10,7 @@ from toolang.common.error import ToolangError
 from toolang.lang import Program, to_data
 from toolang.lang.ast import LetStmt, RepeatStmt
 from toolang.lang.input import expand_program_input
-from toolang.state.durable import scan_durable_state
+from toolang.state.source import read_authored_source
 
 
 def test_program_lowers_declarations_to_static_nodes() -> None:
@@ -325,7 +325,7 @@ def test_program_source_hides_header_without_adding_runtime_declarations(
         encoding="utf-8",
     )
 
-    prepared = scan_durable_state(root, "alice").load_program()
+    prepared = read_authored_source(root, "alice").load_program()
     program = prepared.parse()
 
     assert prepared.source_text == "#!/usr/bin/env toolang\n\nagent alice\n"
@@ -343,7 +343,7 @@ def test_program_source_parse_preserves_authored_shebang_line_numbers(
         encoding="utf-8",
     )
 
-    source = scan_durable_state(root, "alice").load_program()
+    source = read_authored_source(root, "alice").load_program()
     program = source.parse()
 
     assert source.source_text.startswith("#!/usr/bin/env toolang\n")
@@ -359,7 +359,7 @@ agic:
 """.strip(),
     )
 
-    program = scan_durable_state(root, "alice").load_program().parse()
+    program = read_authored_source(root, "alice").load_program().parse()
 
     assert len(program.agics) == 1
     assert program.agics[0].name == "default"
@@ -380,7 +380,7 @@ agic:
   Respond directly.
 """.strip(),
     )
-    program = scan_durable_state(root, "alice").load_program().parse()
+    program = read_authored_source(root, "alice").load_program().parse()
 
     expanded = expand_program_input(
         program, '/review src/app.py "only errors"\n\nAlso inspect tests.'

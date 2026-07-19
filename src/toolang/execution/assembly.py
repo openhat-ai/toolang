@@ -15,7 +15,7 @@ from toolang.base.types.message import Message, TextPart, message_summary, messa
 from toolang.base.types.model import ModelAlias, ModelTarget
 
 from ..lang.ast import AgicDecl, Message as AstMessage
-from toolang.state.prepared import PreparedEntry
+from toolang.state.state import PreparedCap
 from ..lang.input import expand_program_input
 from .binding import _Run, invoke_params, run_selected_model_selector
 from .context import RunSnapshot, build_run_snapshot
@@ -85,9 +85,9 @@ class RunInput:
     models_base: tuple[str, ...]
     tools_base: dict[str, AgentTool]
     snapshot: RunSnapshot
-    psyches_base: tuple[PreparedEntry, ...] = field(default_factory=tuple)
-    skills_base: tuple[PreparedEntry, ...] = field(default_factory=tuple)
-    services_base: tuple[PreparedEntry, ...] = field(default_factory=tuple)
+    psyches_base: tuple[PreparedCap, ...] = field(default_factory=tuple)
+    skills_base: tuple[PreparedCap, ...] = field(default_factory=tuple)
+    services_base: tuple[PreparedCap, ...] = field(default_factory=tuple)
     debug: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -255,17 +255,17 @@ class RunInput:
 
         return select_tools(self.tools_base, directives_for(self.agic, "tools"))
 
-    def psyches(self) -> tuple[PreparedEntry, ...]:
+    def psyches(self) -> tuple[PreparedCap, ...]:
         """Return the effective psyche entries for this run."""
 
         return select_entries(self.psyches_base, directives_for(self.agic, "psyches"))
 
-    def skills(self) -> tuple[PreparedEntry, ...]:
+    def skills(self) -> tuple[PreparedCap, ...]:
         """Return the effective skill entries for this run."""
 
         return select_entries(self.skills_base, directives_for(self.agic, "skills"))
 
-    def services(self) -> tuple[PreparedEntry, ...]:
+    def services(self) -> tuple[PreparedCap, ...]:
         """Return the effective service entries for this run."""
 
         return select_entries(self.services_base, directives_for(self.agic, "services"))

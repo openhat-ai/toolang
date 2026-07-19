@@ -16,7 +16,7 @@ from typer.testing import CliRunner
 from toolang.agent import local as agents
 from toolang.catalog import templates
 from toolang.catalog import cap as caps
-from toolang.state import caps as cap_state
+from toolang.state import state as cap_state
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.model import ModelInfo
 from toolang.base.types.tool import ToolContext, ToolDefinition
@@ -3400,7 +3400,7 @@ def test_cli_info_reads_cap_counts_from_prepared_generation(
 def test_cli_info_republishes_missing_prepared_current(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from toolang.state.generation import (
+    from toolang.state.cache import (
         load_current_version,
         prepared_current_path,
     )
@@ -5381,11 +5381,11 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
         'reviewer = { ref = "github://acme/agents/skills/reviewer@main" }'
         in config_text
     )
-    from toolang.state.generation import load_home_prepared
+    from toolang.state.cache import load_home_prepared
 
     prepared = load_home_prepared(toolang_root, "alice")
     assert (
-        prepared.generation_dir
+        prepared.version_dir
         / "files"
         / "wired"
         / "skills"

@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import cast
 
-from toolang.state.caps import durable_entries_snapshot
-from toolang.state.durable import scan_durable_state
+from toolang.state.state import authored_entries_snapshot
+from toolang.state.source import read_authored_source
 
 
 def test_program_load_uses_captured_snapshot_content(tmp_path: Path) -> None:
@@ -12,7 +12,7 @@ def test_program_load_uses_captured_snapshot_content(tmp_path: Path) -> None:
     program_path = root / "agents" / "alice" / "agent.too"
     program_path.parent.mkdir(parents=True)
     program_path.write_text("agent alice\n\nagic:\n  First.\n", encoding="utf-8")
-    snapshot = scan_durable_state(root, "alice")
+    snapshot = read_authored_source(root, "alice")
 
     program_path.write_text("agent alice\n\nagic:\n  Second.\n", encoding="utf-8")
 
@@ -35,7 +35,7 @@ def test_cap_projection_uses_captured_files(tmp_path: Path) -> None:
         '[prompts]\nold = { ref = "github://acme/agents/prompts/old.md@main" }\n',
         encoding="utf-8",
     )
-    snapshot = scan_durable_state(root, "alice")
+    snapshot = read_authored_source(root, "alice")
 
     prompt_path.write_text(
         "---\ndescription: Second style\n---\nUse the second style.\n",
@@ -46,7 +46,7 @@ def test_cap_projection_uses_captured_files(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    projected = durable_entries_snapshot(snapshot)
+    projected = authored_entries_snapshot(snapshot)
     shared = cast(list[dict[str, object]], projected["shared_entries"])
     private = cast(list[dict[str, object]], projected["private_entries"])
     assert shared[0]["meta"] == {"description": "First style"}

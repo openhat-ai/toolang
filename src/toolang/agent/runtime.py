@@ -24,7 +24,7 @@ from uvicorn.main import STARTUP_FAILURE
 
 from toolang.agent import local as agents
 from toolang.agent.sandbox import prepare_root_mounts
-from toolang.state import caps as cap_store
+from toolang.state import state as cap_store
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.protocols.sandbox import AgentSandbox
 from toolang.base.types.model import ModelAlias
@@ -76,8 +76,8 @@ from toolang.work import inbox as files
 from toolang.agent import channel_runtime as poll
 from toolang.agent import state_updates as watch
 from toolang.common.progress import ProgressSink
-from toolang.state.durable import scan_durable_state
-from toolang.state.agent import AgentState
+from toolang.state.source import read_authored_source
+from toolang.state.state import AgentState
 from toolang.state.prepare import prepare_agent_state
 from toolang.state import watcher as state_watcher
 from toolang.plugin.models.config import (
@@ -496,7 +496,7 @@ def _normalize_file_inboxes(file_inboxes: Sequence[Path] | None) -> tuple[Path, 
 
 
 def _validate_file_agic(*, toolang_root: Path, agent_name: str) -> None:
-    program = scan_durable_state(toolang_root, agent_name).load_program().parse()
+    program = read_authored_source(toolang_root, agent_name).load_program().parse()
     agic = program.find_agic("file")
     if agic is None:
         raise ValueError("file agic not found")

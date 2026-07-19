@@ -12,7 +12,7 @@ import click
 import typer
 
 from toolang.agent import local as agents
-from toolang.state.caps import split_cap_selectors
+from toolang.state.state import split_cap_selectors
 from toolang.plugin.models.resolution import split_model_selectors
 from toolang.plugin.sandboxes.loading import create_sandbox_plugin
 from toolang.plugin.tools.registry import split_tool_selectors
@@ -33,7 +33,7 @@ from ...common.routing import normalize_components
 
 if TYPE_CHECKING:
     from toolang.agent import runtime as agent_up
-    from ....state.agent import AgentState
+    from ....state.state import AgentState
     from ...common.progress import CliProgress
 
 

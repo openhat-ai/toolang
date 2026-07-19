@@ -16,7 +16,7 @@ from toolang.config.env import load_runtime_environ
 from toolang.execution.effective import effective_agics
 from toolang.execution.request import ExecutableKind
 from toolang.lang.ast import AgicDecl, FlowDecl, Program
-from toolang.state.agent import AgentState
+from toolang.state.state import AgentState
 from toolang.cli.common.progress import CliProgress, as_progress_sink, make_cli_progress
 from .help import show_help
 from .rendering import ScriptProgressSink, emit_interrupt, emit_outcome, progress_sink

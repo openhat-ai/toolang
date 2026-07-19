@@ -14,7 +14,7 @@ import click
 import typer
 
 from toolang.agent import local as agents
-from toolang.state.caps import split_cap_selectors
+from toolang.state.state import split_cap_selectors
 from ....config.env import load_runtime_environ
 from toolang.plugin.models.resolution import split_model_selectors
 from toolang.plugin.tools.registry import split_tool_selectors
